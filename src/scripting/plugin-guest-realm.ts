@@ -12,7 +12,7 @@ import type { PluginCommandComplete, PluginCommandInvoke } from '../plugins/plug
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
  * declarations. The QuickJS guest realm evaluates a wrapped global script, so
- * strip export keywords while preserving activate/deactivate bindings.
+ * strip export keywords while preserving setup/dispose bindings.
  */
 export function normalizePluginEntryJavaScript(entryJavaScript: string): string {
   return entryJavaScript
@@ -27,11 +27,16 @@ export function normalizePluginEntryJavaScript(entryJavaScript: string): string 
  * pull bridges, so QuickJS never retains raw guest function handles across
  * Host messages.
  */
-export function buildPluginActivateSource(entryJavaScript: string): string {
+export function buildPluginSetupSource(entryJavaScript: string, context: {
+  pluginId: string;
+  pluginInstanceId: string;
+  installationScope: 'user' | 'library';
+  instanceScope: 'global' | 'library';
+}): string {
   return [
     normalizePluginEntryJavaScript(entryJavaScript),
-    'if (typeof activate !== "function") {',
-    '  throw new Error("Plugin entry must define async function activate(serpent).");',
+    'if (typeof setup !== "function") {',
+    '  throw new Error("Plugin entry must define async function setup(context).");',
     '}',
     'if (serpent.events && typeof serpent.events.next === "function") {',
     '  serpent.events.on = function(kind, handler) {',
@@ -298,12 +303,12 @@ export function buildPluginActivateSource(entryJavaScript: string): string {
     '    });',
     '  };',
     '}',
-    'await activate(serpent);',
+    `await setup(Object.assign({}, serpent, { pluginId: ${JSON.stringify(context.pluginId)}, pluginInstanceId: ${JSON.stringify(context.pluginInstanceId)}, installationScope: ${JSON.stringify(context.installationScope)}, instanceScope: ${JSON.stringify(context.instanceScope)}, serpent: serpent }));`,
     'if (typeof serpent.__waitUntilDeactivate === "function") {',
     '  await serpent.__waitUntilDeactivate();',
     '}',
-    'if (typeof deactivate === "function") {',
-    '  await deactivate();',
+    'if (typeof dispose === "function") {',
+    '  await dispose(typeof serpent.__getDeactivateReason === "function" ? serpent.__getDeactivateReason() : undefined);',
     '}',
     'return { ok: true };',
   ].join('\n');
@@ -319,6 +324,12 @@ export type PluginGuestActivateResult =
 
 export async function runPluginGuestActivate(input: {
   entryJavaScript: string;
+  setupContext?: {
+    pluginId: string;
+    pluginInstanceId: string;
+    installationScope: 'user' | 'library';
+    instanceScope: 'global' | 'library';
+  };
   executeAutomationCommand: (
     commandId: AutomationScriptCommandId,
     commandInput: unknown,
@@ -331,6 +342,7 @@ export async function runPluginGuestActivate(input: {
     value?: unknown;
   }) => Promise<unknown>;
   waitUntilDeactivate: () => Promise<void>;
+  getDeactivateReason?: () => string | undefined;
   waitForDomainEvent?: () => Promise<PluginDomainEvent | null>;
   waitForHookInvoke?: () => Promise<PluginHookInvoke | null>;
   respondHookDecision?: (invokeId: string, decision: PluginHookDecision) => Promise<void>;
@@ -387,6 +399,9 @@ export async function runPluginGuestActivate(input: {
       }
       await input.waitUntilDeactivate();
     },
+    ...(input.getDeactivateReason === undefined
+      ? {}
+      : { getDeactivateReason: input.getDeactivateReason }),
     ...(input.waitForDomainEvent === undefined
       ? {}
       : { waitForDomainEvent: input.waitForDomainEvent }),
@@ -442,7 +457,12 @@ export async function runPluginGuestActivate(input: {
 
   try {
     const result = await runQuickJsSandboxPrototype(
-      buildPluginActivateSource(input.entryJavaScript),
+      buildPluginSetupSource(input.entryJavaScript, input.setupContext ?? {
+        pluginId: 'unknown',
+        pluginInstanceId: 'unknown',
+        installationScope: 'library',
+        instanceScope: 'library',
+      }),
       host,
       {
         signal: input.signal,
@@ -455,7 +475,7 @@ export async function runPluginGuestActivate(input: {
       },
     );
     if (!activatedNotified) {
-      // activate() returned without parking: treat as successful short-lived plugin.
+      // setup() returned without parking: treat as successful short-lived plugin.
       input.onActivated?.();
     }
     return { ok: true, output: result.output };

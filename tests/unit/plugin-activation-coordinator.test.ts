@@ -71,7 +71,7 @@ describe('PluginActivationCoordinator', () => {
         deactivate,
         deactivateLibrary,
       } as never,
-      readEntryFile: async () => 'async function activate() {}',
+      readEntryFile: async () => 'async function setup() {}',
     });
 
     await coordinator.onLibraryOpened({
@@ -83,7 +83,7 @@ describe('PluginActivationCoordinator', () => {
     expect(activate).toHaveBeenCalledWith(expect.objectContaining({
       libraryId: 'library-1',
       pluginId: 'com.example.trusted',
-      entryJavaScript: 'async function activate() {}',
+      entryJavaScript: 'async function setup() {}',
     }));
     expect(deactivate).not.toHaveBeenCalled();
   });
@@ -173,7 +173,7 @@ describe('PluginActivationCoordinator', () => {
         deactivate: trustedDeactivate,
         deactivateLibrary: vi.fn(),
       } as never,
-      readEntryFile: async () => 'async function activate() {}',
+      readEntryFile: async () => 'async function setup() {}',
       compatibility: {
         serpentVersion: '0.2.0',
         pluginApiVersion: 1,
@@ -384,7 +384,7 @@ describe('PluginActivationCoordinator', () => {
         deactivate: vi.fn(),
         deactivateLibrary: vi.fn(),
       } as never,
-      readEntryFile: async () => 'async function activate() {}',
+      readEntryFile: async () => 'async function setup() {}',
     });
 
     await coordinator.refreshOpenLibraries();
@@ -459,7 +459,7 @@ describe('PluginActivationCoordinator', () => {
         deactivateLibrary,
       } as never,
       contributions,
-      readEntryFile: async () => 'async function activate() {}',
+      readEntryFile: async () => 'async function setup() {}',
     });
 
     await coordinator.onLibraryOpened({
@@ -574,5 +574,159 @@ describe('PluginActivationCoordinator', () => {
       id: 'com.example.contrib.library-2.menu.asset.do-thing',
     })]);
     expect(coordinator.listContributions({ libraryId: 'library-1' })).toEqual([]);
+  });
+
+  it('activates one global instance for multiple libraries and keeps it after a library closes', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const { createPluginProviderRegistry } = await import('../../src/plugins/plugin-providers');
+    const contributions = createContributionRegistry();
+    const providers = createPluginProviderRegistry();
+    const activate = vi.fn(async () => undefined);
+    const deactivate = vi.fn();
+    const globalPackage = {
+      lock: { pluginId: 'com.example.global', version: '1.0.0', packageHash: 'a'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted', entry: 'dist/main.js', instanceScope: 'global' },
+        permissions: ['library.read'],
+        contributes: {
+          commands: [{ id: 'global-command', title: 'Global command' }],
+          menus: {},
+          settings: [],
+          toolbar: [],
+          inspector: [],
+          viewerActions: [],
+          shortcuts: [],
+          views: [],
+          hooks: [],
+          jobs: [],
+          providers: [{ id: 'global-provider', kind: 'search' }],
+          themes: [],
+        },
+      },
+      packageDirectory: '/plugins/global',
+      scope: 'user',
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'user'
+          ? [{ status: 'valid', package: globalPackage }]
+          : [],
+        listGlobalActivationCandidates: async () => [globalPackage],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: globalPackage,
+        }),
+      } as never,
+      supervisor: {
+        activate,
+        deactivate,
+        deactivateLibrary: vi.fn(),
+        deliverDomainEvent: vi.fn(),
+      } as never,
+      contributions,
+      providers,
+      readEntryFile: async () => 'async function setup() {}',
+      globalRuntimeContext: {
+        libraryId: '__test_global_runtime__',
+        libraryDirectory: '/user-data',
+      },
+    });
+
+    await coordinator.refreshGlobal();
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({
+      instanceScope: 'global',
+      installScope: 'user',
+      libraryId: '__test_global_runtime__',
+    }));
+    const firstActivation = activate.mock.calls[0] as unknown as [{ instanceId: string }] | undefined;
+    if (firstActivation === undefined) throw new Error('Expected the global instance to activate.');
+    const globalInstanceId = firstActivation[0].instanceId;
+    expect(globalInstanceId).toEqual(expect.any(String));
+
+    await coordinator.onLibraryOpened({ libraryId: 'library-1', libraryDirectory: '/libraries/one' });
+    await coordinator.onLibraryOpened({ libraryId: 'library-2', libraryDirectory: '/libraries/two' });
+
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(contributions.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        pluginInstanceId: globalInstanceId,
+        libraryId: globalInstanceId,
+      }),
+    ]));
+    expect(contributions.list().some((entry) => entry.libraryId === 'library-1')).toBe(false);
+    expect(contributions.list().some((entry) => entry.libraryId === 'library-2')).toBe(false);
+    expect(coordinator.listActiveInstances('library-2')).toEqual([expect.objectContaining({
+      instanceScope: 'global',
+      pluginId: 'com.example.global',
+    })]);
+    expect(coordinator.listActiveProviders('library-2')).toEqual([
+      expect.objectContaining({ pluginInstanceId: expect.any(String), pluginId: 'com.example.global' }),
+    ]);
+
+    coordinator.onLibraryClosed('library-1');
+    expect(deactivate).not.toHaveBeenCalled();
+    expect(coordinator.listContributions({ libraryId: 'library-2', target: 'commands' })).toHaveLength(1);
+
+    coordinator.dispose();
+    expect(deactivate).toHaveBeenCalledTimes(1);
+    expect(contributions.list()).toEqual([]);
+    expect(providers.list()).toEqual([]);
+  });
+
+  it('evicts contributions and active state when a global Host crashes', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const activate = vi.fn(async () => undefined);
+    const globalPackage = {
+      lock: { pluginId: 'com.example.crash-global', version: '1.0.0', packageHash: 'c'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted', entry: 'dist/main.js', instanceScope: 'global' },
+        permissions: ['library.read'],
+        contributes: {
+          commands: [{ id: 'command', title: 'Command' }],
+          menus: {},
+          settings: [],
+          toolbar: [],
+          inspector: [],
+          viewerActions: [],
+          shortcuts: [],
+          views: [],
+          hooks: [],
+          jobs: [],
+          providers: [],
+          themes: [],
+        },
+      },
+      packageDirectory: '/plugins/crash-global',
+      scope: 'user',
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listGlobalActivationCandidates: async () => [globalPackage],
+      } as never,
+      supervisor: {
+        activate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function setup() {}',
+    });
+
+    await coordinator.refreshGlobal();
+    const firstActivation = activate.mock.calls[0] as unknown as [{ instanceId: string }] | undefined;
+    const instanceId = firstActivation?.[0].instanceId;
+    expect(instanceId).toEqual(expect.any(String));
+    expect(coordinator.listActiveInstances('library-1')).toHaveLength(1);
+    expect(contributions.list()).toHaveLength(1);
+
+    coordinator.onInstanceCrashed({ instanceId: instanceId!, failureCode: 'RUNTIME_PROCESS_EXITED' });
+
+    expect(coordinator.listActiveInstances('library-1')).toEqual([]);
+    expect(contributions.list()).toEqual([]);
   });
 });

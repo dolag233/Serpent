@@ -43,10 +43,11 @@ export interface QuickJsSandboxPrototypeHost {
     value?: unknown;
   }): Promise<unknown>;
   /**
-   * Long-lived plugin Host sessions park activate() on this bridge until Main
+   * Long-lived plugin Host sessions park setup() on this bridge until Main
    * requests deactivate. Scripts never receive this surface.
    */
   waitUntilDeactivate?(): Promise<void>;
+  getDeactivateReason?(): string | undefined;
   /**
    * Plugin Host domain-event pull. Resolves with the next event or null when
    * the instance is deactivating.
@@ -911,6 +912,14 @@ export async function runQuickJsSandboxPrototype(
       ));
       context.setProp(serpent, '__waitUntilDeactivate', waitUntilDeactivate);
       waitUntilDeactivate.dispose();
+    }
+    if (host.getDeactivateReason !== undefined) {
+      const getDeactivateReason = context.newFunction('__getDeactivateReason', () => {
+        const reason = host.getDeactivateReason?.();
+        return reason === undefined ? context.undefined : context.newString(reason);
+      });
+      context.setProp(serpent, '__getDeactivateReason', getDeactivateReason);
+      getDeactivateReason.dispose();
     }
     if (host.waitForDomainEvent !== undefined) {
       const events = context.newObject();

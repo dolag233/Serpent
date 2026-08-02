@@ -48,7 +48,8 @@ import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-su
 import type { InstalledPluginPackage } from './plugin-package-manager-types';
 import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
 import { resolvePluginUiAssetPath } from './plugin-ui-assets';
-import type { PluginProviderRegistry } from '../plugins/plugin-providers';
+import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
+import type { PluginProviderRegistry, PluginProviderRegistration } from '../plugins/plugin-providers';
 
 export interface PluginActivationCoordinatorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
@@ -59,6 +60,11 @@ export interface PluginActivationCoordinatorOptions {
   packageManager: PluginPackageManager;
   supervisor: PluginRuntimeSupervisor;
   trustedSupervisor?: PluginTrustedRuntimeSupervisor;
+  /** Runtime-only bootstrap context for a global instance when no library is open. */
+  globalRuntimeContext?: {
+    libraryId: string;
+    libraryDirectory: string;
+  };
   /** Descriptor-only Contribution store; revoked whenever a Host instance ends. */
   contributions?: PluginContributionRegistry;
   /** Runtime Provider registrations; revoked whenever a Host instance ends. */
@@ -89,6 +95,9 @@ type ActiveJobContribution = {
 
 type ActiveRecord = {
   instanceId: string;
+  instanceScope: 'global' | 'library';
+  /** The first library used to bootstrap a global runtime instance. */
+  activationLibraryId: string;
   mode: 'restricted' | 'unrestricted';
   pluginId: string;
   packageHash: string;
@@ -99,6 +108,11 @@ type ActiveRecord = {
   themePackage?: PluginThemePackage;
 };
 
+const DEFAULT_GLOBAL_RUNTIME_CONTEXT = {
+  libraryId: '__serpent_global_runtime__',
+  libraryDirectory: '__serpent_global_runtime__',
+} as const;
+
 /**
  * Enumerates resolved plugins for an open library and activates them on the
  * matching Host. Standard plugins receive entry bytes; trusted plugins receive
@@ -106,6 +120,8 @@ type ActiveRecord = {
  */
 export class PluginActivationCoordinator {
   #activeByLibrary = new Map<string, Map<string, ActiveRecord>>();
+  #activeGlobal = new Map<string, ActiveRecord>();
+  #globalBindings = new Map<string, Set<string>>();
   #openLibraries = new Map<string, string>();
 
   constructor(private readonly options: PluginActivationCoordinatorOptions) {}
@@ -134,6 +150,7 @@ export class PluginActivationCoordinator {
     const desired = new Map<string, {
       pluginPackage: InstalledPluginPackage;
       mode: 'restricted' | 'unrestricted';
+      instanceScope: 'global' | 'library';
       entryJavaScript?: string;
     }>();
     for (const pluginId of pluginIds) {
@@ -144,6 +161,7 @@ export class PluginActivationCoordinator {
       });
       if (resolution.status !== 'resolved') continue;
       const mode = resolution.package.manifest.runtime.mode;
+      const instanceScope = resolution.package.manifest.runtime.instanceScope ?? 'library';
       if (mode !== 'restricted' && mode !== 'unrestricted') continue;
       // Belt-and-suspenders: Safe Mode never activates unrestricted (trusted) hosts.
       if (safeMode && mode === 'unrestricted') continue;
@@ -180,20 +198,37 @@ export class PluginActivationCoordinator {
         try {
           const readEntry = this.options.readEntryFile ?? ((absolutePath: string) => readFile(absolutePath, 'utf8'));
           const entryJavaScript = await readEntry(entryAbsolute);
-          desired.set(pluginId, { pluginPackage: resolution.package, mode, entryJavaScript });
+          desired.set(pluginId, {
+            pluginPackage: resolution.package,
+            mode,
+            instanceScope,
+            entryJavaScript,
+          });
         } catch (error) {
           this.options.logger?.error('plugin.activation.read-entry', error, { pluginId, entryAbsolute });
         }
         continue;
       }
 
-      desired.set(pluginId, { pluginPackage: resolution.package, mode: 'unrestricted' });
+      desired.set(pluginId, {
+        pluginPackage: resolution.package,
+        mode: 'unrestricted',
+        instanceScope,
+      });
+    }
+
+    for (const bindings of this.#globalBindings.values()) bindings.delete(input.libraryId);
+    for (const [pluginId, candidate] of desired) {
+      if (candidate.instanceScope !== 'global') continue;
+      const bindings = this.#globalBindings.get(pluginId) ?? new Set<string>();
+      bindings.add(input.libraryId);
+      this.#globalBindings.set(pluginId, bindings);
     }
 
     const previous = this.#activeByLibrary.get(input.libraryId) ?? new Map<string, ActiveRecord>();
     for (const [pluginId, record] of previous) {
       const next = desired.get(pluginId);
-      if (next === undefined || next.mode !== record.mode) {
+      if (next === undefined || next.instanceScope !== 'library' || next.mode !== record.mode) {
         const reason = safeMode && record.mode === 'unrestricted' && next === undefined
           ? 'safe-mode'
           : 'resolution-changed';
@@ -203,10 +238,13 @@ export class PluginActivationCoordinator {
     }
 
     for (const [pluginId, candidate] of desired) {
+      if (candidate.instanceScope === 'global') continue;
       if (previous.has(pluginId)) continue;
       const instanceId = randomUUID();
-      previous.set(pluginId, {
+      const record: ActiveRecord = {
         instanceId,
+        instanceScope: 'library',
+        activationLibraryId: input.libraryId,
         mode: candidate.mode,
         pluginId,
         packageHash: candidate.pluginPackage.lock.packageHash,
@@ -225,13 +263,14 @@ export class PluginActivationCoordinator {
           const themePackage = extractPluginThemePackage(candidate.pluginPackage.manifest);
           return themePackage === undefined ? {} : { themePackage };
         })(),
-      });
+      };
       try {
         if (candidate.mode === 'restricted') {
           await this.options.supervisor.activate({
             instanceId,
             libraryId: input.libraryId,
             libraryDirectory: input.libraryDirectory,
+            instanceScope: 'library',
             pluginId,
             version: candidate.pluginPackage.lock.version,
             packageHash: candidate.pluginPackage.lock.packageHash,
@@ -244,6 +283,7 @@ export class PluginActivationCoordinator {
             instanceId,
             libraryId: input.libraryId,
             libraryDirectory: input.libraryDirectory,
+            instanceScope: 'library',
             pluginId,
             version: candidate.pluginPackage.lock.version,
             packageHash: candidate.pluginPackage.lock.packageHash,
@@ -254,6 +294,7 @@ export class PluginActivationCoordinator {
           });
         }
         this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
+        previous.set(pluginId, record);
         this.options.logger?.info('plugin.activation.activate-ok', 'Plugin host activated and contributions registered.', {
           pluginId,
           libraryId: input.libraryId,
@@ -267,7 +308,6 @@ export class PluginActivationCoordinator {
         } else {
           this.options.trustedSupervisor?.deactivate(instanceId, 'resolution-changed');
         }
-        previous.delete(pluginId);
         this.options.logger?.error('plugin.activation.activate', error, {
           pluginId,
           libraryId: input.libraryId,
@@ -298,8 +338,263 @@ export class PluginActivationCoordinator {
       }
     }
 
+    for (const [pluginId, candidate] of desired) {
+      if (candidate.instanceScope !== 'global') continue;
+      const current = this.#activeGlobal.get(pluginId);
+      if (current !== undefined
+        && current.mode === candidate.mode
+        && current.packageHash === candidate.pluginPackage.lock.packageHash) continue;
+      if (current !== undefined) {
+        this.#deactivateInstance(current, 'resolution-changed');
+        this.#activeGlobal.delete(pluginId);
+      }
+      const instanceId = randomUUID();
+      const record: ActiveRecord = {
+        instanceId,
+        instanceScope: 'global',
+        activationLibraryId: input.libraryId,
+        mode: candidate.mode,
+        pluginId,
+        packageHash: candidate.pluginPackage.lock.packageHash,
+        packageDirectory: candidate.pluginPackage.packageDirectory,
+        permissions: candidate.pluginPackage.manifest.permissions,
+        hooks: (candidate.pluginPackage.manifest.contributes?.hooks ?? []).map((hook) => ({
+          event: hook.event,
+          blocking: hook.blocking,
+          localId: hook.id,
+        })),
+        jobs: (candidate.pluginPackage.manifest.contributes?.jobs ?? []).map((job) => ({
+          localId: job.id,
+          recovery: job.recovery,
+        })),
+        ...((): { themePackage?: PluginThemePackage } => {
+          const themePackage = extractPluginThemePackage(candidate.pluginPackage.manifest);
+          return themePackage === undefined ? {} : { themePackage };
+        })(),
+      };
+      try {
+        if (candidate.mode === 'restricted') {
+          await this.options.supervisor.activate({
+            instanceId,
+            libraryId: input.libraryId,
+            libraryDirectory: input.libraryDirectory,
+            instanceScope: 'global',
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            entryJavaScript: candidate.entryJavaScript ?? '',
+            permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: candidate.pluginPackage.scope,
+          });
+        } else {
+          await this.options.trustedSupervisor!.activate({
+            instanceId,
+            libraryId: input.libraryId,
+            libraryDirectory: input.libraryDirectory,
+            instanceScope: 'global',
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            packageDirectory: candidate.pluginPackage.packageDirectory,
+            entryRelativePath: candidate.pluginPackage.manifest.runtime.entry,
+            permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: candidate.pluginPackage.scope,
+          });
+        }
+        this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
+        this.#activeGlobal.set(pluginId, record);
+        this.options.logger?.info('plugin.activation.activate-ok', 'Global plugin host activated and contributions registered.', {
+          pluginId,
+          libraryId: input.libraryId,
+          mode: candidate.mode,
+          instanceId,
+          instanceScope: 'global',
+        });
+      } catch (error) {
+        this.#revokeContributions(instanceId);
+        if (candidate.mode === 'restricted') {
+          this.options.supervisor.deactivate(instanceId, 'resolution-changed');
+        } else {
+          this.options.trustedSupervisor?.deactivate(instanceId, 'resolution-changed');
+        }
+        this.options.logger?.error('plugin.activation.activate', error, {
+          pluginId,
+          libraryId: input.libraryId,
+          mode: candidate.mode,
+          instanceScope: 'global',
+        });
+      }
+    }
+
+    for (const [pluginId, record] of this.#activeGlobal) {
+      if ((this.#globalBindings.get(pluginId)?.size ?? 0) > 0) continue;
+      this.#deactivateInstance(record, 'resolution-changed');
+      this.#activeGlobal.delete(pluginId);
+      this.#globalBindings.delete(pluginId);
+    }
+
     if (previous.size === 0) this.#activeByLibrary.delete(input.libraryId);
     else this.#activeByLibrary.set(input.libraryId, previous);
+  }
+
+  /**
+   * Refresh user-scoped global instances independently of library lifecycle.
+   * This is deliberately a no-op for test doubles and older coordinators that
+   * do not provide the package-manager global candidate query.
+   */
+  async refreshGlobal(): Promise<void> {
+    const listCandidates = this.options.packageManager.listGlobalActivationCandidates;
+    if (typeof listCandidates !== 'function') return;
+
+    const safeMode = await this.options.packageManager.getSafeMode();
+    const candidates = await listCandidates.call(this.options.packageManager);
+    const context = this.options.globalRuntimeContext ?? DEFAULT_GLOBAL_RUNTIME_CONTEXT;
+    const desired = new Map<string, {
+      pluginPackage: InstalledPluginPackage;
+      mode: 'restricted' | 'unrestricted';
+      entryJavaScript?: string;
+    }>();
+
+    for (const pluginPackage of candidates) {
+      if (pluginPackage.scope !== 'user'
+        || (pluginPackage.manifest.runtime.instanceScope ?? 'library') !== 'global') continue;
+      const mode = pluginPackage.manifest.runtime.mode;
+      if (mode !== 'restricted' && mode !== 'unrestricted') continue;
+      if (safeMode && mode === 'unrestricted') continue;
+      if (mode === 'unrestricted' && this.options.trustedSupervisor === undefined) continue;
+      if (this.options.compatibility !== undefined) {
+        const compatibility = validatePluginManifestCompatibility(
+          pluginPackage.manifest,
+          this.options.compatibility,
+        );
+        if (!compatibility.ok) {
+          this.options.logger?.error(
+            'plugin.activation.compatibility',
+            new Error(compatibility.message),
+            { pluginId: pluginPackage.lock.pluginId, code: compatibility.code, mode },
+          );
+          continue;
+        }
+      }
+
+      const entryRelative = pluginPackage.manifest.runtime.entry;
+      const entryAbsolute = path.join(pluginPackage.packageDirectory, entryRelative);
+      const relative = path.relative(pluginPackage.packageDirectory, entryAbsolute);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        this.options.logger?.error(
+          'plugin.activation.entry',
+          new Error('Plugin entry path escaped its package directory.'),
+          { pluginId: pluginPackage.lock.pluginId, entryRelative },
+        );
+        continue;
+      }
+      if (mode === 'restricted') {
+        try {
+          const readEntry = this.options.readEntryFile ?? ((absolutePath: string) => readFile(absolutePath, 'utf8'));
+          desired.set(pluginPackage.lock.pluginId, {
+            pluginPackage,
+            mode,
+            entryJavaScript: await readEntry(entryAbsolute),
+          });
+        } catch (error) {
+          this.options.logger?.error('plugin.activation.read-entry', error, {
+            pluginId: pluginPackage.lock.pluginId,
+            entryAbsolute,
+          });
+        }
+      } else {
+        desired.set(pluginPackage.lock.pluginId, { pluginPackage, mode });
+      }
+    }
+
+    for (const [pluginId, current] of this.#activeGlobal) {
+      const next = desired.get(pluginId);
+      if (next !== undefined
+        && next.mode === current.mode
+        && next.pluginPackage.lock.packageHash === current.packageHash) continue;
+      this.#deactivateInstance(current, 'resolution-changed');
+      this.#activeGlobal.delete(pluginId);
+    }
+
+    for (const [pluginId, candidate] of desired) {
+      if (this.#activeGlobal.has(pluginId)) continue;
+      const instanceId = randomUUID();
+      const record: ActiveRecord = {
+        instanceId,
+        instanceScope: 'global',
+        activationLibraryId: context.libraryId,
+        mode: candidate.mode,
+        pluginId,
+        packageHash: candidate.pluginPackage.lock.packageHash,
+        packageDirectory: candidate.pluginPackage.packageDirectory,
+        permissions: candidate.pluginPackage.manifest.permissions,
+        hooks: (candidate.pluginPackage.manifest.contributes?.hooks ?? []).map((hook) => ({
+          event: hook.event,
+          blocking: hook.blocking,
+          localId: hook.id,
+        })),
+        jobs: (candidate.pluginPackage.manifest.contributes?.jobs ?? []).map((job) => ({
+          localId: job.id,
+          recovery: job.recovery,
+        })),
+        ...((): { themePackage?: PluginThemePackage } => {
+          const themePackage = extractPluginThemePackage(candidate.pluginPackage.manifest);
+          return themePackage === undefined ? {} : { themePackage };
+        })(),
+      };
+      try {
+        if (candidate.mode === 'restricted') {
+          await this.options.supervisor.activate({
+            instanceId,
+            libraryId: context.libraryId,
+            libraryDirectory: context.libraryDirectory,
+            instanceScope: 'global',
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            entryJavaScript: candidate.entryJavaScript ?? '',
+            permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: 'user',
+          });
+        } else {
+          await this.options.trustedSupervisor!.activate({
+            instanceId,
+            libraryId: context.libraryId,
+            libraryDirectory: context.libraryDirectory,
+            instanceScope: 'global',
+            pluginId,
+            version: candidate.pluginPackage.lock.version,
+            packageHash: candidate.pluginPackage.lock.packageHash,
+            packageDirectory: candidate.pluginPackage.packageDirectory,
+            entryRelativePath: candidate.pluginPackage.manifest.runtime.entry,
+            permissions: candidate.pluginPackage.manifest.permissions,
+            installScope: 'user',
+          });
+        }
+        this.#registerContributions(context.libraryId, instanceId, pluginId, candidate.pluginPackage);
+        this.#activeGlobal.set(pluginId, record);
+        this.options.logger?.info('plugin.activation.activate-ok', 'Global plugin host activated and contributions registered.', {
+          pluginId,
+          libraryId: context.libraryId,
+          mode: candidate.mode,
+          instanceId,
+          instanceScope: 'global',
+        });
+      } catch (error) {
+        this.#revokeContributions(instanceId);
+        if (candidate.mode === 'restricted') {
+          this.options.supervisor.deactivate(instanceId, 'resolution-changed');
+        } else {
+          this.options.trustedSupervisor?.deactivate(instanceId, 'resolution-changed');
+        }
+        this.options.logger?.error('plugin.activation.activate', error, {
+          pluginId,
+          libraryId: context.libraryId,
+          mode: candidate.mode,
+          instanceScope: 'global',
+        });
+      }
+    }
   }
 
   async onLibraryOpened(input: {
@@ -307,6 +602,7 @@ export class PluginActivationCoordinator {
     libraryDirectory: string;
   }): Promise<void> {
     this.#openLibraries.set(input.libraryId, input.libraryDirectory);
+    await this.refreshGlobal();
     await this.refreshLibrary(input);
   }
 
@@ -318,10 +614,27 @@ export class PluginActivationCoordinator {
   onLibraryClosed(libraryId: string): void {
     this.#deactivateLibraryHosts(libraryId, 'library-closed');
     this.#activeByLibrary.delete(libraryId);
+    for (const [pluginId, bindings] of this.#globalBindings) {
+      bindings.delete(libraryId);
+      if (bindings.size === 0) this.#globalBindings.delete(pluginId);
+    }
     this.#openLibraries.delete(libraryId);
   }
 
+  /** Dispose every active instance during application shutdown or plugin unload. */
+  dispose(reason: PluginRuntimeDeactivateReason = 'supervisor-shutdown'): void {
+    for (const records of this.#activeByLibrary.values()) {
+      for (const record of records.values()) this.#deactivateInstance(record, reason);
+    }
+    for (const record of this.#activeGlobal.values()) this.#deactivateInstance(record, reason);
+    this.#activeByLibrary.clear();
+    this.#activeGlobal.clear();
+    this.#globalBindings.clear();
+    this.#openLibraries.clear();
+  }
+
   async refreshOpenLibraries(): Promise<void> {
+    await this.refreshGlobal();
     for (const [libraryId, libraryDirectory] of this.#openLibraries) {
       await this.refreshLibrary({ libraryId, libraryDirectory });
     }
@@ -331,7 +644,7 @@ export class PluginActivationCoordinator {
    * Deliver a committed domain event to every active Host instance for the library.
    */
   fanOutDomainEvent(
-    event: import('../plugins/plugin-domain-events').PluginDomainEvent,
+    event: PluginDomainEvent,
   ): void {
     if (!this.#openLibraries.has(event.libraryId)) return;
     this.options.supervisor.deliverDomainEvent(event.libraryId, event);
@@ -353,7 +666,10 @@ export class PluginActivationCoordinator {
     if (!parsedEvent.success) {
       return { outcome: 'allow', warnings: [] };
     }
-    const active = this.#activeByLibrary.get(input.libraryId);
+    const active = new Map<string, ActiveRecord>([
+      ...this.#activeGlobal,
+      ...(this.#activeByLibrary.get(input.libraryId) ?? new Map()),
+    ]);
     if (active === undefined || active.size === 0) {
       return { outcome: 'allow', warnings: [] };
     }
@@ -413,25 +729,33 @@ export class PluginActivationCoordinator {
 
   listActiveInstances(libraryId: string): Array<{
     instanceId: string;
+    instanceScope: 'global' | 'library';
     mode: 'restricted' | 'unrestricted';
     pluginId: string;
     packageHash: string;
   }> {
-    const active = this.#activeByLibrary.get(libraryId);
-    if (active === undefined) return [];
+    const active = new Map<string, ActiveRecord>([
+      ...this.#activeGlobal,
+      ...(this.#activeByLibrary.get(libraryId) ?? new Map()),
+    ]);
     return [...active.values()].map((record) => ({
       instanceId: record.instanceId,
+      instanceScope: record.instanceScope,
       mode: record.mode,
       pluginId: record.pluginId,
       packageHash: record.packageHash,
     }));
   }
 
-  listActiveProviders(libraryId: string): readonly import('../plugins/plugin-providers').PluginProviderRegistration[] {
-    return (this.options.providers?.list() ?? []).filter((provider) => provider.libraryId === libraryId);
+  listActiveProviders(libraryId: string): readonly PluginProviderRegistration[] {
+    const activeInstanceIds = new Set(this.listActiveInstances(libraryId).map((record) => record.instanceId));
+    return (this.options.providers?.list() ?? []).filter((provider) => activeInstanceIds.has(provider.pluginInstanceId));
   }
 
   findActiveInstance(instanceId: string): ActiveRecord | undefined {
+    for (const record of this.#activeGlobal.values()) {
+      if (record.instanceId === instanceId) return record;
+    }
     for (const active of this.#activeByLibrary.values()) {
       for (const record of active.values()) {
         if (record.instanceId === instanceId) return record;
@@ -440,10 +764,53 @@ export class PluginActivationCoordinator {
     return undefined;
   }
 
+  /**
+   * Evict an instance after its Host died unexpectedly. Supervisors clear
+   * their process-side tracking before invoking this callback, so this path
+   * must not rely on sending another deactivate message to the child.
+   */
+  onInstanceCrashed(input: { instanceId: string; failureCode: string }): void {
+    const record = this.findActiveInstance(input.instanceId);
+    if (record === undefined) return;
+    this.#revokeContributions(record.instanceId);
+    if (record.instanceScope === 'global') {
+      if (this.#activeGlobal.get(record.pluginId)?.instanceId === record.instanceId) {
+        this.#activeGlobal.delete(record.pluginId);
+      }
+    } else {
+      const pause = this.pauseLibraryPluginJobs(record.activationLibraryId);
+      const active = this.#activeByLibrary.get(record.activationLibraryId);
+      if (active?.get(record.pluginId)?.instanceId === record.instanceId) {
+        active.delete(record.pluginId);
+        if (active.size === 0) this.#activeByLibrary.delete(record.activationLibraryId);
+      }
+      void pause.catch((error) => {
+        this.options.logger?.error('plugin.jobs.pause-after-crash', error, {
+          instanceId: record.instanceId,
+          libraryId: record.activationLibraryId,
+          pluginId: record.pluginId,
+        });
+      });
+    }
+    this.options.logger?.error(
+      'plugin.activation.instance-crashed',
+      new Error(`Plugin instance crashed (${input.failureCode}).`),
+      {
+        instanceId: record.instanceId,
+        pluginId: record.pluginId,
+        libraryId: record.activationLibraryId,
+        instanceScope: record.instanceScope,
+        failureCode: input.failureCode,
+      },
+    );
+  }
+
   #themePackageForInstance(
     pluginInstanceId: string,
     libraryId?: string,
   ): PluginThemePackage | undefined {
+    const globalRecord = this.#activeGlobalForInstance(pluginInstanceId);
+    if (globalRecord !== undefined) return globalRecord.themePackage;
     for (const [activeLibraryId, active] of this.#activeByLibrary) {
       if (libraryId !== undefined && activeLibraryId !== libraryId) continue;
       for (const record of active.values()) {
@@ -451,6 +818,10 @@ export class PluginActivationCoordinator {
       }
     }
     return undefined;
+  }
+
+  #activeGlobalForInstance(pluginInstanceId: string): ActiveRecord | undefined {
+    return [...this.#activeGlobal.values()].find((record) => record.instanceId === pluginInstanceId);
   }
 
   #viewContributionAttachment(
@@ -471,8 +842,11 @@ export class PluginActivationCoordinator {
     contributionId: string;
     relativePath: string;
   }): { absolutePath: string; pluginId: string } | undefined {
-    const active = this.#activeByLibrary.get(input.libraryId);
-    const record = [...(active?.values() ?? [])].find((candidate) =>
+    const active = new Map<string, ActiveRecord>([
+      ...this.#activeGlobal,
+      ...(this.#activeByLibrary.get(input.libraryId) ?? new Map()),
+    ]);
+    const record = [...active.values()].find((candidate) =>
       candidate.instanceId === input.instanceId && candidate.pluginId === input.pluginId);
     if (record === undefined || this.options.contributions === undefined) return undefined;
     // Settings / sidebar / inspector / viewer iframes share serpent-plugin:// with workspace views.
@@ -501,7 +875,11 @@ export class PluginActivationCoordinator {
     pluginId: string;
     pluginInstanceId: string;
   }): readonly PluginPermission[] | undefined {
-    const record = [...(this.#activeByLibrary.get(input.libraryId)?.values() ?? [])]
+    const active = new Map<string, ActiveRecord>([
+      ...this.#activeGlobal,
+      ...(this.#activeByLibrary.get(input.libraryId) ?? new Map()),
+    ]);
+    const record = [...active.values()]
       .find((candidate) => candidate.instanceId === input.pluginInstanceId
         && candidate.pluginId === input.pluginId);
     return record?.permissions;
@@ -513,9 +891,12 @@ export class PluginActivationCoordinator {
   } = {}) {
     if (this.options.contributions === undefined) return [];
     const activeInstanceIds = new Set(
-      [...this.#activeByLibrary.entries()]
+      [
+        ...this.#activeGlobal.values(),
+        ...[...this.#activeByLibrary.entries()]
         .filter(([libraryId]) => input.libraryId === undefined || libraryId === input.libraryId)
-        .flatMap(([, records]) => [...records.values()].map((record) => record.instanceId)),
+        .flatMap(([, records]) => [...records.values()]),
+      ].map((record) => record.instanceId),
     );
     if (input.target === 'commands') {
       return listCommandContributions(this.options.contributions)
@@ -544,6 +925,9 @@ export class PluginActivationCoordinator {
           type: contribution.type,
           ...(contribution.description === undefined ? {} : { description: contribution.description }),
           ...(contribution.options === undefined ? {} : { options: contribution.options }),
+          ...(contribution.default === undefined ? {} : { default: contribution.default }),
+          ...(contribution.minimum === undefined ? {} : { minimum: contribution.minimum }),
+          ...(contribution.maximum === undefined ? {} : { maximum: contribution.maximum }),
           target: 'settings.sections' as const,
         }));
     }
@@ -730,7 +1114,10 @@ export class PluginActivationCoordinator {
     if (contribution === undefined) {
       throw new Error('The plugin command contribution is not active.');
     }
-    const activeRecord = [...(this.#activeByLibrary.get(input.libraryId)?.values() ?? [])]
+    const activeRecord = [
+      ...this.#activeGlobal.values(),
+      ...(this.#activeByLibrary.get(input.libraryId)?.values() ?? []),
+    ]
       .find((item) => item.instanceId === contribution.pluginInstanceId);
     if (activeRecord === undefined) throw new Error('The plugin instance is not active.');
     const context: PluginCommandContext = {
@@ -804,7 +1191,12 @@ export class PluginActivationCoordinator {
         registerManifestContributions(registry, {
           pluginInstanceId: instanceId,
           pluginId,
-          libraryId,
+          // The registry's legacy field is a contribution scope key. Global
+          // contributions must be keyed by their instance, never by a library
+          // used only to bootstrap the Host.
+          libraryId: pluginPackage.manifest.runtime.instanceScope === 'global'
+            ? instanceId
+            : libraryId,
           contributes: pluginPackage.manifest.contributes,
           mcpExportedCommandIds: getPluginMcpExportedCommandIds(pluginPackage.manifest),
           uiEntryPath: pluginPackage.manifest.ui?.entry,
@@ -813,7 +1205,9 @@ export class PluginActivationCoordinator {
       for (const provider of pluginPackage.manifest.contributes?.providers ?? []) {
         this.options.providers?.register({
           pluginInstanceId: instanceId,
-          libraryId,
+          libraryId: pluginPackage.manifest.runtime.instanceScope === 'global'
+            ? instanceId
+            : libraryId,
           pluginId,
           packageHash: pluginPackage.lock.packageHash,
           providerId: provider.id,

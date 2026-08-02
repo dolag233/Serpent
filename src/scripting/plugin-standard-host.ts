@@ -123,7 +123,7 @@ function mapFailureCode(code: string): PluginRuntimeActivationFailureCode {
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
-/** Plugin sessions are long-lived; deactivate is the lifetime bound, not wall clock. */
+/** Plugin sessions are long-lived; dispose follows the lifetime bound, not wall clock. */
 const PLUGIN_SESSION_WALL_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export function createPluginStandardHostHandler(options: {
@@ -380,9 +380,16 @@ export function createPluginStandardHostHandler(options: {
 
     const result = await runPluginGuestActivate({
       entryJavaScript: request.entryJavaScript,
+      setupContext: {
+        pluginId: request.pluginId,
+        pluginInstanceId: request.instanceId,
+        installationScope: request.installScope,
+        instanceScope: request.instanceScope,
+      },
       executeAutomationCommand: callHost,
       executeStorageOperation: callStorage,
       waitUntilDeactivate: () => active.deactivatePromise,
+      getDeactivateReason: () => active.deactivate?.reason,
       waitForDomainEvent: () => active.eventQueue.next(),
       waitForHookInvoke: () => active.hookQueue.next(),
       respondHookDecision,

@@ -27,11 +27,13 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'a'.repeat(64),
       permissions: ['library.read', 'asset.read'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           const page = await serpent.assets.search({ query: null, limit: 1 });
           console.log(page.total);
         }
-        export async function deactivate() {}
+        export async function dispose(reason) {
+          console.log(`disposed:${reason}`);
+        }
       `,
       activateDeadlineMs: 15_000,
     });
@@ -72,6 +74,9 @@ describe('Plugin Standard Host handler', () => {
     expect(posted.some((message) => (
       message.type === 'plugin-runtime.deactivated' && message.reason === 'library-closed'
     ))).toBe(true);
+    expect(posted.some((message) => (
+      message.type === 'plugin-runtime.console' && message.message === 'disposed:library-closed'
+    ))).toBe(true);
     handler.dispose();
   }, 20_000);
 
@@ -95,7 +100,7 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'b'.repeat(64),
       permissions: ['library.read', 'asset.read', 'storage.write'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.events.on('library.changed', async (event) => {
             await serpent.storage.set('last-event', {
               eventId: event.eventId,
@@ -105,7 +110,7 @@ describe('Plugin Standard Host handler', () => {
             await serpent.assets.search({ query: null, limit: 1 });
           });
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });
@@ -199,14 +204,14 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'c'.repeat(64),
       permissions: ['library.read', 'asset.read', 'hook.blocking'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.hooks.onWill('asset.trash', async () => ({
             action: 'block',
             code: 'DEMO_BLOCK',
             message: 'refused',
           }));
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });
@@ -275,13 +280,13 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'd'.repeat(64),
       permissions: ['library.read', 'job.manage', 'storage.write'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.jobs.registerHandler('tick', async (payload) => {
             await serpent.storage.set('job-tick', payload);
           });
           await serpent.jobs.enqueue({ handlerId: 'tick', payload: { tick: 1 } });
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });
@@ -390,7 +395,7 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'f'.repeat(64),
       permissions: ['asset.read', 'derived-field.provider'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.providers.register('derived-field', {
             id: 'ext-upper',
             compute: async (batch) => batch.map((asset) => ({
@@ -399,7 +404,7 @@ describe('Plugin Standard Host handler', () => {
             })),
           });
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });
@@ -465,7 +470,7 @@ describe('Plugin Standard Host handler', () => {
       packageHash: '1'.repeat(64),
       permissions: ['search.provider'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.providers.registerSearch({
             id: 'fixed-token',
             search: async (request, signal) => {
@@ -477,7 +482,7 @@ describe('Plugin Standard Host handler', () => {
             },
           });
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });
@@ -542,12 +547,12 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'e'.repeat(64),
       permissions: ['library.read', 'storage.write'],
       entryJavaScript: `
-        export async function activate(serpent) {
+        export async function setup(serpent) {
           serpent.commands.register('probe.write-selection', async (context) => {
             await serpent.storage.set('menu-command', { assetId: context.assetIds[0] });
           });
         }
-        export async function deactivate() {}
+        export async function dispose() {}
       `,
       activateDeadlineMs: 15_000,
     });

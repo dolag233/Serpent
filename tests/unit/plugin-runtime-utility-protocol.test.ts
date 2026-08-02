@@ -35,7 +35,7 @@ describe('plugin-runtime utility protocol', () => {
       pluginId: 'com.example.demo',
       version: '1.0.0',
       packageHash: 'a'.repeat(64),
-      entryJavaScript: 'async function activate() {}',
+      entryJavaScript: 'async function setup() {}',
       permissions: ['library.read', 'asset.read'],
     });
     expect(activate.type).toBe('plugin-runtime.activate');

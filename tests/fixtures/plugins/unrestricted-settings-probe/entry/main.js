@@ -1,5 +1,5 @@
 /* global exports */
-exports.activate = async function activate(serpent) {
+exports.setup = async function setup(serpent) {
   await serpent.storage.set('host-probe', { activated: true, source: 'unrestricted-settings-probe' });
   serpent.commands.register('probe.write-selection', async (context) => {
     const assetId = Array.isArray(context?.assetIds) ? context.assetIds[0] ?? null : null;
@@ -11,4 +11,4 @@ exports.activate = async function activate(serpent) {
   });
 };
 
-exports.deactivate = async function deactivate() {};
+exports.dispose = async function dispose() {};

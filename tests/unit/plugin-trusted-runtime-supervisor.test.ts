@@ -53,6 +53,8 @@ describe('PluginTrustedRuntimeSupervisor', () => {
   it('forks one child per trusted instance and brokers host commands', async () => {
     const child = new FakeRuntimeChild();
     const commands: Array<{ commandId: string }> = [];
+    const deactivated: string[] = [];
+    const crashed: string[] = [];
     const supervisor = new PluginTrustedRuntimeSupervisor({
       modulePath: '/safe/plugin_trusted_host.js',
       fork: () => child,
@@ -60,6 +62,8 @@ describe('PluginTrustedRuntimeSupervisor', () => {
         commands.push({ commandId });
         return { ok: true };
       },
+      onInstanceDeactivated: (instanceId) => deactivated.push(instanceId),
+      onInstanceCrashed: ({ instanceId }) => crashed.push(instanceId),
     });
 
     const activation = supervisor.activate({
@@ -103,6 +107,8 @@ describe('PluginTrustedRuntimeSupervisor', () => {
 
     supervisor.deactivate('11111111-1111-4111-8111-111111111111', 'library-closed');
     expect(child.killCount).toBe(1);
+    expect(deactivated).toEqual(['11111111-1111-4111-8111-111111111111']);
+    expect(crashed).toEqual([]);
   });
 
   it('kills a trusted host and records HEARTBEAT_TIMEOUT when heartbeats stop', async () => {
@@ -110,14 +116,17 @@ describe('PluginTrustedRuntimeSupervisor', () => {
     try {
       const child = new FakeRuntimeChild();
       const crashes: Array<{ pluginId: string; failureCode: string }> = [];
+      const lifecycle: string[] = [];
       let now = 1_000;
       const supervisor = new PluginTrustedRuntimeSupervisor({
         modulePath: '/safe/plugin_trusted_host.js',
         fork: () => child,
         executeHostCommand: async () => ({}),
         onCrash: (crash) => {
+          lifecycle.push('crash');
           crashes.push({ pluginId: crash.pluginId, failureCode: crash.failureCode });
         },
+        onInstanceCrashed: () => lifecycle.push('cleanup'),
         heartbeatTimeoutMs: 100,
         heartbeatCheckIntervalMs: 50,
         now: () => now,
@@ -149,8 +158,91 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       await vi.advanceTimersByTimeAsync(60);
       expect(child.killCount).toBe(1);
       expect(crashes).toEqual([{ pluginId: 'com.example.trusted', failureCode: 'HEARTBEAT_TIMEOUT' }]);
+      expect(lifecycle).toEqual(['crash', 'cleanup']);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('notifies instance cleanup after activation failure', async () => {
+    const child = new FakeRuntimeChild();
+    const events: string[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onCrash: ({ failureCode }) => events.push(`crash:${failureCode}`),
+      onInstanceCrashed: ({ instanceId, failureCode }) => {
+        events.push(`cleanup:${instanceId}:${failureCode}`);
+      },
+    });
+
+    const activation = supervisor.activate({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      libraryId: 'library-1',
+      libraryDirectory: '/tmp/library',
+      pluginId: 'com.example.trusted',
+      version: '1.0.0',
+      packageHash: 'a'.repeat(64),
+      packageDirectory: '/plugins/trusted',
+      entryRelativePath: 'dist/main.js',
+      installScope: 'library',
+      permissions: ['library.read'],
+    });
+    child.emit('message', { type: 'plugin-trusted.ready' } as never);
+    await Promise.resolve();
+    child.emit('message', {
+      type: 'plugin-trusted.activation-failed',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      code: 'ACTIVATE_REJECTED',
+      message: 'setup rejected',
+    } as never);
+
+    await expect(activation).rejects.toThrow('setup rejected');
+    expect(events).toEqual([
+      'crash:ACTIVATE_REJECTED',
+      'cleanup:11111111-1111-4111-8111-111111111111:ACTIVATE_REJECTED',
+    ]);
+  });
+
+  it('notifies instance cleanup after an unexpected host exit', async () => {
+    const child = new FakeRuntimeChild();
+    const events: string[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onCrash: ({ failureCode }) => events.push(`crash:${failureCode}`),
+      onInstanceCrashed: ({ failureCode }) => events.push(`cleanup:${failureCode}`),
+    });
+
+    const activation = supervisor.activate({
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      libraryId: 'library-1',
+      libraryDirectory: '/tmp/library',
+      pluginId: 'com.example.trusted',
+      version: '1.0.0',
+      packageHash: 'a'.repeat(64),
+      packageDirectory: '/plugins/trusted',
+      entryRelativePath: 'dist/main.js',
+      installScope: 'library',
+      permissions: ['library.read'],
+    });
+    child.emit('message', { type: 'plugin-trusted.ready' } as never);
+    await Promise.resolve();
+    child.emit('message', {
+      type: 'plugin-trusted.activated',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      pluginId: 'com.example.trusted',
+      packageHash: 'a'.repeat(64),
+    } as never);
+    await activation;
+
+    child.emit('exit');
+
+    expect(events).toEqual([
+      'crash:RUNTIME_PROCESS_EXITED',
+      'cleanup:RUNTIME_PROCESS_EXITED',
+    ]);
   });
 });

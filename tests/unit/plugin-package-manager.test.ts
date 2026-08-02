@@ -28,6 +28,7 @@ function writePlugin(
   overrides: Partial<{
     version: string;
     runtime: 'restricted' | 'unrestricted';
+    instanceScope: 'global' | 'library';
     permissions: string[];
     repository: string;
   }> = {},
@@ -37,9 +38,12 @@ function writePlugin(
     version: overrides.version ?? manifestFixture.version,
     permissions: overrides.permissions ?? manifestFixture.permissions,
     ...(overrides.repository === undefined ? {} : { repository: overrides.repository }),
-    runtime: overrides.runtime === 'unrestricted'
-      ? { mode: 'unrestricted', entry: 'dist/main.js' }
-      : manifestFixture.runtime,
+    runtime: {
+      ...(overrides.runtime === 'unrestricted'
+        ? { mode: 'unrestricted' as const, entry: 'dist/main.js' }
+        : manifestFixture.runtime),
+      ...(overrides.instanceScope === undefined ? {} : { instanceScope: overrides.instanceScope }),
+    },
   };
   mkdirSync(path.join(directory, 'dist', 'ui'), { recursive: true });
   writeFileSync(path.join(directory, 'serpent-plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -66,6 +70,56 @@ afterEach(() => {
 });
 
 describe('PluginPackageManager installation and integrity', () => {
+  it('resolves user global candidates without a library and keeps unrestricted packages opt-in', async () => {
+    const restrictedSource = temporaryRoot('serpent-global-restricted-source-');
+    const restrictedUserData = temporaryRoot('serpent-global-restricted-user-');
+    writePlugin(restrictedSource, { instanceScope: 'global' });
+    const restrictedManager = createManager(restrictedUserData);
+    await restrictedManager.installFromDirectory({
+      directory: restrictedSource,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:global-restricted' },
+    });
+    await expect(restrictedManager.listGlobalActivationCandidates()).resolves.toHaveLength(1);
+
+    const trustedSource = temporaryRoot('serpent-global-trusted-source-');
+    const trustedUserData = temporaryRoot('serpent-global-trusted-user-');
+    writePlugin(trustedSource, { runtime: 'unrestricted', instanceScope: 'global' });
+    const trustedManager = createManager(trustedUserData);
+    const installed = await trustedManager.installFromDirectory({
+      directory: trustedSource,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:global-trusted' },
+    });
+    await expect(trustedManager.listGlobalActivationCandidates()).resolves.toEqual([]);
+
+    await trustedManager.chooseResolution({
+      libraryId: 'library-1',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: installed.package.lock.packageHash,
+    });
+    await expect(trustedManager.listGlobalActivationCandidates()).resolves.toHaveLength(1);
+    await trustedManager.setSafeMode(true);
+    await expect(trustedManager.listGlobalActivationCandidates()).resolves.toEqual([]);
+  });
+
+  it('does not expose a library-scoped global package through the no-library path', async () => {
+    const source = temporaryRoot('serpent-library-only-source-');
+    const userData = temporaryRoot('serpent-library-only-user-');
+    const library = temporaryRoot('serpent-library-only-library-');
+    writePlugin(source, { instanceScope: 'global' });
+    const manager = createManager(userData);
+    await manager.installFromDirectory({
+      directory: source,
+      scope: 'library',
+      libraryDirectory: library,
+      source: { kind: 'local-directory', fingerprint: 'local:library-global' },
+    });
+
+    await expect(manager.listGlobalActivationCandidates()).resolves.toEqual([]);
+  });
+
   it('installs a verified directory by staging and atomically adds the package to the selected store', async () => {
     const source = temporaryRoot('serpent-plugin-source-');
     const userData = temporaryRoot('serpent-plugin-user-');

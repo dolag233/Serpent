@@ -53,7 +53,7 @@ describe('Plugin Trusted Host handler', () => {
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
     writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
-      exports.activate = async function activate(serpent) {
+        exports.setup = async function setup(serpent) {
         serpent.console.log(JSON.stringify({
           assets: Object.keys(serpent.assets).sort(),
           library: Object.keys(serpent.library).sort(),
@@ -67,7 +67,7 @@ describe('Plugin Trusted Host handler', () => {
           palettes: Object.keys(serpent.palettes).sort()
         }));
       };
-      exports.deactivate = async function deactivate() {};
+      exports.dispose = async function dispose() {};
     `);
 
     const posted: PluginTrustedChildMessage[] = [];
@@ -121,10 +121,12 @@ describe('Plugin Trusted Host handler', () => {
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
     writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
-      exports.activate = async function activate(serpent) {
+        exports.setup = async function setup(serpent) {
         await serpent.assets.search({ query: null, limit: 1 });
       };
-      exports.deactivate = async function deactivate() {};
+        exports.dispose = async function dispose(reason) {
+          serpent.console.log(`disposed:${reason}`);
+        };
     `);
 
     const posted: PluginTrustedChildMessage[] = [];
@@ -182,6 +184,9 @@ describe('Plugin Trusted Host handler', () => {
     expect(posted.some((message) => (
       message.type === 'plugin-trusted.deactivated' && message.reason === 'library-closed'
     ))).toBe(true);
+    expect(posted.some((message) => (
+      message.type === 'plugin-trusted.console' && message.message === 'disposed:library-closed'
+    ))).toBe(true);
     handler.dispose();
   }, 20_000);
 
@@ -190,11 +195,11 @@ describe('Plugin Trusted Host handler', () => {
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
     writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
-      exports.activate = async function activate(serpent) {
+        exports.setup = async function setup(serpent) {
         await serpent.assets.readContent('asset-1', { maxBytes: 4 });
         await serpent.assets.replaceContent('asset-1', 'AQID', { expectedRevisionId: 'revision-1' });
       };
-      exports.deactivate = async function deactivate() {};
+        exports.dispose = async function dispose() {};
     `);
 
     const posted: PluginTrustedChildMessage[] = [];

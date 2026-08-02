@@ -4381,6 +4381,9 @@ async function startApplication(): Promise<void> {
     onInstanceDeactivated: (instanceId) => {
       pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
     },
+    onInstanceCrashed: ({ instanceId, failureCode }) => {
+      pluginActivationCoordinator?.onInstanceCrashed({ instanceId, failureCode });
+    },
     onCrash: recordPluginRuntimeCrash,
     onInstanceActivated: onPluginInstanceActivated,
     logger,
@@ -4400,6 +4403,9 @@ async function startApplication(): Promise<void> {
     },
     onInstanceDeactivated: (instanceId) => {
       pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
+    },
+    onInstanceCrashed: ({ instanceId, failureCode }) => {
+      pluginActivationCoordinator?.onInstanceCrashed({ instanceId, failureCode });
     },
     onInstanceActivated: onPluginInstanceActivated,
     onCrash: recordPluginRuntimeCrash,
@@ -4427,6 +4433,10 @@ async function startApplication(): Promise<void> {
       packageManager: pluginPackageManager,
       supervisor: pluginRuntimeSupervisor,
       trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      globalRuntimeContext: {
+        libraryId: '__serpent_global_runtime__',
+        libraryDirectory: app.getPath('userData'),
+      },
       contributions: createContributionRegistry(),
       providers: createPluginProviderRegistry(),
       compatibility: {
@@ -4567,6 +4577,9 @@ async function startApplication(): Promise<void> {
       }
     });
   }
+  // Global user-scoped plugins have an application lifetime and must be set up
+  // before recent-library restore, including when no library can be reopened.
+  await pluginActivationCoordinator?.refreshGlobal();
   workerClient.onAssetsChanged(publishAssetChange);
   workerClient.onLibraryChanged(publishLibraryChanged);
   workerClient.onProgress(publishProgress);
@@ -5325,6 +5338,8 @@ if (!hasSingleInstanceLock) {
     aiQueueScheduler.clearAll();
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
+
+    pluginActivationCoordinator?.dispose('supervisor-shutdown');
 
     // Close the extension server early; stop accepting new save intents.
     try {

@@ -1,4 +1,4 @@
-async function activate(serpent) {
+async function setup(serpent) {
   serpent.commands.register('probe.write-selection', async (context) => {
     const enabledDemo = await serpent.storage.get('settings.enabled-demo');
     await serpent.storage.set('menu-command', {
@@ -47,7 +47,7 @@ async function activate(serpent) {
   });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;

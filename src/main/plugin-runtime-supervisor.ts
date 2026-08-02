@@ -38,6 +38,15 @@ type RuntimeChild = {
   once(event: string, listener: RuntimeChildListener): unknown;
 };
 
+type PluginRuntimeCrash = {
+  instanceId: string;
+  libraryId: string;
+  libraryDirectory: string;
+  pluginId: string;
+  packageHash: string;
+  failureCode: string;
+};
+
 export interface PluginRuntimeSupervisorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -47,6 +56,7 @@ export interface PluginRuntimeActivateInput {
   instanceId: string;
   libraryId: string;
   libraryDirectory: string;
+  instanceScope?: 'global' | 'library';
   pluginId: string;
   version: string;
   packageHash: string;
@@ -119,6 +129,7 @@ export class PluginRuntimeSupervisor {
     instanceId: string;
     libraryId: string;
     libraryDirectory: string;
+    instanceScope: 'global' | 'library';
     pluginId: string;
     packageHash: string;
     permissions: readonly PluginPermission[];
@@ -158,20 +169,15 @@ export class PluginRuntimeSupervisor {
       handleInputCaptureStart?: PluginRuntimeInputCaptureStartHandler;
       handleInputCaptureRelease?: (instanceId: string, sessionId: string) => void;
       onInstanceDeactivated?: (instanceId: string) => void;
+      /** Called after crash recording so upper layers can evict the instance. */
+      onInstanceCrashed?: (input: Pick<PluginRuntimeCrash, 'instanceId' | 'failureCode'>) => void;
       onInputCaptureEnd?: (instanceId: string) => void;
       onInstanceActivated?: (input: {
         instanceId: string;
         libraryId: string;
         pluginId: string;
       }) => void;
-      onCrash?: (input: {
-        instanceId: string;
-        libraryId: string;
-        libraryDirectory: string;
-        pluginId: string;
-        packageHash: string;
-        failureCode: string;
-      }) => void;
+      onCrash?: (input: PluginRuntimeCrash) => void;
       logger?: PluginRuntimeSupervisorLogger;
       heartbeatTimeoutMs?: number;
       heartbeatCheckIntervalMs?: number;
@@ -213,6 +219,7 @@ export class PluginRuntimeSupervisor {
       instanceId: input.instanceId,
       libraryId: input.libraryId,
       libraryDirectory: input.libraryDirectory,
+      instanceScope: input.instanceScope ?? 'library',
       pluginId: input.pluginId,
       packageHash: input.packageHash,
       permissions: input.permissions,
@@ -223,6 +230,7 @@ export class PluginRuntimeSupervisor {
       type: 'plugin-runtime.activate',
       instanceId: input.instanceId,
       libraryId: input.libraryId,
+      instanceScope: input.instanceScope ?? 'library',
       pluginId: input.pluginId,
       version: input.version,
       packageHash: input.packageHash,
@@ -263,7 +271,9 @@ export class PluginRuntimeSupervisor {
 
   deactivateLibrary(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
     for (const [instanceId, instance] of this.#instances) {
-      if (instance.libraryId === libraryId) this.deactivate(instanceId, reason);
+      if (instance.instanceScope === 'library' && instance.libraryId === libraryId) {
+        this.deactivate(instanceId, reason);
+      }
     }
   }
 
@@ -277,7 +287,9 @@ export class PluginRuntimeSupervisor {
   ): void {
     if (this.#child === undefined || !this.#ready) return;
     for (const [instanceId, instance] of this.#instances) {
-      if (instance.libraryId !== libraryId || !instance.activated) continue;
+      if (instance.instanceScope !== 'global'
+        && (instance.libraryId !== libraryId || !instance.activated)) continue;
+      if (!instance.activated) continue;
       this.#post({
         type: 'plugin-runtime.domain-event',
         instanceId,
@@ -568,15 +580,19 @@ export class PluginRuntimeSupervisor {
   listActiveInstances(libraryId?: string): Array<{
     instanceId: string;
     libraryId: string;
+    instanceScope: 'global' | 'library';
     pluginId: string;
     packageHash: string;
     activated: boolean;
   }> {
     return [...this.#instances.entries()]
-      .filter(([, instance]) => libraryId === undefined || instance.libraryId === libraryId)
+      .filter(([, instance]) => libraryId === undefined
+        || instance.instanceScope === 'global'
+        || instance.libraryId === libraryId)
       .map(([instanceId, instance]) => ({
         instanceId,
         libraryId: instance.libraryId,
+        instanceScope: instance.instanceScope,
         pluginId: instance.pluginId,
         packageHash: instance.packageHash,
         activated: instance.activated,
@@ -585,7 +601,9 @@ export class PluginRuntimeSupervisor {
 
   listActiveInstanceIds(libraryId?: string): string[] {
     return [...this.#instances.entries()]
-      .filter(([, instance]) => libraryId === undefined || instance.libraryId === libraryId)
+      .filter(([, instance]) => libraryId === undefined
+        || instance.instanceScope === 'global'
+        || instance.libraryId === libraryId)
       .map(([instanceId]) => instanceId);
   }
 
@@ -638,7 +656,7 @@ export class PluginRuntimeSupervisor {
     this.#instances.clear();
     this.#stopHeartbeatWatch();
     for (const instance of instances) {
-      this.options.onCrash?.({
+      this.#notifyCrash({
         instanceId: instance.instanceId,
         libraryId: instance.libraryId,
         libraryDirectory: instance.libraryDirectory,
@@ -682,13 +700,24 @@ export class PluginRuntimeSupervisor {
     this.#instances.clear();
     this.#failReady(new Error(`The standard plugin host exited unexpectedly (${String(code)}).`));
     for (const instance of instances) {
-      this.options.onCrash?.({
+      this.#notifyCrash({
         instanceId: instance.instanceId,
         libraryId: instance.libraryId,
         libraryDirectory: instance.libraryDirectory,
         pluginId: instance.pluginId,
         packageHash: instance.packageHash,
         failureCode: 'RUNTIME_PROCESS_EXITED',
+      });
+    }
+  }
+
+  #notifyCrash(input: PluginRuntimeCrash): void {
+    try {
+      this.options.onCrash?.(input);
+    } finally {
+      this.options.onInstanceCrashed?.({
+        instanceId: input.instanceId,
+        failureCode: input.failureCode,
       });
     }
   }
@@ -752,7 +781,7 @@ export class PluginRuntimeSupervisor {
       const instance = this.#instances.get(message.instanceId);
       this.#instances.delete(message.instanceId);
       if (instance !== undefined) {
-        this.options.onCrash?.({
+        this.#notifyCrash({
           instanceId: message.instanceId,
           libraryId: instance.libraryId,
           libraryDirectory: instance.libraryDirectory,

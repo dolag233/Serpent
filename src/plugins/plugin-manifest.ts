@@ -213,11 +213,13 @@ const nativeModuleSchema = z.strictObject({
 const restrictedRuntimeSchema = z.strictObject({
   mode: z.literal('restricted'),
   entry: pluginPackagePathSchema,
+  instanceScope: z.enum(['global', 'library']).default('library'),
 });
 
 const unrestrictedRuntimeSchema = z.strictObject({
   mode: z.literal('unrestricted'),
   entry: pluginPackagePathSchema,
+  instanceScope: z.enum(['global', 'library']).default('library'),
   nativeModules: z.array(nativeModuleSchema).min(1).max(32).optional(),
 });
 
@@ -325,32 +327,151 @@ const contributionViewSchema = z.strictObject({
   /** Relative HTML entry for a sandboxed custom UI view. */
   entry: pluginPackagePathSchema.optional(),
 });
-const contributionSettingSchema = z.strictObject({
+export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
+export const pluginSettingValueSchema = z.union([
+  z.boolean(),
+  z.number().finite(),
+  z.string().max(8_192),
+]);
+export type PluginSettingValue = z.infer<typeof pluginSettingValueSchema>;
+
+const contributionSettingOptionSchema = z.strictObject({
+  value: z.string().min(1).max(128),
+  label: z.string().min(1).max(160),
+});
+const contributionSettingBase = {
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
-  type: z.enum(['boolean', 'number', 'string', 'select']),
   description: z.string().min(1).max(2_000).optional(),
-  options: z.array(z.strictObject({
-    value: z.string().min(1).max(128),
-    label: z.string().min(1).max(160),
-  })).max(64).optional(),
-}).superRefine((setting, context) => {
-  if (setting.type === 'select' && (setting.options === undefined || setting.options.length === 0)) {
-    context.addIssue({
-      code: 'custom',
-      path: ['options'],
-      message: 'Select settings must declare at least one option.',
-    });
+};
+
+const contributionSettingSchema = z.discriminatedUnion('type', [
+  z.strictObject({
+    ...contributionSettingBase,
+    type: z.literal('boolean'),
+    default: z.boolean().optional(),
+  }),
+  z.strictObject({
+    ...contributionSettingBase,
+    type: z.literal('number'),
+    default: z.number().finite().optional(),
+    minimum: z.number().finite().optional(),
+    maximum: z.number().finite().optional(),
+  }).superRefine((setting, context) => {
+    if (setting.minimum !== undefined && setting.maximum !== undefined
+      && setting.minimum > setting.maximum) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maximum'],
+        message: 'Setting maximum must be greater than or equal to minimum.',
+      });
+    }
+    if (setting.default !== undefined && setting.minimum !== undefined
+      && setting.default < setting.minimum) {
+      context.addIssue({
+        code: 'custom',
+        path: ['default'],
+        message: 'Setting default must be greater than or equal to minimum.',
+      });
+    }
+    if (setting.default !== undefined && setting.maximum !== undefined
+      && setting.default > setting.maximum) {
+      context.addIssue({
+        code: 'custom',
+        path: ['default'],
+        message: 'Setting default must be less than or equal to maximum.',
+      });
+    }
+  }),
+  z.strictObject({
+    ...contributionSettingBase,
+    type: z.literal('string'),
+    default: z.string().max(8_192).optional(),
+  }),
+  z.strictObject({
+    ...contributionSettingBase,
+    type: z.literal('select'),
+    default: z.string().max(128).optional(),
+    options: z.array(contributionSettingOptionSchema).min(1).max(64),
+  }).superRefine((setting, context) => {
+    if (new Set(setting.options.map((option) => option.value)).size !== setting.options.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['options'],
+        message: 'Setting option values must be unique.',
+      });
+    }
+    if (setting.default !== undefined
+      && !setting.options.some((option) => option.value === setting.default)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['default'],
+        message: 'Setting default must be one of the declared options.',
+      });
+    }
+  }),
+]);
+
+export type PluginSettingDefinition = z.infer<typeof contributionSettingSchema>;
+
+export function getPluginSettingDefault(setting: PluginSettingDefinition): PluginSettingValue {
+  if (setting.default !== undefined) return setting.default;
+  switch (setting.type) {
+    case 'boolean': return false;
+    case 'string': return '';
+    case 'select': return setting.options[0]?.value ?? '';
+    case 'number': {
+      const candidate = setting.minimum !== undefined && setting.minimum > 0 ? setting.minimum : 0;
+      return setting.maximum !== undefined && candidate > setting.maximum ? setting.maximum : candidate;
+    }
   }
-  if (setting.options !== undefined
-    && new Set(setting.options.map((option) => option.value)).size !== setting.options.length) {
-    context.addIssue({
-      code: 'custom',
-      path: ['options'],
-      message: 'Setting option values must be unique.',
-    });
+}
+
+export type PluginSettingValidationCode = 'invalid-type' | 'out-of-range' | 'invalid-option';
+
+export type PluginSettingValidationFailure = {
+  valid: false;
+  code: PluginSettingValidationCode;
+  message: string;
+};
+
+export type PluginSettingValidationResult = { valid: true } | PluginSettingValidationFailure;
+
+export function validatePluginSettingValue(
+  setting: PluginSettingDefinition,
+  value: unknown,
+): PluginSettingValidationResult {
+  const expectedType = setting.type === 'boolean'
+    ? typeof value === 'boolean'
+    : setting.type === 'number'
+      ? typeof value === 'number' && Number.isFinite(value)
+      : typeof value === 'string';
+  if (!expectedType) {
+    return {
+      valid: false,
+      code: 'invalid-type',
+      message: `The setting value must be a ${setting.type === 'select' ? 'string' : setting.type}.`,
+    };
   }
-});
+  if (setting.type === 'number'
+    && ((setting.minimum !== undefined && (value as number) < setting.minimum)
+      || (setting.maximum !== undefined && (value as number) > setting.maximum))) {
+    return {
+      valid: false,
+      code: 'out-of-range',
+      message: 'The setting value is outside the declared range.',
+    };
+  }
+  if (setting.type === 'select'
+    && !setting.options.some((option) => option.value === value)) {
+    return {
+      valid: false,
+      code: 'invalid-option',
+      message: 'The setting value is not one of the declared options.',
+    };
+  }
+  return { valid: true };
+}
 const contributionHookSchema = z.strictObject({
   id: pluginLocalIdSchema,
   event: z.string().min(1).max(128),
@@ -637,6 +758,22 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
   }
 });
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;
+
+function formatJsonPath(path: readonly (string | number)[]): string {
+  return path.reduce<string>((result, segment) => {
+    if (typeof segment === 'number') return `${result}[${segment}]`;
+    return /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(segment)
+      ? `${result}.${segment}`
+      : `${result}[${JSON.stringify(segment)}]`;
+  }, '$');
+}
+
+/** Converts Zod's issue paths into safe, renderer-displayable JSON paths. */
+export function formatPluginManifestValidationIssues(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => `${formatJsonPath(issue.path as Array<string | number>)}: ${issue.message}`)
+    .join('; ');
+}
 
 /**
  * Manifest declaration is only one half of MCP exposure. The local user must

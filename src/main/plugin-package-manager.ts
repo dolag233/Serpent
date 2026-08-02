@@ -11,7 +11,15 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { type PluginManifest, parseSemver, pluginIdSchema, pluginManifestSchema, PLUGIN_MANIFEST_FILE_NAME, validatePluginManifestCompatibility } from '../plugins/plugin-manifest';
+import {
+  formatPluginManifestValidationIssues,
+  type PluginManifest,
+  parseSemver,
+  pluginIdSchema,
+  pluginManifestSchema,
+  PLUGIN_MANIFEST_FILE_NAME,
+  validatePluginManifestCompatibility,
+} from '../plugins/plugin-manifest';
 import {
   currentPluginPlatformToken,
   isPluginPlatformToken,
@@ -95,6 +103,8 @@ const USER_PLUGIN_LOCK_FILE_NAME = 'plugin-lock.json';
 const DEVICE_STATE_VERSION = 1 as const;
 const PLUGIN_CRASH_QUARANTINE_THRESHOLD = 3;
 const PLUGIN_CRASH_QUARANTINE_WINDOW_MS = 5 * 60 * 1_000;
+/** Sentinel used only for global runtime quarantine records, never as a library id. */
+const GLOBAL_RUNTIME_SCOPE = '__serpent_global_runtime__';
 
 const deviceStateSchema = z.strictObject({
   version: z.literal(DEVICE_STATE_VERSION),
@@ -726,6 +736,56 @@ export class PluginPackageManager {
   }
 
   /**
+   * Resolve user-installed global runtime packages without requiring a library
+   * to be open. Library resolutions remain authoritative when a library is
+   * open; this method only answers whether the user-scoped global instance may
+   * exist for the current application session.
+   */
+  async listGlobalActivationCandidates(): Promise<InstalledPluginPackage[]> {
+    const state = await this.#readDeviceState();
+    const installed = await this.#validPackages('user');
+    const byPlugin = new Map<string, InstalledPluginPackage>();
+    for (const pluginPackage of installed) {
+      if ((pluginPackage.manifest.runtime.instanceScope ?? 'library') !== 'global') continue;
+      const current = byPlugin.get(pluginPackage.lock.pluginId);
+      if (current === undefined || compareVersions(pluginPackage, current) < 0) {
+        byPlugin.set(pluginPackage.lock.pluginId, pluginPackage);
+      }
+    }
+
+    const candidates: InstalledPluginPackage[] = [];
+    for (const latest of byPlugin.values()) {
+      const resolutions = state.resolutions.filter((resolution) => (
+        resolution.pluginId === latest.lock.pluginId
+      ));
+      const saved = resolutions.at(-1);
+      if (saved?.selection === 'disabled') continue;
+
+      const selected = saved?.selection === 'use-global' && saved.packageHash !== undefined
+        ? installed.find((pluginPackage) => pluginPackage.lock.pluginId === latest.lock.pluginId
+          && pluginPackage.lock.packageHash === saved.packageHash)
+        : latest;
+      if (selected === undefined
+        || (selected.manifest.runtime.instanceScope ?? 'library') !== 'global') continue;
+
+      // Unrestricted packages still require an explicit user enablement. The
+      // global path must not turn a newly installed trusted package on merely
+      // because no library has opened yet.
+      if (selected.manifest.runtime.mode === 'unrestricted'
+        && saved?.selection !== 'use-global') continue;
+
+      const resolved = this.#resolvedOrAwaitingTrust(
+        state,
+        GLOBAL_RUNTIME_SCOPE,
+        'use-global',
+        selected,
+      );
+      if (resolved.status === 'resolved') candidates.push(selected);
+    }
+    return candidates.sort((left, right) => left.lock.pluginId.localeCompare(right.lock.pluginId));
+  }
+
+  /**
    * Records a supervised plugin-process crash. The supervisor is the only
    * caller: this API deliberately is not exposed to Renderer or plugin code.
    * Three crashes in a short window quarantine only this package for this
@@ -1165,7 +1225,11 @@ export class PluginPackageManager {
     try {
       await lstat(packageDirectory);
       const manifestRaw = await readFile(path.join(packageDirectory, PLUGIN_MANIFEST_FILE_NAME), 'utf8');
-      const manifest = pluginManifestSchema.parse(JSON.parse(manifestRaw));
+      const parsedManifest = pluginManifestSchema.safeParse(JSON.parse(manifestRaw));
+      if (!parsedManifest.success) {
+        throw new Error(`The installed plugin manifest is invalid: ${formatPluginManifestValidationIssues(parsedManifest.error)}`);
+      }
+      const manifest = parsedManifest.data;
       if (manifest.id !== lock.pluginId || manifest.version !== lock.version) {
         return {
           status: 'invalid',

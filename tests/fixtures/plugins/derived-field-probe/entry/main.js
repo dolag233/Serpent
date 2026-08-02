@@ -1,4 +1,4 @@
-async function activate(serpent) {
+async function setup(serpent) {
   serpent.providers.register('derived-field', {
     id: 'ext-upper',
     fieldId: 'extUpper',
@@ -22,7 +22,7 @@ async function activate(serpent) {
   });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;

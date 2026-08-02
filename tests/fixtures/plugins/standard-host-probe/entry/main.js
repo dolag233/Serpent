@@ -1,9 +1,9 @@
-async function activate(serpent) {
+async function setup(serpent) {
   await serpent.assets.search({ query: null, limit: 1 });
   await serpent.storage.set('host-probe', { activated: true, source: 'standard-host-probe' });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;

@@ -57,6 +57,7 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('plugin-trusted.activate'),
     instanceId: instanceIdSchema,
     libraryId: z.string().min(1).max(255),
+    instanceScope: z.enum(['global', 'library']).default('library'),
     pluginId: pluginIdSchema,
     version: z.string().min(1).max(64),
     packageHash: packageHashSchema,

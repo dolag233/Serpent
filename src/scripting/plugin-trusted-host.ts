@@ -79,8 +79,8 @@ function createInputCaptureQueue(): InputCaptureQueue {
 }
 
 type TrustedExports = {
-  activate?: (serpent: unknown) => unknown;
-  deactivate?: () => unknown;
+  setup?: (context: unknown) => unknown;
+  dispose?: (reason?: string) => unknown;
 };
 
 type PluginTrustedHostActiveProvider = {
@@ -144,17 +144,17 @@ function nodeRequire(): NodeRequire {
 async function loadTrustedEntry(absoluteEntry: string): Promise<TrustedExports> {
   try {
     const imported = await import(pathToFileURL(absoluteEntry).href) as TrustedExports;
-    if (typeof imported.activate === 'function') return imported;
+    if (typeof imported.setup === 'function') return imported;
   } catch {
     // Fall through to CJS require for CommonJS packages.
   }
   const loaded = nodeRequire()(absoluteEntry) as TrustedExports | { default?: TrustedExports };
-  if (typeof (loaded as TrustedExports).activate === 'function') {
+  if (typeof (loaded as TrustedExports).setup === 'function') {
     return loaded as TrustedExports;
   }
   const nested = (loaded as { default?: TrustedExports }).default;
-  if (nested !== undefined && typeof nested.activate === 'function') return nested;
-  throw new Error('Trusted plugin entry must export activate().');
+  if (nested !== undefined && typeof nested.setup === 'function') return nested;
+  throw new Error('Trusted plugin entry must export setup().');
 }
 
 function createSerpentBridge(
@@ -471,7 +471,13 @@ export function createPluginTrustedHostHandler(options: {
       const exported = await loadTrustedEntry(absoluteEntry);
       active.exports = exported;
       const serpent = createSerpentBridge(active, options.postMessage);
-      await exported.activate?.(serpent);
+      await exported.setup?.(Object.assign({}, serpent, {
+        pluginId: request.pluginId,
+        pluginInstanceId: request.instanceId,
+        installationScope: request.installScope,
+        instanceScope: request.instanceScope,
+        serpent,
+      }));
       active.activated = true;
       options.postMessage({
         type: 'plugin-trusted.activated',
@@ -481,9 +487,9 @@ export function createPluginTrustedHostHandler(options: {
       });
       await active.parkPromise;
       try {
-        await exported.deactivate?.();
+        await exported.dispose?.(active.deactivateReason ?? undefined);
       } catch {
-        // Best-effort deactivate after Main requested shutdown.
+        // Best-effort dispose after Main requested shutdown.
       }
       options.postMessage({
         type: 'plugin-trusted.deactivated',

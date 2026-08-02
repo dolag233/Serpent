@@ -60,7 +60,7 @@ function aiAnalysisResult(batch) {
   }));
 }
 
-async function activate(serpent) {
+async function setup(serpent) {
   serpent.providers.register('preview', {
     id: 'probe-preview',
     async compute(batch) {
@@ -99,7 +99,7 @@ async function activate(serpent) {
   });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;

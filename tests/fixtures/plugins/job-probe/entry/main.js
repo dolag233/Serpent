@@ -1,4 +1,4 @@
-async function activate(serpent) {
+async function setup(serpent) {
   serpent.jobs.registerHandler('tick', async (payload) => {
     await serpent.storage.set('job-tick', payload);
   });
@@ -8,7 +8,7 @@ async function activate(serpent) {
   });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;

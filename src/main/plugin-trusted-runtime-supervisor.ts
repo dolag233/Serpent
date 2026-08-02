@@ -40,6 +40,15 @@ type RuntimeChild = {
   once(event: string, listener: RuntimeChildListener): unknown;
 };
 
+type PluginRuntimeCrash = {
+  instanceId: string;
+  libraryId: string;
+  libraryDirectory: string;
+  pluginId: string;
+  packageHash: string;
+  failureCode: string;
+};
+
 export interface PluginTrustedRuntimeSupervisorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -49,6 +58,7 @@ export interface PluginTrustedActivateInput {
   instanceId: string;
   libraryId: string;
   libraryDirectory: string;
+  instanceScope?: 'global' | 'library';
   pluginId: string;
   version: string;
   packageHash: string;
@@ -92,6 +102,7 @@ type TrackedInstance = {
   activated: boolean;
   libraryId: string;
   libraryDirectory: string;
+  instanceScope: 'global' | 'library';
   pluginId: string;
   packageHash: string;
   permissions: readonly PluginPermission[];
@@ -143,19 +154,14 @@ export class PluginTrustedRuntimeSupervisor {
       handleInputCaptureStart?: PluginRuntimeInputCaptureStartHandler;
       handleInputCaptureRelease?: (instanceId: string, sessionId: string) => void;
       onInstanceDeactivated?: (instanceId: string) => void;
+      /** Called after crash recording so upper layers can evict the instance. */
+      onInstanceCrashed?: (input: Pick<PluginRuntimeCrash, 'instanceId' | 'failureCode'>) => void;
       onInstanceActivated?: (input: {
         instanceId: string;
         libraryId: string;
         pluginId: string;
       }) => void;
-      onCrash?: (input: {
-        instanceId: string;
-        libraryId: string;
-        libraryDirectory: string;
-        pluginId: string;
-        packageHash: string;
-        failureCode: string;
-      }) => void;
+      onCrash?: (input: PluginRuntimeCrash) => void;
       logger?: PluginTrustedRuntimeSupervisorLogger;
       heartbeatTimeoutMs?: number;
       heartbeatCheckIntervalMs?: number;
@@ -175,6 +181,7 @@ export class PluginTrustedRuntimeSupervisor {
       activated: false,
       libraryId: input.libraryId,
       libraryDirectory: input.libraryDirectory,
+      instanceScope: input.instanceScope ?? 'library',
       pluginId: input.pluginId,
       packageHash: input.packageHash,
       permissions: input.permissions,
@@ -218,6 +225,7 @@ export class PluginTrustedRuntimeSupervisor {
       type: 'plugin-trusted.activate',
       instanceId: input.instanceId,
       libraryId: input.libraryId,
+      instanceScope: input.instanceScope ?? 'library',
       pluginId: input.pluginId,
       version: input.version,
       packageHash: input.packageHash,
@@ -249,7 +257,9 @@ export class PluginTrustedRuntimeSupervisor {
 
   deactivateLibrary(libraryId: string, reason: PluginRuntimeDeactivateReason): void {
     for (const [instanceId, tracked] of this.#instances) {
-      if (tracked.libraryId === libraryId) this.deactivate(instanceId, reason);
+      if (tracked.instanceScope === 'library' && tracked.libraryId === libraryId) {
+        this.deactivate(instanceId, reason);
+      }
     }
   }
 
@@ -270,7 +280,9 @@ export class PluginTrustedRuntimeSupervisor {
     event: import('../plugins/plugin-domain-events').PluginDomainEvent,
   ): void {
     for (const [instanceId, tracked] of this.#instances) {
-      if (tracked.libraryId !== libraryId || !tracked.ready) continue;
+      if (tracked.instanceScope !== 'global'
+        && (tracked.libraryId !== libraryId || !tracked.ready)) continue;
+      if (!tracked.ready) continue;
       try {
         tracked.child.postMessage({
           type: 'plugin-trusted.domain-event',
@@ -577,15 +589,19 @@ export class PluginTrustedRuntimeSupervisor {
   listActiveInstances(libraryId?: string): Array<{
     instanceId: string;
     libraryId: string;
+    instanceScope: 'global' | 'library';
     pluginId: string;
     packageHash: string;
     activated: boolean;
   }> {
     return [...this.#instances.entries()]
-      .filter(([, tracked]) => libraryId === undefined || tracked.libraryId === libraryId)
+      .filter(([, tracked]) => libraryId === undefined
+        || tracked.instanceScope === 'global'
+        || tracked.libraryId === libraryId)
       .map(([instanceId, tracked]) => ({
         instanceId,
         libraryId: tracked.libraryId,
+        instanceScope: tracked.instanceScope,
         pluginId: tracked.pluginId,
         packageHash: tracked.packageHash,
         activated: tracked.ready,
@@ -594,7 +610,9 @@ export class PluginTrustedRuntimeSupervisor {
 
   listActiveInstanceIds(libraryId?: string): string[] {
     return [...this.#instances.entries()]
-      .filter(([, tracked]) => libraryId === undefined || tracked.libraryId === libraryId)
+      .filter(([, tracked]) => libraryId === undefined
+        || tracked.instanceScope === 'global'
+        || tracked.libraryId === libraryId)
       .map(([instanceId]) => instanceId);
   }
 
@@ -625,7 +643,7 @@ export class PluginTrustedRuntimeSupervisor {
       new Error('The trusted plugin host stopped sending heartbeats.'),
       { pluginId: tracked.pluginId },
     );
-    this.options.onCrash?.({
+    this.#notifyCrash({
       instanceId: tracked.instanceId,
       libraryId: tracked.libraryId,
       libraryDirectory: tracked.libraryDirectory,
@@ -697,7 +715,7 @@ export class PluginTrustedRuntimeSupervisor {
     const tracked = this.#instances.get(instanceId);
     if (tracked === undefined) return;
     this.#failReady(tracked, new Error('Trusted plugin host exited unexpectedly.'));
-    this.options.onCrash?.({
+    this.#notifyCrash({
       instanceId: tracked.instanceId,
       libraryId: tracked.libraryId,
       libraryDirectory: tracked.libraryDirectory,
@@ -706,6 +724,17 @@ export class PluginTrustedRuntimeSupervisor {
       failureCode: 'RUNTIME_PROCESS_EXITED',
     });
     this.#clearTracked(instanceId);
+  }
+
+  #notifyCrash(input: PluginRuntimeCrash): void {
+    try {
+      this.options.onCrash?.(input);
+    } finally {
+      this.options.onInstanceCrashed?.({
+        instanceId: input.instanceId,
+        failureCode: input.failureCode,
+      });
+    }
   }
 
   #onMessage(instanceId: string, raw: unknown): void {
@@ -764,7 +793,7 @@ export class PluginTrustedRuntimeSupervisor {
     }
     if (message.type === 'plugin-trusted.activation-failed') {
       this.#failActivate(tracked, new Error(message.message || message.code));
-      this.options.onCrash?.({
+      this.#notifyCrash({
         instanceId: tracked.instanceId,
         libraryId: tracked.libraryId,
         libraryDirectory: tracked.libraryDirectory,

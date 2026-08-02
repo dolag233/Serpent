@@ -62,7 +62,7 @@ async function activateGuest(entryJavaScript: string, sandboxLimits?: {
 describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
   it('does not expose process, require, env, filesystem, or network to activate()', async () => {
     const result = await activateGuest(`
-      async function activate() {
+      async function setup() {
         console.log(JSON.stringify({
           process: typeof process,
           require: typeof require,
@@ -71,7 +71,7 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
           network: typeof fetch,
         }));
       }
-      async function deactivate() {}
+      async function dispose() {}
     `);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok');
@@ -89,14 +89,14 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
 
   it('rejects dynamic import and Node module escapes during activate()', async () => {
     const dynamicImport = await activateGuest(`
-      async function activate() {
+      async function setup() {
         await import('node:fs');
       }
     `);
     expect(dynamicImport).toMatchObject({ ok: false, code: 'SOURCE_NOT_ALLOWED' });
 
     const evalImport = await activateGuest(`
-      async function activate() {
+      async function setup() {
         eval("import('node:fs')");
       }
     `);
@@ -105,14 +105,14 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
 
   it('terminates infinite loops, memory floods, and output floods during activate()', async () => {
     const loop = await activateGuest(`
-      async function activate() {
+      async function setup() {
         while (true) {}
       }
     `, { cpuTimeoutMs: 20 });
     expect(loop).toMatchObject({ ok: false, code: 'CPU_TIMEOUT' });
 
     const memory = await activateGuest(`
-      async function activate() {
+      async function setup() {
         const values = [];
         while (true) values.push('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
       }
@@ -120,7 +120,7 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
     expect(memory).toMatchObject({ ok: false, code: 'MEMORY_LIMIT' });
 
     const output = await activateGuest(`
-      async function activate(serpent) {
+      async function setup(serpent) {
         console.log('x'.repeat(100));
       }
     `, { maxOutputBytes: 32 });
@@ -149,7 +149,7 @@ describe('standard plugin Host isolation (Serpent-upsn.3)', () => {
       pluginId: 'com.example.slow',
       version: '1.0.0',
       packageHash: 'a'.repeat(64),
-      entryJavaScript: 'async function activate() { await new Promise(() => {}); }',
+      entryJavaScript: 'async function setup() { await new Promise(() => {}); }',
       permissions: ['library.read'],
       installScope: 'library',
     });

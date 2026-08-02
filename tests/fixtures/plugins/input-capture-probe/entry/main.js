@@ -1,4 +1,4 @@
-async function activate(serpent) {
+async function setup(serpent) {
   const session = await serpent.input.capture({
     scope: "application",
     keyboard: true,

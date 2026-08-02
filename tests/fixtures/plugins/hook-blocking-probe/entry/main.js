@@ -1,4 +1,4 @@
-async function activate(serpent) {
+async function setup(serpent) {
   serpent.hooks.onWill('asset.trash', async () => ({
     action: 'block',
     code: 'DEMO_BLOCK',
@@ -7,7 +7,7 @@ async function activate(serpent) {
   await serpent.storage.set('hook-blocking-probe', { armed: true });
 }
 
-async function deactivate() {}
+async function dispose() {}
 
-void activate;
-void deactivate;
+void setup;
+void dispose;
