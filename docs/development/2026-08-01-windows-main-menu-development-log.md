@@ -42,4 +42,6 @@ Windows 真机视觉与 macOS 对照仍需产品负责人验收；本记录不�
 - 二级菜单宽度改为按内容自适应，保留 180px 最小宽度与视口边界，避免短菜单出现大片空白。
 - 主菜单入口改为点击打开；入口 hover 不再自动展开，打开后仍可通过 hover 或键盘切换二级菜单。
 
+后续 UI 复用缺口见 [2026-08-02 UI 样式与交互复用审计](2026-08-02-ui-reuse-audit.md)。
+
 验证：`npm run typecheck`、`npm run lint`、`npx vitest run tests/unit/main-menu-items.test.ts`（3 个测试通过），以及后台 `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts --workers=1`（1 个测试通过）。

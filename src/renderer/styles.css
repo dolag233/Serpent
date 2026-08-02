@@ -92,6 +92,20 @@
     rgb(0 0 0 / calc(0.24 * var(--elev-intensity)));
   /* Floating overlays stay fixed (pre-elevation family; Serpent-4ojz). */
   --shadow-menu: 0 8px 24px rgb(0 0 0 / 28%);
+  /* Shared menu family: context menus, the Windows main menu, and the library
+     switcher must read as one interaction system in both themes. */
+  --menu-surface-background: var(--raised);
+  --menu-surface-border: color-mix(in srgb, var(--divider) 82%, transparent);
+  --menu-surface-radius: 10px;
+  --menu-surface-shadow: var(--shadow-menu);
+  --menu-item-hover-background: var(--hover);
+  --menu-item-focus-background: color-mix(in srgb, var(--text) 11%, transparent);
+  --menu-item-disabled-opacity: 0.4;
+  --menu-danger-color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  --menu-danger-hover-background: color-mix(in srgb, var(--danger) 14%, var(--menu-item-hover-background));
+  --menu-item-padding: 6px 10px;
+  --menu-item-font-size: 12.5px;
+  --menu-item-line-height: 1.4;
   --shadow-elevated: 0 24px 70px rgb(0 0 0 / 42%);
   --shadow-panel: 0 16px 40px rgb(0 0 0 / 42%);
   --shadow-toast: 0 12px 32px rgb(0 0 0 / 28%);
@@ -1202,52 +1216,60 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   left: 0;
   z-index: 40;
   display: grid;
-  min-width: 168px;
+  min-width: 180px;
   padding: 5px;
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--pane);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 36%);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: var(--menu-surface-background);
+  box-shadow: var(--menu-surface-shadow);
 }
 
 .library-switcher-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
-  padding: 7px 9px;
+  min-height: 30px;
+  gap: 8px;
+  padding: var(--menu-item-padding);
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-family: inherit;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
   text-align: left;
+  white-space: nowrap;
+  cursor: default;
 }
 
-.library-switcher-item:hover:not(:disabled) {
-  background: var(--hover);
+.library-switcher-menu:not(.is-keyboard-navigation) .library-switcher-item:hover:not(:disabled) {
+  background: var(--menu-item-hover-background);
+  color: var(--text);
 }
 
 .library-switcher-menu.is-keyboard-navigation .library-switcher-item:focus-visible:not(:disabled),
 .library-switcher-item:focus-visible:not(:disabled) {
-  background: var(--hover);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  background: var(--menu-item-focus-background);
+  box-shadow: inset 1px 0 var(--secondary);
+  outline: none;
 }
 
 .library-switcher-item:disabled {
   color: var(--tertiary);
-  opacity: 0.55;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
 .library-switcher-item.is-danger {
-  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  color: var(--menu-danger-color);
 }
 
 .library-switcher-item.is-danger:hover:not(:disabled),
 .library-switcher-menu.is-keyboard-navigation
   .library-switcher-item.is-danger:focus-visible:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 14%, var(--hover));
-  color: var(--danger);
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
 }
 
 .library-switcher-recent-row {
@@ -2029,10 +2051,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: 148px;
   overflow: visible;
   padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 10px;
-  background: var(--raised);
-  box-shadow: var(--shadow-menu);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: var(--menu-surface-background);
+  box-shadow: var(--menu-surface-shadow);
 }
 
 .main-menu-sections {
@@ -2047,14 +2069,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: 100%;
   min-height: 30px;
   gap: 8px;
-  padding: 6px 9px;
+  padding: var(--menu-item-padding);
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 12.5px;
-  line-height: 1.35;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
   text-align: left;
   white-space: nowrap;
   cursor: default;
@@ -2065,19 +2087,24 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-section.is-active,
 .main-menu-item:hover:not(:disabled),
 .main-menu-item:focus-visible {
-  background: var(--raised-2);
+  background: var(--menu-item-hover-background);
   outline: none;
 }
 
 .main-menu-section:disabled,
 .main-menu-section[aria-disabled="true"] {
   color: var(--tertiary);
-  opacity: 0.48;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
-.main-menu-section .icon {
-  flex: 0 0 auto;
+.main-menu-section > .icon {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
   color: var(--secondary);
 }
 
@@ -2085,7 +2112,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   flex: 1 1 auto;
 }
 
-.main-menu-chevron {
+.main-menu-chevron,
+.context-menu-submenu-chevron {
   color: var(--tertiary);
   font-size: 18px;
   line-height: 12px;
@@ -2100,10 +2128,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   max-width: min(360px, calc(100vw - 12px));
   align-content: start;
   padding: 5px;
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 10px;
-  background: var(--raised);
-  box-shadow: var(--shadow-menu);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: var(--menu-surface-background);
+  box-shadow: var(--menu-surface-shadow);
 }
 
 .main-menu-item-label {
@@ -2122,18 +2150,18 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-item.is-disabled,
 .main-menu-item:disabled {
   color: var(--tertiary);
-  opacity: 0.48;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
 .main-menu-item.is-danger {
-  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  color: var(--menu-danger-color);
 }
 
 .main-menu-item.is-danger:hover:not(:disabled),
 .main-menu-item.is-danger:focus-visible {
-  background: color-mix(in srgb, var(--danger) 14%, var(--hover));
-  color: var(--danger);
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
 }
 
 .nav-child-count {
@@ -3197,12 +3225,10 @@ body.serpent-modal-open .app-shell {
   position: fixed;
   z-index: 41;
   pointer-events: auto;
-  background: var(--raised);
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 10px;
-  box-shadow:
-    0 8px 24px rgb(0 0 0 / 28%),
-    0 1px 4px rgb(0 0 0 / 16%);
+  background: var(--menu-surface-background);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  box-shadow: var(--menu-surface-shadow);
   min-width: 180px;
   max-height: calc(100vh - 12px);
   overflow-y: auto;
@@ -3214,14 +3240,15 @@ body.serpent-modal-open .app-shell {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  min-height: 30px;
+  padding: var(--menu-item-padding);
   border-radius: 6px;
   border: none;
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 12.5px;
-  line-height: 1.4;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
   cursor: default;
   text-align: left;
   white-space: nowrap;
@@ -3232,22 +3259,23 @@ body.serpent-modal-open .app-shell {
 }
 
 .context-menu:not(.is-keyboard-navigation) .context-menu-item:hover {
-  background: var(--raised-2);
+  background: var(--menu-item-hover-background);
   color: var(--text);
 }
 
 .context-menu.is-keyboard-navigation .context-menu-item:focus {
-  background: color-mix(in srgb, var(--text) 11%, transparent);
+  background: var(--menu-item-focus-background);
   box-shadow: inset 1px 0 var(--secondary);
 }
 
 .context-menu-item.is-danger:hover,
 .context-menu.is-keyboard-navigation .context-menu-item.is-danger:focus {
-  color: var(--danger-soft);
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
 }
 
 .context-menu-item.is-disabled {
-  opacity: 0.4;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
@@ -3282,12 +3310,6 @@ body.serpent-modal-open .app-shell {
   z-index: 42;
   min-width: 230px;
   max-height: calc(100vh - 12px);
-}
-
-.context-menu-submenu-chevron {
-  color: var(--tertiary, var(--tertiary));
-  font-size: 18px;
-  line-height: 12px;
 }
 
 .context-menu-selection-summary {
