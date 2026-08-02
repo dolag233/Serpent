@@ -1,6 +1,6 @@
 /**
  * GitHub Release asset naming and platform matching for plugin distribution.
- * Spec: docs/plugin-distribution-and-updates.md
+ * Spec: docs/manual/plugins/distribution-and-updates.md
  */
 
 export const PLUGIN_PLATFORM_TOKENS = [

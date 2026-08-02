@@ -10,7 +10,7 @@
 
 | 区域 | 变更 |
 | --- | --- |
-| 规范 | [`docs/plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)；0024 / ADR-0026 / 开发指南 / project-status 对齐 |
+| 规范 | [`docs/manual/plugins/distribution-and-updates.md`](../manual/plugins/distribution-and-updates.md)；0024 / ADR-0026 / 开发指南 / project-status 对齐 |
 | 平台与命名 | `src/plugins/plugin-release-asset.ts`：`{pluginId}-{version}-{platformToken}.zip`，精确平台后回退 `any` |
 | URL | `src/shared/plugin-github-url.ts`：仓库根与 `/releases` / `/releases/tag/...` / `latest` |
 | GitHub 客户端 | Release `listReleases` + `downloadReleaseAsset`；无规范 asset 时 zipball 成品回退 |

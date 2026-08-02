@@ -1,16 +1,18 @@
-# Serpent 开发者文档
+# Serpent 用户手册：插件、脚本与 MCP
 
-这组文档面向希望为 Serpent 编写插件、自动化脚本或 MCP 客户端的开发者。它描述的是当前仓库已经提供的开发态接口；实现尚未发布为独立 SDK，示例应在 Serpent 仓库根目录、Node.js 24 环境中运行。
+这组手册面向希望为 Serpent 编写插件、自动化脚本或 MCP 客户端的用户和开发者。它描述的是当前仓库已经提供的开发态接口；实现尚未发布为独立 SDK，示例应在 Serpent 仓库根目录、Node.js 24 环境中运行。
+
+`docs/manual/` 是面向扩展作者发布的用户手册目录；架构决策、实施规格、开发日志和 QA 记录仍分别位于 `docs/adr/`、`docs/implementation/`、`docs/development/` 和 `docs/qa/`。
 
 ## 从哪里开始
 
 | 目标 | 入门 | API 参考 |
 | --- | --- | --- |
-| 编写插件 | [插件开发指南](plugin-development-guide.md) | [插件 API 参考](plugin-api-reference.md) |
-| 编写自动化脚本 | [脚本开发指南](automation-scripting-guide.md) | [脚本 API 参考](script-api-reference.md) |
-| 接入 MCP | [MCP 开发指南](mcp-development-guide.md) | [MCP API 参考](mcp-api-reference.md) |
+| 编写插件 | [插件开发指南](plugins/development.md) | [插件 API 参考](plugins/api-reference.md) |
+| 编写自动化脚本 | [脚本开发指南](scripts/development.md) | [脚本 API 参考](scripts/api-reference.md) |
+| 接入 MCP | [MCP 开发指南](mcp/development.md) | [MCP API 参考](mcp/api-reference.md) |
 
-脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过本地 stdio 连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](skills/serpent-automation/automation-api.d.ts)。
+脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过本地 stdio 连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](../skills/serpent-automation/automation-api.d.ts)。
 
 ## 三种扩展方式如何选择
 
@@ -33,14 +35,14 @@
 2. 读取类操作应使用分页和明确上限；批量写入应使用幂等键、执行计划和 `execution.status` 追踪结果。
 3. 客户端超时不等于操作失败。对可能已经提交的操作，先查询执行状态，再决定是否重试。
 4. 资源库切换、插件停用和 Worker 崩溃都可能使上下文失效；开发者应把 `libraryId`、资产 ID、revision 和执行 ID 当作需要重新校验的边界。
-5. 文档中的 API 名称以当前实现和类型声明为准；如果规范文档、旧 Skill 或示例与 [脚本 API 参考](script-api-reference.md) 冲突，应优先采用 API 参考并记录问题。
+5. 文档中的 API 名称以当前实现和类型声明为准；如果规范文档、旧 Skill 或示例与 [脚本 API 参考](scripts/api-reference.md) 冲突，应优先采用 API 参考并记录问题。
 
 ## 相关规范
 
-- [脚本自动化 Skill](skills/serpent-automation/SKILL.md)：面向 Agent 的操作约束和运行提示。
-- [插件分发与更新](plugin-distribution-and-updates.md)：GitHub Release、ZIP、文件夹安装及更新策略。
-- [插件平台最终设计](implementation/0024-script-plugin-platform.md)：Host/插件边界、贡献模型和生命周期的设计来源。
-- [脚本/MCP 框架实施规格](implementation/0023-automation-scripting-mcp-framework.md)：自动化 Gateway、脚本运行时和 MCP 的实现背景。
+- [脚本自动化 Skill](../skills/serpent-automation/SKILL.md)：面向 Agent 的操作约束和运行提示。
+- [插件分发与更新](plugins/distribution-and-updates.md)：GitHub Release、ZIP、文件夹安装及更新策略。
+- [插件平台最终设计](../implementation/0024-script-plugin-platform.md)：Host/插件边界、贡献模型和生命周期的设计来源。
+- [脚本/MCP 框架实施规格](../implementation/0023-automation-scripting-mcp-framework.md)：自动化 Gateway、脚本运行时和 MCP 的实现背景。
 
 ## 文档状态
 

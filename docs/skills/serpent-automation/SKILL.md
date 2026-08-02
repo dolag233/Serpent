@@ -37,7 +37,7 @@
 
 ## 推荐流程
 
-1. 先读取 `docs/automation-scripting-guide.md` 和当前 Registry。
+1. 先读取 `docs/manual/scripts/development.md` 和当前 Registry。
 2. 先用只读查询确认目标，再执行最小批量写入。
 3. 对文件操作保存返回的恢复引用；计划过期或客户端超时时重新读取状态再决定是否重试，不要重复提交旧计划。
 4. 运行结束后检查 Execution history 和 `logId`；不要把日志中的路径、凭据或环境变量复制到输出。

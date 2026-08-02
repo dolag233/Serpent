@@ -8,7 +8,7 @@
 
 1. **跨文件夹 reveal E2E**：`tests/e2e/automation-mcp-attached-desktop.test.ts` 在同范围 viewer/过滤/选中路径之后，将两资产分别移入不同托管文件夹，打开文件夹 A 后 `serpent_desktop_reveal_asset` 目标在 B，断言 `status: "switched-folder"`、网格选中与 `get_state`。
 2. **Reveal 根因修复**：`chooseFolder` 内 `clearAssetSelection` → `onSelectionCleared` 会清掉 `pendingRevealRef`，导致跨文件夹 reveal 只切范围不选中。改为在 `switch-folder` 路径于 `chooseFolder` 返回后直接应用选中与 focus。
-3. **文档对齐**：`docs/automation-scripting-guide.md` 与 `docs/skills/serpent-automation/SKILL.md` 列出完整 `serpent_desktop_*` 工具面，并说明 `scripts/mcp-session.mjs` 长连接；`package.json` 增加 `mcp:session`。
+3. **文档对齐**：`docs/manual/scripts/development.md` 与 `docs/skills/serpent-automation/SKILL.md` 列出完整 `serpent_desktop_*` 工具面，并说明 `scripts/mcp-session.mjs` 长连接；`package.json` 增加 `mcp:session`。
 4. **工单卫生**：关闭 `Serpent-lq5y.1` / `Serpent-lq5y.2`（开发态编码 AC）；`y51c.3/.8/.9/.10` 保留，因 packaged（`media:verify`）、Windows、Computer Use 仍为验证缺口。
 
 ## 验证

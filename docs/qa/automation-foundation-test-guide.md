@@ -2,7 +2,7 @@
 
 > 适用范围：2026-07-28–30 的 Automation Command Gateway、QuickJS/WASM 独立脚本运行时和受限 Desktop Console。
 >
-> 这不是最终的「脚本功能使用指南」。当前“自动化脚本”窗口已提供受限的真实能力：分页搜索/列出资产和文件夹、读取元数据、批量评分、将真实路径复制到剪贴板、移入回收站、单项或批量重命名、严格条件的回收站恢复、近期自动色卡汇总，以及保存/打开 `.serpent.js` / `.serpent.ts` Console 代码。完整示例见 [自动化脚本使用说明](../automation-scripting-guide.md)。它仍不提供独立发布的类型文件、任意资源库 API 或本地 MCP server。请不要尝试在终端或 Claude/Codex 中寻找 `serpent run`、`serpent repl` 或 `serpent-mcp`：通用 CLI 已撤回，MCP 启动器尚未实现。
+> 这不是最终的「脚本功能使用指南」。当前“自动化脚本”窗口已提供受限的真实能力：分页搜索/列出资产和文件夹、读取元数据、批量评分、将真实路径复制到剪贴板、移入回收站、单项或批量重命名、严格条件的回收站恢复、近期自动色卡汇总，以及保存/打开 `.serpent.js` / `.serpent.ts` Console 代码。完整示例见 [自动化脚本使用说明](../manual/scripts/development.md)。它仍不提供独立发布的类型文件、任意资源库 API 或本地 MCP server。请不要尝试在终端或 Claude/Codex 中寻找 `serpent run`、`serpent repl` 或 `serpent-mcp`：通用 CLI 已撤回，MCP 启动器尚未实现。
 
 相关规格：[0023 脚本化与 MCP 框架](../implementation/0023-automation-scripting-mcp-framework.md)、[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)。代码审查结论见 [自动化基础审查](../reviews/2026-07-28-automation-foundation-code-review.md)。
 
@@ -264,7 +264,7 @@ return page.items;
 
 预期：原始脚本内容恢复，保存后的首次执行显示授权确认；修改文本后运行被视为新的临时 Console 内容，不继承保存脚本授权。关闭脚本窗口后重新打开同一个文件仍可运行，但应由持久 grant 的哈希、资源库和能力匹配决定是否需要重新确认。
 
-该测试通过只证明当前受限 Desktop Console 的评分路径可用。文件回收、批量重命名、路径复制、严格恢复和色卡聚合的完整用法及附加验收步骤见 [自动化脚本使用说明](../automation-scripting-guide.md)；它不代表保存/打开脚本、MCP、UtilityProcess 隔离或安装包已经通过验收。
+该测试通过只证明当前受限 Desktop Console 的评分路径可用。文件回收、批量重命名、路径复制、严格恢复和色卡聚合的完整用法及附加验收步骤见 [自动化脚本使用说明](../manual/scripts/development.md)；它不代表保存/打开脚本、MCP、UtilityProcess 隔离或安装包已经通过验收。
 
 ## AUT-WRITE-001：跨进程写入基础（开发者定向验证）
 

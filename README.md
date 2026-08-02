@@ -117,7 +117,7 @@ Electron lifecycle tests use a production bundle and platform-local staging path
 
 ## Developer documentation
 
-Developer-facing documentation for plugins, automation scripts, the Script API, and MCP is collected in [`docs/developer-documentation.md`](docs/developer-documentation.md). These pages describe the current development entry points and explicitly mark platform or packaged flows that are not yet verified.
+User-facing manuals for plugin, automation script, Script API, and MCP authors are collected in [`docs/manual/`](docs/manual/README.md). These pages describe the current entry points and explicitly mark platform or packaged flows that are not yet verified.
 
 ## License
 

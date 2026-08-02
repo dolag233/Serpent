@@ -16,7 +16,7 @@ Serpent 插件既需要安全地扩展菜单、工作区、搜索和资产领域
 - 插件可以安装为用户级，也可以作为不可变成品放入资源库 `.serpent/plugins/` 并随库同步。资源库插件在每台设备首次出现时必须显式信任；信任、密钥和本机路径只保存在当前设备。
 - 同一插件 ID 同时存在用户级和资源库级版本时，Serpent 不设置隐式优先级，而是提示用户选择使用哪个版本或禁用。选择在当前设备按资源库记忆；普通同源升级沿用，权限、模式或来源变化时重新确认。
 - 插件一等开发语言为 TypeScript/JavaScript。Serpent 不维护 Python 运行时；非受限插件如确有需要，可以自行调用用户环境中的外部程序。
-- GitHub 安装优先取符合命名规范的 **Release 平台 asset ZIP**（见 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)）；不执行远程仓库中的依赖安装、构建或生命周期脚本。过渡期可对无规范 asset 的成品 zipball 回退，并提示作者迁移。
+- GitHub 安装优先取符合命名规范的 **Release 平台 asset ZIP**（见 [插件分发与更新规范](../manual/plugins/distribution-and-updates.md)）；不执行远程仓库中的依赖安装、构建或生命周期脚本。过渡期可对无规范 asset 的成品 zipball 回退，并提示作者迁移。
 
 ## 后果
 

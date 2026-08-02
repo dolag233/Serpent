@@ -296,7 +296,7 @@ Run: `node scripts/run-e2e.mjs tests/e2e/automation-mcp-attached-desktop.test.ts
 ### Task 6: Documentation, human acceptance, and final verification
 
 **Files:**
-- Modify: `docs/automation-scripting-guide.md`
+- Modify: `docs/manual/scripts/development.md`
 - Modify: `docs/skills/serpent-automation/SKILL.md`
 - Modify: `docs/project-status.md`
 - Modify: `docs/qa/human-acceptance-checklist.md`

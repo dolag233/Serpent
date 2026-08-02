@@ -5,7 +5,7 @@
 
 ## 2026-08-02 面向开发者的插件、脚本与 MCP 文档
 
-- 已整理发布级开发文档入口：[开发者文档](developer-documentation.md)，覆盖[插件开发](plugin-development-guide.md)、[插件 API](plugin-api-reference.md)、[Desktop Console 脚本](automation-scripting-guide.md)、[脚本 API](script-api-reference.md)、[MCP 开发](mcp-development-guide.md)和 [MCP API](mcp-api-reference.md)。文档以当前实现和 Registry/类型声明为准，明确区分插件 UI Contribution Context、脚本领域 API、MCP attached/headless 入口及权限/计划确认边界。
+- 已整理面向用户的 [插件、脚本与 MCP 手册](manual/README.md)，覆盖[插件开发](manual/plugins/development.md)、[插件 API](manual/plugins/api-reference.md)、[Desktop Console 脚本](manual/scripts/development.md)、[脚本 API](manual/scripts/api-reference.md)、[MCP 开发](manual/mcp/development.md)和 [MCP API](manual/mcp/api-reference.md)。文档以当前实现和 Registry/类型声明为准，明确区分插件 UI Contribution Context、脚本领域 API、MCP attached/headless 入口及权限/计划确认边界。
 - 当前真实自动化入口为 Desktop Console、`npm run mcp`（默认附着 Desktop）、`npm run mcp -- --headless ...` 和 `npm run mcp:session ...`；没有可用的通用 `serpent run` / `serpent repl` CLI，也没有当前仓库可直接调用的独立 `serpent-mcp` 可执行文件。
 - 文档检查已完成；packaged MCP、Windows 和跨平台发布旅程仍按 `Serpent-y51c.10` 的既有验收范围记录为未验证，不能由开发态文档或单元测试替代。
 
@@ -34,12 +34,12 @@
 
 ## 2026-08-01 插件分发与更新规范
 
-- 安装通道定为 GitHub / ZIP / 文件夹；GitHub 以 **Release 平台 asset** 为主（非源码 zipball + npm）。规范见 [`plugin-distribution-and-updates.md`](plugin-distribution-and-updates.md)。
+- 安装通道定为 GitHub / ZIP / 文件夹；GitHub 以 **Release 平台 asset** 为主（非源码 zipball + npm）。规范见 [`插件分发与更新手册`](manual/plugins/distribution-and-updates.md)。
 - 实现：`Serpent-u3nx`（Release + 平台匹配）与 `Serpent-8r91`（更新提示与自动更新风险说明）一并落地；`Serpent-x9ci`（源码目录 npm）已关闭不做。`upsn.9` 仍排最后。
 
 ## 2026-08-01 插件/脚本自动化验收与 Agent Playbook
 
-- 产品决定：`PLUGIN-*` / `AUT-*` **以自动化测试为准**，测试档位绿即「自动化验收通过」，不要求人类逐步点验。规则见 [`qa/human-acceptance-checklist.md`](qa/human-acceptance-checklist.md)；Agent 流程见 [`agent-plugin-playbook.md`](agent-plugin-playbook.md)。人读 API 仍见 [`plugin-development-guide.md`](plugin-development-guide.md) / [`plugin-api-reference.md`](plugin-api-reference.md)。
+- 产品决定：`PLUGIN-*` / `AUT-*` **以自动化测试为准**，测试档位绿即「自动化验收通过」，不要求人类逐步点验。规则见 [`qa/human-acceptance-checklist.md`](qa/human-acceptance-checklist.md)；Agent 流程见 [`agent-plugin-playbook.md`](agent-plugin-playbook.md)。人读 API 见 [`插件开发手册`](manual/plugins/development.md) / [`插件 API 参考`](manual/plugins/api-reference.md)。
 - 应用级插件文件数据：`{userData}/plugin-files/<pluginId>/`；库级：`<库>/.serpent/plugin-files/<pluginId>/`。既有 KV storage 路径保持不变。
 
 ## 2026-08-01 插件开发者文档与平台接缝

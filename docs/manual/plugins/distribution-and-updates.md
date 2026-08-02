@@ -4,7 +4,7 @@
 > 安装通道：**GitHub** · **本地 ZIP** · **本地文件夹**  
 > 实现跟踪：`Serpent-u3nx`（Release asset + 平台匹配）、`Serpent-8r91`（更新提示与自动更新）  
 
-> 相关：[`plugin-development-guide.md`](plugin-development-guide.md)、[0024](implementation/0024-script-plugin-platform.md)、[ADR-0026](adr/0026-plugin-runtime-installation-and-trust.md)
+> 相关：[插件开发手册](development.md)、[0024](../../implementation/0024-script-plugin-platform.md)、[ADR-0026](../../adr/0026-plugin-runtime-installation-and-trust.md)
 
 ## 1. 安装通道（产品面）
 

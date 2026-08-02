@@ -1,6 +1,6 @@
 # Agent 插件开发与测试 Playbook
 
-> 给实现/测试插件的 Agent 用。人类开发者见 [`plugin-development-guide.md`](plugin-development-guide.md) 与 [`plugin-api-reference.md`](plugin-api-reference.md)。  
+> 给实现/测试插件的 Agent 用。人类开发者见 [插件开发手册](manual/plugins/development.md) 与 [插件 API 参考](manual/plugins/api-reference.md)。
 > 验收口径（产品 2026-08-01）：**插件 / 脚本 / MCP / Gateway 以自动化测试为准；该范围要求的测试绿即视为通过**，不依赖人类逐步点验。
 
 ## 1. 开工前
@@ -75,7 +75,7 @@ exports.deactivate = async function deactivate() {};
 ## 7. 最短任务卡（可复制）
 
 ```text
-1. 读 docs/agent-plugin-playbook.md + plugin-api-reference.md
+1. 读 docs/agent-plugin-playbook.md + docs/manual/plugins/api-reference.md
 2. Sibling 仓实现可安装包（serpent-plugin.json + 编译 entry）
 3. 权限最小化；写回用 content.read/write；模型用 data.getDirectory
 4. 主仓定向 vitest；跨进程则补/跑 plugin E2E（隔离 userData）

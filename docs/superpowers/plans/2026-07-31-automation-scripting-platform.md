@@ -233,7 +233,7 @@
 - Modify: `package.json`
 - Create: `docs/skills/serpent-automation/SKILL.md`
 - Create/modify: generated automation `.d.ts` under `docs/skills/serpent-automation/`
-- Modify: `docs/automation-scripting-guide.md`
+- Modify: `docs/manual/scripts/development.md`
 - Test: `scripts/verify-package.mjs` package assertions and `tests/e2e/packaged-startup.test.ts`
 
 **Interfaces:**

@@ -13,7 +13,7 @@
 
 ## 文档
 
-- `docs/plugin-development-guide.md`：非受限命名与默认不启用；设置入口。
+- `docs/manual/plugins/development.md`：非受限命名与默认不启用；设置入口。
 - `docs/qa/human-acceptance-checklist.md`：`PLUGIN-001`、`PLUGIN-031`。
 
 ## 验证

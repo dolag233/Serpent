@@ -127,7 +127,7 @@ serpent-mcp 启动器 / 代理进程
 | `--headless` | 现有无窗 process-local host（需 `--library` 或 `--unbound` 等现有约束） |
 | `--write-access` | 仍只表示「Host 侧意图暴露写工具」；真正写授权与库绑定由 Desktop 确认 / Journal 签发 |
 
-默认模式切换属于破坏性产品变更：实施时须更新 `docs/automation-scripting-guide.md`、Skills、MCP Host 配置说明，并保留 `--headless` 文档入口。
+默认模式切换属于破坏性产品变更：实施时须更新 `docs/manual/scripts/development.md`、Skills、MCP Host 配置说明，并保留 `--headless` 文档入口。
 
 ## 9. 错误与安全
 

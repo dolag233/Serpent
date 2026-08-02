@@ -184,7 +184,7 @@ LICENSE
 - 同 ID 用户/资源库版本不设隐式优先级；用户选择并按设备+库+插件 ID 记忆。
 - 更新先进入 staging，校验和健康窗口通过后切换；权限增加、运行模式或来源变化必须重新确认。
 
-安装与信任的完整安全边界继续遵循 ADR-0026 和 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)。
+安装与信任的完整安全边界继续遵循 ADR-0026 和 [插件分发与更新规范](../manual/plugins/distribution-and-updates.md)。
 
 ## 7. 运行模式与 Host 架构
 
