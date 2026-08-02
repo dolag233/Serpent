@@ -1,6 +1,10 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import {
+  formatPluginJobProgressMessage,
+  formatPluginJobProgressSummary,
+} from "./plugin-job-display";
 import type { MediaJobStatus, AiJobStatus, PluginJobStatus } from "../shared/library-api";
 
 export interface MediaJobsDialogProps {
@@ -306,47 +310,57 @@ export function MediaJobsDialog({
                 </p>
                 <div style={{ maxHeight: 180, overflow: "auto" }}>
                   {pluginJobs.jobs.length ? (
-                    pluginJobs.jobs.map((job) => (
-                      <div
-                        key={job.jobId}
-                        style={{ padding: "5px 2px" }}
-                      >
+                    pluginJobs.jobs.map((job) => {
+                      const progressSummary = formatPluginJobProgressSummary(job);
+                      const progressMessage = formatPluginJobProgressMessage(job);
+                      return (
                         <div
-                          style={{
-                            display: "grid",
-                            gap: 8,
-                            gridTemplateColumns:
-                              "minmax(160px, 1.4fr) minmax(90px, 0.8fr) 90px minmax(140px, 1.4fr)",
-                            fontSize: 11,
-                          }}
+                          key={job.jobId}
+                          style={{ padding: "5px 2px" }}
                         >
-                          <span title={job.ownerPluginId}>
-                            {job.ownerPluginId}
-                          </span>
-                          <span title={job.pluginHandlerId}>
-                            {job.pluginHandlerId}
-                          </span>
-                          <strong>{job.status}</strong>
-                          <span title={job.errorCode ?? undefined}>
-                            {job.errorDetail ??
-                              job.errorCode ??
-                              (job.status === "running"
-                                ? `${Math.round(job.progress * 100)}%`
-                                : "—")}
-                          </span>
-                        </div>
-                        {job.status === "running" && (
-                          <div className="task-progress-track">
-                            <div
-                              className="task-progress-fill"
-                              style={{
-                                width: `${Math.max(0, Math.min(1, job.progress)) * 100}%`,
-                              }}
-                            />
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 8,
+                              gridTemplateColumns:
+                                "minmax(160px, 1.4fr) minmax(90px, 0.8fr) 90px minmax(140px, 1.4fr)",
+                              fontSize: 11,
+                            }}
+                          >
+                            <span title={job.ownerPluginId}>
+                              {job.ownerPluginId}
+                            </span>
+                            <span title={job.pluginHandlerId}>
+                              {job.pluginHandlerId}
+                            </span>
+                            <strong>{job.status}</strong>
+                            <span title={job.errorCode ?? undefined}>
+                              {job.errorDetail ??
+                                job.errorCode ??
+                                progressSummary}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))
+                          {progressMessage && (
+                            <div
+                              className="plugin-job-progress-message"
+                              title={progressMessage}
+                            >
+                              {progressMessage}
+                            </div>
+                          )}
+                          {(job.status === "running" || job.status === "paused") && (
+                            <div className="task-progress-track">
+                              <div
+                                className="task-progress-fill"
+                                style={{
+                                  width: `${Math.max(0, Math.min(1, job.progress)) * 100}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   ) : (
                     <p className="field-help">
                       {t("dialog.mediaJobs.pluginEmpty")}

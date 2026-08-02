@@ -298,6 +298,8 @@ await library.jobs.reportProgress({
 });
 ```
 
+Host 的「后台任务 → 插件任务」会把 `completed/total` 与百分比显示在进度条旁，并将 `phase` 与 `message` 显示为插件提供的进度说明。文字由插件负责组织，Host 只做长度限制后的安全展示；失败任务仍优先显示错误详情。
+
 `forLibrary()` 返回领域 API 和 Job 的 enqueue/report/cancel/pause/resume/retry，但不返回 events、hooks、providers、storage、data、
 commands 或 handler 注册；handler 必须在实例级 `serpent.jobs` 注册。library 实例不能借此越过自己的库边界。
 

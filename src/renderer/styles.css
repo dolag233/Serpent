@@ -9031,6 +9031,15 @@ select.ai-config-input.ai-config-languages {
   transition: width 250ms ease;
 }
 
+.plugin-job-progress-message {
+  margin-top: 4px;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .task-progress-indeterminate {
   width: 35%;
   height: 100%;
