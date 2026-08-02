@@ -5237,7 +5237,7 @@ function AppInner() {
           ? input.pathKind === "folder"
             ? t("menu.ignoreFolder")
             : t("menu.ignore")
-          : t("menu.unignore")),
+          : t("menu.unignore"),
         name: input.name,
       }));
     } catch (caught) {
