@@ -32,3 +32,9 @@ Windows 开发态 Computer Use 快速检查：设置 → 外观可见「右键�
 - 回归用例覆盖：长列表不产生顶部空白、鼠标移入浮动面板后菜单保持可见、标签选项可点击。
 
 验证：`npm run typecheck`、`npm run lint`、`npx playwright test tests/e2e/context-menu.test.ts --reporter=line`（10 tests passed）。
+
+## Shell 菜单亚克力扩展
+
+资源库切换菜单、Windows 主菜单及工作区“更多”菜单也接入同一 `data-menu-acrylic` 强度档位，保持菜单间的透明度、背景模糊和饱和度一致；设置面板和普通卡片不受影响。
+
+验证：`npx playwright test tests/e2e/shell-navigation.test.ts --reporter=line`（1 test passed，覆盖资源库菜单和主菜单默认低档的模糊效果）。

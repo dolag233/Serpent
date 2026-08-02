@@ -55,6 +55,18 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(window.locator(".brand-glyph")).toHaveCount(0);
     await expect(window.getByText("SERPENT / LOCAL WORKSPACE")).toHaveCount(0);
 
+    // The library switcher is a shell menu, not a context menu, but it uses
+    // the same acrylic preference and should receive the default low level.
+    await libraryTrigger.click();
+    const libraryMenu = window.locator(".library-switcher-menu");
+    await expect(libraryMenu).toBeVisible();
+    await expect
+      .poll(() =>
+        libraryMenu.evaluate((element) => getComputedStyle(element).backdropFilter),
+      )
+      .toContain("blur");
+    await libraryTrigger.click();
+
     // History controls live in the browse column: the nav toggle is in the
     // leading shell cluster, followed by history, the Windows main menu (or
     // the macOS settings entry), and then the breadcrumbs trail.
@@ -74,6 +86,13 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await expect(
         window.getByRole("menu", { name: "主菜单" }),
       ).toBeVisible();
+      await expect
+        .poll(() =>
+          window
+            .locator(".main-menu-surface")
+            .evaluate((element) => getComputedStyle(element).backdropFilter),
+        )
+        .toContain("blur");
       await expect(window.locator(".main-menu-submenu")).toHaveCount(0);
       for (const label of ["文件", "编辑", "资源库", "窗口", "关于", "设置"]) {
         await expect(

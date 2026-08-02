@@ -337,6 +337,7 @@
 | MENU-034 | 资产 ⌘C/Ctrl+C 复制到系统剪贴板 | 人类验收通过 | 选中资产后按 ⌘C（macOS）或 Ctrl+C（Windows）；在访达粘贴；再在文本框内 ⌘C 确认仍可复制文字 | 系统剪贴板含真实文件，与右键「复制」一致；文本框内仍为文本复制 | `Serpent-166q` | 2026-07-22 用户确认通过。 |
 | MENU-035 | 右键菜单亚克力质感与强度设置 | 待人类验收 | 打开设置 → 外观，找到「右键菜单亚克力」刻度条，依次选择无、低、中、高；分别在资产、文件夹、合集和查看器画面上打开右键菜单，并切换亮/暗主题；完全退出后重启确认档位保持 | 所有右键菜单共享同一套透明/模糊质感；无档为不透明，中/高档逐级增强透明与背景模糊，文字和悬停态始终清晰；默认档为低；设置立即生效且跨重启保存；非右键菜单（主菜单、设置面板）不受影响 | [亚克力偏好](../../src/renderer/menu-acrylic-preferences.ts) / [设置页](../../src/renderer/AppSettingsPages.tsx) / [样式](../../src/renderer/styles.css) / [单测](../../tests/unit/menu-acrylic-preferences.test.ts) / [开发日志](../development/2026-08-02-context-menu-acrylic-development-log.md) | 2026-08-02 实现完成；Windows、macOS 人工视觉验收待执行。 |
 | MENU-036 | 浮动二级右键菜单可跨层 hover 与点击 | 待人类验收 | 在可拖拽资产卡片上打开右键菜单，悬停带箭头的「添加标签…」或其他二级菜单项，再将鼠标移入右侧二级菜单并点击一项；重复测试长列表选择器 | 鼠标跨越一级与二级菜单时不落到底层资产、不显示抓取光标；二级菜单不提前消失，选项可正常点击；二级菜单与一级项无可见间隙且仍保持窗口内 | [右键菜单实现](../../src/renderer/context-menu.tsx) / [菜单 E2E](../../tests/e2e/context-menu.test.ts) / [开发日志](../development/2026-08-02-context-menu-acrylic-development-log.md) | 2026-08-02 修复完成；待 Windows 人工验收。 |
+| MENU-037 | 资源库菜单与主菜单亚克力质感 | 待人类验收 | 设置 → 外观依次选择无、低、中、高；打开顶部资源库菜单、Windows 主菜单及工作区“更多”菜单观察效果，并切换亮/暗主题 | 三类壳层菜单与右键菜单共享同一档透明度、背景模糊和饱和度；无档不透明，低/中/高逐级增强；菜单内容和普通设置面板不受影响 | [样式](../../src/renderer/styles.css) / [壳层 E2E](../../tests/e2e/shell-navigation.test.ts) / [开发日志](../development/2026-08-02-context-menu-acrylic-development-log.md) | 2026-08-02 实现完成；待 Windows、macOS 人工视觉验收。 |
 
 ### H. 资产选择与基础右键菜单
 

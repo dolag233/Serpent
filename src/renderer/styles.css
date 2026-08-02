@@ -1220,8 +1220,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   padding: 5px;
   border: 1px solid var(--menu-surface-border);
   border-radius: var(--menu-surface-radius);
-  background: var(--menu-surface-background);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .library-switcher-item {
@@ -2053,8 +2054,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   padding: 5px;
   border: 1px solid var(--menu-surface-border);
   border-radius: var(--menu-surface-radius);
-  background: var(--menu-surface-background);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .main-menu-sections {
@@ -2130,8 +2132,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   padding: 5px;
   border: 1px solid var(--menu-surface-border);
   border-radius: var(--menu-surface-radius);
-  background: var(--menu-surface-background);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .main-menu-item-label {
@@ -2418,8 +2421,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--pane);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--shadow-menu);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .tool-group-utility {
@@ -3266,6 +3270,56 @@ body.serpent-modal-open .app-shell {
 }
 
 :root[data-menu-acrylic="3"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 74%, transparent);
+  backdrop-filter: blur(28px) saturate(135%);
+}
+
+/* The Windows shell menus use dedicated markup for their layout, but share
+   the same acrylic strength preference as context menus. */
+:root[data-menu-acrylic="0"]
+  .main-menu-surface,
+:root[data-menu-acrylic="0"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="0"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="0"]
+  .workspace-tools-overflow-menu {
+  background: var(--menu-surface-background);
+  backdrop-filter: none;
+}
+
+:root[data-menu-acrylic="1"]
+  .main-menu-surface,
+:root[data-menu-acrylic="1"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="1"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="1"]
+  .workspace-tools-overflow-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+:root[data-menu-acrylic="2"]
+  .main-menu-surface,
+:root[data-menu-acrylic="2"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="2"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="2"]
+  .workspace-tools-overflow-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 84%, transparent);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+
+:root[data-menu-acrylic="3"]
+  .main-menu-surface,
+:root[data-menu-acrylic="3"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="3"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="3"]
+  .workspace-tools-overflow-menu {
   background: color-mix(in srgb, var(--menu-surface-background) 74%, transparent);
   backdrop-filter: blur(28px) saturate(135%);
 }
