@@ -17,48 +17,57 @@ export function PluginJobActivityBanner({
   const progressSummary = formatPluginJobProgressSummary(job);
   const errorMessage = job.errorDetail ?? job.errorCode;
   const progressWidth = `${Math.max(0, Math.min(1, job.progress)) * 100}%`;
-  const progressActive = job.status === "running" || job.status === "paused";
+  const statusLabel = t(`dialog.mediaJobs.pluginJobStatus.${job.status}`);
 
   return (
     <div
-      className={`workspace-ai-progress workspace-plugin-job-progress is-${job.status}`}
+      className={`workspace-plugin-job-progress is-${job.status}`}
       role="status"
       aria-live="polite"
     >
-      <div className="workspace-ai-progress-body">
-        <div className="workspace-ai-progress-headline">
-          {job.status === "running" ? (
-            <span aria-hidden="true" className="activity-pulse" />
-          ) : null}
+      <div className="plugin-job-activity-main">
+        <div className="plugin-job-activity-headline">
+          <span aria-hidden="true" className="plugin-job-activity-status-mark" />
           <strong
-            className="workspace-ai-progress-message"
+            className="plugin-job-activity-source"
             title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
           >
-            {job.ownerPluginId} · {job.pluginHandlerId}
+            <span>{job.ownerPluginId}</span>
+            <span aria-hidden="true" className="plugin-job-activity-separator">
+              ·
+            </span>
+            <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
           </strong>
-          <span className="micro-label">{job.status}</span>
+          <span className="plugin-job-activity-status">{statusLabel}</span>
         </div>
-        <div className="workspace-ai-progress-message">
-          {[progressMessage, progressSummary, errorMessage]
-            .filter((value): value is string => Boolean(value))
-            .join(" · ")}
-        </div>
-        {progressActive && (
-          <div
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={Math.round(job.progress * 100)}
-            className="task-progress-track workspace-ai-progress-bar"
-            role="progressbar"
+        <div className="plugin-job-activity-progress-meta">
+          <span
+            className="plugin-job-activity-message"
+            title={progressMessage || statusLabel}
           >
-            <div
-              className="task-progress-fill"
-              style={{ width: progressWidth }}
-            />
+            {progressMessage || statusLabel}
+          </span>
+          <strong>{progressSummary}</strong>
+        </div>
+        <div
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(job.progress * 100)}
+          className="plugin-job-activity-track"
+          role="progressbar"
+        >
+          <div
+            className="plugin-job-activity-fill"
+            style={{ width: progressWidth }}
+          />
+        </div>
+        {errorMessage && (
+          <div className="plugin-job-activity-error" title={errorMessage}>
+            {errorMessage}
           </div>
         )}
       </div>
-      <div className="workspace-ai-progress-actions">
+      <div className="plugin-job-activity-actions">
         <button
           className="secondary-button"
           onClick={onOpenJobs}

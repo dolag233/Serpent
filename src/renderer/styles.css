@@ -2112,6 +2112,225 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: var(--raised);
 }
 
+/* Plugin jobs use a compact status card rather than exposing protocol states
+   such as "running" as raw UI copy. The status chip and progress row keep the
+   plugin identity, current phase and quantitative progress distinct. */
+.workspace-plugin-job-progress {
+  --plugin-job-status-color: var(--accent);
+
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 11px 14px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 22%, var(--divider));
+  border-left: 3px solid var(--plugin-job-status-color);
+  background: color-mix(in srgb, var(--plugin-job-status-color) 5%, var(--raised));
+  color: var(--text);
+}
+
+.workspace-plugin-job-progress.is-queued {
+  --plugin-job-status-color: var(--secondary);
+}
+
+.workspace-plugin-job-progress.is-paused {
+  --plugin-job-status-color: var(--warning);
+}
+
+.workspace-plugin-job-progress.is-succeeded {
+  --plugin-job-status-color: var(--success);
+}
+
+.workspace-plugin-job-progress.is-failed,
+.workspace-plugin-job-progress.is-cancelled {
+  --plugin-job-status-color: var(--danger);
+}
+
+.plugin-job-activity-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plugin-job-activity-headline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.plugin-job-activity-status-mark {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--plugin-job-status-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--plugin-job-status-color) 14%, transparent);
+}
+
+.workspace-plugin-job-progress.is-running .plugin-job-activity-status-mark {
+  animation: plugin-job-status-pulse 1.1s ease-in-out infinite;
+}
+
+.plugin-job-activity-source {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-job-activity-source > span:first-child,
+.plugin-job-activity-handler {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-job-activity-separator {
+  flex: 0 0 auto;
+  margin: 0 5px;
+  color: var(--tertiary);
+  font-weight: 500;
+}
+
+.plugin-job-activity-handler {
+  color: var(--secondary);
+  font-weight: 560;
+}
+
+.plugin-job-activity-status {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 34%, var(--divider));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--plugin-job-status-color) 11%, transparent);
+  color: var(--plugin-job-status-color);
+  font-size: 11px;
+  font-weight: 620;
+  line-height: 1;
+}
+
+.plugin-job-activity-message {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-job-activity-progress-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.plugin-job-activity-progress-meta strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+}
+
+.plugin-job-activity-track {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.plugin-job-activity-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--plugin-job-status-color);
+  transition: width 250ms ease;
+}
+
+.plugin-job-activity-error {
+  overflow: hidden;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-job-activity-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.plugin-job-activity-actions .secondary-button {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 28%, var(--divider));
+  border-radius: 7px;
+  background: var(--pane);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.plugin-job-activity-actions .secondary-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--plugin-job-status-color) 48%, var(--divider));
+  background: var(--hover);
+}
+
+@keyframes plugin-job-status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--plugin-job-status-color) 14%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--plugin-job-status-color) 4%, transparent);
+  }
+}
+
+[data-theme="light"] .workspace-plugin-job-progress {
+  background: color-mix(in srgb, var(--plugin-job-status-color) 4%, var(--raised));
+}
+
+@media (max-width: 720px) {
+  .workspace-plugin-job-progress {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .plugin-job-activity-headline {
+    flex-wrap: wrap;
+  }
+
+  .plugin-job-activity-source {
+    min-width: calc(100% - 28px);
+  }
+
+  .plugin-job-activity-status {
+    margin-left: 16px;
+  }
+}
+
 /* Browse workspace title bar is hidden while viewing (user request). */
 
 .workspace-title,

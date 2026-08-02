@@ -795,6 +795,14 @@ export const en = {
       pluginSection: "Plugin jobs",
       pluginEmpty: "No plugin jobs right now.",
       openPluginJobs: "View plugin jobs",
+      pluginJobStatus: {
+        queued: "Queued",
+        running: "Processing",
+        paused: "Paused",
+        succeeded: "Completed",
+        failed: "Failed",
+        cancelled: "Cancelled"
+      },
       revealLog: "Reveal app log",
       viewLog: "View diagnostics"
     },

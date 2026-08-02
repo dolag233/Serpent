@@ -784,6 +784,14 @@ export const zhCN = {
       pluginSection: "插件任务",
       pluginEmpty: "当前没有插件任务。",
       openPluginJobs: "查看插件任务",
+      pluginJobStatus: {
+        queued: "排队中",
+        running: "处理中",
+        paused: "已暂停",
+        succeeded: "已完成",
+        failed: "处理失败",
+        cancelled: "已取消"
+      },
       revealLog: "查看应用日志",
       viewLog: "查看诊断日志"
     },
