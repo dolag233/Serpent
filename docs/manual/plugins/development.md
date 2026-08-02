@@ -313,8 +313,8 @@ Host 的「后台任务 → 插件任务」会把 `completed/total` 与百分比
 `forLibrary()` 返回领域 API 和 Job 的 enqueue/report/cancel/pause/resume/retry，但不返回 events、hooks、providers、storage、data、
 commands 或 handler 注册；handler 必须在实例级 `serpent.jobs` 注册。library 实例不能借此越过自己的库边界。
 
-命令可通过 `contributes.commands[].mcp.export: true` 或顶层 `mcp.expose: ["command-id"]` 导出。插件激活后 MCP 默认暴露，无需设置页
-开关；只导出有界、可校验的命令，不暴露 eval、秘密或任意 Node 接口。
+命令可通过 `contributes.commands[].mcp.export: true` 或顶层 `mcp.expose: ["command-id"]` 导出。插件激活后会成为 MCP 候选工具，但 MCP 连接仍须请求本地写入配置；插件命令目前按可能产生副作用处理，只导出有界、可校验的命令，不暴露 eval、秘密或任意 Node 接口。
+插件 MCP 调用还必须提供至少一个非空的 `assetIds`、`folderIds` 或 `collectionIds` 数组；空数组会在 JSON Schema 和 Host 运行时两层拒绝。
 
 ## 11. Hook、Provider 与输入
 

@@ -462,6 +462,21 @@ describe('Plugin contribution registry and generated SDK', () => {
     expect(declaration).toContain('get(key: string, options?: { readonly scope?: \'library\' | \'user\' }): Promise<unknown | null>;');
     expect(declaration).toContain('delete(key: string, options?: { readonly scope?: \'library\' | \'user\' }): Promise<boolean>;');
     expect(declaration).toContain('listKeys(options?: { readonly scope?: \'library\' | \'user\' }): Promise<readonly string[]>;');
+    for (const method of [
+      'list(input?: SerpentPluginPageInput): Promise<unknown>;',
+      'getExtractedMetadata(assetId: string): Promise<unknown>;',
+      'readonly folders:',
+      'readonly tags:',
+      'readonly collections:',
+      'readonly smartCollections:',
+      'readonly linkedFolders:',
+      'readonly ui:',
+    ]) {
+      expect(declaration).toContain(method);
+    }
+    expect(declaration).toContain('readonly targetLibraryId: string;');
+    expect(declaration).toContain('readonly folderIds?: readonly string[];');
+    expect(declaration).toContain('readonly collectionIds?: readonly string[];');
     expect(declaration).toContain("Pick<SerpentPluginApi['jobs'], 'enqueue' | 'reportProgress' | 'cancel' | 'pause' | 'resume' | 'retry'>");
     expect(declaration).toContain('reportProgress');
     expect(declaration).not.toContain('zod');

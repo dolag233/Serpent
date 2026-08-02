@@ -36,3 +36,12 @@
 - `node scripts/run-e2e.mjs tests/e2e/plugin-standard-host-activation.test.ts tests/e2e/plugin-trusted-host-activation.test.ts tests/e2e/plugin-job-recovery.test.ts`：3 tests passed（8.7s），覆盖 restricted/trusted storage 和完整 Electron 进程重启后的 job 恢复。
 - 定向 ESLint：本次新增/修改文件未发现新增规则问题；`quickjs-sandbox-prototype.ts` 仍有工作树既有的 `import()` type annotation 与未使用符号问题，未混入本次修复。
 - `git diff --check`：通过。
+
+## Luna 交叉审查收口
+
+- 四条 Luna 轨道分别审查了脚本/Automation、MCP、插件运行时/契约和跨模块回归。
+- 确认并修复 MCP 插件工具 `tools/list` schema 与运行时约束不一致：三个上下文数组现在都声明 `minItems: 1`，并新增 parser/schema 对照测试。
+- 确认并修复生成 SDK 声明落后于 Guest runtime：补齐 assets、library、folders、tags、collections、smartCollections、linkedFolders、files、trash、palettes、ui 方法，以及完整的命令 Invocation Context。
+- 脚本错误被统一压成 `INTERNAL_ERROR`/`HOST_COMMAND_FAILED` 的问题需要先定义稳定错误码映射，已保留为后续设计项，没有用临时错误码掩盖它。
+
+本轮新增验证：定向 MCP/插件契约 ESLint 通过；5 个相关 unit test files、46 tests 通过。

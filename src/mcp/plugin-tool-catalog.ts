@@ -30,6 +30,7 @@ export type PluginMcpToolDefinition = {
     properties: Record<string, {
       type: 'array';
       items: { type: 'string' };
+      minItems: number;
       maxItems: number;
     }>;
     anyOf: Array<{ required: string[] }>;
@@ -72,9 +73,9 @@ const pluginMcpInputSchemaJson: PluginMcpToolDefinition['inputSchema'] = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    assetIds: { type: 'array', items: { type: 'string' }, maxItems: 256 },
-    folderIds: { type: 'array', items: { type: 'string' }, maxItems: 256 },
-    collectionIds: { type: 'array', items: { type: 'string' }, maxItems: 256 },
+    assetIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
+    folderIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
+    collectionIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
   },
   anyOf: [
     { required: ['assetIds'] },
