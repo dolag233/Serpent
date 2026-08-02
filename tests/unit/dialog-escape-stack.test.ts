@@ -19,6 +19,7 @@ const empty: DialogEscapeSnapshot = {
   exportDialogOpen: false,
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
+  librarySettingsOpen: false,
   appLogOpen: false,
   aboutOpen: false,
   openSourceLicensesOpen: false,
@@ -113,6 +114,15 @@ describe("dialog-escape-stack", () => {
         mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-app-settings" });
+  });
+
+  it("closes library settings when that layer is open", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        librarySettingsOpen: true,
+      }),
+    ).toEqual({ kind: "close-library-settings" });
   });
 
   it("closes diagnostics after settings but before background jobs", () => {

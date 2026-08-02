@@ -25,6 +25,7 @@ export type UseDialogEscapeDismissParams = {
   setExportDialogOpen: (open: boolean) => void;
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
+  setLibrarySettingsOpen: (open: boolean) => void;
   setAppLogOpen: (open: boolean) => void;
   setAboutOpen: (open: boolean) => void;
   setOpenSourceLicensesOpen: (open: boolean) => void;
@@ -60,6 +61,7 @@ export function useDialogEscapeDismiss({
   setExportDialogOpen,
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
+  setLibrarySettingsOpen,
   setAppLogOpen,
   setAboutOpen,
   setOpenSourceLicensesOpen,
@@ -128,6 +130,9 @@ export function useDialogEscapeDismiss({
         case "close-app-settings":
           setAppSettingsOpen(false);
           return;
+        case "close-library-settings":
+          setLibrarySettingsOpen(false);
+          return;
         case "close-app-log":
           setAppLogOpen(false);
           return;
@@ -186,6 +191,7 @@ export function useDialogEscapeDismiss({
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
+    setLibrarySettingsOpen,
     setAppLogOpen,
     setAboutOpen,
     setOpenSourceLicensesOpen,
