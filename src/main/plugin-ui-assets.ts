@@ -76,6 +76,60 @@ export function parsePluginUiAssetRequest(input: string): PluginUiAssetRequest |
   };
 }
 
+/**
+ * Relative `<script src="./x.js">` / CSS URLs drop the HTML document query string.
+ * Without `libraryId` + `contributionId`, {@link parsePluginUiAssetRequest} rejects
+ * the subresource and the iframe stays on static HTML (JS never runs).
+ */
+export function parsePluginUiAssetRequestFromNavigation(
+  requestUrl: string,
+  refererUrl: string | null | undefined,
+): PluginUiAssetRequest | undefined {
+  const direct = parsePluginUiAssetRequest(requestUrl);
+  if (direct !== undefined) return direct;
+  if (refererUrl === undefined || refererUrl === null || refererUrl.length === 0) {
+    return undefined;
+  }
+  const referer = parsePluginUiAssetRequest(refererUrl);
+  if (referer === undefined) return undefined;
+  let request: URL;
+  try {
+    request = new URL(requestUrl);
+  } catch {
+    return undefined;
+  }
+  if (request.protocol !== pluginUiProtocol || request.hostname !== referer.pluginId) {
+    return undefined;
+  }
+  request.searchParams.set('libraryId', referer.libraryId);
+  request.searchParams.set('contributionId', referer.contributionId);
+  const merged = parsePluginUiAssetRequest(request.toString());
+  if (merged === undefined || merged.instanceId !== referer.instanceId) return undefined;
+  return merged;
+}
+
+/**
+ * Rewrite relative same-folder asset URLs in plugin HTML so subresources keep
+ * the document's auth query (`libraryId` / `contributionId`). Prefer this over
+ * Referer alone — sandboxed frames may omit Referer.
+ */
+export function rewritePluginUiHtmlAssetUrls(html: string, documentUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(documentUrl);
+  } catch {
+    return html;
+  }
+  const search = url.search;
+  if (search.length <= 1) return html;
+  return html.replace(
+    /\b(src|href)=(["'])(\.\/[^"'?#]+)\2/giu,
+    (_match, attr: string, quote: string, assetPath: string) => (
+      `${attr}=${quote}${assetPath}${search}${quote}`
+    ),
+  );
+}
+
 export function resolvePluginUiAssetPath(
   packageDirectory: string,
   relativePath: string,

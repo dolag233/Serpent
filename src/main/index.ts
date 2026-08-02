@@ -267,7 +267,8 @@ import {
 } from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
 import {
-  parsePluginUiAssetRequest,
+  parsePluginUiAssetRequestFromNavigation,
+  rewritePluginUiHtmlAssetUrls,
   pluginUiMimeType,
 } from "./plugin-ui-assets";
 
@@ -4969,7 +4970,10 @@ async function startApplication(): Promise<void> {
   });
 
   protocol.handle("serpent-plugin", async (request) => {
-    const parsed = parsePluginUiAssetRequest(request.url);
+    const parsed = parsePluginUiAssetRequestFromNavigation(
+      request.url,
+      request.headers.get("referer") ?? request.headers.get("Referer"),
+    );
     if (parsed === undefined) {
       return new Response("Invalid plugin UI URL", { status: 400 });
     }
@@ -4983,7 +4987,14 @@ async function startApplication(): Promise<void> {
       return new Response("Plugin UI asset not found", { status: 404 });
     }
     try {
-      const body = await readFile(resolved.absolutePath);
+      let body: Buffer = await readFile(resolved.absolutePath);
+      const contentType = pluginUiMimeType(parsed.relativePath);
+      if (contentType.startsWith("text/html")) {
+        body = Buffer.from(
+          rewritePluginUiHtmlAssetUrls(body.toString("utf8"), request.url),
+          "utf8",
+        );
+      }
       const pluginOrigin = `serpent-plugin://${parsed.pluginId}`;
       return new Response(body, {
         headers: {
@@ -5001,7 +5012,7 @@ async function startApplication(): Promise<void> {
             "form-action 'none'",
             "frame-src 'none'",
           ].join("; "),
-          "content-type": pluginUiMimeType(parsed.relativePath),
+          "content-type": contentType,
           "x-content-type-options": "nosniff",
         },
       });

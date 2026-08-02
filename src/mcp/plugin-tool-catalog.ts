@@ -49,7 +49,7 @@ export function listPluginMcpTools(
   commands: readonly PluginMcpCommandSource[],
   isEnabled: (command: PluginMcpCommandSource) => boolean = () => true,
 ): PluginMcpToolDefinition[] {
-  return commands
+  const tools = commands
     .filter((command) => command.mcpExported && isEnabled(command))
     .map((command) => ({
       name: pluginMcpToolName(command.pluginId, command.commandId),
@@ -59,6 +59,12 @@ export function listPluginMcpTools(
       inputSchema: pluginMcpInputSchemaJson,
     }))
     .sort((left, right) => left.name.localeCompare(right.name));
+  const seenNames = new Set<string>();
+  for (const tool of tools) {
+    if (seenNames.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`);
+    seenNames.add(tool.name);
+  }
+  return tools;
 }
 
 export function parsePluginMcpToolArguments(

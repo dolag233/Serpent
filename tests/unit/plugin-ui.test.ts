@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   createPluginUiUrl,
   parsePluginUiAssetRequest,
+  parsePluginUiAssetRequestFromNavigation,
   resolvePluginUiAssetPath,
+  rewritePluginUiHtmlAssetUrls,
 } from '../../src/main/plugin-ui-assets';
 import {
   isTrustedPluginUiMessage,
@@ -94,6 +96,13 @@ describe('plugin custom UI contract', () => {
       expectedSource: 'iframe-window',
     })).toBe(true);
     expect(isTrustedPluginUiMessage({
+      origin: 'serpent-plugin://com.example.iframe',
+      source: 'iframe-window',
+      expectedOrigin: 'null',
+      expectedPluginOrigin: 'serpent-plugin://com.example.iframe',
+      expectedSource: 'iframe-window',
+    })).toBe(true);
+    expect(isTrustedPluginUiMessage({
       origin: 'https://serpent.invalid',
       source: 'iframe-window',
       expectedOrigin: 'null',
@@ -148,5 +157,32 @@ describe('plugin custom UI contract', () => {
       .toBe('/plugins/com.example.iframe/1.0.0/entry/index.html');
     expect(resolvePluginUiAssetPath('/plugins/com.example.iframe/1.0.0', '../secret.js'))
       .toBeUndefined();
+  });
+
+  it('recovers query-less subresource URLs via referer and HTML rewrite', () => {
+    const documentUrl = createPluginUiUrl({
+      pluginId: 'com.example.iframe',
+      instanceId: 'instance-a',
+      contributionId: 'com.example.iframe.probe-view',
+      libraryId: 'library-a',
+      entryPath: 'entry/ui/index.html',
+    });
+    const scriptUrl = new URL('./ui.js', documentUrl).href;
+    expect(parsePluginUiAssetRequest(scriptUrl)).toBeUndefined();
+    expect(parsePluginUiAssetRequestFromNavigation(scriptUrl, documentUrl)).toEqual({
+      pluginId: 'com.example.iframe',
+      instanceId: 'instance-a',
+      contributionId: 'com.example.iframe.probe-view',
+      libraryId: 'library-a',
+      relativePath: 'entry/ui/ui.js',
+    });
+    expect(parsePluginUiAssetRequestFromNavigation(scriptUrl, null)).toBeUndefined();
+
+    const rewritten = rewritePluginUiHtmlAssetUrls(
+      '<script src="./ui.js"></script><link href="./app.css" rel="stylesheet">',
+      documentUrl,
+    );
+    expect(rewritten).toContain(`src="./ui.js${new URL(documentUrl).search}"`);
+    expect(rewritten).toContain(`href="./app.css${new URL(documentUrl).search}"`);
   });
 });

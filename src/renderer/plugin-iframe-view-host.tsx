@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   buildPluginUiThemeHostMessage,
@@ -78,10 +78,13 @@ export function PluginIframeViewHost({
   const { resolved } = useTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
+  // Defer src until the message listener is attached so plugin-ui.ready is not dropped.
+  const [frameSrc, setFrameSrc] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     readyRef.current = false;
-  }, [view.id]);
+    setFrameSrc(undefined);
+  }, [view.id, view.url]);
 
   useEffect(() => {
     if (!readyRef.current) return;
@@ -89,6 +92,7 @@ export function PluginIframeViewHost({
   }, [resolved, view]);
 
   useEffect(() => {
+    const pluginOrigin = `serpent-plugin://${view.pluginId}`;
     const onMessage = (event: MessageEvent<unknown>) => {
       const frame = frameRef.current;
       if (frame === null || event.source !== frame.contentWindow) return;
@@ -96,6 +100,7 @@ export function PluginIframeViewHost({
         origin: event.origin,
         source: event.source,
         expectedOrigin: 'null',
+        expectedPluginOrigin: pluginOrigin,
         expectedSource: frame.contentWindow,
       })) return;
       let message;
@@ -105,7 +110,15 @@ export function PluginIframeViewHost({
         return;
       }
       if (message.type === 'plugin-ui.ready') {
-        if (message.contributionId !== view.id || message.instanceId !== view.pluginInstanceId) return;
+        if (message.contributionId !== view.id || message.instanceId !== view.pluginInstanceId) {
+          console.warn('plugin-ui.ready-mismatch', {
+            expectedContributionId: view.id,
+            expectedInstanceId: view.pluginInstanceId,
+            receivedContributionId: message.contributionId,
+            receivedInstanceId: message.instanceId,
+          });
+          return;
+        }
         readyRef.current = true;
         postPluginThemeToIframe(frame, { view, resolvedTheme: resolved });
         return;
@@ -172,7 +185,12 @@ export function PluginIframeViewHost({
       }
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    setFrameSrc(view.url);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      readyRef.current = false;
+      setFrameSrc(undefined);
+    };
   }, [libraryId, pluginApi, resolved, view]);
 
   return (
@@ -181,7 +199,7 @@ export function PluginIframeViewHost({
       key={view.id}
       ref={frameRef}
       sandbox="allow-scripts"
-      src={view.url}
+      src={frameSrc}
       title={title ?? view.title}
     />
   );
