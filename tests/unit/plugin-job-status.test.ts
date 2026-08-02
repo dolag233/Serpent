@@ -31,8 +31,8 @@ describe('summarizePluginJobs', () => {
       job({
         jobId: '44444444-4444-4444-8444-444444444444',
         status: 'failed',
-        errorCode: 'PLUGIN_JOB_TIMEOUT',
-        errorDetail: 'timed out',
+        errorCode: 'PLUGIN_JOB_HANDLER_FAILED',
+        errorDetail: 'handler failed',
       }),
       job({ jobId: '55555555-5555-4555-8555-555555555555', status: 'succeeded' }),
       job({ jobId: '66666666-6666-4666-8666-666666666666', status: 'cancelled' }),

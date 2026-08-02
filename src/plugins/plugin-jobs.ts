@@ -3,8 +3,6 @@ import { z } from 'zod';
 /** Fixed jobs.kind for all plugin-owned background work. */
 export const PLUGIN_BACKGROUND_JOB_KIND = 'plugin.background' as const;
 
-export const PLUGIN_JOB_DEFAULT_TIMEOUT_MS = 120_000;
-
 export const pluginJobRecoveryStrategySchema = z.enum(['idempotent', 'checkpoint']);
 export type PluginJobRecoveryStrategy = z.infer<typeof pluginJobRecoveryStrategySchema>;
 

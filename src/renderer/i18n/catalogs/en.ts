@@ -795,6 +795,8 @@ export const en = {
       pluginSection: "Plugin jobs",
       pluginEmpty: "No plugin jobs right now.",
       openPluginJobs: "View plugin jobs",
+      runInBackground: "Run in background",
+      closePluginJobActivity: "Close plugin job activity",
       pluginJobStatus: {
         queued: "Queued",
         running: "Processing",

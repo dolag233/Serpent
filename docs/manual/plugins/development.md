@@ -224,7 +224,7 @@ exports.dispose = async function dispose(reason) {
 ```
 
 `context` 包含 `pluginId`、`pluginInstanceId`、`installationScope`、`instanceScope`、`serpent`、`subscriptions` 和 `signal`。
-`subscriptions.add()` 接受函数或 `{ dispose() }`；Host 在 dispose 后逆序清理。`signal` 在停用、关库、崩溃隔离或 Host 超时时 abort。
+`subscriptions.add()` 接受函数或 `{ dispose() }`；Host 在 dispose 后逆序清理。`signal` 在停用、关库或崩溃隔离时 abort；Host 不会因为 Job handler 运行时间长而自动 abort。
 Host 会无条件撤销该实例的 Contribution、Hook、Provider、Capture 和未移交资源；deadline 后可终止进程。
 
 global 实例要显式选择目标库；library 实例只能使用绑定库。`instanceScope` 只说明实例范围，不承诺携带库 ID；目标库应使用当前实例领域面或 `forLibrary(libraryId)`。不要把安装位置当作当前库，也不要自行实现 `openLibrary` 生命周期。

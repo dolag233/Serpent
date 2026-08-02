@@ -1428,9 +1428,14 @@ function AppInner() {
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
+  const [hiddenPluginJobActivityId, setHiddenPluginJobActivityId] = useState<string | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
   const pluginJobsActive = hasActivePluginJobs(pluginJobs);
-  const pluginJobActivity = selectPluginJobActivity(pluginJobs);
+  const pluginJobActivityCandidate = selectPluginJobActivity(pluginJobs);
+  const pluginJobActivity =
+    pluginJobActivityCandidate?.jobId === hiddenPluginJobActivityId
+      ? null
+      : pluginJobActivityCandidate;
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
     const mediaActive =
@@ -1439,6 +1444,9 @@ function AppInner() {
     return mediaActive || aiActive || pluginJobsActive;
   }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
   const openMediaJobs = useCallback(() => setMediaJobsOpen(true), []);
+  const hidePluginJobActivity = useCallback((jobId: string) => {
+    setHiddenPluginJobActivityId(jobId);
+  }, []);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
   >(async () => undefined);
@@ -2913,6 +2921,7 @@ function AppInner() {
           await closeAssetPreview(false);
           setLibrary(event.library);
           setPluginJobs(null);
+          setHiddenPluginJobActivityId(null);
           setAssetScope("all");
           setActiveTagId(null);
           setActiveCollectionId(null);
@@ -3249,6 +3258,7 @@ function AppInner() {
       opened = true;
       setLibrary(result.value);
       setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
       setAssetScope("all");
       setActiveTagId(null);
       setActiveCollectionId(null);
@@ -5357,6 +5367,7 @@ function AppInner() {
   function applyClosedLibraryUi() {
     setLibrary(null);
     setPluginJobs(null);
+    setHiddenPluginJobActivityId(null);
     setFolders([]);
     setLinkedFolders([]);
     setAssets([]);
@@ -6215,6 +6226,7 @@ function AppInner() {
       await closeAssetPreview(false);
       setLibrary(summary);
       setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
       setShowTrash(false);
       setShowTagManagement(false);
     setActivePluginSidebarViewId(null);
@@ -8230,7 +8242,8 @@ function AppInner() {
         {pluginJobActivity !== null && (
           <PluginJobActivityBanner
             job={pluginJobActivity}
-            onOpenJobs={openMediaJobs}
+            onDismiss={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+            onRunInBackground={() => hidePluginJobActivity(pluginJobActivity.jobId)}
           />
         )}
         <div

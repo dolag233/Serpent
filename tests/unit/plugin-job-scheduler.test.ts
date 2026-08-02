@@ -34,7 +34,6 @@ describe('PluginJobScheduler', () => {
       .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.completed', job: job({ status: 'succeeded' }) })
       .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: null });
     const invokeJob = vi.fn().mockResolvedValue({
-      timedOut: false,
       complete: {
         jobId: '00000000-0000-4000-8000-000000000001',
         status: 'succeeded',

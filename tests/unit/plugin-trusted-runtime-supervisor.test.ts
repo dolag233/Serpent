@@ -156,7 +156,7 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       ownerPackageHash: 'f'.repeat(64), pluginHandlerId: 'tick', payload: {}, recoveryStrategy: 'idempotent',
       createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
     } as PluginJobRecord;
-    const completion = supervisor.invokeJob({ instanceId, job, timeoutMs: 1_000 });
+    const completion = supervisor.invokeJob({ instanceId, job });
     child.emit('message', {
       type: 'plugin-trusted.job-progress',
       instanceId,

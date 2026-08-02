@@ -7,10 +7,12 @@ import { useT } from "./i18n";
 
 export function PluginJobActivityBanner({
   job,
-  onOpenJobs,
+  onRunInBackground,
+  onDismiss,
 }: {
   job: PluginJobRecord;
-  onOpenJobs: () => void;
+  onRunInBackground: () => void;
+  onDismiss: () => void;
 }) {
   const t = useT();
   const progressMessage = formatPluginJobProgressMessage(job);
@@ -43,10 +45,18 @@ export function PluginJobActivityBanner({
         <div className="plugin-job-activity-actions">
           <button
             className="secondary-button"
-            onClick={onOpenJobs}
+            onClick={onRunInBackground}
             type="button"
           >
-            {t("dialog.mediaJobs.openPluginJobs")}
+            {t("dialog.mediaJobs.runInBackground")}
+          </button>
+          <button
+            aria-label={t("dialog.mediaJobs.closePluginJobActivity")}
+            className="plugin-job-activity-dismiss"
+            onClick={onDismiss}
+            type="button"
+          >
+            <span aria-hidden="true">×</span>
           </button>
         </div>
       </div>

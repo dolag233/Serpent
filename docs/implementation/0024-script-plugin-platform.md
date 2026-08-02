@@ -126,7 +126,7 @@ interface PluginSetupContext {
 }
 ```
 
-Contribution 描述仍由 `serpent-plugin.json` 声明并在 `setup` 前注册；当前版本不提供运行时动态 Contribution Registrar，避免把菜单拓扑和实例撤销拆成两套来源。`subscriptions` 用于托管事件、Provider、Hook、Job handler 等注册返回的 disposable；`signal` 在实例停用、关库、崩溃隔离或 Host 超时时触发。
+Contribution 描述仍由 `serpent-plugin.json` 声明并在 `setup` 前注册；当前版本不提供运行时动态 Contribution Registrar，避免把菜单拓扑和实例撤销拆成两套来源。`subscriptions` 用于托管事件、Provider、Hook、Job handler 等注册返回的 disposable；`signal` 在实例停用、关库或崩溃隔离时触发。Host 不对 Job handler 施加统一墙钟超时。
 
 调用时机：
 

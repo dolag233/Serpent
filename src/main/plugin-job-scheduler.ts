@@ -1,13 +1,8 @@
-import {
-  PLUGIN_JOB_DEFAULT_TIMEOUT_MS,
-  type PluginJobComplete,
-  type PluginJobRecord,
-} from '../plugins/plugin-jobs';
+import { type PluginJobComplete, type PluginJobRecord } from '../plugins/plugin-jobs';
 import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
 import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 
 export interface PluginJobSchedulerLogger {
-  info(scope: string, message: string, context?: Record<string, unknown>): void;
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
 }
 
@@ -67,7 +62,6 @@ export class PluginJobScheduler {
     trustedSupervisor?: PluginTrustedRuntimeSupervisor;
     requestWorker: PluginJobWorkerRequester;
     resolveInstances: (libraryId: string) => readonly PluginJobSchedulerInstanceBinding[];
-    jobTimeoutMs?: number;
     logger?: PluginJobSchedulerLogger;
   }) {}
 
@@ -115,25 +109,15 @@ export class PluginJobScheduler {
     instance: PluginJobSchedulerInstanceBinding,
     job: PluginJobRecord,
   ): Promise<void> {
-    const timeoutMs = this.options.jobTimeoutMs ?? PLUGIN_JOB_DEFAULT_TIMEOUT_MS;
     const invoked = instance.mode === 'restricted'
       ? await this.options.supervisor.invokeJob({
         instanceId: instance.instanceId,
         job,
-        timeoutMs,
       })
       : await this.options.trustedSupervisor!.invokeJob({
         instanceId: instance.instanceId,
         job,
-        timeoutMs,
       });
-    if (invoked.timedOut) {
-      this.options.logger?.info('plugin.job.timeout', 'Plugin job handler timed out.', {
-        libraryId,
-        pluginId: instance.pluginId,
-        jobId: job.jobId,
-      });
-    }
     await this.#completeJob(libraryId, instance, invoked.complete);
   }
 

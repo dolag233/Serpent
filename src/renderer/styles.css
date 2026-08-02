@@ -2260,6 +2260,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  gap: 6px;
 }
 
 .plugin-job-activity-actions .secondary-button {
@@ -2281,6 +2282,30 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .plugin-job-activity-actions .secondary-button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--plugin-job-status-color) 48%, var(--divider));
   background: var(--hover);
+}
+
+.plugin-job-activity-dismiss {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.plugin-job-activity-dismiss:hover,
+.plugin-job-activity-dismiss:focus-visible {
+  border-color: var(--divider);
+  background: var(--hover);
+  color: var(--text);
 }
 
 @keyframes plugin-job-status-pulse {

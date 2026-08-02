@@ -349,7 +349,7 @@ describe('PluginRuntimeSupervisor', () => {
       ownerPackageHash: 'a'.repeat(64), pluginHandlerId: 'upscale', payload: {}, recoveryStrategy: 'idempotent',
       createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
     } as PluginJobRecord;
-    const completion = supervisor.invokeJob({ instanceId, job, timeoutMs: 1_000 });
+    const completion = supervisor.invokeJob({ instanceId, job });
     child.emit('message', {
       type: 'plugin-runtime.job-progress', instanceId, jobId: job.jobId,
       progress: { completed: 1, total: 2, phase: 'read', message: 'half' },

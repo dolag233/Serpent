@@ -133,7 +133,6 @@ export class PluginTrustedRuntimeSupervisor {
   }>();
   #pendingJobCompletions = new Map<string, {
     resolve(complete: PluginJobComplete): void;
-    timer: ReturnType<typeof setTimeout>;
   }>();
   #jobOwners = new Map<string, string>();
   #pendingProviderCompletions = new Map<string, {
@@ -366,10 +365,8 @@ export class PluginTrustedRuntimeSupervisor {
   invokeJob(input: {
     instanceId: string;
     job: PluginJobRecord;
-    timeoutMs: number;
   }): Promise<{
     complete: PluginJobComplete;
-    timedOut: boolean;
   }> {
     const tracked = this.#instances.get(input.instanceId);
     if (tracked === undefined || !tracked.ready) {
@@ -380,27 +377,11 @@ export class PluginTrustedRuntimeSupervisor {
           errorCode: 'PLUGIN_JOB_INSTANCE_UNAVAILABLE',
           errorDetail: 'The trusted plugin instance is not active.',
         },
-        timedOut: false,
       });
     }
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.#pendingJobCompletions.delete(input.job.jobId);
-        this.#jobOwners.delete(input.job.jobId);
-        this.signalJob(input.instanceId, input.job.jobId, 'cancel', 'handler-timeout');
-        resolve({
-          complete: {
-            jobId: input.job.jobId,
-            status: 'failed',
-            errorCode: 'PLUGIN_JOB_TIMEOUT',
-            errorDetail: 'The plugin job handler timed out.',
-          },
-          timedOut: true,
-        });
-      }, input.timeoutMs);
       this.#pendingJobCompletions.set(input.job.jobId, {
-        resolve: (complete) => resolve({ complete, timedOut: false }),
-        timer,
+        resolve: (complete) => resolve({ complete }),
       });
       this.#jobOwners.set(input.job.jobId, input.instanceId);
       try {
@@ -410,7 +391,6 @@ export class PluginTrustedRuntimeSupervisor {
           job: input.job,
         });
       } catch {
-        clearTimeout(timer);
         this.#pendingJobCompletions.delete(input.job.jobId);
         this.#jobOwners.delete(input.job.jobId);
         resolve({
@@ -420,7 +400,6 @@ export class PluginTrustedRuntimeSupervisor {
             errorCode: 'PLUGIN_JOB_INSTANCE_UNAVAILABLE',
             errorDetail: 'The trusted plugin instance is not active.',
           },
-          timedOut: false,
         });
       }
     });
@@ -915,7 +894,6 @@ export class PluginTrustedRuntimeSupervisor {
         this.#handleProtocolFault(tracked.instanceId, `Unknown job correlation ${message.jobId}.`);
         return;
       }
-      clearTimeout(pending.timer);
       this.#pendingJobCompletions.delete(message.jobId);
       this.#jobOwners.delete(message.jobId);
       pending.resolve({
