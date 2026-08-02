@@ -22,6 +22,7 @@ type PluginSettingsPageProps = {
   readonly api: SerpentPluginManagerApi | undefined;
   readonly libraryId: string | undefined;
   readonly onOpenPluginSettings?: (pluginId: string) => void;
+  readonly refreshKey: string | null;
 };
 
 type PluginSnapshot = Extract<
@@ -108,6 +109,7 @@ export function PluginSettingsPage({
   api,
   libraryId,
   onOpenPluginSettings,
+  refreshKey,
 }: PluginSettingsPageProps): ReactNode {
   const t = useT();
   const [snapshot, setSnapshot] = useState<PluginSnapshot | undefined>();
@@ -150,7 +152,7 @@ export function PluginSettingsPage({
   useEffect(() => {
     const timer = globalThis.setTimeout(() => void load(), 0);
     return () => globalThis.clearTimeout(timer);
-  }, [load]);
+  }, [load, refreshKey]);
 
   const execute = useCallback(async (request: PluginManagerRequest): Promise<boolean> => {
     if (api === undefined) {

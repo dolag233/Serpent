@@ -37,6 +37,7 @@ export interface AppSettingsDialogProps {
   onToggleShowAiBadges: () => void;
   onOpenAppLog?: () => void;
   pluginApi?: SerpentPluginManagerApi;
+  pluginContributionRefreshKey?: string | null;
   libraryId?: string;
 }
 
@@ -58,15 +59,17 @@ export function AppSettingsDialog({
   onToggleShowAiBadges,
   onOpenAppLog,
   pluginApi,
+  pluginContributionRefreshKey,
   libraryId,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const [pluginSettingsPluginId, setPluginSettingsPluginId] = useState<string | null>(null);
   const [pluginSettingsRefreshKey, setPluginSettingsRefreshKey] = useState(0);
+  const pluginSettingsRefreshToken = `${pluginContributionRefreshKey ?? ''}:${pluginSettingsRefreshKey}`;
   const pluginSettingsEntries = usePluginSettingsNavEntries(
     pluginApi,
     libraryId,
-    open ? String(pluginSettingsRefreshKey) : null,
+    open ? pluginSettingsRefreshToken : null,
   );
   const activePluginEntry = useMemo(
     () => pluginSettingsEntries.find((entry) => entry.pluginId === pluginSettingsPluginId),
@@ -149,7 +152,7 @@ export function AppSettingsDialog({
                 pluginApi={pluginApi}
                 pluginId={pluginSettingsPluginId}
                 pluginName={activePluginEntry?.name ?? pluginSettingsPluginId}
-                refreshKey={String(pluginSettingsRefreshKey)}
+                refreshKey={pluginSettingsRefreshToken}
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "general" ? (
@@ -175,6 +178,7 @@ export function AppSettingsDialog({
                 api={pluginApi}
                 libraryId={libraryId}
                 onOpenPluginSettings={openPluginSettings}
+                refreshKey={pluginSettingsRefreshToken}
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "safety" ? <SafetySettingsPage /> : null}

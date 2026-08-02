@@ -194,6 +194,10 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
     }).locator('.plugin-settings-package').filter({
       hasText: 'Unrestricted Settings Probe',
     });
+    await dialog.locator('.app-settings-nav-plugin-settings-toggle').click();
+    await expect(dialog.locator('.app-settings-nav-plugin-settings-item').filter({
+      hasText: 'Unrestricted Settings Probe',
+    })).toBeVisible();
     const enableToggle = card.getByRole('checkbox', { name: '启用插件' });
     await expect(enableToggle).not.toBeChecked();
     await card.locator('.plugin-settings-enable-toggle').click();

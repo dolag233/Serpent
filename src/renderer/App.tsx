@@ -9362,6 +9362,7 @@ function AppInner() {
         }}
         onOpenAppLog={openAppLog}
         pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
         libraryId={library?.libraryId}
         open={appSettingsOpen}
       />
