@@ -1,160 +1,70 @@
-# 自动化脚本使用说明（开发态）
+# Desktop Console 脚本开发指南
 
-> 入口：打开资源库后，在工作区右上角的“更多工具”中选择“自动化脚本”。
->
-> 这是交互式 JavaScript / TypeScript Console，不需要先创建脚本文件。可以把已验证的 Console 代码保存为 `.serpent.js` 或 `.serpent.ts`，也可以重新打开它。脚本按 **headless 可运行** 理解：可以没有已打开的资源库（例如先 `library.create` 再建文件夹并导入）。脚本只通过注入的 `serpent` 领域 Action 调用 Gateway；没有 Node、任意文件系统、原始网络、环境变量、SQL 或任意 IPC 权限。MCP 暴露的领域 Action 与 Console 相同，差别只在调用者（人 vs Agent）。需要控制已打开 Desktop 的窗口或网格选中状态时，使用附着 MCP；这不是脚本 API。
+本文面向在 Serpent Desktop 的“自动化脚本”Console 中编写实际脚本的开发者。脚本是一次性、受控的 JavaScript/TypeScript 批处理；它通过注入的 `serpent` 领域 API 调用 Automation Command Gateway，不是 Node 程序，也不是通用命令行。
 
-## 运行与确认
+API 版本：`AUTOMATION_API_VERSION = 1`。本文以当前 Console 实际注入的 `src/scripting/serpent-guest-api.ts`、Registry 和 E2E 行为为准。逐项签名见 [`script-api-reference.md`](script-api-reference.md)；编辑器类型提示见 [`docs/skills/serpent-automation/automation-api.d.ts`](skills/serpent-automation/automation-api.d.ts)。类型声明由 Registry 生成/校验，但个别 Registry 命令尚未投影到 Console，见“实现差异”。
 
-- 未保存的 Console 代码每次点击“运行”都会先确认它可读取资产/标签/合集、修改评分、创建标签或空文件夹、复制路径、重命名或移入回收站。保存脚本首次运行也会确认；之后仅当脚本文本、目标资源库或所需能力改变时才会再次确认。
-- 评分、标签整理和空文件夹创建在本次运行授权后执行。
-- 每一条真实文件操作会再显示一次**计划确认**。计划只显示数量、冲突/不可执行数量和能否撤销，不泄露文件绝对路径；确认后如果资源库发生变化，Worker 会拒绝过期计划，而不是继续操作旧目标。
-- “移入回收站”可从 Serpent 回收站恢复；自动化不会永久删除任何文件。
-- 脚本运行、拒绝和失败会记录到应用日志；脚本不会得到绝对路径。复制路径是唯一例外：路径由 Main 直接写入系统剪贴板，脚本只收到复制数量。
-- “保存脚本”和“打开脚本”只显示文件名，不会把选择的绝对路径传给 Console。保存或打开时，Main 会签发一个仅对当前窗口和当前文本有效的临时句柄；编辑文本后该句柄立即失效，不能借用已保存脚本的持久授权。
+## 先跑起来
 
-脚本每次最多读取 200 项。下面示例都用分页，适用于较大的资源库。
+打开资源库后，从“更多工具”→“自动化脚本”打开 Console。欢迎页也能打开未绑定 Console：这时脚本只能先调用 `serpent.library.create()`；创建成功后，Serpent 会绑定新资源库，脚本的后续命令才能访问它。
 
-## 可用 API
+Console 运行的是脚本正文，最简单的入口是顶层 `return`：
 
 ```ts
-serpent.library.inspect()
-// -> { libraryId, displayName }（不含资源库路径）
-
-serpent.library.create({ displayName, selectedParentPath })
-// -> { libraryId, displayName }；仅未绑定 headless 执行可调用
-
-serpent.files.import({
-  sourceKind: 'files' | 'folder',
-  sourcePaths,
-  targetFolderId?,
-  imageSequenceFps?,
-  expandImageSequences?, // 仅控制导入时是否按序列展开源文件；默认 false
-})
-// -> { status: 'conflicts', plan } 或 { status: 'completed', completion }
-// completion.fileCount / assetCount 分别表示导入文件和逻辑资产
-
-serpent.folders.list({ limit?, offset? })
-// -> { items: [{ id, parentId, name }], total, offset, limit, hasMore }
-serpent.folders.create(name, parentFolderId?)
-// -> { id, parentId, name }
-// 注意：当前没有「把已有资产移动到文件夹」的脚本/MCP Action；创建文件夹 ≠ 完成分类
-
-serpent.linkedFolders.list({ limit?, offset? })
-// -> { items: [{ id, name, status, assetCount }], ... }（不含绝对路径）
-
-serpent.tags.list({ limit?, offset? })
-serpent.tags.create(name)
-serpent.tags.assign(assetIds, tagIds)
-serpent.tags.remove(assetIds, tagIds)
-
-serpent.collections.list({ limit?, offset? })
-serpent.collections.getMemberships(assetIds, { limit?, offset? })
-serpent.collections.create(name, parentId?)
-serpent.collections.addAssets(collectionId, assetIds)
-serpent.collections.removeAssets(collectionId, assetIds)
-
-serpent.smartCollections.list({ limit?, offset? })
-
-serpent.jobs.media.list({ limit?, offset? })
-serpent.jobs.ai.status({ jobIds?, limit?, offset? })
-serpent.jobs.ai.enqueue({ assetIds?, folderId?, resumePaused? })
-// AI 只负责理解/建议（描述、标签等）；不直接移动文件夹或静默改磁盘位置
-
-serpent.assets.search({ query, limit?, offset? })
-// Console / 脚本：query 为工具栏同款字符串或 null，例如 'tag:抽象'、'name:Ser | tag:Ser'
-// MCP：可同样传字符串；也可直接传结构化 SearchQuery（field 用 filename，不是 name）
-// 结构化示例：{ query: { clauses: [{ field: 'filename', values: ['sunny'], exclude: false }] } }
-// name: 是 UI 别名，会归一到 filename；子串匹配可能让 rain 命中 rainbow
-serpent.assets.list({ folderId?, recursive?, limit?, offset? })
-// -> { items: [{ id, name, currentRevisionId, rating, favorite, locationKind, folderId }], ... }
-
-serpent.assets.getMetadata(assetId)
-// -> { tags, rating, favorite, automaticPalette, entityVersion, ... }
-serpent.assets.getAiContent(assetId)
-// -> { assetId, description, tags, rating, modelVersion }
-// 读取当前 AI 层结果；不会把 AI 建议混入人工 metadata，也不会修改资源库
-serpent.assets.getExtractedMetadata(assetId)
-const metadata = await serpent.assets.getMetadata(assetId)
-serpent.assets.setMetadata({
-  assetId,
-  expectedVersion: metadata.entityVersion,
-  description?, rating?, favorite?, sourcePageUrl?, author?
-})
-
-serpent.assets.setRating(assetIds, 0 | 1 | 2 | 3 | 4 | 5)
-serpent.assets.copyFilePaths(assetIds)
-serpent.assets.moveToTrash(assetIds)
-// -> { trashedCount, operationId }；operationId 是 Main/Worker 内部恢复引用
-serpent.assets.moveToFolder(assetIds, targetFolderId, { conflictStrategy? })
-// -> { movedCount, skippedCount, operationId }；需本机计划确认；保留标签/合集/评分/元数据
-serpent.assets.renameFile(assetId, newBaseName)
-serpent.assets.renameFiles([{ assetId, newBaseName }, ...])
-
-serpent.trash.list({ limit?, offset? })
-serpent.trash.restoreIfOriginalVacant(assetIds)
-
-serpent.palettes.mostFrequent({ days?: 2, limit?: 12 })
+const page = await serpent.assets.search({ query: 'tag:抽象', limit: 50 });
+return { count: page.items.length, total: page.total };
 ```
 
-`rating` 是用户手动评分；AI 分析评分不会覆盖它。`search({ query: null })` 搜索当前资源库所有非回收站资产。UI 搜索字段别名：`name`→`filename`，`tag`→`tags`。
+脚本执行一次就是一个 Automation Execution。每次运行都是新的沙箱：上一次运行定义的函数、变量和 Promise 不会保留。需要辅助函数时，把函数和调用放在同一次运行中。
 
-`currentRevisionId` 是文件内容修订的稳定 ID：导入新文件、替换托管文件或接受链接文件的外部内容变化时切换为新的 ID；移动、重命名、回收站、恢复、评分、喜欢、标签和其他元数据修改不会改变它。`entityVersion` 只属于资产元数据行的乐观并发控制，供 `setMetadata({ expectedVersion })` 防止陈旧写入；它不是文件版本，也不应在脚本结果或 UI 中当作内容版本展示。
+支持 `.serpent.js` 和 `.serpent.ts`。TypeScript 在受控运行时内转译为 ES2022；这是脚本正文，不是 ES module。不要写 `import`、`export`、动态 `import()`、`eval`、`Function` 或 `globalThis`。保存脚本只是保存源文本，不会把它变成插件，也不会获得额外权限。
 
-## 资源库变更推送（MCP）
+## 可用全局与库绑定
 
-MCP 客户端可以继续轮询 `serpent_library_change_sequence` 获取当前序号，也可以监听标准 MCP `notifications/message`。资源库发生变更且该 MCP 执行已绑定该资源库时，通知的 `data` 为：
+脚本只应依赖以下环境：
 
-```json
-{
-  "type": "library.changed",
-  "libraryId": "library-id",
-  "changeSequence": 42
-}
+- `serpent`：唯一的 Serpent 领域对象。其命名空间和方法见 API 参考。
+- 标准 ES2022 语言能力：变量、条件、循环、函数、对象、数组、`Promise`、JSON、日期和数学等；具体可用性仍受隔离运行时限制。
+- `console.log(value)`、`console.info(value)`、`console.warn(value)`、`console.error(value)`：写入本次运行的脚本输出，输出受总量限制。
+
+没有 `require`、Node 内置模块、任意文件系统、网络、Shell、SQLite、环境变量、原始 IPC 或任意 UI/DOM。脚本不能读取脚本文件自身，也不能通过 `serpent` 取得资源库或链接文件夹的绝对路径。`assets.copyFilePaths()` 是受控例外：由 Main 把选定路径写入系统剪贴板，脚本只收到数量。
+
+`serpent` 的调用会经过 Gateway 的 Registry、能力检查、输入/结果 Schema、执行日志和资源库范围检查。脚本不能传入 `executionId`、能力、授权、资源库路径或伪造计划证明；这些由宿主绑定。
+
+## JS 与 TS 的写法
+
+```js
+const page = await serpent.assets.search({ query: 'name:rain', limit: 20 });
+return page.items.map((asset) => asset.id);
 ```
 
-未绑定的 MCP 执行不会收到资源库变更推送。通知不包含资源库路径或其他文件系统路径。
-
-## 已打开 Desktop 的附着 MCP
-
-`npm run mcp` 默认连接当前用户已经打开的 Serpent Desktop；如果没有运行实例，会先启动一个可见的 Desktop，再请求本机附着确认。连接使用当前 Desktop 的 Main/Library Worker 和当前激活资源库，不会另开一个与界面隔离的 Worker。显式使用 `npm run mcp -- --headless` 保留原来的无界面 MCP 行为，适用于 CI、指定 `--library` 和 `--unbound` 流程。
-
-多步 Agent 工作流应**只附着一次**，后续工具调用复用同一会话，不要每个脚本都重新 `run-mcp` / 重新确认：
-
-```bash
-node scripts/mcp-session.mjs --write-access start
-node scripts/mcp-session.mjs call serpent_desktop_get_state '{}'
-node scripts/mcp-session.mjs call serpent_asset_search '{"query":null,"limit":20}'
-node scripts/mcp-session.mjs status
-node scripts/mcp-session.mjs stop
+```ts
+const page = await serpent.assets.search({ query: 'name:rain', limit: 20 });
+const ids: string[] = page.items.map((asset) => asset.id);
+return { ids, hasMore: page.hasMore };
 ```
 
-会话套接字默认在当前 userData 下的 `agent-mcp-session.sock`。换库或 Desktop 退出后需重新 `start`。
+不要从脚本 `import` 类型。把 `automation-api.d.ts` 加到编辑器的类型根目录，或在脚本编辑器外用它做补全；运行时仍只接受注入的 `serpent`。
 
-附着确认通过后，Desktop 专用工具包括：
+## 推荐工作流：读、核对、最小写入
 
-```text
-serpent_desktop_focus()
-serpent_desktop_select_assets({ assetIds, mode: "replace" | "add" | "remove" })
-serpent_desktop_get_state()
-serpent_desktop_open_folder({ folderId })
-serpent_desktop_set_discovery({ includeSubfolders?, search?, colorFilter?, sortField?, sortOrder?, favoriteFilter?, formatFilter?, ratingFilter?, … })
-serpent_desktop_reveal_asset({ assetId, position: "nearest" | "center" })
-serpent_desktop_open_viewer({ assetId })
-serpent_desktop_close_viewer()
-serpent_desktop_navigate_viewer({ direction: "next" | "previous" })
+1. 先用 `search`/`list` 查询并分页，确认目标 ID 和数量。
+2. 读取需要写入的当前状态；元数据写入保存 `entityVersion`，文件内容写入保存 `currentRevisionId`。
+3. 用最小批量执行写入，检查 `updatedCount`、`movedCount`、`skippedCount` 或逐项 `skipped`。
+4. 文件类操作完成后保存返回的 Undo 信息，并在 Console 中使用“撤销自动化操作”复核；脚本不能自行重放文件操作。
+5. 对关键结果重新查询，或读取 `library.changeSequence()` 验证资源库已发生预期变化。
+
+```ts
+const page = await serpent.assets.search({ query: 'name:reference', limit: 200, offset: 0 });
+const result = page.items.length === 0
+  ? { updatedCount: 0, skipped: [] }
+  : await serpent.assets.setRating(page.items.map((asset) => asset.id), 4);
+return { matched: page.total, ...result };
 ```
 
-`serpent_desktop_focus` 只恢复、显示并聚焦 Serpent 主窗口。`serpent_desktop_select_assets` 只改变当前 Renderer 的资产选中状态，不写入数据库、不递增 `entity_version`/内容 `revision`、不创建文件计划或 Undo Group；网格中当前已加载的对应卡片会使用正常的选中高亮。浏览/查看工具只驱动当前已附着 Desktop 的语义状态（文件夹范围、Discovery 过滤与排序、reveal、Viewer），不接受 DOM、像素滚动、Shell、SQL、网络或任意文件系统参数；结果不含绝对路径。`--headless` 不暴露上述 Desktop-only 工具。附着会话随 Desktop 退出而结束，拒绝确认不会产生库或 UI 副作用。
+## 分页、大结果和输出
 
-## Undo Group
-
-可撤销的文件操作返回 `undoGroupId`，同一用户意图中的连续变更共享一个组。Desktop Console
-可以从执行完成状态发起撤销；MCP 和脚本应保存该 ID，并把撤销结果中的
-`undoneCount`、`skippedCount` 视为最终结果。部分成功或组内存在不可逆成员时，不得报告为“全部已撤销”。
-重复使用已经消费的组会被拒绝。Undo Group 不提供永久删除能力，也不绕过本机计划确认。
-
-## 常用辅助函数
+列表/搜索接口返回统一页面：`{ items, total, offset, limit, hasMore }`。默认页大小是 50，单次最大 200；`offset` 是零基偏移。不要假设一次调用能读完整资源库，也不要把 `total` 当作当前页长度。
 
 ```ts
 async function allSearch(query: string | null) {
@@ -166,170 +76,64 @@ async function allSearch(query: string | null) {
     offset += page.items.length;
   }
 }
-
-async function allFolderAssets(folderId: string) {
-  const items = [];
-  for (let offset = 0; ; ) {
-    const page = await serpent.assets.list({ folderId, recursive: true, limit: 200, offset });
-    items.push(...page.items);
-    if (!page.hasMore || page.items.length === 0) return items;
-    offset += page.items.length;
-  }
-}
 ```
 
-## 六个示例
+Console 的脚本源最多 64 KiB；脚本输出逐行收集，单行最多 16 KiB，总输出默认约 1 MiB，最终返回值也计入输出预算。输出超限会以 `OUTPUT_LIMIT` 失败。不要 `console.log` 整个资源库或把大文件内容直接返回；`asset.readContent()` 还会受 `maxBytes` 和内容预算限制。
 
-引用 `allSearch()` 或 `allFolderAssets()` 的示例需要把上方对应辅助函数与示例**一起**放进同一次运行；每次 Console 运行都会使用新的沙箱，不会保留上一次定义的函数。
+## 搜索语法
 
-### 1. 将 tag 含“抽象”的资产移入回收站
+`serpent.assets.search({ query })` 使用与工具栏相同的文本搜索语法；`query` 可为字符串或 `null`。`null` 表示当前资源库的非回收站资产。支持空格 AND、`|` OR、`-` 排除、引号短语和字段限定；UI 的 `name:` 会归一为 Registry 的 `filename` 字段。搜索是包含匹配，例如 `rain` 可能命中 `rainbow`，要更严格请使用更长 token 或多字段组合。
 
-```ts
-const assets = await allSearch('tag:抽象');
-const result = await serpent.assets.moveToTrash(assets.map((asset) => asset.id));
-console.log(result);
-return { matched: assets.length, ...result };
-```
+当前 Console 还接受 Registry 的结构化搜索对象，由宿主归一化；若没有明确需要，优先用字符串查询。搜索仍只返回分页资产摘要和可选摘要，不返回磁盘路径。
 
-这是移入 Serpent 回收站，不是永久删除。运行时会显示一次计划确认。
+## 写操作、授权和计划确认
 
-### 2. 复制所有手动评分至少 4 星资产的文件路径
+脚本启动时，Console 会按脚本内容、目标资源库和能力发起一次运行授权。未保存 Console 代码的授权是当前会话级；保存脚本可获得保存脚本级的重复授权，但改动源文本、目标库或能力后会重新确认。脚本不能自行提权。
 
-```ts
-const assets = await allSearch(null);
-const selected = assets.filter((asset) => asset.rating >= 4);
-const result = await serpent.assets.copyFilePaths(selected.map((asset) => asset.id));
-return { selected: selected.length, ...result };
-```
+低风险元数据写入（评分、喜欢、标签、合集、空文件夹等）在运行授权后执行。资源库/文件生命周期和内容写入需要额外的本机计划确认，包括：
 
-路径已写入系统剪贴板，但返回值只包含 `copiedCount`，不会在脚本输出或日志中暴露路径。
+- `library.create`、`files.import`
+- `assets.moveToFolder()`、重命名、移入回收站、恢复
+- 替换或批量替换文件内容
 
-### 用户提示
+计划摘要只显示目标数量、可执行/阻塞数量、冲突和是否可撤销，不把绝对路径交给脚本或输出。资源库变更序号、资产状态 token 和计划哈希绑定在 Main/Worker 侧；确认前后前提变化会使计划失效，操作不会继续写旧目标。取消确认会以取消/失败结果结束，文件不会因此被部分“暗中”执行。
 
-```js
-await serpent.ui.notify({ severity: 'info', message: '已完成扫描' });
-await serpent.ui.notify({ severity: 'warning', message: '部分模型缺失', mode: 'dialog' });
-```
+文件移动、重命名、导入、回收站等可能返回 `operationId` 或 Undo Group 信息。不要把 `operationId` 当作文件路径，也不要假设批量操作全成功；始终检查计数和跳过项。
 
-`severity` 为 `info` / `warning` / `error`；默认 `mode: 'toast'` 走顶部提示条，`dialog` 为需确认的阻塞窗。MCP 工具名为 `serpent_ui_notify`。不要求已打开资源库。
+## 幂等、变更序号和长操作
 
-### 3. 给指定文件夹的文件名追加第一个 tag
+当前脚本 Console 公开的 `library.create` 和 `files.import` 接受可选 `idempotencyKey`：非空白、最长 128 字符。调用超时后不要立刻用新参数/新 key 重提；先确认执行状态和资源库变化，再用同一命令、完全相同参数和同一 key 重试。参数变化会被拒绝，避免重复建库或重复导入。
 
-```ts
-const folders = await serpent.folders.list({ limit: 200 });
-const folder = folders.items.find((item) => item.name === '概念草图');
-if (!folder) throw new Error('找不到“概念草图”文件夹。');
+`library.changeSequence()` 返回当前资源库变更序号。它是并发/复核用的观察点，不是锁，也不是事务快照。脚本不能把一连串命令包装成跨资源库事务；每个 Gateway 命令独立校验并记录。
 
-function baseName(name: string) {
-  const dot = name.lastIndexOf('.');
-  return dot > 0 ? name.slice(0, dot) : name;
-}
+当前 Console 没有脚本内的 `execution.status` API。停止按钮、关闭 Console/窗口会取消执行；长时间调用的最终状态应在 Console 的结果和执行日志中确认。MCP 有额外的 `serpent_execution_status` 工具，但那是 MCP 传输面，不是脚本公共 API。
 
-function safeSuffix(tag: string) {
-  return tag.trim().replace(/[\\/:*?"<>|]/g, '-');
-}
+## 保存、打开和最近脚本
 
-const updates = [];
-for (const asset of await allFolderAssets(folder.id)) {
-  const metadata = await serpent.assets.getMetadata(asset.id);
-  const firstTag = metadata.tags[0]?.name;
-  if (!firstTag) continue;
-  const suffix = safeSuffix(firstTag);
-  if (suffix) updates.push({ assetId: asset.id, newBaseName: `${baseName(asset.name)}_${suffix}` });
-}
+“保存脚本”只接受 `.serpent.js` 或 `.serpent.ts`，源文本上限 64 KiB。文件选择由 Main 完成；Console 只收到文件名、源文本和 Main 签发的临时句柄，不收到绝对路径。打开脚本、保存脚本和从最近脚本列表打开都走同一校验。
 
-const result = updates.length === 0
-  ? { renamedCount: 0, skipped: [] }
-  : await serpent.assets.renameFiles(updates);
-return { candidates: updates.length, ...result };
-```
+句柄绑定当前窗口、当前脚本源文本和当前保存内容。编辑文本后，旧句柄不能用来冒充已保存脚本以继承授权；窗口销毁时句柄也会释放。最近列表只保存可重新打开的文件名/句柄关系，不把路径交给脚本。
 
-`renameFiles()` 会把整批作为一份计划确认；每个文件保留自己的扩展名。已有同名文件、不可用资产或不支持的名称会出现在 `skipped`，已成功的项不会因为某个局部冲突而回滚。
+## 取消、超时和错误处理
 
-### 4. 汇总近 2 天新增资产最常用的自动色卡
+运行器会限制 CPU 时间、墙钟时间、内存、并发 Host 调用、未完成 Promise 和输出。当前默认执行预算为：墙钟 60 秒、CPU 10 秒、内存 64 MiB、输出 1 MiB、最多 4 个并发 Gateway 调用、最多 128 个未完成 Promise；这些是宿主预算，不是脚本可调参数。
 
-```ts
-const palette = await serpent.palettes.mostFrequent({ days: 2, limit: 12 });
-console.log(palette.colors);
-return palette;
-```
+常见运行时错误码：`SOURCE_NOT_ALLOWED`、`SOURCE_TOO_LARGE`、`CPU_TIMEOUT`、`WALL_TIMEOUT`、`CANCELLED`、`MEMORY_LIMIT`、`OUTPUT_LIMIT`、`HOST_CALL_LIMIT`、`PROMISE_LIMIT`、`RUNTIME_ERROR`。Gateway 的业务错误会以公开错误对象/消息返回；内部授权、执行上下文和路径细节会被脱敏。
 
-此调用只汇总已经完成的本地自动色卡，不会发起 AI 请求。`paletteAssetCount` 小于 `assetCount` 说明部分资产的媒体后台任务仍未生成色卡；等待后台任务完成后再次运行即可得到完整汇总。
+对可重试流程，先读取状态再重试；不要用 `try/catch` 把“计划被拒绝”“资源库忙”“版本冲突”吞掉后继续批量写。
 
-### 5. 将所有喜欢的资产设为 5 星
+## 调试与证据
 
-```ts
-const assets = await allSearch(null);
-const likedIds = assets.filter((asset) => asset.favorite).map((asset) => asset.id);
-const result = likedIds.length === 0
-  ? { updatedCount: 0, skipped: [] }
-  : await serpent.assets.setRating(likedIds, 5);
-return { liked: likedIds.length, ...result };
-```
+- 先以只读查询验证输入；把 `return` 设为小型摘要，不要直接返回大数组。
+- 使用 `console.log` 输出少量 ID、计数和状态；不要输出路径、凭据或原始二进制。
+- 运行结果区域显示返回值与脚本输出；脚本错误包含运行时错误码，可能附带 guest stack。
+- Console 可从本次运行打开诊断日志；执行记录包含 execution、命令计数、成功/失败摘要和关联 `logId`，日志会脱敏。
+- 文件操作用实际 UI 状态和资源库内容复核；“计划存在”不等于写入成功。
 
-### 6. 恢复回收站中原位置仍空闲的资产
+## 脚本公共 API与插件 API的边界
 
-```ts
-const trash = [];
-for (let offset = 0; ; ) {
-  const page = await serpent.trash.list({ limit: 200, offset });
-  trash.push(...page.items);
-  if (!page.hasMore || page.items.length === 0) break;
-  offset += page.items.length;
-}
+插件运行时拥有另一套长期生命周期 API（如 `setup`、事件、Hook、Provider、插件 Job、输入捕获和插件存储）。这些来自 `plugin-guest-realm.ts`，不属于 Desktop Console 脚本公共 API；插件也不能用常驻脚本替代。
 
-const result = trash.length === 0
-  ? { restoredCount: 0, skippedCount: 0, skipped: [] }
-  : await serpent.trash.restoreIfOriginalVacant(trash.map((asset) => asset.id));
-return result;
-```
+当前 Registry/类型声明还描述了 `execution.status`、`media.jobs.list`、`ai.jobs.status`、`ai.enqueue` 等命令，但 Desktop Console 的实际 `serpent` guest 投影当前未注入 `jobs` 或执行状态命名空间；不要在 Console 脚本中依赖 `serpent.jobs` 或 `serpent.execution`。类型声明的宽类型也不代表 Console 已提供稳定字段。
 
-它只在原始托管文件夹仍存在、原始名字没有被占用且回收站文件仍存在时恢复。否则保持在回收站，并在 `skipped` 中返回 `original_folder_missing`、`name_conflict` 或 `trash_file_missing`。
-
-### 7. 创建标签并批量打到搜索结果
-
-```ts
-const tag = await serpent.tags.create('天气-雨');
-const assets = await allSearch(null);
-const batch = assets.slice(0, 100).map((asset) => asset.id);
-const result = batch.length === 0
-  ? { assignedCount: 0, skipped: [] }
-  : await serpent.tags.assign(batch, [tag.id]);
-return { tag, matched: assets.length, ...result };
-```
-
-标签创建与分配在运行授权后立即执行，不走文件计划确认。
-
-## 当前边界
-
-### 产品边界（Console = MCP Action 面）
-
-属于脚本 / MCP 的领域 Action（实现按切片推进，但规格上不划给“仅插件”）：
-
-- 只读查询与任务状态。
-- 低风险写入：评分、标签、空文件夹创建等（执行级授权）。
-- 高风险 Action：`library.create`、`file.import`、移动/重命名、回收站等——Console 与 MCP 均需本机计划摘要与人类批准（类比管理员权限弹窗）；**禁止 Agent 或脚本自行提权**。
-
-不属于脚本 / MCP（属插件 Contribution / 可信宿主，见 0024）：
-
-- 注册右键菜单、工具栏、面板、自定义 UI、Hook、输入捕获、Provider。
-- `storage.*` 插件命名空间存储、原始 `net.fetch`、任意 Shell / SQL / Node。
-- 永久删除与整库删除（首版仍禁止）。
-
-### 当前实现进度（会落后于产品边界）
-
-- 已支持：只读表面、评分、元数据（含喜欢）、标签 create/assign/remove、空文件夹 create、合集 create/add/remove、AI enqueue、文件 plan（复制路径/重命名/回收站）、headless `library.create` 与 `file.import` readonly 预览及陈旧源拒绝。
-- MCP：默认 `npm run mcp` 附着已打开 Desktop；无界面/指定资源库流程使用 `npm run mcp -- --headless --library <绝对路径>`，无预绑定资源库时使用 `--unbound`，写工具使用 `--write-access`。工具由 Registry 映射，plan 工具始终经 Main 本机确认；附着模式额外列出 `serpent_desktop_focus` 与 `serpent_desktop_select_assets`，headless 模式不列出 Desktop-only 工具。
-- Console 显示最近执行历史，并可跳转单次运行日志。
-- 文件移动和回收站写入已记录 `operationId` 并进入持久化 Undo Group；Console 的应用级
-  `Ctrl/Cmd+Z` 会按 `executionId` / `undoGroupId` 请求 Main/Worker 恢复，脚本和 MCP
-  仍只能消费返回的组结果，不能自行修改文件。
-- **已知缺口（2026-07-31 天气图片 Agent 反馈）**：
-  - 高风险本机确认若超过 MCP **客户端**默认超时，客户端会报超时而后台可能仍完成。MCP 会话墙钟上限已提高到 30 分钟；长写操作（`library.create`、计划预览）在 Main→Worker 侧使用 5 分钟请求超时。客户端应把工具调用超时设得足够长，并在超时或轮询间隙调用 `serpent_execution_status`（Registry `execution.status`）确认执行是否仍在进行或已结束，再决定是否重试。
-  - `library.create` 与 `file.import` 支持可选的 `idempotencyKey`（非空白字符串，最长 128 个字符）。客户端超时后先轮询 `serpent_execution_status`；确需重试时，必须使用相同 key 和完全相同的命令参数。相同执行、命令和 key 会复用进行中的或已成功的结果；复用同一 key 但修改参数会被 `AUTOMATION_INVALID_REQUEST` 拒绝。不要为同一次未确认的写入生成新 key。
-  - AI 入队已暴露；文件夹移动已接计划确认（`asset.move` / `moveToFolder`），可与 AI 分类流程组合使用。
-- 已支持：计划确认的 `asset.move`（MCP `serpent_asset_move`，脚本 `serpent.assets.moveToFolder`）。
-- 尚未验证：真实双 MCP Host 冒烟、当前 HEAD 的 packaged 应用脚本/MCP smoke 和 Windows。
-  类型声明位于 `docs/skills/serpent-automation/automation-api.d.ts`，由 Registry
-  命令 ID 与 `AUTOMATION_API_VERSION` 的打包门禁校验；文档和声明留在仓库，不强制进入 ASAR。
-- 单次脚本执行仍有 CPU、内存、输出、待处理 Promise 和墙钟限制。可用“停止”或关闭窗口取消未开始的命令。
+未承诺的能力包括通用 CLI、`serpent run`/`serpent repl`、任意 filesystem、SQLite、Shell、网络、MCP JSON-RPC 特有通知/资源引用、Desktop DOM/像素控制和永久删除。MCP 的 `serpent_desktop_*` 是附着 Desktop 的工具，不会出现在 Console 的 `serpent` 对象中。

@@ -32,7 +32,7 @@
 3. `jobs.ai.status` 等待完成。
 4. `assets.getAiContent(assetId)` 读取 AI 描述、标签和建议评分；需要人工字段时另读 `assets.getMetadata`。
 5. 按规则 `tags.assign` / `collections.addAssets`。
-6. 文件夹移动（待实现）单独计划确认；AI 不得直接改磁盘位置或未经确认建合集关系。
+6. 将已有资产移动到文件夹请使用 `assets.moveToFolder` / `asset.move`，单独经过计划确认；AI 不得直接改磁盘位置或未经确认建立合集关系。
 7. AI 不可用或失败时保留导入结果并报告原因。
 
 ## 推荐流程
@@ -54,7 +54,7 @@
 - 多步 Agent 工作流应只附着一次。推荐用 `node scripts/mcp-session.mjs --write-access start` 建立长连接，再用 `call` 复用同一会话；`status` / `stop` 查看或结束。不要为每次工具调用重新 `npm run mcp` 或重复本机确认。
 - 需要隔离/无界面流程时使用 `npm run mcp -- --headless --library <绝对路径>`，或使用 `--unbound` 先暴露
   `library.create`；`--write-access` 只表示本机已配置写入能力，不能由 Agent 自行提升。headless 不暴露 Desktop-only 工具。
-- `serpent-mcp` 是 stdio 协议启动器，不是通用 CLI；诊断写 stderr，stdout 只保留 MCP
+- `npm run mcp` / `npm run mcp -- --headless ...` 是当前仓库的 stdio 协议启动入口，不是通用 CLI；诊断写 stderr，stdout 只保留 MCP
   JSON-RPC。未绑定执行不能调用资源库范围 Action。
 - MCP stdio 本身就是交互式请求/响应通道。若使用命令行包装器，包装器必须持有同一个 MCP Client 和传输连接，把“连接 → 查询 → 用户筛选 → 执行 → 复核”作为同一会话；一次性脚本只允许用于诊断。
 

@@ -3,6 +3,12 @@
 > 更新时间：2026-08-02
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+## 2026-08-02 面向开发者的插件、脚本与 MCP 文档
+
+- 已整理发布级开发文档入口：[开发者文档](developer-documentation.md)，覆盖[插件开发](plugin-development-guide.md)、[插件 API](plugin-api-reference.md)、[Desktop Console 脚本](automation-scripting-guide.md)、[脚本 API](script-api-reference.md)、[MCP 开发](mcp-development-guide.md)和 [MCP API](mcp-api-reference.md)。文档以当前实现和 Registry/类型声明为准，明确区分插件 UI Contribution Context、脚本领域 API、MCP attached/headless 入口及权限/计划确认边界。
+- 当前真实自动化入口为 Desktop Console、`npm run mcp`（默认附着 Desktop）、`npm run mcp -- --headless ...` 和 `npm run mcp:session ...`；没有可用的通用 `serpent run` / `serpent repl` CLI，也没有当前仓库可直接调用的独立 `serpent-mcp` 可执行文件。
+- 文档检查已完成；packaged MCP、Windows 和跨平台发布旅程仍按 `Serpent-y51c.10` 的既有验收范围记录为未验证，不能由开发态文档或单元测试替代。
+
 ## 2026-08-02 插件平台最终架构设计
 
 - [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md) 已升级为权威最终设计；新增 [ADR-0027](adr/0027-plugin-instance-lifecycle-and-interaction-context.md)。核心边界为：安装范围与运行实例范围分离，global/library 实例统一使用 `setup(context)` / `dispose(reason)`，不增加 `openLibrary` 生命周期。
