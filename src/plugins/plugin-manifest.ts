@@ -24,6 +24,21 @@ export const pluginLocalIdSchema = z.string().min(1).max(64).regex(localIdPatter
   message: 'Plugin-local identifiers must use lowercase letters, numbers, dots, hyphens, and underscores.',
 });
 
+/**
+ * A bounded, declarative condition evaluated against the Host Contribution
+ * Context. It is deliberately only a transport-level contract here; the
+ * evaluator lives in the renderer/plugin context module.
+ */
+export const pluginContextExpressionSchema = z.string().min(1).max(4_096).superRefine((value, context) => {
+  if (value.trim().length === 0) {
+    context.addIssue({ code: 'custom', message: 'Context expressions must not be blank.' });
+  }
+  if (/\s{64}/u.test(value)) {
+    context.addIssue({ code: 'custom', message: 'Context expressions contain excessive whitespace.' });
+  }
+});
+export type PluginContextExpression = z.infer<typeof pluginContextExpressionSchema>;
+
 export const pluginPackagePathSchema = z.string().min(1).max(1_024).superRefine((value, context) => {
   if (value.includes('\\') || value.includes('\0') || value.startsWith('/') || /^[A-Za-z]:/u.test(value)) {
     context.addIssue({ code: 'custom', message: 'Plugin package paths must be relative POSIX paths.' });
@@ -244,12 +259,19 @@ export type PluginRuntime = z.infer<typeof pluginRuntimeCanonicalSchema>;
 export type { PluginRuntimeMode };
 export { pluginRuntimeModeSchema, normalizePluginRuntimeMode };
 
+const contributionConditionFields = {
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
+};
+
 const contributionCommandSchema = z.strictObject({
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   mcp: z.strictObject({
     export: z.literal(true),
   }).optional(),
+  ...contributionConditionFields,
 });
 type ContributionMenuItem = {
   command?: string;
@@ -258,6 +280,9 @@ type ContributionMenuItem = {
   group?: string;
   before?: string;
   after?: string;
+  when?: PluginContextExpression;
+  enablement?: PluginContextExpression;
+  checked?: PluginContextExpression;
   submenu?: ContributionMenuItem[];
 };
 
@@ -268,6 +293,7 @@ const contributionMenuItemSchema: z.ZodType<ContributionMenuItem> = z.lazy(() =>
   group: z.string().min(1).max(64).optional(),
   before: pluginLocalIdSchema.optional(),
   after: pluginLocalIdSchema.optional(),
+  ...contributionConditionFields,
   submenu: z.array(contributionMenuItemSchema).max(64).optional(),
 }).superRefine((item, context) => {
   const hasCommand = item.command !== undefined;
@@ -421,7 +447,7 @@ export function getPluginSettingDefault(setting: PluginSettingDefinition): Plugi
     case 'string': return '';
     case 'select': return setting.options[0]?.value ?? '';
     case 'number': {
-      const candidate = setting.minimum !== undefined && setting.minimum > 0 ? setting.minimum : 0;
+      const candidate = setting.minimum ?? 0;
       return setting.maximum !== undefined && candidate > setting.maximum ? setting.maximum : candidate;
     }
   }

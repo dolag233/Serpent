@@ -11,6 +11,11 @@ import {
 import { pluginProviderMediaSchema, pluginProviderMetadataSchema, pluginProviderAiAnalysisSchema, pluginProviderExportDescriptorSchema, pluginProviderImportPlanSchema } from '../plugins/plugin-providers';
 import { pluginThemePackageSchema } from '../plugins/plugin-themes';
 import { pluginRuntimeModeSchema } from '../plugins/plugin-runtime-mode';
+import {
+  pluginContextExpressionSchema,
+  pluginSettingTypeSchema,
+  pluginSettingValueSchema,
+} from '../plugins/plugin-manifest';
 import { isGitHubPluginInstallUrl } from '../shared/plugin-github-url';
 
 const pluginIdSchema = z.string().min(3).max(64).regex(/^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/u);
@@ -71,13 +76,6 @@ const pluginHostContributionTargetSchema = z.enum([
   'shortcuts',
 ]);
 export type PluginHostContributionTarget = z.infer<typeof pluginHostContributionTargetSchema>;
-
-const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
-const pluginSettingValueSchema = z.union([
-  z.boolean(),
-  z.number().finite(),
-  z.string().max(8_192),
-]);
 
 export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin-manager.list'), libraryId: libraryIdSchema.optional() }),
@@ -284,6 +282,9 @@ export const pluginManagerMenuContributionSchema = z.strictObject({
   parentId: z.string().min(1).max(255).optional(),
   before: z.string().min(1).max(255).optional(),
   after: z.string().min(1).max(255).optional(),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   target: pluginHostMenuTargetSchema,
 });
 export type PluginManagerMenuContribution = z.infer<typeof pluginManagerMenuContributionSchema>;
@@ -295,6 +296,9 @@ export const pluginManagerCommandContributionSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
   commandId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   mcpExported: z.literal(true).optional(),
   target: z.literal('commands'),
 });
@@ -368,6 +372,9 @@ export const pluginManagerSettingsContributionSchema = z.strictObject({
     value: z.string().min(1).max(128),
     label: z.string().min(1).max(160),
   })).max(64).optional(),
+  default: pluginSettingValueSchema.optional(),
+  minimum: z.number().finite().optional(),
+  maximum: z.number().finite().optional(),
   target: z.literal('settings.sections'),
 });
 export type PluginManagerSettingsContribution = z.infer<typeof pluginManagerSettingsContributionSchema>;
@@ -436,6 +443,14 @@ export const pluginManagerMcpExposureEntrySchema = z.strictObject({
 });
 export type PluginManagerMcpExposureEntry = z.infer<typeof pluginManagerMcpExposureEntrySchema>;
 
+export const pluginManagerPluginSettingDiagnosticSchema = z.strictObject({
+  settingId: pluginLocalIdSchema,
+  layer: z.enum(['user-default', 'library', 'device-override']),
+  code: z.enum(['invalid-type', 'out-of-range', 'invalid-option']),
+  message: z.string().min(1).max(2_000),
+});
+export type PluginManagerPluginSettingDiagnostic = z.infer<typeof pluginManagerPluginSettingDiagnosticSchema>;
+
 /** @deprecated Use {@link PluginManagerMenuContribution} */
 export type PluginManagerMenuContributionLegacy = PluginManagerMenuContribution;
 
@@ -448,7 +463,10 @@ export const pluginManagerPluginSettingSectionSchema = z.strictObject({
     value: z.string().min(1).max(128),
     label: z.string().min(1).max(160),
   })).max(64).optional(),
-  value: pluginSettingValueSchema.nullable(),
+  default: pluginSettingValueSchema,
+  minimum: z.number().finite().optional(),
+  maximum: z.number().finite().optional(),
+  value: pluginSettingValueSchema,
 });
 export type PluginManagerPluginSettingSection = z.infer<typeof pluginManagerPluginSettingSectionSchema>;
 
@@ -622,6 +640,7 @@ export const pluginManagerResponseSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     sections: z.array(pluginManagerPluginSettingSectionSchema).max(128),
+    diagnostics: z.array(pluginManagerPluginSettingDiagnosticSchema).max(128),
   }),
   z.strictObject({
     ok: z.literal(true),

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createContributionRegistry,
   listAssetMenuContributions,
+  listCommandContributions,
   listInspectorSectionContributions,
   listMenuContributions,
   listSettingsContributions,
@@ -35,11 +36,13 @@ describe('plugin Contributions', () => {
             id: 'processing',
             title: 'Processing',
             group: 'analysis',
+            when: "selection.extensions intersects ['jpg','jpeg','png']",
             submenu: [
-              { command: 'probe.fast', before: 'asset.rename' },
+              { command: 'probe.fast', before: 'asset.rename', enablement: 'selection.assetCount == 1' },
               {
                 id: 'advanced',
                 title: 'Advanced',
+                checked: 'app.busy',
                 submenu: [{ command: 'probe.quality' }, { command: 'probe.deep' }],
               },
             ],
@@ -62,17 +65,20 @@ describe('plugin Contributions', () => {
         id: `${manifest.id}.library-a.menu.asset.processing`,
         title: 'Processing',
         group: 'analysis',
+        when: "selection.extensions intersects ['jpg','jpeg','png']",
       }),
       expect.objectContaining({
         id: `${manifest.id}.library-a.menu.asset.processing.probe.fast`,
         commandId: 'probe.fast',
         parentId: `${manifest.id}.library-a.menu.asset.processing`,
         before: 'asset.rename',
+        enablement: 'selection.assetCount == 1',
       }),
       expect.objectContaining({
         id: `${manifest.id}.library-a.menu.asset.processing.advanced`,
         title: 'Advanced',
         parentId: `${manifest.id}.library-a.menu.asset.processing`,
+        checked: 'app.busy',
       }),
       expect.objectContaining({
         id: `${manifest.id}.library-a.menu.asset.processing.advanced.probe.quality`,
@@ -86,6 +92,60 @@ describe('plugin Contributions', () => {
       }),
     ]));
     expect(listAssetMenuContributions(registry)).toHaveLength(5);
+  });
+
+  it('registers command conditions and keeps them in the command descriptor', () => {
+    const registry = createContributionRegistry();
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        commands: [{
+          id: 'probe.conditional',
+          title: 'Conditional',
+          when: 'library.open',
+          enablement: 'library.writable',
+          checked: 'app.busy',
+        }],
+        menus: {},
+        settings: [],
+      },
+    });
+
+    registerManifestContributions(registry, {
+      pluginInstanceId: '33333333-3333-4333-8333-333333333333',
+      libraryId: 'library-a',
+      pluginId: manifest.id,
+      contributes: manifest.contributes,
+    });
+
+    expect(listCommandContributions(registry)).toEqual([expect.objectContaining({
+      commandId: 'probe.conditional',
+      when: 'library.open',
+      enablement: 'library.writable',
+      checked: 'app.busy',
+    })]);
+  });
+
+  it('rejects blank and overlong context expressions at manifest boundaries', () => {
+    expect(() => pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        commands: [{ id: 'probe.invalid', title: 'Invalid', when: '   ' }],
+        menus: {},
+        settings: [],
+      },
+    })).toThrow();
+    expect(() => pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        commands: [{ id: 'probe.invalid', title: 'Invalid', when: 'a'.repeat(4_097) }],
+        menus: {},
+        settings: [],
+      },
+    })).toThrow();
   });
 
   it('resolves asset menu titles from declared commands and exposes stable rows', () => {

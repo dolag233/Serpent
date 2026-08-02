@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
 import { findReservedAcceleratorConflict } from '../shared/plugin-accelerator';
-import { pluginIdSchema, pluginLocalIdSchema, type PluginManifest } from './plugin-manifest';
+import {
+  pluginIdSchema,
+  pluginLocalIdSchema,
+  pluginContextExpressionSchema,
+  pluginSettingTypeSchema,
+  pluginSettingValueSchema,
+  type PluginManifest,
+} from './plugin-manifest';
 
 export const pluginContributionKindSchema = z.enum([
   'command',
@@ -40,8 +47,6 @@ export const pluginContributionTargetSchema = z.enum([
 ]);
 export type PluginContributionTarget = z.infer<typeof pluginContributionTargetSchema>;
 
-const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
-
 const pluginContributionLibraryIdSchema = z.string().min(1).max(64);
 
 const pluginContributionRegistrationSchema = z.strictObject({
@@ -59,12 +64,18 @@ const pluginContributionRegistrationSchema = z.strictObject({
   parentId: z.string().min(1).max(255).optional(),
   before: z.string().min(1).max(255).optional(),
   after: z.string().min(1).max(255).optional(),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   settingType: pluginSettingTypeSchema.optional(),
   settingDescription: z.string().min(1).max(2_000).optional(),
   settingOptions: z.array(z.strictObject({
     value: z.string().min(1).max(128),
     label: z.string().min(1).max(160),
   })).max(64).optional(),
+  settingDefault: pluginSettingValueSchema.optional(),
+  settingMinimum: z.number().finite().optional(),
+  settingMaximum: z.number().finite().optional(),
   uiEntryPath: z.string().min(1).max(1_024).optional(),
   accelerator: z.string().min(1).max(64).optional(),
 });
@@ -115,6 +126,9 @@ export type PluginMenuContribution = {
   parentId?: string;
   before?: string;
   after?: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 /** @deprecated Use {@link PluginMenuContribution} */
@@ -177,6 +191,9 @@ export function registerManifestContributions(
       kind: 'command',
       target: 'commands',
       title: command.title,
+      ...(command.when === undefined ? {} : { when: command.when }),
+      ...(command.enablement === undefined ? {} : { enablement: command.enablement }),
+      ...(command.checked === undefined ? {} : { checked: command.checked }),
       ...(input.mcpExportedCommandIds?.has(command.id) === true ? { mcpExported: true } : {}),
     });
     registered += 1;
@@ -207,6 +224,9 @@ export function registerManifestContributions(
         ...(item.group === undefined ? {} : { group: item.group }),
         ...(item.before === undefined ? {} : { before: item.before }),
         ...(item.after === undefined ? {} : { after: item.after }),
+        ...(item.when === undefined ? {} : { when: item.when }),
+        ...(item.enablement === undefined ? {} : { enablement: item.enablement }),
+        ...(item.checked === undefined ? {} : { checked: item.checked }),
         ...(parentId === undefined ? {} : { parentId }),
       });
       registered += 1;
@@ -312,7 +332,10 @@ export function registerManifestContributions(
       title: setting.title,
       settingType: setting.type,
       ...(setting.description === undefined ? {} : { settingDescription: setting.description }),
-      ...(setting.options === undefined ? {} : { settingOptions: setting.options }),
+      ...(setting.type === 'select' ? { settingOptions: setting.options } : {}),
+      ...(setting.default === undefined ? {} : { settingDefault: setting.default }),
+      ...(setting.type === 'number' && setting.minimum !== undefined ? { settingMinimum: setting.minimum } : {}),
+      ...(setting.type === 'number' && setting.maximum !== undefined ? { settingMaximum: setting.maximum } : {}),
     });
     registered += 1;
   }
@@ -421,6 +444,9 @@ export type PluginCommandContribution = {
   pluginInstanceId: string;
   commandId: string;
   title: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
   mcpExported?: true;
 };
 
@@ -435,6 +461,9 @@ export function listCommandContributions(
       pluginInstanceId: contribution.pluginInstanceId,
       commandId: contribution.localId,
       title: contribution.title,
+      ...(contribution.when === undefined ? {} : { when: contribution.when }),
+      ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+      ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
       ...(contribution.mcpExported === true ? { mcpExported: true as const } : {}),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -457,6 +486,9 @@ export function listMcpCommandContributions(
       pluginInstanceId: contribution.pluginInstanceId,
       commandId: contribution.localId,
       title: contribution.title,
+      ...(contribution.when === undefined ? {} : { when: contribution.when }),
+      ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+      ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
       mcpExported: true as const,
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -569,6 +601,9 @@ export function listMenuContributions(
       ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),
       ...(contribution.before === undefined ? {} : { before: contribution.before }),
       ...(contribution.after === undefined ? {} : { after: contribution.after }),
+      ...(contribution.when === undefined ? {} : { when: contribution.when }),
+      ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+      ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -588,6 +623,9 @@ export type PluginSettingsContribution = {
   type: z.infer<typeof pluginSettingTypeSchema>;
   description?: string;
   options?: Array<{ value: string; label: string }>;
+  default?: z.infer<typeof pluginSettingValueSchema>;
+  minimum?: number;
+  maximum?: number;
 };
 
 export function listSettingsContributions(
@@ -610,6 +648,15 @@ export function listSettingsContributions(
       ...(contribution.settingOptions === undefined
         ? {}
         : { options: contribution.settingOptions }),
+      ...(contribution.settingDefault === undefined
+        ? {}
+        : { default: contribution.settingDefault }),
+      ...(contribution.settingMinimum === undefined
+        ? {}
+        : { minimum: contribution.settingMinimum }),
+      ...(contribution.settingMaximum === undefined
+        ? {}
+        : { maximum: contribution.settingMaximum }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

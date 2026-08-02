@@ -11,6 +11,103 @@ describe('plugin manager response parse', () => {
     })).toEqual({ ok: true, packages: [], resolutions: [], safeMode: false });
   });
 
+  it('parses field-level plugin setting diagnostics', () => {
+    expect(parsePluginManagerResponse({
+      ok: true,
+      sections: [{
+        id: 'batch-size',
+        title: 'Batch size',
+        type: 'number',
+        default: 4,
+        minimum: 1,
+        maximum: 8,
+        value: 4,
+      }],
+      diagnostics: [{
+        settingId: 'batch-size',
+        layer: 'library',
+        code: 'out-of-range',
+        message: 'The setting value is outside the declared range.',
+      }],
+    })).toMatchObject({
+      ok: true,
+      diagnostics: [{ settingId: 'batch-size', code: 'out-of-range' }],
+    });
+  });
+
+  it('parses all host setting control types without exposing undeclared storage keys', () => {
+    const parsed = parsePluginManagerResponse({
+      ok: true,
+      sections: [
+        {
+          id: 'enabled',
+          title: 'Enabled',
+          type: 'boolean',
+          default: true,
+          value: false,
+        },
+        {
+          id: 'batch-size',
+          title: 'Batch size',
+          type: 'number',
+          default: 4,
+          minimum: 1,
+          maximum: 8,
+          value: 8,
+        },
+        {
+          id: 'label',
+          title: 'Label',
+          type: 'string',
+          default: 'Default',
+          value: 'Updated',
+        },
+        {
+          id: 'quality',
+          title: 'Quality',
+          type: 'select',
+          default: 'fast',
+          options: [
+            { value: 'fast', label: 'Fast' },
+            { value: 'high', label: 'High' },
+          ],
+          value: 'high',
+        },
+      ],
+      diagnostics: [],
+    });
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: 'enabled', type: 'boolean', value: false }),
+        expect.objectContaining({ id: 'batch-size', type: 'number', minimum: 1, maximum: 8, value: 8 }),
+        expect.objectContaining({ id: 'label', type: 'string', value: 'Updated' }),
+        expect.objectContaining({ id: 'quality', type: 'select', options: expect.any(Array), value: 'high' }),
+      ]),
+    });
+    if (!('sections' in parsed)) throw new Error('expected settings sections');
+    expect(parsed.sections.map((section) => section.id)).toEqual([
+      'enabled',
+      'batch-size',
+      'label',
+      'quality',
+    ]);
+    expect(parsed.sections.map((section) => section.id)).not.toContain('removed-setting');
+    expect(() => parsePluginManagerResponse({
+      ok: true,
+      sections: [{
+        id: 'quality',
+        title: 'Quality',
+        type: 'select',
+        default: 'fast',
+        value: 'fast',
+        values: { 'removed-setting': true },
+      }],
+      diagnostics: [],
+    })).toThrow();
+  });
+
   const viewTargets = [
     'sidebar.entries',
     'workspace.views',
@@ -113,6 +210,20 @@ describe('plugin manager response parse', () => {
         target: 'menus.asset',
         group: 'organize',
         before: 'asset.rename',
+        when: "selection.extensions intersects ['jpg','jpeg','png']",
+        enablement: 'selection.assetCount == 1',
+        checked: 'app.busy',
+      }, {
+        kind: 'command',
+        id: 'com.example.menu.processing-command',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: '59847245-d394-4012-ad75-35f837393a8f',
+        commandId: 'processing',
+        title: 'Processing',
+        when: 'library.open',
+        enablement: 'library.writable',
+        checked: 'app.busy',
+        target: 'commands',
       }, {
         kind: 'settings-section',
         id: 'com.example.settings.quality',
@@ -134,6 +245,15 @@ describe('plugin manager response parse', () => {
         kind: 'menu',
         group: 'organize',
         before: 'asset.rename',
+        when: "selection.extensions intersects ['jpg','jpeg','png']",
+        enablement: 'selection.assetCount == 1',
+        checked: 'app.busy',
+      }),
+      expect.objectContaining({
+        kind: 'command',
+        when: 'library.open',
+        enablement: 'library.writable',
+        checked: 'app.busy',
       }),
       expect.objectContaining({
         kind: 'settings-section',

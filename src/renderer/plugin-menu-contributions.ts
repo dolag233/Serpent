@@ -4,6 +4,11 @@ import type {
   PluginHostMenuTarget,
   SerpentPluginManagerApi,
 } from "../shared/plugin-manager-api";
+import {
+  evaluatePluginContextExpression,
+  type PluginContributionContext,
+} from "../plugins/plugin-context";
+import type { PluginContextExpression } from "../plugins/plugin-manifest";
 
 export type PluginMenuDescriptor = {
   id: string;
@@ -14,6 +19,13 @@ export type PluginMenuDescriptor = {
   group?: string;
   before?: string;
   after?: string;
+  disabled: boolean;
+  checked?: boolean;
+  condition?: {
+    when?: PluginContextExpression;
+    enablement?: PluginContextExpression;
+    checked?: PluginContextExpression;
+  };
   children: PluginMenuDescriptor[];
 };
 
@@ -28,9 +40,27 @@ export function buildPluginMenuDescriptors(
     before?: string;
     after?: string;
     parentId?: string;
+    when?: PluginContextExpression;
+    enablement?: PluginContextExpression;
+    checked?: PluginContextExpression;
   }[],
+  context?: PluginContributionContext,
 ): PluginMenuDescriptor[] {
-  const descriptors: PluginMenuDescriptor[] = contributions.map((contribution) => ({
+  const visibleContributions = contributions.filter((contribution) =>
+    context === undefined
+      || contribution.when === undefined
+      || evaluatePluginContextExpression(contribution.when, context));
+  const descriptors: PluginMenuDescriptor[] = visibleContributions.map((contribution) => {
+    const condition = contribution.when === undefined
+      && contribution.enablement === undefined
+      && contribution.checked === undefined
+      ? undefined
+      : {
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        };
+    return {
       id: contribution.id,
       label: contribution.title,
       contributionId: contribution.id,
@@ -39,12 +69,21 @@ export function buildPluginMenuDescriptors(
       ...(contribution.group === undefined ? {} : { group: contribution.group }),
       ...(contribution.before === undefined ? {} : { before: contribution.before }),
       ...(contribution.after === undefined ? {} : { after: contribution.after }),
+      disabled: context !== undefined
+        && contribution.enablement !== undefined
+        && !evaluatePluginContextExpression(contribution.enablement, context),
+      ...(context !== undefined && contribution.checked !== undefined
+        ? { checked: evaluatePluginContextExpression(contribution.checked, context) }
+        : {}),
+      ...(condition === undefined ? {} : { condition }),
       children: [] as PluginMenuDescriptor[],
-    }));
+    };
+  });
   const byId = new Map(descriptors.map((descriptor) => [descriptor.id, descriptor]));
   const roots: PluginMenuDescriptor[] = [];
   for (const [index, descriptor] of descriptors.entries()) {
-    const parentId = contributions[index]?.parentId;
+    const contribution = visibleContributions[index];
+    const parentId = contribution?.parentId;
     const parent = parentId === undefined ? undefined : byId.get(parentId);
     if (parent === undefined) {
       roots.push(descriptor);
@@ -69,6 +108,7 @@ export function usePluginMenuContributions(
   target: PluginHostMenuTarget,
   enabled: boolean,
   refreshKey: string | null,
+  context?: PluginContributionContext,
 ): PluginMenuDescriptor[] {
   const [items, setItems] = useState<PluginMenuDescriptor[]>([]);
 
@@ -90,7 +130,7 @@ export function usePluginMenuContributions(
       const menuContributions = result.contributions.filter(
         (contribution): contribution is Extract<typeof contribution, { kind: 'menu' }> => contribution.kind === 'menu',
       );
-      setItems(buildPluginMenuDescriptors(menuContributions));
+      setItems(buildPluginMenuDescriptors(menuContributions, context));
     }).catch((error: unknown) => {
       if (!cancelled) {
         setItems([]);
@@ -100,7 +140,7 @@ export function usePluginMenuContributions(
     return () => {
       cancelled = true;
     };
-  }, [enabled, libraryId, pluginApi, refreshKey, target]);
+  }, [context, enabled, libraryId, pluginApi, refreshKey, target]);
 
   return items;
 }
