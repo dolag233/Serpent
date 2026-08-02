@@ -36,6 +36,7 @@ export type AppSettingsCategoryId =
   | "appearance"
   | "browse"
   | "ai"
+  | "plugins"
   | "safety";
 
 /**
@@ -51,6 +52,7 @@ export type AppSettingsCategory = {
     | "settings.categoryAppearance"
     | "settings.categoryBrowse"
     | "settings.categoryAi"
+    | "settings.categoryPlugins"
     | "settings.categorySafety";
 };
 
@@ -74,6 +76,11 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "ai",
     icon: "activity",
     labelKey: "settings.categoryAi",
+  },
+  {
+    id: "plugins",
+    icon: "box",
+    labelKey: "settings.categoryPlugins",
   },
   {
     id: "safety",

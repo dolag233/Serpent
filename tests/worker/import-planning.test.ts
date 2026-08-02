@@ -79,6 +79,45 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('creates a readonly automation import plan and rejects a changed source before staging', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'planned.png');
+    writeFileSync(source, 'before');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Automation plan', selectedParentPath: root });
+
+    const plan = service.previewAutomationImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    expect(plan).toMatchObject({
+      libraryId: library.libraryId,
+      fileCount: 1,
+      totalBytes: 6,
+      suspectedDuplicateCount: 0,
+      nameConflictCount: 0,
+    });
+    expect(plan.sourceStates).toHaveLength(1);
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+
+    writeFileSync(source, 'after!');
+    expectServiceCode(
+      () => service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+        automationPlan: {
+          expectedChangeSequence: plan.changeSequence,
+          sourceStates: plan.sourceStates,
+        },
+      }),
+      'VERSION_CONFLICT',
+    );
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+    service.closeAll();
+  });
+
   it('enumerates a folder hierarchy without exposing source paths', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Source Art');
@@ -525,7 +564,14 @@ describe('pending import plans', () => {
       nameConflict: 'keep-both',
     });
 
-    expect(completion).toEqual({ importedCount: 0, skippedCount: 0, replacedCount: 0, assets: [] });
+    expect(completion).toEqual({
+      importedCount: 0,
+      fileCount: 0,
+      assetCount: 0,
+      skippedCount: 0,
+      replacedCount: 0,
+      assets: [],
+    });
     expect(service.listManagedFolders(library.libraryId).map((folder) => folder.relativePath)).toEqual([
       'Empty Tree',
       'Empty Tree/Nested',
@@ -813,7 +859,14 @@ describe('pending import plans', () => {
       importId: plan.importId,
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
-    })).toEqual({ importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [] });
+    })).toEqual({
+      importedCount: 1,
+      fileCount: 1,
+      assetCount: 1,
+      skippedCount: 0,
+      replacedCount: 0,
+      assets: [],
+    });
     expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
     expectServiceCode(
       () => service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }),
@@ -946,6 +999,12 @@ describe('managed asset refresh', () => {
       assetId: initial.assetId,
       currentRevisionId: overwriteRevision.currentRevisionId,
       availability: 'available',
+    });
+
+    utimesSync(managedPath, new Date(acceptedTime.getTime() + 1), new Date(acceptedTime.getTime() + 1));
+    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+      changedCount: 0,
+      missingCount: 0,
     });
 
     const statOnlyTime = new Date(acceptedTime.getTime() + 20_000);

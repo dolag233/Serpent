@@ -17,10 +17,13 @@ export type DialogEscapeSnapshot = {
   importLibraryChooserOpen: boolean;
   appSettingsOpen: boolean;
   appLogOpen: boolean;
+  scriptSandboxPreviewOpen: boolean;
   mediaJobsOpen: boolean;
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
   dialogOpen: boolean;
+  /** Calm prompt when library plugins appear that still need per-device trust. */
+  pluginTrustPromptOpen: boolean;
   /** Serpent-99lv: blocking fatal alert — Escape acknowledges/dismisses. */
   fatalAlertOpen: boolean;
   /** Serpent-kdnm: AI connection lost — Escape aborts remaining jobs. */
@@ -44,10 +47,12 @@ export type DialogEscapeAction =
   | { kind: "close-import-library-chooser" }
   | { kind: "close-app-settings" }
   | { kind: "close-app-log" }
+  | { kind: "close-script-sandbox-preview" }
   | { kind: "close-media-jobs" }
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
   | { kind: "close-dialog" }
+  | { kind: "dismiss-plugin-trust-prompt" }
   | { kind: "dismiss-fatal-alert" }
   | { kind: "abort-ai-connection-failure" }
   | { kind: "abandon-import"; importId: string };
@@ -83,10 +88,16 @@ export function resolveDialogEscapeAction(
     return { kind: "close-import-library-chooser" };
   if (snapshot.appSettingsOpen) return { kind: "close-app-settings" };
   if (snapshot.appLogOpen) return { kind: "close-app-log" };
+  if (snapshot.scriptSandboxPreviewOpen) {
+    return { kind: "close-script-sandbox-preview" };
+  }
   if (snapshot.mediaJobsOpen) return { kind: "close-media-jobs" };
   if (snapshot.linkedRulesEditorOpen) return { kind: "close-linked-rules" };
   if (snapshot.convertLinkedOpen) return { kind: "close-convert-linked" };
   if (snapshot.dialogOpen) return { kind: "close-dialog" };
+  if (snapshot.pluginTrustPromptOpen) {
+    return { kind: "dismiss-plugin-trust-prompt" };
+  }
   if (snapshot.conflictsImportId) {
     return { kind: "abandon-import", importId: snapshot.conflictsImportId };
   }

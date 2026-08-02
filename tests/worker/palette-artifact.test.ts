@@ -110,6 +110,38 @@ describe('local extracted palette artifact', () => {
     service.closeAll();
   });
 
+  it('aggregates only already-extracted palettes for recently added assets', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'Recent palette aggregation', selectedParentPath: root });
+    const source = path.join(root, 'recent.png');
+    writeFileSync(source, VALID_1X1_PNG);
+    const assetId = importAsset(service, library.libraryId, source);
+    service.enqueueThumbnailJobs(library.libraryId);
+    await service.processThumbnailQueue(library.libraryId);
+
+    const artifact = service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette')!;
+    const persisted = JSON.parse(readFileSync(
+      service.getArtifactAbsolutePath(library.libraryId, artifact.artifactId),
+      'utf8',
+    )) as Array<{ hex: string; ratio: number }>;
+    const result = service.aggregateRecentAssetPalette({
+      libraryId: library.libraryId,
+      days: 2,
+      limit: 3,
+    });
+
+    expect(result).toEqual({
+      days: 2,
+      assetCount: 1,
+      paletteAssetCount: 1,
+      colors: [{ hex: persisted[0]!.hex, weight: 1, assetCount: 1 }],
+    });
+    // This helper must not enqueue palette work when an asset has no artifact.
+    expect(service.listMediaJobs(library.libraryId).jobs.some((job) => job.kind === 'extract_palette' && job.status === 'queued')).toBe(false);
+    service.closeAll();
+  });
+
   it('invalidates the prior revision palette and rebuilds it through the media queue', async () => {
     const root = temporaryRoot();
     const service = newService();

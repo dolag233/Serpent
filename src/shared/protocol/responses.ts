@@ -1,8 +1,10 @@
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
+import { CONTENT_REPLACE_MAX_BASE64_LENGTH } from '../content-replace';
 import {
   WORKER_READY_MESSAGE_TYPE,
   WORKER_SHUTDOWN_ACK_MESSAGE_TYPE,
@@ -71,8 +73,27 @@ export const importConflictPlanSchema = z.strictObject({
 
 export type ImportConflictPlan = z.infer<typeof importConflictPlanSchema>;
 
+export const automationImportPlanSchema = z.strictObject({
+  libraryId: nonBlankString,
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  changeSequence: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  suspectedDuplicateCount: z.number().int().nonnegative(),
+  libraryDuplicateCount: z.number().int().nonnegative(),
+  nameConflictCount: z.number().int().nonnegative(),
+  sourceStates: z.array(z.strictObject({
+    sourcePath: nonBlankString,
+    stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  })).max(1_000),
+});
+
+export type AutomationImportPlan = z.infer<typeof automationImportPlanSchema>;
+
 export const importCompletionSchema = z.strictObject({
   importedCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  assetCount: z.number().int().nonnegative(),
   skippedCount: z.number().int().nonnegative(),
   replacedCount: z.number().int().nonnegative(),
   assets: z.array(assetSummarySchema),
@@ -165,15 +186,28 @@ export const assetChangeEventSchema = z.strictObject({
   missingCount: z.number().int().nonnegative(),
   /**
    * `watcher` = external disk reconciliation (only this shows the disk-sync toast).
-   * `text-save` / `client` = in-app mutations; UI should use operation-specific copy.
+   * `text-save` / `client` / `content-replace` = in-app mutations; UI should use
+   * operation-specific copy or silent canvas refresh.
    */
-  source: z.enum(['watcher', 'text-save', 'client']).optional(),
+  source: z.enum(['watcher', 'text-save', 'client', 'content-replace']).optional(),
 });
 
 export type AssetChangeEvent = z.infer<typeof assetChangeEventSchema>;
 
 export function parseAssetChangeEvent(input: unknown): AssetChangeEvent {
   return assetChangeEventSchema.parse(input);
+}
+
+export const libraryChangedEventSchema = z.strictObject({
+  type: z.literal('library.changed'),
+  libraryId: nonBlankString,
+  changeSequence: z.number().int().nonnegative(),
+});
+
+export type LibraryChangedEvent = z.infer<typeof libraryChangedEventSchema>;
+
+export function parseLibraryChangedEvent(input: unknown): LibraryChangedEvent {
+  return libraryChangedEventSchema.parse(input);
 }
 
 export const extensionSaveCompletedEventSchema = z.strictObject({
@@ -345,6 +379,75 @@ const assetOperationSuccessSchemas = [
     type: z.literal('media.jobs.retried'),
     libraryId: nonBlankString,
     retriedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.enqueued'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.listed'),
+    libraryId: nonBlankString,
+    jobs: z.array(pluginJobRecordSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.claimed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.completed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.cancelled'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.job-paused'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.resumed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.retried'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.paused'),
+    libraryId: nonBlankString,
+    pausedCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.derived-fields.materialized'),
+    libraryId: nonBlankString,
+    writtenCount: z.number().int().nonnegative(),
+    fieldKey: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.derived-fields.queried'),
+    libraryId: nonBlankString,
+    assetIds: z.array(nonBlankString),
+    total: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -690,6 +793,42 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.trashed'),
     trashedCount: z.number().int().nonnegative(),
+    operationId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.replaced'),
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.staged'),
+    assetId: nonBlankString,
+    stagingToken: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    complete: z.boolean(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.batch-replaced'),
+    operationId: nonBlankString,
+    items: z.array(z.strictObject({
+      assetId: nonBlankString,
+      revisionId: nonBlankString,
+      byteSize: z.number().int().nonnegative(),
+    })).min(1),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.read'),
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    dataBase64: z.string().max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    truncated: z.boolean(),
+    mimeType: z.string().nullable(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -719,6 +858,13 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.trash-undone'),
+    restoredCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.copied'),
     copiedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
@@ -736,6 +882,59 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.file-renamed'),
     asset: assetSummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.files-renamed'),
+    renamedCount: z.number().int().nonnegative(),
+    skipped: z.array(z.strictObject({
+      assetId: nonBlankString,
+      reason: z.enum(['asset_not_found', 'asset_unavailable', 'name_conflict', 'invalid_name']),
+    })),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.restored-if-original-vacant'),
+    restoredCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    skipped: z.array(z.strictObject({
+      assetId: nonBlankString,
+      reason: z.enum(['original_folder_missing', 'name_conflict', 'trash_file_missing']),
+    })),
+    assets: z.array(assetSummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.palette.aggregated-recent'),
+    days: z.number().int().positive(),
+    assetCount: z.number().int().nonnegative(),
+    paletteAssetCount: z.number().int().nonnegative(),
+    colors: z.array(z.strictObject({
+      hex: z.string().regex(/^#[0-9A-F]{6}$/u),
+      weight: z.number().min(0).max(1),
+      assetCount: z.number().int().positive(),
+    })),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('automation.file-operation-planned'),
+    libraryId: nonBlankString,
+    operation: z.enum(['trash', 'replace-content', 'move', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
+    changeSequence: z.number().int().nonnegative(),
+    targetCount: z.number().int().positive(),
+    executableCount: z.number().int().nonnegative(),
+    blockedCount: z.number().int().nonnegative(),
+    undoSupported: z.boolean(),
+    assetStates: z.array(z.strictObject({
+      assetId: nonBlankString,
+      stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+    })).min(1),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('automation.file-import-planned'),
+    plan: automationImportPlanSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1011,6 +1210,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(internalLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.change-sequence'),
+    libraryId: nonBlankString,
+    changeSequence: z.number().int().nonnegative(),
   }),
   z.strictObject({
     ok: z.literal(true),

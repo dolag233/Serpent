@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { parseWorkerRequest } from '../../src/shared/protocol/requests';
+import { executeAutomationReadOnlyWorkerCommand } from '../../src/worker/automation-readonly-command-executor';
+import { executeBoundedWriteWorkerCommand } from '../../src/worker/bounded-write-command';
 import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
 
 // REQ-MENU-007: batch rating (`asset.rating.set`) applies one rating to a
@@ -57,12 +59,13 @@ afterEach(() => {
 function insertAsset(
   libraryPath: string,
   managedFolder: { folderId: string; relativePath: string },
+  originalFilename?: string,
 ): string {
   const assetsPath = path.join(libraryPath, 'Assets', managedFolder.relativePath);
   mkdirSync(assetsPath, { recursive: true });
   const assetId = randomUUID();
   const revisionId = randomUUID();
-  const fileName = `${assetId}.png`;
+  const fileName = originalFilename ?? `${assetId}.png`;
   writeFileSync(path.join(assetsPath, fileName), 'test content');
 
   const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
@@ -109,6 +112,24 @@ function createLibraryWithAssets(count: number): {
   const assetIds = Array.from({ length: count }, () =>
     insertAsset(library.libraryPath, managedFolder));
   return { service, libraryId: library.libraryId, libraryPath: library.libraryPath, assetIds };
+}
+
+/**
+ * Fixtures insert canonical assets directly to avoid invoking the asynchronous
+ * media-import pipeline. Keep the corresponding canonical search row in sync
+ * so this test exercises the exact search index queried by the Worker.
+ */
+function insertSearchIndex(libraryPath: string, assetId: string, filename: string): void {
+  const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  try {
+    db.prepare(
+      `INSERT INTO asset_search_index
+         (asset_id, filename, tags, description, source_url, author, folder_path, metadata_text)
+       VALUES (?, ?, '', '', '', '', 'Assets', 'png small available')`,
+    ).run(assetId, filename);
+  } finally {
+    db.close();
+  }
 }
 
 describe('batch asset rating', () => {
@@ -242,5 +263,44 @@ describe('batch asset rating', () => {
         rating: 3,
       },
     })).toThrow();
+  });
+
+  it('searches through the automation-only read dispatcher then commits its rating through the bounded write fence', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Automation ratings', selectedParentPath: root });
+    const managedFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Assets' });
+    const matchedAssetId = insertAsset(library.libraryPath, managedFolder, 'Ser-reference.png');
+    insertAsset(library.libraryPath, managedFolder, 'not-a-match.png');
+    insertSearchIndex(library.libraryPath, matchedAssetId, 'ser-reference.png');
+
+    const searched = executeAutomationReadOnlyWorkerCommand(service, {
+      type: 'asset.search',
+      libraryId: library.libraryId,
+      query: { clauses: [{ field: null, values: ['Ser'], exclude: false }] },
+      limit: 50,
+      offset: 0,
+      scopeMode: false,
+    });
+    expect(searched).toMatchObject({
+      ok: true,
+      type: 'asset.search.result',
+      total: 1,
+      items: [{ assetId: matchedAssetId }],
+    });
+
+    const assetIds = (searched && searched.ok && searched.type === 'asset.search.result')
+      ? searched.items.map((asset) => asset.assetId)
+      : [];
+    const updated = executeBoundedWriteWorkerCommand(service, {
+      type: 'asset.rating.set',
+      libraryId: library.libraryId,
+      assetIds,
+      rating: 4,
+    });
+    expect(updated).toEqual({ ok: true, type: 'asset.rating.updated', updatedCount: 1, skipped: [] });
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: matchedAssetId }).rating).toBe(4);
+
+    service.closeAll();
   });
 });

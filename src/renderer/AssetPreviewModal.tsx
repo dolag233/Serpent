@@ -14,6 +14,7 @@ import type {
   PreviewResolution,
   SerpentLibraryApi,
 } from "../shared/library-api";
+import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import {
   DirectPlayCapabilityService,
   type DirectPlayMediaDescriptor,
@@ -44,6 +45,8 @@ import {
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
   type ViewerDisplayTransform,
 } from "./viewer-display-transform";
+import { PluginViewerActionButtons } from "./plugin-viewer-actions";
+import { PluginViewerOverlays } from "./plugin-viewer-overlays";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -56,6 +59,8 @@ interface AssetPreviewModalProps {
   onClose(): void;
   onNext?: () => void;
   onPrevious?: () => void;
+  pluginApi?: SerpentPluginManagerApi;
+  pluginContributionRefreshKey?: string | null;
 }
 
 export type AssetPreviewModalHandle = {
@@ -176,6 +181,8 @@ export const AssetPreviewModal = forwardRef<
     onClose,
     onNext,
     onPrevious,
+    pluginApi,
+    pluginContributionRefreshKey = null,
   },
   ref,
 ) {
@@ -850,6 +857,17 @@ export const AssetPreviewModal = forwardRef<
               </button>
             </div>
           ) : null}
+          <PluginViewerActionButtons
+            assetId={asset.assetId}
+            libraryId={libraryId}
+            pluginApi={pluginApi}
+            refreshKey={pluginContributionRefreshKey}
+          />
+          <PluginViewerOverlays
+            libraryId={libraryId}
+            pluginApi={pluginApi}
+            refreshKey={pluginContributionRefreshKey}
+          />
           {!isTextViewer ? (
             <>
               <button

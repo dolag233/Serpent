@@ -32,6 +32,7 @@ import { useT } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
+import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { formatAudioTechnicalLine, formatVideoTechnicalLine } from "./video-metadata-format";
 import { isGifDisplayName } from "./gif-player-controls";
@@ -40,6 +41,8 @@ import {
   resolveLivePreviewMedia,
 } from "./asset-card-hover-preview";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
+import { PluginInspectorSections } from "./plugin-inspector-sections";
+import { PluginInspectorViews } from "./plugin-inspector-views";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -64,16 +67,6 @@ function formatDateFull(value: string, unknownLabel: string) {
     ? unknownLabel
     : new Intl.DateTimeFormat("zh-CN", {
         year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(date);
-}
-
-function formatDateShort(value: string, unknownLabel: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? unknownLabel
-    : new Intl.DateTimeFormat("zh-CN", {
         month: "2-digit",
         day: "2-digit",
       }).format(date);
@@ -137,6 +130,9 @@ export interface InspectorPanelProps {
   onPaletteColorCopy?: (color: string, copied: boolean) => void;
   /** 在系统浏览器中打开当前源链接（URL 有效性由主进程二次校验）。 */
   onOpenSourceUrl?: () => void;
+  pluginApi?: SerpentPluginManagerApi;
+  libraryId?: string;
+  pluginContributionRefreshKey?: string | null;
 }
 
 function InspectorHeroSinglePreview({
@@ -518,6 +514,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
     multiEdit = null,
     onPaletteColorCopy,
     onOpenSourceUrl,
+    pluginApi,
+    libraryId,
+    pluginContributionRefreshKey = null,
   } = props;
 
   const t = useT();
@@ -809,7 +808,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     return parts;
   }, [selectedAsset, t, gifExtractedMetadata]);
 
-  // REQ-INSPECT-005 / Serpent-i07: codec tech sits in a bottom bar, not the compact size row.
   const technicalInfoParts = useMemo(() => {
     if (!selectedAsset || selectionCount >= 2) return [];
     const parts: string[] = [];
@@ -838,6 +836,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
     audioTechMetadata,
     gifExtractedMetadata,
   ]);
+
+  const inspectorSelectedAssetIds = useMemo(() => {
+    if (selectedAssets.length > 0) {
+      return selectedAssets.map((asset) => asset.assetId);
+    }
+    return selectedAsset ? [selectedAsset.assetId] : [];
+  }, [selectedAsset, selectedAssets]);
 
   return (
     <aside
@@ -1012,6 +1017,19 @@ export function InspectorPanel(props: InspectorPanelProps) {
               )}
             </div>
           </section>
+
+          <PluginInspectorSections
+            libraryId={libraryId ?? library?.libraryId}
+            pluginApi={pluginApi}
+            refreshKey={pluginContributionRefreshKey}
+            selectedAssetIds={inspectorSelectedAssetIds}
+          />
+
+          <PluginInspectorViews
+            libraryId={libraryId ?? library?.libraryId}
+            pluginApi={pluginApi}
+            refreshKey={pluginContributionRefreshKey}
+          />
 
           {/* --- Asset metadata editor (compact) --- */}
           {assetMetadata || isMultiEdit ? (
@@ -1324,19 +1342,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 );
               })()}
 
-              {assetMetadata && assetMetadata.entityVersion > 0 && (
-
-                <div className="inspector-version-line">
-                  {t("inspector.versionLine", {
-                    version: assetMetadata.entityVersion,
-                  })}{" "}
-                  ·{" "}
-                  {formatDateShort(
-                    assetMetadata.updatedAt,
-                    t("common.unknownTime"),
-                  )}
-                </div>
-              )}
             </>
           ) : (
             <div className="inspector-metadata-placeholder" aria-hidden="true" />

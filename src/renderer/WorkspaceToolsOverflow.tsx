@@ -5,6 +5,7 @@ import { useT } from "./i18n";
 export type WorkspaceOverflowItem = {
   id: string;
   label: string;
+  active?: boolean;
   disabled?: boolean;
   onSelect: () => void;
 };
@@ -22,6 +23,7 @@ export function WorkspaceToolsOverflow({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const hasActiveItem = items.some((item) => item.active);
 
   useEffect(() => {
     if (!open) return;
@@ -48,13 +50,16 @@ export function WorkspaceToolsOverflow({
         aria-expanded={open}
         aria-haspopup="menu"
         aria-label={t("shell.moreWorkspaceTools")}
-        className="tool-button"
+        className={`tool-button${hasActiveItem ? " has-badge" : ""}`}
         data-hover-tip={t("shell.moreWorkspaceTools")}
         onClick={() => setOpen((value) => !value)}
         title={t("shell.moreWorkspaceTools")}
         type="button"
       >
         <Icon name="menu" size={14} />
+        {hasActiveItem ? (
+          <span aria-hidden="true" className="tool-button-badge-dot" />
+        ) : null}
       </button>
       {open && (
         <div className="workspace-tools-overflow-menu" id={menuId} role="menu">
@@ -70,6 +75,7 @@ export function WorkspaceToolsOverflow({
               role="menuitem"
               type="button"
             >
+              {item.active ? <span aria-hidden="true" className="workspace-tools-overflow-item-indicator" /> : null}
               {item.label}
             </button>
           ))}

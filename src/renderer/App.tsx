@@ -147,6 +147,7 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
+import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -159,9 +160,14 @@ import {
   type SmartCollectionSettingsTarget,
 } from "./SmartCollectionSettingsDialog";
 import { MediaJobsDialog } from "./MediaJobsDialog";
+import { PluginJobActivityBanner } from "./PluginJobActivityBanner";
 import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
 import { FatalAlertDialog } from "./FatalAlertDialog";
 import { useAiConnectionFailure } from "./use-ai-connection-failure";
+import {
+  hasActivePluginJobs,
+  selectPluginJobActivity,
+} from "./plugin-job-activity";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
 
 import {
@@ -171,6 +177,8 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
+import { useDesktopAutomationSelection } from "./use-desktop-automation-selection";
+import { useDesktopAutomationBrowse } from "./use-desktop-automation-browse";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -190,6 +198,21 @@ import { useExtensionActiveContext } from "./use-extension-active-context";
 import { useExtensionSaveReveal } from "./use-extension-save-reveal";
 import { usePendingAssetReveal } from "./use-pending-asset-reveal";
 import {
+  resolveDesktopReveal,
+} from "./desktop-browse-reveal";
+import type {
+  DesktopBrowseAction,
+  DesktopBrowseResult,
+  DesktopBrowseState,
+  DesktopDiscoveryFilterFields,
+  DesktopRevealPosition,
+  DesktopViewerNavigateDirection,
+} from "../shared/desktop-control";
+import {
+  applyDesktopDiscoveryFilterPatch,
+  resolveDesktopViewerNeighbor,
+} from "../shared/desktop-control";
+import {
   currentScopeShowsRevealAssets,
   pendingRevealFromAssets,
   sharedBrowseScopeForAssets,
@@ -203,9 +226,18 @@ import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
 import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
+import { PluginTrustPromptDialog } from "./PluginTrustPromptDialog";
+import { usePluginTrustPrompt } from "./use-plugin-trust-prompt";
+import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
+import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
+import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
+import { usePluginInputCaptureModalSeam } from "./use-plugin-input-capture-modal-seam";
+import { PluginSidebarViewPanel, usePluginSidebarViews } from "./plugin-sidebar-views";
+import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
 import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
+import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
 import {
   MANAGED_FOLDERS_DRAG_TYPE,
   resolveDraggedFolderIds,
@@ -277,8 +309,12 @@ import type {
   ImportValidatedResult,
   MediaJobStatus,
   AiJobStatus,
+  PluginJobStatus,
 } from "../shared/library-api";
 import type { SerpentShellApi } from "../shared/external-url";
+import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
+import type { SerpentPluginManagerApi } from '../shared/plugin-manager-api';
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
@@ -293,6 +329,10 @@ import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
+import {
+  buildPluginBrowseScope,
+  buildPluginViewerState,
+} from "./plugin-context-state";
 import { InspectorPanel } from "./InspectorPanel";
 import {
   CARD_SIZE_MAX,
@@ -365,6 +405,8 @@ type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
     shell?: SerpentShellApi;
+    automation?: SerpentAutomationScriptApi;
+    plugins?: SerpentPluginManagerApi;
   };
 };
 type UiState =
@@ -391,6 +433,7 @@ type SearchDefinition = {
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
+
 function ToolButton({
   label,
   icon,
@@ -597,6 +640,7 @@ function AppInner() {
     closing: toastClosing,
     fatal: fatalAlertMessage,
     setError,
+    setWarning,
     setNotice,
     setFatal,
     dismissVisible,
@@ -618,6 +662,7 @@ function AppInner() {
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
   const hadLibraryRef = useRef(false);
+  const allowRequiredDialogDismissRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
@@ -851,6 +896,7 @@ function AppInner() {
     }
   }, [showTrash]);
   const [showTagManagement, setShowTagManagement] = useState(false);
+  const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
 
   const {
@@ -944,16 +990,49 @@ function AppInner() {
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [appSettingsCategory, setAppSettingsCategory] =
     useState<AppSettingsCategoryId>("general");
+  const [pluginContributionEpoch, setPluginContributionEpoch] = useState(0);
+  const pluginTrustPrompt = usePluginTrustPrompt({
+    api: (window as RendererWindow).serpent?.plugins,
+    libraryId: library?.libraryId,
+    suppressWhileSettingsOpen: appSettingsOpen && appSettingsCategory === "plugins",
+  });
+  const pluginContributionRefreshKey = `${appSettingsOpen ? "settings" : "browse"}:${pluginContributionEpoch}`;
+  const pluginSidebarRefreshKey = pluginContributionRefreshKey;
+  useEffect(() => {
+    const api = (window as RendererWindow).serpent?.plugins;
+    if (api?.onContributionsChanged === undefined) return;
+    return api.onContributionsChanged(() => {
+      setPluginContributionEpoch((current) => current + 1);
+    });
+  }, []);
+  const pluginSidebarViews = usePluginSidebarViews(
+    (window as RendererWindow).serpent?.plugins,
+    library?.libraryId,
+    Boolean(library) && !busy,
+    pluginSidebarRefreshKey,
+  );
+  const activePluginSidebarView = useMemo(
+    () => pluginSidebarViews.find((view) => view.id === activePluginSidebarViewId),
+    [activePluginSidebarViewId, pluginSidebarViews],
+  );
+  const showPluginSidebarView = activePluginSidebarView !== undefined;
+  useEffect(() => {
+    if (activePluginSidebarViewId !== null && activePluginSidebarView === undefined) {
+      setActivePluginSidebarViewId(null);
+    }
+  }, [activePluginSidebarView, activePluginSidebarViewId]);
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
+  const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
+  const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
 
-  async function refreshAppLog(): Promise<void> {
+  async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
     const bridge = (window as RendererWindow).serpent?.shell;
     if (!bridge?.readAppLog) {
       setAppLogEntries([]);
@@ -962,7 +1041,8 @@ function AppInner() {
     }
     setAppLogLoading(true);
     try {
-      const result = await bridge.readAppLog();
+      const correlationId = automationCorrelationId.trim();
+      const result = await bridge.readAppLog(correlationId === "" ? undefined : correlationId);
       if (result.ok) {
         setAppLogEntries(result.entries);
         setAppLogErrorCode(null);
@@ -975,11 +1055,12 @@ function AppInner() {
     }
   }
 
-  function openAppLog(): void {
+  function openAppLog(automationCorrelationId = ""): void {
     setAppSettingsOpen(false);
     setMediaJobsOpen(false);
+    setAppLogAutomationCorrelationId(automationCorrelationId);
     setAppLogOpen(true);
-    void refreshAppLog();
+    void refreshAppLog(automationCorrelationId);
   }
 
   // AI analysis state
@@ -1084,6 +1165,7 @@ function AppInner() {
     loadMetadata,
     loadAiContentForAsset,
     saveMetadata,
+    applyLoadedMetadata,
   } = useInspectorAssetMetadata({
     api: api ?? null,
     library,
@@ -1345,14 +1427,26 @@ function AppInner() {
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
+  const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
+  const [hiddenPluginJobActivityId, setHiddenPluginJobActivityId] = useState<string | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const pluginJobsActive = hasActivePluginJobs(pluginJobs);
+  const pluginJobActivityCandidate = selectPluginJobActivity(pluginJobs);
+  const pluginJobActivity =
+    pluginJobActivityCandidate?.jobId === hiddenPluginJobActivityId
+      ? null
+      : pluginJobActivityCandidate;
   const backgroundJobsActive = useMemo(() => {
     if (aiAnalyzing) return true;
     const mediaActive =
       (mediaJobs?.queued ?? 0) + (mediaJobs?.running ?? 0) > 0;
     const aiActive = (aiJobs?.queued ?? 0) + (aiJobs?.running ?? 0) > 0;
-    return mediaActive || aiActive;
-  }, [aiAnalyzing, aiJobs, mediaJobs]);
+    return mediaActive || aiActive || pluginJobsActive;
+  }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
+  const openMediaJobs = useCallback(() => setMediaJobsOpen(true), []);
+  const hidePluginJobActivity = useCallback((jobId: string) => {
+    setHiddenPluginJobActivityId(jobId);
+  }, []);
   const controlAiJobsRef = useRef<
     (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
   >(async () => undefined);
@@ -1474,6 +1568,68 @@ function AppInner() {
     trashedAssets,
     trashedFolders,
   ]);
+
+  const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
+    () => buildPluginBrowseScope({
+      selectedFolderId,
+      showTrash,
+      collectionId: activeCollectionId ?? activeSmartCollectionId,
+      tagId: activeTagId,
+      searchValue,
+      filter: {
+        colorFilter,
+        excludeColorFilter,
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        aspectRatioRanges,
+        longEdgeRange,
+        durationRange,
+      },
+    }),
+    [
+      activeCollectionId,
+      activeSmartCollectionId,
+      activeTagId,
+      aspectRatioRange,
+      aspectRatioRanges,
+      availabilityFilter,
+      colorFilter,
+      durationRange,
+      excludeAvailabilityFilter,
+      excludeColorFilter,
+      excludeFormatFilter,
+      excludeRatingFilter,
+      excludeTagFilter,
+      favoriteFilter,
+      formatFilter,
+      heightRange,
+      ratingFilter,
+      searchValue,
+      selectedFolderId,
+      showTrash,
+      sourceUrlFilter,
+      tagFilter,
+      tagFilterMatch,
+      widthRange,
+      longEdgeRange,
+    ],
+  );
+  const pluginViewerState = useMemo<Partial<PluginContributionContext["viewer"]>>(
+    () => buildPluginViewerState(previewAsset, Boolean(document.fullscreenElement)),
+    [previewAsset],
+  );
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -1704,6 +1860,7 @@ function AppInner() {
     return showTrash ? trashedAssets.length : visibleAssets.length;
   }, [
     showTagManagement,
+    showPluginSidebarView,
     tags.length,
     searchTotal,
     showTrash,
@@ -1722,6 +1879,344 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
     clearAssetSelection,
+  });
+
+  useDesktopAutomationSelection({
+    shellApi,
+    libraryId: library?.libraryId,
+    previewOpen: Boolean(previewAsset),
+    selectedAssetIds,
+    selectedAssetId,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    setAssetSelectionAnchor,
+    setSelectedFolderIds,
+  });
+
+  const applyDesktopBrowseDiscovery = async (
+    input: Omit<
+      Extract<DesktopBrowseAction, { type: "set-discovery" }>,
+      "type" | "requestId" | "libraryId"
+    >,
+  ) => {
+    if (!library || !desktopBrowseState) {
+      throw new Error("Desktop browse is unavailable without a library.");
+    }
+    const nextSearch = input.search === undefined ? searchValue : input.search ?? "";
+    const nextColorFilter =
+      input.colorFilter === undefined ? colorFilter : input.colorFilter ?? "";
+    const nextExcludeColorFilter =
+      input.excludeColorFilter ?? excludeColorFilter;
+    const nextIncludeSubfolders =
+      input.includeSubfolders ?? folderRecursive;
+    if (
+      input.includeSubfolders !== undefined
+      && desktopBrowseState.browseTarget !== "folder"
+    ) {
+      throw new Error("Subfolder scope is only available for a managed folder.");
+    }
+    const nextSortField = input.sortField ?? sortField;
+    const nextSortOrder = input.sortOrder ?? sortOrder;
+    const nextFilters = applyDesktopDiscoveryFilterPatch(
+      {
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        longEdgeRange,
+        durationRange,
+      },
+      input,
+    );
+    setSearchValue(nextSearch);
+    setColorFilter(nextColorFilter);
+    setExcludeColorFilter(nextExcludeColorFilter);
+    setFormatFilter(nextFilters.formatFilter);
+    setExcludeFormatFilter(nextFilters.excludeFormatFilter);
+    setTagFilter(nextFilters.tagFilter);
+    setExcludeTagFilter(nextFilters.excludeTagFilter);
+    setTagFilterMatch(nextFilters.tagFilterMatch);
+    setRatingFilter(nextFilters.ratingFilter);
+    setExcludeRatingFilter(nextFilters.excludeRatingFilter);
+    setFavoriteFilter(nextFilters.favoriteFilter);
+    setSourceUrlFilter(nextFilters.sourceUrlFilter);
+    setAvailabilityFilter(nextFilters.availabilityFilter);
+    setExcludeAvailabilityFilter(nextFilters.excludeAvailabilityFilter);
+    setWidthRange(nextFilters.widthRange);
+    setHeightRange(nextFilters.heightRange);
+    setAspectRatioRange(nextFilters.aspectRatioRange);
+    setAspectRatioRanges([]);
+    setLongEdgeRange(nextFilters.longEdgeRange);
+    setDurationRange(nextFilters.durationRange);
+    if (desktopBrowseState.browseTarget === "folder") {
+      folderRecursiveRef.current = nextIncludeSubfolders;
+      setFolderRecursive(nextIncludeSubfolders);
+      const nextPrefs = withFolderRecursiveEnabled(
+        folderRecursivePrefs,
+        library.libraryId,
+        desktopBrowseState.folderId!,
+        nextIncludeSubfolders,
+      );
+      setFolderRecursivePrefs(nextPrefs);
+      saveFolderRecursivePreferences(nextPrefs);
+    }
+    setSortField(nextSortField);
+    setSortOrder(nextSortOrder);
+    setUiState("loading");
+    try {
+      await loadContent(library, assetScope, {
+        discovery: currentQueryDefinition({
+          searchValue: nextSearch,
+          colorFilter: nextColorFilter,
+          excludeColorFilter: nextExcludeColorFilter,
+          sortField: nextSortField,
+          sortOrder: nextSortOrder,
+          filtersSnapshot: nextFilters,
+        }),
+        searchScope:
+          desktopBrowseState.browseTarget === "folder"
+            ? {
+                kind: "folder",
+                folderId: desktopBrowseState.folderId,
+                recursive: nextIncludeSubfolders,
+              }
+            : currentSearchScope(),
+      });
+      return {
+        ...desktopBrowseState,
+        search: nextSearch,
+        colorFilter: nextColorFilter,
+        excludeColorFilter: nextExcludeColorFilter,
+        includeSubfolders: nextIncludeSubfolders,
+        sortField: nextSortField,
+        sortOrder: nextSortOrder,
+        ...nextFilters,
+      };
+    } finally {
+      setUiState("ready");
+    }
+  };
+
+  const revealDesktopAsset = async (
+    assetId: string,
+    position: DesktopRevealPosition,
+  ): Promise<Omit<
+    Extract<DesktopBrowseResult, { type: "reveal-applied" }>,
+    "type" | "requestId" | "ok"
+  >> => {
+    if (!api || !library || !desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop browse is unavailable.");
+    }
+    const listed = await api.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    if (!listed.ok) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset location is unavailable.");
+    }
+    const resolution = resolveDesktopReveal({
+      assetId,
+      currentBrowseTarget: desktopBrowseState.browseTarget,
+      currentFolderId: desktopBrowseState.folderId,
+      assets: listed.value.map((asset) => ({
+        assetId: asset.assetId,
+        locationKind: asset.locationKind,
+        managedFolderId: asset.managedFolderId,
+        available: asset.availability === "available",
+      })),
+    });
+    if (resolution.status === "not-found") {
+      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
+    }
+    if (resolution.status === "unavailable") {
+      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
+    }
+    if (resolution.status === "unsupported-scope") {
+      throw new Error(
+        "DESKTOP_BROWSE_ASSET_SCOPE_UNSUPPORTED: Asset scope is unsupported.",
+      );
+    }
+    if (resolution.status === "switch-folder") {
+      // chooseFolder clears selection and runs onSelectionCleared, which drops
+      // pendingRevealRef. Apply selection after the scope switch settles.
+      await chooseFolderRef.current(resolution.folderId);
+      setSelectedAssetIds([assetId]);
+      setSelectedAssetId(assetId);
+      setAssetSelectionAnchor(assetId);
+      pendingRestoredFocusRef.current = assetId;
+      return {
+        assetId,
+        position,
+        status: "switched-folder",
+        folderId: resolution.folderId,
+        state: {
+          ...desktopBrowseState,
+          browseTarget: "folder",
+          folderId: resolution.folderId,
+          organizationId: null,
+        },
+      };
+    }
+    setSelectedAssetIds([assetId]);
+    setSelectedAssetId(assetId);
+    setAssetSelectionAnchor(assetId);
+    pendingRestoredFocusRef.current = assetId;
+    return {
+      assetId,
+      position,
+      status: "visible",
+      folderId: desktopBrowseState.folderId,
+      state: desktopBrowseState,
+    };
+  };
+
+  const openDesktopViewer = async (assetId: string): Promise<DesktopBrowseState> => {
+    if (!api || !library || !desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
+    }
+    const listed = await api.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    if (!listed.ok) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset list is unavailable.");
+    }
+    const asset = listed.value.find((candidate) => candidate.assetId === assetId);
+    if (!asset) {
+      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
+    }
+    if (asset.availability !== "available" || asset.deletedAt !== null) {
+      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
+    }
+    openAssetPreview(asset);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: assetId,
+      selectedAssetIds: [assetId],
+      primaryAssetId: assetId,
+    };
+  };
+
+  const closeDesktopViewer = async (): Promise<DesktopBrowseState> => {
+    if (!desktopBrowseState) {
+      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
+    }
+    await closeAssetPreview(false);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: null,
+    };
+  };
+
+  const navigateDesktopViewer = async (
+    direction: DesktopViewerNavigateDirection,
+  ): Promise<DesktopBrowseState> => {
+    if (!desktopBrowseState || !previewAsset) {
+      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
+    }
+    const resolution = resolveDesktopViewerNeighbor({
+      direction,
+      viewerAssetId: previewAsset.assetId,
+      visibleAssetIds: visibleAssets.map((asset) => asset.assetId),
+    });
+    if (resolution.status === "viewer-closed") {
+      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
+    }
+    if (resolution.status === "boundary") {
+      throw new Error(
+        "DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.",
+      );
+    }
+    const nextAsset = visibleAssets.find(
+      (asset) => asset.assetId === resolution.assetId,
+    );
+    if (!nextAsset) {
+      throw new Error("DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.");
+    }
+    navigateAssetPreview(nextAsset);
+    return {
+      ...desktopBrowseState,
+      viewerAssetId: nextAsset.assetId,
+      selectedAssetIds: [nextAsset.assetId],
+      primaryAssetId: nextAsset.assetId,
+    };
+  };
+
+  const desktopBrowseState = library === null
+    ? null
+    : {
+        libraryId: library.libraryId,
+        browseTarget: showTrash
+          ? ("trash" as const)
+          : activeSmartCollectionId
+            ? ("smart-collection" as const)
+            : activeCollectionId
+              ? ("collection" as const)
+              : activeTagId
+                ? ("tag" as const)
+                : assetScope === "all"
+                  ? ("all" as const)
+                  : assetScope === "root"
+                    ? ("root" as const)
+                    : ("folder" as const),
+        folderId:
+          assetScope !== "all" && assetScope !== "root" && !showTrash
+            ? assetScope
+            : null,
+        organizationId:
+          activeSmartCollectionId ??
+          activeCollectionId ??
+          activeTagId ??
+          null,
+        showTrash,
+        includeSubfolders: folderRecursive,
+        search: searchValue,
+        colorFilter,
+        excludeColorFilter,
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        longEdgeRange,
+        durationRange,
+        sortField,
+        sortOrder,
+        viewMode: assetViewMode,
+        selectedAssetIds,
+        primaryAssetId: selectedAssetId ?? null,
+        viewerAssetId: previewAsset?.assetId ?? null,
+      };
+  useDesktopAutomationBrowse({
+    shellApi,
+    state: desktopBrowseState,
+    folderIds: folders.map((folder) => folder.folderId),
+    chooseFolder: chooseFolderRef.current,
+    setDiscovery: applyDesktopBrowseDiscovery,
+    revealAsset: revealDesktopAsset,
+    openViewer: openDesktopViewer,
+    closeViewer: closeDesktopViewer,
+    navigateViewer: navigateDesktopViewer,
+    previewOpen: Boolean(previewAsset),
   });
 
   useEffect(() => {
@@ -1743,6 +2238,25 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
   ]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onShellNotify((payload) => {
+      if (payload.mode === 'dialog') {
+        const title = payload.title?.trim()
+          || (payload.severity === 'warning'
+            ? t('dialog.blockingError.automationWarning')
+            : payload.severity === 'info'
+              ? t('dialog.blockingError.automationNotice')
+              : t('dialog.blockingError.automationError'));
+        showBlockingError(title, payload.message);
+        return;
+      }
+      if (payload.severity === 'error') setError(payload.message);
+      else if (payload.severity === 'warning') setWarning(payload.message);
+      else setNotice(payload.message);
+    });
+  }, [shellApi, setError, setWarning, setNotice, showBlockingError, t]);
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
   // browse parent is a managed folder or the managed root; cleared for
@@ -2357,6 +2871,7 @@ function AppInner() {
   // full-window centered with backdrop — not a card inside the canvas.
   useEffect(() => {
     if (library) return;
+    if (scriptSandboxPreviewOpen) return;
     if (importLibraryChooserOpen || appSettingsOpen || busy) return;
     if (dialog === "library") return;
     queueMicrotask(() => {
@@ -2370,6 +2885,7 @@ function AppInner() {
     importLibraryChooserOpen,
     appSettingsOpen,
     busy,
+    scriptSandboxPreviewOpen,
     t,
   ]);
   // Yield the required create surface while another full-window modal is up.
@@ -2393,6 +2909,46 @@ function AppInner() {
     }
     hadLibraryRef.current = true;
   }, [library, dialog]);
+  // A headless Console execution can create and bind a library without going
+  // through the renderer's library request pipeline. Consume that Main-owned
+  // lifecycle event so the welcome shell transitions into the opened library.
+  useEffect(() => {
+    if (!api || !scriptSandboxPreviewOpen || library) return;
+    return api.onLifecycle((event) => {
+      if (event.type !== "library.opened") return;
+      void (async () => {
+        try {
+          await closeAssetPreview(false);
+          setLibrary(event.library);
+          setPluginJobs(null);
+          setHiddenPluginJobActivityId(null);
+          setAssetScope("all");
+          setActiveTagId(null);
+          setActiveCollectionId(null);
+          setActiveSmartCollectionId(null);
+          resetNavHistory({ kind: "all" });
+          api.setActiveContext(event.library.libraryId);
+          await loadContent(event.library, "all");
+          await refreshRecentLibraries(event.library.displayPath);
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        }
+      })();
+    });
+    // loadContent is intentionally read from the current render; adding its
+    // per-render function identity would resubscribe the lifecycle bridge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    api,
+    closeAssetPreview,
+    library,
+    locale,
+    refreshRecentLibraries,
+    resetNavHistory,
+    scriptSandboxPreviewOpen,
+    setError,
+    t,
+  ]);
   useEffect(() => {
     if (!api) return;
     return api.onThumbnailEvent((event) => {
@@ -2701,6 +3257,8 @@ function AppInner() {
       await closeAssetPreview(false);
       opened = true;
       setLibrary(result.value);
+      setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
       setAssetScope("all");
       setActiveTagId(null);
       setActiveCollectionId(null);
@@ -2824,6 +3382,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setAssetScope(scope);
     if (scope !== "all" && scope !== "root") {
       const enabled = isFolderRecursiveEnabled(
@@ -2889,6 +3448,7 @@ function AppInner() {
     setShowTrash(true);
     setTrashBrowseTombstoneId(tombstoneId);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -2915,6 +3475,7 @@ function AppInner() {
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTagManagement(true);
+    setActivePluginSidebarViewId(null);
     setShowTrash(false);
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -2936,6 +3497,25 @@ function AppInner() {
     } finally {
       setUiState("ready");
     }
+  }
+
+  async function enterPluginSidebarView(viewId: string) {
+    if (!library) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(viewId);
+    setAssetScope("all");
+    clearAssetSelection();
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    clearDiscoveryControls();
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    api?.setActiveContext(library.libraryId);
   }
 
   async function handleCreateTagInManagement(name: string): Promise<boolean> {
@@ -3045,6 +3625,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -3085,6 +3666,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
@@ -3199,10 +3781,10 @@ function AppInner() {
     if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
     if (!metadataResult.ok) throw new LibraryOperationError(metadataResult.error);
     setTags(tagResult.value);
-    metadataByAssetRef.current.set(assetId, metadataResult.value);
-    if (selectedAssetIdRef.current === assetId) {
-      setAssetMetadata(metadataResult.value);
-    }
+    // Keep cache and Inspector editor fields coherent. Updating only
+    // `assetMetadata` leaves editRating/editFavorite stale, which made a
+    // completed script look as though its metadata write had not applied.
+    applyLoadedMetadata(assetId, metadataResult.value);
   }
 
   // REQ-MENU-007: Inspector tag operations apply to the whole multi-selection.
@@ -3501,6 +4083,7 @@ function AppInner() {
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveCollectionId(collectionId);
     setActiveTagId(null);
     setActiveSmartCollectionId(null);
@@ -3623,24 +4206,54 @@ function AppInner() {
   }
 
   function currentQueryDefinition(
-    overrides: { tagFilter?: string; tagFilterMatch?: "any" | "all" } = {},
+    overrides: {
+      tagFilter?: string;
+      tagFilterMatch?: "any" | "all";
+      searchValue?: string | null;
+      colorFilter?: string | null;
+      excludeColorFilter?: boolean;
+      sortField?: SortDefinition["field"];
+      sortOrder?: SortDefinition["order"];
+      filtersSnapshot?: DesktopDiscoveryFilterFields;
+    } = {},
   ): SearchDefinition {
+    const filtersState = overrides.filtersSnapshot ?? {
+      formatFilter,
+      excludeFormatFilter,
+      tagFilter,
+      excludeTagFilter,
+      tagFilterMatch,
+      ratingFilter,
+      excludeRatingFilter,
+      favoriteFilter,
+      sourceUrlFilter,
+      availabilityFilter,
+      excludeAvailabilityFilter,
+      widthRange,
+      heightRange,
+      aspectRatioRange,
+      longEdgeRange,
+      durationRange,
+    };
     const filters: FilterClause[] = [];
     const formats = expandFormatFilterTokens(
-      formatFilter
+      filtersState.formatFilter
         .split(",")
         .map((value) => value.trim().replace(/^\./, ""))
         .filter(Boolean),
     );
-    const selectedTags = (overrides.tagFilter ?? tagFilter)
+    const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const ratings = ratingFilter
+    const ratings = filtersState.ratingFilter
       .split(",")
       .map((value) => value.trim())
       .filter((value) => /^[0-5]$/.test(value));
-    const colors = colorFilter
+    const effectiveColorFilter = overrides.colorFilter === undefined
+      ? colorFilter
+      : overrides.colorFilter ?? "";
+    const colors = effectiveColorFilter
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
@@ -3648,29 +4261,33 @@ function AppInner() {
       filters.push({
         field: "color",
         values: colors,
-        exclude: excludeColorFilter,
+        exclude: overrides.excludeColorFilter ?? excludeColorFilter,
       });
     if (formats.length > 0)
       filters.push({
         field: "format",
         values: formats,
-        exclude: excludeFormatFilter,
+        exclude: filtersState.excludeFormatFilter,
       });
     if (selectedTags.length > 0) {
       const matchAll =
-        (overrides.tagFilterMatch ?? tagFilterMatch) === "all" &&
+        (overrides.tagFilterMatch ?? filtersState.tagFilterMatch) === "all" &&
         selectedTags.length > 1;
       // AND semantics ("包含 N 个标签"): one clause per tag — separate
       // clauses are ANDed, values within a clause are ORed.
       if (matchAll) {
         for (const tag of selectedTags) {
-          filters.push({ field: "tag", values: [tag], exclude: excludeTagFilter });
+          filters.push({
+            field: "tag",
+            values: [tag],
+            exclude: filtersState.excludeTagFilter,
+          });
         }
       } else {
         filters.push({
           field: "tag",
           values: selectedTags,
-          exclude: excludeTagFilter,
+          exclude: filtersState.excludeTagFilter,
         });
       }
     }
@@ -3678,25 +4295,25 @@ function AppInner() {
       filters.push({
         field: "rating",
         values: ratings,
-        exclude: excludeRatingFilter,
+        exclude: filtersState.excludeRatingFilter,
       });
-    if (favoriteFilter !== "any")
+    if (filtersState.favoriteFilter !== "any")
       filters.push({
         field: "favorite",
         values: [],
-        exclude: favoriteFilter === "no",
+        exclude: filtersState.favoriteFilter === "no",
       });
-    if (sourceUrlFilter !== "any")
+    if (filtersState.sourceUrlFilter !== "any")
       filters.push({
         field: "source_url",
         values: [],
-        exclude: sourceUrlFilter === "no",
+        exclude: filtersState.sourceUrlFilter === "no",
       });
-    if (availabilityFilter !== "any")
+    if (filtersState.availabilityFilter !== "any")
       filters.push({
         field: "availability",
-        values: [availabilityFilter],
-        exclude: excludeAvailabilityFilter,
+        values: [filtersState.availabilityFilter],
+        exclude: filtersState.excludeAvailabilityFilter,
       });
     const technicalRanges: Array<{
       field: "width" | "height" | "aspect_ratio" | "duration_ms" | "long_edge";
@@ -3704,17 +4321,29 @@ function AppInner() {
       scale?: number;
       integer?: boolean;
     }> = [
-      { field: "width", input: widthRange },
-      { field: "height", input: heightRange },
-      { field: "long_edge", input: longEdgeRange },
-      { field: "duration_ms", input: durationRange, scale: 1_000 },
+      { field: "width", input: filtersState.widthRange },
+      { field: "height", input: filtersState.heightRange },
+      { field: "long_edge", input: filtersState.longEdgeRange },
+      { field: "duration_ms", input: filtersState.durationRange, scale: 1_000 },
     ];
     const aspectInputs =
-      aspectRatioRanges.length > 0
-        ? aspectRatioRanges
-        : aspectRatioRange.min || aspectRatioRange.max
-          ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
-          : [];
+      overrides.filtersSnapshot
+        ? (
+          filtersState.aspectRatioRange.min || filtersState.aspectRatioRange.max
+            ? [{
+              min: filtersState.aspectRatioRange.min,
+              max: filtersState.aspectRatioRange.max,
+            }]
+            : []
+        )
+        : aspectRatioRanges.length > 0
+          ? aspectRatioRanges
+          : aspectRatioRange.min || aspectRatioRange.max
+            ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
+            : [];
+    const aspectExclude = overrides.filtersSnapshot
+      ? filtersState.aspectRatioRange.exclude
+      : aspectRatioRange.exclude;
     const aspectParsed = aspectInputs
       .map((input) => parseNumericRange(input.min, input.max, 1, false))
       .filter((range): range is NonNullable<typeof range> => range !== null);
@@ -3722,7 +4351,7 @@ function AppInner() {
       filters.push({
         field: "aspect_ratio",
         ranges: aspectParsed,
-        exclude: aspectRatioRange.exclude,
+        exclude: aspectExclude,
       });
     }
     for (const { field, input, scale = 1, integer = true } of technicalRanges) {
@@ -3731,13 +4360,22 @@ function AppInner() {
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
     return {
-      ...(searchValue.trim()
+      ...((overrides.searchValue === undefined
+        ? searchValue
+        : overrides.searchValue ?? "").trim()
         ? {
-            search: parseSearchExpression(searchValue),
+            search: parseSearchExpression(
+              overrides.searchValue === undefined
+                ? searchValue
+                : overrides.searchValue ?? "",
+            ),
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
-      sort: { field: sortField, order: sortOrder },
+      sort: {
+        field: overrides.sortField ?? sortField,
+        order: overrides.sortOrder ?? sortOrder,
+      },
     };
   }
 
@@ -3876,6 +4514,19 @@ function AppInner() {
     reloadCurrentContentRef.current = reloadCurrentContent;
   });
 
+  async function refreshAfterAutomationScript() {
+    try {
+      // A script may issue hundreds of write commands. Refresh once after the
+      // execution settles so cards retain the current browse scope/selection
+      // and Inspector reflects committed metadata without a reload per batch.
+      await reloadCurrentContent();
+      const selected = selectedAssetIdRef.current;
+      if (selected) await refreshTagAndMetadataState(selected);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+    }
+  }
+
   const {
     batchAssignTagToSelection,
     batchRemoveTagFromSelection,
@@ -3942,6 +4593,7 @@ function AppInner() {
     libraryOpen: Boolean(library),
     showTrash,
     showTagManagement,
+    showPluginSidebarView,
     assetScope,
     selectedFolderId,
   });
@@ -4135,6 +4787,7 @@ function AppInner() {
     if (requestGeneration !== searchRequestGenerationRef.current) return;
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
     if (!pendingRevealRef.current) {
@@ -4199,6 +4852,7 @@ function AppInner() {
       // management page — its response handler closes the page and dumps the
       // user back on 所有资产. Explicit submit (runSearch) still exits.
       showTagManagement ||
+      showPluginSidebarView ||
       (!hasDiscoveryInput && !shouldClearPreviousResults)
     )
       return;
@@ -4213,6 +4867,7 @@ function AppInner() {
     library,
     showTrash,
     showTagManagement,
+    showPluginSidebarView,
     searchValue,
     colorFilter,
     excludeColorFilter,
@@ -4250,6 +4905,7 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
       setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
@@ -4710,6 +5366,8 @@ function AppInner() {
 
   function applyClosedLibraryUi() {
     setLibrary(null);
+    setPluginJobs(null);
+    setHiddenPluginJobActivityId(null);
     setFolders([]);
     setLinkedFolders([]);
     setAssets([]);
@@ -4717,6 +5375,7 @@ function AppInner() {
     setAssetScope("all");
     setShowTrash(false);
     setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setTrashedAssets([]);
     setTags([]);
     setCollections([]);
@@ -5566,8 +6225,11 @@ function AppInner() {
       }
       await closeAssetPreview(false);
       setLibrary(summary);
+      setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
       setShowTrash(false);
       setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
       setTrashedAssets([]);
       setAssetScope("all");
       setActiveTagId(null);
@@ -5698,10 +6360,7 @@ function AppInner() {
               assetId: selectedAssetId,
             });
             if (metadata.ok) {
-              metadataByAssetRef.current.set(selectedAssetId, metadata.value);
-              metadataConflictAssetIdsRef.current.delete(selectedAssetId);
-              if (selectedAssetIdRef.current === selectedAssetId)
-                setAssetMetadata(metadata.value);
+              applyLoadedMetadata(selectedAssetId, metadata.value);
             }
           }
           if (event.source === "text-save") {
@@ -5717,7 +6376,32 @@ function AppInner() {
               }),
             );
           }
-          // source === 'client' (or omitted): silent canvas refresh only.
+          // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+        }
+      });
+    });
+    const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
+      if (event.libraryId !== library.libraryId) return;
+      // Cross-process change-sequence bumps are not asset mutation counts.
+      // Refresh silently without forging an asset.changed payload.
+      if (uiStateRef.current === "importing") {
+        scheduleSilentReload();
+        return;
+      }
+      void Promise.resolve().then(async () => {
+        try {
+          await reloadCurrentContentRef.current();
+          if (selectedAssetId) {
+            const metadata = await api.getAssetMetadata({
+              libraryId: library.libraryId,
+              assetId: selectedAssetId,
+            });
+            if (metadata.ok) {
+              applyLoadedMetadata(selectedAssetId, metadata.value);
+            }
+          }
         } catch (caught) {
           setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
         }
@@ -5726,8 +6410,9 @@ function AppInner() {
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       unsubscribe();
+      unsubscribeLibraryChanged();
     };
-  }, [api, library, locale, selectedAssetId, setError, setNotice, t]);
+  }, [api, applyLoadedMetadata, library, locale, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -5772,10 +6457,12 @@ function AppInner() {
       importLibraryChooserOpen,
       appSettingsOpen,
       appLogOpen,
+      scriptSandboxPreviewOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
       dialogOpen: Boolean(dialog),
+      pluginTrustPromptOpen: Boolean(pluginTrustPrompt.pending),
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
@@ -5797,11 +6484,13 @@ function AppInner() {
     importLibraryChooserOpen,
     appSettingsOpen,
     appLogOpen,
+    scriptSandboxPreviewOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
     convertLinkedDialog.folderId,
     dialog,
+    pluginTrustPrompt.pending,
     fatalAlertMessage,
     aiConnectionFailureGate.open,
     conflicts?.importId,
@@ -5828,6 +6517,7 @@ function AppInner() {
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
     setAppLogOpen,
+    setScriptSandboxPreviewOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -5837,6 +6527,11 @@ function AppInner() {
       // Serpent-kipk: required no-library surface cannot dismiss; Escape returns
       // to the start phase instead of leaving an empty canvas.
       if (value === null && !library) {
+        if (allowRequiredDialogDismissRef.current) {
+          allowRequiredDialogDismissRef.current = false;
+          setDialog(value);
+          return;
+        }
         setCreateLibraryPhase("start");
         return;
       }
@@ -5848,6 +6543,7 @@ function AppInner() {
       else presentImportConflicts(value);
     },
     setError,
+    onDismissPluginTrustPrompt: pluginTrustPrompt.dismissLater,
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
@@ -5871,10 +6567,12 @@ function AppInner() {
       importLibraryChooserOpen ||
       appSettingsOpen ||
       appLogOpen ||
+      scriptSandboxPreviewOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
+      Boolean(pluginTrustPrompt.pending) ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId,
@@ -5890,7 +6588,7 @@ function AppInner() {
   }, [dialogFocusTrapActive]);
 
   useBrowseCommandKeyboard({
-    enabled: Boolean(library) && !showTagManagement,
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     showTrash,
@@ -5926,6 +6624,26 @@ function AppInner() {
     onRefreshDisk: () => {
       void refreshAssets();
     },
+  });
+
+  usePluginShortcutKeyboard({
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    platform: SHORTCUT_PLATFORM,
+    pluginApi: (window as RendererWindow).serpent?.plugins,
+    libraryId: library?.libraryId,
+    refreshKey: pluginSidebarRefreshKey,
+    previewOpen: Boolean(previewAsset),
+    selectedAssetIds,
+  });
+
+  usePluginInputCaptureFanIn({
+    shell: shellApi,
+    enabled: Boolean(library),
+    previewOpen: Boolean(previewAsset),
+  });
+  usePluginInputCaptureModalSeam({
+    shell: shellApi,
+    snapshot: dialogEscapeSnapshot,
   });
 
   useWorkspaceMouseNavigation({
@@ -6181,6 +6899,7 @@ function AppInner() {
   function workspaceTitle() {
     if (!library) return t("scope.workspace");
     if (showTagManagement) return t("scope.tagManagement");
+    if (showPluginSidebarView) return activePluginSidebarView?.title ?? t("scope.workspace");
     if (showTrash) return t("scope.trash");
     if (activeTagId) {
       const tag = tags.find((x) => x.tagId === activeTagId);
@@ -6794,12 +7513,14 @@ function AppInner() {
     let active = true;
     const poll = async () => {
       try {
-        const [mediaResult, aiResult] = await Promise.all([
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
           api.listMediaJobs({ libraryId: library.libraryId }),
           api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
         ]);
         if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
         if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
       } catch {
         // Keep the last known task state during a transient Worker restart.
       } finally {
@@ -6823,12 +7544,14 @@ function AppInner() {
     let active = true;
     const poll = async () => {
       try {
-        const [mediaResult, aiResult] = await Promise.all([
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
           api.listMediaJobs({ libraryId: library.libraryId }),
           api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
         ]);
         if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
         if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
       } catch {
         // Keep the last known task state during a transient Worker restart.
       }
@@ -7099,6 +7822,8 @@ function AppInner() {
         assetScope={assetScope}
         showTrash={showTrash}
         showTagManagement={showTagManagement}
+        activePluginSidebarViewId={activePluginSidebarViewId}
+        pluginSidebarViews={pluginSidebarViews}
         activeTagId={activeTagId}
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
@@ -7125,6 +7850,7 @@ function AppInner() {
           );
         }}
         onEnterTagManagement={() => void enterTagManagement()}
+        onChoosePluginSidebarView={(viewId) => void enterPluginSidebarView(viewId)}
         onChooseFolder={(folderId) => void chooseFolder(folderId)}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
@@ -7202,6 +7928,7 @@ function AppInner() {
             {library &&
               !showTrash &&
               !showTagManagement &&
+              !showPluginSidebarView &&
               !activeTagId &&
               !activeCollectionId &&
               !activeSmartCollectionId &&
@@ -7277,6 +8004,7 @@ function AppInner() {
               library &&
               !showTrash &&
               !showTagManagement &&
+              !showPluginSidebarView &&
               visibleAssets.some(
                 (a) => a.availability === "missing" && !a.deletedAt,
               ) && (
@@ -7295,7 +8023,6 @@ function AppInner() {
               )
             )}
             <CanvasToolbarControls
-              backgroundJobsActive={backgroundJobsActive}
               actions={{
                 refresh: () => {
                   void refreshAssets();
@@ -7309,7 +8036,6 @@ function AppInner() {
                     fields: { ...p.fields, [field]: !p.fields[field] },
                   }));
                 },
-                openBackgroundJobs: () => setMediaJobsOpen(true),
                 openAiSettings: () => {
                   setAppSettingsCategory("ai");
                   setAppSettingsOpen(true);
@@ -7328,9 +8054,38 @@ function AppInner() {
               onCardSizeChange={resizeAssetCards}
               platform={SHORTCUT_PLATFORM}
             />
+            <PluginToolbarButtons
+              disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+              libraryId={library?.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+              refreshKey={pluginContributionRefreshKey}
+              selectedAssetIds={selectedAssetIds}
+            />
+            <WorkspaceToolsOverflow
+              items={[
+                {
+                  active: backgroundJobsActive,
+                  disabled: library === null,
+                  id: "background-jobs",
+                  label: t("toolbar.backgroundJobs"),
+                  onSelect: openMediaJobs,
+                },
+                {
+                  id: "script-sandbox-preview",
+                  label: t("automation.preview.open"),
+                  onSelect: () => setScriptSandboxPreviewOpen(true),
+                },
+              ]}
+            />
           </div>
         </div>
-        {!showTagManagement && (
+        <PluginWorkspaceViews
+          disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+          libraryId={library?.libraryId}
+          pluginApi={(window as RendererWindow).serpent?.plugins}
+          refreshKey={pluginContributionRefreshKey}
+        />
+        {!showTagManagement && !showPluginSidebarView && (
         <div
           className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
         >
@@ -7484,6 +8239,13 @@ function AppInner() {
               </div>
             );
           })()}
+        {pluginJobActivity !== null && (
+          <PluginJobActivityBanner
+            job={pluginJobActivity}
+            onDismiss={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+            onRunInBackground={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+          />
+        )}
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
         >
@@ -7580,6 +8342,28 @@ function AppInner() {
           onDragOverCapture={handleExternalDragOver}
           onDrop={handleExternalDrop}
           onMouseDown={handleCanvasMouseDown}
+          onContextMenu={(event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (
+              target.closest(
+                ".asset-card, .folder-card, button, [role='button'], [role='menuitem'], a, input, textarea, select",
+              )
+            ) {
+              return;
+            }
+            if (!library || previewAsset || showTagManagement || showPluginSidebarView) return;
+            event.preventDefault();
+            openContextMenu(
+              {
+                type: "workspace",
+                ...(selectedAssetIds.length > 0
+                  ? { assetIds: [...selectedAssetIds] }
+                  : {}),
+              },
+              { x: event.clientX, y: event.clientY },
+            );
+          }}
           ref={workspaceCanvasRef}
         >
           {externalDropActive && (
@@ -7604,7 +8388,13 @@ function AppInner() {
               }}
             />
           )}
-          {library && showTagManagement ? (
+          {library && showPluginSidebarView ? (
+            <PluginSidebarViewPanel
+              activeView={activePluginSidebarView}
+              libraryId={library.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+            />
+          ) : library && showTagManagement ? (
             <TagManagementWorkspace
               busy={busy}
               onCreate={handleCreateTagInManagement}
@@ -8310,6 +9100,8 @@ function AppInner() {
                 ? () => navigateAssetPreview(visibleAssets[previewIndex - 1]!)
                 : undefined
             }
+            pluginApi={(window as RendererWindow).serpent?.plugins}
+            pluginContributionRefreshKey={pluginContributionRefreshKey}
           />
         )}
       </section>
@@ -8357,6 +9149,9 @@ function AppInner() {
         selectedAssets={selectedAssets}
         multiEdit={multiEdit}
         versionConflict={versionConflict}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        libraryId={library?.libraryId}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
       />
       <ImageSequenceDialog
         count={
@@ -8597,13 +9392,33 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
+        libraryId={library?.libraryId}
         open={appSettingsOpen}
       />
+      {pluginTrustPrompt.pending ? (
+        <PluginTrustPromptDialog
+          busy={pluginTrustPrompt.busy}
+          onLater={pluginTrustPrompt.dismissLater}
+          onOpenSettings={() => {
+            pluginTrustPrompt.hidePrompt();
+            setAppSettingsCategory("plugins");
+            setAppSettingsOpen(true);
+          }}
+          onTrustAll={() => {
+            void pluginTrustPrompt.trustAll();
+          }}
+          plugins={pluginTrustPrompt.pending}
+        />
+      ) : null}
       <AppLogDialog
+        automationCorrelationId={appLogAutomationCorrelationId}
         entries={appLogEntries}
         errorCode={appLogErrorCode}
         loading={appLogLoading}
         onClose={() => setAppLogOpen(false)}
+        onAutomationCorrelationIdChange={setAppLogAutomationCorrelationId}
         onRefresh={() => void refreshAppLog()}
         onReveal={() => {
           const bridge = (window as RendererWindow).serpent?.shell;
@@ -8616,6 +9431,21 @@ function AppInner() {
           });
         }}
         open={appLogOpen}
+      />
+      <ScriptSandboxPreviewDialog
+        automation={(window as RendererWindow).serpent?.automation}
+        libraryId={library?.libraryId ?? null}
+        onClose={() => {
+          allowRequiredDialogDismissRef.current = false;
+          setScriptSandboxPreviewOpen(false);
+        }}
+        onExecutionSettled={() => refreshAfterAutomationScript()}
+        onOpenExecutionLog={(logId) => {
+          allowRequiredDialogDismissRef.current = false;
+          setScriptSandboxPreviewOpen(false);
+          openAppLog(logId);
+        }}
+        open={scriptSandboxPreviewOpen}
       />
       {smartCollectionSettings ? (
         <SmartCollectionSettingsDialog
@@ -8664,6 +9494,11 @@ function AppInner() {
         onImportLibrary={() => {
           setDialog(null);
           setImportLibraryChooserOpen(true);
+        }}
+        onOpenAutomation={() => {
+          allowRequiredDialogDismissRef.current = true;
+          setDialog(null);
+          setScriptSandboxPreviewOpen(true);
         }}
         onOpenRecent={(path) => {
           setDialog(null);
@@ -8822,6 +9657,7 @@ function AppInner() {
         mediaJobs={mediaJobs}
         mediaJobsLoading={mediaJobsLoading}
         aiJobs={aiJobs}
+        pluginJobs={pluginJobs}
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
@@ -8839,6 +9675,11 @@ function AppInner() {
       />
       {/* Unified context menu */}
       <AssetContextMenu
+        libraryId={library?.libraryId}
+        pluginBrowseScope={pluginBrowseScope}
+        pluginViewerState={pluginViewerState}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}

@@ -115,6 +115,10 @@ npm run verify:package
 
 Electron lifecycle tests use a production bundle and platform-local staging paths. See `docs/development-process.md` and the current QA report in workspaces that include the separately managed `docs/` directory.
 
+## Developer documentation
+
+User-facing manuals for plugin, automation script, Script API, and MCP authors are collected in [`docs/manual/`](docs/manual/README.md). These pages describe the current entry points and explicitly mark platform or packaged flows that are not yet verified.
+
 ## License
 
 MIT

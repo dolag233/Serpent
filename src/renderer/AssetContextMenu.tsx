@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   TagSummary,
   CollectionSummary,
@@ -19,7 +19,7 @@ import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
 import { ColorSpaceSubmenuItems } from "./ColorSpacePickerMenu";
 import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
-import { useLocale } from "./i18n";
+import { useLocale, useT, type TranslateFn } from "./i18n";
 import {
   assetCommandDefinitions,
   type AssetCommandContext,
@@ -41,8 +41,192 @@ import {
   buildMultiAssetMenuSkipReport,
   formatMultiAssetMenuSkipFooter,
 } from "./menu-skip-report";
+import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import type { PluginContributionContext } from "../plugins/plugin-context";
+import {
+  runPluginMenuCommand,
+  usePluginMenuContributions,
+  type PluginMenuDescriptor,
+} from "./plugin-menu-contributions";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 
 const isMac = isMacPlatform(navigator.userAgent);
+
+function pluginMenuGroupLabel(group: string, t: TranslateFn): string {
+  if (group === "image-processing") {
+    return t("contextMenu.pluginGroups.imageProcessing");
+  }
+  return group;
+}
+
+function PluginMenuCommandsSection(props: {
+  items: readonly PluginMenuDescriptor[];
+  onRun: (item: PluginMenuDescriptor) => void;
+  label: string;
+}) {
+  const t = useT();
+  if (props.items.length === 0) return null;
+  const hasNamedGroup = props.items.some((item) => (item.group ?? "").length > 0);
+  // Named plugin groups already provide the section title; avoid nesting them
+  // under the generic "Plugin commands" header.
+  if (hasNamedGroup) {
+    return (
+      <PluginMenuItems
+        items={props.items}
+        onRun={props.onRun}
+        resolveGroupLabel={(group) => pluginMenuGroupLabel(group, t)}
+        showGroupLabels
+      />
+    );
+  }
+  return (
+    <ContextMenuSection label={props.label}>
+      <PluginMenuItems items={props.items} onRun={props.onRun} />
+    </ContextMenuSection>
+  );
+}
+
+function PluginMenuItems(props: {
+  items: readonly PluginMenuDescriptor[];
+  onRun: (item: PluginMenuDescriptor) => void;
+  showGroupLabels?: boolean;
+  resolveGroupLabel?: (group: string) => string;
+}) {
+  if (props.items.length === 0) return null;
+  const grouped = new Map<string, PluginMenuDescriptor[]>();
+  for (const item of props.items) {
+    const group = item.group ?? "";
+    const current = grouped.get(group) ?? [];
+    current.push(item);
+    grouped.set(group, current);
+  }
+  const renderItem = (item: PluginMenuDescriptor): ReactNode => {
+    if (item.children.length > 0) {
+      return (
+        <ContextMenuSubmenu
+          icon={<Icon name="box" size={14} />}
+          key={item.id}
+          label={item.label}
+          disabled={item.disabled}
+        >
+          {item.children.map(renderItem)}
+        </ContextMenuSubmenu>
+      );
+    }
+    if (item.commandId === undefined) return null;
+    return (
+      <ContextMenuItem
+        key={item.id}
+        icon={<Icon name="box" size={14} />}
+        label={item.label}
+        shortcut={item.shortcut}
+        disabled={item.disabled}
+        checked={item.checked}
+        onAction={() => props.onRun(item)}
+      />
+    );
+  };
+  const hasNamedGroup = [...grouped.keys()].some((group) => group.length > 0);
+  if (props.showGroupLabels !== true || !hasNamedGroup) {
+    return <>{props.items.map(renderItem)}</>;
+  }
+  return (
+    <>
+      {[...grouped.entries()].map(([group, items]) => (
+        <ContextMenuSection
+          key={group || "default"}
+          label={group
+            ? (props.resolveGroupLabel?.(group) ?? group)
+            : undefined}
+        >
+          {items.map(renderItem)}
+        </ContextMenuSection>
+      ))}
+    </>
+  );
+}
+
+type PluginHostMenuGroup = "open" | "organize" | "metadata" | "delete";
+
+const HOST_MENU_ANCHORS: Record<PluginHostMenuGroup, readonly string[]> = {
+  open: [
+    "asset.view",
+    "asset.open-external",
+    "asset.reveal-in-folder",
+    "folder.open-in-file-manager",
+  ],
+  organize: [
+    "asset.remove-from-current-collection",
+    "asset.relink",
+    "asset.move-to-folder",
+    "asset.copy",
+    "asset.paste",
+    "asset.copy-file-path",
+    "asset.rename",
+    "folder.create-subfolder",
+    "folder.rename",
+    "folder.linked-rules",
+    "folder.copy",
+    "folder.paste",
+    "folder.clone",
+    "folder.copy-path",
+  ],
+  metadata: ["asset.ai-analyze", "asset.clear-ai-content"],
+  delete: [
+    "asset.move-to-trash",
+    "asset.delete-from-disk",
+    "asset.delete-linked",
+    "asset.delete-permanent",
+    "folder.move-to-trash",
+    "folder.delete-from-disk",
+    "folder.remove-from-library",
+  ],
+};
+const INLINE_HOST_ANCHORS = new Set(["asset.rename", "folder.rename"]);
+
+function pluginItemsForHostGroup(
+  items: readonly PluginMenuDescriptor[],
+  group: PluginHostMenuGroup,
+  edge: "before" | "after",
+): PluginMenuDescriptor[] {
+  const anchors = HOST_MENU_ANCHORS[group];
+  return items.filter((item) => {
+    const anchor = item.before ?? item.after;
+    if (anchor !== undefined && INLINE_HOST_ANCHORS.has(anchor)) return false;
+    if (item.before !== undefined && anchors.includes(item.before)) return edge === "before";
+    if (item.after !== undefined && anchors.includes(item.after)) return edge === "after";
+    if (item.group === group && item.before === undefined && item.after === undefined) {
+      return edge === "after";
+    }
+    return false;
+  });
+}
+
+function pluginItemsAtHostAnchor(
+  items: readonly PluginMenuDescriptor[],
+  anchor: string,
+  edge: "before" | "after",
+): PluginMenuDescriptor[] {
+  return items.filter((item) =>
+    (edge === "before" ? item.before : item.after) === anchor);
+}
+
+function pluginItemsOutsideHostGroups(
+  items: readonly PluginMenuDescriptor[],
+): PluginMenuDescriptor[] {
+  return items.filter((item) => {
+    if (item.group !== undefined
+      && (Object.keys(HOST_MENU_ANCHORS) as PluginHostMenuGroup[]).includes(
+        item.group as PluginHostMenuGroup,
+      )) {
+      return false;
+    }
+    return !(Object.values(HOST_MENU_ANCHORS).some((anchors) =>
+      item.before !== undefined && anchors.includes(item.before)
+      || item.after !== undefined && anchors.includes(item.after)));
+  });
+}
+
 
 // 0015-B: 单资产右键菜单的静态项由统一命令注册表驱动（REQ-COMMAND-001）；
 // 注册表是纯数据，模块级构建一次即可。0015-C: 多资产分支同样接入。
@@ -78,10 +262,17 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
       return "trash";
     case "trashed-folder":
       return `trashed-folder:${descriptor.tombstoneId}`;
+    case "workspace":
+      return `workspace:${(descriptor.assetIds ?? []).join(",")}`;
   }
 }
 
 interface AssetContextMenuProps {
+  libraryId?: string;
+  pluginBrowseScope?: Partial<PluginContributionContext["browse"]>;
+  pluginViewerState?: Partial<PluginContributionContext["viewer"]>;
+  pluginApi?: SerpentPluginManagerApi;
+  pluginContributionRefreshKey?: string | null;
   tags: TagSummary[];
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
@@ -240,6 +431,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   const activeDescriptorKey = activeContextMenu
     ? descriptorKey(activeContextMenu.descriptor)
     : null;
+  const pluginContributionContext = useMemo(() => {
+    if (activeContextMenu === null) return undefined;
+    return createPluginMenuContributionContext({
+      descriptor: activeContextMenu.descriptor,
+      assets: props.assets,
+      libraryId: props.libraryId,
+      locale,
+      browse: props.pluginBrowseScope,
+      viewer: props.pluginViewerState,
+    });
+  }, [
+    activeContextMenu,
+    locale,
+    props.assets,
+    props.libraryId,
+    props.pluginBrowseScope,
+    props.pluginViewerState,
+  ]);
   const [pickerMenuKey, setPickerMenuKey] = useState(activeDescriptorKey);
   if (pickerMenuKey !== activeDescriptorKey) {
     setPickerMenuKey(activeDescriptorKey);
@@ -273,6 +482,52 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     };
   }, [activeDescriptorKey, activeContextMenu, onLoadCollectionMemberships]);
 
+  const pluginAssetMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.asset",
+    activeContextMenu?.descriptor.type === "asset"
+      || activeContextMenu?.descriptor.type === "multi-asset",
+    `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
+  );
+  const pluginFolderMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.folder",
+    activeContextMenu?.descriptor.type === "folder",
+    `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
+  );
+  const pluginCollectionMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.collection",
+    activeContextMenu?.descriptor.type === "organization",
+    `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
+  );
+  const pluginWorkspaceMenuItems = usePluginMenuContributions(
+    props.pluginApi,
+    props.libraryId,
+    "menus.workspace",
+    activeContextMenu?.descriptor.type === "workspace",
+    `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
+  );
+
+  const runPluginCommand = (
+    item: PluginMenuDescriptor,
+    context: {
+      assetIds?: string[];
+      folderIds?: string[];
+      collectionIds?: string[];
+    },
+  ) => {
+    if (!props.pluginApi || !props.libraryId) return;
+    void runPluginMenuCommand(props.pluginApi, props.libraryId, item, context);
+  };
+
   if (!activeContextMenu) return null;
 
   const ariaLabel =
@@ -292,6 +547,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             ? t("menu.folderOps", {
                 name: activeContextMenu.descriptor.name,
               })
+            : activeContextMenu.descriptor.type === "workspace"
+              ? t("scope.workspace")
             : activeContextMenu.descriptor.type === "trash"
               ? t("scope.trash")
               : activeContextMenu.descriptor.type === "trashed-folder"
@@ -350,6 +607,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           />
         ) : (
           <>
+        {activeContextMenu.descriptor.type === "workspace" && (() => {
+          const desc = activeContextMenu.descriptor;
+          if (desc.type !== "workspace") return null;
+          const assetIds = desc.assetIds;
+          return (
+            <PluginMenuCommandsSection
+              items={pluginWorkspaceMenuItems}
+              label={t("contextMenu.pluginCommands")}
+              onRun={(item) => runPluginCommand(
+                item,
+                assetIds === undefined || assetIds.length === 0
+                  ? {}
+                  : { assetIds: [...assetIds] },
+              )}
+            />
+          );
+        })()}
         {activeContextMenu.descriptor.type === "trash" && (
           <ContextMenuSection label={t("command.group.delete")}>
             <ContextMenuItem
@@ -556,6 +830,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("collection.delete")}
                 />
               )}
+              <PluginMenuCommandsSection
+                items={pluginCollectionMenuItems}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { collectionIds: [desc.id] })}
+              />
             </>
           );
         })()}
@@ -651,6 +930,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           return (
             <>
               <ContextMenuSection label={t("command.group.open")}>
+                <PluginMenuItems
+                  items={pluginItemsForHostGroup(pluginFolderMenuItems, "open", "before")}
+                  onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                />
                 {openInFileManagerItem && (
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
@@ -664,8 +947,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     }
                   />
                 )}
+                <PluginMenuItems
+                  items={pluginItemsForHostGroup(pluginFolderMenuItems, "open", "after")}
+                  onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                />
               </ContextMenuSection>
               <ContextMenuSection label={t("command.group.folders")}>
+                <PluginMenuItems
+                  items={pluginItemsForHostGroup(pluginFolderMenuItems, "organize", "before")}
+                  onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                />
                 {createSubfolderItem && (
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
@@ -676,11 +967,21 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
                 {renameItem && (
-                  <ContextMenuItem
-                    icon={<Icon name="edit" size={14} />}
-                    label={renameItem.label}
-                    onAction={() => runSidebarCommand("folder.rename")}
-                  />
+                  <>
+                    <PluginMenuItems
+                      items={pluginItemsAtHostAnchor(pluginFolderMenuItems, "folder.rename", "before")}
+                      onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                    />
+                    <ContextMenuItem
+                      icon={<Icon name="edit" size={14} />}
+                      label={renameItem.label}
+                      onAction={() => runSidebarCommand("folder.rename")}
+                    />
+                    <PluginMenuItems
+                      items={pluginItemsAtHostAnchor(pluginFolderMenuItems, "folder.rename", "after")}
+                      onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                    />
+                  </>
                 )}
                 {linkedRulesItem && (
                   <ContextMenuItem
@@ -723,9 +1024,21 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() => runSidebarCommand("folder.copy-path")}
                   />
                 )}
+                <PluginMenuItems
+                  items={pluginItemsForHostGroup(pluginFolderMenuItems, "organize", "after")}
+                  onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                />
               </ContextMenuSection>
-              {(trashItem || deleteFromDiskItem || removeFromLibraryItem) && (
+              {(trashItem
+                || deleteFromDiskItem
+                || removeFromLibraryItem
+                || pluginItemsForHostGroup(pluginFolderMenuItems, "delete", "before").length > 0
+                || pluginItemsForHostGroup(pluginFolderMenuItems, "delete", "after").length > 0) && (
                 <ContextMenuSection label={t("command.group.delete")}>
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginFolderMenuItems, "delete", "before")}
+                    onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                  />
                   {trashItem && (
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
@@ -760,8 +1073,17 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                     />
                   )}
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginFolderMenuItems, "delete", "after")}
+                    onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+                  />
                 </ContextMenuSection>
               )}
+              <PluginMenuCommandsSection
+                items={pluginItemsOutsideHostGroups(pluginFolderMenuItems)}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
+              />
             </>
           );
         })()}
@@ -949,6 +1271,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
               </ContextMenuSection>
+            )}
+            {pluginItemsOutsideHostGroups(pluginAssetMenuItems).length > 0 && (
+              <PluginMenuCommandsSection
+                items={pluginItemsOutsideHostGroups(pluginAssetMenuItems)}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
+              />
             )}
             {targetAssetIds.length > 0 && (
             <ContextMenuSection label={t("command.group.organize")}>
@@ -1216,6 +1545,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 ) : (
                   <>
                 <ContextMenuSection label={t("command.group.open")}>
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "open", "before")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                   {viewItem && (
                     <ContextMenuItem
                       icon={<Icon name="file" size={14} />}
@@ -1263,8 +1596,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                     />
                   )}
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "open", "after")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                 </ContextMenuSection>
+                {pluginItemsOutsideHostGroups(pluginAssetMenuItems).length > 0 && (
+                  <PluginMenuCommandsSection
+                    items={pluginItemsOutsideHostGroups(pluginAssetMenuItems)}
+                    label={t("contextMenu.pluginCommands")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
+                )}
                 <ContextMenuSection label={t("command.group.organize")}>
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "organize", "before")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                   {singleAsset?.sequence ? (
                     <ContextMenuItem
                       icon={<Icon name="sliders" size={14} />}
@@ -1342,6 +1690,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     />
                   )}
                   {renameItem && (
+                    <>
+                    <PluginMenuItems
+                      items={pluginItemsAtHostAnchor(pluginAssetMenuItems, "asset.rename", "before")}
+                      onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                    />
                     <ContextMenuItem
                       icon={<Icon name="edit" size={14} />}
                       label={renameItem.label}
@@ -1349,6 +1702,11 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       disabledReason={renameItem.disabledReason ?? undefined}
                       onAction={() => runAssetCommand("asset.rename")}
                     />
+                    <PluginMenuItems
+                      items={pluginItemsAtHostAnchor(pluginAssetMenuItems, "asset.rename", "after")}
+                      onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                    />
+                    </>
                   )}
                   {linkedFolders
                     .filter((f) => f.status === "available")
@@ -1420,8 +1778,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                     />
                   )}
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "organize", "after")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.metadata")}>
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "metadata", "before")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                   {aiAnalyzeItem && (
                     <ContextMenuItem
                       icon={
@@ -1453,8 +1819,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runAssetCommand("asset.clear-ai-content")}
                     />
                   )}
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "metadata", "after")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                 </ContextMenuSection>
                 <ContextMenuSection label={t("command.group.delete")}>
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "delete", "before")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                   {moveToTrashItem && (
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
@@ -1490,6 +1864,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runAssetCommand("asset.delete-linked")}
                     />
                   )}
+                  <PluginMenuItems
+                    items={pluginItemsForHostGroup(pluginAssetMenuItems, "delete", "after")}
+                    onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
+                  />
                 </ContextMenuSection>
                   </>
                 )}

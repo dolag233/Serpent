@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
+import { summarizePluginJobs } from '../shared/plugin-job-status';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
@@ -14,6 +15,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
+  LIBRARY_CHANGED_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
   AI_PROGRESS_CHANNEL,
@@ -23,8 +25,12 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+  SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
+  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
@@ -32,14 +38,80 @@ import {
   WINDOW_MAXIMIZED_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   VIEWER_VIDEO_SHORTCUT_CHANNEL,
+  AUTOMATION_SCRIPT_OPEN_CHANNEL,
+  AUTOMATION_SCRIPT_SAVE_CHANNEL,
+  AUTOMATION_SCRIPT_START_CHANNEL,
+  AUTOMATION_SCRIPT_EXECUTE_CHANNEL,
+  AUTOMATION_SCRIPT_COMMAND_CHANNEL,
+  AUTOMATION_SCRIPT_COMPLETE_CHANNEL,
+  AUTOMATION_SCRIPT_CANCEL_CHANNEL,
+  AUTOMATION_SCRIPT_HISTORY_CHANNEL,
+  AUTOMATION_SCRIPT_UNDO_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
+  AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
+  PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
 } from '../shared/protocol/channels';
+import {
+  parsePluginInputCapturePublishPayload,
+  parsePluginInputCaptureSessionsPayload,
+  type PluginInputCapturePublishPayload,
+  type PluginInputCaptureRendererSession,
+} from '../shared/plugin-input-capture-renderer';
+import {
+  automationScriptFileResultSchema,
+  automationScriptSaveInputSchema,
+  automationScriptStartResultSchema,
+  automationScriptExecuteResultSchema,
+  automationScriptHistoryInputSchema,
+  automationScriptHistoryResultSchema,
+  automationScriptUndoInputSchema,
+  automationScriptUndoResultSchema,
+  automationRecentScriptOpenInputSchema,
+  automationRecentScriptsListResultSchema,
+  type AutomationRecentScriptOpenInput,
+  type AutomationScriptExecuteInput,
+  type AutomationScriptCommandInput,
+  type AutomationScriptCommandResult,
+  type AutomationScriptCompleteInput,
+  type AutomationScriptCancelInput,
+  type AutomationScriptHistoryInput,
+  type AutomationScriptUndoInput,
+  type AutomationScriptSaveInput,
+  type AutomationScriptStartInput,
+  type SerpentAutomationScriptApi,
+} from '../shared/automation-script-api';
+import {
+  parsePluginManagerResponse,
+  type PluginHostContributionTarget,
+  type PluginManagerRequest,
+  type PluginManagerResponse,
+  type SerpentPluginManagerApi,
+} from '../shared/plugin-manager-api';
 import {
   parseOpenExternalUrlResult,
   type RevealAppLogResult,
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
-import { parseAppLogEntry, type ReadAppLogResult } from '../shared/app-log';
+import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
+import {
+  desktopControlSelectionEventSchema,
+  desktopBrowseActionSchema,
+  desktopBrowseResultSchema,
+  type DesktopControlSelectionEvent,
+  type DesktopBrowseAction,
+  type DesktopBrowseResult,
+} from '../shared/desktop-control';
+import {
+  appLogAutomationCorrelationIdSchema,
+  parseAppLogEntry,
+  type AppLogAutomationCorrelationId,
+  type ReadAppLogResult,
+} from '../shared/app-log';
 import { parseShowEditContextMenuResult } from '../shared/edit-context-menu';
 import {
   parseWindowControlResult,
@@ -63,6 +135,8 @@ import {
   type ImageSequenceImportOffer,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type LibraryChangedEvent,
+  parseLibraryChangedEvent,
   type ExtensionSaveCompletedEvent,
   parseExtensionSaveCompletedEvent,
   type ExportProgressEvent,
@@ -1095,6 +1169,14 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(ASSET_CHANGE_CHANNEL, subscription);
   },
 
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void) {
+    const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      listener(parseLibraryChangedEvent(input));
+    };
+    ipcRenderer.on(LIBRARY_CHANGED_CHANNEL, subscription);
+    return () => ipcRenderer.removeListener(LIBRARY_CHANGED_CHANNEL, subscription);
+  },
+
   onExtensionSaveCompleted(listener: (event: ExtensionSaveCompletedEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       listener(parseExtensionSaveCompletedEvent(input));
@@ -1429,6 +1511,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
   },
 
+  async listPluginJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>> {
+    const result = await request({ type: 'plugin.list-jobs.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'plugin.jobs.listed') throw new Error('Unexpected plugin list-jobs response.');
+    return { ok: true, value: summarizePluginJobs(result.jobs) };
+  },
+
   async pauseMediaJobs({ libraryId, jobIds }: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>> {
     const result = await request({ type: 'media.pause-jobs.request', libraryId, jobIds });
     if (!result.ok) return failure(result);
@@ -1646,7 +1735,14 @@ async function importRequest(
   if (result.type === 'extension.asset-saved') {
     return {
       ok: true,
-      value: { importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [result.asset] },
+      value: {
+        importedCount: 1,
+        fileCount: 1,
+        assetCount: 1,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [result.asset],
+      },
     };
   }
   throw new Error('Unexpected prepare-import response.');
@@ -1699,7 +1795,7 @@ function parseReadAppLogResult(input: unknown): ReadAppLogResult {
     typeof input === 'object' && input !== null && 'code' in input && typeof (input as { code: unknown }).code === 'string'
       ? (input as { code: string }).code
       : 'read_failure';
-  if (code === 'unauthorized_sender' || code === 'log_missing' || code === 'read_failure') {
+  if (code === 'unauthorized_sender' || code === 'malformed_request' || code === 'log_missing' || code === 'read_failure') {
     return { ok: false, code };
   }
   return { ok: false, code: 'read_failure' };
@@ -1714,8 +1810,17 @@ const shell: SerpentShellApi = Object.freeze({
     const result: unknown = await ipcRenderer.invoke(REVEAL_APP_LOG_CHANNEL);
     return parseRevealAppLogResult(result);
   },
-  async readAppLog() {
-    const result: unknown = await ipcRenderer.invoke(READ_APP_LOG_CHANNEL);
+  async readAppLog(automationCorrelationId?: AppLogAutomationCorrelationId): Promise<ReadAppLogResult> {
+    const parsedCorrelationId = automationCorrelationId === undefined
+      ? undefined
+      : appLogAutomationCorrelationIdSchema.safeParse(automationCorrelationId);
+    if (parsedCorrelationId !== undefined && !parsedCorrelationId.success) {
+      return { ok: false, code: 'malformed_request' };
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      READ_APP_LOG_CHANNEL,
+      parsedCorrelationId === undefined ? undefined : { automationCorrelationId: parsedCorrelationId.data },
+    );
     return parseReadAppLogResult(result);
   },
   setAppLocale(locale: 'zh-CN' | 'en'): void {
@@ -1779,6 +1884,34 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(WINDOW_FOCUS_CHANNEL, handler);
     };
   },
+  onDesktopAutomationSelection(
+    listener: (event: DesktopControlSelectionEvent) => void,
+  ) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = desktopControlSelectionEventSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
+    };
+  },
+  onDesktopAutomationBrowse(
+    listener: (action: DesktopBrowseAction) => void,
+  ) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = desktopBrowseActionSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
+    };
+  },
+  respondDesktopAutomationBrowse(result: DesktopBrowseResult): void {
+    const parsed = desktopBrowseResultSchema.safeParse(result);
+    if (parsed.success) ipcRenderer.send(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, parsed.data);
+  },
   onInvertSelection(listener: () => void): () => void {
     const handler = () => {
       listener();
@@ -1786,6 +1919,17 @@ const shell: SerpentShellApi = Object.freeze({
     ipcRenderer.on(INVERT_SELECTION_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(INVERT_SELECTION_CHANNEL, handler);
+    };
+  },
+  onShellNotify(listener: (input: ShellNotifyPayload) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = shellNotifyPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(SHELL_NOTIFY_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(SHELL_NOTIFY_CHANNEL, handler);
     };
   },
   onCopySelection(listener: () => void): () => void {
@@ -1823,6 +1967,183 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(VIEWER_VIDEO_SHORTCUT_CHANNEL, handler);
     };
   },
+  onInputCaptureSessions(listener: (sessions: PluginInputCaptureRendererSession[]) => void) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ) => {
+      const parsed = parsePluginInputCaptureSessionsPayload(payload);
+      if (parsed === null) return;
+      listener(parsed.sessions);
+    };
+    ipcRenderer.on(PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL, handler);
+    };
+  },
+  publishInputCaptureEvent(payload: PluginInputCapturePublishPayload) {
+    const parsed = parsePluginInputCapturePublishPayload(payload);
+    if (parsed === null) return;
+    ipcRenderer.send(PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL, parsed);
+  },
+  setInputCaptureSystemModalActive(active: boolean) {
+    ipcRenderer.send(PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL, { active: Boolean(active) });
+  },
+});
+
+const automation: SerpentAutomationScriptApi = Object.freeze({
+  async open() {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_OPEN_CHANNEL),
+    );
+  },
+  async save(input: AutomationScriptSaveInput) {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_SAVE_CHANNEL, automationScriptSaveInputSchema.parse(input)),
+    );
+  },
+  async recentList() {
+    return automationRecentScriptsListResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL),
+    );
+  },
+  async openRecent(input: AutomationRecentScriptOpenInput) {
+    return automationScriptFileResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
+        automationRecentScriptOpenInputSchema.parse(input),
+      ),
+    );
+  },
+  async start(input: AutomationScriptStartInput) {
+    return automationScriptStartResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_START_CHANNEL, input),
+    );
+  },
+  async execute(input: AutomationScriptExecuteInput) {
+    return automationScriptExecuteResultSchema.parse(
+      await ipcRenderer.invoke(AUTOMATION_SCRIPT_EXECUTE_CHANNEL, input),
+    );
+  },
+  async command(input: AutomationScriptCommandInput): Promise<AutomationScriptCommandResult> {
+    const result = await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMMAND_CHANNEL, input);
+    if (typeof result !== 'object' || result === null || typeof (result as { ok?: unknown }).ok !== 'boolean') {
+      throw new Error('Main returned an invalid automation command result.');
+    }
+    return result as AutomationScriptCommandResult;
+  },
+  async complete(input: AutomationScriptCompleteInput): Promise<void> {
+    await ipcRenderer.invoke(AUTOMATION_SCRIPT_COMPLETE_CHANNEL, input);
+  },
+  async cancel(input: AutomationScriptCancelInput): Promise<void> {
+    await ipcRenderer.invoke(AUTOMATION_SCRIPT_CANCEL_CHANNEL, input);
+  },
+  async history(input: AutomationScriptHistoryInput) {
+    return automationScriptHistoryResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_HISTORY_CHANNEL,
+        automationScriptHistoryInputSchema.parse(input),
+      ),
+    );
+  },
+  async undo(input: AutomationScriptUndoInput) {
+    return automationScriptUndoResultSchema.parse(
+      await ipcRenderer.invoke(
+        AUTOMATION_SCRIPT_UNDO_CHANNEL,
+        automationScriptUndoInputSchema.parse(input),
+      ),
+    );
+  },
+});
+
+const plugins: SerpentPluginManagerApi = Object.freeze({
+  async request(input: PluginManagerRequest): Promise<PluginManagerResponse> {
+    const raw = await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input);
+    try {
+      return parsePluginManagerResponse(raw);
+    } catch (error) {
+      console.error('plugin-manager.response-invalid', error, raw);
+      return { ok: false, code: 'operation-failed' };
+    }
+  },
+  async listPluginContributions(input: {
+    libraryId?: string;
+    target?: PluginHostContributionTarget;
+  }) {
+    const response = await this.request({
+      type: 'plugin-manager.list-contributions',
+      ...(input.libraryId === undefined ? {} : { libraryId: input.libraryId }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+    });
+    return 'contributions' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['listPluginContributions']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async runPluginCommand(input: Extract<PluginManagerRequest, { type: 'plugin-manager.run-command' }>) {
+    const response = await this.request(input);
+    return 'executed' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['runPluginCommand']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async searchProviders(input: Extract<PluginManagerRequest, { type: 'plugin-manager.search-providers' }>) {
+    const response = await this.request(input);
+    return 'search' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['searchProviders']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async previewProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.preview-provider' }>) {
+    const response = await this.request(input);
+    return 'media' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['previewProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async thumbnailProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.thumbnail-provider' }>) {
+    const response = await this.request(input);
+    return 'media' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['thumbnailProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async metadataProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.metadata-provider' }>) {
+    const response = await this.request(input);
+    return 'metadata' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['metadataProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async importProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.import-provider' }>) {
+    const response = await this.request(input);
+    return 'import' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['importProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async exportProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.export-provider' }>) {
+    const response = await this.request(input);
+    return 'export' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['exportProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  async aiProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.ai-provider' }>) {
+    const response = await this.request(input);
+    return 'ai' in response || response.ok === false
+      ? response as Awaited<ReturnType<SerpentPluginManagerApi['aiProvider']>>
+      : { ok: false as const, code: 'operation-failed' as const };
+  },
+  onContributionsChanged(listener: (event: {
+    libraryId: string | null;
+    requestType: string;
+  }) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (typeof payload !== 'object' || payload === null) return;
+      const record = payload as { libraryId?: unknown; requestType?: unknown };
+      listener({
+        libraryId: typeof record.libraryId === 'string' ? record.libraryId : null,
+        requestType: typeof record.requestType === 'string' ? record.requestType : 'unknown',
+      });
+    };
+    ipcRenderer.on(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, handler);
+    };
+  },
 });
 
 contextBridge.exposeInMainWorld(
@@ -1830,6 +2151,8 @@ contextBridge.exposeInMainWorld(
   Object.freeze({
     library,
     shell,
+    automation,
+    plugins,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );

@@ -83,6 +83,46 @@ await build({
   },
 });
 
+// Desktop Console scripts now execute in a separate UtilityProcess. The E2E
+// application uses the same `.vite/build` directory as Forge, so this entry
+// must be rebuilt alongside Main/Preload/Library Worker; otherwise an old
+// runtime artifact could make a current Console test exercise stale code.
+await build({
+  configFile: path.join(projectRoot, 'vite.script-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
+await build({
+  configFile: path.join(projectRoot, 'vite.plugin-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
+await build({
+  configFile: path.join(projectRoot, 'vite.plugin-trusted-runtime.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
 await build({
   base: './',
   configFile: path.join(projectRoot, 'vite.renderer.config.ts'),
@@ -93,9 +133,14 @@ await build({
 });
 
 const playwrightPath = require.resolve('@playwright/test/cli');
+// Cursor/agent shells often inherit ELECTRON_RUN_AS_NODE=1 so Electron behaves
+// like plain Node and rejects Playwright's --remote-debugging-port. Strip it
+// for the Playwright child and every Electron process it launches.
+const playwrightEnv = { ...process.env };
+delete playwrightEnv.ELECTRON_RUN_AS_NODE;
 const child = spawn(process.execPath, [playwrightPath, 'test', ...process.argv.slice(2)], {
   cwd: projectRoot,
-  env: process.env,
+  env: playwrightEnv,
   stdio: 'inherit',
 });
 

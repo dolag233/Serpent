@@ -1,6 +1,7 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import {
   readFileSync,
   writeFileSync,
@@ -19,7 +20,9 @@ import {
   screen,
   shell,
   nativeImage,
+  utilityProcess,
 } from "electron";
+import type { MessageBoxOptions } from "electron";
 
 import { installApplicationMenu } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
@@ -64,6 +67,7 @@ import {
   ACTIVE_CONTEXT_CHANNEL,
   APP_LOCALE_CHANNEL,
   LIBRARY_LIFECYCLE_CHANNEL,
+  LIBRARY_CHANGED_CHANNEL,
   LIBRARY_REQUEST_CHANNEL,
   PROGRESS_CHANNEL,
   AI_PROGRESS_CHANNEL,
@@ -73,11 +77,88 @@ import {
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
+  SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
+  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
+  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
+  PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+  PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
 } from "../shared/protocol/channels";
+import {
+  createAutomationCommandGateway,
+  type AutomationCommandGateway,
+} from '../automation/command-gateway';
+import { sanitizeShellNotifyTitle } from '../shared/shell-notify';
+import { AutomationLibraryWorkerAdapter } from './automation-worker-adapter';
+import {
+  createDesktopAutomationFilePlanApprovalHandler,
+  type DesktopAutomationFilePlanSummary,
+} from './automation-file-plan-approval';
+import {
+  AutomationExecutionJournal,
+  createJsonFileAutomationExecutionStore,
+  projectAutomationExecutionStatus,
+} from './automation-execution-journal';
+import { registerAutomationScriptIpc } from './automation-script-ipc';
+import { AutomationScriptFileService } from './automation-script-file-service';
+import {
+  createJsonFileAutomationRecentScriptsStore,
+  type AutomationRecentScriptsStore,
+} from './automation-recent-scripts-store';
+import {
+  maybeStartAutomationMcpMode,
+  redirectConsoleToStderrForMcp,
+} from './automation-mcp-bootstrap';
+import type { AutomationMcpHostHandle } from './automation-mcp-host';
+import {
+  startDesktopAttachedMcp,
+  type DesktopAttachedMcpHandle,
+} from './desktop-attached-mcp';
+import {
+  type DesktopSelectionRequest,
+  type DesktopSelectionResult,
+} from '../shared/desktop-control';
+import {
+  createDesktopBrowseControl,
+  type DesktopBrowseControl,
+} from './desktop-browse-control';
+import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
+import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeInputCaptureStartHandler, type PluginRuntimeJobControlHandler, type PluginRuntimeJobEnqueueHandler, type PluginRuntimeJobProgressHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
+import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
+import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
+import { PluginInputCaptureBroker } from '../shared/plugin-input-capture';
+import {
+  parsePluginInputCapturePublishPayload,
+  parsePluginInputCaptureSystemModalPayload,
+  type PluginInputCaptureSessionsPayload,
+} from '../shared/plugin-input-capture-renderer';
+import { PluginActivationCoordinator } from './plugin-activation-coordinator';
+import { PluginJobScheduler } from './plugin-job-scheduler';
+import { PluginProviderScheduler } from './plugin-provider-scheduler';
+import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
+import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
+import { PluginSettingsStore } from './plugin-settings-store';
+import { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
+import { PluginMcpToolProvider } from './plugin-mcp-tool-provider';
+import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
+import { createContributionRegistry } from '../plugins/plugin-contributions';
+import { createPluginProviderRegistry } from '../plugins/plugin-providers';
+import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
+import { createPluginPackageRequestHandler } from './plugin-package-ipc';
+import { PluginPackageManager } from './plugin-package-manager';
+import { PLUGIN_API_VERSION } from '../plugins/plugin-manifest';
+import {
+  createPluginDomainEvent,
+  validatePluginCauseChain,
+} from '../plugins/plugin-domain-events';
+import type { AutomationExecutionContext } from '../automation/command-gateway';
+import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
@@ -85,7 +166,7 @@ import {
   type OpenExternalUrlResult,
   type RevealAppLogResult,
 } from "../shared/external-url";
-import type { ReadAppLogResult } from "../shared/app-log";
+import { parseReadAppLogRequest, type ReadAppLogResult } from "../shared/app-log";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
   createPublicError,
@@ -106,6 +187,8 @@ import {
   type WorkerResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
+  type LibraryChangedEvent,
+  parseLibraryChangedEvent,
   type ExtensionSaveCompletedEvent,
   parseExtensionSaveCompletedEvent,
   type ProgressEvent,
@@ -183,6 +266,11 @@ import {
   createWebImportCommand,
 } from "./web-ingestion";
 import { serpentProtocolSchemes } from "./serpent-protocol-privileges";
+import {
+  parsePluginUiAssetRequestFromNavigation,
+  rewritePluginUiHtmlAssetUrls,
+  pluginUiMimeType,
+} from "./plugin-ui-assets";
 
 if (process.env.SERPENT_E2E === "1") {
   const explicitUserDataPath = process.env.SERPENT_E2E_USER_DATA_PATH;
@@ -194,12 +282,28 @@ if (process.env.SERPENT_E2E === "1") {
   );
 }
 
+// Headless MCP stdio host (0023 Phase C). Isolate userData and keep JSON-RPC
+// frames off console helpers before Forge/Vite noise is considered separately.
+const mcpModeEnabled = process.env.SERPENT_MCP === "1";
+const mcpAttachBootstrapEnabled = process.env.SERPENT_MCP_ATTACH_BOOTSTRAP === "1";
+const desktopControlEnabled =
+  process.env.SERPENT_E2E !== '1' || process.env.SERPENT_E2E_DESKTOP_CONTROL === '1';
+if (mcpModeEnabled || mcpAttachBootstrapEnabled) {
+  const mcpUserData = process.env.SERPENT_MCP_USER_DATA_PATH;
+  app.setPath(
+    "userData",
+    mcpUserData && path.isAbsolute(mcpUserData)
+      ? mcpUserData
+      : path.join(tmpdir(), "serpent-mcp-user-data", String(process.pid)),
+  );
+}
+
 // Dev multi-instance (Serpent-i6xg): isolate userData so SingletonLock / prefs
 // do not collide. Prefer `npm run start:multi`. Do not open the same library
 // for writes from two GUIs — SQLite write coordination is CLI/desktop lease
 // territory (ADR-0021), not dual-GUI.
 const allowMultiInstance = process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1";
-if (allowMultiInstance && process.env.SERPENT_E2E !== "1") {
+if (allowMultiInstance && process.env.SERPENT_E2E !== "1" && !mcpModeEnabled) {
   app.setPath(
     "userData",
     path.join(app.getPath("userData"), "dev-instances", `pid-${process.pid}`),
@@ -224,9 +328,69 @@ let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
+let automationExecutionJournal: AutomationExecutionJournal | undefined;
+let automationMcpHost: AutomationMcpHostHandle | undefined;
+let desktopAttachedMcp: DesktopAttachedMcpHandle | undefined;
+let desktopBrowseControl: DesktopBrowseControl | undefined;
+let automationCommandGateway: AutomationCommandGateway | undefined;
+let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
+let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
+let pluginTrustedRuntimeSupervisor: PluginTrustedRuntimeSupervisor | undefined;
+let pluginInputCaptureBroker: PluginInputCaptureBroker | undefined;
+let pluginInputCaptureFlushTimer: NodeJS.Timeout | undefined;
+let pluginActivationCoordinator: PluginActivationCoordinator | undefined;
+let pluginJobScheduler: PluginJobScheduler | undefined;
+let pluginProviderScheduler: PluginProviderScheduler | undefined;
+let automationScriptFiles: AutomationScriptFileService | undefined;
+let automationRecentScripts: AutomationRecentScriptsStore | undefined;
+let pluginPackageManager: PluginPackageManager | undefined;
+let pluginMcpToolProvider: PluginMcpToolProvider | undefined;
+const pluginAutomationContexts = new Map<string, AutomationExecutionContext>();
+const desktopAutomationSelections = new Map<string, string[]>();
+
+function buildPluginInputCaptureSessionsPayload(): PluginInputCaptureSessionsPayload {
+  const sessions = pluginInputCaptureBroker?.activeSessions() ?? [];
+  return {
+    sessions: sessions.map((session) => ({
+      sessionId: session.sessionId,
+      scope: session.scope,
+      ...(session.ownerViewId === undefined ? {} : { ownerViewId: session.ownerViewId }),
+      keyboard: session.keyboard,
+      pointer: session.pointer,
+    })),
+  };
+}
+
+function publishPluginInputCaptureSessionsToRenderer(): void {
+  if (!mainWindow) return;
+  mainWindow.webContents.send(
+    PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
+    buildPluginInputCaptureSessionsPayload(),
+  );
+}
+
+function schedulePluginInputCaptureFlush(): void {
+  if (pluginInputCaptureFlushTimer !== undefined) return;
+  pluginInputCaptureFlushTimer = setTimeout(() => {
+    pluginInputCaptureFlushTimer = undefined;
+    pluginInputCaptureBroker?.flush();
+  }, 0);
+}
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
+}
+
+function currentPluginCompatibilityPlatform():
+  | { platform: 'darwin' | 'win32' | 'linux'; arch: 'arm64' | 'x64' | 'ia32' }
+  | undefined {
+  const platform = process.platform;
+  const arch = process.arch;
+  if ((platform !== 'darwin' && platform !== 'win32' && platform !== 'linux')
+    || (arch !== 'arm64' && arch !== 'x64' && arch !== 'ia32')) {
+    return undefined;
+  }
+  return { platform, arch };
 }
 
 function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
@@ -447,8 +611,8 @@ function saveEncryptedApiKey(apiKey: string): void {
   writeFileSync(aiKeyPath(), encrypted);
 }
 
-function focusMainWindow(): void {
-  focusSerpentWindow(
+function focusMainWindow(): boolean {
+  return focusSerpentWindow(
     mainWindow && !mainWindow.isDestroyed() ? mainWindow.id : undefined,
   );
 }
@@ -468,15 +632,16 @@ function handleSecondInstance(): void {
   focusMainWindow();
 }
 
-function focusSerpentWindow(windowId?: number): void {
+function focusSerpentWindow(windowId?: number): boolean {
   const target =
     windowId === undefined
       ? mainWindow
       : BrowserWindow.getAllWindows().find((window) => window.id === windowId);
-  if (!target || target.isDestroyed()) return;
+  if (!target || target.isDestroyed()) return false;
   if (target.isMinimized()) target.restore();
   target.show();
   target.focus();
+  return true;
 }
 
 /**
@@ -679,9 +844,33 @@ async function createMainWindow(): Promise<void> {
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.session.on("will-download", (event, item) => {
+    if (item.getURL().startsWith("serpent-plugin:")) event.preventDefault();
+  });
   // VIEWER-018: letter keys under CJK IME — Menu accelerators + IMM32 suspend
   // are primary on Windows; before-input remains a cross-platform fallback.
   window.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== 'keyDown' && input.type !== 'keyUp') return;
+    const captureType = input.type === 'keyUp' ? 'keyup' : 'keydown';
+    const captureResult = pluginInputCaptureBroker?.publish({
+      target: { scope: 'application' },
+      event: {
+        type: captureType,
+        timestamp: Date.now(),
+        key: input.key,
+        code: input.code,
+        repeat: input.isAutoRepeat,
+        altKey: input.alt,
+        ctrlKey: input.control,
+        metaKey: input.meta,
+        shiftKey: input.shift,
+        isComposing: input.isComposing,
+      },
+    });
+    if (captureResult === 'delivered' || captureResult === 'queued') {
+      event.preventDefault();
+      return;
+    }
     if (!isViewerVideoShortcutContentsActive(window.webContents.id)) {
       return;
     }
@@ -721,8 +910,14 @@ async function createMainWindow(): Promise<void> {
     });
   };
   window.on("focus", publishWindowFocus);
-  window.on("blur", publishWindowFocus);
+  window.on("blur", () => {
+    pluginInputCaptureBroker?.releaseForWindowBlur();
+    publishWindowFocus();
+  });
   window.once("ready-to-show", publishWindowFocus);
+  window.webContents.once("did-finish-load", () => {
+    publishPluginInputCaptureSessionsToRenderer();
+  });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     attachRendererDevDiagnostics(window);
@@ -1001,10 +1196,36 @@ function publishLifecycle(event: RendererLifecycleEvent): void {
 }
 
 function publishAssetChange(event: AssetChangeEvent): void {
+  const parsed = parseAssetChangeEvent(event);
+  pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
+    kind: 'asset.changed',
+    libraryId: parsed.libraryId,
+    summary: {
+      changedCount: parsed.changedCount,
+      missingCount: parsed.missingCount,
+      ...(parsed.source === undefined ? {} : { source: parsed.source }),
+    },
+  }));
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(
     ASSET_CHANGE_CHANNEL,
-    parseAssetChangeEvent(event),
+    parsed,
+  );
+}
+
+function publishLibraryChanged(event: LibraryChangedEvent): void {
+  const parsed = parseLibraryChangedEvent(event);
+  pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
+    kind: 'library.changed',
+    libraryId: parsed.libraryId,
+    summary: {
+      changeSequence: parsed.changeSequence,
+    },
+  }));
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(
+    LIBRARY_CHANGED_CHANNEL,
+    parsed,
   );
 }
 
@@ -1082,6 +1303,28 @@ async function processAiQueue(libraryId: string): Promise<void> {
   const config = loadAiConfig();
   aiQueueScheduler.setRetryPolicy(config.reliabilitySettings);
   await aiQueueScheduler.trigger(libraryId);
+}
+
+/** Shared post-open hook for dialog opens and startup recent-library restore. */
+async function notifyLibraryOpenedSideEffects(input: {
+  libraryId: string;
+  libraryDirectory: string;
+}): Promise<void> {
+  void processAiQueue(input.libraryId);
+  try {
+    await pluginActivationCoordinator?.onLibraryOpened({
+      libraryId: input.libraryId,
+      libraryDirectory: input.libraryDirectory,
+    });
+  } catch (error) {
+    logger?.error("plugin.activation.library-opened", error, {
+      libraryId: input.libraryId,
+    });
+  }
+  // Global plugin activation uses an internal pseudo-library. Once the real
+  // library is open, drain its persisted jobs against the concrete library so
+  // recovered global and library-scoped jobs can actually resume.
+  pluginJobScheduler?.tick(input.libraryId);
 }
 
 async function processAiQueueBatch(
@@ -1201,6 +1444,27 @@ function createNativeDialogHost(): NativeDialogHost {
   };
 }
 
+async function selectAutomationScriptToOpen(): Promise<string | undefined> {
+  return selectOpenFile(
+    createNativeDialogHost(),
+    'openAutomationScript',
+    process.env.SERPENT_E2E_OPEN_AUTOMATION_SCRIPT,
+    [{ name: 'Serpent scripts', extensions: ['serpent.js', 'serpent.ts'] }],
+  );
+}
+
+async function selectAutomationScriptToSave(): Promise<string | undefined> {
+  return selectSavePath(
+    createNativeDialogHost(),
+    'saveAutomationScript',
+    process.env.SERPENT_E2E_SAVE_AUTOMATION_SCRIPT,
+    {
+      defaultPath: 'Untitled.serpent.ts',
+      filters: [{ name: 'Serpent scripts', extensions: ['serpent.js', 'serpent.ts'] }],
+    },
+  );
+}
+
 async function selectImportSources(
   sourceKind: "files" | "folder",
 ): Promise<string[] | undefined> {
@@ -1211,6 +1475,30 @@ async function selectDirectory(
   dialogId: "createLibrary" | "openLibrary",
 ): Promise<string | undefined> {
   return selectLibraryDirectory(createNativeDialogHost(), dialogId);
+}
+
+async function selectPluginPackage(): Promise<string | undefined> {
+  // Isolated Electron E2E injects a disposable package path. Production and
+  // normal development always use the native picker, so Renderer never gains
+  // path selection capability.
+  if (!app.isPackaged && process.env.SERPENT_E2E === '1') {
+    const e2ePackage = process.env.SERPENT_E2E_PLUGIN_PACKAGE;
+    return e2ePackage && path.isAbsolute(e2ePackage) ? e2ePackage : undefined;
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, {
+      title: 'Install a Serpent plugin',
+      buttonLabel: 'Choose plugin',
+      properties: ['openFile', 'openDirectory'],
+      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
+    })
+    : await dialog.showOpenDialog({
+      title: 'Install a Serpent plugin',
+      buttonLabel: 'Choose plugin',
+      properties: ['openFile', 'openDirectory'],
+      filters: [{ name: 'Serpent plugin package', extensions: ['zip'] }],
+    });
+  return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
 }
 
 async function commandFor(
@@ -1983,6 +2271,8 @@ async function commandFor(
       };
     case "media.list-jobs.request":
       return { type: "media.list-jobs", libraryId: request.libraryId };
+    case "plugin.list-jobs.request":
+      return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
       return {
         type: "media.pause-jobs",
@@ -3056,7 +3346,26 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         workerResult.type === "library.opened"
           ? workerResult.library.libraryId
           : workerResult.libraryId;
-      void processAiQueue(openedLibraryId);
+      const openedLibraryPath =
+        workerResult.type === "library.opened"
+          ? workerResult.library.libraryPath
+          : workerResult.libraryPath;
+      notifyLibraryOpenedSideEffects({
+        libraryId: openedLibraryId,
+        libraryDirectory: openedLibraryPath,
+      }).catch((error) => {
+        logger?.error("plugin.activation.library-opened", error, {
+          libraryId: openedLibraryId,
+        });
+      });
+    }
+    if (workerResult.ok && workerResult.type === "library.closed") {
+      pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
+      for (const [executionId, context] of pluginAutomationContexts) {
+        if (context.libraryId === workerResult.libraryId) {
+          pluginAutomationContexts.delete(executionId);
+        }
+      }
     }
 
     // Post-process preview and open-external requests
@@ -3604,6 +3913,143 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   }
 }
 
+async function confirmDesktopAutomationWrite(): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  // Native modal dialogs are not controllable through Playwright. Restrict
+  // this deterministic test seam to an unpackaged, isolated E2E process; it
+  // can never be enabled by a shipped build or normal `npm start` session.
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CONFIRM === '1') {
+    return true;
+  }
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['取消', '运行脚本'],
+    defaultId: 1,
+    cancelId: 0,
+    title: '运行自动化脚本',
+    message: '此脚本可以读取资产、标签与合集，修改评分与元数据，创建标签或空文件夹，整理合集，入队 AI 分析，复制文件路径，以及重命名或移入回收站。',
+    detail: '脚本只会获得受限自动化能力；新建资源库和批量导入仍需单独的本机计划确认，不会获得网络下载、磁盘直读、数据库或永久删除权限。每次运行都会记录到应用日志。',
+  });
+  return response.response === 1;
+}
+
+let e2eAutomationFilePlanConfirmationCount = 0;
+
+async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanSummary): Promise<boolean> {
+  // See confirmDesktopAutomationWrite: this is an isolated, unpackaged E2E
+  // seam only. Production builds always display the fresh plan confirmation.
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CANCEL_ONCE === '1') {
+    e2eAutomationFilePlanConfirmationCount += 1;
+    if (e2eAutomationFilePlanConfirmationCount === 1) return false;
+  }
+  if (!app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_CONFIRM === '1') {
+    return true;
+  }
+  const action = plan.operation === 'trash'
+    ? '移入回收站'
+    : plan.operation === 'replace-content'
+      ? '原地替换文件内容'
+    : plan.operation === 'move'
+      ? '移动到文件夹'
+      : plan.operation === 'rename-file' || plan.operation === 'rename-files'
+        ? '重命名文件'
+        : plan.operation === 'import'
+          ? '导入文件'
+          : plan.operation === 'create'
+            ? '创建资源库'
+            : '恢复回原始位置';
+  const dialogOptions: MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['取消', `确认${action}`],
+    defaultId: 1,
+    cancelId: 0,
+    title: '确认文件操作',
+    message: `准备${action} ${plan.executableCount} 项资产。`,
+    detail: [
+      `本次选中 ${plan.targetCount} 项；${plan.blockedCount} 项因当前状态或冲突不会处理。`,
+      plan.undoSupported
+        ? '移入回收站后可在回收站中恢复。'
+        : plan.operation === 'replace-content'
+          ? '原文件字节将被覆盖，且无法通过回收站撤销。'
+        : '执行前会再次确认这些资产没有变化。',
+      ...(plan.hookWarnings !== undefined && plan.hookWarnings.length > 0
+        ? [`插件提示：${plan.hookWarnings.join('；')}`]
+        : []),
+    ].join('\n'),
+  };
+  const response = mainWindow && !mainWindow.isDestroyed()
+    ? await dialog.showMessageBox(mainWindow, dialogOptions)
+    : await dialog.showMessageBox(dialogOptions);
+  return response.response === 1;
+}
+
+async function confirmDesktopMcpAttach(input: {
+  displayName: string;
+  requestWriteAccess: boolean;
+  clientName: string;
+}): Promise<boolean> {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (
+    !app.isPackaged
+    && process.env.SERPENT_E2E === '1'
+    && process.env.SERPENT_E2E_AUTOMATION_ATTACH_CONFIRM === '1'
+  ) {
+    return true;
+  }
+
+  const access = input.requestWriteAccess ? '读写能力' : '只读能力';
+  const response = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['拒绝', '允许附着'],
+    defaultId: 1,
+    cancelId: 0,
+    title: '允许 Agent 连接 Serpent',
+    message: `Agent “${input.clientName}”请求连接资源库“${input.displayName}”。`,
+    detail: `本次会话申请${access}。允许后，Agent 可以通过 Serpent 的受限自动化接口执行操作；不会获得任意文件系统、Shell、SQL 或网络权限。`,
+  });
+  return response.response === 1;
+}
+
+function applyDesktopAutomationSelection(
+  libraryId: string,
+  request: DesktopSelectionRequest,
+): DesktopSelectionResult {
+  const current = desktopAutomationSelections.get(libraryId) ?? [];
+  const requested = [...new Set(request.assetIds)];
+  let selectedAssetIds: string[];
+  if (request.mode === 'replace') {
+    selectedAssetIds = requested;
+  } else if (request.mode === 'add') {
+    selectedAssetIds = [...new Set([...current, ...requested])];
+  } else {
+    const removed = new Set(requested);
+    selectedAssetIds = current.filter((assetId) => !removed.has(assetId));
+  }
+  desktopAutomationSelections.set(libraryId, selectedAssetIds);
+  const primaryAssetId = selectedAssetIds.at(-1) ?? null;
+  const window = mainWindow;
+  if (window && !window.isDestroyed()) {
+    window.webContents.send(DESKTOP_AUTOMATION_SELECTION_CHANNEL, {
+      libraryId,
+      assetIds: requested,
+      mode: request.mode,
+    });
+  }
+  return {
+    libraryId,
+    mode: request.mode,
+    selectedAssetIds,
+    primaryAssetId,
+    ignoredAssetIds: [],
+  };
+}
+
 async function startApplication(): Promise<void> {
   app.setAppLogsPath();
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
@@ -3624,7 +4070,696 @@ async function startApplication(): Promise<void> {
     logger,
   );
   await workerClient.start();
+  const activeWorkerClient = workerClient;
+  automationExecutionJournal = new AutomationExecutionJournal({
+    store: createJsonFileAutomationExecutionStore(
+      path.join(app.getPath('userData'), 'automation-executions.json'),
+    ),
+    logger,
+  });
+  automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
+    path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
+  );
+  const automationWorkerAdapter = new AutomationLibraryWorkerAdapter(workerClient, {
+    onAiEnqueued: (libraryId) => processAiQueue(libraryId),
+    onAiEnqueueError: (error, libraryId) => {
+      logger?.error('automation.ai-queue.trigger-failed', error, { libraryId });
+    },
+  });
+  automationScriptFiles = new AutomationScriptFileService({
+    selectOpenScript: selectAutomationScriptToOpen,
+    selectSaveScript: selectAutomationScriptToSave,
+    recentScripts: automationRecentScripts,
+  });
+  automationCommandGateway = createAutomationCommandGateway(
+    automationWorkerAdapter,
+    {
+      resolve: (executionId) => {
+        const pluginContext = pluginAutomationContexts.get(executionId);
+        if (pluginContext !== undefined) return pluginContext;
+        return automationExecutionJournal?.resolve(executionId);
+      },
+    },
+    {
+      auditSink: automationExecutionJournal,
+      auditLogger: logger,
+      externalEffectHandler: {
+        apply: ({ commandId, workerResult }) => {
+          // The only current external automation effect is intentionally
+          // consumed in Main: scripts receive the copied count, never an
+          // absolute asset path or an Electron clipboard handle.
+          if (commandId !== 'asset.paths.copy'
+            || !workerResult.ok
+            || workerResult.type !== 'media.asset-paths') {
+            throw new Error(`Unexpected automation external effect: ${commandId}`);
+          }
+          clipboard.writeText(workerResult.absolutePaths.join('\n'));
+        },
+      },
+      uiNotifyHandler: {
+        notify: (input) => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            throw new Error('The Serpent window is not available to show a notification.');
+          }
+          const payload = {
+            severity: input.severity,
+            mode: input.mode,
+            message: input.message.trim().slice(0, 500),
+            ...(input.mode === 'dialog'
+              ? { title: sanitizeShellNotifyTitle(input.title, input.severity) }
+              : {}),
+          };
+          mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, payload);
+        },
+      },
+      filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
+        workerClient: automationWorkerAdapter,
+        confirm: confirmDesktopAutomationFilePlan,
+        runWillHooks: async ({ commandId, libraryId, commandInput, planSummary }) => {
+          if (commandId !== 'asset.trash' || pluginActivationCoordinator === undefined) {
+            return { warnings: [] };
+          }
+          const input = commandInput as { assetIds?: readonly string[] };
+          const result = await pluginActivationCoordinator.runWillHooks({
+            event: 'asset.trash',
+            libraryId,
+            summary: {
+              operation: planSummary.operation,
+              targetCount: planSummary.targetCount,
+              executableCount: planSummary.executableCount,
+              blockedCount: planSummary.blockedCount,
+              assetIds: Array.isArray(input.assetIds) ? [...input.assetIds] : [],
+            },
+          });
+          return { warnings: result.warnings };
+        },
+      }),
+      libraryBindingHandler: {
+        bindLibrary: async ({ executionId, libraryId }) => {
+          const libraries = await activeWorkerClient.request({ type: 'library.list' });
+          if (!libraries.ok || libraries.type !== 'library.list') {
+            throw new Error('The created library is not open in the Library Worker.');
+          }
+          const boundLibrary = libraries.libraries.find((library) => library.libraryId === libraryId);
+          if (!boundLibrary) {
+            throw new Error('The created library is not open in the Library Worker.');
+          }
+          const bound = automationExecutionJournal?.bindLibrary(executionId, libraryId);
+          if (bound === undefined || bound.libraryId !== libraryId) {
+            throw new Error('The automation execution could not bind the created library.');
+          }
+          rememberOpenedLibrary(boundLibrary.libraryPath, boundLibrary.displayName);
+          publishLifecycle({
+            type: 'library.opened',
+            library: {
+              libraryId: boundLibrary.libraryId,
+              displayName: boundLibrary.displayName,
+              displayPath: boundLibrary.libraryPath,
+            },
+          });
+        },
+      },
+      undoGroupHandler: {
+        create: ({ executionId, libraryId }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.createUndoGroup({ executionId, libraryId });
+          return { undoGroupId: group.undoGroupId };
+        },
+        append: ({ undoGroupId, item }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.appendUndoGroupItems(undoGroupId, [item]);
+          if (!group) {
+            throw new Error(`Undo group ${undoGroupId} was not found while appending recovery items.`);
+          }
+        },
+        complete: ({ undoGroupId, status, failureReason }) => {
+          if (!automationExecutionJournal) {
+            throw new Error('The automation execution journal is unavailable.');
+          }
+          const group = automationExecutionJournal.completeUndoGroup(undoGroupId, { status, failureReason });
+          if (!group) {
+            throw new Error(`Undo group ${undoGroupId} was not found while completing the group.`);
+          }
+        },
+      },
+      executionStatusHandler: {
+        getStatus: (executionId) => {
+          const record = automationExecutionJournal?.get(executionId);
+          if (!record) return undefined;
+          return {
+            projection: projectAutomationExecutionStatus(record),
+            source: record.source,
+          };
+        },
+      },
+    },
+  );
+  scriptRuntimeSupervisor = new ScriptRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'script_runtime_utility.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Script Runtime',
+      stdio: 'pipe',
+    }),
+    logger,
+  });
+  const executePluginHostCommand: PluginRuntimeHostCommandHandler = async (commandId, input, context) => {
+    const gateway = automationCommandGateway;
+    if (gateway === undefined) throw new Error('Automation Gateway is unavailable.');
+    const cause = validatePluginCauseChain(context.causeChain);
+    if (!cause.ok) {
+      throw new Error(cause.message);
+    }
+    const targetLibraryId = context.targetLibraryId ?? context.libraryId;
+    if (targetLibraryId === '__serpent_global_runtime__') {
+      throw new Error('A global plugin must choose an open library with serpent.forLibrary().');
+    }
+    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(targetLibraryId);
+    if (!parsedTarget.success) {
+      throw new Error('The plugin command target library is invalid.');
+    }
+    const activeInstance = pluginActivationCoordinator?.findActiveInstance(context.instanceId);
+    if (activeInstance === undefined) {
+      throw new Error('The plugin instance is no longer active.');
+    }
+    if (activeInstance.instanceScope === 'library'
+      && activeInstance.activationLibraryId !== parsedTarget.data) {
+      throw new Error('A library-scoped plugin cannot target another library.');
+    }
+    const libraries = await workerClient?.request({ type: 'library.list' });
+    if (!libraries?.ok || libraries.type !== 'library.list'
+      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
+      throw new Error('The plugin command target library is not open.');
+    }
+    const executionId = context.targetLibraryId === undefined
+      ? context.instanceId
+      : `${context.instanceId}:${parsedTarget.data}`;
+    pluginAutomationContexts.set(executionId, {
+      executionId,
+      source: 'plugin',
+      libraryId: parsedTarget.data,
+      grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
+    });
+    const commandInput = commandId === 'asset.search'
+      ? normalizeAutomationAssetSearchInput(input)
+      : input;
+    if (commandInput === undefined) {
+      throw new Error('Invalid search query.');
+    }
+    const result = await gateway.execute({
+      apiVersion: AUTOMATION_API_VERSION,
+      commandId,
+      executionId,
+      input: commandInput,
+    });
+    if (!result.ok) {
+      logger?.error('plugin.host-command.gateway-failed', new Error(result.error.message ?? result.error.code), {
+        instanceId: context.instanceId,
+        pluginId: context.pluginId,
+        commandId,
+        errorCode: result.error.code,
+      });
+      throw new Error(result.error.message ?? result.error.code);
+    }
+    return result.result;
+  };
+  const recordPluginRuntimeCrash = (crash: {
+    instanceId: string;
+    libraryId: string;
+    libraryDirectory: string;
+    pluginId: string;
+    packageHash: string;
+    failureCode: string;
+  }): void => {
+    pluginInputCaptureBroker?.releaseForInstance(crash.instanceId, 'plugin-crashed');
+    void pluginPackageManager?.recordRuntimeCrash({
+      libraryId: crash.libraryId,
+      libraryDirectory: crash.libraryDirectory,
+      pluginId: crash.pluginId,
+      packageHash: crash.packageHash,
+      failureCode: crash.failureCode,
+    }).catch((error) => {
+      logger?.error('plugin.runtime.crash-record', error, crash);
+    });
+  };
+  const pluginStorageStore = new PluginStorageStore(app.getPath('userData'));
+  const pluginSettingsStore = new PluginSettingsStore(app.getPath('userData'));
+  const pluginMcpExposureStore = new PluginMcpExposureStore(app.getPath('userData'));
+  await pluginMcpExposureStore.load();
+  const executePluginStorage: PluginRuntimeStorageHandler = async (input) => {
+    try {
+      return await pluginStorageStore.execute({
+        operation: input.operation,
+        scope: input.scope ?? 'library',
+        pluginId: input.context.pluginId,
+        libraryId: input.context.libraryId,
+        libraryDirectory: input.context.libraryDirectory,
+        permissions: input.context.permissions,
+        ...(input.key === undefined ? {} : { key: input.key }),
+        ...(input.value === undefined ? {} : { value: input.value }),
+      });
+    } catch (error) {
+      if (error instanceof PluginStorageStoreError) throw error;
+      throw error;
+    }
+  };
+  const resolvePluginJobTargetLibrary = async (input: {
+    instanceId: string;
+    requestedTargetLibraryId?: string;
+    ambientLibraryId: string;
+  }): Promise<{ record: NonNullable<ReturnType<PluginActivationCoordinator['findActiveInstance']>>; libraryId: string }> => {
+    const coordinator = pluginActivationCoordinator;
+    const client = workerClient;
+    if (coordinator === undefined || client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const record = coordinator.findActiveInstance(input.instanceId);
+    if (record === undefined) {
+      throw Object.assign(new Error('The plugin instance is no longer active.'), { code: 'INSTANCE_GONE' });
+    }
+    if (record.instanceScope === 'global' && input.requestedTargetLibraryId === undefined) {
+      throw Object.assign(
+        new Error('Global plugin jobs require an explicit open target library.'),
+        { code: 'JOB_TARGET_REQUIRED' },
+      );
+    }
+    const candidate = input.requestedTargetLibraryId ?? input.ambientLibraryId;
+    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(candidate);
+    if (!parsedTarget.success) {
+      throw Object.assign(new Error('The plugin job target library is invalid.'), { code: 'JOB_TARGET_INVALID' });
+    }
+    if (record.instanceScope === 'library' && record.activationLibraryId !== parsedTarget.data) {
+      throw Object.assign(
+        new Error('A library-scoped plugin cannot target another library.'),
+        { code: 'JOB_TARGET_SCOPE_VIOLATION' },
+      );
+    }
+    const libraries = await client.request({ type: 'library.list' });
+    if (!libraries.ok || libraries.type !== 'library.list'
+      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
+      throw Object.assign(new Error('The plugin job target library is not open.'), { code: 'JOB_TARGET_NOT_OPEN' });
+    }
+    return { record, libraryId: parsedTarget.data };
+  };
+  const handlePluginJobEnqueue: PluginRuntimeJobEnqueueHandler = async (input) => {
+    const client = workerClient;
+    if (client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const coordinator = pluginActivationCoordinator;
+    if (coordinator === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const validated = coordinator.validateJobEnqueue({
+      instanceId: input.instanceId,
+      handlerId: input.handlerId,
+      ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+    });
+    if (!validated.ok) {
+      throw Object.assign(new Error(validated.message), { code: validated.code });
+    }
+    const result = await client.request({
+      type: 'plugin.jobs.enqueue',
+      libraryId,
+      ownerPluginId: input.context.pluginId,
+      ownerPackageHash: input.context.packageHash,
+      ownerPluginInstanceId: input.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: libraryId,
+      pluginHandlerId: input.handlerId,
+      payload: input.payload,
+      recoveryStrategy: validated.recoveryStrategy,
+    });
+    if (!result.ok || result.type !== 'plugin.jobs.enqueued') {
+      throw Object.assign(
+        new Error(result.ok ? 'Plugin job enqueue returned an unexpected result.' : result.error.reason),
+        { code: result.ok ? 'JOB_ENQUEUE_FAILED' : result.error.code },
+      );
+    }
+    pluginJobScheduler?.tick(libraryId);
+    return { jobId: result.job.jobId };
+  };
+  const handlePluginJobProgress: PluginRuntimeJobProgressHandler = async (input) => {
+    const client = workerClient;
+    if (client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId: targetLibraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const result = await client.request({
+      type: 'plugin.jobs.report-progress',
+      libraryId: targetLibraryId,
+      jobId: input.jobId,
+      ownerPluginId: input.context.pluginId,
+      ownerPackageHash: input.context.packageHash,
+      ownerPluginInstanceId: input.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: targetLibraryId,
+      ...input.progress,
+    });
+    if (!result.ok || result.type !== 'plugin.jobs.completed') {
+      throw Object.assign(
+        new Error(result.ok ? 'Plugin job progress returned an unexpected result.' : result.error.reason),
+        { code: result.ok ? 'JOB_PROGRESS_FAILED' : result.error.code },
+      );
+    }
+  };
+  const handlePluginJobControl: PluginRuntimeJobControlHandler = async (input) => {
+    const client = workerClient;
+    const coordinator = pluginActivationCoordinator;
+    if (client === undefined || coordinator === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const listed = await client.request({ type: 'plugin.jobs.list', libraryId });
+    if (!listed.ok || listed.type !== 'plugin.jobs.listed') {
+      throw Object.assign(new Error('The plugin job list could not be read.'), { code: 'JOB_LIST_FAILED' });
+    }
+    const job = listed.jobs.find((candidate) => candidate.jobId === input.jobId);
+    if (job === undefined
+      || job.ownerPluginId !== record.pluginId
+      || job.ownerPackageHash !== record.packageHash
+      || job.ownerPluginInstanceId !== record.instanceId
+      || job.ownerScope !== record.instanceScope
+      || job.ownerLibraryId !== libraryId
+      || job.libraryId !== libraryId) {
+      throw Object.assign(new Error('The plugin does not own this job.'), { code: 'JOB_OWNERSHIP_MISMATCH' });
+    }
+    const capabilities = {
+      handlerId: job.pluginHandlerId,
+      resumable: job.recoveryStrategy === 'checkpoint',
+      ...(job.checkpoint?.version === undefined ? { checkpointVersion: 'v1' } : { checkpointVersion: job.checkpoint.version }),
+    } as const;
+    const owner = {
+      ownerPluginId: record.pluginId,
+      ownerPackageHash: record.packageHash,
+      ownerPluginInstanceId: record.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: libraryId,
+    } as const;
+    let result: Awaited<ReturnType<typeof client.request>>;
+    switch (input.action) {
+      case 'cancel':
+        result = await client.request({ type: 'plugin.jobs.cancel', libraryId, jobId: input.jobId, ...owner, reason: input.reason });
+        break;
+      case 'pause':
+        if (input.checkpoint === undefined) {
+          throw Object.assign(new Error('Pausing a plugin job requires a checkpoint.'), { code: 'CHECKPOINT_REQUIRED' });
+        }
+        result = await client.request({
+          type: 'plugin.jobs.pause', libraryId, jobId: input.jobId, ...owner,
+          capabilities,
+          checkpoint: input.checkpoint,
+        });
+        break;
+      case 'resume':
+        result = await client.request({ type: 'plugin.jobs.resume', libraryId, jobId: input.jobId, ...owner, capabilities });
+        break;
+      case 'retry':
+        result = await client.request({ type: 'plugin.jobs.retry', libraryId, jobId: input.jobId, ...owner, retryInput: input.retryInput });
+        break;
+    }
+    if (!result.ok || !('job' in result)) {
+      throw Object.assign(new Error(result.ok ? 'Plugin job control returned an unexpected result.' : result.error.reason), {
+        code: result.ok ? 'JOB_CONTROL_FAILED' : result.error.code,
+      });
+    }
+    if ((input.action === 'cancel' || input.action === 'pause') && result.job !== null) {
+      if (record.mode === 'restricted') pluginRuntimeSupervisor?.signalJob(record.instanceId, input.jobId, input.action, input.reason);
+      else pluginTrustedRuntimeSupervisor?.signalJob(record.instanceId, input.jobId, input.action, input.reason);
+    }
+    if (input.action === 'resume' || input.action === 'retry') pluginJobScheduler?.tick(libraryId);
+    return { job: result.job };
+  };
+  const onPluginInstanceActivated = (input: { libraryId: string }): void => {
+    pluginJobScheduler?.tick(input.libraryId);
+  };
+  const handlePluginInputCaptureStart: PluginRuntimeInputCaptureStartHandler = (input) => {
+    if (pluginInputCaptureBroker === undefined) {
+      return {
+        ok: false,
+        code: 'CAPTURE_UNAVAILABLE',
+        message: 'Input capture is unavailable in this session.',
+      };
+    }
+    return pluginInputCaptureBroker.start({
+      ...input.options,
+      instanceId: input.instanceId,
+      pluginId: input.pluginId,
+      libraryId: input.libraryId,
+      permissions: input.permissions,
+    });
+  };
+  pluginInputCaptureBroker = new PluginInputCaptureBroker({
+    onStart: () => {
+      publishPluginInputCaptureSessionsToRenderer();
+    },
+    onEvent: (session, event) => {
+      pluginRuntimeSupervisor?.deliverInputCaptureEvent(session.instanceId, session.sessionId, event);
+      pluginTrustedRuntimeSupervisor?.deliverInputCaptureEvent(session.instanceId, session.sessionId, event);
+    },
+    onEnd: (session, reason) => {
+      pluginRuntimeSupervisor?.endInputCapture(session.instanceId, session.sessionId, reason);
+      pluginTrustedRuntimeSupervisor?.endInputCapture(session.instanceId, session.sessionId, reason);
+      publishPluginInputCaptureSessionsToRenderer();
+    },
+  });
+  pluginRuntimeSupervisor = new PluginRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'plugin_standard_host.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Plugin Standard Host',
+      stdio: 'pipe',
+    }),
+    executeHostCommand: executePluginHostCommand,
+    executeStorage: executePluginStorage,
+    handleJobEnqueue: handlePluginJobEnqueue,
+    handleJobProgress: handlePluginJobProgress,
+    handleJobControl: handlePluginJobControl,
+    handleInputCaptureStart: handlePluginInputCaptureStart,
+    handleInputCaptureRelease: (instanceId, sessionId) => {
+      pluginInputCaptureBroker?.release(sessionId);
+    },
+    onInstanceDeactivated: (instanceId) => {
+      pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
+    },
+    onInstanceCrashed: ({ instanceId, failureCode }) => {
+      pluginActivationCoordinator?.onInstanceCrashed({ instanceId, failureCode });
+    },
+    onCrash: recordPluginRuntimeCrash,
+    onInstanceActivated: onPluginInstanceActivated,
+    logger,
+  });
+  pluginTrustedRuntimeSupervisor = new PluginTrustedRuntimeSupervisor({
+    modulePath: path.join(__dirname, 'plugin_trusted_host.js'),
+    fork: (modulePath) => utilityProcess.fork(modulePath, [], {
+      serviceName: 'Serpent Plugin Trusted Host',
+      stdio: 'pipe',
+    }),
+    executeHostCommand: executePluginHostCommand,
+    executeStorage: executePluginStorage,
+    handleJobEnqueue: handlePluginJobEnqueue,
+    handleJobProgress: handlePluginJobProgress,
+    handleJobControl: handlePluginJobControl,
+    handleInputCaptureStart: handlePluginInputCaptureStart,
+    handleInputCaptureRelease: (instanceId, sessionId) => {
+      pluginInputCaptureBroker?.release(sessionId);
+    },
+    onInstanceDeactivated: (instanceId) => {
+      pluginInputCaptureBroker?.releaseForInstance(instanceId, 'plugin-deactivated');
+    },
+    onInstanceCrashed: ({ instanceId, failureCode }) => {
+      pluginActivationCoordinator?.onInstanceCrashed({ instanceId, failureCode });
+    },
+    onInstanceActivated: onPluginInstanceActivated,
+    onCrash: recordPluginRuntimeCrash,
+    logger,
+  });
+  const pluginCompatibility = currentPluginCompatibilityPlatform();
+  const nodeAbi = Number(process.versions.modules);
+  if (pluginCompatibility === undefined || !Number.isSafeInteger(nodeAbi) || nodeAbi <= 0) {
+    logger.error('plugin.platform', new Error('This platform cannot run the plugin package manager.'), {
+      platform: process.platform,
+      arch: process.arch,
+      nodeAbi: process.versions.modules,
+    });
+  } else {
+    pluginPackageManager = new PluginPackageManager({
+      userDataDirectory: app.getPath('userData'),
+      deviceId: await loadOrCreatePluginDeviceId(app.getPath('userData')),
+      serpentVersion: app.getVersion(),
+      pluginApiVersion: PLUGIN_API_VERSION,
+      ...pluginCompatibility,
+      nodeAbi,
+      logger,
+    });
+    pluginActivationCoordinator = new PluginActivationCoordinator({
+      packageManager: pluginPackageManager,
+      supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      globalRuntimeContext: {
+        libraryId: '__serpent_global_runtime__',
+        libraryDirectory: app.getPath('userData'),
+      },
+      contributions: createContributionRegistry(),
+      providers: createPluginProviderRegistry(),
+      compatibility: {
+        serpentVersion: app.getVersion(),
+        pluginApiVersion: PLUGIN_API_VERSION,
+        ...pluginCompatibility,
+        nodeAbi,
+      },
+      pausePluginJobs: async ({ libraryId, owners }) => {
+        const client = workerClient;
+        if (client === undefined) return;
+        const result = await client.request({
+          type: 'plugin.jobs.pause-owners',
+          libraryId,
+          owners,
+          errorCode: 'PLUGIN_INSTANCE_INACTIVE',
+          errorDetail: 'The plugin instance is no longer active.',
+        });
+        if (!result.ok) {
+          throw new Error(result.error.reason);
+        }
+      },
+      onInstanceActivated: ({ libraryId }) => {
+        pluginJobScheduler?.tick(libraryId);
+      },
+      onContributionsRegistered: ({ libraryId }) => {
+        void pluginProviderScheduler?.materializeLibrary(libraryId).catch((error) => {
+          logger?.error('plugin.providers.materialize', error, { libraryId });
+        });
+      },
+      logger,
+    });
+    pluginMcpToolProvider = new PluginMcpToolProvider({
+      activationCoordinator: pluginActivationCoordinator,
+      getLibraryId: () => {
+        const executionId = automationMcpHost?.executionId;
+        const mcpLibraryId = executionId === undefined
+          ? null
+          : automationExecutionJournal?.get(executionId)?.libraryId ?? null;
+        if (mcpLibraryId !== null) return mcpLibraryId;
+        return mainWindow === undefined
+          ? null
+          : focusedContexts.get(mainWindow.id)?.libraryId ?? null;
+      },
+    });
+    pluginJobScheduler = new PluginJobScheduler({
+      supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      requestWorker: async (command) => {
+        const client = workerClient;
+        if (client === undefined) return { ok: false };
+        const result = await client.request(command);
+        if (!result.ok) return { ok: false };
+        if (result.type === 'plugin.jobs.claimed') {
+          return { ok: true, type: result.type, job: result.job };
+        }
+        if (result.type === 'plugin.jobs.completed') {
+          return { ok: true, type: result.type, job: result.job };
+        }
+        return { ok: false };
+      },
+      resolveInstances: (libraryId) => {
+        const coordinator = pluginActivationCoordinator;
+        if (coordinator === undefined) return [];
+        const bindings = coordinator.listActiveInstances(libraryId);
+        const standard = pluginRuntimeSupervisor?.listActiveInstances(libraryId) ?? [];
+        const trusted = pluginTrustedRuntimeSupervisor?.listActiveInstances(libraryId) ?? [];
+        return bindings.map((binding) => {
+          const source = binding.mode === 'restricted'
+            ? standard.find((item) => item.instanceId === binding.instanceId)
+            : trusted.find((item) => item.instanceId === binding.instanceId);
+          return {
+            ...binding,
+            activated: source?.activated ?? false,
+          };
+        });
+      },
+      logger,
+    });
+    pluginProviderScheduler = new PluginProviderScheduler({
+      coordinator: pluginActivationCoordinator,
+      supervisor: pluginRuntimeSupervisor,
+      trustedSupervisor: pluginTrustedRuntimeSupervisor,
+      requestWorker: async (command) => {
+        const client = workerClient;
+        if (client === undefined) return { ok: false };
+        const result = await client.request(command);
+        if (!result.ok) return { ok: false };
+        if (result.type === 'asset.list') {
+          return { ok: true, type: result.type, assets: result.assets };
+        }
+        if (result.type === 'plugin.derived-fields.materialized') {
+          return {
+            ok: true,
+            type: result.type,
+            writtenCount: result.writtenCount,
+            fieldKey: result.fieldKey,
+          };
+        }
+        if (result.type === 'asset.search.result') {
+          return {
+            ok: true,
+            type: result.type,
+            items: result.items,
+            total: result.total,
+            offset: result.offset,
+            snippets: result.snippets,
+          };
+        }
+        return { ok: false };
+      },
+      logger,
+    });
+    workerClient.onPluginMediaProviderRequest(async (input) => {
+      const scheduler = pluginProviderScheduler;
+      if (scheduler === undefined) {
+        return {
+          status: 'native-fallback',
+          assetId: input.assetId,
+          kind: input.kind,
+          errorCode: 'PLUGIN_PROVIDER_UNAVAILABLE',
+        };
+      }
+      try {
+        return await scheduler.resolveMediaProvider(input);
+      } catch (error) {
+        logger?.error('plugin.media-provider.request', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+          kind: input.kind,
+        });
+        return {
+          status: 'native-fallback',
+          assetId: input.assetId,
+          kind: input.kind,
+          errorCode: 'PLUGIN_PROVIDER_FAILED',
+        };
+      }
+    });
+  }
+  // Global user-scoped plugins have an application lifetime and must be set up
+  // before recent-library restore, including when no library can be reopened.
+  await pluginActivationCoordinator?.refreshGlobal();
   workerClient.onAssetsChanged(publishAssetChange);
+  workerClient.onLibraryChanged(publishLibraryChanged);
   workerClient.onProgress(publishProgress);
   workerClient.onAiProgress(publishAiProgress);
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
@@ -3645,6 +4780,20 @@ async function startApplication(): Promise<void> {
         {
           code: restored.ok ? "UNEXPECTED_RESULT" : restored.error.code,
           reason: restored.ok ? undefined : restored.error.reason,
+        },
+      );
+    } else {
+      // Startup restore bypasses handleLibraryRequest; still must activate plugins.
+      // Await so contributions exist before the renderer shell lists menus/settings.
+      await notifyLibraryOpenedSideEffects({
+        libraryId: restored.library.libraryId,
+        libraryDirectory: restored.library.libraryPath,
+      });
+      logger.info(
+        "recent-library.restored",
+        "Reopened the recent library and completed plugin activation request.",
+        {
+          libraryId: restored.library.libraryId,
         },
       );
     }
@@ -3820,6 +4969,63 @@ async function startApplication(): Promise<void> {
     }
   });
 
+  protocol.handle("serpent-plugin", async (request) => {
+    const parsed = parsePluginUiAssetRequestFromNavigation(
+      request.url,
+      request.headers.get("referer") ?? request.headers.get("Referer"),
+    );
+    if (parsed === undefined) {
+      return new Response("Invalid plugin UI URL", { status: 400 });
+    }
+    const resolved = pluginActivationCoordinator?.resolvePluginUiAsset(parsed);
+    if (resolved === undefined) {
+      logger?.info("plugin-ui.protocol-rejected", "Rejected an inactive or unallowlisted plugin UI asset.", {
+        pluginId: parsed.pluginId,
+        instanceId: parsed.instanceId,
+        contributionId: parsed.contributionId,
+      });
+      return new Response("Plugin UI asset not found", { status: 404 });
+    }
+    try {
+      let body: Buffer = await readFile(resolved.absolutePath);
+      const contentType = pluginUiMimeType(parsed.relativePath);
+      if (contentType.startsWith("text/html")) {
+        body = Buffer.from(
+          rewritePluginUiHtmlAssetUrls(body.toString("utf8"), request.url),
+          "utf8",
+        );
+      }
+      const pluginOrigin = `serpent-plugin://${parsed.pluginId}`;
+      return new Response(body, {
+        headers: {
+          "cache-control": "no-store",
+          "content-security-policy": [
+            "default-src 'none'",
+            `script-src 'self' ${pluginOrigin}`,
+            `style-src 'self' ${pluginOrigin} 'unsafe-inline'`,
+            `img-src 'self' ${pluginOrigin} data:`,
+            `font-src 'self' ${pluginOrigin}`,
+            `media-src 'self' ${pluginOrigin} data:`,
+            "connect-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-src 'none'",
+          ].join("; "),
+          "content-type": contentType,
+          "x-content-type-options": "nosniff",
+        },
+      });
+    } catch (error) {
+      logger?.error("plugin-ui.protocol-read", error, {
+        pluginId: parsed.pluginId,
+        contributionId: parsed.contributionId,
+        relativePath: parsed.relativePath,
+      });
+      return new Response("Plugin UI asset unavailable", { status: 404 });
+    }
+  });
+
   ipcMain.handle(LIBRARY_REQUEST_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       return {
@@ -3828,6 +5034,147 @@ async function startApplication(): Promise<void> {
       } satisfies RendererResult;
     }
     return handleLibraryRequest(input);
+  });
+
+  registerAutomationScriptIpc({
+    ipcMain,
+    isAuthorizedSender: (sender) => Boolean(mainWindow && sender === mainWindow.webContents),
+    workerClient: () => workerClient,
+    journal: () => automationExecutionJournal,
+    gateway: () => automationCommandGateway,
+    runtime: () => scriptRuntimeSupervisor,
+    scriptFiles: () => automationScriptFiles,
+    confirmDesktopWrite: confirmDesktopAutomationWrite,
+    logger: () => logger,
+    undoGroup: () => ({
+      recover: async ({ libraryId, items }) => {
+        let undoneCount = 0;
+        let skippedCount = 0;
+        for (const item of [...items].reverse()) {
+          if (!item.reversible) throw new Error('This automation undo item is not reversible.');
+          const result = item.kind === 'asset.move'
+            ? await activeWorkerClient.request({
+              type: 'asset.move-undo',
+              libraryId,
+              operationId: item.reference,
+              conflictStrategy: 'error',
+            })
+            : item.kind === 'asset.trash'
+              ? await activeWorkerClient.request({
+                type: 'asset.trash-undo',
+                libraryId,
+                operationId: item.reference,
+              })
+              : undefined;
+          if (!result) throw new Error(`Automation undo is not supported for ${item.kind}.`);
+          if (!result.ok) throw new Error('Automation undo failed.');
+          if (result.type === 'asset.move-undone') {
+            undoneCount += result.undoneCount;
+            skippedCount += result.skippedCount;
+          } else if (result.type === 'asset.trash-undone') {
+            undoneCount += result.restoredCount;
+            skippedCount += result.skippedCount;
+          } else {
+            throw new Error('Automation undo returned an unexpected result.');
+          }
+        }
+        return { undoneCount, skippedCount };
+      },
+    }),
+  });
+
+  const pluginPackageRequest = pluginPackageManager === undefined
+    ? undefined
+    : createPluginPackageRequestHandler({
+      manager: pluginPackageManager,
+      activationCoordinator: pluginActivationCoordinator,
+      settingsStore: pluginSettingsStore,
+      storageStore: pluginStorageStore,
+      mcpExposureStore: pluginMcpExposureStore,
+      searchProviders: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin search providers are unavailable.');
+        }
+        return pluginProviderScheduler.searchAssets(input);
+      },
+      mediaProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin media providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveMediaProvider(input);
+      },
+      metadataProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin metadata providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveMetadataProvider(input);
+      },
+      importProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin import providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveImportProvider(input);
+      },
+      exportProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin export providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveExportProvider(input);
+      },
+      aiProvider: async (input) => {
+        if (pluginProviderScheduler === undefined) {
+          throw new Error('Plugin AI providers are unavailable.');
+        }
+        return pluginProviderScheduler.resolveAiProvider(input);
+      },
+      resolveLibraryDirectory: async (libraryId) => {
+        const client = workerClient;
+        if (client === undefined) return undefined;
+        const result = await client.request({ type: 'library.list' });
+        if (!result.ok || result.type !== 'library.list') return undefined;
+        return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
+      },
+      chooseLocalPackage: selectPluginPackage,
+      revealPackageDirectory: (absoluteDirectory) => {
+        shell.showItemInFolder(absoluteDirectory);
+      },
+      afterMutation: async ({ requestType, libraryId, libraryDirectory }) => {
+        const coordinator = pluginActivationCoordinator;
+        if (coordinator === undefined) return;
+        try {
+          if (requestType === 'plugin-manager.resolve'
+            || requestType === 'plugin-manager.safe-mode'
+            || requestType === 'plugin-manager.install-local'
+            || requestType === 'plugin-manager.install-github'
+            || requestType === 'plugin-manager.uninstall'
+            || requestType === 'plugin-manager.trust'
+            || requestType === 'plugin-manager.reload') {
+            // Enable/disable (especially user-scoped) and package lifecycle can
+            // change contributions in every open library Host.
+            await coordinator.refreshOpenLibraries();
+          } else if (libraryId !== undefined && libraryDirectory !== undefined) {
+            await coordinator.refreshLibrary({ libraryId, libraryDirectory });
+          }
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, {
+              libraryId: libraryId ?? null,
+              requestType,
+            });
+          }
+        } catch (error) {
+          logger?.error('plugin.activation.after-mutation', error, { requestType, libraryId });
+        }
+      },
+      logger,
+    });
+  ipcMain.handle(PLUGIN_MANAGER_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || pluginPackageRequest === undefined) {
+      logger?.info('plugin.ipc', 'Rejected plugin manager request.', {
+        reason: pluginPackageRequest === undefined ? 'unavailable' : 'unauthorized-sender',
+      });
+      return { ok: false, code: 'operation-failed' };
+    }
+    return pluginPackageRequest(input);
   });
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
@@ -3888,12 +5235,19 @@ async function startApplication(): Promise<void> {
   // The absolute log path remains Main-owned and never crosses the bridge.
   ipcMain.handle(
     READ_APP_LOG_CHANNEL,
-    (event): ReadAppLogResult => {
+    (event, input: unknown): ReadAppLogResult => {
       if (!mainWindow || event.sender !== mainWindow.webContents) {
         logger?.info("ipc.read-app-log", "Rejected read-app-log request.", {
           code: "unauthorized_sender",
         });
         return { ok: false, code: "unauthorized_sender" };
+      }
+      const request = parseReadAppLogRequest(input);
+      if (!request) {
+        logger?.info("ipc.read-app-log", "Rejected malformed app-log filter.", {
+          code: "malformed_request",
+        });
+        return { ok: false, code: "malformed_request" };
       }
       if (!appLogPath || !existsSync(appLogPath)) {
         logger?.info("ipc.read-app-log", "App log file missing.", {
@@ -3904,7 +5258,10 @@ async function startApplication(): Promise<void> {
       try {
         return {
           ok: true,
-          entries: logger?.readRecent(500, { redactPaths: true }) ?? [],
+          entries: logger?.readRecent(500, {
+            redactPaths: true,
+            automationCorrelationId: request.automationCorrelationId,
+          }) ?? [],
           fileName: "serpent.log",
         };
       } catch (error) {
@@ -3997,6 +5354,16 @@ async function startApplication(): Promise<void> {
     }
   });
 
+  ipcMain.on(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.desktop-browse', 'Rejected Desktop browse response.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    desktopBrowseControl?.handleResult(event.sender, payload);
+  });
+
   ipcMain.on(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, (event, input: unknown) => {
     const active =
       typeof input === "object" &&
@@ -4004,6 +5371,32 @@ async function startApplication(): Promise<void> {
       "active" in input &&
       Boolean((input as { active?: unknown }).active);
     setViewerVideoShortcutCaptureActive(event.sender, active);
+  });
+
+  ipcMain.on(PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.plugin-input-capture', 'Rejected input capture event.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    const parsed = parsePluginInputCapturePublishPayload(payload);
+    if (parsed === null) return;
+    const result = pluginInputCaptureBroker?.publish(parsed);
+    if (result === 'queued') schedulePluginInputCaptureFlush();
+    if (result === 'released') publishPluginInputCaptureSessionsToRenderer();
+  });
+
+  ipcMain.on(PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL, (event, payload: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.plugin-input-capture', 'Rejected system modal seam.', {
+        code: 'unauthorized_sender',
+      });
+      return;
+    }
+    const parsed = parsePluginInputCaptureSystemModalPayload(payload);
+    if (parsed === null) return;
+    pluginInputCaptureBroker?.setSystemModalActive(parsed.active);
   });
 
   // Install before the first window so macOS does not keep Electron's default
@@ -4016,7 +5409,65 @@ async function startApplication(): Promise<void> {
     logger,
   });
 
+  if (mcpModeEnabled) {
+    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
+      throw new Error('MCP mode requires journal, gateway, worker, and logger.');
+    }
+    redirectConsoleToStderrForMcp();
+    const startedMcpHost = await maybeStartAutomationMcpMode({
+      journal: automationExecutionJournal,
+      gateway: automationCommandGateway,
+      request: (command) => workerClient!.request(command),
+      onLibraryChanged: (listener) => workerClient!.onLibraryChanged(listener),
+      logger,
+      pluginTools: pluginMcpToolProvider,
+    });
+    if (startedMcpHost === null) {
+      throw new Error('SERPENT_MCP=1 but MCP host did not start.');
+    }
+    automationMcpHost = startedMcpHost;
+    startupComplete = true;
+    return;
+  }
+
   await createMainWindow();
+  desktopBrowseControl = createDesktopBrowseControl({
+    getWebContents: () =>
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null,
+  });
+
+  if (desktopControlEnabled) {
+    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
+      throw new Error('Desktop attached MCP requires journal, gateway, worker, and logger.');
+    }
+    void startDesktopAttachedMcp({
+      userDataPath: app.getPath('userData'),
+      journal: automationExecutionJournal,
+      gateway: automationCommandGateway,
+      getActiveLibraryId: () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return null;
+        return focusedContexts.get(mainWindow.id)?.libraryId ?? null;
+      },
+      getLibrarySummary: async (libraryId) => {
+        const result = await workerClient!.request({ type: 'library.list' });
+        if (!result.ok || result.type !== 'library.list') return null;
+        const library = result.libraries.find((entry) => entry.libraryId === libraryId);
+        return library === undefined
+          ? null
+          : { libraryId: library.libraryId, displayName: library.displayName };
+      },
+      confirmAttach: confirmDesktopMcpAttach,
+      focusMainWindow,
+      applySelection: applyDesktopAutomationSelection,
+      browseControl: desktopBrowseControl,
+      pluginTools: pluginMcpToolProvider,
+      logger,
+    }).then((handle) => {
+      desktopAttachedMcp = handle;
+    }).catch((error: unknown) => {
+      logger?.error('desktop.attached-mcp.start', error);
+    });
+  }
 
   extensionBrowseFoldersStorePath = path.join(
     app.getPath("userData"),
@@ -4063,7 +5514,7 @@ if (!hasSingleInstanceLock) {
     });
 
   app.on("activate", () => {
-    if (!startupComplete) return;
+    if (!startupComplete || mcpModeEnabled) return;
     if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
     else focusMainWindow();
   });
@@ -4077,6 +5528,8 @@ if (!hasSingleInstanceLock) {
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
 
+    pluginActivationCoordinator?.dispose('supervisor-shutdown');
+
     // Close the extension server early; stop accepting new save intents.
     try {
       extensionServer?.server.close();
@@ -4085,9 +5538,17 @@ if (!hasSingleInstanceLock) {
       // Best effort.
     }
 
-    void workerClient.shutdown().finally(() => {
-      quitAfterShutdown = true;
-      app.quit();
-    });
+    const mcpClose = automationMcpHost?.close() ?? Promise.resolve();
+    const desktopAttachedMcpClose = desktopAttachedMcp?.close() ?? Promise.resolve();
+    desktopBrowseControl?.close();
+    void Promise.all([mcpClose, desktopAttachedMcpClose])
+      .catch((error: unknown) => {
+        logger?.error("automation.mcp.close", error);
+      })
+      .then(() => workerClient?.shutdown())
+      .finally(() => {
+        quitAfterShutdown = true;
+        app.quit();
+      });
   });
 }

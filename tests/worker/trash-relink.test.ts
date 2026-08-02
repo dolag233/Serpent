@@ -62,6 +62,27 @@ const TestDatabase = require('better-sqlite3') as new (
   filename: string,
 ) => TestDatabaseConnection;
 
+function removeWriteCoordinationSchema(database: TestDatabaseConnection): void {
+  const triggers = database.prepare(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'trigger'
+        AND (name LIKE 'library_change_on_%' OR name = 'library_change_sequence_seed')`,
+  ).all() as Array<{ name: string }>;
+  for (const trigger of triggers) {
+    if (
+      trigger.name !== 'library_change_sequence_seed' &&
+      !/^library_change_on_[a-z_]+_(?:insert|update|delete)$/u.test(trigger.name)
+    ) {
+      throw new Error('Unexpected write-coordination trigger name in test fixture.');
+    }
+    database.exec(`DROP TRIGGER "${trigger.name}"`);
+  }
+  database.exec(`
+    DROP TABLE IF EXISTS library_write_leases;
+    DROP TABLE IF EXISTS library_change_sequence;
+  `);
+}
+
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-trash-relink-test-'));
   temporaryRoots.push(root);
@@ -96,7 +117,7 @@ describe('schema v8->v9 migration', () => {
     });
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 27 }]);
 
     const columns = database.prepare("PRAGMA table_info('assets')").all() as Array<{
       cid: number; name: string; type: string;
@@ -137,6 +158,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    removeWriteCoordinationSchema(db);
     // Downgrade from v10 to v8 by removing v9+v10 migration metadata + objects.
     db.exec(`
     DROP TABLE IF EXISTS linked_ignored_assets;
@@ -153,7 +175,7 @@ describe('schema v8->v9 migration', () => {
     service.openLibrary(created.libraryPath);
 
     const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db2.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(db2.pragma('user_version')).toEqual([{ user_version: 27 }]);
     const migrationRows = db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{ version: number }>;
     expect(migrationRows.map((r) => r.version)).toContain(9);
     db2.close();
@@ -167,7 +189,7 @@ describe('schema v8->v9 migration', () => {
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 27 }]);
     service.closeAll();
     service.openLibrary(created.libraryPath);
     const migrationCount = db.prepare(
@@ -190,6 +212,7 @@ describe('downgrade helpers still work with v9', () => {
 
     const dbPath = path.join(created.libraryPath, '.serpent', 'library.db');
     const database = new TestDatabase(dbPath);
+    removeWriteCoordinationSchema(database);
     database.exec(`
       DROP TABLE IF EXISTS asset_search;
       DROP TABLE IF EXISTS asset_search_index;
@@ -224,7 +247,7 @@ describe('downgrade helpers still work with v9', () => {
 
     service.openLibrary(created.libraryPath);
     const db = new TestDatabase(dbPath);
-    expect(db.pragma('user_version')).toEqual([{ user_version: 23 }]);
+    expect(db.pragma('user_version')).toEqual([{ user_version: 27 }]);
     db.close();
     service.closeAll();
   });
@@ -242,8 +265,9 @@ describe('trashAssets (soft delete)', () => {
 
     expect(existsSync(path.join(created.libraryPath, 'Assets', 'photo.jpg'))).toBe(true);
 
-    const { trashedCount } = service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    const { trashedCount, operationId } = service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
     expect(trashedCount).toBe(1);
+    expect(operationId).toMatch(/^[0-9a-f-]{36}$/u);
 
     expect(existsSync(path.join(created.libraryPath, 'Assets', 'photo.jpg'))).toBe(false);
     expect(existsSync(path.join(created.libraryPath, '.serpent', 'trash', assetId, 'photo.jpg'))).toBe(true);
@@ -839,6 +863,103 @@ describe('restoreAssets', () => {
     const { assets } = service.restoreAssets({ libraryId: created.libraryId, assetIds: [assetId] });
     expect(assets[0]!.relativeFilePath).toBe('orphan.jpg');
     expect(existsSync(path.join(created.libraryPath, 'Assets', 'orphan.jpg'))).toBe(true);
+    service.closeAll();
+  });
+
+  it('automation recovery restores only a vacant original path and never falls back to root', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Strict Automation Restore', selectedParentPath: root });
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'Original' });
+    writeFileSync(path.join(root, 'recover.png'), 'data');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'recover.png'), folder.folderId).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [asset.assetId] });
+
+    const restored = service.restoreAssetsIfOriginalVacant({
+      libraryId: created.libraryId,
+      assetIds: [asset.assetId],
+    });
+    expect(restored).toMatchObject({ restoredCount: 1, skippedCount: 0, skipped: [] });
+    expect(restored.assets[0]?.relativeFilePath).toBe('Original/recover.png');
+    expect(existsSync(path.join(created.libraryPath, 'Assets', 'Original', 'recover.png'))).toBe(true);
+    service.closeAll();
+  });
+
+  it('automation recovery skips occupied or missing original folders without moving the asset elsewhere', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Strict Automation Skip', selectedParentPath: root });
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'Original' });
+    writeFileSync(path.join(root, 'occupied.png'), 'data');
+    const occupied = importNoConflict(service, created.libraryId, path.join(root, 'occupied.png'), folder.folderId).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [occupied.assetId] });
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'Original', 'occupied.png'), 'other');
+
+    const conflict = service.restoreAssetsIfOriginalVacant({
+      libraryId: created.libraryId,
+      assetIds: [occupied.assetId],
+    });
+    expect(conflict).toMatchObject({
+      restoredCount: 0,
+      skippedCount: 1,
+      skipped: [{ assetId: occupied.assetId, reason: 'name_conflict' }],
+    });
+
+    writeFileSync(path.join(root, 'orphan.png'), 'data');
+    const orphan = importNoConflict(service, created.libraryId, path.join(root, 'orphan.png'), folder.folderId).assets[0]!;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [orphan.assetId] });
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM managed_folders WHERE folder_id = ?').run(folder.folderId);
+    db.close();
+
+    const missingFolder = service.restoreAssetsIfOriginalVacant({
+      libraryId: created.libraryId,
+      assetIds: [orphan.assetId],
+    });
+    expect(missingFolder).toMatchObject({
+      restoredCount: 0,
+      skippedCount: 1,
+      skipped: [{ assetId: orphan.assetId, reason: 'original_folder_missing' }],
+    });
+    expect(service.listTrash(created.libraryId).map((item) => item.assetId)).toEqual(
+      expect.arrayContaining([occupied.assetId, orphan.assetId]),
+    );
+    service.closeAll();
+  });
+
+  it('rejects an automation file-operation plan when the library changes after preview', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Automation Plan Fence', selectedParentPath: root });
+    writeFileSync(path.join(root, 'planned.png'), 'data');
+    const asset = importNoConflict(service, created.libraryId, path.join(root, 'planned.png')).assets[0]!;
+
+    const plan = service.previewAutomationFileOperation({
+      libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [asset.assetId],
+    });
+    expect(plan).toMatchObject({
+      targetCount: 1,
+      executableCount: 1,
+      blockedCount: 0,
+      undoSupported: true,
+      assetStates: [{ assetId: asset.assetId, stateToken: expect.stringMatching(/^[a-f0-9]{64}$/u) }],
+    });
+    service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      expectedChangeSequence: plan.changeSequence,
+      assetStates: plan.assetStates,
+    });
+
+    // Even an unrelated committed write invalidates this plan: Main must ask
+    // again instead of applying a stale file-operation preview.
+    service.createTag({ libraryId: created.libraryId, name: 'changes-the-plan' });
+    expectServiceError(() => service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      expectedChangeSequence: plan.changeSequence,
+      assetStates: plan.assetStates,
+    }), 'VERSION_CONFLICT');
     service.closeAll();
   });
 

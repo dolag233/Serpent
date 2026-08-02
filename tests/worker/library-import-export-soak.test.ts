@@ -15,7 +15,7 @@ import { LibraryService } from '../../src/worker/library-service';
 // modern SSD; the same 100k files would exceed the 120s test timeout.
 // Chosen size: 20_000 assets — large enough to detect pathological slowdown
 // or data loss without timing out CI.
-const ASSET_COUNT = 20_000;
+const ASSET_COUNT = Number(process.env.SERPENT_SOAK_ASSET_COUNT ?? 20_000);
 const BATCH_SIZE = 1000;
 const BATCH_COUNT = Math.floor(ASSET_COUNT / BATCH_SIZE);
 const FILE_EXTENSIONS = ['png', 'jpg', 'psd', 'blend', 'tga'];
@@ -689,7 +689,17 @@ describe('Library import/export soak (20k assets)', () => {
 
       // Import the exported folder using a fresh service to avoid library-id
       // conflict (the exported DB snapshot has the same library_id as source).
-      const importService = new LibraryService();
+      const importService = new LibraryService({
+        onDiagnostic: ({ scope, context }) => {
+          if (scope.startsWith('debug-import-open.')) {
+            writeFileSync(
+              '/tmp/serpent-import-perf.log',
+              `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
+              { flag: 'a' },
+            );
+          }
+        },
+      });
       const importParent = path.join(fixture.root, 'import-folder');
       mkdirSync(importParent, { recursive: true });
 
@@ -702,6 +712,13 @@ describe('Library import/export soak (20k assets)', () => {
         const importElapsedMs = performance.now() - importStartedAt;
 
         console.info(`[soak] folder-import ${importElapsedMs.toFixed(0)}ms libraryId=${imported.libraryId}`);
+        const refreshStartedAt = performance.now();
+        const refresh = importService.refreshManagedAssets(imported.libraryId);
+        writeFileSync(
+          '/tmp/serpent-import-perf.log',
+          `folder-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
+          { flag: 'a' },
+        );
 
         expect(imported.libraryId).toBeTruthy();
         expect(imported.displayName).toBe('SoakExportImport');
@@ -742,7 +759,17 @@ describe('Library import/export soak (20k assets)', () => {
       expect(exportElapsedMs).toBeLessThan(EXPORT_PERF_MS);
 
       // Import from ZIP using a fresh service to avoid library-id conflict.
-      const importService = new LibraryService();
+      const importService = new LibraryService({
+        onDiagnostic: ({ scope, context }) => {
+          if (scope.startsWith('debug-import-open.')) {
+            writeFileSync(
+              '/tmp/serpent-import-perf.log',
+              `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
+              { flag: 'a' },
+            );
+          }
+        },
+      });
       const importParent = path.join(fixture.root, 'import-zip');
       mkdirSync(importParent, { recursive: true });
 
@@ -755,6 +782,13 @@ describe('Library import/export soak (20k assets)', () => {
         const importElapsedMs = performance.now() - importStartedAt;
 
         console.info(`[soak] zip-import ${importElapsedMs.toFixed(0)}ms libraryId=${imported.libraryId}`);
+        const refreshStartedAt = performance.now();
+        const refresh = importService.refreshManagedAssets(imported.libraryId);
+        writeFileSync(
+          '/tmp/serpent-import-perf.log',
+          `zip-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
+          { flag: 'a' },
+        );
 
         expect(imported.libraryId).toBeTruthy();
         expect(imported.displayName).toBe('SoakExportImport');

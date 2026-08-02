@@ -118,6 +118,7 @@ export const assetSummarySchema = z.strictObject({
   managedFolderId: nonBlankString.nullable(),
   relativeFilePath: portableRelativePathSchema,
   displayName: nonBlankString,
+  /** Stable file-content revision; metadata edits do not change it. */
   currentRevisionId: nonBlankString,
   byteSize: z.number().int().nonnegative(),
   modifiedAt: nonBlankString,
@@ -208,6 +209,7 @@ export const assetMetadataResultSchema = z.strictObject({
     name: nonBlankString,
     source: z.enum(['user', 'ai']),
   })).optional().default([]),
+  /** Optimistic-concurrency token for AssetMetadata, not a file-content revision. */
   entityVersion: z.number().int().min(0),
   updatedAt: nonBlankString,
 });

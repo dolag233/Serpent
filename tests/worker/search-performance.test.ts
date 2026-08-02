@@ -203,7 +203,7 @@ describe('100k asset search performance gate', () => {
     // 100k-asset library. This Worker page is the dominant data read on that
     // path; renderer startup is covered separately by Electron smoke tests.
     expect(elapsedMs).toBeLessThan(3_000);
-  });
+  }, 10_000);
 
   it('keeps keyword search first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;

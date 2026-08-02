@@ -19,6 +19,7 @@ import {
   rmdirSync,
   rmSync,
   statSync,
+  utimesSync,
   watch,
   writeFileSync,
   writeSync,
@@ -48,8 +49,40 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
+import {
+  claimNextPluginJobRecord,
+  cancelPluginJobRecord,
+  completePluginJobRecord,
+  enqueuePluginJobRecord,
+  listPluginJobRecords,
+  pausePluginJobRecord,
+  pausePluginJobsForOwners as pausePluginJobRowsForOwners,
+  reportPluginJobProgress,
+  recoverInterruptedPluginJobs,
+  resumePluginJobRecord,
+  retryPluginJobRecord,
+} from './plugin-job-repository';
+import {
+  materializePluginDerivedFields as materializePluginDerivedFieldRows,
+  queryPluginDerivedFields as queryPluginDerivedFieldRows,
+} from './plugin-derived-field-repository';
+import {
+  LibraryWriteCoordinator,
+  LibraryWriteCoordinatorError,
+  isSQLiteWriteContention,
+  type AcquireLibraryWriteLeaseOptions,
+  type LibraryChangeSubscription,
+  type LibraryJobLease,
+  type LibraryWriteLease,
+  type LibraryWriteLeaseHeartbeat,
+} from './library-write-coordinator';
 
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
+import {
+  CONTENT_REPLACE_BATCH_MAX_ITEMS,
+  CONTENT_REPLACE_MAX_BYTES,
+  CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
+} from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
@@ -57,7 +90,7 @@ import {
   colorFilterSql,
   parseColorFilterIds,
 } from '../shared/color-filter-presets';
-import type { TagOperationSkip } from '../shared/protocol/responses';
+import type { LibraryChangedEvent, TagOperationSkip } from '../shared/protocol/responses';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -249,6 +282,7 @@ import { extractAuthorFromExif } from './author-from-exif';
 import type {
   ImportCompletion,
   ImportConflictPlan,
+  AutomationImportPlan,
   InternalLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
@@ -366,14 +400,16 @@ interface DatabaseConnection {
   exec(sql: string): void;
   pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(sql: string): Statement;
-  transaction<T>(operation: () => T): () => T;
+  transaction<T>(operation: () => T): DatabaseTransaction<T>;
+}
+
+interface DatabaseTransaction<T> {
+  (): T;
+  immediate(): T;
 }
 
 interface DatabaseConstructor {
-  new (filename: string, options?: {
-    readonly?: boolean;
-    fileMustExist?: boolean;
-  }): DatabaseConnection;
+  new (filename: string): DatabaseConnection;
 }
 
 const Database = BetterSqlite3 as DatabaseConstructor;
@@ -1482,6 +1518,349 @@ const IMAGE_SEQUENCE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(IMAGE_SEQUENCE_SCHEMA_SQL)
   .digest('hex');
 
+/**
+ * Cross-process writers coordinate through these two durable tables.  The
+ * sequence is maintained by SQLite triggers, so it commits or rolls back with
+ * the mutation that caused it; it is never a best-effort notification emitted
+ * after the fact.  Every library database contains exactly one library row,
+ * which keeps the trigger body independent from the mutated table's shape.
+ */
+const WRITE_COORDINATION_SCHEMA_SQL = `
+  CREATE TABLE library_write_leases (
+    library_id TEXT PRIMARY KEY REFERENCES library(library_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL,
+    acquired_at_ms INTEGER NOT NULL CHECK(acquired_at_ms >= 0),
+    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms > acquired_at_ms)
+  );
+
+  CREATE TABLE library_change_sequence (
+    library_id TEXT PRIMARY KEY REFERENCES library(library_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL DEFAULT 0 CHECK(sequence >= 0)
+  );
+
+  INSERT INTO library_change_sequence (library_id, sequence)
+    SELECT library_id, 0 FROM library;
+
+  -- Fresh libraries insert their single library row after all migrations have
+  -- run, so seed that row as well as pre-existing libraries migrated to v24.
+  CREATE TRIGGER library_change_sequence_seed AFTER INSERT ON library BEGIN
+    INSERT OR IGNORE INTO library_change_sequence (library_id, sequence)
+      VALUES (NEW.library_id, 0);
+  END;
+
+  CREATE TRIGGER library_change_on_assets_insert AFTER INSERT ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_assets_update AFTER UPDATE ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_assets_delete AFTER DELETE ON assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_insert AFTER INSERT ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_update AFTER UPDATE ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revisions_delete AFTER DELETE ON revisions BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_insert AFTER INSERT ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_update AFTER UPDATE ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_managed_folders_delete AFTER DELETE ON managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_insert AFTER INSERT ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_update AFTER UPDATE ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folders_delete AFTER DELETE ON linked_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_insert AFTER INSERT ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_update AFTER UPDATE ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_ignored_assets_delete AFTER DELETE ON linked_ignored_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_insert AFTER INSERT ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_update AFTER UPDATE ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_linked_folder_rules_delete AFTER DELETE ON linked_folder_rules BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_insert AFTER INSERT ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_update AFTER UPDATE ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_metadata_delete AFTER DELETE ON asset_metadata BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_insert AFTER INSERT ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_update AFTER UPDATE ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_color_space_overrides_delete AFTER DELETE ON asset_color_space_overrides BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_insert AFTER INSERT ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_update AFTER UPDATE ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_tags_delete AFTER DELETE ON tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_insert AFTER INSERT ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_update AFTER UPDATE ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_human_asset_tags_delete AFTER DELETE ON human_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_insert AFTER INSERT ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_update AFTER UPDATE ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_asset_tags_delete AFTER DELETE ON ai_asset_tags BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_insert AFTER INSERT ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_update AFTER UPDATE ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collections_delete AFTER DELETE ON collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_insert AFTER INSERT ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_update AFTER UPDATE ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_collection_assets_delete AFTER DELETE ON collection_assets BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_insert AFTER INSERT ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_update AFTER UPDATE ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_smart_collections_delete AFTER DELETE ON smart_collections BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_insert AFTER INSERT ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_update AFTER UPDATE ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_ai_content_delete AFTER DELETE ON ai_content BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_insert AFTER INSERT ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_update AFTER UPDATE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_delete AFTER DELETE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_insert AFTER INSERT ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_update AFTER UPDATE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_delete AFTER DELETE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_insert AFTER INSERT ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_update AFTER UPDATE ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_file_operations_delete AFTER DELETE ON file_operations BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_insert AFTER INSERT ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_update AFTER UPDATE ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_trashed_managed_folders_delete AFTER DELETE ON trashed_managed_folders BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_insert AFTER INSERT ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_update AFTER UPDATE ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequences_delete AFTER DELETE ON asset_sequences BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_insert AFTER INSERT ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_update AFTER UPDATE ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_asset_sequence_frames_delete AFTER DELETE ON asset_sequence_frames BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+`;
+const WRITE_COORDINATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(WRITE_COORDINATION_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v25: durable ownership for long-running, detached Jobs. The
+// lease is separate from the library writer lease so a Job can heartbeat
+// while filesystem/media work remains outside a SQLite transaction.
+const JOB_LEASE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS library_job_leases (
+    library_id TEXT NOT NULL REFERENCES library(library_id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    fencing_token INTEGER NOT NULL CHECK(fencing_token > 0),
+    acquired_at_ms INTEGER NOT NULL CHECK(acquired_at_ms >= 0),
+    expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms > acquired_at_ms),
+    PRIMARY KEY(library_id, job_id)
+  );
+`;
+const JOB_LEASE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(JOB_LEASE_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v26: the thumbnail queue asks whether a job already exists for a
+// revision. Without a matching index, opening a large library performs a
+// quadratic NOT EXISTS scan over the jobs table before the visible batch is
+// queued.
+const THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS jobs_asset_kind_status
+    ON jobs(asset_id, kind, status);
+  CREATE INDEX IF NOT EXISTS revision_artifacts_revision_kind_status
+    ON revision_artifacts(revision_id, kind, status, invalidated_at);
+`;
+const THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
+/**
+ * Migration v27: plugin background jobs reuse the shared jobs table with a
+ * dedicated kind plus owner/version/handler/payload columns for §9.4.
+ */
+const PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL = `
+  CREATE TABLE jobs_v27 (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+               'extract_metadata', 'extract_palette',
+               'ai.image.analysis', 'ai.video.analysis',
+               'plugin.background')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    owner_plugin_id TEXT,
+    owner_package_hash TEXT,
+    plugin_handler_id TEXT,
+    payload_json TEXT,
+    recovery_strategy TEXT CHECK (
+      recovery_strategy IS NULL
+      OR recovery_strategy IN ('idempotent', 'checkpoint')
+    )
+  );
+  INSERT INTO jobs_v27 (
+    job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+    attempt_count, error_code, error_detail, created_at, updated_at,
+    owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json, recovery_strategy
+  )
+  SELECT
+    job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+    attempt_count, error_code, error_detail, created_at, updated_at,
+    NULL, NULL, NULL, NULL, NULL
+  FROM jobs;
+  DROP TABLE jobs;
+  ALTER TABLE jobs_v27 RENAME TO jobs;
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+  CREATE INDEX IF NOT EXISTS jobs_asset_kind_status
+    ON jobs(asset_id, kind, status);
+  CREATE INDEX IF NOT EXISTS jobs_plugin_owner_status
+    ON jobs(library_id, owner_plugin_id, owner_package_hash, status)
+    WHERE kind = 'plugin.background';
+`;
+const PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL)
+  .digest('hex');
+
+/**
+ * Migration v28: namespaced, package-versioned materialized Provider fields.
+ * Queries only select the active package hash supplied by Main, so upgrading
+ * or deactivating a plugin cannot expose stale values.
+ */
+const PLUGIN_DERIVED_FIELDS_SCHEMA_SQL = `
+  CREATE TABLE plugin_derived_fields (
+    library_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+    plugin_id TEXT NOT NULL,
+    package_hash TEXT NOT NULL,
+    field_id TEXT NOT NULL,
+    field_type TEXT NOT NULL CHECK (field_type IN ('string', 'number', 'boolean', 'date', 'json')),
+    value_text TEXT,
+    value_number REAL,
+    value_boolean INTEGER CHECK (value_boolean IS NULL OR value_boolean IN (0, 1)),
+    value_json TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (library_id, asset_id, plugin_id, package_hash, field_id)
+  );
+  CREATE INDEX plugin_derived_fields_lookup
+    ON plugin_derived_fields(library_id, plugin_id, package_hash, field_id, asset_id);
+`;
+const PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PLUGIN_DERIVED_FIELDS_SCHEMA_SQL)
+  .digest('hex');
+
 const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
@@ -1526,6 +1905,27 @@ const MIGRATIONS = [
   { version: 21, sql: MEDIA_PROXY_SCHEMA_SQL, checksum: MEDIA_PROXY_SCHEMA_CHECKSUM },
   { version: 22, sql: COLOR_SPACE_OVERRIDE_SCHEMA_SQL, checksum: COLOR_SPACE_OVERRIDE_SCHEMA_CHECKSUM },
   { version: 23, sql: IMAGE_SEQUENCE_SCHEMA_SQL, checksum: IMAGE_SEQUENCE_SCHEMA_CHECKSUM },
+  {
+    version: 24,
+    sql: WRITE_COORDINATION_SCHEMA_SQL,
+    checksum: WRITE_COORDINATION_SCHEMA_CHECKSUM,
+  },
+  { version: 25, sql: JOB_LEASE_SCHEMA_SQL, checksum: JOB_LEASE_SCHEMA_CHECKSUM },
+  {
+    version: 26,
+    sql: THUMBNAIL_QUEUE_INDEX_SCHEMA_SQL,
+    checksum: THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 27,
+    sql: PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL,
+    checksum: PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 28,
+    sql: PLUGIN_DERIVED_FIELDS_SCHEMA_SQL,
+    checksum: PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM,
+  },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -1542,7 +1942,7 @@ interface MigrationRow {
 interface OpenLibrary {
   connection: DatabaseConnection;
   summary: InternalLibrarySummary;
-  readOnly: boolean;
+  changeSubscription: LibraryChangeSubscription;
   /** Managed path identities whose on-disk file must not be auto-reconciled after relink recovery preserved them. */
   preservedRelinkPathIdentities: Set<string>;
 }
@@ -1728,15 +2128,34 @@ interface ManagedCopyOperationManifest {
   version: 5;
 }
 
+interface ContentReplaceBatchOperationManifest {
+  files: Array<{
+    assetId: string;
+    backupName: string;
+    destinationRelativePath: string;
+    newRevisionId: string;
+    originalModifiedAt: string;
+    originalSha256: string;
+    previousRevisionId: string;
+    sha256: string;
+    stageName: string;
+  }>;
+  kind: 'content-replace-batch';
+  version: 6;
+}
+
 type PersistedOperationManifest =
   | OperationManifest
   | LinkedTrashOperationManifest
   | RestoreOperationManifest
   | ManagedMoveOperationManifest
-  | ManagedCopyOperationManifest;
+  | ManagedCopyOperationManifest
+  | ContentReplaceBatchOperationManifest;
 
 interface OperationRow {
   error_code: string | null;
+  /** Present when selected; recoverFileOperations requires it for import lease skips. */
+  kind?: string;
   manifest_json: string;
   operation_id: string;
   status: string;
@@ -1764,6 +2183,15 @@ export type ImportFailurePoint =
   | 'crash-move-after-filesystem'
   | 'crash-move-before-db-commit'
   | 'crash-move-after-db-commit'
+  | 'crash-copy-before-filesystem'
+  | 'crash-copy-after-conflict'
+  | 'crash-copy-after-filesystem'
+  | 'crash-copy-before-db-commit'
+  | 'crash-copy-after-db-commit'
+  | 'crash-content-replace-batch-after-backup'
+  | 'crash-content-replace-batch-after-first-file'
+  | 'crash-content-replace-batch-before-db-commit'
+  | 'crash-content-replace-batch-after-db-commit'
   | 'crash-linked-convert-after-filesystem'
   | 'crash-relink-before-manifest-write'
   | 'crash-relink-after-manifest-before-placement'
@@ -2021,6 +2449,7 @@ export interface LibraryServiceOptions {
   importClock?: ImportExpiryClock;
   importTtlMs?: number;
   onAssetsChanged?: (event: AssetsChangedEvent) => void;
+  onLibraryChanged?: (event: LibraryChangedEvent) => void;
   onDiagnostic?: (diagnostic: LibraryServiceDiagnostic) => void;
   onProgress?: (event: ExportProgressEvent | ImportProgressEvent) => void;
   observerFactory?: AssetObserverFactory;
@@ -2038,6 +2467,16 @@ export interface LibraryServiceOptions {
   spawnFn?: SpawnFunction;
   /** Moves one absolute source path to the OS system trash. */
   trashItem?: (sourcePath: string) => Promise<void>;
+  /** Test-only seam invoked after bounded-write lease acquisition. */
+  beforeBoundedWriteTransaction?: (libraryId: string) => void;
+  /** Test-only seam invoked immediately before the v23+ migration transaction. */
+  beforeSchemaMigrationTransaction?: () => void;
+  /** Test-only seam invoked before a batch content replacement backs up a target. */
+  beforeContentReplaceBatchBackup?: (input: { assetId: string; libraryId: string }) => void;
+  /** Test-only seam invoked after BEGIN IMMEDIATE acquires the migration mutex. */
+  afterSchemaMigrationTransactionBegin?: () => void;
+  /** Test-only override for deterministic SQLite writer-contention tests. */
+  sqliteBusyTimeoutMsForTests?: number;
   /** Removes one Serpent trash directory; injectable for platform-error tests. */
   removeTrashPath?: (trashPath: string) => void;
   /**
@@ -2058,7 +2497,7 @@ export interface AssetsChangedEvent {
   changedCount: number;
   libraryId: string;
   missingCount: number;
-  source?: 'watcher' | 'text-save' | 'client';
+  source?: 'watcher' | 'text-save' | 'content-replace' | 'client';
   type: 'asset.changed';
 }
 
@@ -2432,17 +2871,29 @@ function databasePath(libraryPath: string): string {
   return path.join(libraryPath, '.serpent', 'library.db');
 }
 
-export function openConfiguredDatabase(filename: string): DatabaseConnection {
+export function openConfiguredDatabase(
+  filename: string,
+  busyTimeoutMs = 5_000,
+): DatabaseConnection {
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > 60_000) {
+    throw new Error('SQLite busy timeout must be an integer between 0 and 60000 milliseconds.');
+  }
   const connection = new Database(filename);
   try {
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
+    // A second Serpent process may be finishing a short SQLite transaction
+    // while the durable lease is being acquired. Let SQLite wait briefly for
+    // that kernel-level lock instead of turning normal contention into an
+    // opaque SQLITE_BUSY/INTERNAL_ERROR before our public LIBRARY_BUSY path.
+    connection.pragma(`busy_timeout = ${busyTimeoutMs}`);
     const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
     connection.pragma('synchronous = FULL');
     if (
       journalMode !== 'wal' ||
       connection.pragma('foreign_keys', { simple: true }) !== 1 ||
-      connection.pragma('synchronous', { simple: true }) !== 2
+      connection.pragma('synchronous', { simple: true }) !== 2 ||
+      connection.pragma('busy_timeout', { simple: true }) !== busyTimeoutMs
     ) {
       throw new Error('Required SQLite safety pragmas could not be enabled.');
     }
@@ -2927,7 +3378,41 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
   };
 }
 
-function migrateDatabase(connection: DatabaseConnection, allowFresh: boolean): void {
+/**
+ * Schema v24 is the first migration opened routinely by two independent
+ * Serpent processes: an existing library can be opened by Desktop while a
+ * future MCP host connects to the same database.  Serialize the v23 -> v24
+ * boundary with SQLite's writer mutex, then re-read the version *inside* the
+ * transaction.  The second opener therefore observes the committed v24
+ * history instead of both trying to create the coordination tables/triggers.
+ *
+ * Older migrations rebuild tables while temporarily changing `foreign_keys`.
+ * SQLite forbids that PRAGMA inside a transaction, so they intentionally keep
+ * their established per-migration transaction model below.  Every released
+ * v0.1 library is v23 before this change, which is the upgrade boundary that
+ * needs cross-process protection now.
+ */
+function migrateDatabase(
+  connection: DatabaseConnection,
+  allowFresh: boolean,
+  options?: Pick<
+    LibraryServiceOptions,
+    'afterSchemaMigrationTransactionBegin' | 'beforeSchemaMigrationTransaction'
+  >,
+): void {
+  const versionBeforeMigration = schemaVersion(connection);
+  if (versionBeforeMigration >= 23 && versionBeforeMigration <= SUPPORTED_SCHEMA_VERSION) {
+    options?.beforeSchemaMigrationTransaction?.();
+    connection.transaction(() => {
+      options?.afterSchemaMigrationTransactionBegin?.();
+      migrateDatabaseUnserialized(connection, allowFresh);
+    }).immediate();
+    return;
+  }
+  migrateDatabaseUnserialized(connection, allowFresh);
+}
+
+function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
     throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
@@ -3688,6 +4173,52 @@ export class LibraryService {
       }
       return value as unknown as ManagedCopyOperationManifest;
     }
+    if (value.version === 6) {
+      const candidate = value as Record<string, unknown>;
+      if (
+        candidate.kind !== 'content-replace-batch' ||
+        !Array.isArray(candidate.files) ||
+        candidate.files.length === 0 ||
+        candidate.files.length > CONTENT_REPLACE_BATCH_MAX_ITEMS
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const assetIds = new Set<string>();
+      const destinationIdentities = new Set<string>();
+      const validRelativePath = (relativePath: unknown): relativePath is string =>
+        typeof relativePath === 'string' && relativePath.length > 0 &&
+        !relativePath.includes('\\') && !path.posix.isAbsolute(relativePath) &&
+        path.posix.normalize(relativePath) === relativePath &&
+        !relativePath.split('/').some((segment) => segment === '.' || segment === '..');
+      for (const file of candidate.files) {
+        if (typeof file !== 'object' || file === null) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const entry = file as Record<string, unknown>;
+        if (
+          typeof entry.assetId !== 'string' || !UUID.test(entry.assetId) || assetIds.has(entry.assetId) ||
+          !validRelativePath(entry.destinationRelativePath) ||
+          typeof entry.backupName !== 'string' || path.posix.basename(entry.backupName) !== entry.backupName ||
+          path.win32.basename(entry.backupName) !== entry.backupName ||
+          typeof entry.stageName !== 'string' || path.posix.basename(entry.stageName) !== entry.stageName ||
+          path.win32.basename(entry.stageName) !== entry.stageName ||
+          typeof entry.newRevisionId !== 'string' || !UUID.test(entry.newRevisionId) ||
+          typeof entry.originalModifiedAt !== 'string' || !Number.isFinite(Date.parse(entry.originalModifiedAt)) ||
+          typeof entry.originalSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.originalSha256) ||
+          typeof entry.previousRevisionId !== 'string' || !UUID.test(entry.previousRevisionId) ||
+          typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.sha256)
+        ) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const destinationIdentity = portablePathIdentity(entry.destinationRelativePath);
+        if (destinationIdentities.has(destinationIdentity)) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        assetIds.add(entry.assetId);
+        destinationIdentities.add(destinationIdentity);
+      }
+      return value as unknown as ContentReplaceBatchOperationManifest;
+    }
     if (value.version === 4) {
       const candidate = value as Record<string, unknown>;
       if (
@@ -4067,10 +4598,90 @@ export class LibraryService {
     ).run(new Date().toISOString(), row.operation_id);
   }
 
+  private recoverContentReplaceBatchOperation(
+    openLibrary: OpenLibrary,
+    row: OperationRow,
+    manifest: ContentReplaceBatchOperationManifest,
+    operationPath: string,
+  ): void {
+    if (row.status === 'preparing') {
+      this.removeOperation(operationPath);
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), row.operation_id);
+      return;
+    }
+
+    let recoveryPending = false;
+    const restoreOriginalModifiedAt = (destinationPath: string, modifiedAt: string): void => {
+      const timestamp = Date.parse(modifiedAt);
+      if (!Number.isFinite(timestamp)) {
+        recoveryPending = true;
+        return;
+      }
+      try {
+        const date = new Date(timestamp);
+        utimesSync(destinationPath, date, date);
+      } catch {
+        recoveryPending = true;
+      }
+    };
+    for (const file of [...manifest.files].reverse()) {
+      const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      const backupPath = path.join(operationPath, 'backup', file.backupName);
+      if (!realFileExists(backupPath)) continue;
+      if (!realFileExists(destinationPath)) {
+        mkdirSync(path.dirname(destinationPath), { recursive: true });
+        renameSync(backupPath, destinationPath);
+        restoreOriginalModifiedAt(destinationPath, file.originalModifiedAt);
+        continue;
+      }
+      let destinationHash: string;
+      try {
+        destinationHash = sha256FileAtPath(destinationPath);
+      } catch {
+        recoveryPending = true;
+        continue;
+      }
+      if (destinationHash !== file.sha256) {
+        if (destinationHash === file.originalSha256) {
+          rmSync(backupPath, { force: true });
+          restoreOriginalModifiedAt(destinationPath, file.originalModifiedAt);
+          continue;
+        }
+        // An external writer changed the destination after the interrupted
+        // replace. Do not overwrite it during recovery; retain the journal so
+        // the conflict is explainable and can be handled explicitly.
+        recoveryPending = true;
+        continue;
+      }
+      rmSync(destinationPath, { force: true });
+      mkdirSync(path.dirname(destinationPath), { recursive: true });
+      renameSync(backupPath, destinationPath);
+      restoreOriginalModifiedAt(destinationPath, file.originalModifiedAt);
+    }
+    if (recoveryPending) {
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'failed', error_code = 'CONTENT_REPLACE_RECOVERY_CONFLICT', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), row.operation_id);
+      this.diagnose('asset.content-replace-batch.recovery-pending', new Error(
+        'An interrupted batch encountered an external destination change.',
+      ), {
+        operationId: row.operation_id,
+        libraryId: openLibrary.summary.libraryId,
+      });
+      return;
+    }
+    this.removeOperation(operationPath);
+    openLibrary.connection.prepare(
+      "UPDATE file_operations SET status = 'rolled_back', error_code = 'PROCESS_INTERRUPTED', updated_at = ? WHERE operation_id = ?",
+    ).run(new Date().toISOString(), row.operation_id);
+  }
+
   private recoverFileOperations(openLibrary: OpenLibrary): void {
     const rows = openLibrary.connection
       .prepare(
-        `SELECT operation_id, status, manifest_json, error_code
+        `SELECT operation_id, kind, status, manifest_json, error_code
            FROM file_operations
           ORDER BY created_at`,
       )
@@ -4115,9 +4726,31 @@ export class LibraryService {
         row.error_code !== 'IMPORT_APPLY_FAILED' &&
         row.error_code !== 'RESTORE_APPLY_FAILED' &&
         row.error_code !== 'MOVE_APPLY_FAILED' &&
-        row.error_code !== 'COPY_APPLY_FAILED'
+        row.error_code !== 'COPY_APPLY_FAILED' &&
+        row.error_code !== 'CONTENT_REPLACE_APPLY_FAILED' &&
+        row.error_code !== 'CONTENT_REPLACE_RECOVERY_CONFLICT'
       ) {
         this.removeOperation(operationPath);
+        continue;
+      }
+      // Another Serpent process is still applying under a live Job lease.
+      // Do not roll back its filesystem or clear the operation directory.
+      const JOB_LEASE_APPLYING_KINDS = new Set([
+        'import',
+        'managed-move',
+        'managed-move-undo',
+        'managed-copy',
+        'restore',
+        'content-replace-batch',
+      ]);
+      if (
+        row.status === 'applying'
+        && row.kind !== undefined
+        && JOB_LEASE_APPLYING_KINDS.has(row.kind)
+        && new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+          .hasLiveJobLease(row.operation_id)
+      ) {
+        retainedOperationIds.add(row.operation_id);
         continue;
       }
       this.assertSafeOperationPath(operationPath);
@@ -4136,6 +4769,18 @@ export class LibraryService {
       }
       if (manifest.version === 5) {
         this.recoverManagedCopyOperation(openLibrary, row, manifest, operationPath);
+        continue;
+      }
+      if (manifest.version === 6) {
+        // A recovery conflict is intentionally retained across reopen. The
+        // recovery helper may leave the operation directory in place so an
+        // operator can resolve the external destination change explicitly;
+        // do not let the generic orphan sweep erase that evidence later in
+        // this same pass.
+        if (row.status === 'failed' && row.error_code === 'CONTENT_REPLACE_RECOVERY_CONFLICT') {
+          retainedOperationIds.add(row.operation_id);
+        }
+        this.recoverContentReplaceBatchOperation(openLibrary, row, manifest, operationPath);
         continue;
       }
       if (
@@ -4243,6 +4888,254 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
     return openLibrary;
+  }
+
+  /**
+   * Acquire the durable, per-library writer lease used by Desktop, scripts and
+   * MCP. Callers must release the returned handle in a `finally` block.
+   * Read-only operations intentionally do not take this lease.
+   */
+  acquireWriteLease(
+    libraryId: string,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<LibraryWriteLease> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).acquire(options);
+  }
+
+  /**
+   * Claim a long-running Job with a durable owner/fencing token. The caller
+   * must heartbeat while external work is in progress and assert ownership
+   * before every persisted state transition.
+   */
+  acquireJobLease(
+    libraryId: string,
+    jobId: string,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<LibraryJobLease> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).claimJob(jobId, options);
+  }
+
+  /**
+   * Execute a synchronous, metadata-only command inside a real SQLite
+   * `BEGIN IMMEDIATE` transaction and an observable per-library lease.
+   *
+   * The transaction is the fencing boundary: while it is open no second
+   * database connection can replace the lease and then interleave a write if
+   * this operation outlives its nominal lease duration. File/network/media
+   * work must never use this helper; those paths need their own recoverable
+   * job phases.
+   */
+  async runBoundedWrite<T>(
+    libraryId: string,
+    operation: () => T,
+    options?: AcquireLibraryWriteLeaseOptions,
+  ): Promise<T> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const coordinator = new LibraryWriteCoordinator(openLibrary.connection, libraryId);
+    const lease = await coordinator.acquire(options);
+    try {
+      this.options.beforeBoundedWriteTransaction?.(libraryId);
+      const transaction = openLibrary.connection.transaction(() => {
+        // Acquisition happens before BEGIN IMMEDIATE so the caller can wait
+        // until its configurable timeout for a live owner to finish. Renew
+        // again inside SQLite's writer mutex to prove this owner is still
+        // current and to keep the lease alive for the fenced mutation.
+        lease.renew();
+        return operation();
+      });
+      return transaction.immediate();
+    } catch (error) {
+      if (isSQLiteWriteContention(error)) {
+        throw new LibraryWriteCoordinatorError(
+          'Another Serpent session is updating this library.',
+          'timed-out',
+        );
+      }
+      throw error;
+    } finally {
+      // Release after COMMIT/ROLLBACK. Releasing inside the transaction would
+      // make the persisted lease invisible before the database write lock is
+      // released, reopening a small cross-process race at the boundary.
+      try {
+        lease.release();
+      } catch (error) {
+        // Never let best-effort cleanup replace the operation's public
+        // outcome. If a non-cooperating legacy writer grabbed SQLite between
+        // COMMIT/ROLLBACK and this DELETE, the persisted expiry remains the
+        // crash-recovery fallback; record the precise cause for diagnostics.
+        this.diagnose('write-lease.release', error, { libraryId });
+      }
+    }
+  }
+
+  /** Return the durable mutation sequence for cross-process refresh cursors. */
+  getChangeSequence(libraryId: string): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    try {
+      return new LibraryWriteCoordinator(openLibrary.connection, libraryId).currentChangeSequence();
+    } catch (error) {
+      throw serviceError(error, 'LIBRARY_CORRUPT');
+    }
+  }
+
+  /**
+   * Polls the durable sequence from the open library connection so a Worker
+   * can observe commits made by another Serpent process. The subscription
+   * owns no write lease and must be stopped when the library closes.
+   */
+  subscribeToChangeSequence(
+    libraryId: string,
+    onChange: (sequence: number) => void,
+    intervalMs = 250,
+  ): LibraryChangeSubscription {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new LibraryWriteCoordinator(openLibrary.connection, libraryId)
+      .subscribeToChangeSequence({ intervalMs, onChange });
+  }
+
+  /**
+   * Side-effect-free preflight for an Automation Gateway file-operation plan.
+   * The result contains only opaque state tokens; source paths and filenames
+   * remain inside the Worker. The execution command later validates both the
+   * durable change sequence and every token before touching the filesystem.
+   */
+  previewAutomationFileOperation(input: {
+    libraryId: string;
+    operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    assetIds: string[];
+    newBaseName?: string;
+    targetFolderId?: string | null;
+  }): {
+    libraryId: string;
+    operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    changeSequence: number;
+    targetCount: number;
+    executableCount: number;
+    blockedCount: number;
+    undoSupported: boolean;
+    assetStates: Array<{ assetId: string; stateToken: string }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (input.operation === 'move') {
+      // Validate target folder exists when moving into a non-root folder.
+      if (input.targetFolderId) {
+        const folder = openLibrary.connection.prepare(
+          'SELECT folder_id FROM managed_folders WHERE folder_id = ?',
+        ).get(input.targetFolderId);
+        if (!folder) throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
+              availability, location_kind
+         FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      current_revision_id: string;
+      relative_file_path: string;
+      deleted_at: string | null;
+      availability: 'available' | 'missing';
+      location_kind: 'managed' | 'linked';
+    }>;
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    const assetStates: Array<{ assetId: string; stateToken: string }> = [];
+    let executableCount = 0;
+    for (const assetId of input.assetIds) {
+      const row = rowById.get(assetId);
+      if (!row) {
+        assetStates.push({
+          assetId,
+          stateToken: createHash('sha256').update(`missing:${assetId}`, 'utf8').digest('hex'),
+        });
+        continue;
+      }
+      assetStates.push({
+        assetId,
+        stateToken: this.automationAssetStateToken(row),
+      });
+      const executable = input.operation === 'trash'
+        ? row.location_kind === 'managed' && row.deleted_at === null
+        : input.operation === 'replace-content'
+          ? row.location_kind === 'managed'
+            && row.deleted_at === null
+            && row.availability === 'available'
+        : input.operation === 'move'
+          ? row.location_kind === 'managed'
+            && row.deleted_at === null
+            && row.availability === 'available'
+          : input.operation === 'rename-file'
+            ? row.deleted_at === null && row.availability === 'available' && typeof input.newBaseName === 'string'
+            : input.operation === 'rename-files'
+              ? row.deleted_at === null && row.availability === 'available'
+            : row.location_kind === 'managed' && row.deleted_at !== null;
+      if (executable) executableCount++;
+    }
+    return {
+      libraryId: input.libraryId,
+      operation: input.operation,
+      changeSequence: this.getChangeSequence(input.libraryId),
+      targetCount: input.assetIds.length,
+      executableCount,
+      blockedCount: input.assetIds.length - executableCount,
+      undoSupported: input.operation === 'trash' || input.operation === 'move',
+      assetStates,
+    };
+  }
+
+  validateAutomationFileOperationPlan(input: {
+    libraryId: string;
+    expectedChangeSequence: number;
+    assetStates: Array<{ assetId: string; stateToken: string }>;
+  }): void {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const currentSequence = this.getChangeSequence(input.libraryId);
+    if (currentSequence !== input.expectedChangeSequence) {
+      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
+    }
+    if (input.assetStates.length === 0 || new Set(input.assetStates.map((state) => state.assetId)).size !== input.assetStates.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
+              availability, location_kind
+         FROM assets
+        WHERE asset_id IN (${input.assetStates.map(() => '?').join(',')})`,
+    ).all(...input.assetStates.map((state) => state.assetId)) as Array<{
+      asset_id: string;
+      current_revision_id: string;
+      relative_file_path: string;
+      deleted_at: string | null;
+      availability: 'available' | 'missing';
+      location_kind: 'managed' | 'linked';
+    }>;
+    const tokens = new Map(rows.map((row) => [row.asset_id, this.automationAssetStateToken(row)]));
+    if (input.assetStates.some((state) => tokens.get(state.assetId) !== state.stateToken)) {
+      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
+    }
+  }
+
+  private automationAssetStateToken(row: {
+    asset_id: string;
+    current_revision_id: string;
+    relative_file_path: string;
+    deleted_at: string | null;
+    availability: 'available' | 'missing';
+    location_kind: 'managed' | 'linked';
+  }): string {
+    return createHash('sha256').update(JSON.stringify([
+      row.asset_id,
+      row.current_revision_id,
+      row.relative_file_path,
+      row.deleted_at,
+      row.availability,
+      row.location_kind,
+    ]), 'utf8').digest('hex');
   }
 
   private folderPath(openLibrary: OpenLibrary, relativePath: string): string {
@@ -8095,6 +8988,90 @@ export class LibraryService {
     return { automaticPalette: [], effectivePalette: [], paletteSource: null };
   }
 
+  /**
+   * Produce a compact, deterministic palette for assets added during a recent
+   * time window. This is intentionally a read-only aggregation over completed
+   * `extracted_palette` artifacts: the request never schedules extraction or
+   * mutates metadata, so an automation script cannot create hidden background
+   * work merely by asking for a colour summary.
+   */
+  aggregateRecentAssetPalette(input: {
+    libraryId: string;
+    days: number;
+    limit: number;
+  }): {
+    days: number;
+    assetCount: number;
+    paletteAssetCount: number;
+    colors: Array<{ hex: string; weight: number; assetCount: number }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const days = Math.max(1, Math.min(3_650, Math.floor(input.days)));
+    const limit = Math.max(1, Math.min(24, Math.floor(input.limit)));
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const assetCount = (openLibrary.connection.prepare(
+      `SELECT COUNT(*) AS count
+         FROM assets
+        WHERE deleted_at IS NULL AND created_at >= ?`,
+    ).get(cutoff) as { count: number }).count;
+    const rows = openLibrary.connection.prepare(
+      `SELECT a.asset_id, ra.artifact_id
+         FROM assets a
+         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL
+          AND a.created_at >= ?
+          AND ra.kind = 'extracted_palette'
+          AND ra.status = 'ready'
+          AND ra.invalidated_at IS NULL
+        ORDER BY a.asset_id ASC, ra.artifact_id ASC`,
+    ).all(cutoff) as Array<{ asset_id: string; artifact_id: string }>;
+
+    const totals = new Map<string, { weight: number; assetIds: Set<string> }>();
+    const paletteAssetIds = new Set<string>();
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(readFileSync(
+          this.getArtifactAbsolutePath(input.libraryId, row.artifact_id),
+          'utf8',
+        )) as unknown;
+        if (!Array.isArray(parsed)) throw new Error('Palette artifact must contain an array.');
+        let validEntries = 0;
+        for (const entry of parsed) {
+          if (
+            typeof entry !== 'object' || entry === null
+            || !('hex' in entry) || typeof entry.hex !== 'string'
+            || !/^#[0-9A-F]{6}$/u.test(entry.hex)
+            || !('ratio' in entry) || typeof entry.ratio !== 'number'
+            || !Number.isFinite(entry.ratio) || entry.ratio < 0 || entry.ratio > 1
+          ) {
+            throw new Error('Palette artifact contains an invalid colour entry.');
+          }
+          const existing = totals.get(entry.hex) ?? { weight: 0, assetIds: new Set<string>() };
+          existing.weight += entry.ratio;
+          existing.assetIds.add(row.asset_id);
+          totals.set(entry.hex, existing);
+          validEntries++;
+        }
+        if (validEntries > 0) paletteAssetIds.add(row.asset_id);
+      } catch (error) {
+        this.diagnose('palette.aggregate-recent.artifact-read', error, {
+          assetId: row.asset_id,
+          artifactId: row.artifact_id,
+        });
+      }
+    }
+    const totalWeight = [...totals.values()].reduce((sum, entry) => sum + entry.weight, 0);
+    const colors = [...totals.entries()]
+      .map(([hex, entry]) => ({
+        hex,
+        weight: totalWeight === 0 ? 0 : entry.weight / totalWeight,
+        assetCount: entry.assetIds.size,
+      }))
+      .sort((left, right) => right.weight - left.weight || right.assetCount - left.assetCount || left.hex.localeCompare(right.hex))
+      .slice(0, limit);
+    return { days, assetCount, paletteAssetCount: paletteAssetIds.size, colors };
+  }
+
   setAssetColorSpaceOverride(input: {
     libraryId: string;
     assetId: string;
@@ -9422,23 +10399,37 @@ export class LibraryService {
   }
 
   private recoverInterruptedAiJobs(openLibrary: OpenLibrary): void {
+    const nowMs = Date.now();
     openLibrary.connection.prepare(
       `UPDATE jobs SET status = 'queued', progress = 0.0,
         error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
         WHERE library_id = ? AND status = 'running'
-          AND kind IN ('ai.image.analysis', 'ai.video.analysis')`,
-    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
+          AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+          AND NOT EXISTS (
+            SELECT 1 FROM library_job_leases
+             WHERE library_job_leases.library_id = jobs.library_id
+               AND library_job_leases.job_id = jobs.job_id
+               AND library_job_leases.expires_at_ms > ?
+          )`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId, nowMs);
   }
 
   private recoverInterruptedThumbnailJobs(openLibrary: OpenLibrary): void {
+    const nowMs = Date.now();
     openLibrary.connection.prepare(
       `UPDATE jobs SET status = 'queued', progress = 0.0,
         error_code = 'PROCESS_INTERRUPTED', error_detail = NULL, updated_at = ?
         WHERE library_id = ? AND status = 'running'
           AND kind IN ('generate_thumbnail', 'generate_video_poster',
                        'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
-                       'extract_palette')`,
-    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
+                       'extract_palette')
+          AND NOT EXISTS (
+            SELECT 1 FROM library_job_leases
+             WHERE library_job_leases.library_id = jobs.library_id
+               AND library_job_leases.job_id = jobs.job_id
+               AND library_job_leases.expires_at_ms > ?
+          )`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId, nowMs);
   }
 
   // ── AI Job Queue Management ──────────────────────────────────────
@@ -9659,6 +10650,252 @@ export class LibraryService {
   }
 
   // ── Media Job Queue Management ────────────────────────────────────
+
+  enqueuePluginJob(input: {
+    libraryId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+    pluginHandlerId: string;
+    payload?: Record<string, unknown>;
+    recoveryStrategy: import('../plugins/plugin-jobs').PluginJobRecoveryStrategy;
+    priority?: number;
+  }): import('../plugins/plugin-jobs').PluginJobRecord {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.ownerLibraryId === '__serpent_global_runtime__'
+      || input.ownerLibraryId !== openLibrary.summary.libraryId) {
+      throw new Error('Plugin job owner library must be the concrete open library.');
+    }
+    return enqueuePluginJobRecord(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      ownerPluginId: input.ownerPluginId,
+      ownerPackageHash: input.ownerPackageHash,
+      ownerPluginInstanceId: input.ownerPluginInstanceId,
+      ownerScope: input.ownerScope,
+      ownerLibraryId: input.ownerLibraryId,
+      pluginHandlerId: input.pluginHandlerId,
+      payload: input.payload,
+      recoveryStrategy: input.recoveryStrategy,
+      priority: input.priority,
+    });
+  }
+
+  listPluginJobs(libraryId: string): import('../plugins/plugin-jobs').PluginJobRecord[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return listPluginJobRecords(openLibrary.connection, openLibrary.summary.libraryId);
+  }
+
+  claimNextPluginJob(input: {
+    libraryId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.ownerLibraryId === '__serpent_global_runtime__'
+      || input.ownerLibraryId !== openLibrary.summary.libraryId) {
+      throw new Error('Plugin job owner library must be the concrete open library.');
+    }
+    return claimNextPluginJobRecord(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      ownerPluginId: input.ownerPluginId,
+      ownerPackageHash: input.ownerPackageHash,
+      ownerPluginInstanceId: input.ownerPluginInstanceId,
+      ownerScope: input.ownerScope,
+      ownerLibraryId: input.ownerLibraryId,
+    });
+  }
+
+  completePluginJob(input: {
+    libraryId: string;
+    jobId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+    status: 'succeeded' | 'failed' | 'cancelled';
+    errorCode?: string;
+    errorDetail?: string;
+    progress?: number;
+    completed?: number;
+    total?: number;
+    phase?: string;
+    message?: string;
+    itemResults?: import('../plugins/plugin-jobs').PluginJobItemResult[];
+    failedAssetIds?: string[];
+    retryInput?: Record<string, unknown>;
+    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return completePluginJobRecord(openLibrary.connection, {
+      jobId: input.jobId,
+      owner: {
+        pluginId: input.ownerPluginId,
+        packageHash: input.ownerPackageHash,
+        pluginInstanceId: input.ownerPluginInstanceId,
+        scope: input.ownerScope,
+        libraryId: input.ownerLibraryId,
+      },
+      status: input.status,
+      errorCode: input.errorCode,
+      errorDetail: input.errorDetail,
+      progress: input.progress,
+      completed: input.completed,
+      total: input.total,
+      phase: input.phase,
+      message: input.message,
+      itemResults: input.itemResults,
+      failedAssetIds: input.failedAssetIds,
+      retryInput: input.retryInput,
+      checkpoint: input.checkpoint,
+    });
+  }
+
+  controlPluginJob(input: {
+    libraryId: string;
+    jobId: string;
+    action: 'cancel' | 'pause' | 'resume' | 'retry';
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+    reason?: string;
+    retryInput?: Record<string, unknown>;
+    capabilities?: import('../plugins/plugin-jobs').PluginJobHandlerCapabilities;
+    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.ownerLibraryId === '__serpent_global_runtime__'
+      || input.ownerLibraryId !== openLibrary.summary.libraryId) {
+      throw new Error('Plugin job owner library must be the concrete open library.');
+    }
+    const owner = {
+      pluginId: input.ownerPluginId,
+      packageHash: input.ownerPackageHash,
+      pluginInstanceId: input.ownerPluginInstanceId,
+      scope: input.ownerScope,
+      libraryId: input.ownerLibraryId,
+    } as const;
+    switch (input.action) {
+      case 'cancel':
+        return cancelPluginJobRecord(openLibrary.connection, { jobId: input.jobId, owner, reason: input.reason });
+      case 'pause':
+        if (input.capabilities === undefined || input.checkpoint === undefined) {
+          throw new Error('Pausing a plugin job requires handler capabilities and a checkpoint.');
+        }
+        return pausePluginJobRecord(openLibrary.connection, {
+          jobId: input.jobId,
+          owner,
+          capabilities: input.capabilities,
+          checkpoint: input.checkpoint,
+        });
+      case 'resume':
+        if (input.capabilities === undefined) {
+          throw new Error('Resuming a plugin job requires handler capabilities.');
+        }
+        return resumePluginJobRecord(openLibrary.connection, {
+          jobId: input.jobId,
+          owner,
+          capabilities: input.capabilities,
+        });
+      case 'retry':
+        return retryPluginJobRecord(openLibrary.connection, {
+          jobId: input.jobId,
+          owner,
+          retryInput: input.retryInput,
+        });
+    }
+  }
+
+  reportPluginJobProgress(input: {
+    libraryId: string;
+    jobId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+    completed: number;
+    total: number;
+    phase: string;
+    message: string;
+    progress?: number;
+  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.ownerLibraryId === '__serpent_global_runtime__'
+      || input.ownerLibraryId !== openLibrary.summary.libraryId) {
+      throw new Error('Plugin job owner library must be the concrete open library.');
+    }
+    return reportPluginJobProgress(openLibrary.connection, {
+      jobId: input.jobId,
+      ownerPluginId: input.ownerPluginId,
+      ownerPackageHash: input.ownerPackageHash,
+      ownerPluginInstanceId: input.ownerPluginInstanceId,
+      ownerScope: input.ownerScope,
+      ownerLibraryId: input.ownerLibraryId,
+      progress: {
+        completed: input.completed,
+        total: input.total,
+        phase: input.phase,
+        message: input.message,
+        ...(input.progress === undefined ? {} : { progress: input.progress }),
+      },
+    });
+  }
+
+  pausePluginJobsForOwners(input: {
+    libraryId: string;
+    owners: ReadonlyArray<{ pluginId: string; packageHash?: string }>;
+    errorCode?: string;
+    errorDetail?: string;
+  }): number {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return pausePluginJobRowsForOwners(openLibrary.connection, {
+      libraryId: openLibrary.summary.libraryId,
+      owners: input.owners,
+      errorCode: input.errorCode ?? 'PLUGIN_UNAVAILABLE',
+      errorDetail: input.errorDetail
+        ?? 'The owning plugin is missing, disabled, or incompatible on this device.',
+    });
+  }
+
+  materializePluginDerivedFields(input: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    fieldId: string;
+    fieldType: import('../plugins/plugin-providers').PluginProviderFieldType;
+    values: ReadonlyArray<{ assetId: string; value: string | number | boolean | null }>;
+  }): { writtenCount: number; fieldKey: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return materializePluginDerivedFieldRows(openLibrary.connection, {
+      ...input,
+      libraryId: openLibrary.summary.libraryId,
+    });
+  }
+
+  queryPluginDerivedFields(input: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    fieldId: string;
+    operator: 'equals' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte';
+    value: string | number | boolean | null;
+    limit?: number;
+    offset?: number;
+  }): { assetIds: string[]; total: number } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    return queryPluginDerivedFieldRows(openLibrary.connection, {
+      ...input,
+      libraryId: openLibrary.summary.libraryId,
+    });
+  }
 
   listMediaJobs(libraryId: string): {
     queued: number;
@@ -11340,6 +12577,64 @@ export class LibraryService {
       : null;
   }
 
+  /** Persist bounded Main-brokered plugin media as the normal thumbnail artifact. */
+  writePluginMediaArtifact(input: {
+    libraryId: string;
+    assetId: string;
+    mimeType: string;
+    bytesBase64: string;
+    providerId?: string;
+  }): { artifactId: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ? AND deleted_at IS NULL')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    const bytes = Buffer.from(input.bytesBase64, 'base64');
+    if (bytes.length === 0 || bytes.length > 256 * 1024) {
+      throw new LibraryServiceError('INTERNAL_ERROR');
+    }
+
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.plugin`;
+    const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+    mkdirSync(this.artifactsDir(openLibrary), { recursive: true });
+    try {
+      writeFileSync(artifactAbsPath, bytes, { flag: 'wx' });
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ? AND kind = 'thumbnail' AND invalidated_at IS NULL`,
+          )
+          .run(now, asset.current_revision_id);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                generator_version, status, generated_at)
+             VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            asset.current_revision_id,
+            input.mimeType,
+            bytes.length,
+            artifactRelPath,
+            `plugin:${input.providerId ?? 'media-provider'}`,
+            now,
+          );
+      })();
+      return { artifactId };
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      throw error;
+    }
+  }
+
   /**
    * Return the current (invalidated_at IS NULL) artifact of a given kind
    * for an asset's current revision. Returns null if none exists.
@@ -11350,7 +12645,14 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
     kind: string,
-  ): { artifactId: string; filePath: string; mimeType: string; status: string; errorCode: string | null } | null {
+  ): {
+    artifactId: string;
+    filePath: string;
+    mimeType: string;
+    generatorVersion: string;
+    status: string;
+    errorCode: string | null;
+  } | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
@@ -11359,7 +12661,7 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        `SELECT artifact_id, file_path, mime_type, status, error_code
+        `SELECT artifact_id, file_path, mime_type, generator_version, status, error_code
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = ?
@@ -11370,6 +12672,7 @@ export class LibraryService {
         artifact_id: string;
         file_path: string;
         mime_type: string;
+        generator_version: string;
         status: string;
         error_code: string | null;
       } | undefined;
@@ -11379,6 +12682,7 @@ export class LibraryService {
           artifactId: row.artifact_id,
           filePath: row.file_path,
           mimeType: row.mime_type,
+          generatorVersion: row.generator_version,
           status: row.status,
           errorCode: row.error_code,
         }
@@ -11628,7 +12932,17 @@ export class LibraryService {
         : mediaType === 'text'
           ? 'text/plain'
         : 'image/webp';
+    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (mediaType === 'other') {
+      if (artifact?.status === 'ready' && artifact.generatorVersion.startsWith('plugin:')) {
+        return {
+          mediaType: 'image',
+          status: 'ready',
+          kind: 'thumbnail',
+          artifactId: artifact.artifactId,
+          mimeType: artifact.mimeType,
+        };
+      }
       return {
         mediaType,
         status: 'missing',
@@ -11679,7 +12993,6 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
-    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (mediaType === 'video' || mediaType === 'audio') {
       const status = artifact?.status === 'generating' ? 'pending' : artifact?.status;
       if (status === 'ready' && artifact) {
@@ -11749,7 +13062,7 @@ export class LibraryService {
       // (REQ-VIEW-002: uncompressed source in the viewer).
       if (
         status === 'ready' &&
-        !(mediaType === 'image' && nativeMimeType)
+        !(mediaType === 'image' && nativeMimeType && !artifact.generatorVersion.startsWith('plugin:'))
       ) {
         return {
           mediaType,
@@ -12654,6 +13967,16 @@ export class LibraryService {
         artifactId?: string;
         errorCode?: string;
       }) => void;
+      pluginMediaProvider?: (input: {
+        assetId: string;
+        signal: AbortSignal;
+        asset?: {
+          assetId: string;
+          displayName: string;
+          relativeFilePath: string;
+          currentRevisionId: string;
+        };
+      }) => Promise<string | null>;
     } = {},
   ): Promise<number> {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -12688,16 +14011,48 @@ export class LibraryService {
         .run(job.attempt_count + 1, now, job.job_id);
       if (claimed.changes === 0) continue;
 
+      let jobLease: LibraryJobLease;
+      try {
+        jobLease = await this.acquireJobLease(libraryId, job.job_id, {
+          timeoutMs: 0,
+        });
+      } catch (error) {
+        if (!(error instanceof LibraryWriteCoordinatorError)) throw error;
+        openLibrary.connection.prepare(
+          "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_BUSY', updated_at = ? WHERE job_id = ? AND status = 'running'",
+        ).run(new Date().toISOString(), job.job_id);
+        continue;
+      }
+      const jobHeartbeat = jobLease.startHeartbeat();
       const controller = new AbortController();
       this.activeMediaJobs.set(job.job_id, { controller, libraryId });
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
+      const providerAssetRow = openLibrary.connection
+        .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+        .get(job.asset_id) as { relative_file_path: string } | undefined;
 
       try {
         if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
-          const generated = await this.generateThumbnail(
-            { libraryId, assetId: job.asset_id },
-            { signal: controller.signal },
-          );
+          const pluginArtifactId = options.pluginMediaProvider
+            ? await options.pluginMediaProvider({
+              assetId: job.asset_id,
+              signal: controller.signal,
+              ...(providerAssetRow === undefined ? {} : {
+                asset: {
+                  assetId: job.asset_id,
+                  displayName: path.basename(providerAssetRow.relative_file_path),
+                  relativeFilePath: providerAssetRow.relative_file_path,
+                  currentRevisionId: job.revision_id,
+                },
+              }),
+            })
+            : null;
+          const generated = pluginArtifactId
+            ? { artifactId: pluginArtifactId }
+            : await this.generateThumbnail(
+              { libraryId, assetId: job.asset_id },
+              { signal: controller.signal },
+            );
           if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
             this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
               libraryId,
@@ -12769,10 +14124,31 @@ export class LibraryService {
           processed += 1;
           continue;
         }
+          jobLease.assertCurrent();
         openLibrary.connection
           .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ? WHERE job_id = ? AND status = 'running'")
           .run(new Date().toISOString(), job.job_id);
       } catch (error) {
+        if (jobHeartbeat.error !== undefined || error instanceof LibraryWriteCoordinatorError) {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          // Lease loss must not leave the job stuck in `running`; requeue so a
+          // later wave (or process restart recovery) can claim it again.
+          openLibrary.connection.prepare(
+            "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_LOST', updated_at = ? WHERE job_id = ? AND status = 'running'",
+          ).run(new Date().toISOString(), job.job_id);
+          this.diagnose('media-job.lease-lost', error, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+          });
+          processed += 1;
+          continue;
+        }
         const state = this.mediaJobState(libraryId, job.job_id);
         if (controller.signal.aborted || state === 'paused' || state === 'cancelled') {
           this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
@@ -12840,6 +14216,8 @@ export class LibraryService {
           });
         }
       } finally {
+        jobHeartbeat.stop();
+        jobLease.release();
         this.activeMediaJobs.delete(job.job_id);
       }
       processed += 1;
@@ -14322,6 +15700,27 @@ export class LibraryService {
        VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
     ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
 
+    let jobLease: LibraryJobLease;
+    try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection.prepare(
+            `UPDATE file_operations
+                SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+              WHERE operation_id = ? AND status = 'preparing'`,
+          ).run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update.
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
     try {
       this.failAt('crash-move-before-filesystem');
       const applying = openLibrary.connection.prepare(
@@ -14397,6 +15796,7 @@ export class LibraryService {
           if (consumed.changes !== 1) throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
         }
         this.failAt('crash-move-before-db-commit');
+        jobLease.assertCurrent();
         openLibrary.connection.prepare(
           "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
         ).run(new Date().toISOString(), operationId);
@@ -14427,6 +15827,16 @@ export class LibraryService {
         }
       }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('asset.move.lease-release', releaseError, {
+          libraryId: openLibrary.summary.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -14859,8 +16269,29 @@ export class LibraryService {
        VALUES (?, ?, 'preparing', ?, NULL, ?, ?)`,
     ).run(operationId, manifest.kind, JSON.stringify(manifest), now, now);
 
-    const copiedPaths: string[] = [];
+    let jobLease: LibraryJobLease;
     try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection.prepare(
+            `UPDATE file_operations
+                SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+              WHERE operation_id = ? AND status = 'preparing'`,
+          ).run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update.
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
+    try {
+      this.failAt('crash-copy-before-filesystem');
       const applying = openLibrary.connection.prepare(
         "UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'",
       ).run(new Date().toISOString(), operationId);
@@ -14873,14 +16304,15 @@ export class LibraryService {
         mkdirSync(path.dirname(holdingPath), { recursive: true });
         renameSync(destinationPath, holdingPath);
       }
+      this.failAt('crash-copy-after-conflict');
 
       for (const file of manifest.files) {
         const sourcePath = this.folderPath(openLibrary, file.sourceRelativePath);
         const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
         mkdirSync(path.dirname(destinationPath), { recursive: true });
         copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
-        copiedPaths.push(file.destinationRelativePath);
       }
+      this.failAt('crash-copy-after-filesystem');
 
       openLibrary.connection.transaction(() => {
         for (const file of manifest.files) {
@@ -14992,31 +16424,51 @@ export class LibraryService {
           this.syncAssetSearchContent(openLibrary.connection, file.newAssetId);
         }
 
+        this.failAt('crash-copy-before-db-commit');
+        jobLease.assertCurrent();
         openLibrary.connection.prepare(
           "UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?",
         ).run(new Date().toISOString(), operationId);
       })();
+      this.failAt('crash-copy-after-db-commit');
     } catch (error) {
-      for (const relativePath of copiedPaths.reverse()) {
-        rmSync(this.folderPath(openLibrary, relativePath), { force: true });
+      if (error instanceof SimulatedCrashError) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
       }
-      for (const file of manifest.files) {
-        if (!file.destinationConflict) continue;
-        const holdingPath = this.moveConflictHoldingPath(openLibrary, file.destinationConflict);
-        const restorePath = this.folderPath(openLibrary, file.destinationConflict.relativePath);
-        if (existsSync(holdingPath) && !existsSync(restorePath)) {
-          mkdirSync(path.dirname(restorePath), { recursive: true });
-          renameSync(holdingPath, restorePath);
+      const row = openLibrary.connection.prepare(
+        'SELECT status, manifest_json, error_code, operation_id FROM file_operations WHERE operation_id = ?',
+      ).get(operationId) as OperationRow | undefined;
+      if (row?.status === 'committed') {
+        this.diagnose('asset.copy.post-commit', error, {
+          operationId,
+          libraryId: openLibrary.summary.libraryId,
+        });
+        return;
+      }
+      if (row) {
+        try {
+          this.recoverManagedCopyOperation(openLibrary, row, manifest, operationPath);
+        } catch (recoveryError) {
+          openLibrary.connection.prepare(
+            "UPDATE file_operations SET status = 'failed', error_code = 'COPY_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
+          ).run(new Date().toISOString(), operationId);
+          this.diagnose('asset.copy.rollback', recoveryError, {
+            operationId,
+            libraryId: openLibrary.summary.libraryId,
+          });
         }
       }
-      openLibrary.connection.prepare(
-        "UPDATE file_operations SET status = 'failed', error_code = 'COPY_APPLY_FAILED', updated_at = ? WHERE operation_id = ?",
-      ).run(new Date().toISOString(), operationId);
-      this.diagnose('asset.copy.rollback', error, {
-        operationId,
-        libraryId: openLibrary.summary.libraryId,
-      });
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('asset.copy.lease-release', releaseError, {
+          libraryId: openLibrary.summary.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -15284,6 +16736,710 @@ export class LibraryService {
   }
 
   /**
+   * Append one bounded chunk to a Worker-owned content staging entry. The
+   * token is opaque to callers and never resolves to a filesystem path.
+   */
+  stageManagedAssetContent(input: {
+    libraryId: string;
+    assetId: string;
+    stagingToken?: string;
+    dataBase64: string;
+    complete: boolean;
+  }): {
+    assetId: string;
+    stagingToken: string;
+    byteSize: number;
+    complete: boolean;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (
+      input.dataBase64.length === 0
+      || input.dataBase64.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]*={0,2}$/u.test(input.dataBase64)
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const payload = Buffer.from(input.dataBase64, 'base64');
+    if (payload.length === 0 || payload.length > CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const row = openLibrary.connection
+      .prepare(`SELECT asset_id, location_kind, availability, deleted_at, current_revision_id
+           FROM assets WHERE asset_id = ?`)
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+        current_revision_id: string | null;
+      } | undefined;
+    if (
+      !row ||
+      row.location_kind !== 'managed' ||
+      row.availability !== 'available' ||
+      row.deleted_at !== null ||
+      row.current_revision_id === null
+    ) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+
+    const stagingToken = input.stagingToken ?? randomUUID();
+    if (!UUID.test(stagingToken)) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const stagingRoot = path.join(openLibrary.summary.libraryPath, '.serpent', 'content-staging');
+    mkdirSync(stagingRoot, { recursive: true });
+    const stagedPath = path.join(stagingRoot, `${stagingToken}.bin`);
+    const metadataPath = path.join(stagingRoot, `${stagingToken}.json`);
+    let metadata: { assetId: string; byteSize: number; complete: boolean } | undefined;
+    try {
+      const parsed = JSON.parse(readFileSync(metadataPath, 'utf8')) as unknown;
+      if (
+        typeof parsed !== 'object' ||
+        parsed === null ||
+        !('assetId' in parsed) ||
+        typeof parsed.assetId !== 'string' ||
+        !('byteSize' in parsed) ||
+        typeof parsed.byteSize !== 'number' ||
+        !Number.isSafeInteger(parsed.byteSize) ||
+        !('complete' in parsed) ||
+        typeof parsed.complete !== 'boolean'
+      ) {
+        throw new Error('Invalid content staging metadata.');
+      }
+      metadata = {
+        assetId: parsed.assetId,
+        byteSize: parsed.byteSize,
+        complete: parsed.complete,
+      };
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+    }
+    if (metadata !== undefined && metadata.assetId !== input.assetId) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    if (metadata?.complete === true) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    let existingByteSize = metadata?.byteSize ?? 0;
+    let stagedByteSize: number | undefined;
+    try {
+      const entry = lstatSync(stagedPath);
+      if (!entry.isFile() || entry.isSymbolicLink()) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      const byteSize = Number(entry.size);
+      if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      stagedByteSize = byteSize;
+      if (metadata === undefined) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      if (!isMissingPathError(error)) throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      if (metadata !== undefined) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    if (metadata !== undefined && stagedByteSize !== metadata.byteSize) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    if (existingByteSize + payload.length > CONTENT_REPLACE_MAX_BYTES) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    const descriptor = openSync(stagedPath, 'a', 0o600);
+    try {
+      writeSync(descriptor, payload);
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+    existingByteSize += payload.length;
+    const nextMetadata = JSON.stringify({
+      assetId: input.assetId,
+      byteSize: existingByteSize,
+      complete: input.complete,
+    });
+    const metadataTempPath = `${metadataPath}.tmp-${randomUUID()}`;
+    try {
+      writeFileSync(metadataTempPath, nextMetadata, { encoding: 'utf8', mode: 0o600 });
+      renameSync(metadataTempPath, metadataPath);
+    } catch (error) {
+      rmSync(metadataTempPath, { force: true });
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    return {
+      assetId: input.assetId,
+      stagingToken,
+      byteSize: existingByteSize,
+      complete: input.complete,
+    };
+  }
+
+  /**
+   * Replace the bytes of an available managed asset without changing its
+   * asset identity or filename. The previous revision remains only as a
+   * database record; its derived artifacts are invalidated and the new
+   * revision is always marked as a client replacement.
+   */
+  replaceManagedAssetContent(input: {
+    libraryId: string;
+    assetId: string;
+    dataBase64: string;
+    expectedRevisionId?: string;
+  }): {
+    assetId: string;
+    revisionId: string;
+    byteSize: number;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (
+      input.dataBase64.length === 0
+      || input.dataBase64.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]*={0,2}$/u.test(input.dataBase64)
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const payload = Buffer.from(input.dataBase64, 'base64');
+    if (payload.length > CONTENT_REPLACE_MAX_BYTES) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (row.location_kind !== 'managed') {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (
+      input.expectedRevisionId !== undefined
+      && input.expectedRevisionId !== row.current_revision_id
+    ) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const dir = path.dirname(absolutePath);
+    const tmpPath = path.join(dir, `.serpent-content-replace-${randomUUID()}.tmp`);
+    this.noteClientFilesystemMutation();
+    try {
+      writeFileSync(tmpPath, payload);
+      const fd = openSync(tmpPath, 'r+');
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(tmpPath, absolutePath);
+    } catch (error) {
+      try {
+        rmSync(tmpPath, { force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+
+    let fileStat: Stats | BigIntStats;
+    try {
+      fileStat = this.options.assetLstat
+        ? this.options.assetLstat(absolutePath)
+        : lstatSync(absolutePath, { bigint: true });
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    const storedByteSize = Number(fileStat.size);
+    if (!Number.isSafeInteger(storedByteSize)) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    const modifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
+    const now = new Date().toISOString();
+    const revisionId = randomUUID();
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revisions
+             (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+              original_filename, origin, accepted_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'replace', ?)`,
+        )
+        .run(
+          revisionId,
+          input.assetId,
+          row.current_revision_id,
+          storedByteSize,
+          modifiedAt,
+          path.posix.basename(row.relative_file_path),
+          now,
+        );
+      openLibrary.connection
+        .prepare(
+          `UPDATE assets
+              SET current_revision_id = ?, updated_at = ?
+            WHERE asset_id = ?`,
+        )
+        .run(revisionId, now, input.assetId);
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ?
+              AND invalidated_at IS NULL`,
+        )
+        .run(now, row.current_revision_id);
+      this.syncAssetSearchContent(openLibrary.connection, input.assetId);
+    })();
+
+    if (LibraryService.supportsThumbnail(row.relative_file_path)) {
+      this.enqueueThumbnailJobs(input.libraryId, {
+        assetIds: [input.assetId],
+        priority: 300,
+        repairFailed: true,
+      });
+    }
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'content-replace',
+    });
+    return {
+      assetId: input.assetId,
+      revisionId,
+      byteSize: storedByteSize,
+    };
+  }
+
+  /**
+   * Replace several managed assets under one change-sequence fence. Every
+   * expected revision and every staged source is validated before the first
+   * destination is touched. The v6 file_operations manifest is a recovery
+   * journal, not a claim of cross-file filesystem atomicity.
+   */
+  replaceManagedAssetContentBatch(input: {
+    libraryId: string;
+    items: Array<{
+      assetId: string;
+      expectedRevisionId: string;
+      dataBase64?: string;
+      stagingToken?: string;
+    }>;
+    automationPlan?: {
+      expectedChangeSequence: number;
+      assetStates: Array<{ assetId: string; stateToken: string }>;
+    };
+  }): {
+    operationId: string;
+    items: Array<{ assetId: string; revisionId: string; byteSize: number }>;
+  } {
+    if (
+      input.items.length === 0 ||
+      input.items.length > CONTENT_REPLACE_BATCH_MAX_ITEMS ||
+      new Set(input.items.map((item) => item.assetId)).size !== input.items.length ||
+      input.items.some((item) => (
+        (item.dataBase64 === undefined) === (item.stagingToken === undefined)
+      ))
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    if (input.automationPlan !== undefined) {
+      this.validateAutomationFileOperationPlan({
+        libraryId: input.libraryId,
+        expectedChangeSequence: input.automationPlan.expectedChangeSequence,
+        assetStates: input.automationPlan.assetStates,
+      });
+    }
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const rows = openLibrary.connection.prepare(
+      `SELECT assets.asset_id, assets.location_kind, assets.relative_file_path, assets.current_revision_id,
+              revisions.modified_at AS current_modified_at,
+              availability, deleted_at
+         FROM assets
+         LEFT JOIN revisions ON revisions.revision_id = assets.current_revision_id
+        WHERE assets.asset_id IN (${input.items.map(() => '?').join(',')})`,
+    ).all(...input.items.map((item) => item.assetId)) as Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+      relative_file_path: string;
+      current_revision_id: string | null;
+      availability: 'available' | 'missing';
+      deleted_at: string | null;
+      current_modified_at: string | null;
+    }>;
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    for (const item of input.items) {
+      const row = rowById.get(item.assetId);
+      if (
+        !row ||
+        row.location_kind !== 'managed' ||
+        row.deleted_at !== null ||
+        row.availability !== 'available' ||
+        row.current_revision_id === null
+      ) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      if (row.current_revision_id !== item.expectedRevisionId) {
+        throw new LibraryServiceError('VERSION_CONFLICT');
+      }
+    }
+
+    const operationId = randomUUID();
+    const operationPath = path.join(
+      this.assertSafeOperationsRoot(openLibrary.summary.libraryPath),
+      operationId,
+    );
+    const stagePath = path.join(operationPath, 'stage');
+    const backupPath = path.join(operationPath, 'backup');
+    const manifest: ContentReplaceBatchOperationManifest = {
+      kind: 'content-replace-batch',
+      version: 6,
+      files: [],
+    };
+    const resultItems: Array<{ assetId: string; revisionId: string; byteSize: number }> = [];
+    mkdirSync(stagePath, { recursive: true });
+    mkdirSync(backupPath, { recursive: true });
+    try {
+      for (const [index, item] of input.items.entries()) {
+        const row = rowById.get(item.assetId)!;
+        const stageName = `${index}.stage`;
+        const stageFilePath = path.join(stagePath, stageName);
+        if (item.dataBase64 !== undefined) {
+          if (
+            item.dataBase64.length === 0 ||
+            item.dataBase64.length % 4 !== 0 ||
+            !/^[A-Za-z0-9+/]*={0,2}$/u.test(item.dataBase64)
+          ) {
+            throw new LibraryServiceError('INVALID_ASSET_METADATA');
+          }
+          const payload = Buffer.from(item.dataBase64, 'base64');
+          if (payload.length === 0 || payload.length > CONTENT_REPLACE_MAX_BYTES) {
+            throw new LibraryServiceError('INVALID_ASSET_METADATA');
+          }
+          writeFileSync(stageFilePath, payload, { mode: 0o600 });
+        } else {
+          const stagingToken = item.stagingToken!;
+          if (!UUID.test(stagingToken)) throw new LibraryServiceError('INVALID_ASSET_METADATA');
+          const stagingRoot = path.join(openLibrary.summary.libraryPath, '.serpent', 'content-staging');
+          const stagedPath = path.join(stagingRoot, `${stagingToken}.bin`);
+          const metadataPath = path.join(stagingRoot, `${stagingToken}.json`);
+          let metadata: unknown;
+          let stagedByteSize: number | undefined;
+          try {
+            metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as unknown;
+            const entry = lstatSync(stagedPath);
+            if (!entry.isFile() || entry.isSymbolicLink()) throw new Error('Invalid staged content.');
+            const byteSize = Number(entry.size);
+            if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+              throw new Error('Invalid staged content length.');
+            }
+            stagedByteSize = byteSize;
+          } catch (error) {
+            throw new LibraryServiceError('INVALID_ASSET_METADATA', { cause: error });
+          }
+          if (
+            typeof metadata !== 'object' ||
+            metadata === null ||
+            !('assetId' in metadata) ||
+            metadata.assetId !== item.assetId ||
+            !('byteSize' in metadata) ||
+            typeof metadata.byteSize !== 'number' ||
+            !Number.isSafeInteger(metadata.byteSize) ||
+            metadata.byteSize <= 0 ||
+            metadata.byteSize > CONTENT_REPLACE_MAX_BYTES ||
+            !('complete' in metadata) ||
+            metadata.complete !== true
+          ) {
+            throw new LibraryServiceError('INVALID_ASSET_METADATA');
+          }
+          if (stagedByteSize !== metadata.byteSize) {
+            throw new LibraryServiceError('INVALID_ASSET_METADATA');
+          }
+          copyFileSync(stagedPath, stageFilePath);
+        }
+        const stat = lstatSync(stageFilePath);
+        const byteSize = Number(stat.size);
+        if (!Number.isSafeInteger(byteSize) || byteSize <= 0 || byteSize > CONTENT_REPLACE_MAX_BYTES) {
+          throw new LibraryServiceError('INVALID_ASSET_METADATA');
+        }
+        const revisionId = randomUUID();
+        manifest.files.push({
+          assetId: item.assetId,
+          backupName: `${index}.backup`,
+          destinationRelativePath: row.relative_file_path,
+          newRevisionId: revisionId,
+          originalModifiedAt: row.current_modified_at ?? (() => {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          })(),
+          originalSha256: sha256FileAtPath(this.resolveAssetPath(input.libraryId, item.assetId)),
+          previousRevisionId: row.current_revision_id!,
+          sha256: sha256FileAtPath(stageFilePath),
+          stageName,
+        });
+        resultItems.push({ assetId: item.assetId, revisionId, byteSize });
+      }
+
+      const now = new Date().toISOString();
+      openLibrary.connection.prepare(
+        `INSERT INTO file_operations
+           (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
+         VALUES (?, 'content-replace-batch', 'preparing', ?, NULL, ?, ?)`,
+      ).run(operationId, JSON.stringify(manifest), now, now);
+      const jobLease = new LibraryWriteCoordinator(openLibrary.connection, input.libraryId)
+        .claimJobOnce(operationId);
+      const jobHeartbeat = jobLease.startHeartbeat();
+      try {
+        openLibrary.connection.prepare(
+          `UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'`,
+        ).run(new Date().toISOString(), operationId);
+        for (const file of manifest.files) {
+          const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+          this.options.beforeContentReplaceBatchBackup?.({
+            assetId: file.assetId,
+            libraryId: input.libraryId,
+          });
+          if (sha256FileAtPath(destinationPath) !== file.originalSha256) {
+            throw new LibraryServiceError('VERSION_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          }
+          copyFileSync(destinationPath, path.join(backupPath, file.backupName));
+        }
+        this.failAt('crash-content-replace-batch-after-backup');
+        for (const file of manifest.files) {
+          const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+          if (sha256FileAtPath(destinationPath) !== file.originalSha256) {
+            throw new LibraryServiceError('VERSION_CONFLICT', { reason: 'SOURCE_CHANGED' });
+          }
+          const temporaryPath = path.join(
+            path.dirname(destinationPath),
+            `.serpent-content-replace-batch-${operationId}-${file.assetId}.tmp`,
+          );
+          copyFileSync(path.join(stagePath, file.stageName), temporaryPath);
+          const descriptor = openSync(temporaryPath, 'r+');
+          try {
+            fsyncSync(descriptor);
+          } finally {
+            closeSync(descriptor);
+          }
+          renameSync(temporaryPath, destinationPath);
+          this.failAt('crash-content-replace-batch-after-first-file');
+        }
+        this.failAt('crash-content-replace-batch-before-db-commit');
+        const committedAt = new Date().toISOString();
+        openLibrary.connection.transaction(() => {
+          for (const file of manifest.files) {
+            const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+            const fileStat = lstatSync(destinationPath, { bigint: true });
+            const storedByteSize = Number(fileStat.size);
+            if (!Number.isSafeInteger(storedByteSize)) {
+              throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+            }
+            openLibrary.connection.prepare(
+              `INSERT INTO revisions
+                 (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                  original_filename, origin, accepted_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'replace', ?)`,
+            ).run(
+              file.newRevisionId,
+              file.assetId,
+              file.previousRevisionId,
+              storedByteSize,
+              new Date(Number(fileStat.mtimeMs)).toISOString(),
+              path.posix.basename(file.destinationRelativePath),
+              committedAt,
+            );
+            const changed = openLibrary.connection.prepare(
+              `UPDATE assets SET current_revision_id = ?, updated_at = ?
+                 WHERE asset_id = ? AND current_revision_id = ?`,
+            ).run(file.newRevisionId, committedAt, file.assetId, file.previousRevisionId);
+            if (changed.changes !== 1) {
+              throw new LibraryServiceError('VERSION_CONFLICT');
+            }
+            openLibrary.connection.prepare(
+              `UPDATE revision_artifacts SET invalidated_at = ?
+                 WHERE revision_id = ? AND invalidated_at IS NULL`,
+            ).run(committedAt, file.previousRevisionId);
+            this.syncAssetSearchContent(openLibrary.connection, file.assetId);
+          }
+          jobLease.assertCurrent();
+          openLibrary.connection.prepare(
+            `UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?`,
+          ).run(committedAt, operationId);
+        })();
+        this.failAt('crash-content-replace-batch-after-db-commit');
+      } catch (error) {
+        if (error instanceof SimulatedCrashError) throw error;
+        const row = openLibrary.connection.prepare(
+          `SELECT status, manifest_json, error_code, operation_id FROM file_operations WHERE operation_id = ?`,
+        ).get(operationId) as OperationRow | undefined;
+        if (row?.status === 'committed') {
+          this.diagnose('asset.content-replace-batch.post-commit', error, {
+            operationId,
+            libraryId: input.libraryId,
+          });
+        } else if (row) {
+          try {
+            this.recoverContentReplaceBatchOperation(openLibrary, row, manifest, operationPath);
+          } catch (recoveryError) {
+            openLibrary.connection.prepare(
+              `UPDATE file_operations SET status = 'failed', error_code = 'CONTENT_REPLACE_APPLY_FAILED', updated_at = ? WHERE operation_id = ?`,
+            ).run(new Date().toISOString(), operationId);
+            this.diagnose('asset.content-replace-batch.rollback', recoveryError, {
+              operationId,
+              libraryId: input.libraryId,
+            });
+          }
+        }
+        throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      } finally {
+        jobHeartbeat.stop();
+        try {
+          jobLease.release();
+        } catch (releaseError) {
+          this.diagnose('asset.content-replace-batch.lease-release', releaseError, {
+            operationId,
+            libraryId: input.libraryId,
+          });
+        }
+      }
+    } catch (error) {
+      if (error instanceof SimulatedCrashError) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+      }
+      const operationRow = openLibrary.connection.prepare(
+        'SELECT status, error_code FROM file_operations WHERE operation_id = ?',
+      ).get(operationId) as { status: string; error_code: string | null } | undefined;
+      // A recovery conflict deliberately retains the journal so the external
+      // destination change remains explainable and can be resolved explicitly.
+      if (operationRow?.status !== 'failed' || operationRow.error_code !== 'CONTENT_REPLACE_RECOVERY_CONFLICT') {
+        this.removeOperation(operationPath);
+      }
+      throw error;
+    }
+
+    this.removeOperation(operationPath);
+    const stagingRoot = path.join(openLibrary.summary.libraryPath, '.serpent', 'content-staging');
+    for (const item of input.items) {
+      if (item.stagingToken === undefined) continue;
+      rmSync(path.join(stagingRoot, `${item.stagingToken}.bin`), { force: true });
+      rmSync(path.join(stagingRoot, `${item.stagingToken}.json`), { force: true });
+    }
+    this.enqueueThumbnailJobs(input.libraryId, {
+      assetIds: resultItems.map((item) => item.assetId),
+      priority: 300,
+      repairFailed: true,
+    });
+    this.options.onAssetsChanged?.({
+      type: 'asset.changed',
+      libraryId: input.libraryId,
+      changedCount: resultItems.length,
+      missingCount: 0,
+      source: 'content-replace',
+    });
+    return { operationId, items: resultItems };
+  }
+
+  /**
+   * Read a bounded prefix of an available managed asset. The absolute source
+   * path remains inside the Worker and only opaque revision/content metadata
+   * crosses the automation boundary.
+   */
+  readManagedAssetContent(input: {
+    libraryId: string;
+    assetId: string;
+    maxBytes?: number;
+  }): {
+    assetId: string;
+    revisionId: string;
+    byteSize: number;
+    dataBase64: string;
+    truncated: boolean;
+    mimeType: string | null;
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+                availability, deleted_at
+           FROM assets WHERE asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+        deleted_at: string | null;
+      } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const maxBytes = Math.min(
+      Math.max(1, input.maxBytes ?? CONTENT_REPLACE_MAX_BYTES),
+      CONTENT_REPLACE_MAX_BYTES,
+    );
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    const extension = path.extname(row.relative_file_path).toLowerCase();
+    const mimeType = directImageMimeForExtension(extension)
+      ?? videoMimeForExtension(extension)
+      ?? audioMimeForExtension(extension)
+      ?? textMimeForExtension(extension);
+    let descriptor: number | undefined;
+    try {
+      descriptor = openSync(absolutePath, 'r');
+      const stats = fstatSync(descriptor);
+      const byteSize = Number(stats.size);
+      if (!Number.isSafeInteger(byteSize)) {
+        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+      }
+      const bytesToRead = Math.min(byteSize, maxBytes);
+      const buffer = Buffer.allocUnsafe(bytesToRead);
+      let offset = 0;
+      while (offset < bytesToRead) {
+        const count = readSync(descriptor, buffer, offset, bytesToRead - offset, offset);
+        if (count === 0) break;
+        offset += count;
+      }
+      const payload = offset === buffer.length ? buffer : buffer.subarray(0, offset);
+      return {
+        assetId: row.asset_id,
+        revisionId: row.current_revision_id,
+        byteSize,
+        dataBase64: payload.toString('base64'),
+        truncated: byteSize > payload.length,
+        mimeType,
+      };
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND', cause: error });
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }
+  }
+
+  /**
    * REQ-MENU-002 / REQ-LABEL-002: renaming an asset's display name IS renaming
    * its real file, so this goes through file-operation semantics. The
    * extension always stays as-is (Eagle behavior: a rename must never
@@ -15462,6 +17618,62 @@ export class LibraryService {
     return { asset };
   }
 
+  /**
+   * Batch convenience over the crash-safe single-file rename primitive.
+   * Every successful item has the same disk-first / DB-rollback protection as
+   * `renameAssetFile`; failures that are local to one item are returned for
+   * the script to inspect, while an infrastructure failure stops the batch so
+   * it cannot be mistaken for a normal name conflict.
+   */
+  renameAssetFiles(input: {
+    libraryId: string;
+    items: Array<{ assetId: string; newBaseName: string }>;
+  }): {
+    renamedCount: number;
+    skipped: Array<{
+      assetId: string;
+      reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name';
+    }>;
+    assets: AssetSummary[];
+  } {
+    if (input.items.length === 0 || new Set(input.items.map((item) => item.assetId)).size !== input.items.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const assets: AssetSummary[] = [];
+    const skipped: Array<{
+      assetId: string;
+      reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name';
+    }> = [];
+    for (const item of input.items) {
+      try {
+        assets.push(this.renameAssetFile({
+          libraryId: input.libraryId,
+          assetId: item.assetId,
+          newBaseName: item.newBaseName,
+        }).asset);
+      } catch (error) {
+        if (!(error instanceof LibraryServiceError)) throw error;
+        if (error.code === 'ASSET_FILE_NAME_CONFLICT') {
+          skipped.push({ assetId: item.assetId, reason: 'name_conflict' });
+          continue;
+        }
+        if (error.code === 'INVALID_ASSET_FILE_NAME') {
+          skipped.push({ assetId: item.assetId, reason: 'invalid_name' });
+          continue;
+        }
+        if (error.code === 'ASSET_NOT_FOUND') {
+          skipped.push({
+            assetId: item.assetId,
+            reason: error.reason === 'SOURCE_NOT_FOUND' ? 'asset_unavailable' : 'asset_not_found',
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
+    return { renamedCount: assets.length, skipped, assets };
+  }
+
   private expandAssetIdsToSequenceMembers(
     openLibrary: OpenLibrary,
     assetIds: readonly string[],
@@ -15517,8 +17729,11 @@ export class LibraryService {
   trashAssets(input: {
     libraryId: string;
     assetIds: string[];
-  }): { trashedCount: number } {
+  }): { trashedCount: number; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     const logicalCount = this.countLogicalAssetUnits(
       openLibrary,
       input.assetIds,
@@ -15646,7 +17861,7 @@ export class LibraryService {
         }
       })();
 
-      return { trashedCount: logicalCount };
+      return { trashedCount: logicalCount, operationId };
     } catch (error) {
       // Rollback filesystem: move trashed files back
       for (const entry of [...movedEntries].reverse()) {
@@ -15752,12 +17967,11 @@ export class LibraryService {
     assetIds: string[];
     targetFolderId?: string | null;
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
-  }): { restoredCount: number; assets: AssetSummary[] } {
+  }): { restoredCount: number; assets: AssetSummary[]; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const logicalCount = this.countLogicalAssetUnits(
-      openLibrary,
-      input.assetIds,
-    );
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
     const assetIds = this.expandAssetIdsToSequenceMembers(
       openLibrary,
       input.assetIds,
@@ -15966,6 +18180,27 @@ export class LibraryService {
         )
         .run(operationId, JSON.stringify(manifest), now, now);
 
+      let jobLease: LibraryJobLease;
+      try {
+        jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+          .claimJobOnce(operationId);
+      } catch (error) {
+        this.removeOperation(operationPath);
+        if (error instanceof LibraryWriteCoordinatorError) {
+          try {
+            openLibrary.connection.prepare(
+              `UPDATE file_operations
+                  SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+                WHERE operation_id = ? AND status = 'preparing'`,
+            ).run(new Date().toISOString(), operationId);
+          } catch {
+            // Best-effort status update.
+          }
+        }
+        throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      }
+      const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
       try {
         this.failAt('crash-restore-before-filesystem');
         const applying = openLibrary.connection
@@ -16022,6 +18257,7 @@ export class LibraryService {
             this.syncAssetSearchContent(openLibrary.connection, plan.assetId);
           }
           this.failAt('crash-restore-before-db-commit');
+          jobLease.assertCurrent();
           openLibrary.connection
             .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
             .run(new Date().toISOString(), operationId);
@@ -16065,6 +18301,16 @@ export class LibraryService {
         } else {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
+      } finally {
+        jobHeartbeat.stop();
+        try {
+          jobLease.release();
+        } catch (releaseError) {
+          this.diagnose('asset.restore.lease-release', releaseError, {
+            libraryId: input.libraryId,
+            operationId,
+          });
+        }
       }
 
       const restoredAssets: AssetSummary[] = [];
@@ -16093,12 +18339,181 @@ export class LibraryService {
       );
 
       return {
-        restoredCount: logicalCount,
+        // `skip` can remove every planned file (or only a subset of a
+        // sequence). Report the logical units actually restored, never the
+        // originally requested count.
+        restoredCount: this.countLogicalAssetUnits(openLibrary, plans.map((plan) => plan.assetId)),
         assets: this.withImageSequenceSummaries(openLibrary, restoredAssets),
+        operationId,
       };
     } catch (error) {
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
+  }
+
+  undoTrashAssets(input: {
+    libraryId: string;
+    operationId: string;
+  }): {
+    restoredCount: number;
+    skippedCount: number;
+    assets: AssetSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const operation = openLibrary.connection.prepare(
+      `SELECT operation_id, status, manifest_json, error_code FROM file_operations
+        WHERE operation_id = ? AND kind = 'trash'`,
+    ).get(input.operationId) as OperationRow | undefined;
+    if (!operation || operation.status !== 'committed' || operation.error_code !== null) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+    }
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(operation.manifest_json);
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+    if (
+      typeof manifest !== 'object'
+      || manifest === null
+      || !Array.isArray((manifest as { files?: unknown }).files)
+    ) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const assetIds = (manifest as { files: unknown[] }).files.map((file) => (
+      typeof file === 'object' && file !== null && typeof (file as { backupName?: unknown }).backupName === 'string'
+        ? (file as { backupName: string }).backupName
+        : null
+    ));
+    if (assetIds.some((assetId) => assetId === null) || assetIds.length === 0) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const restored = this.restoreAssetsIfOriginalVacant({
+      libraryId: input.libraryId,
+      assetIds: assetIds as string[],
+    });
+    if (restored.skippedCount === 0) {
+      openLibrary.connection.prepare(
+        "UPDATE file_operations SET status = 'rolled_back', updated_at = ? WHERE operation_id = ?",
+      ).run(new Date().toISOString(), input.operationId);
+    }
+    return {
+      restoredCount: restored.restoredCount,
+      skippedCount: restored.skippedCount,
+      assets: restored.assets,
+    };
+  }
+
+  /**
+   * Conservative recovery helper for Automation. Unlike the normal Restore
+   * UI, it never falls back to another folder, adds a suffix, or replaces a
+   * collision. Each selected asset must still have its original managed
+   * folder and its exact original path must be vacant at execution time.
+   */
+  restoreAssetsIfOriginalVacant(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): {
+    restoredCount: number;
+    skippedCount: number;
+    skipped: Array<{
+      assetId: string;
+      reason: 'original_folder_missing' | 'name_conflict' | 'trash_file_missing';
+    }>;
+    assets: AssetSummary[];
+  } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const assetIds = this.expandAssetIdsToSequenceMembers(openLibrary, input.assetIds);
+    if (assetIds.length === 0 || new Set(assetIds).size !== assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, relative_file_path, deleted_at,
+              trashed_from_relative_path, trashed_from_folder_id
+         FROM assets
+        WHERE asset_id IN (${assetIds.map(() => '?').join(',')})
+          AND deleted_at IS NOT NULL`,
+    ).all(...assetIds) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      deleted_at: string;
+      trashed_from_relative_path: string;
+      trashed_from_folder_id: string | null;
+    }>;
+    const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+    for (const assetId of assetIds) {
+      if (rowById.has(assetId)) continue;
+      const existing = openLibrary.connection.prepare('SELECT asset_id FROM assets WHERE asset_id = ?').get(assetId);
+      if (!existing) throw new LibraryServiceError('ASSET_NOT_FOUND');
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    const accepted: string[] = [];
+    const skipped: Array<{
+      assetId: string;
+      reason: 'original_folder_missing' | 'name_conflict' | 'trash_file_missing';
+    }> = [];
+    const plannedDestinations = new Set<string>();
+    for (const assetId of assetIds) {
+      const row = rowById.get(assetId)!;
+      const originalDirectory = path.posix.dirname(row.trashed_from_relative_path);
+      if (row.trashed_from_folder_id !== null) {
+        const originalFolder = openLibrary.connection.prepare(
+          'SELECT relative_path FROM managed_folders WHERE folder_id = ?',
+        ).get(row.trashed_from_folder_id) as { relative_path: string } | undefined;
+        if (!originalFolder || originalFolder.relative_path !== originalDirectory) {
+          skipped.push({ assetId, reason: 'original_folder_missing' });
+          continue;
+        }
+      } else if (originalDirectory !== '.') {
+        // A non-root file with no surviving managed-folder mapping cannot be
+        // restored to its actual original location safely.
+        skipped.push({ assetId, reason: 'original_folder_missing' });
+        continue;
+      }
+
+      const trashFilename = path.posix.basename(row.relative_file_path);
+      const trashFilePath = this.trashPath(openLibrary, assetId, trashFilename);
+      if (!realFileExists(trashFilePath)) {
+        skipped.push({ assetId, reason: 'trash_file_missing' });
+        continue;
+      }
+
+      const destinationIdentity = portablePathIdentity(row.trashed_from_relative_path);
+      const activeConflict = openLibrary.connection.prepare(
+        `SELECT asset_id FROM assets
+          WHERE path_identity = ? AND location_kind = 'managed'
+            AND deleted_at IS NULL AND asset_id != ?`,
+      ).get(destinationIdentity, assetId);
+      if (
+        activeConflict
+        || plannedDestinations.has(destinationIdentity)
+        || this.portableDiskDestination(openLibrary, row.trashed_from_relative_path) !== undefined
+      ) {
+        skipped.push({ assetId, reason: 'name_conflict' });
+        continue;
+      }
+      plannedDestinations.add(destinationIdentity);
+      accepted.push(assetId);
+    }
+
+    if (accepted.length === 0) {
+      return { restoredCount: 0, skippedCount: skipped.length, skipped, assets: [] };
+    }
+    const restored = this.restoreAssets({
+      libraryId: input.libraryId,
+      assetIds: accepted,
+      conflictStrategy: 'skip',
+    });
+    return {
+      restoredCount: restored.restoredCount,
+      skippedCount: skipped.length,
+      skipped,
+      assets: restored.assets,
+    };
   }
 
   /**
@@ -17895,6 +20310,8 @@ export class LibraryService {
     );
     return {
       importedCount: assets.length,
+      fileCount: assets.length,
+      assetCount: assets.length,
       skippedCount: Math.max(0, entries.length - assets.length),
       replacedCount: 0,
       assets,
@@ -18005,6 +20422,130 @@ export class LibraryService {
     }
 
     return 'none';
+  }
+
+  previewAutomationImport(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    sourceKind: 'files' | 'folder';
+    sourcePaths: string[];
+    expandImageSequences?: boolean;
+    imageSequenceFps?: number;
+  }): AutomationImportPlan {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        reason: 'SOURCE_NOT_FOUND',
+      });
+    }
+    const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
+    const { entries } = this.enumerateImportSources({
+      sourceKind: input.sourceKind,
+      sourcePaths: input.sourcePaths,
+      targetPrefix: targetFolder?.relative_path ?? '',
+      expandImageSequences: input.expandImageSequences === true,
+    });
+    const seenDestinations = new Map<string, number>();
+    const contentHashCache = new Map<string, string>();
+    const seenContentHashes = new Set<string>();
+    const sequenceBatchPaths = new Set<string>();
+    for (const candidate of detectImageSequences(
+      entries.map((entry) => entry.destinationRelativePath),
+    )) {
+      for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+    }
+    const sourceStates: AutomationImportPlan['sourceStates'] = [];
+    let suspectedDuplicateCount = 0;
+    let libraryDuplicateCount = 0;
+    let nameConflictCount = 0;
+    let totalBytes = 0;
+
+    for (const entry of entries) {
+      const entrySha256 = sha256FileAtPath(entry.sourcePath);
+      contentHashCache.set(entry.sourcePath, entrySha256);
+      sourceStates.push({
+        sourcePath: entry.sourcePath,
+        stateToken: createHash('sha256')
+          .update(`${entry.sourcePath}\0${entry.byteSize}\0${entrySha256}`, 'utf8')
+          .digest('hex'),
+      });
+      totalBytes += entry.byteSize;
+      const identity = portablePathIdentity(entry.destinationRelativePath);
+      let existingSize = seenDestinations.get(identity);
+      let existingAbsolutePath: string | undefined;
+      if (existingSize === undefined) {
+        const destination = this.portableDiskDestination(
+          openLibrary,
+          entry.destinationRelativePath,
+        );
+        existingSize = destination?.size;
+        if (destination && destination.size !== -1) {
+          existingAbsolutePath = this.folderPath(openLibrary, destination.actualRelativePath);
+        }
+      }
+      const conflictKind = this.classifyImportEntryConflict({
+        openLibrary,
+        entry,
+        entrySha256,
+        existingSize,
+        existingAbsolutePath,
+        contentHashCache,
+        seenContentHashes,
+        ignoreBatchContentHash: sequenceBatchPaths.has(entry.destinationRelativePath),
+      });
+      if (conflictKind === 'suspected-duplicate') {
+        suspectedDuplicateCount += 1;
+        if (existingSize === undefined) libraryDuplicateCount += 1;
+      } else if (conflictKind === 'name-conflict') {
+        nameConflictCount += 1;
+      } else {
+        seenContentHashes.add(entrySha256);
+        seenDestinations.set(identity, entry.byteSize);
+      }
+    }
+    return {
+      libraryId: input.libraryId,
+      changeSequence: this.getChangeSequence(input.libraryId),
+      fileCount: entries.length,
+      totalBytes,
+      suspectedDuplicateCount,
+      libraryDuplicateCount,
+      nameConflictCount,
+      sourceStates,
+    };
+  }
+
+  validateAutomationImportPlan(input: {
+    libraryId: string;
+    targetFolderId?: string;
+    sourceKind: 'files' | 'folder';
+    sourcePaths: string[];
+    expandImageSequences?: boolean;
+    imageSequenceFps?: number;
+    automationPlan?: {
+      expectedChangeSequence: number;
+      sourceStates: Array<{ sourcePath: string; stateToken: string }>;
+    };
+  }): void {
+    if (input.automationPlan === undefined) return;
+    const plan = this.previewAutomationImport(input);
+    if (plan.changeSequence !== input.automationPlan.expectedChangeSequence) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: plan.changeSequence,
+      });
+    }
+    const expected = new Map(input.automationPlan.sourceStates.map((state) => [
+      state.sourcePath,
+      state.stateToken,
+    ]));
+    if (
+      expected.size !== plan.sourceStates.length
+      || plan.sourceStates.some((state) => expected.get(state.sourcePath) !== state.stateToken)
+    ) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: plan.changeSequence,
+      });
+    }
   }
 
   prepareImport(input: {
@@ -18201,7 +20742,14 @@ export class LibraryService {
     sourcePaths: string[];
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
+    automationPlan?: {
+      expectedChangeSequence: number;
+      sourceStates: Array<{ sourcePath: string; stateToken: string }>;
+    };
   }): ImportConflictPlan | ImportCompletion {
+    if (input.automationPlan !== undefined) {
+      this.validateAutomationImportPlan(input);
+    }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const linked = this.linkedFolderRowForImport(
       openLibrary,
@@ -18489,6 +21037,29 @@ export class LibraryService {
       })),
     };
 
+    let jobLease: LibraryJobLease;
+    try {
+      jobLease = new LibraryWriteCoordinator(openLibrary.connection, pending.libraryId)
+        .claimJobOnce(operationId);
+    } catch (error) {
+      this.removeOperation(operationPath);
+      if (error instanceof LibraryWriteCoordinatorError) {
+        try {
+          openLibrary.connection
+            .prepare(
+              `UPDATE file_operations
+                  SET status = 'failed', error_code = 'JOB_LEASE_BUSY', updated_at = ?
+                WHERE operation_id = ? AND status = 'preparing'`,
+            )
+            .run(new Date().toISOString(), operationId);
+        } catch {
+          // Best-effort status update; the caller still receives IMPORT_APPLY_FAILED.
+        }
+      }
+      throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    }
+    const jobHeartbeat: LibraryWriteLeaseHeartbeat = jobLease.startHeartbeat();
+
     try {
       const now = new Date().toISOString();
       const updated = openLibrary.connection
@@ -18500,6 +21071,15 @@ export class LibraryService {
         .run(JSON.stringify(manifest), now, operationId);
       if (updated.changes !== 1) throw new Error('Pending operation is not preparing.');
     } catch (error) {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('import-apply.lease-release', releaseError, {
+          libraryId: pending.libraryId,
+          operationId,
+        });
+      }
       this.removeOperation(operationPath);
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
     }
@@ -18733,6 +21313,7 @@ export class LibraryService {
         }
       }
 
+      jobLease.assertCurrent();
       openLibrary.connection
         .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
         .run(new Date().toISOString(), operationId);
@@ -18762,13 +21343,22 @@ export class LibraryService {
       }
       return {
         importedCount,
+        fileCount: importedCount,
+        assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
         skippedCount,
         replacedCount,
         assets,
       };
     } catch (error) {
       if (committed) {
-        return { importedCount, skippedCount, replacedCount, assets: [] };
+        return {
+          importedCount,
+          fileCount: importedCount,
+          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
+          skippedCount,
+          replacedCount,
+          assets: [],
+        };
       }
       if (affectedAssetIds.length > 0) {
         // Partial durable import: keep committed rows/files and finish the op.
@@ -18795,6 +21385,8 @@ export class LibraryService {
         }
         return {
           importedCount,
+          fileCount: importedCount,
+          assetCount: this.countLogicalAssetUnits(openLibrary, affectedAssetIds),
           skippedCount,
           replacedCount,
           assets,
@@ -18816,6 +21408,16 @@ export class LibraryService {
         // The filesystem rollback is authoritative; recovery can retry a stale applying row.
       }
       throw serviceError(error, 'IMPORT_APPLY_FAILED');
+    } finally {
+      jobHeartbeat.stop();
+      try {
+        jobLease.release();
+      } catch (releaseError) {
+        this.diagnose('import-apply.lease-release', releaseError, {
+          libraryId: pending.libraryId,
+          operationId,
+        });
+      }
     }
   }
 
@@ -19097,10 +21699,14 @@ export class LibraryService {
         // used to create a phantom revision when a missing file reappeared. Only
         // tolerate that one-millisecond representation edge while restoring a
         // missing asset; available-file refreshes retain exact change detection.
-        const reappearanceTimestampEquivalent = asset.availability === 'missing'
-          && Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
+        // Files copied from an exported library can round an ISO millisecond
+        // timestamp by one millisecond on APFS/NTFS. Treat that representation
+        // edge as equivalent for both available and reappearing assets; a
+        // genuine source edit is still represented by a larger timestamp or
+        // byte-size change.
+        const timestampEquivalent = Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
         const statChanged = byteSize !== asset.byte_size
-          || (modifiedAt !== asset.modified_at && !reappearanceTimestampEquivalent);
+          || (modifiedAt !== asset.modified_at && !timestampEquivalent);
         const now = new Date().toISOString();
         if (statChanged) {
           const revisionId = randomUUID();
@@ -19197,8 +21803,11 @@ export class LibraryService {
     try {
       mkdirSync(partialPath);
       createDirectoryLayout(partialPath);
-      connection = openConfiguredDatabase(databasePath(partialPath));
-      migrateDatabase(connection, true);
+      connection = openConfiguredDatabase(
+        databasePath(partialPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
+      migrateDatabase(connection, true, this.options);
       connection
         .prepare('INSERT INTO library (library_id, display_name, created_at) VALUES (?, ?, ?)')
         .run(randomUUID(), displayName, new Date().toISOString());
@@ -19206,7 +21815,10 @@ export class LibraryService {
       connection.close();
       connection = undefined;
 
-      const verificationConnection = openConfiguredDatabase(databasePath(partialPath));
+      const verificationConnection = openConfiguredDatabase(
+        databasePath(partialPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
       try {
         verifyDatabase(verificationConnection);
       } finally {
@@ -19277,8 +21889,11 @@ export class LibraryService {
 
     let connection: DatabaseConnection | undefined;
     try {
-      connection = openConfiguredDatabase(databasePath(canonicalPath));
-      migrateDatabase(connection, false);
+      connection = openConfiguredDatabase(
+        databasePath(canonicalPath),
+        this.options.sqliteBusyTimeoutMsForTests,
+      );
+      migrateDatabase(connection, false, this.options);
       backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
       try {
@@ -19302,7 +21917,14 @@ export class LibraryService {
       const openLibrary: OpenLibrary = {
         connection,
         summary,
-        readOnly: false,
+        changeSubscription: new LibraryWriteCoordinator(connection, summary.libraryId)
+          .subscribeToChangeSequence({
+            onChange: (changeSequence) => this.options.onLibraryChanged?.({
+              type: 'library.changed',
+              libraryId: summary.libraryId,
+              changeSequence,
+            }),
+          }),
         preservedRelinkPathIdentities: new Set(),
       };
       this.openById.set(summary.libraryId, openLibrary);
@@ -19311,6 +21933,7 @@ export class LibraryService {
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
+      recoverInterruptedPluginJobs(openLibrary.connection, openLibrary.summary.libraryId);
       this.reconcileDefaultIgnoredAssets(openLibrary);
       // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
       // leave ready rows pointing at missing files → broken <img>. Invalidate so
@@ -19337,76 +21960,6 @@ export class LibraryService {
     } catch (error) {
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
-    }
-  }
-
-  /**
-   * Opens a current-schema library without migrations, recovery, filesystem
-   * reconciliation, watchers, or background job scheduling. This is the only
-   * open mode available to read-only clients such as the CLI inspection
-   * process.
-   */
-  openLibraryReadOnly(selectedLibraryPath: string): InternalLibrarySummary {
-    let selectedPath: string;
-    try {
-      selectedPath = normalizeAbsolutePath(selectedLibraryPath);
-    } catch (error) {
-      throw serviceError(error, 'INVALID_LIBRARY_PATH');
-    }
-
-    if (!existsSync(selectedPath)) throw new LibraryServiceError('LIBRARY_NOT_FOUND');
-    if (!directoryExists(selectedPath)) throw new LibraryServiceError('NOT_A_LIBRARY');
-
-    let canonicalPath: string;
-    try {
-      canonicalPath = realpathSync(selectedPath);
-    } catch (error) {
-      throw serviceError(error, 'LIBRARY_NOT_FOUND');
-    }
-    const alreadyOpenId = this.openIdByPath.get(canonicalPath);
-    if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
-
-    for (const directoryName of REQUIRED_DIRECTORIES) {
-      if (!realDirectoryExists(path.join(canonicalPath, directoryName))) {
-        throw new LibraryServiceError('NOT_A_LIBRARY');
-      }
-    }
-    const serpentPath = path.join(canonicalPath, '.serpent');
-    const filename = databasePath(canonicalPath);
-    if (!realDirectoryExists(serpentPath) || !realFileExists(filename)) {
-      throw new LibraryServiceError('NOT_A_LIBRARY');
-    }
-
-    let connection: DatabaseConnection | undefined;
-    try {
-      connection = new Database(filename, { readonly: true, fileMustExist: true });
-      connection.pragma('foreign_keys = ON');
-      connection.pragma('trusted_schema = ON');
-      connection.pragma('query_only = ON');
-      const library = verifyDatabase(connection);
-      const existingIdentity = this.openById.get(library.library_id);
-      if (existingIdentity) {
-        closeIgnoringFailure(connection);
-        throw new LibraryServiceError('LIBRARY_CORRUPT');
-      }
-
-      const summary: InternalLibrarySummary = {
-        libraryId: library.library_id,
-        displayName: library.display_name,
-        libraryPath: canonicalPath,
-      };
-      this.openById.set(summary.libraryId, {
-        connection,
-        summary,
-        readOnly: true,
-        preservedRelinkPathIdentities: new Set(),
-      });
-      this.openIdByPath.set(canonicalPath, summary.libraryId);
-      return summary;
-    } catch (error) {
-      closeIgnoringFailure(connection);
-      if (error instanceof LibraryServiceError) throw error;
-      throw error;
     }
   }
 
@@ -20410,6 +22963,18 @@ export class LibraryService {
         }
       }
 
+      const managedAssetMtimes = new Map<string, Date>(
+        (openLibrary.connection
+          .prepare(
+            `SELECT a.relative_file_path, r.modified_at
+               FROM assets a
+               JOIN revisions r ON r.revision_id = a.current_revision_id
+              WHERE a.location_kind = 'managed'
+                AND a.deleted_at IS NULL`,
+          )
+          .all() as Array<{ relative_file_path: string; modified_at: string }>)
+          .map((row) => [row.relative_file_path, new Date(row.modified_at)]),
+      );
       const totalFiles = entries.length;
       let totalBytes = 0;
       for (const entry of entries) {
@@ -20436,6 +23001,20 @@ export class LibraryService {
         const destPath = path.join(canonicalDest, ...entry.relativePath.split('/'));
         mkdirSync(path.dirname(destPath), { recursive: true });
         copyFileSync(entry.sourcePath, destPath);
+        // Preserve managed-asset timestamps so reopening an exported library
+        // does not mistake the copy for an external revision and invalidate
+        // the ready artifact rows from the consistent DB snapshot.
+        const sourceStat = statSync(entry.sourcePath);
+        const managedRelativePath = entry.relativePath.startsWith('Assets/')
+          ? entry.relativePath.slice('Assets/'.length)
+          : undefined;
+        utimesSync(
+          destPath,
+          sourceStat.atime,
+          (managedRelativePath === undefined
+            ? undefined
+            : managedAssetMtimes.get(managedRelativePath)) ?? sourceStat.mtime,
+        );
         filesProcessed += 1;
         bytesProcessed += entry.byteSize;
 
@@ -21318,24 +23897,22 @@ export class LibraryService {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
 
-    if (!openLibrary.readOnly) {
-      // A deliberate close is not a crash recovery boundary. Persist queued,
-      // paused, and running AI work as cancelled before the connection closes
-      // so reopening the library cannot silently resume uploads the user
-      // stopped. Read-only CLI sessions never own or mutate those jobs.
-      this.cancelJobs(libraryId);
-      this.abortActiveMediaJobs(libraryId);
-      this.stopAssetWatcher(libraryId);
-      this.stopLinkedWatchers(libraryId);
-      for (const [importId, pending] of this.pendingImports) {
-        if (pending.libraryId === libraryId) {
-          this.pendingImports.delete(importId);
-          this.cancelImportExpiry(pending);
-          this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
-          this.removeOperation(pending.operationPath);
-        }
+    // A deliberate close is not a crash recovery boundary. Persist queued,
+    // paused, and running AI work as cancelled before the connection closes so
+    // reopening the library cannot silently resume uploads the user stopped.
+    this.cancelJobs(libraryId);
+    this.abortActiveMediaJobs(libraryId);
+    this.stopAssetWatcher(libraryId);
+    this.stopLinkedWatchers(libraryId);
+    for (const [importId, pending] of this.pendingImports) {
+      if (pending.libraryId === libraryId) {
+        this.pendingImports.delete(importId);
+        this.cancelImportExpiry(pending);
+        this.updateImportOperation(pending, 'rolled_back', 'LIBRARY_CLOSED');
+        this.removeOperation(pending.operationPath);
       }
     }
+    openLibrary.changeSubscription.stop();
     openLibrary.connection.close();
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);

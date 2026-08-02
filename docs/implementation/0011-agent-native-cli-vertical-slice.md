@@ -1,20 +1,15 @@
-# 第0011垂直切片：一等命令行客户端与 Agent 原生操作面
+# 第0011垂直切片：一等命令行客户端与 Agent 原生操作面（已撤回）
 
-> 状态：需求已确认；CLI 契约与只读基础层可在 v0.1.0 收口期间并行，完整写入/多进程/分发切片目标 v0.2.0
+> 状态：已撤回；不得据此继续实现 CLI
 > 日期：2026-07-13
 > 2026-07-16 产品变更：CLI 资产元数据不再包含 Label/显示别名；0011 实施时以 ADR 0022 和 0018 的最终协议为准。
 
-## 2026-07-28 第一阶段实现状态
-
-`Serpent-bb56.1` 已落地源码态只读基础层：共享只读 Worker 执行器、Zod CLI
-契约与 `commands --json`、显式资源库根目录、稳定 stdout/stderr/退出码，以及
-资源库检查、资产/文件夹/标签/合集/智能合集列表、搜索和媒体/AI 任务查询。
-CLI 使用真正的 SQLite readonly/query-only 打开模式，不执行 Desktop 打开时的迁移、
-恢复、刷新、watcher 或后台任务入队。源码态通过 Electron 的无窗口 Node 模式运行，
-以复用 Desktop 的 native ABI；双平台独立可执行文件仍由 `Serpent-bb56.3` 交付。
-
-当前不应把这一增量描述为完整 0011：所有写命令、跨进程写租约、变更序号与
-detached jobs 仍在 `Serpent-bb56.2`，Windows/packaged/独立分发仍未验证。
+> 2026-07-28 产品决定：撤回此前的通用 CLI 方向及提交 `753129b` 中的只读实现，
+> 不保留其构建入口、协议、测试或人类验收项。本文件仅保留为历史决策记录；当前
+> 自动化实现以 [ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md) 和
+> [0023 脚本自动化与 MCP 框架](0023-automation-scripting-mcp-framework.md) 为唯一依据。
+> 新功能必须以 Desktop Console 的 JS/TS 脚本与本地 stdio MCP 为入口。未来若重启 CLI
+> 讨论，需要新 ADR，不得从本规格或旧提交恢复代码。
 
 ## 目标
 
@@ -44,8 +39,8 @@ CLI 契约、共享 command registry/schema、机器可读帮助和不修改资�
 9. 第一版不提供通用 idempotency key；标签分配、合集关系和元数据设置等操作尽量自然幂等，导入与文件写入使用显式冲突策略。
 10. 长任务默认可在前台等待，也可 detach 后返回 job ID；detached job 不依赖发起终端或桌面客户端存活。
 11. CLI 随桌面安装包提供，也提供同版本的独立平台压缩包；第一版不以 `npm install -g` 作为主要分发方式。
-12. CLI 是规范能力面；未来 Skills 与 MCP 只包装同一命令注册表和领域实现。
-13. CLI 提供机器可读命令自描述，用于生成帮助、补全、Skills 与未来 MCP schema。
+12. Automation Command Gateway 是规范能力面；CLI、脚本、Skills 与 MCP 只适配同一命令注册表和领域实现。
+13. 通用命令注册表提供机器可读自描述，用于生成 CLI 帮助、脚本类型、补全、Skills 与 MCP schema。
 
 进程与并发决定详见 [ADR-0021](../adr/0021-independent-first-party-clients.md)。
 

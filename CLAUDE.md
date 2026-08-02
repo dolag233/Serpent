@@ -136,7 +136,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/development/NNNN-*.md` — 切片开发日志
 - `docs/reviews/NNNN-*.md` — 双轴代码审查
 - `docs/qa/NNNN-*.md` — QA 报告
-- `docs/qa/human-acceptance-checklist.md` — 持续更新的人类功能验收队列；只有用户本人可以标记“人类验收通过”
+- `docs/qa/human-acceptance-checklist.md` — 功能验收队列；UI 仅用户可标「人类验收通过」；`PLUGIN-*`/`AUT-*` 以自动化测试为准（见 `docs/agent-plugin-playbook.md`）
 - `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
 - `docs/research/` — 技术调研
 

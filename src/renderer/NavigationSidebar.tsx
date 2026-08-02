@@ -45,6 +45,7 @@ import {
 import {
   isAllAssetsNavActive,
   isManagedFolderNavActive,
+  isPluginSidebarViewNavActive,
   isTagManagementNavActive,
   isTrashNavActive,
 } from "./browse-nav-active";
@@ -342,6 +343,8 @@ export interface NavigationSidebarProps {
   assetScope: string;
   showTrash: boolean;
   showTagManagement: boolean;
+  activePluginSidebarViewId?: string | null;
+  pluginSidebarViews?: readonly { id: string; title: string }[];
   activeTagId: string | null;
   activeCollectionId: string | null;
   activeSmartCollectionId: string | null;
@@ -371,6 +374,7 @@ export interface NavigationSidebarProps {
   onEnterTrash: () => void;
   onTrashContextMenu?: (event: React.MouseEvent) => void;
   onEnterTagManagement: () => void;
+  onChoosePluginSidebarView?: (viewId: string) => void;
   onChooseFolder: (folderId: string) => void;
   onChooseCollection: (collectionId: string, recursive?: boolean) => void;
   onChooseSmartCollection: (collectionId: string) => void;
@@ -475,6 +479,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     assetScope,
     showTrash,
     showTagManagement,
+    activePluginSidebarViewId = null,
+    pluginSidebarViews = [],
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
@@ -496,6 +502,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onEnterTrash,
     onTrashContextMenu,
     onEnterTagManagement,
+    onChoosePluginSidebarView,
     onChooseFolder,
     onChooseCollection,
     onChooseSmartCollection,
@@ -536,6 +543,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     assetScope,
     showTrash,
     showTagManagement,
+    activePluginSidebarViewId,
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
@@ -1047,6 +1055,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           label={t("nav.tagManagement")}
           onClick={() => onEnterTagManagement()}
         />
+        {pluginSidebarViews.map((view) => (
+          <NavRow
+            active={Boolean(library && isPluginSidebarViewNavActive(browseNavFlags, view.id))}
+            disabled={!library}
+            icon="box"
+            key={view.id}
+            label={view.title}
+            onClick={() => onChoosePluginSidebarView?.(view.id)}
+          />
+        ))}
         <Section
           title={t("nav.folders")}
           action={library ? onAddFolder : undefined}

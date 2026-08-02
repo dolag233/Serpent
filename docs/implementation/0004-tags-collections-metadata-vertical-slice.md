@@ -31,6 +31,8 @@
 - 标签分配/移除：支持单资产或批量的资产-标签关系变更；重复分配与移除不存在的标签幂等或报错。
 - AssetMetadata 读写：Label、描述、评分（0-5 整数）、喜欢（布尔）、人工色卡（JSON 颜色数组）、源链接 URL。
 - 乐观并发控制：`entity_version` 字段；set 操作要求 `expectedVersion`，不匹配时返回 `VERSION_CONFLICT`。
+  `entity_version` 只保护元数据行的并发写入，不表示文件内容版本；文件内容修订使用
+  Asset 的 `current_revision_id` / `Revision` 语义。
 - 合集 CRUD：树状层级，同父下按 position 排序；更新名称、描述、封面资产和位置。
 - 合集资产成员管理：添加、移除、手动重排序；父合集默认递归汇总子合集资产并去重。
 - 智能合集 CRUD：名称、查询定义（JSON）、排序定义（JSON）；本切片不执行查询。

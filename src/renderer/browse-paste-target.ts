@@ -12,10 +12,11 @@ export function resolveBrowsePasteDestination(input: {
   libraryOpen: boolean;
   showTrash: boolean;
   showTagManagement: boolean;
+  showPluginSidebarView?: boolean;
   assetScope: string;
   selectedFolderId: string | undefined;
 }): BrowsePasteDestination {
-  if (!input.libraryOpen || input.showTrash || input.showTagManagement) {
+  if (!input.libraryOpen || input.showTrash || input.showTagManagement || input.showPluginSidebarView) {
     return undefined;
   }
   if (input.selectedFolderId !== undefined) {

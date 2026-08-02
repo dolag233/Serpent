@@ -23,7 +23,6 @@ export interface ToolbarCommandActions {
   readonly refresh: () => void;
   readonly setViewMode: (mode: CanvasViewMode) => void;
   readonly toggleField: (field: CanvasFieldKey) => void;
-  readonly openBackgroundJobs: () => void;
   /** Opens the AI category in the consolidated settings center. */
   readonly openAiSettings: () => void;
   /** Opens the general category in the consolidated settings center. */
@@ -50,10 +49,8 @@ export const TOOLBAR_CANVAS_COMMAND_IDS = [
   'canvas.field.date',
 ] as const;
 
-/** 工作区工具栏直出按钮（Serpent-9gt2：后台任务不再藏在溢出菜单）。 */
-export const TOOLBAR_DIRECT_UTILITY_COMMAND_IDS = [
-  'workspace.background-jobs',
-] as const;
+/** 工作区工具栏直出按钮。 */
+export const TOOLBAR_DIRECT_UTILITY_COMMAND_IDS = [] as const;
 
 /** 「更多工具」溢出菜单条目（导入类不在此列）。AI 设置已迁入设置中心。 */
 export const TOOLBAR_OVERFLOW_COMMAND_IDS = [] as const;
@@ -113,13 +110,6 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     title: (ctx) => t(ctx, 'toolbar.showModifiedDate'),
     group: 'metadata',
     run: (ctx) => ctx.actions.toggleField('date'),
-  },
-  {
-    id: 'workspace.background-jobs',
-    title: (ctx) => t(ctx, 'toolbar.backgroundJobs'),
-    group: 'organize',
-    visible: (ctx) => ctx.libraryOpen,
-    run: (ctx) => ctx.actions.openBackgroundJobs(),
   },
   {
     id: 'workspace.ai-settings',

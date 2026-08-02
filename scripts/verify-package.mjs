@@ -1,11 +1,16 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
   currentPlatformKey,
   verifyBundle,
   verifyReleaseProvenance,
 } from './media-binaries-lib.mjs';
+
+const require = createRequire(import.meta.url);
+const asar = require('@electron/asar');
+const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
 const platformDirectory = `Serpent-${process.platform}-${process.arch}`;
 const packageRoot = process.env.SERPENT_PACKAGE_ROOT ?? path.resolve('out', platformDirectory);
@@ -51,6 +56,93 @@ if (missingPaths.length > 0) {
   throw new Error(`Package is missing required runtime files:\n${missingPaths.join('\n')}`);
 }
 
+const asarPath = path.join(resourcesPath, 'app.asar');
+const asarFiles = asar.listPackage(asarPath);
+const requiredAsarEntries = [
+  'plugin_standard_host.js',
+  'plugin_trusted_host.js',
+  'script_runtime_utility.js',
+];
+const missingAsarEntries = requiredAsarEntries.filter((entry) => {
+  const normalized = entry.replaceAll('\\', '/');
+  return !asarFiles.some((candidate) => {
+    const file = String(candidate).replaceAll('\\', '/').replace(/^\.\//u, '');
+    return file === normalized || file.endsWith(`/${normalized}`);
+  });
+});
+if (missingAsarEntries.length > 0) {
+  throw new Error(
+    `Package ASAR is missing plugin/script Host utilities:\n${missingAsarEntries.join('\n')}`,
+  );
+}
+
+const registrySource = readFileSync(
+  path.join(projectRoot, 'src', 'automation', 'command-registry.ts'),
+  'utf8',
+);
+const apiVersionMatch = registrySource.match(
+  /export const AUTOMATION_API_VERSION = (\d+) as const;/u,
+);
+if (!apiVersionMatch) {
+  throw new Error('Could not determine AUTOMATION_API_VERSION from the Registry source.');
+}
+const apiVersion = Number(apiVersionMatch[1]);
+const declarationPath = path.join(
+  projectRoot,
+  'docs',
+  'skills',
+  'serpent-automation',
+  'automation-api.d.ts',
+);
+if (!existsSync(declarationPath)) {
+  throw new Error(`Workspace is missing generated automation declarations: ${declarationPath}`);
+}
+const declaration = readFileSync(declarationPath, 'utf8');
+const declarationVersion = declaration.match(
+  /AUTOMATION_API_VERSION:\s*(\d+)|AUTOMATION_API_VERSION\s*=\s*(\d+)/u,
+);
+if (!declarationVersion || Number(declarationVersion[1] ?? declarationVersion[2]) !== apiVersion) {
+  throw new Error(
+    `Automation declaration API version does not match Registry (expected ${apiVersion}).`,
+  );
+}
+const commandIds = [
+  ...registrySource.matchAll(/^\s*commandId:\s*'([^']+)'/gmu),
+].map((match) => match[1]);
+const missingDeclarationCommands = commandIds.filter(
+  (commandId) => !declaration.includes(`'${commandId}'`),
+);
+if (missingDeclarationCommands.length > 0) {
+  throw new Error(
+    `Automation declaration is missing Registry commands:\n${missingDeclarationCommands.join('\n')}`,
+  );
+}
+
+const packageManifest = JSON.parse(
+  readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
+);
+if (packageManifest.scripts?.mcp !== 'node scripts/run-mcp.mjs') {
+  throw new Error('Package manifest must retain the protocol-only `npm run mcp` launcher.');
+}
+const launcherPath = path.join(projectRoot, 'scripts', 'run-mcp.mjs');
+if (!existsSync(launcherPath)) {
+  throw new Error(`Workspace is missing the MCP protocol launcher: ${launcherPath}`);
+}
+
+const mainEntry = asarFiles.find((entry) => {
+  const normalized = String(entry).replaceAll('\\', '/').replace(/^\.\//u, '');
+  return normalized.endsWith('/main.js') || normalized === 'main.js';
+});
+if (!mainEntry) {
+  throw new Error('Package ASAR is missing the Main process entry.');
+}
+const mainSource = asar.extractFile(asarPath, mainEntry.replace(/^\/+/u, '')).toString('utf8');
+if (!mainSource.includes(`AUTOMATION_API_VERSION`) || !mainSource.includes(String(apiVersion))) {
+  throw new Error(
+    `Packaged Main does not contain the Registry API version marker (expected ${apiVersion}).`,
+  );
+}
+
 const mediaResourcesPath = path.join(resourcesPath, 'resources');
 const mediaPlatform = currentPlatformKey();
 verifyBundle({ root: mediaResourcesPath, platform: mediaPlatform });
@@ -64,3 +156,4 @@ if (process.env.SERPENT_MEDIA_SKIP_PROVENANCE === '1') {
 }
 
 console.log(`Verified packaged runtime files in ${resourcesPath}`);
+console.log(`Verified Host utilities in ASAR: ${requiredAsarEntries.join(', ')}`);

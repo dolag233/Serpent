@@ -1,0 +1,89 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.unrestricted-settings-probe",
+  "version": "1.0.0",
+  "name": "Unrestricted Settings Probe",
+  "description": "Unrestricted host fixture with menus.asset and settings.pages for contribution listing.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "unrestricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "library.read",
+    "asset.read",
+    "storage.read",
+    "storage.write",
+    "ui.settings"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "probe.write-selection",
+        "title": "Write unrestricted selection"
+      },
+      {
+        "id": "probe.nested-selection",
+        "title": "Write nested selection"
+      }
+    ],
+    "menus": {
+      "asset": [
+        {
+          "command": "probe.write-selection",
+          "group": "probe"
+        },
+        {
+          "id": "processing",
+          "title": "Probe processing",
+          "group": "probe",
+          "submenu": [
+            {
+              "command": "probe.nested-selection",
+              "before": "asset.rename"
+            }
+          ]
+        }
+      ]
+    },
+    "toolbar": [],
+    "inspector": [],
+    "viewerActions": [],
+    "shortcuts": [],
+    "views": [
+      {
+        "id": "settings-page",
+        "title": "Unrestricted settings page",
+        "location": "settings",
+        "entry": "entry/ui/settings.html"
+      }
+    ],
+    "settings": [
+      {
+        "id": "enabled-demo",
+        "title": "Probe enabled",
+        "type": "boolean",
+        "description": "Enable the unrestricted probe."
+      },
+      {
+        "id": "quality",
+        "title": "Probe quality",
+        "type": "select",
+        "description": "Choose the probe processing quality.",
+        "options": [
+          { "value": "fast", "label": "Fast" },
+          { "value": "high", "label": "High" }
+        ]
+      }
+    ],
+    "hooks": [],
+    "jobs": [],
+    "providers": [],
+    "themes": []
+  }
+}

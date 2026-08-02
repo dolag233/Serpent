@@ -2,11 +2,17 @@ import { z } from 'zod';
 
 import type { ShowEditContextMenuResult } from './edit-context-menu';
 import type { ViewerVideoShortcutAction } from './viewer-video-shortcuts';
+import type { DesktopBrowseAction, DesktopBrowseResult } from './desktop-control';
 import type {
   WindowControlAction,
   WindowControlResult,
 } from './window-controls';
-import type { ReadAppLogResult } from './app-log';
+import type { AppLogAutomationCorrelationId, ReadAppLogResult } from './app-log';
+import type { DesktopControlSelectionEvent } from './desktop-control';
+import type {
+  PluginInputCapturePublishPayload,
+  PluginInputCaptureRendererSession,
+} from './plugin-input-capture-renderer';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -100,8 +106,11 @@ export interface SerpentShellApi {
    * Does not expose the path string to the renderer.
    */
   revealAppLog(): Promise<RevealAppLogResult>;
-  /** Read the recent, already-redacted entries from the Main-owned app log. */
-  readAppLog(): Promise<ReadAppLogResult>;
+  /**
+   * Read recent, already-redacted entries from the Main-owned app log. An
+   * optional Automation Execution/log ID narrows diagnostics to one run.
+   */
+  readAppLog(automationCorrelationId?: AppLogAutomationCorrelationId): Promise<ReadAppLogResult>;
   /**
    * Sync the effective UI locale to Main for native file dialogs (Serpent-bwb).
    * Only `zh-CN` | `en` are accepted; malformed payloads are dropped in Main.
@@ -128,8 +137,20 @@ export interface SerpentShellApi {
   onSwipe(listener: (direction: ShellSwipeDirection) => void): () => void;
   /** BrowserWindow 聚焦态（Serpent-oy07）；macOS 原生红绿灯失焦变灰由系统负责。 */
   onWindowFocusChanged(listener: (focused: boolean) => void): () => void;
+  /** Main → Renderer: apply a selection requested by an attached local Agent. */
+  onDesktopAutomationSelection(
+    listener: (event: DesktopControlSelectionEvent) => void,
+  ): () => void;
+  /** Main → Renderer: typed browse intent from an attached local Agent. */
+  onDesktopAutomationBrowse(
+    listener: (action: DesktopBrowseAction) => void,
+  ): () => void;
+  /** Renderer → Main: response to a typed browse intent. */
+  respondDesktopAutomationBrowse(result: DesktopBrowseResult): void;
   /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
   onInvertSelection(listener: () => void): () => void;
+  /** Main → Renderer: script/MCP/plugin toast or blocking dialog (`ui.notify`). */
+  onShellNotify(listener: (payload: import('./shell-notify').ShellNotifyPayload) => void): () => void;
   /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；
    * 否则回退为原生文本复制。
    */
@@ -145,4 +166,12 @@ export interface SerpentShellApi {
   onViewerVideoShortcut(
     listener: (action: ViewerVideoShortcutAction) => void,
   ): () => void;
+  /** Main → Renderer: active plugin input capture sessions for fan-in gating. */
+  onInputCaptureSessions(
+    listener: (sessions: PluginInputCaptureRendererSession[]) => void,
+  ): () => void;
+  /** Renderer → Main: DOM input capture fan-in. */
+  publishInputCaptureEvent(payload: PluginInputCapturePublishPayload): void;
+  /** Renderer → Main: pause capture while Host modals are open. */
+  setInputCaptureSystemModalActive(active: boolean): void;
 }

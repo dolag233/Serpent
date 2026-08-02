@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
 > 状态：生效，持续演进
-> 日期：2026-07-11；最后校准：2026-07-16
+> 日期：2026-07-11；最后校准：2026-08-02
 
 ## 核心关系
 
@@ -19,11 +19,56 @@ Library
 └─ Job*                      # 可恢复后台任务
 ```
 
-## 一等客户端
+## 自动化访问面
 
-桌面客户端与命令行客户端是平等的一等访问面：二者调用相同的领域命令并遵守相同的不变量，不存在“GUI 优先”或“agent 优先”。CLI 同时面向人类和软件 agent，易用性与机器可调用性都属于产品要求。
+Desktop、脚本与 MCP 都是第一方访问面，但 `Automation Command Gateway` 才是规范能力边界。所有入口调用相同的领域命令并遵守相同不变量，不得各自拥有 SQLite、文件操作或后台任务实现。JS/TS 脚本与 MCP 共享**同一领域 Action 面**；差别是调用者（人 vs Agent）与 transport，不是命令子集。通用 CLI 已撤出当前产品范围。
 
-CLI 只公开语义化领域能力，不公开任意 SQL、数据库连接或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，客户端只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
+自动化入口只公开语义化领域 Action，不公开任意 SQL、数据库连接、Node.js、Shell、原始网络或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，入口只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
+
+每次脚本或 MCP 自动化运行形成 Automation Execution。Execution **可以没有当前资源库**（headless），以便先执行 `library.create` 等 Action，再绑定新建或显式指定的目标库。Execution 持有能力授权、取消与资源预算，记录命令轨迹和日志关联；脚本代码本身不直接接触 Library Worker。高风险文件与资源库生命周期写入还需形成 Execution Plan，并由本机人类批准（Console 与 MCP 同等；禁止自提权）。
+
+插件 Contribution（菜单、Hook、UI、输入捕获、Provider）不属于脚本/MCP Action 面。
+
+## 插件扩展面
+
+插件和自动化脚本共享 Automation Command Gateway 与 `serpent` 领域 API，但生命周期不同：
+脚本是一次 Automation Execution；插件是可安装、激活和停用的扩展，能够注册 UI
+Contribution、领域 Hook、Provider、输入捕获和后台 Job handler。
+
+```text
+PluginPackage
+├─ manifest + immutable files + integrity
+└─ runtime_mode = restricted | unrestricted
+
+PluginInstallation
+├─ installation_scope = user | library
+├─ package
+└─ enabled intent
+
+PluginTrustDecision             # 当前设备本地
+PluginResolution                # 当前设备为当前资源库选择 user/library/disabled
+PluginInstance
+├─ instance_scope = global | library
+├─ setup(context) / dispose(reason)
+└─ ContributionRegistry         # pluginInstanceId + localContributionId
+```
+
+不变量：
+
+- 用户级安装位于应用用户数据；资源库级安装位于 `.serpent/plugins/` 并可以随资源库同步。
+- 资源库级 Package 同步不包含本机信任。每台设备首次运行前都必须显式信任。
+- 同一插件 ID 的用户级和资源库级版本发生冲突时由用户选择；两者不得同时激活。
+- 安装范围只描述 Package 存放位置，不推导运行实例范围。全局实例每应用会话一个，资源库
+  实例每个已打开库一个；二者使用同一 `setup` / `dispose` 生命周期，不另设 openLibrary。
+- 受限插件只能通过声明并授权的 Host API 行动。非受限插件具有完整 Node.js 能力，其权限清单
+  不能被描述为完整系统沙箱。
+- 插件通过 Gateway 发起的领域命令继续遵守实体版本、Execution Plan、文件恢复和 Library
+  Worker 所有权；非受限插件绕过 Gateway 的直接系统行为不享受这些保证。
+- 插件 Hook 不得在数据库事务或文件锁内执行；搜索、过滤和排序 Provider 不得在 Renderer
+  中逐资产同步求值。
+- Contribution Context 只承载 UI 条件所需的有界同步状态；命令触发时冻结 Invocation
+  Context；实际功能使用完整 `serpent` Domain API。复杂 UI 条件异步解析成 Context Key，
+  菜单打开不得等待插件代码。
 
 ## 聚合与实体
 
@@ -166,6 +211,10 @@ AssetMetadata
   entity_version
   updated_at
 ```
+
+`entity_version` 仅是 `AssetMetadata` 行的乐观并发控制 token，不是文件内容版本，也不要求
+在用户界面展示。文件内容修订由 `Asset.current_revision_id` 指向 `Revision`；导入、替换或
+接受外部内容变化时切换到新的修订，元数据和组织操作不改变该指针。
 
 `author`（Serpent-7x0）是用户可编辑的创作者/作者字段，与 `source_page_url` 共用清空语义（保存空字符串即清空为 `null`）。图片首次生成缩略图时，若 `author` 为空，Worker 会尝试从文件的 EXIF/IPTC/XMP 元数据中提取创作者信息（优先级：XMP `dc:creator` > IPTC By-line/Creator > EXIF `Artist`）并回填，但不覆盖用户已填写或此前已提取过的非空值；这是尽力而为的增强，提取失败或没有相关字段时保持为空，不阻塞缩略图生成。视频等不支持 EXIF 的格式不做自动提取。
 

@@ -8,6 +8,13 @@ import {
   searchScopeSchema,
   sortDefinitionSchema,
 } from '../asset-types';
+import {
+  CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_BATCH_MAX_ITEMS,
+  CONTENT_REPLACE_MAX_BYTES,
+  CONTENT_REPLACE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
+} from '../content-replace';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -62,6 +69,32 @@ export const assetAuthorSchema = z.union([
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
+
+const automationFileOperationSchema = z.enum([
+  'trash',
+  'replace-content',
+  'move',
+  'rename-file',
+  'rename-files',
+  'restore-if-original-vacant',
+]);
+const automationFilePlanAssetStateSchema = z.strictObject({
+  assetId: identifierSchema,
+  stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const automationFilePlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  assetStates: z.array(automationFilePlanAssetStateSchema).min(1).max(10_000),
+});
+export const automationImportPlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  sourceStates: z.array(z.strictObject({
+    sourcePath: selectedPathSchema,
+    stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  })).max(1_000),
+});
 
 
 const aiApiFormatSchema = z.enum([
@@ -827,6 +860,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('plugin.list-jobs.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.pause-jobs.request'),
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1).optional(),
@@ -920,10 +957,6 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     selectedLibraryPath: selectedPathSchema,
   }),
   z.strictObject({
-    type: z.literal('library.open-readonly'),
-    selectedLibraryPath: selectedPathSchema,
-  }),
-  z.strictObject({
     type: z.literal('library.close'),
     libraryId: identifierSchema,
   }),
@@ -933,6 +966,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.list'),
+  }),
+  z.strictObject({
+    type: z.literal('library.change-sequence'),
+    libraryId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('folder.create'),
@@ -1044,6 +1081,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     imageSequenceFps: z.number().int().min(1).max(240).optional(),
     /** When true, expand single selected frames to continuous sibling runs. */
     expandImageSequences: z.boolean().optional(),
+    automationPlan: automationImportPlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),
@@ -1294,6 +1332,53 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.trash'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.replace'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    expectedRevisionId: identifierSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.stage'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    stagingToken: identifierSchema.optional(),
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH),
+    complete: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.replace-batch'),
+    libraryId: identifierSchema,
+    items: z.array(z.union([
+      z.strictObject({
+        assetId: identifierSchema,
+        dataBase64: z.string().min(1).max(CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH),
+        expectedRevisionId: identifierSchema,
+      }),
+      z.strictObject({
+        assetId: identifierSchema,
+        stagingToken: identifierSchema,
+        expectedRevisionId: identifierSchema,
+      }),
+    ])).min(1).max(CONTENT_REPLACE_BATCH_MAX_ITEMS).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ).refine(
+      (items) => items.reduce((total, item) => total + ('dataBase64' in item ? item.dataBase64.length : 0), 0)
+        <= CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+      { message: 'Inline batch content exceeds the IPC payload budget; use staging tokens.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.read'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES),
   }),
   z.strictObject({
     type: z.literal('asset.restore'),
@@ -1317,12 +1402,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     ),
     targetFolderId: identifierSchema.nullable(),
     conflictStrategy: nameConflictDecisionSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move-undo'),
     libraryId: identifierSchema,
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.trash-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.copy'),
@@ -1345,6 +1436,60 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     newBaseName: assetFileBaseNameSchema,
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.rename-files'),
+    libraryId: identifierSchema,
+    items: z.array(z.strictObject({
+      assetId: identifierSchema,
+      newBaseName: assetFileBaseNameSchema,
+    })).min(1).max(10_000).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Automation-only recovery operation: restore only assets whose original
+  // managed folder still exists and whose original destination is vacant.
+  // It intentionally has no target-folder or overwrite option.
+  z.strictObject({
+    type: z.literal('asset.restore-if-original-vacant'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Main-only preflight used by the Automation Gateway before a file write.
+  // It returns opaque state tokens rather than paths and has no side effects.
+  z.strictObject({
+    type: z.literal('automation.file-operation-plan'),
+    libraryId: identifierSchema,
+    operation: automationFileOperationSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    newBaseName: assetFileBaseNameSchema.optional(),
+    targetFolderId: identifierSchema.nullable().optional(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('automation.file-import-plan'),
+    libraryId: identifierSchema,
+    sourceKind: z.enum(['files', 'folder']),
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+    targetFolderId: optionalIdentifierSchema,
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    expandImageSequences: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.palette.aggregate-recent'),
+    libraryId: identifierSchema,
+    days: z.number().int().min(1).max(3_650).default(2),
+    limit: z.number().int().min(1).max(24).default(12),
   }),
   z.strictObject({
     type: z.literal('asset.text.read'),
@@ -1529,6 +1674,172 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     jobIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
+    type: z.literal('plugin.jobs.enqueue'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    pluginHandlerId: z.string().min(1).max(128),
+    payload: z.record(z.string(), z.unknown()).default({}),
+    recoveryStrategy: z.enum(['idempotent', 'checkpoint']).default('idempotent'),
+    priority: z.number().int().min(-1000).max(1000).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.claim-next'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.complete'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    status: z.enum(['succeeded', 'failed', 'cancelled']),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+    progress: z.number().min(0).max(1).optional(),
+    completed: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
+    phase: z.string().max(128).optional(),
+    message: z.string().max(1_024).optional(),
+    itemResults: z.array(z.strictObject({
+      itemId: identifierSchema,
+      assetId: identifierSchema.optional(),
+      status: z.enum(['succeeded', 'failed', 'cancelled', 'skipped']),
+      errorCode: z.string().min(1).max(128).optional(),
+      errorDetail: z.string().max(4_096).optional(),
+      retryInput: z.record(z.string(), z.unknown()).optional(),
+    })).max(100_000).optional(),
+    failedAssetIds: z.array(identifierSchema).max(100_000).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: z.strictObject({
+      version: z.string().min(1).max(64),
+      cursor: z.string().max(4_096).optional(),
+      data: z.record(z.string(), z.unknown()).default({}),
+      savedAt: z.string().datetime(),
+    }).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.cancel'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    reason: z.string().max(1_024).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.pause'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    capabilities: z.strictObject({
+      handlerId: identifierSchema,
+      resumable: z.boolean(),
+      checkpointVersion: identifierSchema.optional(),
+    }),
+    checkpoint: z.strictObject({
+      version: identifierSchema,
+      cursor: z.string().max(4_096).optional(),
+      data: z.record(z.string(), z.unknown()).default({}),
+      savedAt: z.string().datetime(),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.resume'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    capabilities: z.strictObject({
+      handlerId: identifierSchema,
+      resumable: z.boolean(),
+      checkpointVersion: identifierSchema.optional(),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.retry'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.report-progress'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    completed: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    phase: z.string().max(128),
+    message: z.string().max(1_024),
+    progress: z.number().min(0).max(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.pause-owners'),
+    libraryId: identifierSchema,
+    owners: z.array(z.strictObject({
+      pluginId: z.string().min(1).max(255),
+      packageHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    })).min(1).max(256),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.materialize'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    fieldType: z.enum(['string', 'number', 'boolean', 'date', 'json']),
+    values: z.array(z.strictObject({
+      assetId: identifierSchema,
+      value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    })).max(256),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.query'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    operator: z.enum(['equals', 'contains', 'gt', 'gte', 'lt', 'lte']),
+    value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    limit: z.number().int().positive().max(256).optional(),
+    offset: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
     type: z.literal('media.get-asset-path'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -1656,6 +1967,12 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /**
+   * Automation reads share the Worker protocol but must not inherit desktop
+   * side effects such as thumbnail scheduling. Only Main-owned transports can
+   * construct this envelope; Renderer requests remain on their existing path.
+   */
+  dispatch: z.enum(['automation-readonly']).optional(),
 });
 
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;

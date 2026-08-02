@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { parseWorkerRequest, type WorkerRequest } from '../shared/protocol/requests';
 import {
   parseWorkerControlMessage,
@@ -41,7 +42,16 @@ import { runLimitedAiRequest } from './ai/limited-request';
 import { AiProgressThrottler } from './ai/progress-throttler';
 import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
-import { executeReadOnlyWorkerCommand } from './read-only-command-executor';
+import { dispatchAutomationReadOnlyRequest } from './automation-readonly-dispatch';
+import {
+  boundedWriteLibraryId,
+  executeBoundedWriteWorkerCommand,
+} from './bounded-write-command';
+import {
+  parsePluginMediaProviderResponse,
+  type PluginMediaProviderRequest,
+  type PluginMediaProviderResult,
+} from '../shared/plugin-media-protocol';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -57,6 +67,10 @@ const analysisControls = new Map<string, {
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
+const pendingPluginMediaProviderRequests = new Map<string, {
+  resolve: (result: PluginMediaProviderResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
 
 if (!parentPort) {
   throw new Error('Library Worker must be started by the Electron main process.');
@@ -64,6 +78,7 @@ if (!parentPort) {
 
 const libraryService = new LibraryService({
   onAssetsChanged: (event) => parentPort.postMessage(event),
+  onLibraryChanged: (event) => parentPort.postMessage(event),
   onProgress: (event) => parentPort.postMessage(event),
   onDiagnostic: ({ scope, error, context }) => {
     try {
@@ -83,6 +98,56 @@ const libraryService = new LibraryService({
 // event-loop ref. Development builds happen to have other active handles; a
 // packaged utility process can otherwise exit cleanly immediately after ready.
 const processLifetime = setInterval(() => {}, 60 * 60_000);
+
+function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'type' | 'requestId'>): Promise<PluginMediaProviderResult> {
+  const requestId = randomUUID();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPluginMediaProviderRequests.delete(requestId);
+      resolve({
+        status: 'native-fallback',
+        assetId: input.assetId,
+        kind: input.kind,
+        errorCode: 'PLUGIN_PROVIDER_TIMEOUT',
+      });
+    }, 35_000);
+    timer.unref?.();
+    pendingPluginMediaProviderRequests.set(requestId, { resolve, timer });
+    parentPort?.postMessage({
+      type: 'plugin-media-provider.request',
+      requestId,
+      ...input,
+    });
+  });
+}
+
+async function writePluginMediaArtifact(input: {
+  libraryId: string;
+  assetId: string;
+  kind: 'preview' | 'thumbnail';
+  asset?: PluginMediaProviderRequest['asset'];
+}): Promise<{ artifactId: string } | null> {
+  const result = await requestPluginMediaProvider(input);
+  if (result.status !== 'provided' || result.assetId !== input.assetId || !result.media) {
+    return null;
+  }
+  try {
+    return libraryService.writePluginMediaArtifact({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      mimeType: result.media.mimeType,
+      bytesBase64: result.media.bytesBase64,
+      ...(result.providerId === undefined ? {} : { providerId: result.providerId }),
+    });
+  } catch (error) {
+    libraryService.reportDiagnostic('plugin-media-artifact.write', error, {
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      kind: input.kind,
+    });
+    return null;
+  }
+}
 
 function scheduleThumbnailQueue(
   libraryId: string,
@@ -141,6 +206,15 @@ function scheduleThumbnailQueue(
         libraryService.processThumbnailQueue(libraryId, {
           maxJobs: 2,
           onResult,
+          pluginMediaProvider: async ({ assetId, signal, asset }) => {
+            if (signal?.aborted) return null;
+            return (await writePluginMediaArtifact({
+              libraryId,
+              assetId,
+              kind: 'thumbnail',
+              ...(asset === undefined ? {} : { asset }),
+            }))?.artifactId ?? null;
+          },
         })))).reduce((total, count) => total + count, 0);
       continueImmediately = processed === 4;
     } catch (error) {
@@ -272,21 +346,41 @@ function publishAiProgress(libraryId: string): void {
 }
 
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
-  const readOnlyResult = request.command.type === 'library.close'
-    ? undefined
-    : await executeReadOnlyWorkerCommand(
-        libraryService,
-        request.command,
-        {
-          onAssetsListed: (libraryId, assetIds) =>
-            scheduleThumbnailScene(libraryId, 'visible', assetIds),
-        },
-      );
-  if (readOnlyResult) return readOnlyResult;
+  const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
+  if (automationResult) return automationResult;
 
+  const libraryId = boundedWriteLibraryId(request.command);
+  if (!libraryId) return handleRequestWithoutWriteLease(request);
+
+  try {
+    const result = await libraryService.runBoundedWrite(
+      libraryId,
+      () => executeBoundedWriteWorkerCommand(libraryService, request.command),
+    );
+    if (result === undefined) {
+      throw new Error(`Bounded write command ${request.command.type} has no executor.`);
+    }
+    return result;
+  } catch (error) {
+    libraryService.reportDiagnostic('write-lease.execute', error, {
+      libraryId,
+      commandType: request.command.type,
+    });
+    throw error;
+  }
+}
+
+async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
+    case 'library.change-sequence':
+      return {
+        ok: true,
+        type: 'library.change-sequence',
+        libraryId: request.command.libraryId,
+        changeSequence: libraryService.getChangeSequence(request.command.libraryId),
+      };
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
       scheduleThumbnailScene(library.libraryId, 'startup');
@@ -297,8 +391,6 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       scheduleThumbnailScene(library.libraryId, 'startup');
       return { ok: true, type: 'library.opened', library };
     }
-    case 'library.open-readonly':
-      throw new Error('Read-only library open was not dispatched.');
     case 'library.close':
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -318,10 +410,9 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         libraryPath: deleted.libraryPath,
       };
     }
-    case 'folder.create': {
-      const folder = libraryService.createManagedFolder(request.command);
-      return { ok: true, type: 'folder.created', folder };
-    }
+    case 'folder.create':
+      // Routed through runBoundedWrite / executeBoundedWriteWorkerCommand.
+      throw new Error('Bounded folder.create write was not dispatched through its transaction fence.');
     case 'folder.rename': {
       const folder = libraryService.renameManagedFolder(request.command);
       return { ok: true, type: 'folder.renamed', folder };
@@ -562,10 +653,8 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'tag.list',
         tags: libraryService.listTags(request.command.libraryId),
       };
-    case 'tag.create': {
-      const tag = libraryService.createTag(request.command);
-      return { ok: true, type: 'tag.created', tag };
-    }
+    case 'tag.create':
+      throw new Error('Bounded tag.create write was not dispatched through its transaction fence.');
     case 'tag.rename': {
       const tag = libraryService.renameTag(request.command);
       return { ok: true, type: 'tag.renamed', tag };
@@ -595,24 +684,18 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'tag.cooccurrence',
         graph: libraryService.getTagCooccurrenceGraph(request.command),
       };
-    case 'tag.assign': {
-      const { assignedCount, skipped } = libraryService.assignTags(request.command);
-      return { ok: true, type: 'tag.assigned', assignedCount, skipped };
-    }
-    case 'tag.remove': {
-      const { removedCount, skipped } = libraryService.removeTags(request.command);
-      return { ok: true, type: 'tag.removed', removedCount, skipped };
-    }
+    case 'tag.assign':
+      throw new Error('Bounded tag.assign write was not dispatched through its transaction fence.');
+    case 'tag.remove':
+      throw new Error('Bounded tag.remove write was not dispatched through its transaction fence.');
     case 'collection.list':
       return {
         ok: true,
         type: 'collection.list',
         collections: libraryService.listCollections(request.command.libraryId),
       };
-    case 'collection.create': {
-      const collection = libraryService.createCollection(request.command);
-      return { ok: true, type: 'collection.created', collection };
-    }
+    case 'collection.create':
+      throw new Error('Bounded collection.create write was not dispatched through its transaction fence.');
     case 'collection.update': {
       const collection = libraryService.updateCollection(request.command);
       return { ok: true, type: 'collection.updated', collection };
@@ -627,14 +710,10 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'collection.deleted',
         collectionId: libraryService.deleteCollection(request.command),
       };
-    case 'collection.assets.add': {
-      const { collectionId } = libraryService.addCollectionAssets(request.command);
-      return { ok: true, type: 'collection.assets.added', collectionId };
-    }
-    case 'collection.assets.remove': {
-      const { collectionId } = libraryService.removeCollectionAssets(request.command);
-      return { ok: true, type: 'collection.assets.removed', collectionId };
-    }
+    case 'collection.assets.add':
+      throw new Error('Bounded collection.assets.add write was not dispatched through its transaction fence.');
+    case 'collection.assets.remove':
+      throw new Error('Bounded collection.assets.remove write was not dispatched through its transaction fence.');
     case 'collection.assets.reorder': {
       const { collectionId } = libraryService.reorderCollectionAssets(request.command);
       return { ok: true, type: 'collection.assets.reordered', collectionId };
@@ -668,18 +747,17 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const result = libraryService.setAssetColorSpaceOverride(request.command);
       return { ok: true, type: 'asset.color-space.updated', ...result };
     }
-    case 'asset.metadata.set': {
-      const metadata = libraryService.setAssetMetadata(request.command);
-      return { ok: true, type: 'asset.metadata.updated', metadata };
-    }
+    case 'asset.metadata.set':
+      throw new Error('Bounded asset.metadata.set write was not dispatched through its transaction fence.');
     case 'asset.metadata.backfill': {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };
     }
-    case 'asset.rating.set': {
-      const { updatedCount, skipped } = libraryService.setAssetsRating(request.command);
-      return { ok: true, type: 'asset.rating.updated', updatedCount, skipped };
-    }
+    case 'asset.rating.set':
+      // `handleRequest` routes this command through runBoundedWrite before
+      // this legacy desktop switch. Keep the exhaustiveness case explicit so
+      // a future dispatcher change cannot silently restore an unfenced path.
+      throw new Error('Bounded rating write was not dispatched through its transaction fence.');
     case 'asset.search': {
       const result = libraryService.searchAssets({
         libraryId: request.command.libraryId,
@@ -743,8 +821,44 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'asset.trash': {
-      const { trashedCount } = libraryService.trashAssets(request.command);
-      return { ok: true, type: 'asset.trashed', trashedCount };
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const { trashedCount, operationId } = libraryService.trashAssets(request.command);
+      return { ok: true, type: 'asset.trashed', trashedCount, operationId };
+    }
+    case 'asset.content.replace': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.replaceManagedAssetContent(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'mutation', [result.assetId]);
+      return { ok: true, type: 'asset.content.replaced', ...result };
+    }
+    case 'asset.content.stage': {
+      const result = libraryService.stageManagedAssetContent(request.command);
+      return { ok: true, type: 'asset.content.staged', ...result };
+    }
+    case 'asset.content.replace-batch': {
+      const result = libraryService.replaceManagedAssetContentBatch(request.command);
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'mutation',
+        result.items.map((item) => item.assetId),
+      );
+      return { ok: true, type: 'asset.content.batch-replaced', ...result };
+    }
+    case 'asset.content.read': {
+      const result = libraryService.readManagedAssetContent(request.command);
+      return { ok: true, type: 'asset.content.read', ...result };
     }
     case 'asset.restore': {
       const { restoredCount, assets } = libraryService.restoreAssets(request.command);
@@ -756,6 +870,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.restore-previewed', ...preview };
     }
     case 'asset.move': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.moved', movedCount, skippedCount, operationId, assets };
@@ -764,6 +885,11 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       const { undoneCount, skippedCount, assets } = libraryService.undoMoveAssets(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return { ok: true, type: 'asset.move-undone', undoneCount, skippedCount, assets };
+    }
+    case 'asset.trash-undo': {
+      const { restoredCount, skippedCount, assets } = libraryService.undoTrashAssets(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.trash-undone', restoredCount, skippedCount, assets };
     }
     case 'asset.copy': {
       const { copiedCount, skippedCount, operationId, assets } = libraryService.copyAssets(request.command);
@@ -776,8 +902,42 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       return { ok: true, type: 'asset.copy-undone', undoneCount, skippedCount, assets };
     }
     case 'asset.rename-file': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const { asset } = libraryService.renameAssetFile(request.command);
       return { ok: true, type: 'asset.file-renamed', asset };
+    }
+    case 'asset.rename-files': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.renameAssetFiles(request.command);
+      return { ok: true, type: 'asset.files-renamed', ...result };
+    }
+    case 'asset.restore-if-original-vacant': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
+      const result = libraryService.restoreAssetsIfOriginalVacant(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'restore', result.assets.map((asset) => asset.assetId));
+      return { ok: true, type: 'asset.restored-if-original-vacant', ...result };
+    }
+    case 'asset.palette.aggregate-recent': {
+      const result = libraryService.aggregateRecentAssetPalette(request.command);
+      return { ok: true, type: 'asset.palette.aggregated-recent', ...result };
     }
     case 'asset.text.read': {
       const result = libraryService.readTextAsset(request.command);
@@ -1267,7 +1427,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'media.generate-thumbnail': {
-      const { artifactId } = await libraryService.generateThumbnail(request.command);
+      const pluginArtifact = await writePluginMediaArtifact({
+        libraryId: request.command.libraryId,
+        assetId: request.command.assetId,
+        kind: 'thumbnail',
+      });
+      const { artifactId } = pluginArtifact
+        ?? await libraryService.generateThumbnail(request.command);
       // Publish the thumbnail-ready event to the renderer
       if (parentPort) {
         parentPort.postMessage({
@@ -1330,12 +1496,21 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
       };
     }
     case 'media.get-preview-artifact': {
+      const pluginArtifact = await writePluginMediaArtifact({
+        libraryId: request.command.libraryId,
+        assetId: request.command.assetId,
+        kind: 'preview',
+      });
       // Opening a preview is also an idempotent, high-priority generation hint.
-      scheduleThumbnailScene(
-        request.command.libraryId,
-        'mutation',
-        [request.command.assetId],
-      );
+      // A provided plugin artifact already satisfies the request, so avoid
+      // enqueueing a native job that could overwrite it.
+      if (!pluginArtifact) {
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'mutation',
+          [request.command.assetId],
+        );
+      }
       const preview = await libraryService.resolvePreviewArtifact(
         request.command.libraryId,
         request.command.assetId,
@@ -1434,6 +1609,138 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         type: 'media.jobs.retried',
         libraryId: request.command.libraryId,
         ...result,
+      };
+    }
+    case 'plugin.jobs.enqueue': {
+      const job = libraryService.enqueuePluginJob({
+        libraryId: request.command.libraryId,
+        ownerPluginId: request.command.ownerPluginId,
+        ownerPackageHash: request.command.ownerPackageHash,
+        ownerPluginInstanceId: request.command.ownerPluginInstanceId,
+        ownerScope: request.command.ownerScope,
+        ownerLibraryId: request.command.ownerLibraryId,
+        pluginHandlerId: request.command.pluginHandlerId,
+        payload: request.command.payload,
+        recoveryStrategy: request.command.recoveryStrategy,
+        priority: request.command.priority,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.enqueued',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.list': {
+      const jobs = libraryService.listPluginJobs(request.command.libraryId);
+      return {
+        ok: true,
+        type: 'plugin.jobs.listed',
+        libraryId: request.command.libraryId,
+        jobs,
+      };
+    }
+    case 'plugin.jobs.claim-next': {
+      const job = libraryService.claimNextPluginJob({
+        libraryId: request.command.libraryId,
+        ownerPluginId: request.command.ownerPluginId,
+        ownerPackageHash: request.command.ownerPackageHash,
+        ownerPluginInstanceId: request.command.ownerPluginInstanceId,
+        ownerScope: request.command.ownerScope,
+        ownerLibraryId: request.command.ownerLibraryId,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.claimed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.complete': {
+      const job = libraryService.completePluginJob(request.command);
+      return {
+        ok: true,
+        type: 'plugin.jobs.completed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.cancel': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'cancel' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.cancelled',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.pause': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'pause' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.job-paused',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.resume': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'resume' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.resumed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.retry': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'retry' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.retried',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.report-progress': {
+      const job = libraryService.reportPluginJobProgress(request.command);
+      return {
+        ok: true,
+        type: 'plugin.jobs.completed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.pause-owners': {
+      const pausedCount = libraryService.pausePluginJobsForOwners({
+        libraryId: request.command.libraryId,
+        owners: request.command.owners,
+        errorCode: request.command.errorCode,
+        errorDetail: request.command.errorDetail,
+      });
+      return {
+        ok: true,
+        type: 'plugin.jobs.paused',
+        libraryId: request.command.libraryId,
+        pausedCount,
+      };
+    }
+    case 'plugin.derived-fields.materialize': {
+      const result = libraryService.materializePluginDerivedFields(request.command);
+      return {
+        ok: true,
+        type: 'plugin.derived-fields.materialized',
+        libraryId: request.command.libraryId,
+        ...result,
+      };
+    }
+    case 'plugin.derived-fields.query': {
+      const result = libraryService.queryPluginDerivedFields(request.command);
+      return {
+        ok: true,
+        type: 'plugin.derived-fields.queried',
+        libraryId: request.command.libraryId,
+        ...result,
+        offset: request.command.offset ?? 0,
       };
     }
     case 'ai.configure': {
@@ -1749,6 +2056,13 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
         ...status,
       };
     }
+    case 'automation.file-operation-plan':
+      // This preflight is deliberately accepted only through the fail-closed
+      // automation-readonly dispatcher above. A normal desktop request must
+      // not be able to manufacture a plan outside Main approval.
+      throw new Error('Automation file-operation planning requires automation-readonly dispatch.');
+    case 'automation.file-import-plan':
+      throw new Error('Automation import planning requires automation-readonly dispatch.');
     default:
       return assertNever(request.command);
   }
@@ -1768,6 +2082,19 @@ function requestIdFrom(input: unknown): string | undefined {
 
 parentPort.on('message', async (event) => {
   const input: unknown = event.data;
+
+  try {
+    const providerResponse = parsePluginMediaProviderResponse(input);
+    const pending = pendingPluginMediaProviderRequests.get(providerResponse.requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingPluginMediaProviderRequests.delete(providerResponse.requestId);
+      pending.resolve(providerResponse.result);
+    }
+    return;
+  } catch {
+    // A normal Worker request or control message; validate it below.
+  }
 
   try {
     const control = parseWorkerControlMessage(input);

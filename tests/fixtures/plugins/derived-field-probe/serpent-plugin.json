@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.derived-field-probe",
+  "version": "1.0.0",
+  "name": "Derived Field Probe",
+  "description": "Deterministically derives an uppercase file extension for provider materialization tests.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "library.read",
+    "search.provider"
+  ],
+  "contributes": {
+    "commands": [],
+    "menus": {},
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "jobs": [],
+    "providers": [
+      {
+        "id": "ext-upper",
+        "kind": "derived-field",
+        "fieldId": "extUpper",
+        "fieldType": "string"
+      },
+      {
+        "id": "fixed-token",
+        "kind": "search"
+      }
+    ]
+  }
+}

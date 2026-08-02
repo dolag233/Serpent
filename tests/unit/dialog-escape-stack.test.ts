@@ -20,10 +20,12 @@ const empty: DialogEscapeSnapshot = {
   importLibraryChooserOpen: false,
   appSettingsOpen: false,
   appLogOpen: false,
+  scriptSandboxPreviewOpen: false,
   mediaJobsOpen: false,
   linkedRulesEditorOpen: false,
   convertLinkedOpen: false,
   dialogOpen: false,
+  pluginTrustPromptOpen: false,
   fatalAlertOpen: false,
   aiConnectionFailureOpen: false,
   conflictsImportId: null,
@@ -121,5 +123,31 @@ describe("dialog-escape-stack", () => {
         mediaJobsOpen: true,
       }),
     ).toEqual({ kind: "close-app-log" });
+  });
+
+  it("closes the script sandbox preview above background jobs", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        scriptSandboxPreviewOpen: true,
+        mediaJobsOpen: true,
+      }),
+    ).toEqual({ kind: "close-script-sandbox-preview" });
+  });
+
+  it("dismisses the plugin trust prompt below ordinary dialogs", () => {
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        pluginTrustPromptOpen: true,
+      }),
+    ).toEqual({ kind: "dismiss-plugin-trust-prompt" });
+    expect(
+      resolveDialogEscapeAction({
+        ...empty,
+        dialogOpen: true,
+        pluginTrustPromptOpen: true,
+      }),
+    ).toEqual({ kind: "close-dialog" });
   });
 });

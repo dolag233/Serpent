@@ -963,6 +963,10 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
     })).toMatchObject({ type: 'media.list-jobs.request' });
     expect(parseRendererRequest({
+      type: 'plugin.list-jobs.request',
+      libraryId: 'library-01',
+    })).toMatchObject({ type: 'plugin.list-jobs.request' });
+    expect(parseRendererRequest({
       type: 'media.cancel-jobs.request',
       libraryId: 'library-01',
       jobIds: ['job-01'],
@@ -992,6 +996,61 @@ describe('renderer request protocol', () => {
     expect(() =>
       parseRendererRequest({ type: 'library.close.request', libraryId: '' }),
     ).toThrow();
+  });
+});
+
+describe('plugin job worker protocol', () => {
+  it('requires an instance-scoped owner and preserves rich completion fields', () => {
+    const owner = {
+      ownerPluginId: 'com.example.worker',
+      ownerPackageHash: 'a'.repeat(64),
+      ownerPluginInstanceId: 'instance-01',
+      ownerScope: 'library' as const,
+      ownerLibraryId: 'library-01',
+    };
+    expect(parseWorkerRequest({
+      requestId: 'job-enqueue-01',
+      command: {
+        type: 'plugin.jobs.enqueue',
+        libraryId: 'library-01',
+        ...owner,
+        pluginHandlerId: 'upscale',
+        payload: { assetIds: ['asset-01'] },
+        recoveryStrategy: 'checkpoint',
+      },
+    }).command).toMatchObject(owner);
+
+    expect(parseWorkerRequest({
+      requestId: 'job-complete-01',
+      command: {
+        type: 'plugin.jobs.complete',
+        libraryId: 'library-01',
+        jobId: '00000000-0000-4000-8000-000000000001',
+        ...owner,
+        status: 'succeeded',
+        completed: 2,
+        total: 2,
+        phase: 'writeback',
+        message: 'Done',
+        itemResults: [{ itemId: 'asset-01', status: 'succeeded' }],
+        checkpoint: {
+          version: 'v1',
+          data: { cursor: '2' },
+          savedAt: '2026-08-02T00:00:00.000Z',
+        },
+      },
+    }).command).toMatchObject({ completed: 2, total: 2, phase: 'writeback' });
+
+    expect(() => parseWorkerRequest({
+      requestId: 'job-enqueue-legacy',
+      command: {
+        type: 'plugin.jobs.enqueue',
+        libraryId: 'library-01',
+        ownerPluginId: 'com.example.worker',
+        ownerPackageHash: 'a'.repeat(64),
+        pluginHandlerId: 'upscale',
+      },
+    })).toThrow();
   });
 });
 
@@ -1757,6 +1816,19 @@ describe('background asset change events', () => {
       changedCount: 3,
       missingCount: 1,
     });
+    expect(parseAssetChangeEvent({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      source: 'content-replace',
+    })).toEqual({
+      type: 'asset.changed',
+      libraryId: 'library-01',
+      changedCount: 1,
+      missingCount: 0,
+      source: 'content-replace',
+    });
     expect(() => parseAssetChangeEvent({
       type: 'asset.changed',
       libraryId: 'library-01',
@@ -1764,5 +1836,51 @@ describe('background asset change events', () => {
       missingCount: 0,
       sourcePath: '/private/source.png',
     })).toThrow();
+  });
+});
+
+describe('batch content replacement protocol', () => {
+  it('keeps large content behind opaque staging tokens and accepts one Worker batch', () => {
+    const staged = parseWorkerRequest({
+      requestId: '11111111-1111-4111-8111-111111111111',
+      command: {
+        type: 'asset.content.stage',
+        libraryId: '22222222-2222-4222-8222-222222222222',
+        assetId: '33333333-3333-4333-8333-333333333333',
+        dataBase64: 'AQID',
+        complete: true,
+      },
+    });
+    expect(staged.command).toMatchObject({
+      type: 'asset.content.stage',
+      dataBase64: 'AQID',
+    });
+    expect(() => parseWorkerRequest({
+      requestId: '11111111-1111-4111-8111-111111111111',
+      command: {
+        type: 'asset.content.replace-batch',
+        libraryId: '22222222-2222-4222-8222-222222222222',
+        items: [{
+          assetId: '33333333-3333-4333-8333-333333333333',
+          stagingToken: '44444444-4444-4444-8444-444444444444',
+          expectedRevisionId: '55555555-5555-4555-8555-555555555555',
+        }],
+      },
+    })).not.toThrow();
+    expect(parseWorkerResponse({
+      requestId: '11111111-1111-4111-8111-111111111111',
+      result: {
+        ok: true,
+        type: 'asset.content.batch-replaced',
+        operationId: '66666666-6666-4666-8666-666666666666',
+        items: [{
+          assetId: '33333333-3333-4333-8333-333333333333',
+          revisionId: '77777777-7777-4777-8777-777777777777',
+          byteSize: 3,
+        }],
+      },
+    })).toMatchObject({
+      result: { type: 'asset.content.batch-replaced' },
+    });
   });
 });

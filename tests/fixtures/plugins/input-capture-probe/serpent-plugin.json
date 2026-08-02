@@ -1,0 +1,35 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.input-capture-probe",
+  "version": "1.0.0",
+  "name": "Input Capture Probe",
+  "description": "Fixed probe for application-scoped keyboard and IME input capture.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "storage.read",
+    "storage.write",
+    "input.capture.application"
+  ],
+  "contributes": {
+    "commands": [],
+    "menus": {},
+    "toolbar": [],
+    "inspector": [],
+    "viewerActions": [],
+    "shortcuts": [],
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "jobs": [],
+    "providers": []
+  }
+}

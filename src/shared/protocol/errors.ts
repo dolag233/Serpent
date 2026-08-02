@@ -27,8 +27,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_CORRUPT: 'The library database or migration history is damaged.',
   LIBRARY_VERSION_TOO_NEW: 'This library was created by a newer version of Serpent.',
   LIBRARY_NOT_WRITABLE: 'Serpent cannot write to the selected location.',
-  RESOURCE_NOT_FOUND: 'The requested resource could not be found in this library.',
-  RESOURCE_PATH_CONFLICT: 'The resource path does not identify exactly one item.',
+  LIBRARY_BUSY: 'This library is being updated by another Serpent session. Try again in a moment.',
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
   LIBRARY_NOT_OPEN: 'The library is not currently open.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
@@ -44,6 +43,10 @@ export const PUBLIC_ERROR_MESSAGES = {
   VERSION_CONFLICT: 'The metadata has been modified by another operation. Please refresh and try again.',
   ZIP_TOO_LARGE: 'The library is too large for standard ZIP. Export as a folder instead.',
   TRANSFER_IN_PROGRESS: 'Another library transfer is already using the same library or path.',
+  AUTOMATION_UNDO_GROUP_NOT_FOUND: 'The automation undo group is no longer available.',
+  AUTOMATION_UNDO_NOT_AVAILABLE: 'This automation result cannot be undone.',
+  AUTOMATION_UNDO_STALE: 'The files changed, so this automation result can no longer be undone safely.',
+  PLUGIN_HOOK_BLOCKED: 'A plugin blocked this operation before it could run.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

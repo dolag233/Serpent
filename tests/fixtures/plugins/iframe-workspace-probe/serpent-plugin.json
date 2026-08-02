@@ -1,0 +1,84 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.iframe-workspace-probe",
+  "version": "1.0.0",
+  "name": "Iframe Workspace Probe",
+  "description": "Fixed sandboxed workspace iframe fixture for PLUGIN-016.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "ui.workspace",
+    "ui.inspector",
+    "ui.viewer",
+    "ui.settings",
+    "storage.read",
+    "storage.write"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "probe.write",
+        "title": "Write iframe probe"
+      }
+    ],
+    "menus": {},
+    "toolbar": [],
+    "inspector": [],
+    "viewerActions": [],
+    "views": [
+      {
+        "id": "workspace-probe",
+        "title": "Iframe probe",
+        "location": "workspace",
+        "entry": "entry/ui/index.html"
+      },
+      {
+        "id": "sidebar-probe",
+        "title": "Sidebar iframe probe",
+        "location": "sidebar",
+        "entry": "entry/ui/sidebar.html"
+      },
+      {
+        "id": "inspector-probe",
+        "title": "Inspector iframe probe",
+        "location": "inspector",
+        "entry": "entry/ui/inspector.html"
+      },
+      {
+        "id": "viewer-overlay-probe",
+        "title": "Viewer overlay probe",
+        "location": "viewer",
+        "entry": "entry/ui/viewer-overlay.html"
+      },
+      {
+        "id": "settings-page-probe",
+        "title": "Settings page probe",
+        "location": "settings",
+        "entry": "entry/ui/settings-page.html"
+      }
+    ],
+    "settings": [],
+    "hooks": [],
+    "jobs": [],
+    "providers": [],
+    "themes": [
+      {
+        "id": "probe-accent",
+        "light": {
+          "--accent": "#c45a00"
+        },
+        "dark": {
+          "--accent": "#ff9a3c"
+        }
+      }
+    ]
+  }
+}

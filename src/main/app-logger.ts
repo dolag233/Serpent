@@ -1,14 +1,22 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { parseAppLogEntry, type AppLogEntry, type SerializedLogError } from '../shared/app-log';
+import {
+  matchesAppLogAutomationCorrelation,
+  parseAppLogEntry,
+  type AppLogAutomationCorrelationId,
+  type AppLogEntry,
+  type SerializedLogError,
+} from '../shared/app-log';
 
 const MAX_LOG_READ_BYTES = 2_000_000;
+const sensitiveContextKey = /^(?:api[_-]?key|access[_-]?token|token|secret|password|authorization|proxy-authorization|cookie|set-cookie|env|environment|process[_-]?env)$/iu;
 
 function redactText(value: string): string {
   return value
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED_TOKEN]')
+    .replace(/((?:proxy-)?authorization\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/([?&](?:api[_-]?key|access[_-]?token|token|secret|password)=)[^&\s]+/gi, '$1[REDACTED]')
     .replace(/((?:api[_-]?key|access[_-]?token|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]');
 }
@@ -19,7 +27,10 @@ function redactValue(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) return value.map((item) => redactValue(item, depth + 1));
   if (typeof value === 'object' && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, redactValue(item, depth + 1)]),
+      Object.entries(value).map(([key, item]) => [
+        key,
+        sensitiveContextKey.test(key) ? '[REDACTED]' : redactValue(item, depth + 1),
+      ]),
     );
   }
   return value;
@@ -96,7 +107,13 @@ export class AppLogger {
     }
   }
 
-  readRecent(limit = 500, options: { redactPaths?: boolean } = {}): AppLogEntry[] {
+  readRecent(
+    limit = 500,
+    options: {
+      redactPaths?: boolean;
+      automationCorrelationId?: AppLogAutomationCorrelationId;
+    } = {},
+  ): AppLogEntry[] {
     let content: string;
     try {
       content = readFileSync(this.filePath, 'utf8');
@@ -120,9 +137,13 @@ export class AppLogger {
       })
       .filter((entry): entry is AppLogEntry => entry !== null)
       .slice(-Math.max(1, Math.min(2_000, Math.floor(limit))));
+    const correlationId = options.automationCorrelationId;
+    const matchingEntries = correlationId === undefined
+      ? entries
+      : entries.filter((entry) => matchesAppLogAutomationCorrelation(entry, correlationId));
     return options.redactPaths
-      ? entries.map((entry) => redactPaths(entry) as AppLogEntry)
-      : entries;
+      ? matchingEntries.map((entry) => redactPaths(entry) as AppLogEntry)
+      : matchingEntries;
   }
 
   private write(entry: Record<string, unknown>): void {

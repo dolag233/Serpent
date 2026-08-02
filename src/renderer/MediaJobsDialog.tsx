@@ -1,13 +1,20 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
-import type { MediaJobStatus, AiJobStatus } from "../shared/library-api";
+import {
+  formatPluginJobError,
+  formatPluginJobProgressMessage,
+  formatPluginJobProgressSummary,
+  getPluginJobDisplayProgress,
+} from "./plugin-job-display";
+import type { MediaJobStatus, AiJobStatus, PluginJobStatus } from "../shared/library-api";
 
 export interface MediaJobsDialogProps {
   open: boolean;
   mediaJobs: MediaJobStatus | null;
   mediaJobsLoading: boolean;
   aiJobs: AiJobStatus | null;
+  pluginJobs: PluginJobStatus | null;
   onClose: () => void;
   onControlMediaJobs: (
     action: "pause" | "resume" | "cancel" | "retry",
@@ -28,6 +35,7 @@ export function MediaJobsDialog({
   mediaJobs,
   mediaJobsLoading,
   aiJobs,
+  pluginJobs,
   onClose,
   onControlMediaJobs,
   onControlAiJobs,
@@ -279,6 +287,87 @@ export function MediaJobsDialog({
                       )}
                     </div>
                   ))}
+                </div>
+              </section>
+            )}
+            {pluginJobs && (
+              <section
+                style={{
+                  borderTop: "1px solid var(--border)",
+                  marginTop: 16,
+                  paddingTop: 12,
+                }}
+              >
+                <h3 className="media-jobs-section-title">
+                  {t("dialog.mediaJobs.pluginSection")}
+                </h3>
+                <p className="field-help">
+                  {t("dialog.mediaJobs.summary", {
+                    queued: pluginJobs.queued,
+                    running: pluginJobs.running,
+                    paused: pluginJobs.paused,
+                    failed: pluginJobs.failed,
+                    completed: pluginJobs.succeeded,
+                  })}
+                </p>
+                <div style={{ maxHeight: 180, overflow: "auto" }}>
+                  {pluginJobs.jobs.length ? (
+                    pluginJobs.jobs.map((job) => {
+                      const progressSummary = formatPluginJobProgressSummary(job);
+                      const progressMessage = formatPluginJobProgressMessage(job);
+                      const progress = getPluginJobDisplayProgress(job);
+                      return (
+                        <div
+                          key={job.jobId}
+                          style={{ padding: "5px 2px" }}
+                        >
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 8,
+                              gridTemplateColumns:
+                                "minmax(160px, 1.4fr) minmax(90px, 0.8fr) 90px minmax(140px, 1.4fr)",
+                              fontSize: 11,
+                            }}
+                          >
+                            <span title={job.ownerPluginId}>
+                              {job.ownerPluginId}
+                            </span>
+                            <span title={job.pluginHandlerId}>
+                              {job.pluginHandlerId}
+                            </span>
+                            <strong>{job.status}</strong>
+                            <span title={job.errorCode ?? undefined}>
+                              {formatPluginJobError(job.errorDetail, job.errorCode) ||
+                                progressSummary}
+                            </span>
+                          </div>
+                          {progressMessage && (
+                            <div
+                              className="plugin-job-progress-message"
+                              title={progressMessage}
+                            >
+                              {progressMessage}
+                            </div>
+                          )}
+                          {(job.status === "running" || job.status === "paused") && (
+                            <div className="task-progress-track">
+                              <div
+                                className="task-progress-fill"
+                                style={{
+                                  width: `${progress * 100}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="field-help">
+                      {t("dialog.mediaJobs.pluginEmpty")}
+                    </p>
+                  )}
                 </div>
               </section>
             )}

@@ -20,6 +20,45 @@ export type AppLogEntry = {
   error?: SerializedLogError | { value: string } | { truncated: true };
 };
 
+/**
+ * A short, opaque identifier shown by an Automation Execution.  Treating it
+ * as an identifier instead of a free-text log query keeps the diagnostics
+ * bridge from becoming a way to pass arbitrary log content through IPC.
+ */
+export const appLogAutomationCorrelationIdSchema = z.string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9_-]+$/u);
+
+export type AppLogAutomationCorrelationId = z.infer<typeof appLogAutomationCorrelationIdSchema>;
+
+export type ReadAppLogRequest = {
+  automationCorrelationId?: AppLogAutomationCorrelationId;
+};
+
+const readAppLogRequestSchema = z.strictObject({
+  automationCorrelationId: appLogAutomationCorrelationIdSchema.optional(),
+});
+
+/**
+ * `undefined` is the historical "show recent diagnostics" request.  A
+ * malformed object is rejected by Main without recording its raw content.
+ */
+export function parseReadAppLogRequest(input: unknown): ReadAppLogRequest | null {
+  if (input === undefined) return {};
+  const parsed = readAppLogRequestSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Matches one execution ID or one log ID; the UI intentionally needs only one field. */
+export function matchesAppLogAutomationCorrelation(
+  entry: AppLogEntry,
+  correlationId: AppLogAutomationCorrelationId,
+): boolean {
+  const context = entry.context;
+  return context?.executionId === correlationId || context?.logId === correlationId;
+}
+
 const serializedLogErrorSchema: z.ZodType<SerializedLogError> = z.lazy(() =>
   z.object({
     name: z.string().optional(),
@@ -54,4 +93,4 @@ export function parseAppLogEntry(input: unknown): AppLogEntry | null {
 
 export type ReadAppLogResult =
   | { ok: true; entries: AppLogEntry[]; fileName: "serpent.log" }
-  | { ok: false; code: "unauthorized_sender" | "log_missing" | "read_failure" };
+  | { ok: false; code: "unauthorized_sender" | "malformed_request" | "log_missing" | "read_failure" };

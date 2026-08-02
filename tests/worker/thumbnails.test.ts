@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,7 +72,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(23);
+    expect(db.pragma('user_version', { simple: true })).toBe(27);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');
@@ -161,6 +161,66 @@ describe('detectMediaType', () => {
 });
 
 describe('generateThumbnail (sharp)', () => {
+  it('uses a bounded plugin artifact from the media queue before native decoding', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'PluginMedia', selectedParentPath: root });
+    const sourcePath = path.join(root, 'broken.png');
+    createCorruptImage(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const pluginBytes = VALID_1X1_PNG.toString('base64');
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      pluginMediaProvider: async ({ assetId }) =>
+        service.writePluginMediaArtifact({
+          libraryId: created.libraryId,
+          assetId,
+          mimeType: 'image/png',
+          bytesBase64: pluginBytes,
+          providerId: 'probe-thumbnail',
+        }).artifactId,
+    })).toBe(1);
+
+    const artifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    expect(artifact).toMatchObject({
+      status: 'ready',
+      mimeType: 'image/png',
+      generatorVersion: 'plugin:probe-thumbnail',
+    });
+    expect(readFileSync(service.getArtifactAbsolutePath(created.libraryId, artifact!.artifactId)))
+      .toEqual(VALID_1X1_PNG);
+    service.closeAll();
+  });
+
+  it('serves a plugin image artifact for an otherwise unsupported preview', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'PluginPreview', selectedParentPath: root });
+    const sourcePath = path.join(root, 'sample.probe');
+    writeFileSync(sourcePath, 'plugin-owned-source');
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const artifact = service.writePluginMediaArtifact({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      mimeType: 'image/png',
+      bytesBase64: VALID_1X1_PNG.toString('base64'),
+      providerId: 'probe-preview',
+    });
+
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      artifactId: artifact.artifactId,
+      mimeType: 'image/png',
+    });
+    service.closeAll();
+  });
+
   it('generates a WebP thumbnail for a PNG asset', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -591,7 +651,7 @@ describe('enqueueThumbnailJobs', () => {
 
     const assetIds: string[] = [];
     for (let index = 0; index < 6; index += 1) {
-      const source = path.join(root, `image-${index}.png`);
+      const source = path.join(root, `image-${String.fromCharCode(97 + index)}.png`);
       createTestImage(source);
       importNoConflict(service, created.libraryId, source);
     }

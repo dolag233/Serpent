@@ -1,0 +1,45 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.palette-tools",
+  "version": "1.2.0",
+  "name": "Palette Tools",
+  "description": "Extract and organize asset palettes.",
+  "author": "Example",
+  "license": "MIT",
+  "repository": "https://github.com/example/serpent-palette-tools",
+  "engines": {
+    "serpent": ">=0.2.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "dist/main.js"
+  },
+  "ui": {
+    "entry": "dist/ui/index.html"
+  },
+  "permissions": [
+    "asset.read",
+    "metadata.write",
+    "ui.workspace",
+    "input.shortcut"
+  ],
+  "contributes": {
+    "commands": [
+      { "id": "extract-palette", "title": "Extract palette" }
+    ],
+    "menus": {
+      "asset": [
+        { "command": "extract-palette", "group": "analysis" }
+      ]
+    },
+    "views": [
+      { "id": "palette-board", "title": "Palette board", "location": "workspace" }
+    ],
+    "settings": [
+      { "id": "palette-size", "title": "Palette size", "type": "number" }
+    ],
+    "hooks": [],
+    "providers": []
+  }
+}

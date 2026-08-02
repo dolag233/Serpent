@@ -32,7 +32,6 @@ function makeActions(calls: RecordedCall[]): ToolbarCommandActions {
     refresh: record('refresh'),
     setViewMode: record('setViewMode'),
     toggleField: record('toggleField'),
-    openBackgroundJobs: record('openBackgroundJobs'),
     openAiSettings: record('openAiSettings'),
     openAppSettings: record('openAppSettings'),
   };
@@ -83,13 +82,12 @@ function findItem(
 }
 
 describe('工具栏命令可见性', () => {
-  it('资源库打开时：常驻画布命令可见，后台任务仍在注册表', () => {
+  it('资源库打开时：常驻画布命令可见', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'canvas.view.grid',
       'canvas.view.masonry',
       'canvas.refresh',
-      'workspace.background-jobs',
       'workspace.ai-settings',
       'workspace.app-settings',
       'canvas.field.name',
@@ -98,7 +96,7 @@ describe('工具栏命令可见性', () => {
     ]);
   });
 
-  it('无资源库：后台任务与 AI 设置隐藏，通用设置（app-settings）仍可见', () => {
+  it('无资源库：AI 设置隐藏，通用设置（app-settings）仍可见', () => {
     const { ctx } = makeCtx({ libraryOpen: false });
     expect(resolveIds(ctx)).toEqual([
       'canvas.view.grid',
@@ -111,11 +109,9 @@ describe('工具栏命令可见性', () => {
     ]);
   });
 
-  it('溢出 id 列表为空（AI 设置已迁入设置中心）', () => {
+  it('溢出 id 列表为空（工具入口由更多工具菜单承载）', () => {
     expect([...TOOLBAR_OVERFLOW_COMMAND_IDS]).toEqual([]);
-    expect([...TOOLBAR_DIRECT_UTILITY_COMMAND_IDS]).toEqual([
-      'workspace.background-jobs',
-    ]);
+    expect([...TOOLBAR_DIRECT_UTILITY_COMMAND_IDS]).toEqual([]);
     for (const id of TOOLBAR_OVERFLOW_COMMAND_IDS) {
       expect(registry.get(id)).toBeDefined();
     }
@@ -209,12 +205,10 @@ describe('run 委托 actions', () => {
     ]);
   });
 
-  it('后台任务命令仍可通过注册表委托', () => {
+  it('设置命令仍可通过注册表委托', () => {
     const { ctx, calls } = makeCtx();
-    registry.get('workspace.background-jobs')!.run(ctx);
     registry.get('workspace.ai-settings')!.run(ctx);
     expect(calls.map((c) => c.action)).toEqual([
-      'openBackgroundJobs',
       'openAiSettings',
     ]);
   });
@@ -228,7 +222,6 @@ describe('run 委托 actions', () => {
   it('runToolbarCommand 尊重 visible/disabled', () => {
     const { ctx, calls } = makeCtx({ libraryOpen: false, busy: true });
     runToolbarCommand(ctx, 'canvas.refresh');
-    runToolbarCommand(ctx, 'workspace.background-jobs');
     runToolbarCommand(ctx, 'canvas.view.grid');
     expect(calls).toEqual([{ action: 'setViewMode', args: ['grid'] }]);
   });

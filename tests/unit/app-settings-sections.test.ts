@@ -34,9 +34,11 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "appearance",
       "browse",
       "ai",
+      "plugins",
       "safety",
     ]);
     expect(isAppSettingsCategoryId("ai")).toBe(true);
+    expect(isAppSettingsCategoryId("plugins")).toBe(true);
     expect(isAppSettingsCategoryId("internal-telemetry")).toBe(false);
   });
 

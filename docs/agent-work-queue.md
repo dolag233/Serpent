@@ -9,9 +9,10 @@
 |------|-------------|--------|------------|
 | **执行队列** | `bd`（`.beads/issues.jsonl`） | 无阻塞、可认领的编码/修复工单 | **开工前必查** |
 | **需求来源** | `docs/implementation/mvp-ui-ux-requirements-backlog.md` | 用户原话、REQ ID、产品方向 | 理解背景；无工单则开单 |
-| **人类验收** | `docs/qa/human-acceptance-checklist.md` | 你可独立操作的功能步骤与通过/不通过 | **不**当执行队列；只从「人类验收不通过」挖 bug |
+| **功能验收清单** | `docs/qa/human-acceptance-checklist.md` | UI：人类操作通过/不通过；**PLUGIN/AUT：自动化验收** | UI 不从「待人类验收」当执行队列；PLUGIN/AUT 按测试档位更新状态；「人类验收不通过」仍是缺陷池 |
 
-**人类验收「待人类验收」条目多（~190）是正常现象**：表示功能已值得你来点通过，不等于还有 190 个未实现功能。agent **不得**为清队列而删改这些条目。
+**UI「待人类验收」条目多是正常现象**：值得人点，不等于未实现。  
+**插件开发**：见 [`docs/agent-plugin-playbook.md`](agent-plugin-playbook.md)。
 
 ---
 
@@ -27,7 +28,7 @@ bd list --status=in_progress --json
 1. 读 `docs/project-status.md` 的 **「当前前沿」**（发布阻断 vs MVP 产品化）。
 2. 从 `bd ready` 按 **P0 → P1 → P2** 选一条；立刻 `bd update <id> --claim`。
 3. 用 `bd show <id>` 看描述；用 `rg Serpent-<id>` / `rg REQ-` 在 `docs/` 补上下文。
-4. 实现完成后：`bd close <id> --reason "…"`，若产生可验收增量则更新 `human-acceptance-checklist.md`（状态仍只能是「待人类验收」）。
+4. 实现完成后：`bd close <id> --reason "…"`（若仍有 packaged/Windows 等开放条件则保持 open 并备注）。UI 增量更新清单为「待人类验收」；`PLUGIN-*`/`AUT-*` 按自动化档位更新为「自动化验收通过」等（见清单规则与 `agent-plugin-playbook.md`）。
 
 ---
 

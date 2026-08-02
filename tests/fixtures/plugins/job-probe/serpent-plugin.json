@@ -1,0 +1,43 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.job-probe",
+  "version": "1.0.0",
+  "name": "Job Probe",
+  "description": "Fixed test plugin that registers a tick job handler and enqueues once on activate.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "library.read",
+    "job.manage",
+    "storage.read",
+    "storage.write"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "start",
+        "title": "Start probe"
+      }
+    ],
+    "menus": {},
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "jobs": [
+      {
+        "id": "tick",
+        "title": "Tick probe",
+        "recovery": "idempotent"
+      }
+    ],
+    "providers": []
+  }
+}

@@ -47,3 +47,21 @@ _Avoid_: Filter preset, smart collection
 **Highlighted match**:
 The exact text span matched by a plain-text search term within a result's displayed searchable value. Result cards render matching filename spans and contextual snippets with a distinct but accessible emphasis without changing the underlying value.
 _Avoid_: Selected text, tag color
+
+## Plugin runtime and interaction
+
+**Plugin instance**:
+A running unit of one resolved plugin version. Its runtime scope is either global to the application session or isolated to one open library, independently of where its package was installed.
+_Avoid_: Plugin installation, always library-bound activation
+
+**Contribution context**:
+The bounded, synchronously readable UI state published by the Host for conditions such as visibility, enablement, and checked state. It is not an asset query or mutation API.
+_Avoid_: Domain API, invocation target
+
+**Invocation context**:
+The frozen window, library, surface, and target-selection snapshot captured when a command is invoked. The command uses it to identify the operation target, then uses the Domain API for details and actions.
+_Avoid_: Live selection, contribution context
+
+**Context key**:
+A canonical value available to contribution condition expressions. Expensive plugin-derived values are resolved asynchronously and published under the plugin namespace before a UI surface opens.
+_Avoid_: Synchronous plugin callback, arbitrary expression code

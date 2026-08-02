@@ -8,6 +8,7 @@ import { mediaBinaryWorkerEnv } from './media-binary-env';
 import {
   parseWorkerControlMessage,
   parseAssetChangeEvent,
+  parseLibraryChangedEvent,
   parseWorkerReadyMessage,
   parseWorkerResponse,
   parseProgressEvent,
@@ -17,12 +18,18 @@ import {
   parseAiContentClearedEvent,
   type WorkerResult,
   type AssetChangeEvent,
+  type LibraryChangedEvent,
   type ProgressEvent,
   type ThumbnailEvent,
   type AiProgressEvent,
   type AiAnalysisCompletedEvent,
   type AiContentClearedEvent,
 } from '../shared/protocol/responses';
+import {
+  parsePluginMediaProviderRequest,
+  type PluginMediaProviderRequest,
+  type PluginMediaProviderResult,
+} from '../shared/plugin-media-protocol';
 
 interface PendingRequest {
   resolve(result: WorkerResult): void;
@@ -69,10 +76,23 @@ export function requestTimeoutForCommand(
   if (
     commandType.startsWith('asset.import.')
     || commandType === 'asset.refresh'
+    || commandType === 'library.create'
+    || commandType === 'automation.file-import-plan'
+    || commandType === 'automation.file-operation-plan'
     || commandType === 'extension.save-from-url'
     || commandType === 'extension.save-from-file'
   ) return FILE_OPERATION_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
+}
+
+/** True when a Worker message looks like a push event rather than a request/response. */
+export function isWorkerEventShapedMessage(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) return false;
+  const record = message as Record<string, unknown>;
+  if (typeof record.type !== 'string' || record.type.length === 0) return false;
+  if ('requestId' in record) return false;
+  if ('result' in record) return false;
+  return true;
 }
 
 export class LibraryWorkerClient {
@@ -84,11 +104,14 @@ export class LibraryWorkerClient {
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
+  #libraryChangedListeners = new Set<(event: LibraryChangedEvent) => void>();
   #progressListeners = new Set<(event: ProgressEvent) => void>();
   #thumbnailListeners = new Set<(event: ThumbnailEvent) => void>();
   #aiProgressListeners = new Set<(event: AiProgressEvent) => void>();
   #aiCompletedListeners = new Set<(event: AiAnalysisCompletedEvent) => void>();
   #aiClearedListeners = new Set<(event: AiContentClearedEvent) => void>();
+  #pluginMediaProviderListener:
+    ((request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>) | undefined;
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -155,7 +178,10 @@ export class LibraryWorkerClient {
 
   }
 
-  request(command: WorkerCommand): Promise<WorkerResult> {
+  request(
+    command: WorkerCommand,
+    options: { dispatch?: 'automation-readonly' } = {},
+  ): Promise<WorkerResult> {
     const child = this.#child;
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
 
@@ -174,13 +200,22 @@ export class LibraryWorkerClient {
       }, timeout);
 
       this.#pending.set(requestId, { resolve, reject, timer });
-      child.postMessage({ requestId, command });
+      child.postMessage({
+        requestId,
+        command,
+        ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
+      });
     });
   }
 
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void {
     this.#assetChangeListeners.add(listener);
     return () => this.#assetChangeListeners.delete(listener);
+  }
+
+  onLibraryChanged(listener: (event: LibraryChangedEvent) => void): () => void {
+    this.#libraryChangedListeners.add(listener);
+    return () => this.#libraryChangedListeners.delete(listener);
   }
 
   onProgress(listener: (event: ProgressEvent) => void): () => void {
@@ -208,6 +243,17 @@ export class LibraryWorkerClient {
     return () => this.#aiClearedListeners.delete(listener);
   }
 
+  onPluginMediaProviderRequest(
+    listener: (request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>,
+  ): () => void {
+    this.#pluginMediaProviderListener = listener;
+    return () => {
+      if (this.#pluginMediaProviderListener === listener) {
+        this.#pluginMediaProviderListener = undefined;
+      }
+    };
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -231,6 +277,36 @@ export class LibraryWorkerClient {
   }
 
   readonly #onMessage = (message: unknown) => {
+    try {
+      const providerRequest = parsePluginMediaProviderRequest(message);
+      const child = this.#child;
+      if (!child) return;
+      void (this.#pluginMediaProviderListener
+        ? this.#pluginMediaProviderListener(providerRequest)
+        : Promise.resolve({
+          status: 'native-fallback' as const,
+          assetId: providerRequest.assetId,
+          kind: providerRequest.kind,
+          errorCode: 'PLUGIN_PROVIDER_UNAVAILABLE',
+        }))
+        .catch(() => ({
+          status: 'native-fallback' as const,
+          assetId: providerRequest.assetId,
+          kind: providerRequest.kind,
+          errorCode: 'PLUGIN_PROVIDER_FAILED',
+        }))
+        .then((result) => {
+          child.postMessage({
+            type: 'plugin-media-provider.response',
+            requestId: providerRequest.requestId,
+            result,
+          });
+        });
+      return;
+    } catch {
+      // Not a plugin media provider request; continue with normal Worker events.
+    }
+
     // Progress events take priority over asset-change events.
     try {
       const progress = parseProgressEvent(message);
@@ -273,6 +349,14 @@ export class LibraryWorkerClient {
     }
 
     try {
+      const libraryChanged = parseLibraryChangedEvent(message);
+      for (const listener of this.#libraryChangedListeners) listener(libraryChanged);
+      return;
+    } catch {
+      // Not a library change event; continue parsing worker messages.
+    }
+
+    try {
       const event = parseAssetChangeEvent(message);
       for (const listener of this.#assetChangeListeners) listener(event);
       return;
@@ -294,6 +378,17 @@ export class LibraryWorkerClient {
     try {
       response = parseWorkerResponse(message);
     } catch (error) {
+      // Event-shaped payloads that fail their dedicated parsers (schema drift,
+      // new source enums, etc.) must not take down the Library Worker. Only
+      // kill the process when the message cannot be classified as an event.
+      if (isWorkerEventShapedMessage(message)) {
+        this.logger.error('worker.protocol.ignored-event', error, {
+          type: typeof message === 'object' && message !== null && 'type' in message
+            ? String((message as { type: unknown }).type)
+            : undefined,
+        });
+        return;
+      }
       this.#protocolFailure(new Error('Library Worker sent a malformed response.', { cause: error }));
       return;
     }
