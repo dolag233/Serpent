@@ -6,6 +6,7 @@ import {
 } from 'react';
 
 import type {
+  PluginManagerPluginSettingDiagnostic,
   PluginManagerPluginSettingSection,
   SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
@@ -19,6 +20,18 @@ type PluginHostSettingsFieldsProps = {
   readonly disabled?: boolean;
 };
 
+export function resolvePluginSettingSelectValue(
+  section: Pick<PluginManagerPluginSettingSection, 'value' | 'default' | 'options'>,
+): string {
+  const options = section.options ?? [];
+  const isOptionValue = (value: unknown): value is string => (
+    typeof value === 'string' && options.some((option) => option.value === value)
+  );
+  if (isOptionValue(section.value)) return section.value;
+  if (isOptionValue(section.default)) return section.default;
+  return options[0]?.value ?? '';
+}
+
 export function PluginHostSettingsFields({
   api,
   pluginId,
@@ -28,6 +41,7 @@ export function PluginHostSettingsFields({
 }: PluginHostSettingsFieldsProps): ReactNode {
   const t = useT();
   const [sections, setSections] = useState<PluginManagerPluginSettingSection[]>([]);
+  const [diagnostics, setDiagnostics] = useState<PluginManagerPluginSettingDiagnostic[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -36,6 +50,7 @@ export function PluginHostSettingsFields({
     if (api === undefined) return;
     if (scope === 'library' && libraryId === undefined) {
       setSections([]);
+      setDiagnostics([]);
       return;
     }
     setLoading(true);
@@ -49,13 +64,16 @@ export function PluginHostSettingsFields({
       if (!response.ok || !('sections' in response)) {
         setError(t('settings.pluginOperationFailed', { code: response.ok ? 'unexpected-response' : response.code }));
         setSections([]);
+        setDiagnostics([]);
         return;
       }
       setSections(response.sections);
+      setDiagnostics(response.diagnostics);
       setError(undefined);
     } catch {
       setError(t('settings.pluginOperationFailed', { code: 'bridge-unavailable' }));
       setSections([]);
+      setDiagnostics([]);
     } finally {
       setLoading(false);
     }
@@ -89,6 +107,7 @@ export function PluginHostSettingsFields({
       setSections((current) => current.map((item) => (
         item.id === section.id ? { ...item, value } : item
       )));
+      setDiagnostics((current) => current.filter((item) => item.settingId !== section.id));
       setError(undefined);
     } catch {
       setError(t('settings.pluginOperationFailed', { code: 'bridge-unavailable' }));
@@ -117,6 +136,12 @@ export function PluginHostSettingsFields({
             {section.description}
           </span>
         );
+        const diagnostic = diagnostics.find((item) => item.settingId === section.id);
+        const diagnosticNode = diagnostic === undefined ? null : (
+          <span className="plugin-settings-field-diagnostic" role="status">
+            {diagnostic.message}
+          </span>
+        );
         if (section.type === 'boolean') {
           const checked = section.value === true;
           return (
@@ -128,6 +153,7 @@ export function PluginHostSettingsFields({
             >
               <span className="app-settings-row-copy">
                 <strong>{section.title}</strong>
+                {diagnosticNode}
               </span>
               <span className="app-settings-toggle-control">
                 <input
@@ -146,10 +172,7 @@ export function PluginHostSettingsFields({
         }
         if (section.type === 'select') {
           const options = section.options ?? [];
-          const selectValue = typeof section.value === 'string'
-            && options.some((option) => option.value === section.value)
-            ? section.value
-            : (options[0]?.value ?? '');
+          const selectValue = resolvePluginSettingSelectValue(section);
           return (
             <label
               className="plugin-host-settings-field"
@@ -158,6 +181,7 @@ export function PluginHostSettingsFields({
               title={section.description}
             >
               <span className="micro-label">{section.title}</span>
+              {diagnosticNode}
               <select
                 aria-label={section.title}
                 aria-describedby={descriptionId}
@@ -197,9 +221,12 @@ export function PluginHostSettingsFields({
                   if (!Number.isFinite(parsed)) return;
                   void save(section, parsed);
                 }}
+                max={section.maximum}
+                min={section.minimum}
                 type="number"
                 value={numericValue}
               />
+              {diagnosticNode}
               {help}
             </label>
           );
@@ -213,6 +240,7 @@ export function PluginHostSettingsFields({
             title={section.description}
           >
             <span className="micro-label">{section.title}</span>
+            {diagnosticNode}
             <input
               aria-describedby={descriptionId}
               className="text-field"

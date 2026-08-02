@@ -3,6 +3,52 @@ import { describe, expect, it, vi } from 'vitest';
 import { PluginActivationCoordinator } from '../../src/main/plugin-activation-coordinator';
 
 describe('PluginActivationCoordinator', () => {
+  it('stages a library instance before setup can call back into Host state', async () => {
+    const coordinatorRef: { current?: PluginActivationCoordinator } = {};
+    const activate = vi.fn(async () => {
+      expect(coordinatorRef.current?.listActiveInstances('library-1')).toEqual([
+        expect.objectContaining({ pluginId: 'com.example.setup-callback' }),
+      ]);
+    });
+    const pluginPackage = {
+      scope: 'library' as const,
+      lock: { pluginId: 'com.example.setup-callback', version: '1.0.0', packageHash: 'a'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted' as const, entry: 'dist/main.js' },
+        permissions: ['library.read' as const],
+      },
+      packageDirectory: '/plugins/setup-callback',
+    };
+
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'library'
+          ? [{ status: 'valid', package: pluginPackage }]
+          : [],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-library',
+          package: pluginPackage,
+        }),
+      } as never,
+      supervisor: {
+        activate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      readEntryFile: async () => 'async function setup() {}',
+    });
+    coordinatorRef.current = coordinator;
+
+    await coordinator.onLibraryOpened({ libraryId: 'library-1', libraryDirectory: '/libraries/one' });
+
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(coordinator.listActiveInstances('library-1')).toEqual([
+      expect.objectContaining({ pluginId: 'com.example.setup-callback' }),
+    ]);
+  });
+
   it('activates only resolved standard plugins and skips awaiting-trust', async () => {
     const activate = vi.fn(async () => undefined);
     const deactivate = vi.fn();
@@ -680,6 +726,7 @@ describe('PluginActivationCoordinator', () => {
     const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
     const contributions = createContributionRegistry();
     const activate = vi.fn(async () => undefined);
+    const pausePluginJobs = vi.fn(async () => undefined);
     const globalPackage = {
       lock: { pluginId: 'com.example.crash-global', version: '1.0.0', packageHash: 'c'.repeat(64) },
       manifest: {
@@ -707,6 +754,10 @@ describe('PluginActivationCoordinator', () => {
       packageManager: {
         getSafeMode: async () => false,
         listGlobalActivationCandidates: async () => [globalPackage],
+        listInstalled: async ({ scope }: { scope: string }) => scope === 'user'
+          ? [{ status: 'valid', package: globalPackage }]
+          : [],
+        resolve: async () => ({ status: 'resolved', selection: 'use-global', package: globalPackage }),
       } as never,
       supervisor: {
         activate,
@@ -715,19 +766,32 @@ describe('PluginActivationCoordinator', () => {
       } as never,
       contributions,
       readEntryFile: async () => 'async function setup() {}',
+      pausePluginJobs,
     });
 
     await coordinator.refreshGlobal();
     const firstActivation = activate.mock.calls[0] as unknown as [{ instanceId: string }] | undefined;
     const instanceId = firstActivation?.[0].instanceId;
     expect(instanceId).toEqual(expect.any(String));
+    await coordinator.onLibraryOpened({ libraryId: 'library-1', libraryDirectory: '/libraries/one' });
+    await coordinator.onLibraryOpened({ libraryId: 'library-2', libraryDirectory: '/libraries/two' });
     expect(coordinator.listActiveInstances('library-1')).toHaveLength(1);
     expect(contributions.list()).toHaveLength(1);
 
     coordinator.onInstanceCrashed({ instanceId: instanceId!, failureCode: 'RUNTIME_PROCESS_EXITED' });
+    await Promise.resolve();
 
     expect(coordinator.listActiveInstances('library-1')).toEqual([]);
     expect(contributions.list()).toEqual([]);
+    expect(pausePluginJobs).toHaveBeenCalledTimes(2);
+    expect(pausePluginJobs).toHaveBeenCalledWith(expect.objectContaining({
+      libraryId: 'library-1',
+      owners: [{ pluginId: 'com.example.crash-global', packageHash: 'c'.repeat(64) }],
+    }));
+    expect(pausePluginJobs).toHaveBeenCalledWith(expect.objectContaining({
+      libraryId: 'library-2',
+      owners: [{ pluginId: 'com.example.crash-global', packageHash: 'c'.repeat(64) }],
+    }));
   });
 
   it('freezes the actual target library on a global command invocation', async () => {

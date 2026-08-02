@@ -46,9 +46,9 @@ test('activates the fixed standard Host probe and writes library storage', async
     await expect(installDialog).toBeVisible();
     await installDialog.getByLabel('安装范围').selectOption('library');
     await installDialog.getByRole('button', { name: '安装本地插件' }).click();
-    await expect(dialog.getByText('Standard Host Probe', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByText(/Standard Host Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+    await expect(dialog.getByRole('checkbox', { name: '启用插件' })).toBeChecked();
     await dialog.getByRole('button', { name: '关闭' }).click();
 
     const libraryDirectory = path.join(temporaryRoot, libraryName);

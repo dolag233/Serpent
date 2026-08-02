@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   TagSummary,
   CollectionSummary,
@@ -42,11 +42,13 @@ import {
   formatMultiAssetMenuSkipFooter,
 } from "./menu-skip-report";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import {
   runPluginMenuCommand,
   usePluginMenuContributions,
   type PluginMenuDescriptor,
 } from "./plugin-menu-contributions";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
@@ -105,6 +107,7 @@ function PluginMenuItems(props: {
           icon={<Icon name="box" size={14} />}
           key={item.id}
           label={item.label}
+          disabled={item.disabled}
         >
           {item.children.map(renderItem)}
         </ContextMenuSubmenu>
@@ -116,6 +119,9 @@ function PluginMenuItems(props: {
         key={item.id}
         icon={<Icon name="box" size={14} />}
         label={item.label}
+        shortcut={item.shortcut}
+        disabled={item.disabled}
+        checked={item.checked}
         onAction={() => props.onRun(item)}
       />
     );
@@ -263,6 +269,8 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
 
 interface AssetContextMenuProps {
   libraryId?: string;
+  pluginBrowseScope?: Partial<PluginContributionContext["browse"]>;
+  pluginViewerState?: Partial<PluginContributionContext["viewer"]>;
   pluginApi?: SerpentPluginManagerApi;
   pluginContributionRefreshKey?: string | null;
   tags: TagSummary[];
@@ -423,6 +431,24 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   const activeDescriptorKey = activeContextMenu
     ? descriptorKey(activeContextMenu.descriptor)
     : null;
+  const pluginContributionContext = useMemo(() => {
+    if (activeContextMenu === null) return undefined;
+    return createPluginMenuContributionContext({
+      descriptor: activeContextMenu.descriptor,
+      assets: props.assets,
+      libraryId: props.libraryId,
+      locale,
+      browse: props.pluginBrowseScope,
+      viewer: props.pluginViewerState,
+    });
+  }, [
+    activeContextMenu,
+    locale,
+    props.assets,
+    props.libraryId,
+    props.pluginBrowseScope,
+    props.pluginViewerState,
+  ]);
   const [pickerMenuKey, setPickerMenuKey] = useState(activeDescriptorKey);
   if (pickerMenuKey !== activeDescriptorKey) {
     setPickerMenuKey(activeDescriptorKey);
@@ -460,8 +486,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     props.pluginApi,
     props.libraryId,
     "menus.asset",
-    activeContextMenu?.descriptor.type === "asset",
+    activeContextMenu?.descriptor.type === "asset"
+      || activeContextMenu?.descriptor.type === "multi-asset",
     `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
   );
   const pluginFolderMenuItems = usePluginMenuContributions(
     props.pluginApi,
@@ -469,6 +497,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     "menus.folder",
     activeContextMenu?.descriptor.type === "folder",
     `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
   );
   const pluginCollectionMenuItems = usePluginMenuContributions(
     props.pluginApi,
@@ -476,6 +505,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     "menus.collection",
     activeContextMenu?.descriptor.type === "organization",
     `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
   );
   const pluginWorkspaceMenuItems = usePluginMenuContributions(
     props.pluginApi,
@@ -483,6 +513,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     "menus.workspace",
     activeContextMenu?.descriptor.type === "workspace",
     `${props.pluginContributionRefreshKey ?? ""}:${activeDescriptorKey}`,
+    pluginContributionContext,
   );
 
   const runPluginCommand = (
@@ -1240,6 +1271,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   />
                 )}
               </ContextMenuSection>
+            )}
+            {pluginItemsOutsideHostGroups(pluginAssetMenuItems).length > 0 && (
+              <PluginMenuCommandsSection
+                items={pluginItemsOutsideHostGroups(pluginAssetMenuItems)}
+                label={t("contextMenu.pluginCommands")}
+                onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
+              />
             )}
             {targetAssetIds.length > 0 && (
             <ContextMenuSection label={t("command.group.organize")}>

@@ -46,11 +46,14 @@ test('activates the fixed trusted Host probe and writes library storage', async 
     await expect(installDialog).toBeVisible();
     await installDialog.getByLabel('安装范围').selectOption('library');
     await installDialog.getByRole('button', { name: '安装本地插件' }).click();
-    await expect(dialog.getByText('Trusted Host Probe', { exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(dialog.getByText(/^无限制模式 ·/)).toBeVisible();
-    await expect(dialog.getByText(/信任后，此无限制模式插件将获得本机完整系统能力/)).toBeVisible();
+    await expect(dialog.getByText(/Trusted Host Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByText(/插件处于非受限模式，拥有完全的Node\.js能力/)).toBeVisible();
+    await expect(dialog.getByText(/信任后，此非受限模式插件将获得本机完整系统能力/)).toBeVisible();
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
-    await expect(dialog.getByText('已启用', { exact: true })).toBeVisible();
+    const enableToggle = dialog.getByRole('checkbox', { name: '启用插件' });
+    await expect(enableToggle).toBeEnabled();
+    await dialog.locator('label.plugin-settings-enable-toggle').click({ force: true });
+    await expect(enableToggle).toBeChecked();
     await dialog.getByRole('button', { name: '关闭' }).click();
 
     const libraryDirectory = path.join(temporaryRoot, libraryName);

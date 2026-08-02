@@ -82,6 +82,7 @@ type ActiveInstance = {
   pluginId: string;
   packageHash: string;
   abortController: AbortController;
+  lifecycleAbortController: AbortController;
   pendingHostRequests: Map<string, PendingHostRequest>;
   deactivate: {
     reason: PluginRuntimeDeactivateReason;
@@ -89,6 +90,7 @@ type ActiveInstance = {
   } | undefined;
   deactivatePromise: Promise<void>;
   resolveDeactivatePark(): void;
+  deactivationTimer: ReturnType<typeof setTimeout> | undefined;
   activated: boolean;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
   hookQueue: ReturnType<typeof createPluginHookInvokeQueue>;
@@ -97,6 +99,7 @@ type ActiveInstance = {
   searchQueue: ReturnType<typeof createPluginSearchEventQueue>;
   commandQueue: ReturnType<typeof createPluginCommandInvokeQueue>;
   inputCaptureQueues: Map<string, InputCaptureQueue>;
+  jobSignals: Map<string, 'pause' | 'cancel'>;
   activeCauseChain: string[];
 };
 
@@ -126,9 +129,20 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
 /** Plugin sessions are long-lived; dispose follows the lifetime bound, not wall clock. */
 const PLUGIN_SESSION_WALL_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1_000;
 
+function normalizePluginConsoleOutput(output: string): string {
+  try {
+    const parsed: unknown = JSON.parse(output);
+    return typeof parsed === 'string' ? parsed : output;
+  } catch {
+    return output;
+  }
+}
+
 export function createPluginStandardHostHandler(options: {
   postMessage(message: PluginRuntimeChildMessage): void;
   heartbeatIntervalMs?: number;
+  /** Grace period for an activated plugin to finish dispose(reason). */
+  deactivateGraceMs?: number;
 }): PluginStandardHostHandler {
   const instances = new Map<string, ActiveInstance>();
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
@@ -142,6 +156,14 @@ export function createPluginStandardHostHandler(options: {
     const current = instances.get(instanceId);
     if (current === undefined) return;
     instances.delete(instanceId);
+    // Deactivation first closes guest-facing queues and rejects pending Host
+    // calls. Abort the sandbox only after the guest has returned from its
+    // lifecycle (including dispose(reason)); aborting in deactivate() can
+    // interrupt QuickJS while it is still transitioning through park.
+    current.abortController.abort();
+    current.lifecycleAbortController.abort();
+    if (current.deactivationTimer !== undefined) clearTimeout(current.deactivationTimer);
+    current.deactivationTimer = undefined;
     current.eventQueue.close();
     current.hookQueue.close();
     current.jobQueue.close();
@@ -151,6 +173,7 @@ export function createPluginStandardHostHandler(options: {
     current.commandQueue.close();
     for (const queue of current.inputCaptureQueues.values()) queue.end();
     current.inputCaptureQueues.clear();
+    current.jobSignals.clear();
     current.commandQueue.close();
     for (const pending of current.pendingHostRequests.values()) {
       pending.reject(new Error('The plugin instance ended.'));
@@ -177,16 +200,19 @@ export function createPluginStandardHostHandler(options: {
       resolveDeactivatePark = resolve;
     });
     const abortController = new AbortController();
+    const lifecycleAbortController = new AbortController();
     const pendingHostRequests = new Map<string, PendingHostRequest>();
     const active: ActiveInstance = {
       instanceId: request.instanceId,
       pluginId: request.pluginId,
       packageHash: request.packageHash,
       abortController,
+      lifecycleAbortController,
       pendingHostRequests,
       deactivate: undefined,
       deactivatePromise,
       resolveDeactivatePark,
+      deactivationTimer: undefined,
       activated: false,
       eventQueue: createPluginDomainEventQueue(),
       hookQueue: createPluginHookInvokeQueue(),
@@ -195,6 +221,7 @@ export function createPluginStandardHostHandler(options: {
       searchQueue: createPluginSearchEventQueue(),
       commandQueue: createPluginCommandInvokeQueue(),
       inputCaptureQueues: new Map(),
+      jobSignals: new Map(),
       activeCauseChain: [],
     };
     instances.set(request.instanceId, active);
@@ -213,12 +240,6 @@ export function createPluginStandardHostHandler(options: {
           reject(new Error('The plugin instance was deactivated.'));
           return;
         }
-        if (commandOptions?.targetLibraryId !== undefined) {
-          reject(new Error(
-            'Targeted plugin commands require the target-library host protocol extension.',
-          ));
-          return;
-        }
         const requestId = globalThis.crypto.randomUUID();
         current.pendingHostRequests.set(requestId, { resolve, reject });
         const causeChain = commandOptions?.causeChain ?? current.activeCauseChain;
@@ -228,6 +249,9 @@ export function createPluginStandardHostHandler(options: {
           requestId,
           commandId,
           input,
+          ...(commandOptions?.targetLibraryId === undefined
+            ? {}
+            : { targetLibraryId: commandOptions.targetLibraryId }),
           ...(causeChain.length > 0 ? { causeChain: [...causeChain] } : {}),
         });
       })
@@ -278,6 +302,14 @@ export function createPluginStandardHostHandler(options: {
         ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
         ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
         ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+        ...(complete.completed === undefined ? {} : { completed: complete.completed }),
+        ...(complete.total === undefined ? {} : { total: complete.total }),
+        ...(complete.phase === undefined ? {} : { phase: complete.phase }),
+        ...(complete.message === undefined ? {} : { message: complete.message }),
+        ...(complete.itemResults === undefined ? {} : { itemResults: complete.itemResults }),
+        ...(complete.failedAssetIds === undefined ? {} : { failedAssetIds: complete.failedAssetIds }),
+        ...(complete.retryInput === undefined ? {} : { retryInput: complete.retryInput }),
+        ...(complete.checkpoint === undefined ? {} : { checkpoint: complete.checkpoint }),
       });
       return Promise.resolve();
     };
@@ -340,6 +372,7 @@ export function createPluginStandardHostHandler(options: {
       handlerId: string;
       payload: Record<string, unknown>;
       recoveryStrategy?: 'idempotent' | 'checkpoint';
+      targetLibraryId?: string;
     }): Promise<unknown> => (
       new Promise((resolve, reject) => {
         const current = instances.get(request.instanceId);
@@ -356,9 +389,65 @@ export function createPluginStandardHostHandler(options: {
           handlerId: input.handlerId,
           payload: input.payload,
           ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+          ...(input.targetLibraryId === undefined ? {} : { targetLibraryId: input.targetLibraryId }),
         });
       })
     );
+
+    const reportJobProgress = (input: {
+      jobId: string;
+      completed: number;
+      total: number;
+      phase?: string;
+      message?: string;
+      progress?: number;
+      targetLibraryId?: string;
+    }): Promise<void> => {
+      const current = instances.get(request.instanceId);
+      if (current === undefined || current.abortController.signal.aborted) return Promise.resolve();
+      options.postMessage({
+        type: 'plugin-runtime.job-progress',
+        instanceId: request.instanceId,
+        jobId: input.jobId,
+        progress: {
+          completed: input.completed,
+          total: input.total,
+          phase: input.phase ?? '',
+          message: input.message ?? '',
+          ...(input.progress === undefined ? {} : { progress: input.progress }),
+        },
+        ...(input.targetLibraryId === undefined ? {} : { targetLibraryId: input.targetLibraryId }),
+      });
+      return Promise.resolve();
+    };
+
+    const controlPluginJob = (input: {
+      jobId: string;
+      action: 'pause' | 'resume' | 'cancel' | 'retry';
+      reason?: string;
+      retryInput?: Record<string, unknown>;
+      checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+      targetLibraryId?: string;
+    }): Promise<unknown> => new Promise((resolve, reject) => {
+      const current = instances.get(request.instanceId);
+      if (current === undefined || current.abortController.signal.aborted) {
+        reject(new Error('The plugin instance was deactivated.'));
+        return;
+      }
+      const requestId = globalThis.crypto.randomUUID();
+      current.pendingHostRequests.set(requestId, { resolve, reject });
+      options.postMessage({
+        type: 'plugin-runtime.job-control',
+        instanceId: request.instanceId,
+        requestId,
+        jobId: input.jobId,
+        action: input.action,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+        ...(input.retryInput === undefined ? {} : { retryInput: input.retryInput }),
+        ...(input.checkpoint === undefined ? {} : { checkpoint: input.checkpoint }),
+        ...(input.targetLibraryId === undefined ? {} : { targetLibraryId: input.targetLibraryId }),
+      });
+    });
 
     const requestInputCapture = (input: PluginInputCaptureOptions): Promise<{ sessionId: string }> => (
       new Promise((resolve, reject) => {
@@ -403,6 +492,7 @@ export function createPluginStandardHostHandler(options: {
       waitForHookInvoke: () => active.hookQueue.next(),
       respondHookDecision,
       waitForJobInvoke: () => active.jobQueue.next(),
+      isJobAborted: (jobId) => active.jobSignals.has(jobId),
       respondJobComplete,
       waitForProviderInvoke: () => active.providerQueue.next(),
       respondProviderComplete,
@@ -410,6 +500,8 @@ export function createPluginStandardHostHandler(options: {
       respondSearchChunk,
       respondSearchComplete,
       enqueuePluginJob,
+      reportJobProgress,
+      controlPluginJob,
       waitForCommandInvoke: () => active.commandQueue.next(),
       respondCommandComplete,
       requestInputCapture,
@@ -423,6 +515,7 @@ export function createPluginStandardHostHandler(options: {
         active.activeCauseChain = [...causeChain];
       },
       signal: abortController.signal,
+      setupSignal: lifecycleAbortController.signal,
       wallTimeoutMs: PLUGIN_SESSION_WALL_TIMEOUT_MS,
       onActivated: () => {
         if (active.activated) return;
@@ -452,6 +545,14 @@ export function createPluginStandardHostHandler(options: {
       return;
     }
 
+    for (const output of result.output) {
+      options.postMessage({
+        type: 'plugin-runtime.console',
+        instanceId: request.instanceId,
+        level: 'log',
+        message: normalizePluginConsoleOutput(output),
+      });
+    }
     const reason = current.deactivate?.reason ?? 'supervisor-shutdown';
     options.postMessage({
       type: 'plugin-runtime.deactivated',
@@ -467,7 +568,8 @@ export function createPluginStandardHostHandler(options: {
     const current = instances.get(request.instanceId);
     if (current === undefined) return;
     current.deactivate = { reason: request.reason, resolve: current.resolveDeactivatePark };
-    current.abortController.abort();
+    current.lifecycleAbortController.abort();
+    if (current.deactivationTimer !== undefined) return;
     current.eventQueue.close();
     current.hookQueue.close();
     current.jobQueue.close();
@@ -478,6 +580,18 @@ export function createPluginStandardHostHandler(options: {
     }
     current.pendingHostRequests.clear();
     current.resolveDeactivatePark();
+    const graceMs = options.deactivateGraceMs ?? 5_000;
+    current.deactivationTimer = setTimeout(() => {
+      const latest = instances.get(request.instanceId);
+      if (latest !== current) return;
+      current.abortController.abort();
+      options.postMessage({
+        type: 'plugin-runtime.deactivated',
+        instanceId: request.instanceId,
+        reason: request.reason,
+      });
+      finishInstance(request.instanceId);
+    }, graceMs);
   };
 
   return {
@@ -519,6 +633,12 @@ export function createPluginStandardHostHandler(options: {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         current.jobQueue.push(message.job);
+        return;
+      }
+      if (message.type === 'plugin-runtime.job-signal') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        current.jobSignals.set(message.jobId, message.action);
         return;
       }
       if (message.type === 'plugin-runtime.provider-invoke') {
@@ -580,13 +700,14 @@ export function createPluginStandardHostHandler(options: {
       }
       if (message.type === 'plugin-runtime.host-result'
         || message.type === 'plugin-runtime.storage-result'
-        || message.type === 'plugin-runtime.job-enqueue-result') {
+        || message.type === 'plugin-runtime.job-enqueue-result'
+        || message.type === 'plugin-runtime.job-control-result') {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         const pending = current.pendingHostRequests.get(message.requestId);
         if (pending === undefined) return;
         current.pendingHostRequests.delete(message.requestId);
-        if (message.ok) pending.resolve(message.result);
+        if (message.ok) pending.resolve(message.type === 'plugin-runtime.job-control-result' ? message.job ?? null : message.result);
         else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
       }
     },

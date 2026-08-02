@@ -36,6 +36,7 @@ describe('plugin Contributions', () => {
             id: 'processing',
             title: 'Processing',
             group: 'analysis',
+            first: true,
             when: "selection.extensions intersects ['jpg','jpeg','png']",
             submenu: [
               { command: 'probe.fast', before: 'asset.rename', enablement: 'selection.assetCount == 1' },
@@ -48,6 +49,10 @@ describe('plugin Contributions', () => {
             ],
           }],
         },
+        shortcuts: [
+          { id: 'fast-shortcut', command: 'probe.fast', accelerator: 'F9' },
+          { id: 'reserved-shortcut', command: 'probe.deep', accelerator: 'CmdOrCtrl+F' },
+        ],
         settings: [],
       },
     });
@@ -65,6 +70,7 @@ describe('plugin Contributions', () => {
         id: `${manifest.id}.library-a.menu.asset.processing`,
         title: 'Processing',
         group: 'analysis',
+        first: true,
         when: "selection.extensions intersects ['jpg','jpeg','png']",
       }),
       expect.objectContaining({
@@ -73,6 +79,7 @@ describe('plugin Contributions', () => {
         parentId: `${manifest.id}.library-a.menu.asset.processing`,
         before: 'asset.rename',
         enablement: 'selection.assetCount == 1',
+        shortcut: 'F9',
       }),
       expect.objectContaining({
         id: `${manifest.id}.library-a.menu.asset.processing.advanced`,

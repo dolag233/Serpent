@@ -1,616 +1,495 @@
 # 第0024框架规格：脚本—插件扩展平台
 
-> 状态：顶层设计已确认（2026-07-30 与 ADR-0025 对齐：Action vs Contribution）
+> 状态：最终架构设计已确认，按此拆分实施（尚不表示实现或平台验收完成）
 >
 > 日期：2026-07-29
 >
-> 修订：2026-07-30
+> 最后修订：2026-08-02
 >
-> 上位决策：[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)、[ADR-0026](../adr/0026-plugin-runtime-installation-and-trust.md)
+> 上位决策：[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)、[ADR-0026](../adr/0026-plugin-runtime-installation-and-trust.md)、[ADR-0027](../adr/0027-plugin-instance-lifecycle-and-interaction-context.md)
 >
 > 相关规格：[0023 脚本自动化与 Agent MCP](0023-automation-scripting-mcp-framework.md)
 >
-> Beads 实施 Epic：`Serpent-upsn`
+> Beads 实施 Epic：`Serpent-upsn`、`Serpent-7nah`
 
 ## 1. 目标
 
-Serpent 需要一个足够强的 TypeScript/JavaScript 插件系统，使第三方插件能够：
+Serpent 插件平台要让第三方扩展像原生能力一样参与应用，但不能为每个新需求继续增加一次性的 Manifest 字段和 Renderer 分支。插件应能够：
 
-- 扩展资产、文件夹等对象的右键菜单，扩展工具栏、Inspector、查看页和设置页。
-- 在左侧导航增加入口，并在中央工作区运行完整的插件 UI 与逻辑。
-- 注册快捷键，读取键盘、鼠标、滚轮和输入法事件；在明确的捕获会话中暂时独占应用内输入。
-- 观察或参与导入、删除、恢复、文件夹变更等领域操作。
-- 扩展格式解析、缩略图、预览、元信息、搜索、过滤、排序、AI 和后台任务。
-- 通过和自动化脚本相同的领域 API 读取、组织和修改资产，不复制数据库或文件操作实现。
-- 以用户级方式安装，也可以把插件代码放入资源库，使多台设备同步同一工作环境。
+- 以稳定命令和结构化 Contribution 扩展菜单、工具栏、Inspector、Viewer、设置与工作区。
+- 使用树形菜单、子菜单、语义分组、前后锚点、当前快捷键、隐藏、置灰和选中状态。
+- 根据当前选择、查看资产、资源库和应用状态决定 UI 表现；复杂判断可以调用完整领域 API，但不能阻塞菜单打开。
+- 在命令执行时获得冻结的调用快照，再通过与脚本相同的 `serpent` 领域 API 完成功能。
+- 使用统一的 `setup(context)` / `dispose(reason)` 生命周期，并明确选择全局实例或资源库实例。
+- 注册事件、阻断 Hook、Provider、输入捕获和可恢复后台 Job。
+- 在受限（restricted）运行时或用户明确授权的非受限（unrestricted）Node.js 运行时中工作。
+- 以用户级方式安装，也可以将包放入资源库，使代码和非秘密配置随库复制。
 
-系统不建设插件社区和人工审核流程。第一阶段只提供本地 ZIP、本地文件夹和符合规范的 GitHub 安装（优先 Release 平台 asset）。
+本规格借鉴 Houdini 的核心思想——稳定标识、声明式 UI 结构、顺序约束、可计算条件、完整脚本环境和明确生命周期——但不采用 XML，也不复制 Houdini 的 Python 运行时。规范格式是可校验 JSON；作者可使用类型化 TypeScript Builder 在构建时生成同一 JSON。
 
-## 2. 已确认的产品决定
+## 2. 设计原则与已确认决定
 
-1. 插件只提供 TypeScript/JavaScript 一等开发模型，不提供 Serpent 管理的 Python 运行时。
-2. 脚本与插件共享 Automation Command Gateway、能力词汇、领域 API 和日志基础，但不是同一种产品对象。
-3. 标准插件运行在受控环境；可信插件获得完整 Node.js 能力，由用户在理解风险后决定是否运行。
-4. 用户级插件安装在当前 Serpent 用户配置中；资源库级插件代码保存在资源库内并随资源库同步。
-5. 资源库级插件在每台设备首次出现时都必须显式信任；信任状态不得随资源库同步。
-6. 同一插件同时存在用户级和资源库级版本时，不自动决定优先级。用户必须选择本机在该资源库中使用哪个版本，也可以暂时禁用。
-7. 选择结果在本机记忆。普通同源升级沿用选择；权限增加、运行模式改变或来源改变时重新询问。
-8. 只考虑个人多设备同步，不设计管理员、成员、审批或协作权限。本地用户可以任意修改资源库插件及其同步配置。
-9. GitHub 安装优先使用 Release 平台 asset ZIP（命名与平台 token 见 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)）；无规范 asset 时过渡期可回退成品 zipball。
-10. 标准插件不执行远程仓库中的构建、`npm install`、`postinstall` 或任意 Shell。
-11. GitHub 来源可显示可用更新；自动更新默认关闭，勾选前须风险说明；权限增加或运行模式变更不得静默启用。
+1. **Action 与 Contribution 分离**：脚本、插件和 MCP 共享 Automation Command Gateway；只有插件拥有常驻生命周期和 UI/Hook/Provider Contribution。
+2. **命令是行为源，菜单只是位置**：命令定义标题、图标、启用条件、快捷键和 handler；菜单、工具栏等只引用命令。
+3. **上下文不是功能 API**：Contribution Context 只服务 UI 决策；Invocation Context 固定本次操作目标；实际读写通过完整领域 API。
+4. **安装范围不决定实例范围**：用户级/资源库级描述包存放位置；`global`/`library` 描述运行实例边界。
+5. **生命周期只有一对**：所有插件均使用 `setup(context)` 和 `dispose(reason)`；不增加 `openLibrary` 等第二套生命周期。
+6. **条件计算不阻塞 UI 热路径**：同步条件只读取 Host 发布的 Context Key；复杂异步计算先解析成插件命名空间 Context Key。
+7. **Host 保持领域不变量**：插件使用 Gateway 时继续受到权限、实体版本、Execution Plan、Worker 所有权和恢复机制约束。
+8. **非受限插件不伪装成沙箱**：完整 Node.js 能力意味着插件可自行探测 GPU/CPU/内存、启动模型进程或直接访问系统；Host 不承诺拦截这些行为。
+9. **视觉 UI 标准化延期**：主线 Serpent 尚未完成组件与视觉规范，当前只稳定交互语义、结构和边界，不把 toggle/dropdown/slider 枚举包装成稳定 UI Kit。
+10. **无需旧协议兼容**：项目尚未发布；实施时直接替换旧 Manifest、Contribution 和生命周期契约，同步迁移仓内 fixture、测试和文档，不维护兼容适配层或弃用周期。
 
-## 3. 脚本、插件和 MCP 的关系
+## 3. 脚本、插件和 MCP
 
 ```text
                         Automation Command Gateway
                          /          |           \
                         /           |            \
         Automation Script      Plugin Host       MCP Adapter
-        领域 Action 面          安装/生命周期       同一 Action 面
-        人用 Console            UI/Hook/Provider    Agent 调用
-        可 headless 执行
+        一次 Execution          长期 Instance      Agent transport
+        领域 Action             Contribution       同一 Action 面
 ```
-
-三者共享的是领域 Action，不共享产品生命周期：
 
 | 维度 | 自动化脚本 | 插件 | MCP |
 | --- | --- | --- | --- |
-| 主要用途 | 复杂批处理与编排（含建库/导入等 Action） | 长期扩展应用行为与 UI | 与脚本相同的领域 Action，供 Agent 调用 |
-| 生命周期 | 每次运行形成 Execution，完成即结束 | 安装、激活、停用、升级、卸载 | MCP 连接生命周期（可挂 headless host） |
-| UI Contribution | 不支持注册菜单/Hook/界面 | 支持 | 不支持 GUI Contribution |
-| 领域操作 | `serpent` SDK → Gateway | 同一 SDK → Gateway | Registry 映射 → Gateway（与脚本同面） |
-| 运行时 | QuickJS 隔离执行 | 标准 QuickJS / 可信 Node | 本地 stdio host |
+| 生命周期 | 每次运行形成 Execution | 安装、实例化、setup、dispose | 连接生命周期 |
+| UI/Hook/Provider | 无 | 有 | 无 |
+| 领域操作 | `serpent` SDK → Gateway | 同一 SDK → Gateway | Registry → Gateway |
+| 运行时 | QuickJS | restricted QuickJS / unrestricted Node | 本地 stdio host |
 
-标准插件可以复用 Script Runtime 的 QuickJS 引擎、TypeScript 转换、RPC 和资源预算实现，但必须使用独立的 `Plugin Runtime Contract`。不能通过“永不结束的脚本”模拟插件 Contribution，也不能让保存脚本注册常驻 Hook、UI 或输入监听。
+受限插件可复用 Script Runtime 的 QuickJS、TypeScript 转换、RPC 和资源预算实现，但必须拥有独立 Plugin Runtime Contract。不能用“永不结束的脚本”模拟插件，也不能让普通脚本注册常驻 Contribution。
 
-`library.create`、`file.import` 等**领域 Action** 属于脚本/MCP，不属于“仅插件”。插件通过 Gateway 调用这些 Action 时与脚本遵循同一授权与计划批准规则。
+插件可以注册命名空间命令；只有目标插件实例存在且调用者获授权时，脚本/MCP 才能调用显式导出的命令。导出参数必须是有界 Schema，不允许暴露任意 `eval`、秘密或未声明 Node 接口。
 
-插件可以注册命名空间命令。脚本只能在目标插件已激活并被授权时调用这些命令：
+## 4. 领域对象与作用域
+
+### 4.1 Package、Installation、Trust 与 Resolution
+
+- **Plugin Package**：不可变、带完整性摘要的插件成品，包含清单、编译后代码、可选 UI、文档和许可证。
+- **Plugin Installation**：把 Package 放入用户插件存储或资源库插件存储；安装不表示信任或运行。
+- **Plugin Trust Decision**：当前设备针对确定包摘要、来源、运行模式和权限集合做出的决定，不随资源库同步。
+- **Plugin Resolution**：同一插件 ID 同时存在用户级和资源库级版本时，当前设备针对某资源库选择 `use-user | use-library | disabled`。
+
+`installationScope = user | library` 只回答“包在哪里”。它不回答运行时是否全局。
+
+### 4.2 Plugin Instance
+
+通过完整性、信任、版本选择和能力检查后创建的运行单元。Manifest 明确声明：
 
 ```ts
-await serpent.plugins.call('com.example.palette.extract', {
-  assetIds,
-});
+type PluginInstanceScope =
+  | { kind: 'global' }
+  | { kind: 'library' };
 ```
 
-插件清单须声明 `mcp.expose` / `commands[].mcp.export` 才会进入 MCP tools 面；激活后的声明命令默认对 MCP 可见可调用（无设置页二次开关）。MCP 仅接受有界 asset/folder/collection ID Schema，插件不能向 MCP 暴露任意 `eval`、秘密或未声明的 Node 接口。
+- **全局实例**：应用会话中每个确定插件版本最多一个，可服务多个窗口和多个已打开资源库。
+- **资源库实例**：每个已打开资源库分别创建；同一包在两个库中形成两个隔离实例。
+- Contribution 注册键为 `pluginInstanceId + localContributionId`，不能只用插件 ID 或资源库 ID。
+- 全局实例的 Contribution 注册一次，在每个窗口的 Context 中分别求值；关闭一个库不能撤销其他库或全局实例的 Contribution。
 
-## 4. 核心领域对象
+### 4.3 Interaction Context 三分法
 
-### 4.1 Plugin Package
+- **Contribution Context**：Host 发布的、体积有界、可同步读取的实时 UI 状态，只用于 `when`、`enablement`、`checked` 和显示文案选择。
+- **Invocation Context**：用户触发命令时冻结的目标快照；命令不得在异步等待后重新猜测当前焦点或选择。
+- **Domain API**：插件执行功能时调用的完整 `serpent` SDK；它不是上下文快照。
+- **Context Key**：Contribution Context 中可供表达式读取的规范值。Host 发布内建 key；插件 Predicate Resolver 只能发布自己命名空间下的派生 key。
 
-一份不可变、带完整性摘要的插件成品。Package 包含清单、已编译后端、可选 UI、文档与许可证，不等于 Git 仓库或源码工作区。
+### 4.4 其他对象
 
-### 4.2 Plugin Installation
+- **Plugin Contribution**：命令、菜单、工具栏、视图、设置、Hook 或 Provider 的结构化描述；必须可按实例完整撤销。
+- **Input Capture Session**：插件在应用内临时持有键盘或指针事件的有界会话，不是系统全局 Hook。
+- **Plugin Job**：由 Host Job 系统持久化、由确定插件 handler 执行的后台工作；进度、取消和恢复能力由契约声明。
 
-把一个 Plugin Package 放入用户插件存储或资源库插件存储。安装只表示代码存在，不表示它已被信任或激活。
+## 5. 生命周期
 
-### 4.3 Plugin Trust Decision
+插件入口只导出：
 
-当前设备上的用户对一个确定的包摘要、来源、运行模式和权限集合做出的信任决定。资源库同步不得复制该决定。
-
-### 4.4 Plugin Resolution
-
-同一插件 ID 同时存在用户级和资源库级版本时，当前设备针对当前资源库选择实际运行版本的决定：
-
-```text
-use-global | use-library | disabled
+```ts
+export async function setup(context: PluginSetupContext): Promise<void>;
+export async function dispose(reason: PluginDisposeReason): Promise<void>;
 ```
 
-Resolution 不随资源库同步，因为另一台设备可能没有相同的用户级版本。
+`PluginSetupContext` 至少包含：
 
-### 4.5 Plugin Activation
+```ts
+interface PluginSetupContext {
+  pluginId: string;
+  pluginInstanceId: string;
+  installationScope: 'user' | 'library';
+  instanceScope:
+    | { kind: 'global' }
+    | { kind: 'library'; libraryId: string };
+  serpent: SerpentPluginApi;
+  subscriptions: DisposableStore;
+  signal: AbortSignal;
+}
+```
 
-确定版本通过兼容性、完整性、信任和权限检查后，为一个资源库创建运行中 Plugin Instance。一个插件 ID 在一个资源库中最多激活一个版本。
+Contribution 描述仍由 `serpent-plugin.json` 声明并在 `setup` 前注册；当前版本不提供运行时动态 Contribution Registrar，避免把菜单拓扑和实例撤销拆成两套来源。`subscriptions` 用于托管事件、Provider、Hook、Job handler 等注册返回的 disposable；`signal` 在实例停用、关库、崩溃隔离或 Host 超时时触发。
 
-### 4.6 Plugin Contribution
+调用时机：
 
-插件向 Host 注册的菜单、命令、视图、设置、Provider 或 Hook 描述。Contribution 必须有稳定 ID，停用插件后可完整撤销。
+| 实例范围 | `setup` | `dispose` |
+| --- | --- | --- |
+| global | 应用会话中该版本首次可运行时 | 应用退出、停用、卸载、升级、崩溃隔离 |
+| library | 目标库已打开且版本 Resolution/Trust 完成时 | 关库、停用、卸载、升级、崩溃隔离 |
 
-### 4.7 Input Capture Session
+库打开、关闭、切换、离线和恢复是普通领域事件，不是额外生命周期回调。全局插件可通过 API 列出已打开库并订阅事件；命令触发时得到绑定目标库的 API。后台跨库操作必须显式使用 `serpent.forLibrary(libraryId)`，并受实例范围限制：library 实例只能绑定自己的库。
 
-插件在应用内临时持有键盘或指针事件的有界会话。Capture 不是操作系统全局键盘钩子，也不是普通快捷键监听。
+`dispose` 必须幂等。Host 在 deadline 后可强制终止进程，并无条件撤销该实例的 Contribution、Hook、Provider、Capture、Predicate 和未移交资源。
 
-## 5. 包格式与清单
+## 6. 包、清单、安装与信任
 
-规范仓库或本地包至少包含：
+包至少包含：
 
 ```text
 serpent-plugin.json
-dist/
-  main.js                  # 有后端时必需
-  ui/index.html            # 有自定义 UI 时必需
+dist/main.js
+dist/ui/index.html          # 可选自定义 UI
 README.md
 LICENSE
 ```
 
-依赖必须打包进 `dist`。标准插件不允许原生 Node 模块；可信插件如包含原生模块，必须在清单声明支持的 OS、架构和 Node ABI。
-
-清单 v1 建议结构：
+清单核心结构：
 
 ```json
 {
-  "manifestVersion": 1,
-  "id": "com.example.palette-tools",
-  "version": "1.2.0",
-  "name": "Palette Tools",
-  "description": "Extract and organize asset palettes.",
-  "author": "Example",
-  "license": "MIT",
-  "repository": "https://github.com/example/serpent-palette-tools",
-  "engines": {
-    "serpent": ">=0.2.0 <1.0.0",
-    "pluginApi": 1
-  },
+  "manifestVersion": 2,
+  "id": "com.example.image-upscaler",
+  "version": "0.1.0",
+  "engines": { "serpent": ">=0.2.0 <1.0.0", "pluginApi": 2 },
   "runtime": {
-    "mode": "standard",
-    "entry": "dist/main.js"
+    "mode": "unrestricted",
+    "entry": "dist/main.js",
+    "instanceScope": "global"
   },
-  "ui": {
-    "entry": "dist/ui/index.html"
-  },
-  "permissions": [
-    "asset.read",
-    "metadata.write",
-    "ui.workspace",
-    "input.shortcut"
-  ],
+  "permissions": ["asset.read", "content.write", "ui.contribute"],
   "contributes": {
     "commands": [],
-    "menus": {},
-    "views": [],
-    "settings": []
+    "menus": [],
+    "keybindings": [],
+    "configuration": []
   }
 }
 ```
 
-约束：
+规则：
 
-- `id` 一经发布不可改变，使用小写、数字、点、连字符和下划线，长度 3–64。
-- `version` 使用 SemVer。
-- 所有路径必须是包内相对路径；拒绝路径穿越、绝对路径和符号链接逃逸。
-- 安装器限制归档大小、文件数量、单文件大小和展开后总大小。
-- 清单、文件列表和每个文件 SHA-256 写入 lock；运行前再次校验。
-- 未声明入口、权限、Contribution 或平台依赖不得在运行时动态增加。
+- ID 稳定、版本使用 SemVer、所有路径为包内相对路径。
+- 归档限制大小、文件数、单文件大小和展开总量；拒绝路径穿越、绝对路径和符号链接逃逸。
+- 清单、文件列表和 SHA-256 写入 lock，运行前再次校验。
+- 受限插件依赖必须打包进 `dist`，安装时不运行 `npm install`、构建、postinstall 或 Shell。
+- 用户级包位于 `userData`；资源库级包位于 `.serpent/plugins/<id>/<version>/`，其信任、秘密和本机路径不随库复制。
+- 同 ID 用户/资源库版本不设隐式优先级；用户选择并按设备+库+插件 ID 记忆。
+- 更新先进入 staging，校验和健康窗口通过后切换；权限增加、运行模式或来源变化必须重新确认。
 
-## 6. 安装、同步与更新
+安装与信任的完整安全边界继续遵循 ADR-0026 和 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md)。
 
-### 6.1 用户级安装
+## 7. 运行模式与 Host 架构
 
-用户级 Package 安装在 Electron `userData` 下的版本化插件存储。用户可以选择对全部资源库、指定资源库或当前禁用，但代码本身只安装一次。
+### 7.1 受限插件（restricted）
 
-### 6.2 资源库级安装
+受限后端运行在可终止 QuickJS 隔离单元中，没有 Node built-ins、`process`、环境变量、任意 import、原生文件系统、数据库或宿主 DOM。它只通过有 Schema 的 Plugin SDK 行动，并受 CPU、墙钟、内存、输出、队列和并发限制。
 
-资源库级 Package 放在：
+受限插件可以在授权后使用 Host 提供的资产内容流、插件存储、用户选择文件 Handle 和按域名 allowlist 限制的网络 API；这不等于任意系统访问。
 
-```text
-.serpent/plugins/<plugin-id>/<version>/
-.serpent/plugin-lock.json
-```
+### 7.2 非受限插件（unrestricted）
 
-Package、lock 和资源库级非秘密设置随资源库整体复制或第三方同步。更新、删除和配置都是普通本地修改，不引入协作权限。
+非受限后端运行在独立 UtilityProcess 中，具有完整 Node.js、文件系统、网络、子进程和第三方依赖能力。权限清单只约束 Serpent API 并向用户披露风险，不能可靠阻止插件绕过 Gateway 直接行动。
 
-资源库打开时：
+每个非受限 Plugin Instance 使用独立受监督进程；Host 不提供通用共享模型 Worker。插件可在 `setup` 中创建并复用自己的模型/外部进程，在 `dispose` 中释放；崩溃重启和模型切换由插件处理，Host 只监督实例健康与撤销注册。
 
-1. 读取 lock，不执行插件代码。
-2. 校验清单、兼容性和文件摘要。
-3. 未在本机信任的 Package 标记为“等待信任”。
-4. 用户查看来源、版本、运行模式、权限和变更后决定信任。
-5. 只有信任和版本 Resolution 都完成后才能激活。
+非受限插件自行探测 GPU、VRAM、CPU、内存和设备能力。Serpent 不增加通用 `system.getGpuInfo` 或推理并发调度 API；无法可靠探测时采用串行等安全降级是插件责任。
 
-### 6.3 GitHub 安装
-
-用户粘贴 GitHub 仓库 / Release URL 后，安装器：
-
-1. 解析 owner/repo；若未指定 tag，取最新稳定 Release。
-2. **优先**按 [`plugin-distribution-and-updates.md`](../plugin-distribution-and-updates.md) 匹配当前平台（或 `any`）的 Release asset ZIP。
-3. 过渡期：若无规范 asset，可回退到 tag/默认分支 zipball 中的成品包，并提示作者迁移到 Release asset。
-4. 只接受已含规范清单与已编译 `runtime.entry` 的成品；不运行依赖安装、构建、生命周期脚本或 Shell。
-5. 记录仓库 URL、Release/tag、commit（若可得）、asset 名、包摘要和安装时间。
-
-允许从默认分支安装成品树，但必须提示“分支内容可变”，并锁定本次 commit SHA（若可得）。更新仍生成新的不可变 Package，不在原目录上覆盖。GitHub 来源的更新显示与可选自动更新见分发规范 §5。
-
-### 6.4 原子更新与回滚
-
-- 新版本先下载到 staging，完成校验和兼容性检查后原子切换 lock。
-- 保留上一可运行版本用于自动回滚；插件成功激活并通过健康窗口后再清理更旧版本。
-- 权限增加、`standard → trusted`、来源变化或完整性异常必须重新确认。
-- 同一来源、同一运行模式且权限未增加的普通升级沿用既有版本选择。
-- 更新后反复崩溃时自动回滚并隔离新版本。
-
-### 6.5 用户级与资源库级版本冲突
-
-Host 不设隐式优先级。第一次遇到冲突时展示：
-
-- 使用用户级版本。
-- 使用资源库级版本。
-- 暂时不启用。
-
-界面同时显示版本、来源、Package 摘要、权限差异、运行模式和兼容性。选择按“设备 + 资源库 + 插件 ID”保存，可在插件管理页更改。两个版本绝不能同时运行。
-
-## 7. 运行模式与真实安全边界
-
-### 7.1 标准插件
-
-标准插件后端运行在可终止的 QuickJS 隔离单元中：
-
-- 没有 Node built-ins、`process`、环境变量、任意 import、文件系统、网络或数据库。
-- 只通过 Host 注入的 Plugin SDK 和有 Schema 的消息调用 Serpent。
-- 有 CPU、墙钟、内存、输出、并发请求、事件队列和未完成 Promise 上限。
-- 无限循环、内存膨胀或运行时崩溃不得带走 Renderer、Main 或 Library Worker。
-- 标准插件 UI 运行在独立 origin 的 sandboxed iframe 中，无 Node、无同源应用 DOM 权限。
-
-标准插件权限是可执行的能力边界：未声明或未授权的 Host API 必须拒绝。
-这里的“没有文件系统和网络”是指没有任意原生访问；标准插件仍可在授权后使用 Host
-提供的资产内容流、插件存储、用户选择的文件句柄和按域名 allowlist 限制的
-`serpent.net.fetch`。这些调用可记录、可取消并受大小与速率限制。
-
-### 7.2 可信插件
-
-可信插件后端运行在独立 UtilityProcess 中，获得完整 Node.js 能力，可以使用文件系统、网络、子进程和第三方依赖。
-
-可信模式的关键事实必须直接告诉用户：
-
-- 权限清单主要用于风险披露、Serpent API 授权和管理界面说明。
-- Serpent 无法可靠拦截可信插件直接通过 Node.js 执行的所有系统行为。
-- 即使 Serpent 的文件命令要求计划确认，恶意可信插件仍可能绕过 Gateway 直接使用 `node:fs`。
-- 可信插件崩溃隔离和日志记录不是恶意行为防护。
-
-每个可信插件使用独立进程，不能把多个可信插件装入 Main、Renderer 或同一共享 Node 上下文。插件停用、卸载或崩溃时终止对应进程并撤销所有 UI、Hook 和输入捕获。
-
-### 7.3 为什么保留两种模式
-
-标准模式适合绝大多数 UI、组织、搜索、格式元信息和自动化插件，提供可执行的边界。可信模式承载 DCC 集成、自定义原生解码器、外部程序和完整开发环境等无法被标准 Host 表达的能力。不能把可信模式包装成“仍然完全受权限控制”的虚假安全承诺。
-
-## 8. Plugin Host 进程架构
+### 7.3 进程关系
 
 ```text
 Renderer
-  ├─ Host-rendered contributions
-  └─ sandboxed plugin iframe ── typed postMessage ── Main Plugin Broker
+  ├─ Host-rendered Contribution
+  └─ sandboxed plugin iframe ─ typed postMessage ─ Main Plugin Broker
                                                    │
 Main Plugin Supervisor ────────────────────────────┼─ Automation Gateway
-  ├─ package / trust / activation                  ├─ Event & Hook Broker
-  ├─ contribution registry                         ├─ Input Capture Broker
+  ├─ package / trust / instance lifecycle          ├─ Context & Command Registry
+  ├─ contribution registry                         ├─ Event / Hook / Job Broker
   ├─ crash quarantine                              └─ AppLogger
-  │
-  ├─ Standard Plugin Host UtilityProcess
-  │    └─ QuickJS realm per plugin
-  │
-  └─ Trusted Plugin UtilityProcess per plugin
+  ├─ Restricted Host: QuickJS realm per instance
+  └─ Unrestricted Host: UtilityProcess per instance
                                                    │
                                              Library Worker
                                       SQLite / files / jobs owner
 ```
 
-不变量：
+Renderer 不加载第三方后端代码，不接收任意路径、SQL、秘密或 Node 能力；Main 不打开资源库数据库；Hook 不得在 SQLite 事务或文件锁内等待插件。
 
-- Renderer 不加载第三方后端代码，不接收任意路径、SQL、秘密或 Node 能力。
-- Main 只做安装、信任、调度、窗口/UI Broker 和进程监督，不打开资源库数据库。
-- Plugin Host 不直接打开资源库数据库；领域操作仍经过 Gateway 和 Library Worker。
-- Hook 不得在 SQLite 事务或不可中断文件临界区内等待插件。
-- 自定义 UI 只能通过 typed bridge 调用其已授权的后端或 Host API。
+## 8. 统一交互框架
 
-## 9. Plugin SDK 能力面
+### 8.1 Command Registry
 
-### 9.1 领域 API
-
-复用 0023 的 `serpent` SDK 和 Registry：
-
-- `assets`：分页列表、搜索、详情、元数据、评分、喜欢、路径复制。
-- `folders`：列表、创建、重命名、移动、删除/恢复计划。
-- `tags`、`collections`：查询与批量关系修改。
-- `files`：导入、移动、重命名、回收站等 Execution Plan。
-- `jobs`、`ai`：入队、查询、暂停、继续、取消、重试。
-- `library`：当前 Plugin Instance 所绑定资源库的只读信息。
-- `content`：按资产 ID 读取有界内容流或预览 artifact，不暴露任意绝对路径。
-- `net`：按清单域名 allowlist 发起 HTTP(S) 请求；不提供原始 socket。
-- `clipboard`：在独立权限下读写声明类型的剪贴板内容。
-- `storage`、`secrets`：访问插件自己的命名空间数据和系统凭据项。
-
-插件不能用当前 GUI 焦点冒充资源库身份。每个 Instance 明确绑定资源库；跨库工作拆成独立命令或 Instance。
-标准插件访问用户在文件选择器中显式选择的外部文件时只获得不可伪造的临时或持久
-Handle，不获得任意父目录遍历能力。启动进程、原始磁盘路径和任意系统文件访问仅属于
-可信模式。
-
-### 9.2 UI Contributions
-
-Host-rendered、声明式扩展点：
-
-- `commands`
-- `menus.asset`
-- `menus.folder`
-- `menus.collection`
-- `menus.workspace`
-- `toolbar`
-- `inspector.sections`
-- `viewer.actions`
-- `settings.sections`
-- `shortcuts`
-
-完整自定义 UI 扩展点：
-
-- `sidebar.entries`
-- `workspace.views`
-- `inspector.views`
-- `viewer.overlays`
-- `settings.pages`
-
-小型菜单、按钮和设置行由 Host 渲染，继承主题、键盘导航、无障碍和禁用语义。完整工作区和复杂面板使用 sandboxed iframe；插件不能把任意 React 组件注入 Serpent React 树，也不能查询或修改宿主 DOM。
-
-所有 Contribution 必须支持：
-
-- 稳定 ID 和插件命名空间。
-- 可见条件、启用条件和禁用原因。
-- 激活时注册，停用时完整撤销。
-- 亮色、暗色、缩放和中英文环境。
-- Host 级菜单顺序规则；插件不能用任意 z-index 覆盖系统对话框。
-
-### 9.3 设置与存储
-
-插件清单提供设置 Schema，Host 生成基础设置 UI；复杂设置可贡献自定义页面。
-
-数据分层：
-
-| 类型 | 保存位置 | 是否同步 |
-| --- | --- | --- |
-| 用户级默认设置 | `userData` | 否 |
-| 资源库级插件设置 | `.serpent/` 插件配置 | 是 |
-| 本机覆盖值 | `userData`，按资源库和插件分区 | 否 |
-| API Key / token | 系统凭据库 | 否 |
-| 插件缓存 | 本机 cache | 否，可清理 |
-| 插件持久领域数据 | 通过命名空间 Storage API | 取决于声明 scope |
-
-资源库设置可以覆盖用户默认值。秘密、绝对本机路径和信任记录不得写入资源库同步数据。
-
-### 9.4 日志与后台任务
-
-- 每个日志条目带 `pluginId`、版本、Instance、资源库、操作和 `logId`。
-- 用户可在后台任务/脚本统一入口按插件过滤日志，完整诊断同时写入持久日志文件。
-- 标准插件 console 输出限量并单独标记。
-- 插件可以注册后台 Job handler；Job 由现有任务系统持久化并显示来源插件。
-- 插件缺失、停用或版本不兼容时，其未完成 Job 进入 paused/blocked，不由其他版本静默接管。
-- Job handler 必须幂等或声明恢复策略，更新插件时等待安全点或明确取消。
-
-## 10. 事件、Hook 与 Provider
-
-### 10.1 事件：已经发生
-
-`onDid*` 事件只用于观察提交后的事实，例如：
-
-- 资产导入、移入回收站、恢复、永久删除。
-- 文件夹创建、重命名、移动、删除。
-- 元数据、标签、合集、AI 内容变化。
-- 搜索、过滤、排序上下文变化。
-- 资源库打开、关闭、离线和恢复。
-
-事件携带稳定 ID、最小摘要、`eventId`、来源和 cause chain，不直接携带绝对路径或秘密。插件需要更多信息时再调用领域 API。
-
-领域事件默认至少一次投递，插件必须使用 `eventId` 去重。纯 UI 状态事件可以是会话内尽力而为，不承诺重放。
-
-### 10.2 Hook：操作尚未提交
-
-`onWill*` 只能在领域预检/Execution Plan 阶段运行，不能在事务或文件锁内执行。Hook 返回：
+命令是唯一行为定义：
 
 ```ts
-type HookDecision =
-  | { action: 'allow' }
-  | { action: 'warn'; message: string }
-  | { action: 'block'; code: string; message: string };
-```
-
-Hook 不能直接重写命令参数或修改数据库，避免多个插件形成不可预测的变换链。需要补充操作时，插件在 `onDid*` 后发起独立、可追踪的领域命令。
-
-阻断型 Hook 需要 `hook.blocking` 权限。默认超时策略是 fail-open 并记录日志；只有用户为特定插件明确启用“插件不可用时阻止操作”，才允许 fail-closed。排序按用户优先级、插件 ID 稳定执行，不能依赖安装时间。
-
-插件发起的命令必须携带 cause chain。Host 限制递归深度并检测重复的“事件 → 命令 → 同类事件”循环。
-
-### 10.3 Provider：扩展一种能力
-
-下列能力使用 Provider，而不是滥用事件 Hook：
-
-- `preview.provider`
-- `thumbnail.provider`
-- `metadata.extractor`
-- `import.provider`
-- `export.provider`
-- `ai.provider`
-- `derived-field.provider`
-- `search.provider`
-
-搜索、过滤和排序不得在 Renderer 中对 10 万资产逐项调用插件 JS。优先模型是：
-
-1. Provider 计算命名空间化的派生字段。
-2. Host 通过批量 API 把字段写入插件索引存储。
-3. Serpent 原生搜索、过滤和排序对物化字段执行查询。
-
-确实需要实时查询的 `search.provider` 必须支持取消、分页、deadline、结果上限和渐进返回；超时只降级该 Provider，不阻塞原生结果。自定义排序必须提供可缓存的稳定 sort key，不允许每一帧渲染时调用插件比较函数。
-
-## 11. 键盘、鼠标与输入捕获
-
-普通快捷键：
-
-```ts
-serpent.input.registerShortcut({
-  id: 'open-palette',
-  accelerator: 'Ctrl+Space',
-  command: 'com.example.palette.open',
-});
-```
-
-需要连续持有输入时，插件创建 Capture Session：
-
-```ts
-const session = await serpent.input.capture({
-  scope: 'application',
-  keyboard: true,
-  pointer: false,
-  ownerViewId: view.id,
-});
-
-try {
-  for await (const event of session.events) {
-    if (event.type === 'keydown' && event.key === 'Enter') break;
-    if (event.type === 'keydown' && event.key === 'Escape') break;
-    // text、compositionstart/update/end、keyup、pointer、wheel
-  }
-} finally {
-  session.release();
+interface CommandContribution {
+  id: string;
+  title: LocalizedText;
+  icon?: IconReference;
+  enablement?: ContextExpression;
+  disabledReason?: LocalizedText | ContextTemplate;
+  defaultKeybinding?: KeybindingRule[];
+  handler: string;
 }
 ```
 
-支持范围：
+- 完整命令 ID 为 `<pluginId>.<localId>`；注册表内部再以 `pluginInstanceId` 隔离。
+- 菜单和工具栏只引用 command ID，不复制 handler、快捷键或启用逻辑。
+- 菜单展示中央 Keybinding Registry 的当前有效快捷键，而不是 Manifest 中可能过时的默认值。
+- 命令 handler 接收 Invocation Context 和已绑定目标库的 Domain API。
 
-- `view`：只捕获插件自己的活动视图。
-- `viewer`：捕获当前资产查看页。
-- `application`：捕获 Serpent 应用窗口内的输入。
+### 8.2 Contribution Context
+
+内建 Context 至少包含：
+
+| 范围 | 关键字段 |
+| --- | --- |
+| 应用 | `app.platform`、`app.locale`、`app.theme`、`app.busy` |
+| 表面 | `surface.id`、`surface.kind` |
+| 窗口 | `windowId`、`contextId`、`revision` |
+| 资源库 | `library.id`、`library.open`、`library.writable`、`library.offline` |
+| 选择 | `selection.ref`、`count`、`primaryId`、`assetCount`、`folderCount`、`extensions`、`mimeTypes`、`mediaKinds`、`mixed`、`hasDeleted`、`hasUnavailable` |
+| 浏览 | 当前 folder/collection/tag/search/filter 等 scope ID |
+| Viewer | `viewer.active`、`assetId`、`extension`、`mimeType`、`mediaKind`、`fullscreen` |
+
+`selection.ref` 是 Host 管理的不可伪造引用；Context 中只放摘要，完整资产信息由 Domain API 读取。一个 `asset.contextMenu` 同时适用于单选和多选；未写数量条件时，Host 不得默认排除多选。
+
+### 8.3 条件表达式与异步 Predicate
+
+每个可交互 Contribution 使用一致语义：
+
+- `when` 为 false：不渲染。
+- `enablement` 为 false：保留位置但置灰。
+- `checked`：控制 toggle/radio 选中状态。
+
+表达式是无副作用、可终止、只读 Context Key 的声明式语言，支持布尔、比较、集合包含/相交、正则/通配匹配和括号；不允许在表达式中执行 JS、I/O 或 Domain API。
+
+复杂条件由插件注册 Predicate Resolver：
+
+1. Host 在相关 Context revision 变化后异步调用 Resolver。
+2. Resolver 可调用完整 Domain API，并发布如 `com.example.upscaler.canRun` 的 namespaced key。
+3. 缓存键至少包含 `pluginInstanceId + contextId + revision + predicateId`。
+4. 新 revision 取消旧请求；Resolver 有 deadline、错误隔离和 fallback 值。
+5. 菜单打开只读缓存，绝不等待插件 RPC。
+
+### 8.4 菜单树与 Placement Solver
+
+```json
+{
+  "surface": "asset.contextMenu",
+  "items": [
+    {
+      "id": "upscale",
+      "command": "com.example.image-upscaler.upscale",
+      "group": "transform",
+      "after": "host.asset.open-with",
+      "when": "selection.assetCount == selection.count && selection.extensions intersects ['jpg','jpeg','png']"
+    },
+    {
+      "id": "advanced",
+      "title": "Advanced",
+      "group": "transform",
+      "children": [
+        { "id": "upscale-4x", "command": "com.example.image-upscaler.upscale4x" }
+      ]
+    }
+  ]
+}
+```
 
 规则：
 
-- 同一时间只有一个 application Capture owner；后来的请求明确失败，不能静默抢占。
-- 系统/权限/破坏性确认对话框优先级高于插件，出现时强制暂停或释放 Capture。
-- 插件崩溃、停用、视图关闭、资源库关闭和窗口失焦时自动释放。
-- Host 保留不可被插件拦截的紧急释放快捷键。
-- 文本输入支持 IME composition，不能只监听 `keydown` 拼接字符。
-- 高频 pointer move 和 wheel 事件合并、限速并施加队列背压。
-- 标准插件不能捕获 Serpent 以外的系统全局输入；可信插件自行使用系统 Hook 属于完整 Node 风险范围。
-- macOS `Ctrl+Space` 等系统保留组合键需要冲突提示和用户重新绑定。
+- 菜单保持树结构，不在注册时丢失 parent/children 关系。
+- item 有稳定局部 ID；支持 `parent`、语义 `group`、`before`、`after`、`first`、`last`。
+- Host 对同一表面建立确定性约束图并拓扑排序；同优先级以插件 ID、实例 ID、item ID 稳定打破平局。
+- 缺失锚点降级到目标 group 末尾并写开发诊断；循环约束拒绝相关边并写明确错误，不能使整个菜单消失。
+- 表面策略决定最大深度；首版菜单最多三级。超深节点只拒绝该分支。
+- 原生项也必须拥有稳定 Host ID，插件不按文案或 DOM 位置定位。
+- `menus.asset` 旧式平面结构直接删除，由统一 `surface: asset.contextMenu` 结构替代。
 
-权限使用 `input.shortcut`、`input.capture.viewer`、`input.capture.application`；安装/变更时授权，不在每次 Capture 时重复弹窗。
+### 8.5 其他表面
 
-## 12. 主题
+同一 Command、Context、条件和 Placement 语义适用于 toolbar、Inspector action、Viewer action、workspace/sidebar entry。完整自定义工作区、Inspector、Viewer overlay 和设置页继续使用 sandboxed iframe，通过 typed bridge 调用后端或 Host API；插件不能把任意 React 组件注入宿主树或访问宿主 DOM。
 
-插件 UI 使用 Host 提供的设计 token、CSS variables、字体、间距和状态色。标准插件的 CSS 只作用于自己的 iframe。
+## 9. 配置数据与 UI 标准化边界
 
-主题包可以提供受支持 token 的覆盖值。直接向 Serpent 宿主 DOM 注入任意 CSS 属于可信主题能力，需要单独警告；它可能破坏布局、无障碍和升级兼容性，不享受稳定选择器承诺。
+本阶段稳定的是配置数据 Schema，不是视觉控件 Schema：
 
-## 13. 可靠性和故障恢复
+```ts
+interface ConfigurationProperty {
+  key: string;
+  valueType: 'boolean' | 'number' | 'string' | 'enum';
+  default: unknown;
+  scope: 'user' | 'library' | 'machine' | 'machine-library';
+  minimum?: number;
+  maximum?: number;
+  enum?: readonly unknown[];
+  description?: LocalizedText;
+}
+```
 
-- Plugin Supervisor 记录启动、激活、Hook、Provider、Job、退出原因和资源占用。
-- 激活有 deadline；超时或失败不能阻止资源库打开。
-- 插件连续崩溃进入 quarantine，下次启动默认禁用并显示原因。
-- Serpent 提供 Safe Mode：本次启动不加载第三方插件，但保留管理和卸载入口。
-- UI iframe、标准 Host 和可信进程均有心跳；失联后撤销 Contribution、Hook 和 Capture。
-- Hook、Provider 和事件队列有上限、取消和背压；慢插件不得拖慢主浏览、搜索或文件提交。
-- 更新使用 staging、健康窗口和上一版本回滚。
-- 插件错误向用户显示安全、可操作原因，完整堆栈和路径只进入本地日志。
-- Serpent 不上传插件遥测；诊断由用户主动导出。
+容错边界：
 
-## 14. API 与兼容性
+- 静态 Manifest/Schema 非法：安装或激活阶段拒绝整个插件，返回精确 JSON path；不能静默猜测作者意图。
+- 已持久化值非法：仅该字段回退默认值并给出字段级诊断；其他设置仍可读取和渲染。
+- 已删除或未声明的旧 key 可保留在命名空间存储中，但不参与渲染和运行时配置结果。
+- 项目未发布，不提供旧设置 Schema 兼容或迁移承诺；仓内 fixture 与新 Schema 一次性迁移。
 
-- Plugin API 独立使用整数主版本，首版为 `1`。
-- `engines.serpent` 和 `engines.pluginApi` 在安装与激活时双重校验。
-- API 字段和 Contribution 弃用至少保留一个发布周期。
-- Plugin SDK 类型从公共 Schema 生成；Host、类型、示例和测试 fixture 同版本发布。
-- 插件自有数据迁移必须声明 `from` / `to` 和回滚策略，在新版本激活前完成。
-- 更新失败不得留下半迁移状态；资源库级数据迁移需要备份或可逆日志。
+现有 Host-rendered boolean/select 等设置行视为实验实现，不是稳定公开组件 API。等主线 Serpent 自身形成设计 token、交互状态、布局、表单、无障碍和组件规范后，再单独设计插件 UI primitives（toggle、dropdown、slider、field、section 等）及 `@serpent/ui` 包。届时插件只描述语义，Host 组件负责原生一致性；当前不得继续无限扩张 `setting.type` 枚举。
 
-## 15. 测试门禁
+## 10. Domain API、批量写回与 Execution Plan
 
-每个功能变更必须同步更新受影响测试。实施至少覆盖：
+插件复用 0023 的完整 `serpent` SDK：assets、folders、tags、collections、files、jobs、ai、content、storage、secrets、net、clipboard 和 library binding。受限插件不获得任意绝对路径；非受限插件直接系统访问不享受 Gateway 保证。
 
-### 契约与安装
+批量内容替换是通用 Gateway Action，不是 Image Upscaler 专用接口：
 
-- Manifest、SemVer、平台、路径穿越、符号链接、归档炸弹和文件摘要。
-- GitHub tag、默认分支锁 commit、不执行构建脚本。
-- 用户级/资源库级安装、两设备模拟同步、每设备信任。
-- 同 ID 双版本选择、记忆、切换、缺失版本和升级重新确认。
+```ts
+await serpent.assets.replaceContentBatch({
+  items: [
+    { assetId, expectedRevisionId, content: { stagingToken } }
+  ]
+});
+```
 
-### 运行时与安全
+语义：
 
-- 标准插件无法访问 Node、环境变量、文件系统、网络、宿主 DOM 和任意 IPC。
-- 无限循环、内存膨胀、Promise 风暴、事件洪水和输出洪水可终止。
-- 可信插件进程崩溃不影响 Main、Renderer、Worker 和其他可信插件。
-- 权限不足、权限增加、模式变化、来源变化和摘要篡改 fail-closed。
+- 所有输出先写入 Host 管理的 staging；大文件不塞入单个 IPC payload。
+- 一个批次生成一个 Execution Plan 和一次用户确认。
+- 在首次提交前统一校验全部 `expectedRevisionId`；任一变化则整个批次拒绝开始。
+- 多文件系统写入无法承诺真正原子；Host 使用 staging、恢复 journal 和明确 per-item result，在崩溃后继续或回滚到可解释状态。
+- 成功提交后统一切换 Revision、失效衍生物、刷新缩略图并发布领域事件；Undo/恢复以整个批次关联。
 
-### UI 与输入
+## 11. Job、长生命周期 Worker 与资源管理
 
-- Contribution 注册/撤销、菜单 enablement、视图恢复、主题、语言、缩放和无障碍。
-- iframe CSP、origin、postMessage Schema 和导航/下载限制。
-- 快捷键冲突、IME、Capture mutex、紧急释放、崩溃释放和系统对话框抢占。
-- Electron E2E 必须在后台、隔离 userData 和测试资源库运行。
+Plugin Job API 至少支持：
 
-### Hook、Provider 与性能
+- `reportProgress({ completed, total, phase, message? })`
+- `signal` 取消和明确 cancelled 结果
+- 逐项成功/失败结果与可重试输入
+- handler 声明 `resumable` 和 checkpoint Schema 后的暂停/恢复；未声明者只支持取消/重试
+- 插件缺失、停用或版本不兼容时进入 blocked/paused，不由其他版本静默接管
 
-- did event 去重、cause chain 防循环、Hook 顺序、超时和 failure mode。
-- Hook 不在事务/锁内运行，不能回调形成死锁。
-- Provider 取消、分页、超时降级、版本失效和缓存重建。
-- 10 万资产下插件派生搜索/过滤/排序不破坏原生首屏性能目标。
+推荐阶段包括 `preparing`、`loading-model`、`reading`、`processing`、`staging`、`committing`；`awaiting-confirmation` 属于 Execution Plan/UI 状态，不应伪装成插件仍在计算。
 
-### 生命周期与恢复
+模型推理、OCR、视频处理等插件在 `setup` 中启动长生命周期 Worker，在多个 Job 间复用模型，并在 `dispose` 或模型配置变化时释放。全局实例天然可跨库复用一个 Worker；library 实例按库隔离。Host 不替插件设计显存并发策略，也不默认把多个插件的外部模型进程合并共享。
 
-- 安装、启用、停用、升级、回滚、卸载、Safe Mode 和 crash quarantine。
-- 插件 Job 在应用重启、插件缺失、版本改变和资源库关闭后的状态。
-- macOS / Windows packaged 安装、Unicode/长路径、升级与卸载保留资源库数据。
+## 12. 事件、Hook、Provider 与输入
 
-大规模功能完成后按仓库纪律执行独立 Standards/Spec 审查、真实 Electron E2E 和 Computer Use；实现者不得自行签署最终 accepted。
+- `onDid*` 观察提交后事实，携带稳定 ID、最小摘要、`eventId`、来源和 cause chain；至少一次投递，插件负责去重。
+- `onWill*` 只在领域预检/Execution Plan 阶段运行，不能在事务或文件锁内运行；返回 allow/warn/block，不直接改写参数。
+- 阻断 Hook 默认 timeout fail-open；只有用户对特定插件明确启用才可 fail-closed。
+- Provider 用于 preview、thumbnail、metadata、import、export、AI、derived field 和 search；大规模搜索/排序优先物化字段，不能在 Renderer 逐资产同步调用插件。
+- Input Capture 分 `view`、`viewer`、`application`，有互斥、IME、背压、紧急释放和系统对话框优先级；失焦、停用、崩溃、关库和视图关闭时自动释放。
 
-## 16. 分阶段交付
+## 13. Worker 协议与故障域
 
-### Phase A：契约与 SDK
+协议按消息重要性分层：
 
-- Manifest Schema、Package/Installation/Trust/Resolution 数据模型。
-- Plugin API v1、生成的 SDK 类型、Contribution Registry。
-- 用户级/资源库级目录与 lock 规范。
-- Beads：`Serpent-upsn.1`。
+- **控制面**：handshake、request/response、lifecycle、capability negotiation。未知类型、错误 correlation 或不兼容版本属于协议错误，终止并按策略重启/隔离该实例。
+- **可选事件面**：统一 envelope `{ kind: 'event', eventType, critical: false, payload }`。未知非关键事件记录诊断后忽略，不杀死 Worker。
+- 已声明 `critical: true` 但 Host 不认识的事件视为能力协商失败，不能假装成功。
 
-### Phase B：安装、信任和管理
+Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Renderer 刷新。未知事件、单个非法 Contribution、单个持久化设置值和某个 Predicate 失败各自局部降级，不得错误扩大为整个插件设置页、全部菜单或整个 Host 崩溃。
 
-- 本地包、本地目录、GitHub URL 安装。
-- 完整性、原子升级、回滚、双版本选择。
-- 插件管理页、Safe Mode 和 crash quarantine 基础。
-- Beads：`Serpent-upsn.2`。
+## 14. 可靠性、安全与恢复
 
-### Phase C：标准与可信 Host
+- Plugin Supervisor 记录实例范围、启动、setup/dispose、Hook、Provider、Job、退出和诊断。
+- setup 有 deadline；失败不能阻止应用或资源库打开。连续崩溃进入 quarantine。
+- Safe Mode 本次启动不加载第三方插件，但保留管理、诊断和卸载入口。
+- UI iframe、受限 Host 和非受限进程有心跳；失联后按实例撤销全部注册。
+- Hook、Provider、Predicate、事件和输入队列均有取消、上限、deadline 与背压。
+- 更新使用 staging、健康窗口和上一版本回滚；插件自有持久数据迁移必须可恢复。
+- Serpent 不上传插件遥测；用户可主动导出诊断。
 
-- QuickJS 标准 Plugin Runtime Contract。
-- 每插件可信 UtilityProcess、监督、日志和强制终止。
-- Activation/Deactivation、设置和命名空间存储。
-- Beads：`Serpent-upsn.3`（标准）、`Serpent-upsn.4`（可信）。
+## 15. API 版本策略（发布前）
 
-### Phase D：领域 API、事件和后台任务
+- 本项目尚未发布，当前 Plugin API/Manifest 直接升级为新主版本并替换旧实现。
+- 不保留旧 Contribution 适配器、不提供一个发布周期弃用、不为旧 fixture 维持双 Schema。
+- 公共类型必须从 Schema 生成；Host、SDK、文档、示例和测试 fixture 同一变更发布。
+- 真正对外发布前另行制定兼容政策；本条不能被实现者提前解释成永久无版本管理。
 
-- 复用 Gateway 的 Plugin SDK。
-- did events、cause chain、插件 Job。
-- 阻断 Hook 与 Execution Plan 集成。
-- Beads：`Serpent-upsn.5`。
+## 16. 对 Image Upscaler 反馈的取舍
 
-### Phase E：UI Contributions 与输入捕获
+| 反馈 | 决定 |
+| --- | --- |
+| 批量内容替换、单次确认、Revision 校验、staging | 接受，建模为通用 Gateway Action；不虚构跨文件真正原子性 |
+| 常驻模型 Worker | 接受插件实例内复用；不提供强制 Host 共享模型 Worker |
+| Host 提供 GPU/VRAM/CPU/内存接口与推理调度 | 拒绝；非受限插件自行探测和调度 |
+| 条件菜单、结构化选择上下文、多选菜单 | 接受，归入统一交互框架 |
+| Job 进度、取消、暂停/恢复 | 接受进度与取消；暂停/恢复只对声明 checkpoint 的 handler 开放 |
+| 非法设置不能清空整页 | 接受持久化值字段级降级；静态非法 Manifest 仍整体拒绝 |
+| 未知 Worker 事件永不终止 | 部分接受；非关键事件忽略，未知控制消息仍 fail-closed |
+| 多库 Contribution 隔离 | 接受，以 pluginInstanceId 隔离而非只拼 libraryId |
+| Host 级共享 Worker | 拒绝为通用契约；由 global Plugin Instance 自己复用资源 |
 
-- Host-rendered 菜单、工具栏、Inspector、设置。
-- sandboxed iframe 工作区、侧栏入口和查看页 overlay。
-- shortcut、IME 和 Capture Session。
-- Beads：`Serpent-upsn.6`（UI）、`Serpent-upsn.7`（输入）。
+## 17. 测试门禁
 
-### Phase F：Provider 与高级扩展
+### 契约与生命周期
 
-- 预览、缩略图、元信息、导入导出和 AI Provider。
-- 物化派生字段、搜索/过滤/排序扩展。
-- 插件命令按用户授权选择性暴露到 MCP。
-- 主题 token 包与可信 CSS 主题。
-- Beads：`Serpent-upsn.8`（Provider）、`Serpent-upsn.9`（MCP/主题/打包/QA）。
+- Manifest、路径/归档/摘要、信任、Resolution、用户/资源库安装。
+- global setup 一次、library setup 每库一次、dispose 幂等、关一库不撤销其他实例。
+- `pluginInstanceId + contributionId` 隔离；setup/dispose/reload 后 Registry revision 刷新。
 
-## 17. 明确不做
+### Context、Command 与菜单
 
-- 第一阶段插件社区、评分、审核和官方市场。
-- Serpent 托管的 Python 环境、pip 或 Python SDK。
-- 标准插件的系统全局键鼠 Hook、任意 Node、Shell、SQL 或宿主 DOM。
-- 打开资源库时自动运行未信任代码。
-- 从 GitHub 仓库执行安装、构建或生命周期脚本。
-- 两台设备同时写同一资源库、团队角色和协作审批。
-- 保证可信插件的系统行为都能被权限清单拦截。
-- 让资源库同步信任、密钥、绝对本机路径或版本冲突 Resolution。
+- Contribution/Invocation/Domain API 不混用，Invocation Context 在等待后仍指向原目标。
+- `when`/`enablement`/`checked`、Predicate revision 取消、超时与缓存。
+- 单选、多选图片、混合选择、viewer/浏览上下文；无条件菜单不排除多选。
+- 二/三级菜单、before/after/group、缺锚点、循环约束和当前快捷键显示。
+- 停用、卸载、重装、切库后菜单及时刷新。
 
-## 18. 给实施 Agent 的硬约束
+### Gateway、Job 与协议
+
+- batch replace 一次确认、统一 Revision 预检、staging 大文件、部分提交崩溃恢复、统一事件/缩略图。
+- Job 进度、取消、逐项失败、checkpoint 恢复和不可恢复 handler 的明确拒绝。
+- 未知非关键事件不杀 Worker；未知控制消息终止并只隔离当前实例。
+- 非法持久化设置只回退单字段；非法静态 Manifest 精确报错并拒绝。
+
+### 安全与真实应用
+
+- 受限插件隔离、非受限进程崩溃、权限变化、Hook 死锁、Provider deadline、Input Capture 释放。
+- 真实 Electron E2E 后台运行并隔离 userData；packaged、完整重启、macOS/Windows 和 Computer Use 按仓库四列证据记录，未执行不得写成通过。
+
+## 18. 分阶段交付
+
+1. **基础 Runtime（已有实现继续收口）**：Package、Trust、Resolution、restricted/unrestricted Host、Gateway、事件、Hook、Provider、Input、iframe。
+2. **实例生命周期重构**：引入 instance scope，统一 setup/dispose，消除“所有实例绑定单库”的旧假设。
+3. **交互内核**：Command Registry、Context Key、Contribution/Invocation Context、条件引擎、Predicate Resolver。
+4. **菜单与表面统一**：树形菜单、Placement Solver、快捷键显示，并让 toolbar/Inspector/Viewer 复用同一语义。
+5. **批处理与 Job 能力**：batch replace、staging/recovery、进度/取消/可选 checkpoint。
+6. **故障域收口**：设置值字段降级、协议控制面/事件面分层、多实例回归。
+7. **视觉组件体系（延期）**：只在主线 Serpent UI 设计系统稳定后实施插件 primitives 与统一设置 UI。
+
+具体 Beads ID 和依赖以 `Serpent-upsn`、`Serpent-7nah` 子工单为准。
+
+## 19. 明确不做
+
+- 当前阶段的插件市场、评分、审核、团队审批和 Serpent 托管 Python 环境。
+- 受限插件的任意 Node、Shell、SQL、宿主 DOM 或系统全局键鼠 Hook。
+- 在 Context 表达式中执行插件 JS 或等待 RPC。
+- 把 Contribution Context 扩成完整资产对象或功能 API。
+- 通用 GPU/CPU/内存探测 API、Host 推理调度器或跨插件模型 Worker。
+- 在主线 UI 规范形成前承诺 toggle/dropdown/slider 的稳定视觉组件 API。
+- 为未发布的旧插件协议维护兼容层。
+
+## 20. 给实施 Agent 的硬约束
 
 1. 不得绕过 Automation Command Gateway 复制资产、数据库或文件操作逻辑。
-2. 不得把第三方后端代码加载到 Renderer 或 Main。
-3. 不得把 `node:vm` 当成标准插件安全边界。
-4. 不得让资源库插件在显式信任前执行任何入口代码。
-5. 不得对用户级和资源库级同 ID 插件设置隐藏优先级。
-6. 不得声称可信插件仍被细粒度权限完全限制。
-7. 不得在 SQLite 事务或文件锁内等待插件 Hook。
-8. 不得在 Renderer 中逐资产运行搜索、过滤或排序 Provider。
-9. 不得用无限制事件流或 input capture 阻塞 Host。
-10. 修改任何功能后必须在同一增量更新相关测试、类型和文档。
+2. 不得把第三方后端加载到 Renderer 或 Main，也不得把 `node:vm` 当安全边界。
+3. 不得让资源库插件在显式信任前执行入口代码。
+4. 不得由安装范围推导实例范围，也不得重新引入 `openLibrary` 生命周期。
+5. 不得让菜单打开等待插件 RPC；复杂判断必须预计算为 Context Key。
+6. 不得用文案、DOM 顺序或数组下标作为菜单锚点。
+7. 不得把 Context 摘要作为领域读取/写入 API。
+8. 不得声称多文件替换具有文件系统原子性；必须设计 staging 和恢复 journal。
+9. 不得因未知非关键事件、单个坏设置值或单个坏菜单分支杀死整个插件 Host/UI。
+10. 不得为 GPU 探测或模型并发增加无必要 Host 能力。
+11. UI 组件标准化工单在主线设计系统稳定前保持延期，不用临时枚举冒充最终抽象。
+12. 每个行为变更同步更新 Schema、SDK 类型、fixture、文档和相关测试。

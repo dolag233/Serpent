@@ -53,7 +53,11 @@ describe('Plugin Trusted Host handler', () => {
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
     writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
+        let pluginContext;
         exports.setup = async function setup(serpent) {
+        pluginContext = serpent;
+        serpent.subscriptions.add(() => serpent.console.log('subscription-disposed'));
+        serpent.console.log('signal-aborted:' + serpent.signal.aborted);
         serpent.console.log(JSON.stringify({
           assets: Object.keys(serpent.assets).sort(),
           library: Object.keys(serpent.library).sort(),
@@ -67,7 +71,9 @@ describe('Plugin Trusted Host handler', () => {
           palettes: Object.keys(serpent.palettes).sort()
         }));
       };
-      exports.dispose = async function dispose() {};
+      exports.dispose = async function dispose() {
+        pluginContext.console.log('dispose-signal-aborted:' + pluginContext.signal.aborted);
+      };
     `);
 
     const posted: PluginTrustedChildMessage[] = [];
@@ -92,7 +98,7 @@ describe('Plugin Trusted Host handler', () => {
     for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.activated'); attempt += 1) {
       await flush(10);
     }
-    const consoleMessage = posted.find((message) => message.type === 'plugin-trusted.console');
+    const consoleMessage = posted.find((message) => message.type === 'plugin-trusted.console' && message.message.startsWith('{'));
     expect(consoleMessage?.type).toBe('plugin-trusted.console');
     if (consoleMessage?.type !== 'plugin-trusted.console') throw new Error('missing Guest API probe output');
     expect(JSON.parse(consoleMessage.message)).toEqual({
@@ -107,12 +113,95 @@ describe('Plugin Trusted Host handler', () => {
       trash: [...SERPENT_GUEST_TRASH_METHODS].sort(),
       palettes: [...SERPENT_GUEST_PALETTE_METHODS].sort(),
     });
+    expect(posted.some((message) => message.type === 'plugin-trusted.console' && message.message === 'signal-aborted:false')).toBe(true);
 
     handler.handle({
       type: 'plugin-trusted.deactivate',
       instanceId,
       reason: 'library-closed',
     });
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.deactivated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-trusted.console' && message.message === 'subscription-disposed')).toBe(true);
+    expect(posted.some((message) => message.type === 'plugin-trusted.console' && message.message === 'dispose-signal-aborted:true')).toBe(true);
+    handler.dispose();
+  }, 20_000);
+
+  it('binds trusted jobs to the same explicit forLibrary target as domain calls', async () => {
+    const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-targeted-jobs-'));
+    roots.push(packageDirectory);
+    mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
+    writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
+      exports.setup = async function setup(serpent) {
+        const scoped = serpent.forLibrary('library-2');
+        await scoped.jobs.enqueue({ handlerId: 'tick', payload: { tick: 2 } });
+        await scoped.jobs.reportProgress({ jobId: '88888888-8888-4888-8888-888888888888', completed: 1, total: 2 });
+        await scoped.jobs.cancel({ jobId: '88888888-8888-4888-8888-888888888888', reason: 'stop' });
+      };
+      exports.dispose = async function dispose() {};
+    `);
+    const posted: PluginTrustedChildMessage[] = [];
+    const handler = createPluginTrustedHostHandler({
+      postMessage: (message) => posted.push(message),
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    handler.handle({
+      type: 'plugin-trusted.activate',
+      instanceId,
+      libraryId: '__serpent_global_runtime__',
+      instanceScope: 'global',
+      pluginId: 'com.example.targeted-jobs',
+      version: '1.0.0',
+      packageHash: 'e'.repeat(64),
+      packageDirectory,
+      entryRelativePath: 'dist/main.js',
+      permissions: ['job.manage'],
+      activateDeadlineMs: 15_000,
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.job-enqueue'); attempt += 1) {
+      await flush(10);
+    }
+    const enqueueMessage = posted.find((message) => message.type === 'plugin-trusted.job-enqueue');
+    expect(enqueueMessage).toMatchObject({ targetLibraryId: 'library-2', handlerId: 'tick' });
+    if (enqueueMessage?.type !== 'plugin-trusted.job-enqueue') throw new Error('missing targeted trusted job enqueue');
+    handler.handle({
+      type: 'plugin-trusted.job-enqueue-result',
+      instanceId,
+      requestId: enqueueMessage.requestId,
+      ok: true,
+      result: { jobId: '88888888-8888-4888-8888-888888888888' },
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.job-progress'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted).toContainEqual(expect.objectContaining({
+      type: 'plugin-trusted.job-progress',
+      targetLibraryId: 'library-2',
+      jobId: '88888888-8888-4888-8888-888888888888',
+    }));
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.job-control'); attempt += 1) {
+      await flush(10);
+    }
+    const controlMessage = posted.find((message) => message.type === 'plugin-trusted.job-control');
+    expect(controlMessage).toMatchObject({
+      targetLibraryId: 'library-2',
+      jobId: '88888888-8888-4888-8888-888888888888',
+      action: 'cancel',
+      reason: 'stop',
+    });
+    if (controlMessage?.type !== 'plugin-trusted.job-control') throw new Error('missing targeted trusted job control');
+    handler.handle({
+      type: 'plugin-trusted.job-control-result',
+      instanceId,
+      requestId: controlMessage.requestId,
+      ok: true,
+      job: null,
+    });
+    handler.handle({ type: 'plugin-trusted.deactivate', instanceId, reason: 'library-closed' });
     handler.dispose();
   }, 20_000);
 
@@ -121,12 +210,14 @@ describe('Plugin Trusted Host handler', () => {
     roots.push(packageDirectory);
     mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
     writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
-        exports.setup = async function setup(serpent) {
+      let bridge;
+      exports.setup = async function setup(serpent) {
+        bridge = serpent;
         await serpent.assets.search({ query: null, limit: 1 });
       };
-        exports.dispose = async function dispose(reason) {
-          serpent.console.log('disposed:' + reason);
-        };
+      exports.dispose = async function dispose(reason) {
+        bridge.console.log('disposed:' + reason);
+      };
     `);
 
     const posted: PluginTrustedChildMessage[] = [];
@@ -187,6 +278,56 @@ describe('Plugin Trusted Host handler', () => {
     expect(posted.some((message) => (
       message.type === 'plugin-trusted.console' && message.message === 'disposed:library-closed'
     ))).toBe(true);
+    handler.dispose();
+  }, 20_000);
+
+  it('rejects a pending Host call during deactivation before disposing with its reason', async () => {
+    const packageDirectory = mkdtempSync(path.join(tmpdir(), 'serpent-trusted-pending-plugin-'));
+    roots.push(packageDirectory);
+    mkdirSync(path.join(packageDirectory, 'dist'), { recursive: true });
+    writeFileSync(path.join(packageDirectory, 'dist', 'main.js'), `
+      let bridge;
+      exports.setup = async function setup(serpent) {
+        bridge = serpent;
+        void serpent.assets.search({ query: null, limit: 1 }).catch((error) => {
+          bridge.console.log('pending:' + error.message);
+        });
+      };
+      exports.dispose = async function dispose(reason) {
+        bridge.console.log('disposed:' + reason);
+      };
+    `);
+
+    const posted: PluginTrustedChildMessage[] = [];
+    const handler = createPluginTrustedHostHandler({
+      postMessage: (message) => posted.push(message),
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = '12111111-1111-4111-8111-111111111111';
+    handler.handle({
+      type: 'plugin-trusted.activate',
+      instanceId,
+      libraryId: 'library-1',
+      pluginId: 'com.example.trusted.pending',
+      version: '1.0.0',
+      packageHash: 'a'.repeat(64),
+      packageDirectory,
+      entryRelativePath: 'dist/main.js',
+      permissions: ['library.read', 'asset.read'],
+      activateDeadlineMs: 15_000,
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.activated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-trusted.host-command')).toBe(true);
+
+    handler.handle({ type: 'plugin-trusted.deactivate', instanceId, reason: 'library-closed' });
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-trusted.deactivated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-trusted.console' && message.message === 'pending:The trusted plugin instance was deactivated.')).toBe(true);
+    expect(posted.some((message) => message.type === 'plugin-trusted.console' && message.message === 'disposed:library-closed')).toBe(true);
     handler.dispose();
   }, 20_000);
 

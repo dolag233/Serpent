@@ -12,7 +12,7 @@ import {
   type PluginHookContext,
   type PluginHookDecision,
 } from '../plugins/plugin-hooks';
-import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
+import type { PluginJobCheckpoint, PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
 import type { PluginCommandComplete, PluginCommandContext } from '../plugins/plugin-commands';
 import type {
   PluginProviderBatchResult,
@@ -34,6 +34,7 @@ import {
   createSerpentGuestApi,
 } from './serpent-guest-api';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import type {
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
@@ -83,6 +84,34 @@ type TrustedExports = {
   dispose?: (reason?: string) => unknown;
 };
 
+type PluginSubscriptionStore = {
+  add(value: unknown): unknown;
+  dispose(): void;
+};
+
+function createPluginSubscriptionStore(): PluginSubscriptionStore {
+  const values: unknown[] = [];
+  return {
+    add(value: unknown): unknown {
+      if (value !== null && value !== undefined) values.push(value);
+      return value;
+    },
+    dispose(): void {
+      for (const value of values.splice(0).reverse()) {
+        try {
+          if (typeof value === 'function') (value as () => void)();
+          else if (typeof value === 'object' && value !== null && 'dispose' in value
+            && typeof (value as { dispose?: unknown }).dispose === 'function') {
+            (value as { dispose(): void }).dispose();
+          }
+        } catch {
+          // One broken subscription must not retain the plugin instance.
+        }
+      }
+    },
+  };
+}
+
 type PluginTrustedHostActiveProvider = {
   compute: (
     batch: PluginProviderInvoke['batch'],
@@ -100,6 +129,8 @@ type ActiveInstance = {
   pluginId: string;
   packageHash: string;
   pendingHostRequests: Map<string, PendingHostRequest>;
+  abortController: AbortController;
+  subscriptions: PluginSubscriptionStore;
   deactivateReason: PluginRuntimeDeactivateReason | undefined;
   resolvePark(): void;
   parkPromise: Promise<void>;
@@ -107,7 +138,8 @@ type ActiveInstance = {
   exports: TrustedExports | undefined;
   eventQueue: ReturnType<typeof createPluginDomainEventQueue>;
   hookHandlers: Map<string, (context: PluginHookContext) => PluginHookDecision | Promise<PluginHookDecision>>;
-  jobHandlers: Map<string, (payload: Record<string, unknown>, job: PluginJobRecord) => unknown | Promise<unknown>>;
+  jobHandlers: Map<string, (payload: Record<string, unknown>, job: PluginJobRecord, signal: AbortSignal) => unknown | Promise<unknown>>;
+  jobSignals: Map<string, AbortController>;
   providerHandlers: Map<string, {
     kind: string;
     compute: (batch: PluginProviderInvoke['batch'], context: {
@@ -170,21 +202,18 @@ function createSerpentBridge(
     },
   ): Promise<unknown> => (
     new Promise((resolve, reject) => {
-      if (commandOptions?.targetLibraryId !== undefined) {
-        reject(new Error(
-          'Targeted plugin commands require the target-library host protocol extension.',
-        ));
-        return;
-      }
       const requestId = globalThis.crypto.randomUUID();
       instance.pendingHostRequests.set(requestId, { resolve, reject });
-      const causeChain = instance.activeCauseChain;
+      const causeChain = commandOptions?.causeChain ?? instance.activeCauseChain;
       postMessage({
         type: 'plugin-trusted.host-command',
         instanceId: instance.instanceId,
         requestId,
         commandId,
         input,
+        ...(commandOptions?.targetLibraryId === undefined
+          ? {}
+          : { targetLibraryId: commandOptions.targetLibraryId }),
         ...(causeChain.length > 0 ? { causeChain: [...causeChain] } : {}),
       });
     })
@@ -246,16 +275,41 @@ function createSerpentBridge(
     },
   };
 
-  const jobs = {
-    registerHandler: (id: unknown, handler: unknown): void => {
-      if (typeof handler !== 'function') {
-        throw new Error('serpent.jobs.registerHandler requires a handler function.');
-      }
-      instance.jobHandlers.set(
-        String(id),
-        handler as (payload: Record<string, unknown>, job: PluginJobRecord) => unknown | Promise<unknown>,
-      );
-    },
+  const createJobs = (targetLibraryId?: string) => {
+    const controlJob = (input: {
+      jobId: string;
+      action: 'pause' | 'resume' | 'cancel' | 'retry';
+      reason?: string;
+      retryInput?: Record<string, unknown>;
+      checkpoint?: PluginJobCheckpoint;
+    }): Promise<unknown> => new Promise((resolve, reject) => {
+      const requestId = globalThis.crypto.randomUUID();
+      instance.pendingHostRequests.set(requestId, { resolve, reject });
+      postMessage({
+        type: 'plugin-trusted.job-control',
+        instanceId: instance.instanceId,
+        requestId,
+        jobId: input.jobId,
+        action: input.action,
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+        ...(input.retryInput === undefined ? {} : { retryInput: input.retryInput }),
+        ...(input.checkpoint === undefined ? {} : { checkpoint: input.checkpoint }),
+        ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
+      });
+    });
+
+    return {
+      ...(targetLibraryId === undefined ? {
+      registerHandler: (id: unknown, handler: unknown): void => {
+        if (typeof handler !== 'function') {
+          throw new Error('serpent.jobs.registerHandler requires a handler function.');
+        }
+        instance.jobHandlers.set(
+          String(id),
+          handler as (payload: Record<string, unknown>, job: PluginJobRecord, signal: AbortSignal) => unknown | Promise<unknown>,
+        );
+      },
+    } : {}),
     enqueue: (input: {
       handlerId: string;
       payload?: Record<string, unknown>;
@@ -271,10 +325,48 @@ function createSerpentBridge(
           handlerId: input.handlerId,
           payload: input.payload ?? {},
           ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+          ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
         });
       })
     ),
+    reportProgress: (input: {
+      jobId: string;
+      completed: number;
+      total: number;
+      phase?: string;
+      message?: string;
+      progress?: number;
+    }): Promise<void> => {
+      postMessage({
+        type: 'plugin-trusted.job-progress',
+        instanceId: instance.instanceId,
+        jobId: input.jobId,
+        progress: {
+          completed: input.completed,
+          total: input.total,
+          phase: input.phase ?? '',
+          message: input.message ?? '',
+          ...(input.progress === undefined ? {} : { progress: input.progress }),
+        },
+        ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
+      });
+      return Promise.resolve();
+    },
+    cancel: (input: { jobId: string; reason?: string }): Promise<unknown> => (
+      controlJob({ ...input, action: 'cancel' })
+    ),
+    pause: (input: { jobId: string; checkpoint: PluginJobCheckpoint }): Promise<unknown> => (
+      controlJob({ ...input, action: 'pause' })
+    ),
+    resume: (input: { jobId: string }): Promise<unknown> => (
+      controlJob({ ...input, action: 'resume' })
+    ),
+    retry: (input: { jobId: string; retryInput?: Record<string, unknown> }): Promise<unknown> => (
+      controlJob({ ...input, action: 'retry' })
+    ),
+    };
   };
+  const jobs = createJobs();
   const providers = {
     register: (kind: unknown, provider: unknown): void => {
       if (typeof provider !== 'object' || provider === null
@@ -347,8 +439,21 @@ function createSerpentBridge(
     }),
   };
 
+  const guestApi = createSerpentGuestApi({ executeCommand: callHost });
   return {
-    ...createSerpentGuestApi({ executeCommand: callHost }),
+    ...guestApi,
+    signal: instance.abortController.signal,
+    subscriptions: instance.subscriptions,
+    forLibrary: (libraryId: string): Record<string, unknown> => {
+      const parsed = pluginTargetLibraryIdSchema.safeParse(libraryId);
+      if (!parsed.success || parsed.data === '__serpent_global_runtime__') {
+        throw new Error('Invalid target library id.');
+      }
+      return {
+        ...createSerpentGuestApi({ executeCommand: callHost }, parsed.data),
+        jobs: createJobs(parsed.data),
+      };
+    },
     storage: {
       get: (key: unknown, options?: { scope?: 'library' | 'user' }) => callStorage({
         operation: 'get',
@@ -417,9 +522,13 @@ export function createPluginTrustedHostHandler(options: {
     const current = instances.get(instanceId);
     if (current === undefined) return;
     instances.delete(instanceId);
+    current.abortController.abort();
+    current.subscriptions.dispose();
     current.eventQueue.close();
     for (const controller of current.searchControllers.values()) controller.abort();
     current.searchControllers.clear();
+    for (const controller of current.jobSignals.values()) controller.abort();
+    current.jobSignals.clear();
     for (const queue of current.inputCaptureQueues.values()) queue.end();
     current.inputCaptureQueues.clear();
     for (const pending of current.pendingHostRequests.values()) {
@@ -451,6 +560,8 @@ export function createPluginTrustedHostHandler(options: {
       pluginId: request.pluginId,
       packageHash: request.packageHash,
       pendingHostRequests: new Map(),
+      abortController: new AbortController(),
+      subscriptions: createPluginSubscriptionStore(),
       deactivateReason: undefined,
       resolvePark,
       parkPromise,
@@ -459,6 +570,7 @@ export function createPluginTrustedHostHandler(options: {
       eventQueue: createPluginDomainEventQueue(),
       hookHandlers: new Map(),
       jobHandlers: new Map(),
+      jobSignals: new Map(),
       providerHandlers: new Map(),
       searchHandlers: new Map(),
       searchControllers: new Map(),
@@ -488,7 +600,7 @@ export function createPluginTrustedHostHandler(options: {
         pluginId: request.pluginId,
         pluginInstanceId: request.instanceId,
         installationScope: request.installScope,
-        instanceScope: request.instanceScope,
+        instanceScope: { kind: request.instanceScope },
         serpent,
       }));
       active.activated = true;
@@ -504,6 +616,7 @@ export function createPluginTrustedHostHandler(options: {
       } catch {
         // Best-effort dispose after Main requested shutdown.
       }
+      active.subscriptions.dispose();
       options.postMessage({
         type: 'plugin-trusted.deactivated',
         instanceId: request.instanceId,
@@ -529,6 +642,7 @@ export function createPluginTrustedHostHandler(options: {
     const current = instances.get(request.instanceId);
     if (current === undefined) return;
     current.deactivateReason = request.reason;
+    current.abortController.abort();
     current.eventQueue.close();
     for (const controller of current.searchControllers.values()) controller.abort();
     current.searchControllers.clear();
@@ -605,18 +719,36 @@ export function createPluginTrustedHostHandler(options: {
               errorDetail: 'No handler registered for this job.',
             };
           } else {
+            const controller = new AbortController();
+            current.jobSignals.set(message.job.jobId, controller);
             try {
-              await handler(message.job.payload, message.job);
+              await handler(message.job.payload, message.job, controller.signal);
+              if (controller.signal.aborted) {
+                complete = {
+                  jobId: message.job.jobId,
+                  status: 'cancelled',
+                  errorCode: 'PLUGIN_JOB_CANCELLED',
+                  errorDetail: 'The plugin job was cancelled.',
+                };
+              }
             } catch (error) {
-              complete = {
-                jobId: message.job.jobId,
-                status: 'failed',
-                errorCode: 'PLUGIN_JOB_HANDLER_FAILED',
-                errorDetail: error instanceof Error
-                  ? error.message.slice(0, 4_096)
-                  : 'Job handler failed.',
-              };
+              complete = controller.signal.aborted
+                ? {
+                  jobId: message.job.jobId,
+                  status: 'cancelled',
+                  errorCode: 'PLUGIN_JOB_CANCELLED',
+                  errorDetail: 'The plugin job was cancelled.',
+                }
+                : {
+                  jobId: message.job.jobId,
+                  status: 'failed',
+                  errorCode: 'PLUGIN_JOB_HANDLER_FAILED',
+                  errorDetail: error instanceof Error
+                    ? error.message.slice(0, 4_096)
+                    : 'Job handler failed.',
+                };
             }
+            current.jobSignals.delete(message.job.jobId);
           }
           options.postMessage({
             type: 'plugin-trusted.job-complete',
@@ -626,8 +758,23 @@ export function createPluginTrustedHostHandler(options: {
             ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
             ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
             ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+            ...(complete.completed === undefined ? {} : { completed: complete.completed }),
+            ...(complete.total === undefined ? {} : { total: complete.total }),
+            ...(complete.phase === undefined ? {} : { phase: complete.phase }),
+            ...(complete.message === undefined ? {} : { message: complete.message }),
+            ...(complete.itemResults === undefined ? {} : { itemResults: complete.itemResults }),
+            ...(complete.failedAssetIds === undefined ? {} : { failedAssetIds: complete.failedAssetIds }),
+            ...(complete.retryInput === undefined ? {} : { retryInput: complete.retryInput }),
+            ...(complete.checkpoint === undefined ? {} : { checkpoint: complete.checkpoint }),
           });
         })();
+        return;
+      }
+      if (message.type === 'plugin-trusted.job-signal') {
+        const current = instances.get(message.instanceId);
+        if (current === undefined) return;
+        const controller = current.jobSignals.get(message.jobId);
+        if (controller !== undefined && !controller.signal.aborted) controller.abort(message.reason);
         return;
       }
       if (message.type === 'plugin-trusted.provider-invoke') {
@@ -837,13 +984,14 @@ export function createPluginTrustedHostHandler(options: {
       }
       if (message.type === 'plugin-trusted.host-result'
         || message.type === 'plugin-trusted.storage-result'
-        || message.type === 'plugin-trusted.job-enqueue-result') {
+        || message.type === 'plugin-trusted.job-enqueue-result'
+        || message.type === 'plugin-trusted.job-control-result') {
         const current = instances.get(message.instanceId);
         if (current === undefined) return;
         const pending = current.pendingHostRequests.get(message.requestId);
         if (pending === undefined) return;
         current.pendingHostRequests.delete(message.requestId);
-        if (message.ok) pending.resolve(message.result);
+        if (message.ok) pending.resolve(message.type === 'plugin-trusted.job-control-result' ? message.job ?? null : message.result);
         else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
       }
     },

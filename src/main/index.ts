@@ -129,7 +129,7 @@ import {
   type DesktopBrowseControl,
 } from './desktop-browse-control';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
-import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeInputCaptureStartHandler, type PluginRuntimeJobEnqueueHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
+import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeInputCaptureStartHandler, type PluginRuntimeJobControlHandler, type PluginRuntimeJobEnqueueHandler, type PluginRuntimeJobProgressHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
 import { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import { PluginInputCaptureBroker } from '../shared/plugin-input-capture';
@@ -141,6 +141,7 @@ import {
 import { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import { PluginJobScheduler } from './plugin-job-scheduler';
 import { PluginProviderScheduler } from './plugin-provider-scheduler';
+import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import { PluginStorageStore, PluginStorageStoreError } from './plugin-storage-store';
 import { PluginSettingsStore } from './plugin-settings-store';
 import { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
@@ -4227,10 +4228,34 @@ async function startApplication(): Promise<void> {
     if (!cause.ok) {
       throw new Error(cause.message);
     }
-    pluginAutomationContexts.set(context.instanceId, {
-      executionId: context.instanceId,
+    const targetLibraryId = context.targetLibraryId ?? context.libraryId;
+    if (targetLibraryId === '__serpent_global_runtime__') {
+      throw new Error('A global plugin must choose an open library with serpent.forLibrary().');
+    }
+    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(targetLibraryId);
+    if (!parsedTarget.success) {
+      throw new Error('The plugin command target library is invalid.');
+    }
+    const activeInstance = pluginActivationCoordinator?.findActiveInstance(context.instanceId);
+    if (activeInstance === undefined) {
+      throw new Error('The plugin instance is no longer active.');
+    }
+    if (activeInstance.instanceScope === 'library'
+      && activeInstance.activationLibraryId !== parsedTarget.data) {
+      throw new Error('A library-scoped plugin cannot target another library.');
+    }
+    const libraries = await workerClient?.request({ type: 'library.list' });
+    if (!libraries?.ok || libraries.type !== 'library.list'
+      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
+      throw new Error('The plugin command target library is not open.');
+    }
+    const executionId = context.targetLibraryId === undefined
+      ? context.instanceId
+      : `${context.instanceId}:${parsedTarget.data}`;
+    pluginAutomationContexts.set(executionId, {
+      executionId,
       source: 'plugin',
-      libraryId: context.libraryId,
+      libraryId: parsedTarget.data,
       grantedCapabilities: automationCapabilitiesFromPluginPermissions(context.permissions),
     });
     const commandInput = commandId === 'asset.search'
@@ -4242,7 +4267,7 @@ async function startApplication(): Promise<void> {
     const result = await gateway.execute({
       apiVersion: AUTOMATION_API_VERSION,
       commandId,
-      executionId: context.instanceId,
+      executionId,
       input: commandInput,
     });
     if (!result.ok) {
@@ -4296,10 +4321,56 @@ async function startApplication(): Promise<void> {
       throw error;
     }
   };
-  const handlePluginJobEnqueue: PluginRuntimeJobEnqueueHandler = async (input) => {
+  const resolvePluginJobTargetLibrary = async (input: {
+    instanceId: string;
+    requestedTargetLibraryId?: string;
+    ambientLibraryId: string;
+  }): Promise<{ record: NonNullable<ReturnType<PluginActivationCoordinator['findActiveInstance']>>; libraryId: string }> => {
     const coordinator = pluginActivationCoordinator;
     const client = workerClient;
     if (coordinator === undefined || client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const record = coordinator.findActiveInstance(input.instanceId);
+    if (record === undefined) {
+      throw Object.assign(new Error('The plugin instance is no longer active.'), { code: 'INSTANCE_GONE' });
+    }
+    if (record.instanceScope === 'global' && input.requestedTargetLibraryId === undefined) {
+      throw Object.assign(
+        new Error('Global plugin jobs require an explicit open target library.'),
+        { code: 'JOB_TARGET_REQUIRED' },
+      );
+    }
+    const candidate = input.requestedTargetLibraryId ?? input.ambientLibraryId;
+    const parsedTarget = pluginTargetLibraryIdSchema.safeParse(candidate);
+    if (!parsedTarget.success) {
+      throw Object.assign(new Error('The plugin job target library is invalid.'), { code: 'JOB_TARGET_INVALID' });
+    }
+    if (record.instanceScope === 'library' && record.activationLibraryId !== parsedTarget.data) {
+      throw Object.assign(
+        new Error('A library-scoped plugin cannot target another library.'),
+        { code: 'JOB_TARGET_SCOPE_VIOLATION' },
+      );
+    }
+    const libraries = await client.request({ type: 'library.list' });
+    if (!libraries.ok || libraries.type !== 'library.list'
+      || !libraries.libraries.some((library) => library.libraryId === parsedTarget.data)) {
+      throw Object.assign(new Error('The plugin job target library is not open.'), { code: 'JOB_TARGET_NOT_OPEN' });
+    }
+    return { record, libraryId: parsedTarget.data };
+  };
+  const handlePluginJobEnqueue: PluginRuntimeJobEnqueueHandler = async (input) => {
+    const client = workerClient;
+    if (client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const coordinator = pluginActivationCoordinator;
+    if (coordinator === undefined) {
       throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
     }
     const validated = coordinator.validateJobEnqueue({
@@ -4310,15 +4381,14 @@ async function startApplication(): Promise<void> {
     if (!validated.ok) {
       throw Object.assign(new Error(validated.message), { code: validated.code });
     }
-    const record = coordinator.findActiveInstance(input.instanceId);
-    if (record === undefined) {
-      throw Object.assign(new Error('The plugin instance is no longer active.'), { code: 'INSTANCE_GONE' });
-    }
     const result = await client.request({
       type: 'plugin.jobs.enqueue',
-      libraryId: input.context.libraryId,
+      libraryId,
       ownerPluginId: input.context.pluginId,
       ownerPackageHash: input.context.packageHash,
+      ownerPluginInstanceId: input.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: libraryId,
       pluginHandlerId: input.handlerId,
       payload: input.payload,
       recoveryStrategy: validated.recoveryStrategy,
@@ -4329,8 +4399,107 @@ async function startApplication(): Promise<void> {
         { code: result.ok ? 'JOB_ENQUEUE_FAILED' : result.error.code },
       );
     }
-    pluginJobScheduler?.tick(input.context.libraryId);
+    pluginJobScheduler?.tick(libraryId);
     return { jobId: result.job.jobId };
+  };
+  const handlePluginJobProgress: PluginRuntimeJobProgressHandler = async (input) => {
+    const client = workerClient;
+    if (client === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId: targetLibraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const result = await client.request({
+      type: 'plugin.jobs.report-progress',
+      libraryId: targetLibraryId,
+      jobId: input.jobId,
+      ownerPluginId: input.context.pluginId,
+      ownerPackageHash: input.context.packageHash,
+      ownerPluginInstanceId: input.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: targetLibraryId,
+      ...input.progress,
+    });
+    if (!result.ok || result.type !== 'plugin.jobs.completed') {
+      throw Object.assign(
+        new Error(result.ok ? 'Plugin job progress returned an unexpected result.' : result.error.reason),
+        { code: result.ok ? 'JOB_PROGRESS_FAILED' : result.error.code },
+      );
+    }
+  };
+  const handlePluginJobControl: PluginRuntimeJobControlHandler = async (input) => {
+    const client = workerClient;
+    const coordinator = pluginActivationCoordinator;
+    if (client === undefined || coordinator === undefined) {
+      throw Object.assign(new Error('Plugin jobs are unavailable in this session.'), { code: 'JOBS_UNAVAILABLE' });
+    }
+    const { record, libraryId } = await resolvePluginJobTargetLibrary({
+      instanceId: input.instanceId,
+      requestedTargetLibraryId: input.targetLibraryId,
+      ambientLibraryId: input.context.libraryId,
+    });
+    const listed = await client.request({ type: 'plugin.jobs.list', libraryId });
+    if (!listed.ok || listed.type !== 'plugin.jobs.listed') {
+      throw Object.assign(new Error('The plugin job list could not be read.'), { code: 'JOB_LIST_FAILED' });
+    }
+    const job = listed.jobs.find((candidate) => candidate.jobId === input.jobId);
+    if (job === undefined
+      || job.ownerPluginId !== record.pluginId
+      || job.ownerPackageHash !== record.packageHash
+      || job.ownerPluginInstanceId !== record.instanceId
+      || job.ownerScope !== record.instanceScope
+      || job.ownerLibraryId !== libraryId
+      || job.libraryId !== libraryId) {
+      throw Object.assign(new Error('The plugin does not own this job.'), { code: 'JOB_OWNERSHIP_MISMATCH' });
+    }
+    const capabilities = {
+      handlerId: job.pluginHandlerId,
+      resumable: job.recoveryStrategy === 'checkpoint',
+      ...(job.checkpoint?.version === undefined ? { checkpointVersion: 'v1' } : { checkpointVersion: job.checkpoint.version }),
+    } as const;
+    const owner = {
+      ownerPluginId: record.pluginId,
+      ownerPackageHash: record.packageHash,
+      ownerPluginInstanceId: record.instanceId,
+      ownerScope: record.instanceScope,
+      ownerLibraryId: libraryId,
+    } as const;
+    let result: Awaited<ReturnType<typeof client.request>>;
+    switch (input.action) {
+      case 'cancel':
+        result = await client.request({ type: 'plugin.jobs.cancel', libraryId, jobId: input.jobId, ...owner, reason: input.reason });
+        break;
+      case 'pause':
+        if (input.checkpoint === undefined) {
+          throw Object.assign(new Error('Pausing a plugin job requires a checkpoint.'), { code: 'CHECKPOINT_REQUIRED' });
+        }
+        result = await client.request({
+          type: 'plugin.jobs.pause', libraryId, jobId: input.jobId, ...owner,
+          capabilities,
+          checkpoint: input.checkpoint,
+        });
+        break;
+      case 'resume':
+        result = await client.request({ type: 'plugin.jobs.resume', libraryId, jobId: input.jobId, ...owner, capabilities });
+        break;
+      case 'retry':
+        result = await client.request({ type: 'plugin.jobs.retry', libraryId, jobId: input.jobId, ...owner, retryInput: input.retryInput });
+        break;
+    }
+    if (!result.ok || !('job' in result)) {
+      throw Object.assign(new Error(result.ok ? 'Plugin job control returned an unexpected result.' : result.error.reason), {
+        code: result.ok ? 'JOB_CONTROL_FAILED' : result.error.code,
+      });
+    }
+    if ((input.action === 'cancel' || input.action === 'pause') && result.job !== null) {
+      if (record.mode === 'restricted') pluginRuntimeSupervisor?.signalJob(record.instanceId, input.jobId, input.action, input.reason);
+      else pluginTrustedRuntimeSupervisor?.signalJob(record.instanceId, input.jobId, input.action, input.reason);
+    }
+    if (input.action === 'resume' || input.action === 'retry') pluginJobScheduler?.tick(libraryId);
+    return { job: result.job };
   };
   const onPluginInstanceActivated = (input: { libraryId: string }): void => {
     pluginJobScheduler?.tick(input.libraryId);
@@ -4374,6 +4543,8 @@ async function startApplication(): Promise<void> {
     executeHostCommand: executePluginHostCommand,
     executeStorage: executePluginStorage,
     handleJobEnqueue: handlePluginJobEnqueue,
+    handleJobProgress: handlePluginJobProgress,
+    handleJobControl: handlePluginJobControl,
     handleInputCaptureStart: handlePluginInputCaptureStart,
     handleInputCaptureRelease: (instanceId, sessionId) => {
       pluginInputCaptureBroker?.release(sessionId);
@@ -4397,6 +4568,8 @@ async function startApplication(): Promise<void> {
     executeHostCommand: executePluginHostCommand,
     executeStorage: executePluginStorage,
     handleJobEnqueue: handlePluginJobEnqueue,
+    handleJobProgress: handlePluginJobProgress,
+    handleJobControl: handlePluginJobControl,
     handleInputCaptureStart: handlePluginInputCaptureStart,
     handleInputCaptureRelease: (instanceId, sessionId) => {
       pluginInputCaptureBroker?.release(sessionId);
@@ -4494,7 +4667,7 @@ async function startApplication(): Promise<void> {
           return { ok: true, type: result.type, job: result.job };
         }
         if (result.type === 'plugin.jobs.completed') {
-          return { ok: true, type: result.type };
+          return { ok: true, type: result.type, job: result.job };
         }
         return { ok: false };
       },

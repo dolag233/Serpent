@@ -17,8 +17,11 @@ import {
 import type { WorkerCommand, WorkerRequest } from '../shared/protocol/requests';
 import { assetAuthorSchema, nameConflictDecisionSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import {
+  CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_BATCH_MAX_ITEMS,
   CONTENT_REPLACE_MAX_BYTES,
   CONTENT_REPLACE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../shared/content-replace';
 import {
   aiJobSchema,
@@ -213,6 +216,33 @@ export const automationCommandInputSchemas = {
     dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
     expectedRevisionId: nonBlankString.optional(),
     mimeHint: z.string().max(128).optional(),
+  }),
+  'asset.content.stage': z.strictObject({
+    assetId: nonBlankString,
+    stagingToken: nonBlankString.optional(),
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH),
+    complete: z.boolean().default(false),
+  }),
+  'asset.content.replace-batch': z.strictObject({
+    items: z.array(z.union([
+      z.strictObject({
+        assetId: nonBlankString,
+        dataBase64: z.string().min(1).max(CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH),
+        expectedRevisionId: nonBlankString,
+      }),
+      z.strictObject({
+        assetId: nonBlankString,
+        stagingToken: nonBlankString,
+        expectedRevisionId: nonBlankString,
+      }),
+    ])).min(1).max(CONTENT_REPLACE_BATCH_MAX_ITEMS).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ).refine(
+      (items) => items.reduce((total, item) => total + ('dataBase64' in item ? item.dataBase64.length : 0), 0)
+        <= CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+      { message: 'Inline batch content exceeds the IPC payload budget; use staging tokens.' },
+    ),
   }),
   'asset.content.read': z.strictObject({
     assetId: nonBlankString,
@@ -432,6 +462,24 @@ const assetContentReplaceWorkerResultSchema = z.strictObject({
   assetId: nonBlankString,
   revisionId: nonBlankString,
   byteSize: z.number().int().nonnegative(),
+});
+const assetContentStageWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.content.staged'),
+  assetId: nonBlankString,
+  stagingToken: nonBlankString,
+  byteSize: z.number().int().nonnegative(),
+  complete: z.boolean(),
+});
+const assetContentReplaceBatchWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.content.batch-replaced'),
+  operationId: nonBlankString,
+  items: z.array(z.strictObject({
+    assetId: nonBlankString,
+    revisionId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+  })).min(1),
 });
 const assetContentReadWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
@@ -697,6 +745,20 @@ export const automationCommandResultSchemas = {
     assetId: nonBlankString,
     revisionId: nonBlankString,
     byteSize: z.number().int().nonnegative(),
+  }),
+  'asset.content.stage': z.strictObject({
+    stagingToken: nonBlankString,
+    assetId: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    complete: z.boolean(),
+  }),
+  'asset.content.replace-batch': z.strictObject({
+    operationId: nonBlankString,
+    items: z.array(z.strictObject({
+      assetId: nonBlankString,
+      revisionId: nonBlankString,
+      byteSize: z.number().int().nonnegative(),
+    })).min(1),
   }),
   'asset.content.read': z.strictObject({
     assetId: nonBlankString,
@@ -1136,6 +1198,81 @@ export const automationCommandRegistry = [
             revisionId: parsed.data.revisionId,
             byteSize: parsed.data.byteSize,
           }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'asset.content.stage',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '以有界分块将待替换内容写入 Worker-owned staging；不会修改资产。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.content.stage'],
+    resultSchema: automationCommandResultSchemas['asset.content.stage'],
+    workerResultSchema: assetContentStageWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'content.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'asset',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'best-effort',
+    approvalPolicy: 'none',
+    mcp: { public: false, toolName: 'serpent_asset_content_stage', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.content.stage'>) => ({
+      type: 'asset.content.stage',
+      libraryId,
+      assetId: input.assetId,
+      ...(input.stagingToken === undefined ? {} : { stagingToken: input.stagingToken }),
+      dataBase64: input.dataBase64,
+      complete: input.complete,
+    }),
+    projectResult: (result) => {
+      const parsed = assetContentStageWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+            stagingToken: parsed.data.stagingToken,
+            assetId: parsed.data.assetId,
+            byteSize: parsed.data.byteSize,
+            complete: parsed.data.complete,
+          }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'asset.content.replace-batch',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '统一预检并一次确认后批量替换托管资产内容。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.content.replace-batch'],
+    resultSchema: automationCommandResultSchemas['asset.content.replace-batch'],
+    workerResultSchema: assetContentReplaceBatchWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'content.write'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'asset-set',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'plan',
+    mcp: { public: false, toolName: 'serpent_asset_content_replace_batch', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.content.replace-batch'>, plan) => ({
+      type: 'asset.content.replace-batch',
+      libraryId,
+      items: input.items,
+      ...(plan === undefined ? {} : { automationPlan: plan }),
+    }),
+    projectResult: (result) => {
+      const parsed = assetContentReplaceBatchWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? { operationId: parsed.data.operationId, items: parsed.data.items }
         : undefined;
     },
   },
@@ -2216,6 +2353,8 @@ export function generateAutomationTypeDeclaration(
     '      moveToTrash(assetIds: readonly string[]): Promise<{ readonly trashedCount: number; readonly operationId: string }>;',
     '      readContent(assetId: string, options?: { readonly maxBytes?: number }): Promise<{ readonly assetId: string; readonly revisionId: string; readonly byteSize: number; readonly dataBase64: string; readonly truncated: boolean; readonly mimeType: string | null }>;',
     '      replaceContent(assetId: string, dataBase64: string, options?: { readonly expectedRevisionId?: string; readonly mimeHint?: string }): Promise<{ readonly assetId: string; readonly revisionId: string; readonly byteSize: number }>;',
+    '      stageContent(assetId: string, dataBase64: string, options?: { readonly stagingToken?: string; readonly complete?: boolean }): Promise<{ readonly assetId: string; readonly stagingToken: string; readonly byteSize: number; readonly complete: boolean }>;',
+    '      replaceContentBatch(items: readonly ({ readonly assetId: string; readonly dataBase64: string; readonly expectedRevisionId: string } | { readonly assetId: string; readonly stagingToken: string; readonly expectedRevisionId: string })[]): Promise<{ readonly operationId: string; readonly items: readonly { readonly assetId: string; readonly revisionId: string; readonly byteSize: number }[] }>;',
     "      moveToFolder(assetIds: readonly string[], targetFolderId: string | null, options?: { readonly conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<{ readonly movedCount: number; readonly skippedCount: number; readonly operationId: string | null }>;",
     '      renameFile(assetId: string, newBaseName: string): Promise<{ readonly assetId: string; readonly name: string }>;',
     "      renameFiles(items: readonly { readonly assetId: string; readonly newBaseName: string }[]): Promise<{ readonly renamedCount: number; readonly skipped: readonly { readonly assetId: string; readonly reason: 'asset_not_found' | 'asset_unavailable' | 'name_conflict' | 'invalid_name' }[] }>;",

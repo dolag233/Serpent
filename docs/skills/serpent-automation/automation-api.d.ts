@@ -11,16 +11,22 @@ declare global {
     | 'library.inspect'
     | 'library.change-sequence'
     | 'execution.status'
+    | 'ui.notify'
     | 'folder.list'
     | 'linked-folder.list'
     | 'asset.list'
     | 'asset.metadata.get'
+    | 'asset.ai-content.get'
     | 'asset.metadata.set'
     | 'asset.extracted-metadata.get'
     | 'asset.search'
     | 'asset.rating.set'
     | 'asset.paths.copy'
     | 'asset.trash'
+    | 'asset.content.replace'
+    | 'asset.content.stage'
+    | 'asset.content.replace-batch'
+    | 'asset.content.read'
     | 'asset.move'
     | 'asset.rename-file'
     | 'asset.rename-files'
@@ -155,6 +161,34 @@ declare global {
       list(input?: { readonly folderId?: string; readonly recursive?: boolean; readonly limit?: number; readonly offset?: number }): Promise<SerpentPage<SerpentAsset>>;
       getMetadata(assetId: string): Promise<SerpentAssetMetadata>;
       getAiContent(assetId: string): Promise<SerpentAiContent>;
+      readContent(assetId: string, options?: { readonly maxBytes?: number }): Promise<{
+        readonly assetId: string;
+        readonly revisionId: string;
+        readonly byteSize: number;
+        readonly dataBase64: string;
+        readonly truncated: boolean;
+        readonly mimeType: string | null;
+      }>;
+      replaceContent(assetId: string, dataBase64: string, options?: {
+        readonly expectedRevisionId?: string;
+        readonly mimeHint?: string;
+      }): Promise<{ readonly assetId: string; readonly revisionId: string; readonly byteSize: number }>;
+      stageContent(assetId: string, dataBase64: string, options?: {
+        readonly stagingToken?: string;
+        readonly complete?: boolean;
+      }): Promise<{
+        readonly stagingToken: string;
+        readonly assetId: string;
+        readonly byteSize: number;
+        readonly complete: boolean;
+      }>;
+      replaceContentBatch(items: readonly (
+        | { readonly assetId: string; readonly dataBase64: string; readonly expectedRevisionId: string }
+        | { readonly assetId: string; readonly stagingToken: string; readonly expectedRevisionId: string }
+      )[]): Promise<{
+        readonly operationId: string;
+        readonly items: readonly { readonly assetId: string; readonly revisionId: string; readonly byteSize: number }[];
+      }>;
       /** expectedVersion is the metadata-row optimistic-concurrency token, not a file revision. */
       setMetadata(input: { readonly assetId: string; readonly expectedVersion: number; readonly description?: string | null; readonly rating?: 0 | 1 | 2 | 3 | 4 | 5; readonly favorite?: boolean; readonly sourcePageUrl?: string | null; readonly author?: string | null }): Promise<SerpentAssetMetadata>;
       getExtractedMetadata(assetId: string): Promise<unknown>;

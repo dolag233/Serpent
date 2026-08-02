@@ -406,6 +406,30 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('plugin.jobs.cancelled'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.job-paused'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.resumed'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('plugin.jobs.retried'),
+    libraryId: nonBlankString,
+    job: pluginJobRecordSchema.nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('plugin.jobs.paused'),
     libraryId: nonBlankString,
     pausedCount: z.number().int().nonnegative(),
@@ -777,6 +801,24 @@ const assetOperationSuccessSchemas = [
     assetId: nonBlankString,
     revisionId: nonBlankString,
     byteSize: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.staged'),
+    assetId: nonBlankString,
+    stagingToken: nonBlankString,
+    byteSize: z.number().int().nonnegative(),
+    complete: z.boolean(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.content.batch-replaced'),
+    operationId: nonBlankString,
+    items: z.array(z.strictObject({
+      assetId: nonBlankString,
+      revisionId: nonBlankString,
+      byteSize: z.number().int().nonnegative(),
+    })).min(1),
   }),
   z.strictObject({
     ok: z.literal(true),

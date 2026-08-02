@@ -55,7 +55,7 @@ Finder 默认隐藏 `~/Library`：菜单「前往」时按住 ⌥ 可见「资�
 
 1. **安装**：代码出现在上述目录  
 2. **信任**：本机用户明确允许该包装载（资源库插件每台设备都要信任；信任不随库同步）  
-3. **激活**：打开资源库且 Resolution 允许后，Host 加载入口并调用 `activate(serpent)`
+3. **实例化**：Resolution 允许后，Host 创建 global 或 library 实例并调用 `setup(context)`；停用、关库、卸载、升级或崩溃清理时调用 `dispose(reason)`。
 
 ## 3. 两种运行模式
 
@@ -125,15 +125,21 @@ my-plugin/
 }
 ```
 
-入口（CommonJS，受限与无限制均支持导出 `activate` / `deactivate`）：
+入口（CommonJS，受限与无限制均支持导出 `setup` / `dispose`）：
 
 ```js
-exports.activate = async function activate(serpent) {
-  await serpent.storage.set('hello', { ok: true });
+exports.setup = async function setup(context) {
+  context.subscriptions.add(() => console.log('subscription disposed'));
+  await context.serpent.storage.set('hello', { ok: true });
 };
 
-exports.deactivate = async function deactivate() {};
+exports.dispose = async function dispose(reason) {
+  // 释放插件自己的 Worker、模型和监听器。
+  void reason;
+};
 ```
+
+`context.signal` 会在实例停用、关库或崩溃隔离时进入 aborted；`context.subscriptions` 会在 `dispose` 完成后逆序释放已登记的函数或 `{ dispose() }` 对象。Contribution 仍在 `serpent-plugin.json` 中声明，当前版本不支持运行时动态注册菜单树。
 
 无限制模式把 `runtime.mode` 设为 `"unrestricted"`（对用户显示「非受限模式」），入口可用完整 Node（仍应优先用 `serpent.*` 改库内资产）。
 

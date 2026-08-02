@@ -228,6 +228,10 @@ export class PluginActivationCoordinator {
     }
 
     const previous = this.#activeByLibrary.get(input.libraryId) ?? new Map<string, ActiveRecord>();
+    // Host setup may call back into the command gateway before supervisor.activate
+    // resolves. Stage the instance in the coordinator before starting the host so
+    // those setup-time calls see the same lifecycle record as later calls.
+    this.#activeByLibrary.set(input.libraryId, previous);
     for (const [pluginId, record] of previous) {
       const next = desired.get(pluginId);
       if (next === undefined || next.instanceScope !== 'library' || next.mode !== record.mode) {
@@ -266,6 +270,7 @@ export class PluginActivationCoordinator {
           return themePackage === undefined ? {} : { themePackage };
         })(),
       };
+      previous.set(pluginId, record);
       try {
         if (candidate.mode === 'restricted') {
           await this.options.supervisor.activate({
@@ -296,7 +301,6 @@ export class PluginActivationCoordinator {
           });
         }
         this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
-        previous.set(pluginId, record);
         this.options.logger?.info('plugin.activation.activate-ok', 'Plugin host activated and contributions registered.', {
           pluginId,
           libraryId: input.libraryId,
@@ -304,6 +308,7 @@ export class PluginActivationCoordinator {
           instanceId,
         });
       } catch (error) {
+        previous.delete(pluginId);
         this.#revokeContributions(instanceId);
         if (candidate.mode === 'restricted') {
           this.options.supervisor.deactivate(instanceId, 'resolution-changed');
@@ -374,6 +379,7 @@ export class PluginActivationCoordinator {
           return themePackage === undefined ? {} : { themePackage };
         })(),
       };
+      this.#activeGlobal.set(pluginId, record);
       try {
         if (candidate.mode === 'restricted') {
           await this.options.supervisor.activate({
@@ -404,7 +410,6 @@ export class PluginActivationCoordinator {
           });
         }
         this.#registerContributions(input.libraryId, instanceId, pluginId, candidate.pluginPackage);
-        this.#activeGlobal.set(pluginId, record);
         this.options.logger?.info('plugin.activation.activate-ok', 'Global plugin host activated and contributions registered.', {
           pluginId,
           libraryId: input.libraryId,
@@ -413,6 +418,7 @@ export class PluginActivationCoordinator {
           instanceScope: 'global',
         });
       } catch (error) {
+        this.#activeGlobal.delete(pluginId);
         this.#revokeContributions(instanceId);
         if (candidate.mode === 'restricted') {
           this.options.supervisor.deactivate(instanceId, 'resolution-changed');
@@ -544,6 +550,7 @@ export class PluginActivationCoordinator {
           return themePackage === undefined ? {} : { themePackage };
         })(),
       };
+      this.#activeGlobal.set(pluginId, record);
       try {
         if (candidate.mode === 'restricted') {
           await this.options.supervisor.activate({
@@ -574,7 +581,6 @@ export class PluginActivationCoordinator {
           });
         }
         this.#registerContributions(context.libraryId, instanceId, pluginId, candidate.pluginPackage);
-        this.#activeGlobal.set(pluginId, record);
         this.options.logger?.info('plugin.activation.activate-ok', 'Global plugin host activated and contributions registered.', {
           pluginId,
           libraryId: context.libraryId,
@@ -583,6 +589,7 @@ export class PluginActivationCoordinator {
           instanceScope: 'global',
         });
       } catch (error) {
+        this.#activeGlobal.delete(pluginId);
         this.#revokeContributions(instanceId);
         if (candidate.mode === 'restricted') {
           this.options.supervisor.deactivate(instanceId, 'resolution-changed');
@@ -776,9 +783,16 @@ export class PluginActivationCoordinator {
     if (record === undefined) return;
     this.#revokeContributions(record.instanceId);
     if (record.instanceScope === 'global') {
+      const pause = this.#pauseJobsForInstance(record);
       if (this.#activeGlobal.get(record.pluginId)?.instanceId === record.instanceId) {
         this.#activeGlobal.delete(record.pluginId);
       }
+      void pause.catch((error) => {
+        this.options.logger?.error('plugin.jobs.pause-after-global-crash', error, {
+          instanceId: record.instanceId,
+          pluginId: record.pluginId,
+        });
+      });
     } else {
       const pause = this.pauseLibraryPluginJobs(record.activationLibraryId);
       const active = this.#activeByLibrary.get(record.activationLibraryId);
@@ -910,6 +924,9 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           commandId: contribution.commandId,
           title: contribution.title,
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
           target: 'commands' as const,
           ...(contribution.mcpExported === true ? { mcpExported: true as const } : {}),
         }));
@@ -1069,6 +1086,12 @@ export class PluginActivationCoordinator {
         ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),
         ...(contribution.before === undefined ? {} : { before: contribution.before }),
         ...(contribution.after === undefined ? {} : { after: contribution.after }),
+        ...(contribution.first === undefined ? {} : { first: contribution.first }),
+        ...(contribution.last === undefined ? {} : { last: contribution.last }),
+        ...(contribution.shortcut === undefined ? {} : { shortcut: contribution.shortcut }),
+        ...(contribution.when === undefined ? {} : { when: contribution.when }),
+        ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
       }));
   }
 
@@ -1192,6 +1215,15 @@ export class PluginActivationCoordinator {
     await this.options.pausePluginJobs({ libraryId, owners });
   }
 
+  async #pauseJobsForInstance(record: ActiveRecord): Promise<void> {
+    if (this.options.pausePluginJobs === undefined) return;
+    const libraryIds = record.instanceScope === 'global'
+      ? [...this.#openLibraries.keys()]
+      : [record.activationLibraryId];
+    const owners = [{ pluginId: record.pluginId, packageHash: record.packageHash }];
+    await Promise.all(libraryIds.map((libraryId) => this.options.pausePluginJobs!({ libraryId, owners })));
+  }
+
   #registerContributions(
     libraryId: string,
     instanceId: string,
@@ -1246,6 +1278,13 @@ export class PluginActivationCoordinator {
 
   #deactivateInstance(record: ActiveRecord, reason: PluginRuntimeDeactivateReason): void {
     this.#revokeContributions(record.instanceId);
+    void this.#pauseJobsForInstance(record).catch((error) => {
+      this.options.logger?.error('plugin.jobs.pause-before-deactivate', error, {
+        instanceId: record.instanceId,
+        pluginId: record.pluginId,
+        reason,
+      });
+    });
     if (record.mode === 'restricted') {
       this.options.supervisor.deactivate(record.instanceId, reason);
       return;

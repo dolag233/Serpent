@@ -11,6 +11,7 @@ import {
   pluginRuntimeModeSchema,
   pluginSha256Schema,
   semverSchema,
+  formatPluginManifestValidationIssues,
   type PluginManifest,
 } from './plugin-manifest';
 
@@ -256,7 +257,12 @@ export function validatePluginPackageSnapshot(
   }
 
   const parsedManifest = pluginManifestSchema.safeParse(snapshot.manifest);
-  if (!parsedManifest.success) return failure('PLUGIN_PACKAGE_INVALID_MANIFEST', 'The plugin manifest is invalid.');
+  if (!parsedManifest.success) {
+    return failure(
+      'PLUGIN_PACKAGE_INVALID_MANIFEST',
+      `The plugin manifest is invalid: ${formatPluginManifestValidationIssues(parsedManifest.error)}`,
+    );
+  }
   const manifestFile = files.find((file) => file.path === PLUGIN_MANIFEST_FILE_NAME);
   if (manifestFile === undefined || manifestFile.sha256 !== snapshot.manifestSha256) {
     return failure('PLUGIN_PACKAGE_INTEGRITY_MISMATCH', 'The manifest digest does not match the packaged manifest file.');

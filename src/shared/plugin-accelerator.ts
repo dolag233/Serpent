@@ -111,6 +111,37 @@ export function parseElectronAccelerator(
   };
 }
 
+/**
+ * Formats a plugin accelerator using the same compact platform conventions as
+ * Serpent's built-in menus. The manifest keeps Electron's portable spelling;
+ * only the renderer-facing label is platform-specific.
+ */
+export function formatElectronAcceleratorLabel(
+  accelerator: string,
+  platform: CommandPlatform,
+): string {
+  const parsed = parseElectronAccelerator(accelerator, platform);
+  if (parsed === null) return accelerator;
+  const key = parsed.key === ' '
+    ? 'Space'
+    : (/^[a-z]$/u.test(parsed.key) ? parsed.key.toUpperCase() : parsed.key);
+  if (platform === 'mac') {
+    return [
+      parsed.ctrlKey === true ? '⌃' : '',
+      parsed.altKey === true ? '⌥' : '',
+      parsed.metaKey === true ? '⌘' : '',
+      parsed.shiftKey === true ? '⇧' : '',
+    ].join('') + key;
+  }
+  return [
+    parsed.ctrlKey === true ? 'Ctrl' : '',
+    parsed.metaKey === true ? 'Win' : '',
+    parsed.altKey === true ? 'Alt' : '',
+    parsed.shiftKey === true ? 'Shift' : '',
+    key,
+  ].filter(Boolean).join('+');
+}
+
 function chordsEqual(left: PlatformShortcutChord, right: PlatformShortcutChord): boolean {
   return left.key.toLowerCase() === right.key.toLowerCase()
     && (left.metaKey ?? false) === (right.metaKey ?? false)

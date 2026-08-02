@@ -2,11 +2,19 @@ import { randomUUID } from 'node:crypto';
 
 import {
   PLUGIN_BACKGROUND_JOB_KIND,
+  applyPluginJobProgress,
+  assertPluginJobControlAllowed,
   parsePluginJobPayload,
+  pluginJobOwnerMatches,
   serializePluginJobPayload,
+  type PluginJobCheckpoint,
+  type PluginJobHandlerCapabilities,
+  type PluginJobItemResult,
+  type PluginJobProgressInput,
   type PluginJobRecord,
   type PluginJobRecoveryStrategy,
   type PluginJobStatus,
+  type PluginJobOwnerFields,
 } from '../plugins/plugin-jobs';
 
 type SqlConnection = {
@@ -34,7 +42,49 @@ type JobRow = {
   updated_at: string;
 };
 
+const PLUGIN_JOB_STATE_KEY = '__serpent_plugin_job_state_v1';
+
+type PersistedPluginJobState = {
+  ownerPluginInstanceId?: string;
+  ownerScope?: 'library' | 'global';
+  ownerLibraryId?: string | null;
+  executionAvailability?: 'ready' | 'blocked';
+  completed?: number;
+  total?: number;
+  phase?: string;
+  message?: string;
+  itemResults?: PluginJobItemResult[];
+  failedAssetIds?: string[];
+  retryInput?: Record<string, unknown>;
+  checkpoint?: PluginJobCheckpoint;
+  cancellation?: { requested: boolean; reason?: string };
+};
+
+function parseStoredJobPayload(raw: string | null): {
+  payload: Record<string, unknown>;
+  state: PersistedPluginJobState;
+} {
+  const parsed = parsePluginJobPayload(raw);
+  const envelope = parsed[PLUGIN_JOB_STATE_KEY];
+  if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) {
+    return { payload: parsed, state: {} };
+  }
+  const value = envelope as { payload?: unknown; state?: unknown };
+  const payload = typeof value.payload === 'object' && value.payload !== null && !Array.isArray(value.payload)
+    ? value.payload as Record<string, unknown>
+    : {};
+  const state = typeof value.state === 'object' && value.state !== null && !Array.isArray(value.state)
+    ? value.state as PersistedPluginJobState
+    : {};
+  return { payload, state };
+}
+
+function serializeStoredJobPayload(payload: Record<string, unknown>, state: PersistedPluginJobState): string {
+  return serializePluginJobPayload({ [PLUGIN_JOB_STATE_KEY]: { payload, state } });
+}
+
 function mapRow(row: JobRow): PluginJobRecord {
+  const stored = parseStoredJobPayload(row.payload_json);
   return {
     jobId: row.job_id,
     libraryId: row.library_id,
@@ -46,11 +96,56 @@ function mapRow(row: JobRow): PluginJobRecord {
     errorDetail: row.error_detail,
     ownerPluginId: row.owner_plugin_id,
     ownerPackageHash: row.owner_package_hash,
+    ...(stored.state.ownerPluginInstanceId === undefined ? {} : { ownerPluginInstanceId: stored.state.ownerPluginInstanceId }),
+    ...(stored.state.ownerScope === undefined ? {} : { ownerScope: stored.state.ownerScope }),
+    ...(stored.state.ownerLibraryId === undefined ? {} : { ownerLibraryId: stored.state.ownerLibraryId }),
+    ...(stored.state.executionAvailability === undefined ? {} : { executionAvailability: stored.state.executionAvailability }),
     pluginHandlerId: row.plugin_handler_id,
-    payload: parsePluginJobPayload(row.payload_json),
+    payload: stored.payload,
     recoveryStrategy: row.recovery_strategy,
+    ...(stored.state.completed === undefined ? {} : { completed: stored.state.completed }),
+    ...(stored.state.total === undefined ? {} : { total: stored.state.total }),
+    ...(stored.state.phase === undefined ? {} : { phase: stored.state.phase }),
+    ...(stored.state.message === undefined ? {} : { message: stored.state.message }),
+    ...(stored.state.itemResults === undefined ? {} : { itemResults: stored.state.itemResults }),
+    ...(stored.state.failedAssetIds === undefined ? {} : { failedAssetIds: stored.state.failedAssetIds }),
+    ...(stored.state.retryInput === undefined ? {} : { retryInput: stored.state.retryInput }),
+    ...(stored.state.checkpoint === undefined ? {} : { checkpoint: stored.state.checkpoint }),
+    ...(stored.state.cancellation === undefined ? {} : { cancellation: stored.state.cancellation }),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+const SELECT_PLUGIN_JOB = `
+  SELECT job_id, library_id, status, progress, attempt_count, error_code, error_detail,
+         owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json,
+         recovery_strategy, created_at, updated_at
+    FROM jobs`;
+
+function readPluginJob(connection: SqlConnection, jobId: string): PluginJobRecord | null {
+  const row = connection.prepare(`${SELECT_PLUGIN_JOB} WHERE job_id = ? AND kind = ?`).get(
+    jobId,
+    PLUGIN_BACKGROUND_JOB_KIND,
+  ) as JobRow | undefined;
+  return row === undefined ? null : mapRow(row);
+}
+
+function stateFromRecord(job: PluginJobRecord): PersistedPluginJobState {
+  return {
+    ...(job.ownerPluginInstanceId === undefined ? {} : { ownerPluginInstanceId: job.ownerPluginInstanceId }),
+    ...(job.ownerScope === undefined ? {} : { ownerScope: job.ownerScope }),
+    ...(job.ownerLibraryId === undefined ? {} : { ownerLibraryId: job.ownerLibraryId }),
+    ...(job.executionAvailability === undefined ? {} : { executionAvailability: job.executionAvailability }),
+    ...(job.completed === undefined ? {} : { completed: job.completed }),
+    ...(job.total === undefined ? {} : { total: job.total }),
+    ...(job.phase === undefined ? {} : { phase: job.phase }),
+    ...(job.message === undefined ? {} : { message: job.message }),
+    ...(job.itemResults === undefined ? {} : { itemResults: job.itemResults }),
+    ...(job.failedAssetIds === undefined ? {} : { failedAssetIds: job.failedAssetIds }),
+    ...(job.retryInput === undefined ? {} : { retryInput: job.retryInput }),
+    ...(job.checkpoint === undefined ? {} : { checkpoint: job.checkpoint }),
+    ...(job.cancellation === undefined ? {} : { cancellation: job.cancellation }),
   };
 }
 
@@ -60,6 +155,9 @@ export function enqueuePluginJobRecord(
     libraryId: string;
     ownerPluginId: string;
     ownerPackageHash: string;
+    ownerPluginInstanceId?: string;
+    ownerScope?: 'library' | 'global';
+    ownerLibraryId?: string | null;
     pluginHandlerId: string;
     payload?: Record<string, unknown>;
     recoveryStrategy: PluginJobRecoveryStrategy;
@@ -68,6 +166,16 @@ export function enqueuePluginJobRecord(
 ): PluginJobRecord {
   const now = new Date().toISOString();
   const jobId = randomUUID();
+  const state: PersistedPluginJobState = {
+    ownerPluginInstanceId: input.ownerPluginInstanceId ?? input.ownerPluginId,
+    ownerScope: input.ownerScope ?? 'library',
+    ownerLibraryId: input.ownerLibraryId === undefined ? input.libraryId : input.ownerLibraryId,
+    executionAvailability: 'ready',
+    completed: 0,
+    total: 0,
+    phase: 'queued',
+    message: '',
+  };
   connection.prepare(
     `INSERT INTO jobs (
        job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
@@ -84,15 +192,10 @@ export function enqueuePluginJobRecord(
     input.ownerPluginId,
     input.ownerPackageHash,
     input.pluginHandlerId,
-    serializePluginJobPayload(input.payload ?? {}),
+    serializeStoredJobPayload(input.payload ?? {}, state),
     input.recoveryStrategy,
   );
-  const row = connection.prepare(
-    `SELECT job_id, library_id, status, progress, attempt_count, error_code, error_detail,
-            owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json,
-            recovery_strategy, created_at, updated_at
-       FROM jobs WHERE job_id = ?`,
-  ).get(jobId) as JobRow;
+  const row = connection.prepare(`${SELECT_PLUGIN_JOB} WHERE job_id = ?`).get(jobId) as JobRow;
   return mapRow(row);
 }
 
@@ -101,10 +204,7 @@ export function listPluginJobRecords(
   libraryId: string,
 ): PluginJobRecord[] {
   const rows = connection.prepare(
-    `SELECT job_id, library_id, status, progress, attempt_count, error_code, error_detail,
-            owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json,
-            recovery_strategy, created_at, updated_at
-       FROM jobs
+    `${SELECT_PLUGIN_JOB}
       WHERE library_id = ? AND kind = ?
       ORDER BY created_at DESC, job_id DESC
       LIMIT 500`,
@@ -118,24 +218,34 @@ export function claimNextPluginJobRecord(
     libraryId: string;
     ownerPluginId: string;
     ownerPackageHash: string;
+    ownerPluginInstanceId?: string;
+    ownerScope?: 'library' | 'global';
+    ownerLibraryId?: string;
   },
 ): PluginJobRecord | null {
   const now = new Date().toISOString();
-  const candidate = connection.prepare(
-    `SELECT job_id FROM jobs
+  const candidates = connection.prepare(
+    `${SELECT_PLUGIN_JOB}
       WHERE library_id = ?
         AND kind = ?
         AND status = 'queued'
         AND owner_plugin_id = ?
         AND owner_package_hash = ?
       ORDER BY priority DESC, created_at ASC, job_id ASC
-      LIMIT 1`,
-  ).get(
+      LIMIT 500`,
+  ).all(
     input.libraryId,
     PLUGIN_BACKGROUND_JOB_KIND,
     input.ownerPluginId,
     input.ownerPackageHash,
-  ) as { job_id: string } | undefined;
+  ) as JobRow[];
+  const candidate = candidates
+    .map(mapRow)
+    .find((job) => input.ownerPluginInstanceId === undefined
+      || (job.ownerPluginInstanceId === input.ownerPluginInstanceId
+        && job.ownerScope === input.ownerScope
+        && job.ownerLibraryId === input.ownerLibraryId
+        && job.libraryId === input.libraryId));
   if (candidate === undefined) return null;
 
   const updated = connection.prepare(
@@ -145,55 +255,287 @@ export function claimNextPluginJobRecord(
             updated_at = ?,
             error_code = NULL,
             error_detail = NULL
-      WHERE job_id = ? AND status = 'queued'`,
-  ).run(now, candidate.job_id);
+      WHERE job_id = ? AND status = 'queued'
+        AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(now, candidate.jobId, input.ownerPluginId, input.ownerPackageHash);
   if (updated.changes !== 1) return null;
 
-  const row = connection.prepare(
-    `SELECT job_id, library_id, status, progress, attempt_count, error_code, error_detail,
-            owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json,
-            recovery_strategy, created_at, updated_at
-       FROM jobs WHERE job_id = ?`,
-  ).get(candidate.job_id) as JobRow;
-  return mapRow(row);
+  const row = connection.prepare(`${SELECT_PLUGIN_JOB} WHERE job_id = ?`).get(candidate.jobId) as JobRow | undefined;
+  if (row === undefined) return null;
+  const job = mapRow(row);
+  if (input.ownerPluginInstanceId !== undefined
+    && (job.ownerPluginInstanceId !== input.ownerPluginInstanceId
+      || job.ownerScope !== input.ownerScope
+      || job.ownerLibraryId !== input.ownerLibraryId
+      || job.libraryId !== input.libraryId)) {
+    return null;
+  }
+  const stored = parseStoredJobPayload(row.payload_json);
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(stored.payload, { ...stored.state, phase: 'running' }),
+    candidate.jobId,
+  );
+  return readPluginJob(connection, candidate.jobId);
 }
 
 export function completePluginJobRecord(
   connection: SqlConnection,
   input: {
     jobId: string;
+    owner: PluginJobOwnerFields;
     status: 'succeeded' | 'failed' | 'cancelled';
     errorCode?: string;
     errorDetail?: string;
     progress?: number;
+    completed?: number;
+    total?: number;
+    phase?: string;
+    message?: string;
+    itemResults?: PluginJobItemResult[];
+    failedAssetIds?: string[];
+    retryInput?: Record<string, unknown>;
+    checkpoint?: PluginJobCheckpoint;
   },
 ): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || current.status !== 'running' || !pluginJobOwnerMatches(current, input.owner)) return null;
+  const currentProgress = {
+    completed: current.completed ?? 0,
+    total: current.total ?? 0,
+    phase: current.phase ?? '',
+    message: current.message ?? '',
+    progress: current.progress,
+  };
+  const progress = input.completed === undefined || input.total === undefined
+    ? {
+      ...currentProgress,
+      progress: input.progress ?? (input.status === 'succeeded' ? 1 : current.progress),
+      phase: input.phase ?? currentProgress.phase,
+      message: input.message ?? currentProgress.message,
+    }
+    : applyPluginJobProgress(currentProgress, {
+      completed: input.completed,
+      total: input.total,
+      phase: input.phase ?? currentProgress.phase,
+      message: input.message ?? currentProgress.message,
+      progress: input.progress,
+    });
+  const stored = { state: stateFromRecord(current) };
+  const state: PersistedPluginJobState = {
+    ...stored.state,
+    completed: progress.completed,
+    total: progress.total,
+    phase: progress.phase,
+    message: progress.message,
+    ...(input.itemResults === undefined ? {} : { itemResults: input.itemResults }),
+    ...(input.failedAssetIds === undefined ? {} : { failedAssetIds: input.failedAssetIds }),
+    ...(input.retryInput === undefined ? {} : { retryInput: input.retryInput }),
+    ...(input.checkpoint === undefined ? {} : { checkpoint: input.checkpoint }),
+  };
   const now = new Date().toISOString();
   const updated = connection.prepare(
     `UPDATE jobs
         SET status = ?,
-            progress = COALESCE(?, progress),
+            progress = ?,
             error_code = ?,
             error_detail = ?,
-            updated_at = ?
-      WHERE job_id = ? AND kind = ? AND status = 'running'`,
+            updated_at = ?,
+            payload_json = ?
+      WHERE job_id = ? AND kind = ? AND status = 'running'
+        AND owner_plugin_id = ? AND owner_package_hash = ?`,
   ).run(
     input.status,
-    input.progress ?? (input.status === 'succeeded' ? 1 : null),
+    progress.progress,
     input.errorCode ?? null,
     input.errorDetail ?? null,
     now,
+    serializeStoredJobPayload(current.payload, state),
     input.jobId,
     PLUGIN_BACKGROUND_JOB_KIND,
+    input.owner.pluginId,
+    input.owner.packageHash,
   );
   if (updated.changes !== 1) return null;
-  const row = connection.prepare(
-    `SELECT job_id, library_id, status, progress, attempt_count, error_code, error_detail,
-            owner_plugin_id, owner_package_hash, plugin_handler_id, payload_json,
-            recovery_strategy, created_at, updated_at
-       FROM jobs WHERE job_id = ?`,
-  ).get(input.jobId) as JobRow | undefined;
-  return row === undefined ? null : mapRow(row);
+  return readPluginJob(connection, input.jobId);
+}
+
+export function reportPluginJobProgress(
+  connection: SqlConnection,
+  input: {
+    jobId: string;
+    ownerPluginId: string;
+    ownerPackageHash: string;
+    ownerPluginInstanceId: string;
+    ownerScope: 'library' | 'global';
+    ownerLibraryId: string;
+    progress: PluginJobProgressInput;
+  },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (
+    current === null
+    || current.status !== 'running'
+    || current.ownerPluginId !== input.ownerPluginId
+    || current.ownerPackageHash !== input.ownerPackageHash
+    || current.ownerPluginInstanceId !== input.ownerPluginInstanceId
+    || current.ownerScope !== input.ownerScope
+    || current.ownerLibraryId !== input.ownerLibraryId
+    || current.libraryId !== input.ownerLibraryId
+  ) return null;
+  const next = applyPluginJobProgress({
+    completed: current.completed ?? 0,
+    total: current.total ?? 0,
+    phase: current.phase ?? '',
+    message: current.message ?? '',
+    progress: current.progress,
+  }, input.progress);
+  const stored = { state: stateFromRecord(current) };
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET progress = ?, payload_json = ?, updated_at = ?
+      WHERE job_id = ? AND kind = ? AND status = 'running'
+        AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(
+    next.progress,
+    serializeStoredJobPayload(current.payload, {
+      ...stored.state,
+      completed: next.completed,
+      total: next.total,
+      phase: next.phase,
+      message: next.message,
+    }),
+    now,
+    input.jobId,
+    PLUGIN_BACKGROUND_JOB_KIND,
+    input.ownerPluginId,
+    input.ownerPackageHash,
+  );
+  return updated.changes === 1 ? readPluginJob(connection, input.jobId) : null;
+}
+
+export function cancelPluginJobRecord(
+  connection: SqlConnection,
+  input: { jobId: string; owner: PluginJobOwnerFields; reason?: string },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || !pluginJobOwnerMatches(current, input.owner)
+    || ['succeeded', 'failed', 'cancelled'].includes(current.status)) return null;
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET status = 'cancelled', error_code = 'PLUGIN_JOB_CANCELLED',
+       error_detail = ?, updated_at = ?
+       WHERE job_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')
+         AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(input.reason ?? 'The plugin job was cancelled.', now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND,
+    input.owner.pluginId, input.owner.packageHash);
+  if (updated.changes !== 1) return null;
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(current.payload, {
+      ...stateFromRecord(current),
+      cancellation: { requested: true, ...(input.reason === undefined ? {} : { reason: input.reason }) },
+    }),
+    input.jobId,
+  );
+  return readPluginJob(connection, input.jobId);
+}
+
+export function pausePluginJobRecord(
+  connection: SqlConnection,
+  input: { jobId: string; owner: PluginJobOwnerFields; capabilities: PluginJobHandlerCapabilities; checkpoint: PluginJobCheckpoint },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || !pluginJobOwnerMatches(current, input.owner)
+    || !['queued', 'running'].includes(current.status)) return null;
+  assertPluginJobControlAllowed('pause', input.capabilities, input.checkpoint);
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET status = 'paused', updated_at = ?
+       WHERE job_id = ? AND kind = ? AND status IN ('queued', 'running')
+         AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND, input.owner.pluginId, input.owner.packageHash);
+  if (updated.changes !== 1) return null;
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(current.payload, {
+      ...stateFromRecord(current),
+      checkpoint: input.checkpoint,
+      executionAvailability: 'ready',
+    }),
+    input.jobId,
+  );
+  return readPluginJob(connection, input.jobId);
+}
+
+export function resumePluginJobRecord(
+  connection: SqlConnection,
+  input: { jobId: string; owner: PluginJobOwnerFields; capabilities: PluginJobHandlerCapabilities },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || !pluginJobOwnerMatches(current, input.owner) || current.status !== 'paused') return null;
+  assertPluginJobControlAllowed('resume', input.capabilities, current.checkpoint);
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET status = 'queued', error_code = NULL, error_detail = NULL, updated_at = ?
+       WHERE job_id = ? AND kind = ? AND status = 'paused'
+         AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND, input.owner.pluginId, input.owner.packageHash);
+  if (updated.changes !== 1) return null;
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(current.payload, {
+      ...stateFromRecord(current),
+      executionAvailability: 'ready',
+      cancellation: { requested: false },
+    }),
+    input.jobId,
+  );
+  return readPluginJob(connection, input.jobId);
+}
+
+export function retryPluginJobRecord(
+  connection: SqlConnection,
+  input: { jobId: string; owner: PluginJobOwnerFields; retryInput?: Record<string, unknown> },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || !pluginJobOwnerMatches(current, input.owner)
+    || !['failed', 'cancelled', 'paused'].includes(current.status)) return null;
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET status = 'queued', progress = 0, error_code = NULL, error_detail = NULL, updated_at = ?
+       WHERE job_id = ? AND kind = ? AND status IN ('failed', 'cancelled', 'paused')
+         AND owner_plugin_id = ? AND owner_package_hash = ?`,
+  ).run(now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND, input.owner.pluginId, input.owner.packageHash);
+  if (updated.changes !== 1) return null;
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(current.payload, {
+      ...stateFromRecord(current),
+      executionAvailability: 'ready',
+      completed: 0,
+      phase: 'queued',
+      message: '',
+      ...(input.retryInput === undefined ? {} : { retryInput: input.retryInput }),
+      cancellation: { requested: false },
+    }),
+    input.jobId,
+  );
+  return readPluginJob(connection, input.jobId);
+}
+
+export function blockPluginJobRecord(
+  connection: SqlConnection,
+  input: { jobId: string; errorCode: string; errorDetail: string },
+): PluginJobRecord | null {
+  const current = readPluginJob(connection, input.jobId);
+  if (current === null || ['succeeded', 'failed', 'cancelled'].includes(current.status)) return null;
+  const now = new Date().toISOString();
+  const updated = connection.prepare(
+    `UPDATE jobs SET status = 'paused', error_code = ?, error_detail = ?, updated_at = ?
+       WHERE job_id = ? AND kind = ? AND status IN ('queued', 'running', 'paused')`,
+  ).run(input.errorCode, input.errorDetail, now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND);
+  if (updated.changes !== 1) return null;
+  connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
+    serializeStoredJobPayload(current.payload, { ...stateFromRecord(current), executionAvailability: 'blocked' }),
+    input.jobId,
+  );
+  return readPluginJob(connection, input.jobId);
 }
 
 export function pausePluginJobsForOwners(

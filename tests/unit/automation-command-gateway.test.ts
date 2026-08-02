@@ -129,7 +129,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(39);
+    expect(automationCommandRegistry).toHaveLength(41);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -158,9 +158,14 @@ describe('Automation Command Registry', () => {
         expect(command.impact).toBe('file-write');
         expect(command.approvalPolicy).toBe('execution');
         expect(command.mcp.public).toBe(false);
+      } else if (command.commandId === 'asset.content.stage') {
+        expect(command.impact).toBe('file-write');
+        expect(command.approvalPolicy).toBe('none');
+        expect(command.mcp.public).toBe(false);
       } else if ([
         'asset.trash',
         'asset.content.replace',
+        'asset.content.replace-batch',
         'asset.move',
         'asset.rename-file',
         'asset.rename-files',
@@ -181,6 +186,13 @@ describe('Automation Command Registry', () => {
       if (command.commandId === 'asset.content.replace') {
         expect(command.requiredCapabilities).toEqual(['library.read', 'asset.read', 'content.write']);
         expect(command.allowedSources).toEqual(['desktop-console', 'script', 'mcp', 'test', 'plugin']);
+        expect(command.approvalPolicy).toBe('plan');
+        expect(command.supportsUndo).toBe(false);
+        expect(command.atomicity).toBe('recoverable-file-operation');
+      }
+      if (command.commandId === 'asset.content.replace-batch') {
+        expect(command.requiredCapabilities).toEqual(['library.read', 'asset.read', 'content.write']);
+        expect(command.supportsBatch).toBe(true);
         expect(command.approvalPolicy).toBe('plan');
         expect(command.supportsUndo).toBe(false);
         expect(command.atomicity).toBe('recoverable-file-operation');
@@ -687,6 +699,57 @@ describe('Automation Command Gateway', () => {
       assetIds: ['asset-1'],
       targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
       conflictStrategy: 'keep-both',
+      automationPlan: plan,
+    }]);
+  });
+
+  it('dispatches one approved plan for a batch content replacement', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.content.batch-replaced',
+      operationId: 'operation-content-batch-1',
+      items: [
+        { assetId: 'asset-1', revisionId: 'revision-new-1', byteSize: 3 },
+        { assetId: 'asset-2', revisionId: 'revision-new-2', byteSize: 4 },
+      ],
+    });
+    const plan = {
+      planHash: 'f'.repeat(64),
+      expectedChangeSequence: 42,
+      assetStates: [
+        { assetId: 'asset-1', stateToken: 'a'.repeat(64) },
+        { assetId: 'asset-2', stateToken: 'b'.repeat(64) },
+      ],
+    };
+    const approvals: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: ['library.read', 'asset.read', 'content.write'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async (input) => {
+          approvals.push(input);
+          return plan;
+        },
+      },
+    });
+
+    await expect(commandGateway.execute(request('asset.content.replace-batch', {
+      items: [
+        { assetId: 'asset-1', dataBase64: 'AQID', expectedRevisionId: 'revision-1' },
+        { assetId: 'asset-2', stagingToken: 'staging-2', expectedRevisionId: 'revision-2' },
+      ],
+    }))).resolves.toMatchObject({
+      ok: true,
+      result: { operationId: 'operation-content-batch-1' },
+    });
+    expect(approvals).toHaveLength(1);
+    expect(worker.commands).toEqual([{
+      type: 'asset.content.replace-batch',
+      libraryId: 'library-1',
+      items: [
+        { assetId: 'asset-1', dataBase64: 'AQID', expectedRevisionId: 'revision-1' },
+        { assetId: 'asset-2', stagingToken: 'staging-2', expectedRevisionId: 'revision-2' },
+      ],
       automationPlan: plan,
     }]);
   });

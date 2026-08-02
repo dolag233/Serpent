@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PluginTrustedRuntimeSupervisor } from '../../src/main/plugin-trusted-runtime-supervisor';
 import type { PluginTrustedChildMessage } from '../../src/shared/plugin-trusted-runtime-protocol';
+import type { PluginJobRecord } from '../../src/plugins/plugin-jobs';
 
 type Listener = (...args: never[]) => void;
 
@@ -52,14 +53,14 @@ async function flush(): Promise<void> {
 describe('PluginTrustedRuntimeSupervisor', () => {
   it('forks one child per trusted instance and brokers host commands', async () => {
     const child = new FakeRuntimeChild();
-    const commands: Array<{ commandId: string }> = [];
+    const commands: Array<{ commandId: string; targetLibraryId?: string }> = [];
     const deactivated: string[] = [];
     const crashed: string[] = [];
     const supervisor = new PluginTrustedRuntimeSupervisor({
       modulePath: '/safe/plugin_trusted_host.js',
       fork: () => child,
-      executeHostCommand: async (commandId) => {
-        commands.push({ commandId });
+      executeHostCommand: async (commandId, _input, context) => {
+        commands.push({ commandId, ...(context.targetLibraryId === undefined ? {} : { targetLibraryId: context.targetLibraryId }) });
         return { ok: true };
       },
       onInstanceDeactivated: (instanceId) => deactivated.push(instanceId),
@@ -100,15 +101,77 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       requestId: '22222222-2222-4222-8222-222222222222',
       commandId: 'asset.search',
       input: { query: null },
+      targetLibraryId: 'library-2',
     };
     child.emit('message', hostCommand as never);
     await flush();
-    expect(commands).toEqual([{ commandId: 'asset.search' }]);
+    expect(commands).toEqual([{ commandId: 'asset.search', targetLibraryId: 'library-2' }]);
 
     supervisor.deactivate('11111111-1111-4111-8111-111111111111', 'library-closed');
+    child.emit('message', {
+      type: 'plugin-trusted.deactivated',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      reason: 'library-closed',
+    } as never);
     expect(child.killCount).toBe(1);
     expect(deactivated).toEqual(['11111111-1111-4111-8111-111111111111']);
     expect(crashed).toEqual([]);
+  });
+
+  it('routes owned trusted job progress with an explicit target library', async () => {
+    const child = new FakeRuntimeChild();
+    const progress: unknown[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      handleJobProgress: async (input) => { progress.push(input); },
+    });
+    const instanceId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const activation = supervisor.activate({
+      instanceId,
+      libraryId: '__serpent_global_runtime__',
+      instanceScope: 'global',
+      libraryDirectory: '__serpent_global_runtime__',
+      pluginId: 'com.example.trusted-jobs',
+      version: '1.0.0',
+      packageHash: 'f'.repeat(64),
+      packageDirectory: '/plugins/trusted',
+      entryRelativePath: 'dist/main.js',
+      permissions: ['job.manage'],
+    });
+    child.emit('message', { type: 'plugin-trusted.ready' } as never);
+    await flush();
+    child.emit('message', {
+      type: 'plugin-trusted.activated',
+      instanceId,
+      pluginId: 'com.example.trusted-jobs',
+      packageHash: 'f'.repeat(64),
+    } as never);
+    await activation;
+    const job = {
+      jobId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      libraryId: 'library-2', kind: 'plugin.background', status: 'running', progress: 0,
+      attemptCount: 1, errorCode: null, errorDetail: null, ownerPluginId: 'com.example.trusted-jobs',
+      ownerPackageHash: 'f'.repeat(64), pluginHandlerId: 'tick', payload: {}, recoveryStrategy: 'idempotent',
+      createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+    } as PluginJobRecord;
+    const completion = supervisor.invokeJob({ instanceId, job, timeoutMs: 1_000 });
+    child.emit('message', {
+      type: 'plugin-trusted.job-progress',
+      instanceId,
+      jobId: job.jobId,
+      targetLibraryId: 'library-2',
+      progress: { completed: 1, total: 2, phase: 'read', message: 'half' },
+    } as never);
+    await flush();
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toMatchObject({ targetLibraryId: 'library-2' });
+    child.emit('message', {
+      type: 'plugin-trusted.job-complete', instanceId, jobId: job.jobId, status: 'succeeded', progress: 1,
+    } as never);
+    await completion;
+    supervisor.shutdown();
   });
 
   it('kills a trusted host and records HEARTBEAT_TIMEOUT when heartbeats stop', async () => {
@@ -244,5 +307,62 @@ describe('PluginTrustedRuntimeSupervisor', () => {
       'crash:RUNTIME_PROCESS_EXITED',
       'cleanup:RUNTIME_PROCESS_EXITED',
     ]);
+  });
+
+  it('ignores unknown non-critical events and isolates a critical event per child', async () => {
+    const first = new FakeRuntimeChild();
+    const second = new FakeRuntimeChild();
+    const children = [first, second];
+    const crashes: string[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => children.shift() ?? new FakeRuntimeChild(),
+      executeHostCommand: async () => ({}),
+      onInstanceCrashed: ({ instanceId, failureCode }) => crashes.push(`${instanceId}:${failureCode}`),
+    });
+    const activate = async (child: FakeRuntimeChild, instanceId: string, pluginId: string) => {
+      const activation = supervisor.activate({
+        instanceId,
+        libraryId: 'library-1',
+        libraryDirectory: '/tmp/library',
+        pluginId,
+        version: '1.0.0',
+        packageHash: 'a'.repeat(64),
+        packageDirectory: '/plugins/trusted',
+        entryRelativePath: 'dist/main.js',
+        installScope: 'library',
+        permissions: ['library.read'],
+      });
+      child.emit('message', { type: 'plugin-trusted.ready' } as never);
+      await Promise.resolve();
+      child.emit('message', {
+        type: 'plugin-trusted.activated',
+        instanceId,
+        pluginId,
+        packageHash: 'a'.repeat(64),
+      } as never);
+      await activation;
+    };
+    await activate(first, '11111111-1111-4111-8111-111111111111', 'com.example.one');
+    await activate(second, '22222222-2222-4222-8222-222222222222', 'com.example.two');
+
+    first.emit('message', {
+      type: 'plugin-trusted.event',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      eventType: 'future.progress',
+      critical: false,
+      payload: {},
+    } as never);
+    expect(crashes).toEqual([]);
+    expect(first.killCount).toBe(0);
+
+    first.emit('message', {
+      type: 'plugin-trusted.control.future',
+      instanceId: '11111111-1111-4111-8111-111111111111',
+    } as never);
+    expect(crashes).toEqual(['11111111-1111-4111-8111-111111111111:RUNTIME_PROTOCOL_ERROR']);
+    expect(first.killCount).toBe(1);
+    expect(second.killCount).toBe(0);
+    expect(supervisor.listActiveInstanceIds()).toEqual(['22222222-2222-4222-8222-222222222222']);
   });
 });

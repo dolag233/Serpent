@@ -10,29 +10,37 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { pluginIdSchema, type PluginManifest } from '../plugins/plugin-manifest';
+import {
+  getPluginSettingDefault,
+  pluginIdSchema,
+  validatePluginSettingValue,
+  type PluginManifest,
+  type PluginSettingValue,
+  type PluginSettingValidationCode,
+} from '../plugins/plugin-manifest';
 import { PLUGIN_LIBRARY_SETTINGS_DIRECTORY } from '../plugins/plugin-package';
 
 const SETTINGS_FILE_VERSION = 1 as const;
 const MAX_SETTINGS_FILE_BYTES = 64 * 1024;
 const settingIdSchema = z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]{0,126}[a-z0-9]$/u);
-const settingValueSchema = z.union([
-  z.boolean(),
-  z.number().finite(),
-  z.string().max(8_192),
-]);
-
 const settingsDocumentSchema = z.strictObject({
   version: z.literal(SETTINGS_FILE_VERSION),
   pluginId: pluginIdSchema,
-  values: z.record(settingIdSchema, settingValueSchema).refine((value) => Object.keys(value).length <= 128, {
+  // Raw values are intentionally retained so one bad field cannot invalidate
+  // the rest of the document and undeclared keys survive future writes.
+  values: z.record(settingIdSchema, z.unknown()).refine((value) => Object.keys(value).length <= 128, {
     message: 'A plugin settings document can contain at most 128 values.',
   }),
 });
 
-export type PluginSettingValue = z.infer<typeof settingValueSchema>;
 export type PluginSettingsLayer = 'user-default' | 'library' | 'device-override';
 export type PluginSettingsDocument = z.infer<typeof settingsDocumentSchema>;
+export type PluginSettingsDiagnostic = {
+  settingId: string;
+  layer: PluginSettingsLayer;
+  code: PluginSettingValidationCode;
+  message: string;
+};
 
 export class PluginSettingsStoreError extends Error {
   constructor(
@@ -47,6 +55,12 @@ export class PluginSettingsStoreError extends Error {
 export type PluginSettingsSnapshot = {
   values: Record<string, PluginSettingValue>;
   sources: Record<string, PluginSettingsLayer>;
+  diagnostics: PluginSettingsDiagnostic[];
+};
+
+type ReadLayerResult = {
+  document: PluginSettingsDocument;
+  diagnostics: PluginSettingsDiagnostic[];
 };
 
 /**
@@ -68,19 +82,29 @@ export class PluginSettingsStore {
       this.#readLayer('library', input),
       this.#readLayer('device-override', input),
     ]);
-    const values: Record<string, PluginSettingValue> = {};
+    const values: Record<string, PluginSettingValue> = Object.fromEntries(
+      input.manifest.contributes.settings.map((setting) => [setting.id, getPluginSettingDefault(setting)]),
+    );
     const sources: Record<string, PluginSettingsLayer> = {};
+    const diagnostics: PluginSettingsDiagnostic[] = [
+      ...userDefaults.diagnostics,
+      ...librarySettings.diagnostics,
+      ...deviceOverrides.diagnostics,
+    ];
     for (const [layer, document] of [
-      ['user-default', userDefaults],
-      ['library', librarySettings],
-      ['device-override', deviceOverrides],
+      ['user-default', userDefaults.document],
+      ['library', librarySettings.document],
+      ['device-override', deviceOverrides.document],
     ] as const) {
       for (const [settingId, value] of Object.entries(document.values)) {
-        values[settingId] = value;
+        if (!input.manifest.contributes.settings.some((setting) => setting.id === settingId)) continue;
+        const setting = input.manifest.contributes.settings.find((candidate) => candidate.id === settingId);
+        if (setting === undefined || !validatePluginSettingValue(setting, value).valid) continue;
+        values[settingId] = value as PluginSettingValue;
         sources[settingId] = layer;
       }
     }
-    return { values, sources };
+    return { values, sources, diagnostics };
   }
 
   async set(input: {
@@ -92,7 +116,7 @@ export class PluginSettingsStore {
     value: PluginSettingValue;
   }): Promise<PluginSettingsSnapshot> {
     this.#assertValue(input.manifest, input.settingId, input.value);
-    const document = await this.#readLayer(input.layer, input);
+    const document = (await this.#readLayer(input.layer, input)).document;
     document.values[input.settingId] = input.value;
     await this.#writeLayer(input.layer, input, document);
     return this.getEffective(input);
@@ -106,7 +130,7 @@ export class PluginSettingsStore {
     settingId: string;
   }): Promise<PluginSettingsSnapshot> {
     this.#assertDeclared(input.manifest, input.settingId);
-    const document = await this.#readLayer(input.layer, input);
+    const document = (await this.#readLayer(input.layer, input)).document;
     delete document.values[input.settingId];
     await this.#writeLayer(input.layer, input, document);
     return this.getEffective(input);
@@ -125,17 +149,9 @@ export class PluginSettingsStore {
 
   #assertValue(manifest: PluginManifest, settingId: string, value: PluginSettingValue): void {
     const setting = this.#assertDeclared(manifest, settingId);
-    const isExpectedType = setting.type === 'boolean'
-      ? typeof value === 'boolean'
-      : setting.type === 'number'
-        ? typeof value === 'number'
-        : typeof value === 'string';
-    if (!isExpectedType) {
-      throw new PluginSettingsStoreError('PLUGIN_SETTING_VALUE_INVALID', 'The setting value does not match the declared type.');
-    }
-    if (setting.type === 'select'
-      && !setting.options?.some((option) => option.value === value)) {
-      throw new PluginSettingsStoreError('PLUGIN_SETTING_VALUE_INVALID', 'The setting value is not one of the declared options.');
+    const validation = validatePluginSettingValue(setting, value);
+    if (!validation.valid) {
+      throw new PluginSettingsStoreError('PLUGIN_SETTING_VALUE_INVALID', validation.message);
     }
   }
 
@@ -146,13 +162,15 @@ export class PluginSettingsStore {
   async #readLayer(
     layer: PluginSettingsLayer,
     input: { libraryId: string; libraryDirectory: string; manifest: PluginManifest },
-  ): Promise<PluginSettingsDocument> {
+  ): Promise<ReadLayerResult> {
     const settingsPath = this.#pathFor(layer, input);
     let contents: string;
     try {
       contents = await readFile(settingsPath, 'utf8');
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return this.#emptyDocument(input.manifest.id);
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return { document: this.#emptyDocument(input.manifest.id), diagnostics: [] };
+      }
       throw error;
     }
     if (Buffer.byteLength(contents, 'utf8') > MAX_SETTINGS_FILE_BYTES) {
@@ -163,24 +181,21 @@ export class PluginSettingsStore {
       if (document.pluginId !== input.manifest.id) {
         throw new PluginSettingsStoreError('PLUGIN_SETTINGS_INVALID', 'The plugin settings file belongs to another plugin.');
       }
-      const values: PluginSettingsDocument['values'] = {};
+      const diagnostics: PluginSettingsDiagnostic[] = [];
       for (const [settingId, value] of Object.entries(document.values)) {
-        const declared = input.manifest.contributes.settings.some((setting) => setting.id === settingId);
-        if (!declared) continue;
-        try {
-          this.#assertValue(input.manifest, settingId, value);
-        } catch (error) {
-          // Stale values from older plugin versions must not wipe the whole
-          // settings document; skip them so the UI can fall back to defaults.
-          if (error instanceof PluginSettingsStoreError
-            && error.code === 'PLUGIN_SETTING_VALUE_INVALID') {
-            continue;
-          }
-          throw error;
+        const setting = input.manifest.contributes.settings.find((candidate) => candidate.id === settingId);
+        if (setting === undefined) continue;
+        const validation = validatePluginSettingValue(setting, value);
+        if (!validation.valid) {
+          diagnostics.push({
+            settingId,
+            layer,
+            code: validation.code,
+            message: validation.message,
+          });
         }
-        values[settingId] = value;
       }
-      return { ...document, values };
+      return { document, diagnostics };
     } catch (error) {
       if (error instanceof PluginSettingsStoreError) throw error;
       throw new PluginSettingsStoreError('PLUGIN_SETTINGS_INVALID', 'The plugin settings file is invalid.');

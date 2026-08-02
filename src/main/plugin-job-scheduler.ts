@@ -16,14 +16,30 @@ export type PluginJobWorkerRequester = (command: {
   libraryId: string;
   ownerPluginId: string;
   ownerPackageHash: string;
+  ownerPluginInstanceId: string;
+  ownerScope: 'library' | 'global';
+  ownerLibraryId: string;
 } | {
   type: 'plugin.jobs.complete';
   libraryId: string;
   jobId: string;
+  ownerPluginId: string;
+  ownerPackageHash: string;
+  ownerPluginInstanceId: string;
+  ownerScope: 'library' | 'global';
+  ownerLibraryId: string;
   status: 'succeeded' | 'failed' | 'cancelled';
   errorCode?: string;
   errorDetail?: string;
   progress?: number;
+  completed?: number;
+  total?: number;
+  phase?: string;
+  message?: string;
+  itemResults?: PluginJobComplete['itemResults'];
+  failedAssetIds?: string[];
+  retryInput?: Record<string, unknown>;
+  checkpoint?: PluginJobComplete['checkpoint'];
 }) => Promise<{
   ok: boolean;
   type?: string;
@@ -35,6 +51,7 @@ export type PluginJobSchedulerInstanceBinding = {
   mode: 'restricted' | 'unrestricted';
   pluginId: string;
   packageHash: string;
+  instanceScope: 'library' | 'global';
   activated: boolean;
 };
 
@@ -76,6 +93,9 @@ export class PluginJobScheduler {
         libraryId,
         ownerPluginId: instance.pluginId,
         ownerPackageHash: instance.packageHash,
+        ownerPluginInstanceId: instance.instanceId,
+        ownerScope: instance.instanceScope,
+        ownerLibraryId: libraryId,
       });
       if (!claimed.ok || claimed.type !== 'plugin.jobs.claimed' || claimed.job === null || claimed.job === undefined) {
         return;
@@ -114,25 +134,43 @@ export class PluginJobScheduler {
         jobId: job.jobId,
       });
     }
-    await this.#completeJob(libraryId, invoked.complete);
+    await this.#completeJob(libraryId, instance, invoked.complete);
   }
 
   async completeJobFromHost(
     libraryId: string,
+    instance: PluginJobSchedulerInstanceBinding,
     complete: PluginJobComplete,
   ): Promise<void> {
-    await this.#completeJob(libraryId, complete);
+    await this.#completeJob(libraryId, instance, complete);
   }
 
-  async #completeJob(libraryId: string, complete: PluginJobComplete): Promise<void> {
+  async #completeJob(
+    libraryId: string,
+    instance: PluginJobSchedulerInstanceBinding,
+    complete: PluginJobComplete,
+  ): Promise<void> {
     const result = await this.options.requestWorker({
       type: 'plugin.jobs.complete',
       libraryId,
       jobId: complete.jobId,
+      ownerPluginId: instance.pluginId,
+      ownerPackageHash: instance.packageHash,
+      ownerPluginInstanceId: instance.instanceId,
+      ownerScope: instance.instanceScope,
+      ownerLibraryId: libraryId,
       status: complete.status,
       ...(complete.errorCode === undefined ? {} : { errorCode: complete.errorCode }),
       ...(complete.errorDetail === undefined ? {} : { errorDetail: complete.errorDetail }),
       ...(complete.progress === undefined ? {} : { progress: complete.progress }),
+      ...(complete.completed === undefined ? {} : { completed: complete.completed }),
+      ...(complete.total === undefined ? {} : { total: complete.total }),
+      ...(complete.phase === undefined ? {} : { phase: complete.phase }),
+      ...(complete.message === undefined ? {} : { message: complete.message }),
+      ...(complete.itemResults === undefined ? {} : { itemResults: complete.itemResults }),
+      ...(complete.failedAssetIds === undefined ? {} : { failedAssetIds: complete.failedAssetIds }),
+      ...(complete.retryInput === undefined ? {} : { retryInput: complete.retryInput }),
+      ...(complete.checkpoint === undefined ? {} : { checkpoint: complete.checkpoint }),
     });
     if (!result.ok) {
       this.options.logger?.error(

@@ -10,6 +10,8 @@ import {
   generatePluginSdkTypeDeclaration,
 } from '../../src/plugins/plugin-sdk';
 import {
+  formatPluginManifestValidationIssues,
+  getPluginSettingDefault,
   pluginManifestSchema,
   validatePluginManifestCompatibility,
 } from '../../src/plugins/plugin-manifest';
@@ -47,12 +49,125 @@ function validSnapshot() {
 }
 
 describe('Plugin v1 manifest contract', () => {
+  it('uses the declared minimum when a number setting has a negative range', () => {
+    const setting = pluginManifestSchema.parse({
+      ...validManifest,
+      contributes: {
+        ...validManifest.contributes,
+        settings: [{
+          id: 'temperature-offset',
+          title: 'Temperature offset',
+          type: 'number',
+          minimum: -10,
+          maximum: -5,
+        }],
+      },
+    }).contributes.settings[0]!;
+
+    expect(getPluginSettingDefault(setting)).toBe(-10);
+  });
+
   it('exports a JSON schema and accepts the documented restricted-plugin manifest', () => {
     const parsed = pluginManifestSchema.parse(validManifest);
 
     expect(parsed.id).toBe('com.example.palette-tools');
     expect(parsed.runtime.mode).toBe('restricted');
     expect(pluginManifestSchema.toJSONSchema()).toMatchObject({ type: 'object' });
+  });
+
+  it('reports precise JSON paths for invalid static setting schemas', () => {
+    const invalid = pluginManifestSchema.safeParse({
+      ...validManifestFixture,
+      contributes: {
+        ...validManifestFixture.contributes,
+        settings: [{
+          id: 'batch-size',
+          title: 'Batch size',
+          type: 'number',
+          default: 20,
+          minimum: 1,
+          maximum: 10,
+        }],
+      },
+    });
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error('Expected invalid setting schema');
+    expect(formatPluginManifestValidationIssues(invalid.error)).toContain(
+      '$.contributes.settings[0].default: Setting default must be less than or equal to maximum.',
+    );
+    const packageResult = validatePluginPackageSnapshot({
+      ...validSnapshot(),
+      manifest: {
+        ...validManifestFixture,
+        contributes: {
+          ...validManifestFixture.contributes,
+          settings: [{
+            id: 'batch-size',
+            title: 'Batch size',
+            type: 'number',
+            default: 20,
+            minimum: 1,
+            maximum: 10,
+          }],
+        },
+      },
+    });
+    expect(packageResult).toMatchObject({
+      ok: false,
+      code: 'PLUGIN_PACKAGE_INVALID_MANIFEST',
+      message: expect.stringContaining('$.contributes.settings[0].default'),
+    });
+  });
+
+  it.each([
+    {
+      label: 'boolean default type',
+      setting: { id: 'enabled', title: 'Enabled', type: 'boolean', default: 'yes' },
+      path: '$.contributes.settings[0].default',
+    },
+    {
+      label: 'number default type',
+      setting: { id: 'batch-size', title: 'Batch size', type: 'number', default: 'many' },
+      path: '$.contributes.settings[0].default',
+    },
+    {
+      label: 'number default range',
+      setting: { id: 'batch-size', title: 'Batch size', type: 'number', default: 20, minimum: 1, maximum: 10 },
+      path: '$.contributes.settings[0].default',
+    },
+    {
+      label: 'select default option',
+      setting: {
+        id: 'quality',
+        title: 'Quality',
+        type: 'select',
+        default: 'ultra',
+        options: [{ value: 'fast', label: 'Fast' }],
+      },
+      path: '$.contributes.settings[0].default',
+    },
+    {
+      label: 'select option value',
+      setting: {
+        id: 'quality',
+        title: 'Quality',
+        type: 'select',
+        options: [{ value: '', label: 'Empty' }],
+      },
+      path: '$.contributes.settings[0].options[0].value',
+    },
+  ] as const)('reports a JSON path for a bad static setting %s', ({ setting, path: expectedPath }) => {
+    const invalid = pluginManifestSchema.safeParse({
+      ...validManifestFixture,
+      contributes: {
+        ...validManifestFixture.contributes,
+        settings: [setting],
+      },
+    });
+
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error('Expected invalid setting schema');
+    expect(formatPluginManifestValidationIssues(invalid.error)).toContain(expectedPath);
   });
 
   it('maps legacy standard/trusted runtime aliases to restricted/unrestricted', () => {
@@ -342,6 +457,10 @@ describe('Plugin contribution registry and generated SDK', () => {
     expect(declaration).toContain('registerContribution');
     expect(declaration).toContain('hooks');
     expect(declaration).toContain('onWill');
+    expect(declaration).toContain('forLibrary');
+    expect(declaration).toContain('SerpentPluginScopedApi');
+    expect(declaration).toContain("Pick<SerpentPluginApi['jobs'], 'enqueue' | 'reportProgress' | 'cancel' | 'pause' | 'resume' | 'retry'>");
+    expect(declaration).toContain('reportProgress');
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('node:');
   });

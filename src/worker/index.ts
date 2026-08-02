@@ -843,6 +843,19 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(request.command.libraryId, 'mutation', [result.assetId]);
       return { ok: true, type: 'asset.content.replaced', ...result };
     }
+    case 'asset.content.stage': {
+      const result = libraryService.stageManagedAssetContent(request.command);
+      return { ok: true, type: 'asset.content.staged', ...result };
+    }
+    case 'asset.content.replace-batch': {
+      const result = libraryService.replaceManagedAssetContentBatch(request.command);
+      scheduleThumbnailScene(
+        request.command.libraryId,
+        'mutation',
+        result.items.map((item) => item.assetId),
+      );
+      return { ok: true, type: 'asset.content.batch-replaced', ...result };
+    }
     case 'asset.content.read': {
       const result = libraryService.readManagedAssetContent(request.command);
       return { ok: true, type: 'asset.content.read', ...result };
@@ -1603,6 +1616,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         libraryId: request.command.libraryId,
         ownerPluginId: request.command.ownerPluginId,
         ownerPackageHash: request.command.ownerPackageHash,
+        ownerPluginInstanceId: request.command.ownerPluginInstanceId,
+        ownerScope: request.command.ownerScope,
+        ownerLibraryId: request.command.ownerLibraryId,
         pluginHandlerId: request.command.pluginHandlerId,
         payload: request.command.payload,
         recoveryStrategy: request.command.recoveryStrategy,
@@ -1629,6 +1645,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         libraryId: request.command.libraryId,
         ownerPluginId: request.command.ownerPluginId,
         ownerPackageHash: request.command.ownerPackageHash,
+        ownerPluginInstanceId: request.command.ownerPluginInstanceId,
+        ownerScope: request.command.ownerScope,
+        ownerLibraryId: request.command.ownerLibraryId,
       });
       return {
         ok: true,
@@ -1638,14 +1657,52 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'plugin.jobs.complete': {
-      const job = libraryService.completePluginJob({
+      const job = libraryService.completePluginJob(request.command);
+      return {
+        ok: true,
+        type: 'plugin.jobs.completed',
         libraryId: request.command.libraryId,
-        jobId: request.command.jobId,
-        status: request.command.status,
-        errorCode: request.command.errorCode,
-        errorDetail: request.command.errorDetail,
-        progress: request.command.progress,
-      });
+        job,
+      };
+    }
+    case 'plugin.jobs.cancel': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'cancel' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.cancelled',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.pause': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'pause' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.job-paused',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.resume': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'resume' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.resumed',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.retry': {
+      const job = libraryService.controlPluginJob({ ...request.command, action: 'retry' });
+      return {
+        ok: true,
+        type: 'plugin.jobs.retried',
+        libraryId: request.command.libraryId,
+        job,
+      };
+    }
+    case 'plugin.jobs.report-progress': {
+      const job = libraryService.reportPluginJobProgress(request.command);
       return {
         ok: true,
         type: 'plugin.jobs.completed',

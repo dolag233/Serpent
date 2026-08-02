@@ -67,9 +67,10 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     const enableToggle = libraryCard.getByRole('checkbox', { name: '启用插件' });
     await expect(enableToggle).toBeChecked();
     await expect(enableToggle).toBeEnabled();
-    await libraryCard.locator('.plugin-settings-enable-toggle').click();
+    const enableRow = libraryCard.locator('label.plugin-settings-enable-toggle');
+    await enableRow.click({ force: true });
     await expect(enableToggle).not.toBeChecked();
-    await libraryCard.locator('.plugin-settings-enable-toggle').click();
+    await enableRow.click({ force: true });
     await expect(enableToggle).toBeChecked();
 
     const safeModeRow = dialog.locator('.plugin-settings-safe-mode');

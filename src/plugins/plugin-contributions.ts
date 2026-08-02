@@ -64,9 +64,12 @@ const pluginContributionRegistrationSchema = z.strictObject({
   parentId: z.string().min(1).max(255).optional(),
   before: z.string().min(1).max(255).optional(),
   after: z.string().min(1).max(255).optional(),
+  first: z.boolean().optional(),
+  last: z.boolean().optional(),
   when: pluginContextExpressionSchema.optional(),
   enablement: pluginContextExpressionSchema.optional(),
   checked: pluginContextExpressionSchema.optional(),
+  shortcut: z.string().min(1).max(64).optional(),
   settingType: pluginSettingTypeSchema.optional(),
   settingDescription: z.string().min(1).max(2_000).optional(),
   settingOptions: z.array(z.strictObject({
@@ -126,9 +129,12 @@ export type PluginMenuContribution = {
   parentId?: string;
   before?: string;
   after?: string;
+  first?: boolean;
+  last?: boolean;
   when?: string;
   enablement?: string;
   checked?: string;
+  shortcut?: string;
 };
 
 /** @deprecated Use {@link PluginMenuContribution} */
@@ -182,6 +188,16 @@ export function registerManifestContributions(
     themes: [],
   };
   let registered = 0;
+  // A menu item references a command, while shortcuts are declared in a
+  // separate manifest section. Keep the first effective shortcut per command
+  // so the renderer can present the same accelerator beside the menu item.
+  const shortcutByCommand = new Map<string, string>();
+  for (const shortcut of contributes.shortcuts ?? []) {
+    if (findReservedAcceleratorConflict(shortcut.accelerator) !== null) continue;
+    if (!shortcutByCommand.has(shortcut.command)) {
+      shortcutByCommand.set(shortcut.command, shortcut.accelerator);
+    }
+  }
   for (const command of contributes.commands) {
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
@@ -224,9 +240,14 @@ export function registerManifestContributions(
         ...(item.group === undefined ? {} : { group: item.group }),
         ...(item.before === undefined ? {} : { before: item.before }),
         ...(item.after === undefined ? {} : { after: item.after }),
+        ...(item.first === undefined ? {} : { first: item.first }),
+        ...(item.last === undefined ? {} : { last: item.last }),
         ...(item.when === undefined ? {} : { when: item.when }),
         ...(item.enablement === undefined ? {} : { enablement: item.enablement }),
         ...(item.checked === undefined ? {} : { checked: item.checked }),
+        ...(item.command === undefined || shortcutByCommand.get(item.command) === undefined
+          ? {}
+          : { shortcut: shortcutByCommand.get(item.command) }),
         ...(parentId === undefined ? {} : { parentId }),
       });
       registered += 1;
@@ -601,9 +622,12 @@ export function listMenuContributions(
       ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),
       ...(contribution.before === undefined ? {} : { before: contribution.before }),
       ...(contribution.after === undefined ? {} : { after: contribution.after }),
+      ...(contribution.first === undefined ? {} : { first: contribution.first }),
+      ...(contribution.last === undefined ? {} : { last: contribution.last }),
       ...(contribution.when === undefined ? {} : { when: contribution.when }),
       ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
       ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+      ...(contribution.shortcut === undefined ? {} : { shortcut: contribution.shortcut }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

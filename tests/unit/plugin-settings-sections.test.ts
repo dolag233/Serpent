@@ -10,6 +10,7 @@ import { PluginSettingsStore } from '../../src/main/plugin-settings-store';
 import { PluginStorageStore } from '../../src/main/plugin-storage-store';
 import { pluginManifestSchema } from '../../src/plugins/plugin-manifest';
 import { pluginManagerRequestSchema } from '../../src/shared/plugin-manager-api';
+import { resolvePluginSettingSelectValue } from '../../src/renderer/plugin-host-settings-fields';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
 const roots: string[] = [];
@@ -46,6 +47,17 @@ afterEach(() => {
 });
 
 describe('Plugin settings sections IPC', () => {
+  it('renders a select fallback using the declared default before the first option', () => {
+    expect(resolvePluginSettingSelectValue({
+      value: 'removed-option',
+      default: 'high',
+      options: [
+        { value: 'fast', label: 'Fast' },
+        { value: 'high', label: 'High' },
+      ],
+    })).toBe('high');
+  });
+
   it('accepts select options and hover help metadata in a settings contribution', () => {
     const manifest = pluginManifestSchema.parse({
       ...manifestFixture,
@@ -155,7 +167,14 @@ describe('Plugin settings sections IPC', () => {
     });
     expect(initial).toMatchObject({
       ok: true,
-      sections: [{ id: 'palette-size', title: 'Palette size', type: 'number', value: null }],
+      sections: [{
+        id: 'palette-size',
+        title: 'Palette size',
+        type: 'number',
+        default: 0,
+        value: 0,
+      }],
+      diagnostics: [],
     });
 
     await expect(handler({

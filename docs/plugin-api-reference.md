@@ -6,7 +6,9 @@
 
 ## 约定
 
-- 入口：`activate(serpent)` / 可选 `deactivate()`。  
+- 入口：`setup(context)` / `dispose(reason)`；global 与 library 实例共用这一对生命周期回调。
+- `context.signal` 在实例停用时变为 aborted；`context.subscriptions.add(value)` 托管函数或 `{ dispose() }`，Host 会在 `dispose` 完成后逆序清理。
+- 菜单、快捷键、设置等 Contribution 由 `serpent-plugin.json` 声明；当前开发态不提供运行时动态 Contribution Registrar。
 - 所有领域写操作经 Automation Gateway；结果为 JSON 安全结构，**不含资源库绝对路径**（剪贴板复制路径除外：脚本只收到数量）。  
 - `restricted` 与 `unrestricted` 必须暴露**同一套** `serpent.*` 方法面；`unrestricted` 额外拥有 Node，但不因此省略 Guest API。旧清单别名 `standard`/`trusted` 读入时映射到上述主标识。
 
@@ -128,6 +130,30 @@ serpent.hooks.onWill('asset.trash', async (ctx) => {
 
 ---
 
+## `serpent.forLibrary(libraryId)`
+
+全局插件执行跨库功能时必须显式指定一个已打开的资源库；不能把全局运行时的
+sentinel 当作目标库。资源库级插件只能指定自己绑定的库。
+
+```ts
+const scoped = serpent.forLibrary(libraryId)
+await scoped.assets.search({ query: null, limit: 20 })
+await scoped.jobs.enqueue({ handlerId, payload })
+await scoped.jobs.reportProgress({
+  jobId,
+  completed: 1,
+  total: 10,
+  phase: 'process',
+  message: 'one item done',
+})
+```
+
+`forLibrary()` 返回完整的领域命令面和 Job 的 `enqueue` / `reportProgress` /
+`cancel` / `pause` / `resume` / `retry`，但不重复暴露 `registerHandler`；handler
+在实例级 `serpent.jobs` 上注册。
+
+---
+
 ## `serpent.jobs`
 
 清单 `contributes.jobs` 声明 handler；运行时：
@@ -135,9 +161,25 @@ serpent.hooks.onWill('asset.trash', async (ctx) => {
 ```ts
 serpent.jobs.registerHandler(handlerId, async (payload, job) => { ... })
 await serpent.jobs.enqueue({ handlerId, payload?, recoveryStrategy? })
+await serpent.jobs.reportProgress({
+  jobId,
+  completed,
+  total,
+  phase,
+  message,
+  progress?,
+})
+await serpent.jobs.cancel({ jobId, reason: 'user-requested' })
+await serpent.jobs.pause({
+  jobId,
+  checkpoint: { version: 'v1', data: { cursor: 'asset-42' }, savedAt: new Date().toISOString() },
+})
+await serpent.jobs.resume({ jobId })
+await serpent.jobs.retry({ jobId, retryInput: { onlyFailed: true } })
 ```
 
-权限：`job.manage` 等。后台任务 UI 可展示来源插件。
+权限：`job.manage` 等。后台任务 UI 可展示来源插件、阶段、数量、失败资产和重试输入。
+暂停/恢复只有声明 checkpoint 的 handler 可用；其他 Job 明确只支持取消/重试。
 
 ---
 

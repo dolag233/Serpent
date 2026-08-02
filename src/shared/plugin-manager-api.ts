@@ -282,9 +282,12 @@ export const pluginManagerMenuContributionSchema = z.strictObject({
   parentId: z.string().min(1).max(255).optional(),
   before: z.string().min(1).max(255).optional(),
   after: z.string().min(1).max(255).optional(),
+  first: z.boolean().optional(),
+  last: z.boolean().optional(),
   when: pluginContextExpressionSchema.optional(),
   enablement: pluginContextExpressionSchema.optional(),
   checked: pluginContextExpressionSchema.optional(),
+  shortcut: z.string().min(1).max(64).optional(),
   target: pluginHostMenuTargetSchema,
 });
 export type PluginManagerMenuContribution = z.infer<typeof pluginManagerMenuContributionSchema>;

@@ -3,10 +3,18 @@
 > 更新时间：2026-08-02
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+## 2026-08-02 插件平台最终架构设计
+
+- [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md) 已升级为权威最终设计；新增 [ADR-0027](adr/0027-plugin-instance-lifecycle-and-interaction-context.md)。核心边界为：安装范围与运行实例范围分离，global/library 实例统一使用 `setup(context)` / `dispose(reason)`，不增加 `openLibrary` 生命周期。
+- 插件交互分为 Contribution Context（UI 条件）、Invocation Context（触发时冻结目标）和完整 Domain API（实际功能）；复杂条件异步解析为 Context Key，菜单打开不得等待插件 RPC。Command Registry 为行为源，菜单保持树结构并通过稳定 ID、group、before/after 约束定位。
+- 主线 UI 尚未标准化，因此 toggle/dropdown/slider 等视觉 primitives 明确延期；现有 Host-rendered 控件仅为实验实现。项目未发布，后续直接替换旧 Manifest/Contribution 契约，不维护兼容层。
+- Image Upscaler 反馈经取舍后纳入：新增通用批量内容替换、Job 进度/取消、设置字段级容错和 Worker 协议故障隔离；拒绝 Host 通用 GPU/VRAM/CPU/内存接口与强制共享模型 Worker，非受限插件自行探测和调度。
+- Beads：`Serpent-2qsq` 生命周期基础单已关闭；`Serpent-gtih`、`Serpent-upsn.10`–`.13` 的核心实现已落地并进入验证收口，`Serpent-fkq3` 仍依赖 Context 菜单轨道；视觉组件工单 `Serpent-7nah.2` 继续 deferred。实现不等同于完整切片验收：当前插件定向测试 21 files / 271 passed，隔离 Electron E2E 4/4；全量 Vitest 为 307 files 中 298 passed、3 skipped、6 failed（14 个测试失败），失败为既有 schema 27/28、历史迁移重复建表和 100k 搜索性能基线；packaged/Windows/Computer Use 未执行。详见 [插件平台开发日志](development/2026-08-02-plugin-platform-runtime-management-development-log.md) 与 [验收清单 PLUGIN-040–044](qa/human-acceptance-checklist.md)。
+
 ## 2026-08-02 脚本/MCP/插件 ui.notify
 
 - 新增 Gateway `ui.notify` / Guest `serpent.ui.notify` / MCP `serpent_ui_notify`：info/warning/error toast 与可选阻塞弹窗；权限/能力 `ui.notify`；无库可调用。见 [开发日志](development/2026-08-02-ui-notify-development-log.md)；`AUT-021`。工单 `Serpent-99zs`。
-- `Serpent-fkq3` / `Serpent-7nah.1` 已落地插件菜单树与 Host 设置控件增量：菜单支持三级 submenu、宿主/自定义分组与 before/after 锚点；设置支持 boolean toggle、select options、description hover/focus 帮助和提交值校验。定向测试通过；Electron 启动 SIGABRT、packaged/Windows 仍未验证，见 [开发日志](development/2026-08-02-plugin-native-controls-and-menu-tree-development-log.md)。
+- `Serpent-fkq3` / `Serpent-7nah.1` 已落地插件菜单树与 Host 设置控件的早期增量：菜单支持三级 submenu、宿主/自定义分组与 before/after 锚点；设置支持 boolean toggle、select options、description hover/focus 帮助和提交值校验。定向测试通过；Electron 启动 SIGABRT、packaged/Windows 仍未验证，见 [开发日志](development/2026-08-02-plugin-native-controls-and-menu-tree-development-log.md)。按同日最终架构，`fkq3` 已重新打开用于统一 Command Registry/Placement Solver；设置控件不视为稳定插件 UI API。
 - **`Serpent-l2tj` 已关闭**：settings.pages/menus 贡献解析与启动激活回归测试落地——全 view target + 混合数组单测、IPC `serpent-plugin://` 经 Preload 解析保留、E2E（含 `SERPENT_E2E_RESTORE_RECENT` 完整重启）。见 [贡献回归开发日志](development/2026-08-02-plugin-contribution-regression-tests-development-log.md)。仍开放：`Serpent-2qsq`（全局 user-scope 插件激活不应依赖打开资源库）。
 
 ## 2026-08-01 插件设置 IA 与列表样式
@@ -78,9 +86,9 @@
 - 第一阶段支持本地包、本地目录和规范 GitHub 仓库 URL，不依赖 GitHub Release，不运行
   远程构建/安装脚本，不建设插件社区或协作权限。
 - 完整规格见 [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md)，
-  架构决策见 [ADR-0026](adr/0026-plugin-runtime-installation-and-trust.md)。设计不表示插件
+  架构决策见 [ADR-0026](adr/0026-plugin-runtime-installation-and-trust.md) 与 [ADR-0027](adr/0027-plugin-instance-lifecycle-and-interaction-context.md)。设计不表示插件
   运行时已经实现，也不进入 v0.1.0 发布完成度。实施 Epic 为 `Serpent-upsn`
-  （`Serpent-upsn.1`–`.9`）。
+  （`Serpent-upsn.1`–`.13`）与 `Serpent-7nah`。
 
 ## 2026-07-28 发布准备评估
 

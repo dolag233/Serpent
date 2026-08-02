@@ -1,12 +1,15 @@
 import {
-  pluginRuntimeChildMessageSchema,
+  parsePluginRuntimeChildMessage,
   type PluginRuntimeChildMessage,
   type PluginRuntimeDeactivateReason,
   type PluginRuntimeParentMessage,
+  type PluginRuntimeJobProgressInput,
 } from '../shared/plugin-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import type { PluginPermission } from '../plugins/plugin-manifest';
-import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
+import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
+import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
+import type { PluginJobComplete, PluginJobControlAction, PluginJobRecord, PluginJobCheckpoint } from '../plugins/plugin-jobs';
 import type { PluginProviderBatchResult, PluginProviderInvoke } from '../plugins/plugin-providers';
 import type {
   PluginSearchChunk,
@@ -72,6 +75,7 @@ export type PluginRuntimeHostCommandHandler = (
   context: {
     instanceId: string;
     libraryId: string;
+    targetLibraryId?: string;
     pluginId: string;
     permissions: readonly PluginPermission[];
     causeChain: readonly string[];
@@ -98,6 +102,7 @@ export type PluginRuntimeJobEnqueueHandler = (input: {
   handlerId: string;
   payload: Record<string, unknown>;
   recoveryStrategy?: 'idempotent' | 'checkpoint';
+  targetLibraryId?: string;
   context: {
     libraryId: string;
     pluginId: string;
@@ -105,6 +110,36 @@ export type PluginRuntimeJobEnqueueHandler = (input: {
     permissions: readonly PluginPermission[];
   };
 }) => Promise<{ jobId: string }>;
+
+export type PluginRuntimeJobProgressHandler = (input: {
+  instanceId: string;
+  jobId: string;
+  progress: PluginRuntimeJobProgressInput;
+  targetLibraryId?: string;
+  context: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    permissions: readonly PluginPermission[];
+  };
+}) => Promise<void>;
+
+export type PluginRuntimeJobControlHandler = (input: {
+  instanceId: string;
+  requestId: string;
+  jobId: string;
+  action: PluginJobControlAction;
+  targetLibraryId?: string;
+  reason?: string;
+  retryInput?: Record<string, unknown>;
+  checkpoint?: PluginJobCheckpoint;
+  context: {
+    libraryId: string;
+    pluginId: string;
+    packageHash: string;
+    permissions: readonly PluginPermission[];
+  };
+}) => Promise<{ job: PluginJobRecord | null }>;
 
 export type PluginRuntimeInputCaptureStartHandler = (input: {
   instanceId: string;
@@ -137,13 +172,14 @@ export class PluginRuntimeSupervisor {
     activated: boolean;
   }>();
   #pendingHookDecisions = new Map<string, {
-    resolve(decision: import('../plugins/plugin-hooks').PluginHookDecision): void;
+    resolve(decision: PluginHookDecision): void;
     timer: ReturnType<typeof setTimeout>;
   }>();
   #pendingJobCompletions = new Map<string, {
     resolve(complete: PluginJobComplete): void;
     timer: ReturnType<typeof setTimeout>;
   }>();
+  #jobOwners = new Map<string, string>();
   #pendingProviderCompletions = new Map<string, {
     resolve(result: PluginProviderBatchResult): void;
     timer: ReturnType<typeof setTimeout>;
@@ -166,6 +202,8 @@ export class PluginRuntimeSupervisor {
       executeHostCommand: PluginRuntimeHostCommandHandler;
       executeStorage?: PluginRuntimeStorageHandler;
       handleJobEnqueue?: PluginRuntimeJobEnqueueHandler;
+      handleJobProgress?: PluginRuntimeJobProgressHandler;
+      handleJobControl?: PluginRuntimeJobControlHandler;
       handleInputCaptureStart?: PluginRuntimeInputCaptureStartHandler;
       handleInputCaptureRelease?: (instanceId: string, sessionId: string) => void;
       onInstanceDeactivated?: (instanceId: string) => void;
@@ -244,6 +282,9 @@ export class PluginRuntimeSupervisor {
   deactivate(instanceId: string, reason: PluginRuntimeDeactivateReason): void {
     if (!this.#instances.has(instanceId)) return;
     this.options.onInstanceDeactivated?.(instanceId);
+    for (const [jobId, owner] of this.#jobOwners) {
+      if (owner === instanceId) this.#jobOwners.delete(jobId);
+    }
     this.#post({
       type: 'plugin-runtime.deactivate',
       instanceId,
@@ -283,7 +324,7 @@ export class PluginRuntimeSupervisor {
    */
   deliverDomainEvent(
     libraryId: string,
-    event: import('../plugins/plugin-domain-events').PluginDomainEvent,
+    event: PluginDomainEvent,
   ): void {
     if (this.#child === undefined || !this.#ready) return;
     for (const [instanceId, instance] of this.#instances) {
@@ -304,10 +345,10 @@ export class PluginRuntimeSupervisor {
    */
   invokeHook(input: {
     instanceId: string;
-    invoke: import('../plugins/plugin-hooks').PluginHookInvoke;
+    invoke: PluginHookInvoke;
     timeoutMs: number;
   }): Promise<{
-    decision: import('../plugins/plugin-hooks').PluginHookDecision;
+    decision: PluginHookDecision;
     timedOut: boolean;
   }> {
     const instance = this.#instances.get(input.instanceId);
@@ -364,6 +405,8 @@ export class PluginRuntimeSupervisor {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.#pendingJobCompletions.delete(input.job.jobId);
+        this.#jobOwners.delete(input.job.jobId);
+        this.signalJob(input.instanceId, input.job.jobId, 'cancel', 'handler-timeout');
         resolve({
           complete: {
             jobId: input.job.jobId,
@@ -378,11 +421,39 @@ export class PluginRuntimeSupervisor {
         resolve: (complete) => resolve({ complete, timedOut: false }),
         timer,
       });
-      this.#post({
-        type: 'plugin-runtime.job-invoke',
-        instanceId: input.instanceId,
-        job: input.job,
-      });
+      this.#jobOwners.set(input.job.jobId, input.instanceId);
+      try {
+        this.#post({
+          type: 'plugin-runtime.job-invoke',
+          instanceId: input.instanceId,
+          job: input.job,
+        });
+      } catch {
+        clearTimeout(timer);
+        this.#pendingJobCompletions.delete(input.job.jobId);
+        this.#jobOwners.delete(input.job.jobId);
+        resolve({
+          complete: {
+            jobId: input.job.jobId,
+            status: 'failed',
+            errorCode: 'PLUGIN_JOB_INSTANCE_UNAVAILABLE',
+            errorDetail: 'The plugin instance is not active.',
+          },
+          timedOut: false,
+        });
+      }
+    });
+  }
+
+  signalJob(instanceId: string, jobId: string, action: 'pause' | 'cancel', reason?: string): void {
+    const instance = this.#instances.get(instanceId);
+    if (instance === undefined) return;
+    this.#post({
+      type: 'plugin-runtime.job-signal',
+      instanceId,
+      jobId,
+      action,
+      ...(reason === undefined ? {} : { reason }),
     });
   }
 
@@ -726,16 +797,24 @@ export class PluginRuntimeSupervisor {
     const payload = typeof raw === 'object' && raw !== null && 'data' in raw
       ? (raw as { data: unknown }).data
       : raw;
-    const parsed = pluginRuntimeChildMessageSchema.safeParse(payload);
-    if (!parsed.success) {
-      this.options.logger?.error(
-        'plugin.runtime.protocol',
-        new Error('Invalid plugin-runtime child message.'),
-      );
+    const protocol = parsePluginRuntimeChildMessage(payload);
+    if (protocol.kind === 'ignored-event') {
+      this.options.logger?.info('plugin.runtime.ignored-event', 'Ignored unknown non-critical event.', {
+        eventType: protocol.eventType,
+        ...(protocol.instanceId === undefined ? {} : { instanceId: protocol.instanceId }),
+      });
       return;
     }
-    const message = parsed.data;
+    if (protocol.kind === 'fault') {
+      this.#handleProtocolFault(protocol.instanceId, protocol.reason);
+      return;
+    }
+    const message = protocol.message;
     if (message.type === 'plugin-runtime.ready') {
+      if (this.#ready) {
+        this.#handleProtocolFault(undefined, 'Duplicate standard Host ready handshake.');
+        return;
+      }
       this.#markReady();
       return;
     }
@@ -743,7 +822,24 @@ export class PluginRuntimeSupervisor {
       this.#lastHeartbeatAt = this.#now();
       return;
     }
-    if (!this.#ready) return;
+    if (!this.#ready) {
+      this.#handleProtocolFault(
+        'instanceId' in message ? message.instanceId : undefined,
+        `Standard Host sent ${message.type} before ready handshake.`,
+      );
+      return;
+    }
+
+    if (message.type === 'plugin-runtime.event') {
+      // The parser already classified this envelope. Keep the branch explicit
+      // so adding a future envelope variant cannot accidentally execute it.
+      return;
+    }
+
+    if ('instanceId' in message && !this.#instances.has(message.instanceId)) {
+      this.#handleProtocolFault(message.instanceId, `Message ${message.type} references an unknown instance.`);
+      return;
+    }
 
     if (message.type === 'plugin-runtime.host-command') {
       void this.#respondHostCommand(message);
@@ -755,6 +851,14 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.job-enqueue') {
       void this.#respondJobEnqueue(message);
+      return;
+    }
+    if (message.type === 'plugin-runtime.job-progress') {
+      void this.#respondJobProgress(message);
+      return;
+    }
+    if (message.type === 'plugin-runtime.job-control') {
+      void this.#respondJobControl(message);
       return;
     }
     if (message.type === 'plugin-runtime.input-capture.start') {
@@ -794,6 +898,9 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.deactivated') {
       this.#instances.delete(message.instanceId);
+      for (const [jobId, owner] of this.#jobOwners) {
+        if (owner === message.instanceId) this.#jobOwners.delete(jobId);
+      }
       return;
     }
     if (message.type === 'plugin-runtime.console') {
@@ -805,29 +912,51 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.hook-decision') {
       const pending = this.#pendingHookDecisions.get(message.invokeId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown hook correlation ${message.invokeId}.`);
+        return;
+      }
       clearTimeout(pending.timer);
       this.#pendingHookDecisions.delete(message.invokeId);
       pending.resolve(message.decision);
       return;
     }
     if (message.type === 'plugin-runtime.job-complete') {
+      if (this.#jobOwners.get(message.jobId) !== message.instanceId) {
+        this.#handleProtocolFault(message.instanceId, `Job completion ownership mismatch for ${message.jobId}.`);
+        return;
+      }
       const pending = this.#pendingJobCompletions.get(message.jobId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown job correlation ${message.jobId}.`);
+        return;
+      }
       clearTimeout(pending.timer);
       this.#pendingJobCompletions.delete(message.jobId);
+      this.#jobOwners.delete(message.jobId);
       pending.resolve({
         jobId: message.jobId,
         status: message.status,
         ...(message.errorCode === undefined ? {} : { errorCode: message.errorCode }),
         ...(message.errorDetail === undefined ? {} : { errorDetail: message.errorDetail }),
         ...(message.progress === undefined ? {} : { progress: message.progress }),
+        ...(message.completed === undefined ? {} : { completed: message.completed }),
+        ...(message.total === undefined ? {} : { total: message.total }),
+        ...(message.phase === undefined ? {} : { phase: message.phase }),
+        ...(message.message === undefined ? {} : { message: message.message }),
+        ...(message.itemResults === undefined ? {} : { itemResults: message.itemResults }),
+        ...(message.failedAssetIds === undefined ? {} : { failedAssetIds: message.failedAssetIds }),
+        ...(message.retryInput === undefined ? {} : { retryInput: message.retryInput }),
+        ...(message.checkpoint === undefined ? {} : { checkpoint: message.checkpoint }),
       });
       return;
     }
     if (message.type === 'plugin-runtime.provider-complete') {
       const pending = this.#pendingProviderCompletions.get(message.invokeId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown provider correlation ${message.invokeId}.`);
+        return;
+      }
       clearTimeout(pending.timer);
       this.#pendingProviderCompletions.delete(message.invokeId);
       pending.resolve({
@@ -840,7 +969,12 @@ export class PluginRuntimeSupervisor {
       return;
     }
     if (message.type === 'plugin-runtime.search-chunk') {
-      this.#pendingSearches.get(message.invokeId)?.onChunk({
+      const pending = this.#pendingSearches.get(message.invokeId);
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown search correlation ${message.invokeId}.`);
+        return;
+      }
+      pending.onChunk({
         invokeId: message.invokeId,
         items: message.items,
       });
@@ -848,7 +982,10 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.search-complete') {
       const pending = this.#pendingSearches.get(message.invokeId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown search correlation ${message.invokeId}.`);
+        return;
+      }
       pending.resolve({
         invokeId: message.invokeId,
         status: message.status,
@@ -860,10 +997,68 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.command-complete') {
       const pending = this.#pendingCommandCompletions.get(message.invokeId);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.#handleProtocolFault(message.instanceId, `Unknown command correlation ${message.invokeId}.`);
+        return;
+      }
       clearTimeout(pending.timer);
       this.#pendingCommandCompletions.delete(message.invokeId);
       pending.resolve(message);
+    }
+  }
+
+  #handleProtocolFault(instanceId: string | undefined, reason: string): void {
+    this.options.logger?.error(
+      'plugin.runtime.protocol-fault',
+      new Error(reason),
+      instanceId === undefined ? undefined : { instanceId },
+    );
+    const instance = instanceId === undefined ? undefined : this.#instances.get(instanceId);
+    if (instance !== undefined) {
+      this.#instances.delete(instance.instanceId);
+      for (const [jobId, owner] of this.#jobOwners) {
+        if (owner === instance.instanceId) this.#jobOwners.delete(jobId);
+      }
+      try {
+        this.#post({
+          type: 'plugin-runtime.deactivate',
+          instanceId: instance.instanceId,
+          reason: 'protocol-fault',
+        });
+      } catch {
+        // The shared Host may be in the process of shutting down.
+      }
+      this.#notifyCrash({
+        instanceId: instance.instanceId,
+        libraryId: instance.libraryId,
+        libraryDirectory: instance.libraryDirectory,
+        pluginId: instance.pluginId,
+        packageHash: instance.packageHash,
+        failureCode: 'RUNTIME_PROTOCOL_ERROR',
+      });
+      return;
+    }
+    // A control-plane fault without an attributable instance invalidates the
+    // shared handshake. There is no safe way to isolate it to one plugin.
+    const child = this.#child;
+    if (child === undefined) return;
+    const instances = [...this.#instances.values()];
+    this.#child = undefined;
+    this.#ready = false;
+    this.#instances.clear();
+    this.#jobOwners.clear();
+    this.#stopHeartbeatWatch();
+    this.#failReady(new Error(`Standard Host protocol fault: ${reason}`));
+    child.kill();
+    for (const affected of instances) {
+      this.#notifyCrash({
+        instanceId: affected.instanceId,
+        libraryId: affected.libraryId,
+        libraryDirectory: affected.libraryDirectory,
+        pluginId: affected.pluginId,
+        packageHash: affected.packageHash,
+        failureCode: 'RUNTIME_PROTOCOL_ERROR',
+      });
     }
   }
 
@@ -885,6 +1080,7 @@ export class PluginRuntimeSupervisor {
       const result = await this.options.executeHostCommand(message.commandId, message.input, {
         instanceId: message.instanceId,
         libraryId: instance.libraryId,
+        ...(message.targetLibraryId === undefined ? {} : { targetLibraryId: message.targetLibraryId }),
         pluginId: instance.pluginId,
         permissions: instance.permissions,
         causeChain: message.causeChain ?? [],
@@ -1020,6 +1216,7 @@ export class PluginRuntimeSupervisor {
         handlerId: message.handlerId,
         payload: message.payload,
         ...(message.recoveryStrategy === undefined ? {} : { recoveryStrategy: message.recoveryStrategy }),
+        ...(message.targetLibraryId === undefined ? {} : { targetLibraryId: message.targetLibraryId }),
         context: {
           libraryId: instance.libraryId,
           pluginId: instance.pluginId,
@@ -1027,6 +1224,7 @@ export class PluginRuntimeSupervisor {
           permissions: instance.permissions,
         },
       });
+      this.#jobOwners.set(result.jobId, message.instanceId);
       this.#post({
         type: 'plugin-runtime.job-enqueue-result',
         instanceId: message.instanceId,
@@ -1049,6 +1247,114 @@ export class PluginRuntimeSupervisor {
         requestId: message.requestId,
         ok: false,
         error: { code, message: messageText.slice(0, 1_024) },
+      });
+    }
+  }
+
+  async #respondJobProgress(
+    message: Extract<PluginRuntimeChildMessage, { type: 'plugin-runtime.job-progress' }>,
+  ): Promise<void> {
+    const instance = this.#instances.get(message.instanceId);
+    if (instance === undefined) return;
+    if (!instance.permissions.includes('job.manage')) {
+      this.options.logger?.info('plugin.runtime.job-progress-denied', 'Ignored progress without job.manage permission.', {
+        instanceId: message.instanceId,
+        jobId: message.jobId,
+      });
+      return;
+    }
+    const owner = this.#jobOwners.get(message.jobId);
+    if (owner !== message.instanceId) {
+      this.options.logger?.info('plugin.runtime.job-progress-ignored', 'Ignored progress for an unknown or foreign job.', {
+        instanceId: message.instanceId,
+        jobId: message.jobId,
+      });
+      return;
+    }
+    if (this.options.handleJobProgress === undefined) return;
+    try {
+      await this.options.handleJobProgress({
+        instanceId: message.instanceId,
+        jobId: message.jobId,
+        progress: message.progress,
+        ...(message.targetLibraryId === undefined ? {} : { targetLibraryId: message.targetLibraryId }),
+        context: {
+          libraryId: instance.libraryId,
+          pluginId: instance.pluginId,
+          packageHash: instance.packageHash,
+          permissions: instance.permissions,
+        },
+      });
+    } catch (error) {
+      this.options.logger?.error('plugin.runtime.job-progress-failed', error, {
+        instanceId: message.instanceId,
+        jobId: message.jobId,
+      });
+    }
+  }
+
+  async #respondJobControl(
+    message: Extract<PluginRuntimeChildMessage, { type: 'plugin-runtime.job-control' }>,
+  ): Promise<void> {
+    const instance = this.#instances.get(message.instanceId);
+    if (instance === undefined) return;
+    if (!instance.permissions.includes('job.manage')) {
+      this.#post({
+        type: 'plugin-runtime.job-control-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'PERMISSION_DENIED', message: 'This plugin does not have job.manage permission.' },
+      });
+      return;
+    }
+    if (this.options.handleJobControl === undefined) {
+      this.#post({
+        type: 'plugin-runtime.job-control-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code: 'JOBS_UNAVAILABLE', message: 'Plugin jobs are unavailable in this session.' },
+      });
+      return;
+    }
+    try {
+      const result = await this.options.handleJobControl({
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        jobId: message.jobId,
+        action: message.action,
+        ...(message.targetLibraryId === undefined ? {} : { targetLibraryId: message.targetLibraryId }),
+        ...(message.reason === undefined ? {} : { reason: message.reason }),
+        ...(message.retryInput === undefined ? {} : { retryInput: message.retryInput }),
+        ...(message.checkpoint === undefined ? {} : { checkpoint: message.checkpoint }),
+        context: {
+          libraryId: instance.libraryId,
+          pluginId: instance.pluginId,
+          packageHash: instance.packageHash,
+          permissions: instance.permissions,
+        },
+      });
+      if (message.action === 'cancel' || message.action === 'pause') {
+        this.signalJob(message.instanceId, message.jobId, message.action, message.reason);
+      }
+      this.#post({
+        type: 'plugin-runtime.job-control-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: true,
+        job: result.job,
+      });
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'JOB_CONTROL_FAILED';
+      this.#post({
+        type: 'plugin-runtime.job-control-result',
+        instanceId: message.instanceId,
+        requestId: message.requestId,
+        ok: false,
+        error: { code, message: error instanceof Error ? error.message.slice(0, 1_024) : 'Plugin job control failed.' },
       });
     }
   }

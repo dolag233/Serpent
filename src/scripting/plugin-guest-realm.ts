@@ -92,6 +92,33 @@ export function buildPluginSetupSource(entryJavaScript: string, context: {
     '      recoveryStrategy: request.recoveryStrategy,',
     '    });',
     '  };',
+    '  serpent.jobs.reportProgress = function(input) {',
+    '    const request = input && typeof input === "object" ? input : {};',
+    '    const completedValue = Number(request.completed);',
+    '    const totalValue = Number(request.total);',
+    '    const progressValue = Number(request.progress);',
+    '    const completed = Number.isFinite(completedValue) ? Math.max(0, completedValue) : 0;',
+    '    const total = Number.isFinite(totalValue) ? Math.max(completed, totalValue) : completed;',
+    '    const progress = Number.isFinite(progressValue) ? Math.min(1, Math.max(0, progressValue)) : (total > 0 ? Math.min(1, completed / total) : 0);',
+    '    return serpent.jobs.__reportProgress({',
+    '      jobId: String(request.jobId ?? ""),',
+    '      completed,',
+    '      total,',
+    '      progress,',
+    '      ...(typeof request.phase === "string" ? { phase: request.phase.slice(0, 128) } : {}),',
+    '      ...(typeof request.message === "string" ? { message: request.message.slice(0, 4096) } : {}),',
+    '    });',
+    '  };',
+    '  serpent.jobs.cancel = function(input) { return serpent.jobs.__control({ ...(input || {}), action: "cancel" }); };',
+    '  serpent.jobs.pause = function(input) { return serpent.jobs.__control({ ...(input || {}), action: "pause" }); };',
+    '  serpent.jobs.resume = function(input) { return serpent.jobs.__control({ ...(input || {}), action: "resume" }); };',
+    '  serpent.jobs.retry = function(input) { return serpent.jobs.__control({ ...(input || {}), action: "retry" }); };',
+    '  const __jobSignal = function(jobId) {',
+    '    const signal = {};',
+    '    Object.defineProperty(signal, "aborted", { enumerable: true, get: function() { return serpent.jobs.__isAborted(String(jobId)); } });',
+    '    signal.throwIfAborted = function() { if (signal.aborted) { const error = new Error("The plugin job was cancelled."); error.name = "AbortError"; throw error; } };',
+    '    return signal;',
+    '  };',
     '  void (async function() {',
     '    for (;;) {',
     '      const job = await serpent.jobs.__nextJob();',
@@ -106,11 +133,19 @@ export function buildPluginSetupSource(entryJavaScript: string, context: {
     '        errorDetail = "No handler registered for this job.";',
     '      } else {',
     '        try {',
-    '          await handler(job.payload, job);',
+      '          job.signal = __jobSignal(job.jobId);',
+      '          await handler(job.payload, job, job.signal);',
+      '          job.signal.throwIfAborted();',
     '        } catch (error) {',
-    '          status = "failed";',
-    '          errorCode = "PLUGIN_JOB_HANDLER_FAILED";',
-    '          errorDetail = error && error.message ? String(error.message).slice(0, 4096) : "Job handler failed.";',
+    '          if (job.signal && job.signal.aborted) {',
+    '            status = "cancelled";',
+    '            errorCode = "PLUGIN_JOB_CANCELLED";',
+    '            errorDetail = "The plugin job was cancelled.";',
+    '          } else {',
+    '            status = "failed";',
+    '            errorCode = "PLUGIN_JOB_HANDLER_FAILED";',
+    '            errorDetail = error && error.message ? String(error.message).slice(0, 4096) : "Job handler failed.";',
+    '          }',
     '        }',
     '      }',
     '      await serpent.jobs.__respond(job.jobId, {',
@@ -303,12 +338,36 @@ export function buildPluginSetupSource(entryJavaScript: string, context: {
     '    });',
     '  };',
     '}',
-    `await setup(Object.assign({}, serpent, { pluginId: ${JSON.stringify(context.pluginId)}, pluginInstanceId: ${JSON.stringify(context.pluginInstanceId)}, installationScope: ${JSON.stringify(context.installationScope)}, instanceScope: ${JSON.stringify(context.instanceScope)}, serpent: serpent }));`,
-    'if (typeof serpent.__waitUntilDeactivate === "function") {',
-    '  await serpent.__waitUntilDeactivate();',
-    '}',
-    'if (typeof dispose === "function") {',
-    '  await dispose(typeof serpent.__getDeactivateReason === "function" ? serpent.__getDeactivateReason() : undefined);',
+    'const __pluginSubscriptions = [];',
+    'const __disposePluginSubscriptions = function() {',
+    '  for (let index = __pluginSubscriptions.length - 1; index >= 0; index -= 1) {',
+    '    const value = __pluginSubscriptions[index];',
+    '    try { if (typeof value === "function") value(); else if (value && typeof value.dispose === "function") value.dispose(); } catch (_error) {}',
+    '  }',
+    '  __pluginSubscriptions.length = 0;',
+    '};',
+    'const subscriptions = {',
+    '  add: function(value) { if (value !== null && value !== undefined) __pluginSubscriptions.push(value); return value; },',
+    '  dispose: __disposePluginSubscriptions,',
+    '};',
+    'const signal = {};',
+    'Object.defineProperty(signal, "aborted", { enumerable: true, get: function() { return typeof serpent.__isDeactivated === "function" && serpent.__isDeactivated(); } });',
+    'signal.addEventListener = function(type, listener) {',
+    '  if (type !== "abort" || typeof listener !== "function" || typeof serpent.__waitUntilDeactivate !== "function") return;',
+    '  void serpent.__waitUntilDeactivate().then(function() { try { listener({ type: "abort", target: signal }); } catch (_error) {} });',
+    '};',
+    'signal.removeEventListener = function() {};',
+    'signal.throwIfAborted = function() { if (signal.aborted) { const error = new Error("The plugin instance was deactivated."); error.name = "AbortError"; throw error; } };',
+    'try {',
+    `  await setup(Object.assign({}, serpent, { pluginId: ${JSON.stringify(context.pluginId)}, pluginInstanceId: ${JSON.stringify(context.pluginInstanceId)}, installationScope: ${JSON.stringify(context.installationScope)}, instanceScope: { kind: ${JSON.stringify(context.instanceScope)} }, subscriptions: subscriptions, signal: signal, serpent: serpent }));`,
+    '  if (typeof serpent.__waitUntilDeactivate === "function") {',
+    '    await serpent.__waitUntilDeactivate();',
+    '  }',
+    '  if (typeof dispose === "function") {',
+    '    await dispose(typeof serpent.__getDeactivateReason === "function" ? serpent.__getDeactivateReason() : undefined);',
+    '  }',
+    '} finally {',
+    '  __disposePluginSubscriptions();',
     '}',
     'return { ok: true };',
   ].join('\n');
@@ -333,7 +392,10 @@ export async function runPluginGuestActivate(input: {
   executeAutomationCommand: (
     commandId: AutomationScriptCommandId,
     commandInput: unknown,
-    options?: { causeChain?: readonly string[] },
+    options?: {
+      causeChain?: readonly string[];
+      targetLibraryId?: string;
+    },
   ) => Promise<unknown>;
   executeStorageOperation?: (input: {
     operation: 'get' | 'set' | 'delete' | 'list';
@@ -369,9 +431,30 @@ export async function runPluginGuestActivate(input: {
     handlerId: string;
     payload: Record<string, unknown>;
     recoveryStrategy?: 'idempotent' | 'checkpoint';
+    targetLibraryId?: string;
   }) => Promise<unknown>;
+  reportJobProgress?: (input: {
+    jobId: string;
+    completed: number;
+    total: number;
+    phase?: string;
+    message?: string;
+    progress?: number;
+    targetLibraryId?: string;
+  }) => Promise<void>;
+  controlPluginJob?: (input: {
+    jobId: string;
+    action: 'pause' | 'resume' | 'cancel' | 'retry';
+    reason?: string;
+    retryInput?: Record<string, unknown>;
+    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+    targetLibraryId?: string;
+  }) => Promise<unknown>;
+  isJobAborted?: (jobId: string) => boolean;
   setActiveCauseChain?: (causeChain: readonly string[]) => void;
   signal?: AbortSignal;
+  /** Lifecycle signal exposed to setup/dispose; kept separate from engine abort. */
+  setupSignal?: AbortSignal;
   wallTimeoutMs?: number;
   /** Test/host overrides for QuickJS resource limits. */
   sandboxLimits?: Partial<{
@@ -389,6 +472,9 @@ export async function runPluginGuestActivate(input: {
   let activatedNotified = false;
   const host: QuickJsSandboxPrototypeHost = {
     executeAutomationCommand: input.executeAutomationCommand,
+    ...(input.setupSignal === undefined && input.signal === undefined
+      ? {}
+      : { signal: input.setupSignal ?? input.signal }),
     ...(input.executeStorageOperation === undefined
       ? {}
       : { executeStorageOperation: input.executeStorageOperation }),
@@ -435,6 +521,15 @@ export async function runPluginGuestActivate(input: {
     ...(input.enqueuePluginJob === undefined
       ? {}
       : { enqueuePluginJob: input.enqueuePluginJob }),
+    ...(input.reportJobProgress === undefined
+      ? {}
+      : { reportJobProgress: input.reportJobProgress }),
+    ...(input.controlPluginJob === undefined
+      ? {}
+      : { controlPluginJob: input.controlPluginJob }),
+    ...(input.isJobAborted === undefined
+      ? {}
+      : { isJobAborted: input.isJobAborted }),
     ...(input.waitForCommandInvoke === undefined
       ? {}
       : { waitForCommandInvoke: input.waitForCommandInvoke }),

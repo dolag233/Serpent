@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
 > 状态：生效，持续演进
-> 日期：2026-07-11；最后校准：2026-07-29
+> 日期：2026-07-11；最后校准：2026-08-02
 
 ## 核心关系
 
@@ -38,16 +38,19 @@ Contribution、领域 Hook、Provider、输入捕获和后台 Job handler。
 ```text
 PluginPackage
 ├─ manifest + immutable files + integrity
-└─ runtime_mode = standard | trusted
+└─ runtime_mode = restricted | unrestricted
 
 PluginInstallation
-├─ scope = user | library
+├─ installation_scope = user | library
 ├─ package
 └─ enabled intent
 
 PluginTrustDecision             # 当前设备本地
 PluginResolution                # 当前设备为当前资源库选择 user/library/disabled
-PluginInstance                  # 一个资源库中实际激活的确定版本
+PluginInstance
+├─ instance_scope = global | library
+├─ setup(context) / dispose(reason)
+└─ ContributionRegistry         # pluginInstanceId + localContributionId
 ```
 
 不变量：
@@ -55,12 +58,17 @@ PluginInstance                  # 一个资源库中实际激活的确定版本
 - 用户级安装位于应用用户数据；资源库级安装位于 `.serpent/plugins/` 并可以随资源库同步。
 - 资源库级 Package 同步不包含本机信任。每台设备首次运行前都必须显式信任。
 - 同一插件 ID 的用户级和资源库级版本发生冲突时由用户选择；两者不得同时激活。
-- 标准插件只能通过声明并授权的 Host API 行动。可信插件具有完整 Node.js 能力，其权限清单
+- 安装范围只描述 Package 存放位置，不推导运行实例范围。全局实例每应用会话一个，资源库
+  实例每个已打开库一个；二者使用同一 `setup` / `dispose` 生命周期，不另设 openLibrary。
+- 受限插件只能通过声明并授权的 Host API 行动。非受限插件具有完整 Node.js 能力，其权限清单
   不能被描述为完整系统沙箱。
 - 插件通过 Gateway 发起的领域命令继续遵守实体版本、Execution Plan、文件恢复和 Library
-  Worker 所有权；可信插件绕过 Gateway 的直接系统行为不享受这些保证。
+  Worker 所有权；非受限插件绕过 Gateway 的直接系统行为不享受这些保证。
 - 插件 Hook 不得在数据库事务或文件锁内执行；搜索、过滤和排序 Provider 不得在 Renderer
   中逐资产同步求值。
+- Contribution Context 只承载 UI 条件所需的有界同步状态；命令触发时冻结 Invocation
+  Context；实际功能使用完整 `serpent` Domain API。复杂 UI 条件异步解析成 Context Key，
+  菜单打开不得等待插件代码。
 
 ## 聚合与实体
 

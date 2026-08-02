@@ -12,6 +12,10 @@ import {
 } from '../plugins/plugin-hooks';
 import {
   pluginJobCompleteSchema,
+  pluginJobCheckpointSchema,
+  pluginJobControlActionSchema,
+  pluginJobItemResultSchema,
+  pluginJobSignalActionSchema,
   pluginJobRecordSchema,
   pluginJobRecoveryStrategySchema,
 } from '../plugins/plugin-jobs';
@@ -46,6 +50,10 @@ const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
 const packageHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const pluginIdSchema = z.string().min(1).max(255);
+const targetLibraryIdSchema = z.string().min(1).max(255).refine(
+  (value) => value !== '__serpent_global_runtime__',
+  'Global runtime sentinel is not a valid target library.',
+);
 
 /**
  * Trusted Host messages. Unlike the standard Host, activate carries a verified
@@ -127,6 +135,13 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     job: pluginJobRecordSchema,
   }),
   z.strictObject({
+    type: z.literal('plugin-trusted.job-signal'),
+    instanceId: instanceIdSchema,
+    jobId: z.string().uuid(),
+    action: pluginJobSignalActionSchema,
+    reason: z.string().max(1_024).optional(),
+  }),
+  z.strictObject({
     type: z.literal('plugin-trusted.provider-invoke'),
     instanceId: instanceIdSchema,
     invoke: pluginProviderInvokeSchema,
@@ -167,6 +182,20 @@ export const pluginTrustedParentMessageSchema = z.discriminatedUnion('type', [
     }
   }),
   z.strictObject({
+    type: z.literal('plugin-trusted.job-control-result'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    ok: z.boolean(),
+    job: pluginJobRecordSchema.nullable().optional(),
+    error: z.strictObject({
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(1_024),
+    }).optional(),
+  }).superRefine((value, context) => {
+    if (value.ok && value.error !== undefined) context.addIssue({ code: 'custom', path: ['error'], message: 'Successful job controls cannot contain an error.' });
+    if (!value.ok && value.error === undefined) context.addIssue({ code: 'custom', path: ['error'], message: 'Failed job controls need an error.' });
+  }),
+  z.strictObject({
     type: z.literal('plugin-trusted.input-capture.started'),
     instanceId: instanceIdSchema,
     requestId: requestIdSchema,
@@ -198,6 +227,13 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin-trusted.ready') }),
   z.strictObject({ type: z.literal('plugin-trusted.heartbeat') }),
   z.strictObject({
+    type: z.literal('plugin-trusted.event'),
+    instanceId: instanceIdSchema,
+    eventType: z.string().min(1).max(128),
+    critical: z.boolean().default(false),
+    payload: z.unknown(),
+  }),
+  z.strictObject({
     type: z.literal('plugin-trusted.activated'),
     instanceId: instanceIdSchema,
     pluginId: pluginIdSchema,
@@ -220,6 +256,7 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
     causeChain: pluginCauseChainSchema.optional(),
   }),
   z.strictObject({
@@ -250,6 +287,18 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     handlerId: z.string().min(1).max(128),
     payload: z.record(z.string(), z.unknown()).default({}),
     recoveryStrategy: pluginJobRecoveryStrategySchema.optional(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-control'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    jobId: z.string().uuid(),
+    action: pluginJobControlActionSchema,
+    reason: z.string().max(1_024).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: pluginJobCheckpointSchema.optional(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-trusted.job-complete'),
@@ -259,6 +308,35 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
     errorCode: z.string().min(1).max(128).optional(),
     errorDetail: z.string().max(4_096).optional(),
     progress: z.number().min(0).max(1).optional(),
+    completed: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
+    phase: z.string().max(128).optional(),
+    message: z.string().max(1_024).optional(),
+    itemResults: z.array(pluginJobItemResultSchema).max(100_000).optional(),
+    failedAssetIds: z.array(z.string().min(1).max(255)).max(100_000).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: pluginJobCheckpointSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-trusted.job-progress'),
+    instanceId: instanceIdSchema,
+    jobId: z.string().uuid(),
+    progress: z.strictObject({
+      completed: z.number().int().nonnegative(),
+      total: z.number().int().nonnegative(),
+      phase: z.string().max(128),
+      message: z.string().max(1_024),
+      progress: z.number().min(0).max(1).optional(),
+    }).superRefine((value, context) => {
+      if (value.completed > value.total) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['completed'],
+          message: 'completed cannot exceed total.',
+        });
+      }
+    }),
+    targetLibraryId: targetLibraryIdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-trusted.provider-complete'),
@@ -293,3 +371,48 @@ export const pluginTrustedChildMessageSchema = z.discriminatedUnion('type', [
   }),
 ]);
 export type PluginTrustedChildMessage = z.infer<typeof pluginTrustedChildMessageSchema>;
+
+export type PluginTrustedChildProtocolResult =
+  | { kind: 'message'; message: PluginTrustedChildMessage }
+  | { kind: 'ignored-event'; eventType: string; instanceId?: string }
+  | { kind: 'fault'; reason: string; instanceId?: string };
+
+const trustedProtocolRecordSchema = z.record(z.string(), z.unknown());
+
+export function parsePluginTrustedChildMessage(raw: unknown): PluginTrustedChildProtocolResult {
+  const parsed = pluginTrustedChildMessageSchema.safeParse(raw);
+  if (parsed.success) {
+    if (parsed.data.type === 'plugin-trusted.event') {
+      return parsed.data.critical
+        ? { kind: 'fault', reason: `Unknown critical event: ${parsed.data.eventType}.`, instanceId: parsed.data.instanceId }
+        : { kind: 'ignored-event', eventType: parsed.data.eventType, instanceId: parsed.data.instanceId };
+    }
+    return { kind: 'message', message: parsed.data };
+  }
+  const record = trustedProtocolRecordSchema.safeParse(raw).success
+    ? raw as Record<string, unknown>
+    : undefined;
+  const type = typeof record?.type === 'string' ? record.type : undefined;
+  const instanceId = typeof record?.instanceId === 'string' ? record.instanceId : undefined;
+  const isExplicitEvent = type === 'plugin-trusted.event'
+    || record?.kind === 'event'
+    || typeof record?.eventType === 'string'
+    || type?.includes('.event.') === true
+    || type?.endsWith('-event') === true;
+  const isCritical = record?.critical === true
+    || record?.kind === 'control'
+    || type?.includes('.control.') === true
+    || type?.endsWith('.control') === true;
+  if (isExplicitEvent && !isCritical) {
+    return {
+      kind: 'ignored-event',
+      eventType: typeof record?.eventType === 'string' ? record.eventType : type ?? 'unknown',
+      ...(instanceId === undefined ? {} : { instanceId }),
+    };
+  }
+  return {
+    kind: 'fault',
+    reason: type === undefined ? 'Child message has no protocol type.' : `Invalid or unknown control message: ${type}.`,
+    ...(instanceId === undefined ? {} : { instanceId }),
+  };
+}

@@ -309,6 +309,7 @@ import type {
 import type { SerpentShellApi } from "../shared/external-url";
 import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
 import type { SerpentPluginManagerApi } from '../shared/plugin-manager-api';
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
@@ -323,6 +324,10 @@ import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
+import {
+  buildPluginBrowseScope,
+  buildPluginViewerState,
+} from "./plugin-context-state";
 import { InspectorPanel } from "./InspectorPanel";
 import {
   CARD_SIZE_MAX,
@@ -423,6 +428,7 @@ type SearchDefinition = {
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
+
 function ToolButton({
   label,
   icon,
@@ -1546,6 +1552,68 @@ function AppInner() {
     trashedAssets,
     trashedFolders,
   ]);
+
+  const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
+    () => buildPluginBrowseScope({
+      selectedFolderId,
+      showTrash,
+      collectionId: activeCollectionId ?? activeSmartCollectionId,
+      tagId: activeTagId,
+      searchValue,
+      filter: {
+        colorFilter,
+        excludeColorFilter,
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        aspectRatioRanges,
+        longEdgeRange,
+        durationRange,
+      },
+    }),
+    [
+      activeCollectionId,
+      activeSmartCollectionId,
+      activeTagId,
+      aspectRatioRange,
+      aspectRatioRanges,
+      availabilityFilter,
+      colorFilter,
+      durationRange,
+      excludeAvailabilityFilter,
+      excludeColorFilter,
+      excludeFormatFilter,
+      excludeRatingFilter,
+      excludeTagFilter,
+      favoriteFilter,
+      formatFilter,
+      heightRange,
+      ratingFilter,
+      searchValue,
+      selectedFolderId,
+      showTrash,
+      sourceUrlFilter,
+      tagFilter,
+      tagFilterMatch,
+      widthRange,
+      longEdgeRange,
+    ],
+  );
+  const pluginViewerState = useMemo<Partial<PluginContributionContext["viewer"]>>(
+    () => buildPluginViewerState(previewAsset, Boolean(document.fullscreenElement)),
+    [previewAsset],
+  );
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -9576,6 +9644,8 @@ function AppInner() {
       {/* Unified context menu */}
       <AssetContextMenu
         libraryId={library?.libraryId}
+        pluginBrowseScope={pluginBrowseScope}
+        pluginViewerState={pluginViewerState}
         pluginApi={(window as RendererWindow).serpent?.plugins}
         pluginContributionRefreshKey={pluginContributionRefreshKey}
         tags={tags}

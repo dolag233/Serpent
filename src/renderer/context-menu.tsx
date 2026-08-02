@@ -340,6 +340,7 @@ export function ContextMenuItem({
   shortcut,
   danger = false,
   disabled = false,
+  checked,
   disabledReason,
   onAction,
 }: {
@@ -348,6 +349,7 @@ export function ContextMenuItem({
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
+  checked?: boolean;
   disabledReason?: string;
   onAction: () => void;
 }) {
@@ -369,10 +371,11 @@ export function ContextMenuItem({
     <button
       ref={buttonRef}
       className={`context-menu-item${danger ? " is-danger" : ""}${disabled ? " is-disabled" : ""}`}
-      role="menuitem"
+      role={checked === undefined ? "menuitem" : "menuitemcheckbox"}
       tabIndex={-1}
       type="button"
       aria-disabled={disabled || undefined}
+      aria-checked={checked}
       aria-label={
         disabled && disabledReason
           ? t("common.unavailableSuffix", { label, disabledReason })
@@ -393,10 +396,12 @@ export function ContextMenuItem({
 export function ContextMenuSubmenu({
   icon,
   label,
+  disabled = false,
   children,
 }: {
   icon?: ReactNode;
   label: string;
+  disabled?: boolean;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -415,6 +420,7 @@ export function ContextMenuSubmenu({
     closeTimer.current = window.setTimeout(() => setOpen(false), 140);
   };
   const openSubmenu = () => {
+    if (disabled) return;
     cancelClose();
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
@@ -443,8 +449,9 @@ export function ContextMenuSubmenu({
       <button
         aria-expanded={open}
         aria-haspopup="menu"
+        aria-disabled={disabled || undefined}
         aria-label={label}
-        className="context-menu-item"
+        className={`context-menu-item${disabled ? " is-disabled" : ""}`}
         ref={triggerRef}
         role="menuitem"
         tabIndex={-1}

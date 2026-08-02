@@ -88,6 +88,7 @@ describe('PluginSettingsStore', () => {
     await expect(deviceA.getEffective(baseInput)).resolves.toEqual({
       values: { 'palette-size': 12 },
       sources: { 'palette-size': 'device-override' },
+      diagnostics: [],
     });
 
     rmSync(copiedLibrary, { recursive: true, force: true });
@@ -101,12 +102,46 @@ describe('PluginSettingsStore', () => {
     await expect(deviceB.getEffective({ ...baseInput, libraryDirectory: copiedLibrary })).resolves.toEqual({
       values: { 'palette-size': 8 },
       sources: { 'palette-size': 'library' },
+      diagnostics: [],
     });
     expect(readFileSync(path.join(copiedLibrary, '.serpent', 'plugin-lock.json'), 'utf8'))
       .not.toContain(path.basename(userA));
   });
 
-  it('rejects undeclared settings and values that do not match the manifest type', async () => {
+  it.each([
+    ['boolean', 'enabled', 'yes'],
+    ['number', 'palette-size', 'large'],
+    ['string', 'label', 42],
+    ['select', 'quality', 42],
+  ] as const)('rejects %s setting values with the wrong runtime type', async (_type, settingId, value) => {
+    const library = temporaryRoot('serpent-plugin-settings-library-');
+    const userData = temporaryRoot('serpent-plugin-settings-user-');
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [
+          { id: 'enabled', title: 'Enabled', type: 'boolean', default: true },
+          { id: 'palette-size', title: 'Palette size', type: 'number', default: 4 },
+          { id: 'label', title: 'Label', type: 'string', default: 'Default' },
+          {
+            id: 'quality',
+            title: 'Quality',
+            type: 'select',
+            default: 'fast',
+            options: [{ value: 'fast', label: 'Fast' }, { value: 'high', label: 'High' }],
+          },
+        ],
+      },
+    });
+    const store = new PluginSettingsStore(userData);
+    const input = { libraryId: 'library-a', libraryDirectory: library, manifest, layer: 'library' as const };
+
+    await expect(store.set({ ...input, settingId, value }))
+      .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
+  });
+
+  it('rejects undeclared settings', async () => {
     const library = temporaryRoot('serpent-plugin-settings-library-');
     const userData = temporaryRoot('serpent-plugin-settings-user-');
     const manifest = pluginManifestSchema.parse(manifestFixture);
@@ -115,8 +150,6 @@ describe('PluginSettingsStore', () => {
 
     await expect(store.set({ ...input, settingId: 'missing-setting', value: 2 }))
       .rejects.toMatchObject({ code: 'PLUGIN_SETTING_UNDECLARED' });
-    await expect(store.set({ ...input, settingId: 'palette-size', value: 'large' }))
-      .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
   });
 
   it('rejects select values outside the declared options', async () => {
@@ -146,6 +179,32 @@ describe('PluginSettingsStore', () => {
       .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
   });
 
+  it('rejects numbers outside the declared range', async () => {
+    const library = temporaryRoot('serpent-plugin-number-range-library-');
+    const userData = temporaryRoot('serpent-plugin-number-range-user-');
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [{
+          id: 'quality',
+          title: 'Quality',
+          type: 'number',
+          default: 4,
+          minimum: 1,
+          maximum: 8,
+        }],
+      },
+    });
+    const store = new PluginSettingsStore(userData);
+    const input = { libraryId: 'library-a', libraryDirectory: library, manifest, layer: 'library' as const };
+
+    await expect(store.set({ ...input, settingId: 'quality', value: 0 }))
+      .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
+    await expect(store.set({ ...input, settingId: 'quality', value: 9 }))
+      .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
+  });
+
   it('skips stale invalid select values when reading an existing settings document', async () => {
     const library = temporaryRoot('serpent-plugin-select-stale-library-');
     const userData = temporaryRoot('serpent-plugin-select-stale-user-');
@@ -157,6 +216,7 @@ describe('PluginSettingsStore', () => {
           id: 'quality',
           title: 'Quality',
           type: 'select',
+          default: 'high',
           options: [
             { value: 'fast', label: 'Fast' },
             { value: 'high', label: 'High' },
@@ -184,8 +244,124 @@ describe('PluginSettingsStore', () => {
       libraryDirectory: library,
       manifest,
     })).resolves.toEqual({
-      values: {},
+      values: { quality: 'high' },
       sources: {},
+      diagnostics: [{
+        settingId: 'quality',
+        layer: 'user-default',
+        code: 'invalid-option',
+        message: 'The setting value is not one of the declared options.',
+      }],
     });
+  });
+
+  it('falls back per field, reports diagnostics, and preserves undeclared values on later writes', async () => {
+    const library = temporaryRoot('serpent-plugin-settings-diagnostics-library-');
+    const userData = temporaryRoot('serpent-plugin-settings-diagnostics-user-');
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [
+          { id: 'enabled', title: 'Enabled', type: 'boolean', default: true },
+          { id: 'batch-size', title: 'Batch size', type: 'number', default: 4, minimum: 1, maximum: 8 },
+          { id: 'batch-size-type', title: 'Batch size type', type: 'number', default: 2 },
+          { id: 'label', title: 'Label', type: 'string', default: 'Default' },
+          { id: 'description', title: 'Description', type: 'string', default: 'Default description' },
+          {
+            id: 'quality',
+            title: 'Quality',
+            type: 'select',
+            default: 'fast',
+            options: [{ value: 'fast', label: 'Fast' }, { value: 'high', label: 'High' }],
+          },
+          {
+            id: 'quality-type',
+            title: 'Quality type',
+            type: 'select',
+            default: 'fast',
+            options: [{ value: 'fast', label: 'Fast' }, { value: 'high', label: 'High' }],
+          },
+        ],
+      },
+    });
+    const settingsDirectory = path.join(library, '.serpent', 'plugin-settings');
+    mkdirSync(settingsDirectory, { recursive: true });
+    const settingsPath = path.join(settingsDirectory, `${manifest.id}.json`);
+    writeFileSync(settingsPath, `${JSON.stringify({
+      version: 1,
+      pluginId: manifest.id,
+      values: {
+        enabled: 'yes',
+        'batch-size': 99,
+        'batch-size-type': 'many',
+        label: true,
+        description: 'Persisted description',
+        quality: 'ultra',
+        'quality-type': 42,
+        'removed-setting': true,
+      },
+    }, null, 2)}\n`);
+    const store = new PluginSettingsStore(userData);
+    const input = { libraryId: 'library-a', libraryDirectory: library, manifest };
+
+    await expect(store.getEffective(input)).resolves.toEqual({
+      values: {
+        enabled: true,
+        'batch-size': 4,
+        'batch-size-type': 2,
+        label: 'Default',
+        description: 'Persisted description',
+        quality: 'fast',
+        'quality-type': 'fast',
+      },
+      sources: { description: 'library' },
+      diagnostics: [
+        {
+          settingId: 'enabled',
+          layer: 'library',
+          code: 'invalid-type',
+          message: 'The setting value must be a boolean.',
+        },
+        {
+          settingId: 'batch-size',
+          layer: 'library',
+          code: 'out-of-range',
+          message: 'The setting value is outside the declared range.',
+        },
+        {
+          settingId: 'batch-size-type',
+          layer: 'library',
+          code: 'invalid-type',
+          message: 'The setting value must be a number.',
+        },
+        {
+          settingId: 'label',
+          layer: 'library',
+          code: 'invalid-type',
+          message: 'The setting value must be a string.',
+        },
+        {
+          settingId: 'quality',
+          layer: 'library',
+          code: 'invalid-option',
+          message: 'The setting value is not one of the declared options.',
+        },
+        {
+          settingId: 'quality-type',
+          layer: 'library',
+          code: 'invalid-type',
+          message: 'The setting value must be a string.',
+        },
+      ],
+    });
+
+    expect((await store.getEffective(input)).values).not.toHaveProperty('removed-setting');
+
+    await store.set({ ...input, layer: 'library', settingId: 'label', value: 'Updated label' });
+    const written = readFileSync(settingsPath, 'utf8');
+    expect(written).toContain('"removed-setting": true');
+    expect(written).toContain('"enabled": "yes"');
+    expect(written).toContain('"label": "Updated label"');
   });
 });

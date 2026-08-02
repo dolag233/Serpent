@@ -21,12 +21,15 @@ import {
 } from './plugin-package-manager';
 import type { PluginPackageManager } from './plugin-package-manager';
 import type { PluginActivationCoordinator } from './plugin-activation-coordinator';
-import type { PluginManifest } from '../plugins/plugin-manifest';
+import {
+  getPluginSettingDefault,
+  type PluginManifest,
+  type PluginSettingValue,
+} from '../plugins/plugin-manifest';
 import {
   PluginSettingsStoreError,
-  type PluginSettingValue,
 } from './plugin-settings-store';
-import type { PluginSettingsStore } from './plugin-settings-store';
+import type { PluginSettingsSnapshot, PluginSettingsStore } from './plugin-settings-store';
 import type { PluginStorageStore } from './plugin-storage-store';
 import type { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
 import { createPluginUiUrl } from './plugin-ui-assets';
@@ -339,7 +342,7 @@ async function getPluginSettingsSections(
   request: Extract<PluginManagerRequest, { type: 'plugin-manager.get-plugin-settings' }>,
   libraryDirectory: string | undefined,
   options: PluginPackageIpcOptions,
-): Promise<PluginManagerPluginSettingSection[] | undefined> {
+): Promise<{ sections: PluginManagerPluginSettingSection[]; diagnostics: PluginSettingsSnapshot['diagnostics'] } | undefined> {
   const resolved = await resolvedManifestForSettings(request, libraryDirectory, options);
   const store = options.settingsStore;
   if (resolved === undefined || store === undefined) return undefined;
@@ -348,14 +351,20 @@ async function getPluginSettingsSections(
     libraryDirectory: resolved.libraryDirectory,
     manifest: resolved.manifest,
   });
-  return resolved.manifest.contributes.settings.map((setting) => ({
-    id: setting.id,
-    title: setting.title,
-    type: setting.type,
-    ...(setting.description === undefined ? {} : { description: setting.description }),
-    ...(setting.options === undefined ? {} : { options: setting.options }),
-    value: snapshot.values[setting.id] ?? null,
-  }));
+  return {
+    sections: resolved.manifest.contributes.settings.map((setting) => ({
+      id: setting.id,
+      title: setting.title,
+      type: setting.type,
+      ...(setting.description === undefined ? {} : { description: setting.description }),
+      ...(setting.type === 'select' ? { options: setting.options } : {}),
+      default: getPluginSettingDefault(setting),
+      ...(setting.type === 'number' && setting.minimum !== undefined ? { minimum: setting.minimum } : {}),
+      ...(setting.type === 'number' && setting.maximum !== undefined ? { maximum: setting.maximum } : {}),
+      value: snapshot.values[setting.id] ?? getPluginSettingDefault(setting),
+    })),
+    diagnostics: snapshot.diagnostics,
+  };
 }
 
 async function setPluginSettingValue(
@@ -573,7 +582,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
       if (request.type === 'plugin-manager.get-plugin-settings') {
         const sections = await getPluginSettingsSections(request, libraryDirectory, options);
         if (sections === undefined) return { ok: false, code: 'operation-failed' };
-        return { ok: true, sections };
+        return { ok: true, ...sections };
       }
       if (request.type === 'plugin-manager.set-plugin-setting') {
         const saved = await setPluginSettingValue(request, libraryDirectory, options);

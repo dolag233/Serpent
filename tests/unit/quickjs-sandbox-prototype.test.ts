@@ -65,6 +65,58 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
     ]);
   });
 
+  it('routes a global plugin domain call through an explicit forLibrary target', async () => {
+    const commands: Array<{ commandId: string; targetLibraryId?: string }> = [];
+    const result = await runQuickJsSandboxPrototype(
+      `
+        const scoped = serpent.forLibrary('library-2');
+        const page = await scoped.assets.search({ query: null, limit: 1 });
+        return page.items.length;
+      `,
+      {
+        executeAutomationCommand: async (commandId, _input, options) => {
+          commands.push({
+            commandId,
+            ...(options?.targetLibraryId === undefined ? {} : { targetLibraryId: options.targetLibraryId }),
+          });
+          return { items: [{ assetId: 'asset-2' }], total: 1, offset: 0, limit: 1, hasMore: false };
+        },
+      },
+    );
+
+    expect(result.value).toBe(1);
+    expect(commands).toEqual([{ commandId: 'asset.search', targetLibraryId: 'library-2' }]);
+  });
+
+  it('routes global plugin jobs through the same explicit forLibrary target', async () => {
+    const enqueues: Array<{ handlerId: string; targetLibraryId?: string }> = [];
+    const progress: Array<{ jobId: string; targetLibraryId?: string }> = [];
+    const result = await runQuickJsSandboxPrototype(
+      `
+        const scoped = serpent.forLibrary('library-2');
+        const job = await scoped.jobs.enqueue({ handlerId: 'upscale', payload: { assetId: 'asset-1' } });
+        await scoped.jobs.reportProgress({ jobId: job.jobId, completed: 1, total: 1 });
+        return job.jobId;
+      `,
+      {
+        executeAutomationCommand: async () => ({ items: [], total: 0, offset: 0, limit: 0, hasMore: false }),
+        waitForJobInvoke: async () => null,
+        respondJobComplete: async () => {},
+        enqueuePluginJob: async (input) => {
+          enqueues.push({ handlerId: input.handlerId, ...(input.targetLibraryId === undefined ? {} : { targetLibraryId: input.targetLibraryId }) });
+          return { jobId: '33333333-3333-4333-8333-333333333333' };
+        },
+        reportJobProgress: async (input) => {
+          progress.push({ jobId: input.jobId, ...(input.targetLibraryId === undefined ? {} : { targetLibraryId: input.targetLibraryId }) });
+        },
+      },
+    );
+
+    expect(result.value).toBe('33333333-3333-4333-8333-333333333333');
+    expect(enqueues).toEqual([{ handlerId: 'upscale', targetLibraryId: 'library-2' }]);
+    expect(progress).toEqual([{ jobId: '33333333-3333-4333-8333-333333333333', targetLibraryId: 'library-2' }]);
+  });
+
   it('exposes organize automation without leaking library or linked-folder paths to the script guest', async () => {
     const commands: Array<{ commandId: string; input: unknown }> = [];
     const result = await runQuickJsSandboxPrototype(

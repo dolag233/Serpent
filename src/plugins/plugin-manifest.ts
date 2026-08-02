@@ -280,6 +280,8 @@ type ContributionMenuItem = {
   group?: string;
   before?: string;
   after?: string;
+  first?: boolean;
+  last?: boolean;
   when?: PluginContextExpression;
   enablement?: PluginContextExpression;
   checked?: PluginContextExpression;
@@ -293,6 +295,8 @@ const contributionMenuItemSchema: z.ZodType<ContributionMenuItem> = z.lazy(() =>
   group: z.string().min(1).max(64).optional(),
   before: pluginLocalIdSchema.optional(),
   after: pluginLocalIdSchema.optional(),
+  first: z.boolean().optional(),
+  last: z.boolean().optional(),
   ...contributionConditionFields,
   submenu: z.array(contributionMenuItemSchema).max(64).optional(),
 }).superRefine((item, context) => {
@@ -323,6 +327,13 @@ const contributionMenuItemSchema: z.ZodType<ContributionMenuItem> = z.lazy(() =>
       code: 'custom',
       path: ['before'],
       message: 'A menu item may declare before or after, not both.',
+    });
+  }
+  if (item.first === true && item.last === true) {
+    context.addIssue({
+      code: 'custom',
+      path: ['first'],
+      message: 'A menu item may not be both first and last.',
     });
   }
 }));

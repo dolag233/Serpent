@@ -11,10 +11,12 @@ test.describe.configure({ timeout: 180_000 });
 
 const FIXTURE_ROOT = path.resolve('tests/fixtures/plugins/unrestricted-settings-probe');
 const PLUGIN_ID = 'com.serpent.unrestricted-settings-probe';
-const SETTINGS_PAGE_ID = `${PLUGIN_ID}.settings-page`;
-const MENU_ID = `${PLUGIN_ID}.menu.asset.probe.write-selection`;
-const SUBMENU_ID = `${PLUGIN_ID}.menu.asset.processing`;
-const SUBMENU_ITEM_ID = `${SUBMENU_ID}.probe.nested-selection`;
+const CONTRIBUTION_ID_SUFFIXES = {
+  settingsPage: '.settings-page',
+  menu: '.menu.asset.probe.write-selection',
+  submenu: '.menu.asset.processing',
+  submenuItem: '.menu.asset.processing.probe.nested-selection',
+} as const;
 
 type ContributionListing = {
   menus: Array<{
@@ -93,27 +95,30 @@ async function readOpenLibraryId(window: Page): Promise<string> {
 
 async function expectContributionsAndSettingsIframe(window: Page, libraryId: string): Promise<void> {
   const listed = await listContributions(window, libraryId);
+  const contributionId = (suffix: string): RegExp => new RegExp(
+    `^${PLUGIN_ID.replaceAll('.', '\\.')}(?:\\.[0-9a-f-]+)?${suffix.replaceAll('.', '\\.')}$`,
+  );
   expect(listed).toMatchObject({
     menus: expect.arrayContaining([
       expect.objectContaining({
-        id: MENU_ID,
+        id: expect.stringMatching(contributionId(CONTRIBUTION_ID_SUFFIXES.menu)),
         pluginId: PLUGIN_ID,
         group: 'probe',
       }),
       expect.objectContaining({
-        id: SUBMENU_ID,
+        id: expect.stringMatching(contributionId(CONTRIBUTION_ID_SUFFIXES.submenu)),
         pluginId: PLUGIN_ID,
         group: 'probe',
       }),
       expect.objectContaining({
-        id: SUBMENU_ITEM_ID,
+        id: expect.stringMatching(contributionId(CONTRIBUTION_ID_SUFFIXES.submenuItem)),
         pluginId: PLUGIN_ID,
-        parentId: SUBMENU_ID,
+        parentId: expect.stringMatching(contributionId(CONTRIBUTION_ID_SUFFIXES.submenu)),
         before: 'asset.rename',
       }),
     ]),
     pages: [expect.objectContaining({
-      id: SETTINGS_PAGE_ID,
+      id: expect.stringMatching(contributionId(CONTRIBUTION_ID_SUFFIXES.settingsPage)),
       pluginId: PLUGIN_ID,
       hasUrl: true,
     })],
@@ -127,8 +132,10 @@ async function expectContributionsAndSettingsIframe(window: Page, libraryId: str
     hasText: 'Unrestricted Settings Probe',
   }).click();
   const hostSettings = dialog.locator('.plugin-host-settings-fields');
-  await expect(hostSettings.getByRole('checkbox', { name: 'Probe enabled' })).toBeVisible();
-  await hostSettings.getByRole('checkbox', { name: 'Probe enabled' }).check();
+  const enabledSetting = hostSettings.getByRole('checkbox', { name: 'Probe enabled' });
+  await expect(enabledSetting).toBeVisible();
+  await hostSettings.locator('label').filter({ hasText: 'Probe enabled' }).click({ force: true });
+  await expect(enabledSetting).toBeChecked();
   const quality = hostSettings.getByRole('combobox', { name: 'Probe quality' });
   await quality.selectOption('high');
   await expect(quality).toHaveValue('high');

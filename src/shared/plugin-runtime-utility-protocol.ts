@@ -12,9 +12,31 @@ import {
 } from '../plugins/plugin-hooks';
 import {
   pluginJobCompleteSchema,
+  pluginJobCheckpointSchema,
+  pluginJobControlActionSchema,
+  pluginJobItemResultSchema,
+  pluginJobSignalActionSchema,
+  type PluginJobProgressInput,
   pluginJobRecordSchema,
   pluginJobRecoveryStrategySchema,
 } from '../plugins/plugin-jobs';
+
+const pluginJobProgressInputSchema = z.strictObject({
+  completed: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  phase: z.string().max(128),
+  message: z.string().max(1_024),
+  progress: z.number().min(0).max(1).optional(),
+}).superRefine((value, context) => {
+  if (value.completed > value.total) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['completed'],
+      message: 'completed cannot exceed total.',
+    });
+  }
+});
+export type PluginRuntimeJobProgressInput = PluginJobProgressInput;
 import {
   pluginCommandCompleteSchema,
   pluginCommandInvokeSchema,
@@ -40,6 +62,12 @@ const instanceIdSchema = z.string().uuid();
 const requestIdSchema = z.string().uuid();
 const packageHashSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 const pluginIdSchema = z.string().min(1).max(255);
+// Reserved by Main for a global runtime instance; it is never a valid
+// forLibrary() target and must not cross the plugin command boundary.
+const targetLibraryIdSchema = z.string().min(1).max(255).refine(
+  (value) => value !== '__serpent_global_runtime__',
+  'Global runtime sentinel is not a valid target library.',
+);
 
 export const pluginStorageScopeSchema = z.enum(['library', 'user']);
 export type PluginStorageScopeMessage = z.infer<typeof pluginStorageScopeSchema>;
@@ -70,6 +98,7 @@ export const pluginRuntimeDeactivateReasonSchema = z.enum([
   'safe-mode',
   'supervisor-shutdown',
   'activation-replaced',
+  'protocol-fault',
 ]);
 export type PluginRuntimeDeactivateReason = z.infer<typeof pluginRuntimeDeactivateReasonSchema>;
 
@@ -147,6 +176,13 @@ export const pluginRuntimeParentMessageSchema = z.discriminatedUnion('type', [
     job: pluginJobRecordSchema,
   }),
   z.strictObject({
+    type: z.literal('plugin-runtime.job-signal'),
+    instanceId: instanceIdSchema,
+    jobId: z.string().uuid(),
+    action: pluginJobSignalActionSchema,
+    reason: z.string().max(1_024).optional(),
+  }),
+  z.strictObject({
     type: z.literal('plugin-runtime.provider-invoke'),
     instanceId: instanceIdSchema,
     invoke: pluginProviderInvokeSchema,
@@ -187,6 +223,20 @@ export const pluginRuntimeParentMessageSchema = z.discriminatedUnion('type', [
     }
   }),
   z.strictObject({
+    type: z.literal('plugin-runtime.job-control-result'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    ok: z.boolean(),
+    job: pluginJobRecordSchema.nullable().optional(),
+    error: z.strictObject({
+      code: z.string().min(1).max(128),
+      message: z.string().min(1).max(1_024),
+    }).optional(),
+  }).superRefine((value, context) => {
+    if (value.ok && value.error !== undefined) context.addIssue({ code: 'custom', path: ['error'], message: 'Successful job controls cannot contain an error.' });
+    if (!value.ok && value.error === undefined) context.addIssue({ code: 'custom', path: ['error'], message: 'Failed job controls need an error.' });
+  }),
+  z.strictObject({
     type: z.literal('plugin-runtime.input-capture.started'),
     instanceId: instanceIdSchema,
     requestId: requestIdSchema,
@@ -217,6 +267,17 @@ export type PluginRuntimeParentMessage = z.infer<typeof pluginRuntimeParentMessa
 export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('plugin-runtime.ready') }),
   z.strictObject({ type: z.literal('plugin-runtime.heartbeat') }),
+  /**
+   * Extensible event envelope. Event payloads are deliberately opaque here:
+   * adding a non-critical event must not require a Host restart.
+   */
+  z.strictObject({
+    type: z.literal('plugin-runtime.event'),
+    instanceId: instanceIdSchema,
+    eventType: z.string().min(1).max(128),
+    critical: z.boolean().default(false),
+    payload: z.unknown(),
+  }),
   z.strictObject({
     type: z.literal('plugin-runtime.activated'),
     instanceId: instanceIdSchema,
@@ -240,6 +301,7 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     commandId: automationScriptCommandIdSchema,
     input: z.unknown(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
     causeChain: pluginCauseChainSchema.optional(),
   }),
   z.strictObject({
@@ -270,6 +332,18 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     handlerId: z.string().min(1).max(128),
     payload: z.record(z.string(), z.unknown()).default({}),
     recoveryStrategy: pluginJobRecoveryStrategySchema.optional(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.job-control'),
+    instanceId: instanceIdSchema,
+    requestId: requestIdSchema,
+    jobId: z.string().uuid(),
+    action: pluginJobControlActionSchema,
+    reason: z.string().max(1_024).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: pluginJobCheckpointSchema.optional(),
+    targetLibraryId: targetLibraryIdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-runtime.job-complete'),
@@ -279,6 +353,21 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
     errorCode: z.string().min(1).max(128).optional(),
     errorDetail: z.string().max(4_096).optional(),
     progress: z.number().min(0).max(1).optional(),
+    completed: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
+    phase: z.string().max(128).optional(),
+    message: z.string().max(1_024).optional(),
+    itemResults: z.array(pluginJobItemResultSchema).max(100_000).optional(),
+    failedAssetIds: z.array(z.string().min(1).max(255)).max(100_000).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: pluginJobCheckpointSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-runtime.job-progress'),
+    instanceId: instanceIdSchema,
+    jobId: z.string().uuid(),
+    progress: pluginJobProgressInputSchema,
+    targetLibraryId: targetLibraryIdSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-runtime.provider-complete'),
@@ -313,3 +402,54 @@ export const pluginRuntimeChildMessageSchema = z.discriminatedUnion('type', [
   }),
 ]);
 export type PluginRuntimeChildMessage = z.infer<typeof pluginRuntimeChildMessageSchema>;
+
+export type PluginRuntimeChildProtocolResult =
+  | { kind: 'message'; message: PluginRuntimeChildMessage }
+  | { kind: 'ignored-event'; eventType: string; instanceId?: string }
+  | { kind: 'fault'; reason: string; instanceId?: string };
+
+const runtimeProtocolRecordSchema = z.record(z.string(), z.unknown());
+
+/**
+ * Parse a child message while keeping the protocol fault domain explicit.
+ * Known messages retain the old behavior. Unknown event envelopes are
+ * forward-compatible when non-critical; unknown control messages are faults.
+ */
+export function parsePluginRuntimeChildMessage(raw: unknown): PluginRuntimeChildProtocolResult {
+  const parsed = pluginRuntimeChildMessageSchema.safeParse(raw);
+  if (parsed.success) {
+    if (parsed.data.type === 'plugin-runtime.event') {
+      return parsed.data.critical
+        ? { kind: 'fault', reason: `Unknown critical event: ${parsed.data.eventType}.`, instanceId: parsed.data.instanceId }
+        : { kind: 'ignored-event', eventType: parsed.data.eventType, instanceId: parsed.data.instanceId };
+    }
+    return { kind: 'message', message: parsed.data };
+  }
+
+  const record = runtimeProtocolRecordSchema.safeParse(raw).success
+    ? raw as Record<string, unknown>
+    : undefined;
+  const type = typeof record?.type === 'string' ? record.type : undefined;
+  const instanceId = typeof record?.instanceId === 'string' ? record.instanceId : undefined;
+  const isExplicitEvent = type === 'plugin-runtime.event'
+    || record?.kind === 'event'
+    || typeof record?.eventType === 'string'
+    || type?.includes('.event.') === true
+    || type?.endsWith('-event') === true;
+  const isCritical = record?.critical === true
+    || record?.kind === 'control'
+    || type?.includes('.control.') === true
+    || type?.endsWith('.control') === true;
+  if (isExplicitEvent && !isCritical) {
+    return {
+      kind: 'ignored-event',
+      eventType: typeof record?.eventType === 'string' ? record.eventType : type ?? 'unknown',
+      ...(instanceId === undefined ? {} : { instanceId }),
+    };
+  }
+  return {
+    kind: 'fault',
+    reason: type === undefined ? 'Child message has no protocol type.' : `Invalid or unknown control message: ${type}.`,
+    ...(instanceId === undefined ? {} : { instanceId }),
+  };
+}

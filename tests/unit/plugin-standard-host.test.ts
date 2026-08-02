@@ -27,11 +27,16 @@ describe('Plugin Standard Host handler', () => {
       packageHash: 'a'.repeat(64),
       permissions: ['library.read', 'asset.read'],
       entryJavaScript: `
+        let pluginContext;
         export async function setup(serpent) {
+          pluginContext = serpent;
+          serpent.subscriptions.add(() => console.log('subscription-disposed'));
+          console.log('signal-aborted:' + serpent.signal.aborted);
           const page = await serpent.assets.search({ query: null, limit: 1 });
           console.log(page.total);
         }
         export async function dispose(reason) {
+          console.log('dispose-signal-aborted:' + pluginContext.signal.aborted);
           console.log('disposed:' + reason);
         }
       `,
@@ -77,6 +82,59 @@ describe('Plugin Standard Host handler', () => {
     expect(posted.some((message) => (
       message.type === 'plugin-runtime.console' && message.message === 'disposed:library-closed'
     ))).toBe(true);
+    expect(posted.some((message) => (
+      message.type === 'plugin-runtime.console' && message.message === 'signal-aborted:false'
+    ))).toBe(true);
+    expect(posted.some((message) => (
+      message.type === 'plugin-runtime.console' && message.message === 'subscription-disposed'
+    ))).toBe(true);
+    expect(posted.some((message) => (
+      message.type === 'plugin-runtime.console' && message.message === 'dispose-signal-aborted:true'
+    ))).toBe(true);
+    handler.dispose();
+  }, 20_000);
+
+  it('rejects a pending Host call during deactivation before disposing with its reason', async () => {
+    const posted: PluginRuntimeChildMessage[] = [];
+    const handler = createPluginStandardHostHandler({
+      postMessage: (message) => posted.push(message),
+      heartbeatIntervalMs: 60_000,
+    });
+    const instanceId = '12111111-1111-4111-8111-111111111111';
+
+    handler.handle({
+      type: 'plugin-runtime.activate',
+      instanceId,
+      libraryId: 'library-1',
+      pluginId: 'com.example.pending',
+      version: '1.0.0',
+      packageHash: 'a'.repeat(64),
+      permissions: ['library.read', 'asset.read'],
+      entryJavaScript: `
+        export async function setup(serpent) {
+          void serpent.assets.search({ query: null, limit: 1 }).catch((error) => {
+            console.log('pending:' + error.message);
+          });
+        }
+        export async function dispose(reason) {
+          console.log('disposed:' + reason);
+        }
+      `,
+      activateDeadlineMs: 15_000,
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.activated'); attempt += 1) {
+      await flush(10);
+    }
+    const hostCommand = posted.find((message) => message.type === 'plugin-runtime.host-command');
+    expect(hostCommand?.type).toBe('plugin-runtime.host-command');
+
+    handler.handle({ type: 'plugin-runtime.deactivate', instanceId, reason: 'library-closed' });
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.deactivated'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted.some((message) => message.type === 'plugin-runtime.console' && message.message === 'pending:The host request failed.')).toBe(true);
+    expect(posted.some((message) => message.type === 'plugin-runtime.console' && message.message === 'disposed:library-closed')).toBe(true);
     handler.dispose();
   }, 20_000);
 
@@ -285,6 +343,9 @@ describe('Plugin Standard Host handler', () => {
             await serpent.storage.set('job-tick', payload);
           });
           await serpent.jobs.enqueue({ handlerId: 'tick', payload: { tick: 1 } });
+          const scoped = serpent.forLibrary('library-2');
+          await scoped.jobs.enqueue({ handlerId: 'tick', payload: { tick: 2 } });
+          await scoped.jobs.reportProgress({ jobId: '88888888-8888-4888-8888-888888888888', completed: 1, total: 2 });
         }
         export async function dispose() {}
       `,
@@ -310,6 +371,29 @@ describe('Plugin Standard Host handler', () => {
       ok: true,
       result: { jobId: '77777777-7777-4777-8777-777777777777' },
     });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.job-enqueue' && message.requestId !== enqueueMessage.requestId); attempt += 1) {
+      await flush(10);
+    }
+    const targetedEnqueue = posted.find((message) => message.type === 'plugin-runtime.job-enqueue' && message.requestId !== enqueueMessage.requestId);
+    expect(targetedEnqueue).toMatchObject({ targetLibraryId: 'library-2', payload: { tick: 2 } });
+    if (targetedEnqueue?.type !== 'plugin-runtime.job-enqueue') throw new Error('missing targeted job enqueue');
+    handler.handle({
+      type: 'plugin-runtime.job-enqueue-result',
+      instanceId,
+      requestId: targetedEnqueue.requestId,
+      ok: true,
+      result: { jobId: '88888888-8888-4888-8888-888888888888' },
+    });
+
+    for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.job-progress'); attempt += 1) {
+      await flush(10);
+    }
+    expect(posted).toContainEqual(expect.objectContaining({
+      type: 'plugin-runtime.job-progress',
+      targetLibraryId: 'library-2',
+      jobId: '88888888-8888-4888-8888-888888888888',
+    }));
 
     for (let attempt = 0; attempt < 200 && !posted.some((message) => message.type === 'plugin-runtime.activated'); attempt += 1) {
       await flush(10);

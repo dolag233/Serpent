@@ -63,6 +63,15 @@ function planCommandFor(
         assetIds: [input.assetId],
       };
     }
+    case 'asset.content.replace-batch': {
+      const input = automationCommandInputSchemas['asset.content.replace-batch'].parse(commandInput);
+      return {
+        type: 'automation.file-operation-plan',
+        libraryId,
+        operation: 'replace-content',
+        assetIds: input.items.map((item) => item.assetId),
+      };
+    }
     case 'asset.move': {
       const input = automationCommandInputSchemas['asset.move'].parse(commandInput);
       return {

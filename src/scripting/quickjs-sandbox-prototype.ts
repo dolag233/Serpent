@@ -8,6 +8,7 @@ import {
 import ts from 'typescript';
 import { utf8ByteLength } from '../shared/script-sandbox-limits';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import {
   SERPENT_GUEST_COMMANDS,
 } from './serpent-guest-api';
@@ -31,7 +32,10 @@ export interface QuickJsSandboxPrototypeHost {
   executeAutomationCommand?(
     commandId: AutomationScriptCommandId,
     input: unknown,
-    options?: { causeChain?: readonly string[] },
+    options?: {
+      causeChain?: readonly string[];
+      targetLibraryId?: string;
+    },
   ): Promise<unknown>;
   /**
    * Plugin Host namespaced KV storage. Not available to Desktop Scripts.
@@ -48,6 +52,7 @@ export interface QuickJsSandboxPrototypeHost {
    */
   waitUntilDeactivate?(): Promise<void>;
   getDeactivateReason?(): string | undefined;
+  signal?: AbortSignal;
   /**
    * Plugin Host domain-event pull. Resolves with the next event or null when
    * the instance is deactivating.
@@ -86,7 +91,26 @@ export interface QuickJsSandboxPrototypeHost {
     handlerId: string;
     payload: Record<string, unknown>;
     recoveryStrategy?: 'idempotent' | 'checkpoint';
+    targetLibraryId?: string;
   }): Promise<unknown>;
+  reportJobProgress?(input: {
+    jobId: string;
+    completed: number;
+    total: number;
+    phase?: string;
+    message?: string;
+    progress?: number;
+    targetLibraryId?: string;
+  }): Promise<void>;
+  controlPluginJob?(input: {
+    jobId: string;
+    action: 'pause' | 'resume' | 'cancel' | 'retry';
+    reason?: string;
+    retryInput?: Record<string, unknown>;
+    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+    targetLibraryId?: string;
+  }): Promise<unknown>;
+  isJobAborted?(jobId: string): boolean;
   waitForCommandInvoke?(): Promise<import('../plugins/plugin-commands').PluginCommandInvoke | null>;
   respondCommandComplete?(
     invokeId: string,
@@ -893,6 +917,7 @@ export async function runQuickJsSandboxPrototype(
     };
 
     const serpent = context.newObject();
+    let scopedPluginJobsFactory: ((targetLibraryId?: string, includeControl?: boolean) => QuickJSHandle) | undefined;
     const consoleObject = context.newObject();
     const log = context.newFunction('log', (...args) => {
       appendOutput(args.map((arg) => stringifyGuestValue(context, arg)).join(' '));
@@ -920,6 +945,13 @@ export async function runQuickJsSandboxPrototype(
       });
       context.setProp(serpent, '__getDeactivateReason', getDeactivateReason);
       getDeactivateReason.dispose();
+    }
+    if (host.signal !== undefined) {
+      const isDeactivated = context.newFunction('__isDeactivated', () => (
+        host.signal?.aborted === true ? context.true : context.false
+      ));
+      context.setProp(serpent, '__isDeactivated', isDeactivated);
+      isDeactivated.dispose();
     }
     if (host.waitForDomainEvent !== undefined) {
       const events = context.newObject();
@@ -969,41 +1001,141 @@ export async function runQuickJsSandboxPrototype(
       && host.respondJobComplete !== undefined
       && host.enqueuePluginJob !== undefined
     ) {
-      const jobs = context.newObject();
-      const nextJob = context.newFunction('__nextJob', () => createDeferredHostCall(
-        host.waitForJobInvoke!(),
-        (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
-      ));
-      context.setProp(jobs, '__nextJob', nextJob);
-      nextJob.dispose();
-      const respondJob = context.newFunction('__respond', (jobIdHandle, completeHandle) => createDeferredHostCall(
-        host.respondJobComplete!(
-          String(context.dump(jobIdHandle)),
-          context.dump(completeHandle) as import('../plugins/plugin-jobs').PluginJobComplete,
-        ),
-        () => context.undefined,
-      ));
-      context.setProp(jobs, '__respond', respondJob);
-      respondJob.dispose();
-      const enqueueJob = context.newFunction('__enqueue', (inputHandle) => {
-        const input = context.dump(inputHandle) as {
-          handlerId?: string;
-          payload?: Record<string, unknown>;
-          recoveryStrategy?: 'idempotent' | 'checkpoint';
+      const createPluginJobsApi = (targetLibraryId?: string, includeControl = false): QuickJSHandle => {
+        const jobs = context.newObject();
+        const enqueue = (inputHandle: QuickJSHandle) => {
+          const input = context.dump(inputHandle) as {
+            handlerId?: string;
+            payload?: Record<string, unknown>;
+            recoveryStrategy?: 'idempotent' | 'checkpoint';
+          };
+          return createDeferredHostCall(
+            host.enqueuePluginJob!({
+              handlerId: String(input.handlerId ?? ''),
+              payload: input.payload ?? {},
+              ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
+              ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
+            }),
+            (value) => newQuickJsJsonValue(context, value),
+          );
         };
-        return createDeferredHostCall(
-          host.enqueuePluginJob!({
-            handlerId: String(input.handlerId ?? ''),
-            payload: input.payload ?? {},
-            ...(input.recoveryStrategy === undefined ? {} : { recoveryStrategy: input.recoveryStrategy }),
-          }),
-          (value) => newQuickJsJsonValue(context, value),
-        );
-      });
-      context.setProp(jobs, '__enqueue', enqueueJob);
-      enqueueJob.dispose();
+        const enqueueJob = context.newFunction('enqueue', enqueue);
+        context.setProp(jobs, includeControl ? '__enqueue' : 'enqueue', enqueueJob);
+        enqueueJob.dispose();
+        if (host.reportJobProgress !== undefined) {
+          const reportProgress = context.newFunction('reportProgress', (inputHandle) => {
+            const input = context.dump(inputHandle) as {
+              jobId?: unknown;
+              completed?: unknown;
+              total?: unknown;
+              phase?: unknown;
+              message?: unknown;
+              progress?: unknown;
+            };
+            const completedValue = Number(input.completed);
+            const totalValue = Number(input.total);
+            const progressValue = Number(input.progress);
+            const completed = Number.isFinite(completedValue) ? Math.max(0, completedValue) : 0;
+            const total = Number.isFinite(totalValue) ? Math.max(completed, totalValue) : completed;
+            const progress = Number.isFinite(progressValue)
+              ? Math.min(1, Math.max(0, progressValue))
+              : (total > 0 ? Math.min(1, completed / total) : 0);
+            return createDeferredHostCall(
+              host.reportJobProgress!({
+                jobId: String(input.jobId ?? ''),
+                completed,
+                total,
+                ...(typeof input.phase === 'string' ? { phase: input.phase.slice(0, 128) } : {}),
+                ...(typeof input.message === 'string' ? { message: input.message.slice(0, 4096) } : {}),
+                progress,
+                ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
+              }),
+              () => context.undefined,
+            );
+          });
+          context.setProp(jobs, includeControl ? '__reportProgress' : 'reportProgress', reportProgress);
+          reportProgress.dispose();
+        }
+        if (host.controlPluginJob !== undefined) {
+          const invokeControl = (action: 'pause' | 'resume' | 'cancel' | 'retry', inputHandle: QuickJSHandle) => {
+            const dumped = context.dump(inputHandle);
+            const input = dumped !== null && typeof dumped === 'object' && !Array.isArray(dumped)
+              ? dumped as {
+              jobId?: unknown;
+              reason?: unknown;
+              retryInput?: Record<string, unknown>;
+              checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+                }
+              : {};
+            return createDeferredHostCall(
+              host.controlPluginJob!({
+                jobId: String(input.jobId ?? ''),
+                action,
+                ...(typeof input.reason === 'string' ? { reason: input.reason.slice(0, 1_024) } : {}),
+                ...(input.retryInput === undefined ? {} : { retryInput: input.retryInput }),
+                ...(input.checkpoint === undefined ? {} : { checkpoint: input.checkpoint }),
+                ...(targetLibraryId === undefined ? {} : { targetLibraryId }),
+              }),
+              (value) => newQuickJsJsonValue(context, value),
+            );
+          };
+          if (includeControl) {
+            const controlJob = context.newFunction('control', (inputHandle: QuickJSHandle) => {
+              const dumped = context.dump(inputHandle);
+              const input = dumped !== null && typeof dumped === 'object' && !Array.isArray(dumped)
+                ? dumped as { action?: unknown }
+                : {};
+              const action = input.action === 'pause' || input.action === 'resume' || input.action === 'retry'
+                ? input.action
+                : 'cancel';
+              return invokeControl(action, inputHandle);
+            });
+            context.setProp(jobs, '__control', controlJob);
+            controlJob.dispose();
+          } else {
+            for (const action of ['cancel', 'pause', 'resume', 'retry'] as const) {
+              const control = context.newFunction(action, (inputHandle: QuickJSHandle) => (
+                invokeControl(action, inputHandle)
+              ));
+              context.setProp(jobs, action, control);
+              control.dispose();
+            }
+          }
+        }
+        if (includeControl && host.isJobAborted !== undefined) {
+          const isJobAborted = context.newFunction('__isAborted', (jobIdHandle: QuickJSHandle) => (
+            host.isJobAborted!(String(context.dump(jobIdHandle))) ? context.true : context.false
+          ));
+          context.setProp(jobs, '__isAborted', isJobAborted);
+          isJobAborted.dispose();
+        }
+        if (includeControl) {
+          const nextJob = context.newFunction('__nextJob', () => createDeferredHostCall(
+            host.waitForJobInvoke!(),
+            (value) => (value === null ? context.null : newQuickJsJsonValue(context, value)),
+          ));
+          context.setProp(jobs, '__nextJob', nextJob);
+          nextJob.dispose();
+          const respondJob = context.newFunction('__respond', (jobIdHandle, completeHandle) => createDeferredHostCall(
+            host.respondJobComplete!(
+              String(context.dump(jobIdHandle)),
+              context.dump(completeHandle) as import('../plugins/plugin-jobs').PluginJobComplete,
+            ),
+            () => context.undefined,
+          ));
+          context.setProp(jobs, '__respond', respondJob);
+          respondJob.dispose();
+        }
+        return jobs;
+      };
+      const jobs = createPluginJobsApi(undefined, true);
       context.setProp(serpent, 'jobs', jobs);
       jobs.dispose();
+
+      // Captured by the domain API binding below. Scoped instances expose only
+      // the public enqueue/report methods; job handlers remain registered on
+      // the ambient instance and are therefore shared by all target scopes.
+      scopedPluginJobsFactory = createPluginJobsApi;
     }
     if (host.waitForProviderInvoke !== undefined && host.respondProviderComplete !== undefined) {
       const providers = context.newObject();
@@ -1178,20 +1310,57 @@ export async function runQuickJsSandboxPrototype(
       input.dispose();
     }
     if (host.executeAutomationCommand !== undefined) {
-      const assets = context.newObject();
-      const folders = context.newObject();
-      const library = context.newObject();
-      const files = context.newObject();
-      const linkedFolders = context.newObject();
-      const tags = context.newObject();
-      const collections = context.newObject();
-      const smartCollections = context.newObject();
       const trash = context.newObject();
       const palettes = context.newObject();
       const ui = context.newObject();
       const jobs = context.newObject();
       const mediaJobs = context.newObject();
       const aiJobs = context.newObject();
+      const createGuestCommandApi = (targetLibraryId?: string): QuickJSHandle => {
+        const api = context.newObject();
+        const namespaces = new Map<string, QuickJSHandle>();
+        try {
+          for (const definition of SERPENT_GUEST_COMMANDS) {
+            const [namespace, method] = definition.path.split('.');
+            if (namespace === undefined || method === undefined) {
+              throw new Error(`Invalid Guest API command path: ${definition.path}`);
+            }
+            let target = namespaces.get(namespace);
+            if (target === undefined) {
+              target = context.newObject();
+              namespaces.set(namespace, target);
+              context.setProp(api, namespace, target);
+            }
+            const guestFunction = context.newFunction(method, (...argumentHandles: QuickJSHandle[]) => {
+              const argumentsForHost = argumentHandles.map((argumentHandle) => context.dump(argumentHandle));
+              return createDeferredHostCall(
+                host.executeAutomationCommand!(
+                  definition.commandId,
+                  definition.buildInput(...argumentsForHost),
+                  targetLibraryId === undefined ? undefined : { targetLibraryId },
+                ),
+                (value) => newQuickJsJsonValue(
+                  context,
+                  definition.projectResult?.(value) ?? value,
+                ),
+              );
+            });
+            context.setProp(target, method, guestFunction);
+            guestFunction.dispose();
+          }
+          if (targetLibraryId !== undefined && scopedPluginJobsFactory !== undefined) {
+            const scopedJobs = scopedPluginJobsFactory(targetLibraryId, false);
+            context.setProp(api, 'jobs', scopedJobs);
+            scopedJobs.dispose();
+          }
+          return api;
+        } catch (error) {
+          api.dispose();
+          throw error;
+        } finally {
+          for (const namespace of namespaces.values()) namespace.dispose();
+        }
+      };
       // Script-only nested automation jobs stay Host-local: plugin jobs.* must not collide.
       const listMediaJobs = context.newFunction('list', (inputHandle) => createDeferredHostCall(
         host.executeAutomationCommand!(
@@ -1214,78 +1383,39 @@ export async function runQuickJsSandboxPrototype(
         ),
         newQuickJsJsonValue.bind(undefined, context),
       ));
-      const sharedGuestTargets: Record<string, QuickJSHandle> = {
-        assets,
-        library,
-        folders,
-        tags,
-        collections,
-        smartCollections,
-        linkedFolders,
-        files,
-        trash,
-        palettes,
-        ui,
-      };
-      const sharedGuestFunctions = SERPENT_GUEST_COMMANDS.map((definition) => {
-        const [namespace, method] = definition.path.split('.');
-        if (namespace === undefined || method === undefined) {
-          throw new Error(`Invalid Guest API command path: ${definition.path}`);
+      const domainApi = createGuestCommandApi();
+      for (const namespace of ['assets', 'library', 'folders', 'tags', 'collections', 'smartCollections', 'linkedFolders', 'files', 'trash', 'palettes', 'ui']) {
+        const target = context.getProp(domainApi, namespace);
+        try {
+          context.setProp(serpent, namespace, target);
+        } finally {
+          target.dispose();
         }
-        const target = sharedGuestTargets[namespace];
-        if (target === undefined) {
-          throw new Error(`Unsupported Guest API namespace for QuickJS binding: ${namespace}`);
+      }
+      const forLibrary = context.newFunction('forLibrary', (libraryIdHandle) => {
+        const parsed = pluginTargetLibraryIdSchema.safeParse(context.dump(libraryIdHandle));
+        if (!parsed.success || parsed.data === '__serpent_global_runtime__') {
+          throw new Error('Invalid target library id.');
         }
-        const guestFunction = context.newFunction(method, (...argumentHandles: QuickJSHandle[]) => {
-          const argumentsForHost = argumentHandles.map((argumentHandle) => context.dump(argumentHandle));
-          return createDeferredHostCall(
-            host.executeAutomationCommand!(
-              definition.commandId,
-              definition.buildInput(...argumentsForHost),
-            ),
-            (value) => newQuickJsJsonValue(
-              context,
-              definition.projectResult?.(value) ?? value,
-            ),
-          );
-        });
-        context.setProp(target, method, guestFunction);
-        return guestFunction;
+        return createGuestCommandApi(parsed.data);
       });
+      context.setProp(serpent, 'forLibrary', forLibrary);
       context.setProp(mediaJobs, 'list', listMediaJobs);
       context.setProp(aiJobs, 'status', getAiJobStatus);
       context.setProp(aiJobs, 'enqueue', enqueueAi);
       context.setProp(jobs, 'media', mediaJobs);
       context.setProp(jobs, 'ai', aiJobs);
-      context.setProp(serpent, 'assets', assets);
-      context.setProp(serpent, 'folders', folders);
-      context.setProp(serpent, 'library', library);
-      context.setProp(serpent, 'files', files);
-      context.setProp(serpent, 'linkedFolders', linkedFolders);
-      context.setProp(serpent, 'tags', tags);
-      context.setProp(serpent, 'collections', collections);
-      context.setProp(serpent, 'smartCollections', smartCollections);
       if (host.enqueuePluginJob === undefined) {
         context.setProp(serpent, 'jobs', jobs);
       }
-      context.setProp(serpent, 'trash', trash);
-      context.setProp(serpent, 'palettes', palettes);
-      context.setProp(serpent, 'ui', ui);
-      assets.dispose();
-      folders.dispose();
-      library.dispose();
-      files.dispose();
-      linkedFolders.dispose();
-      tags.dispose();
-      collections.dispose();
-      smartCollections.dispose();
+      domainApi.dispose();
       jobs.dispose();
       mediaJobs.dispose();
       aiJobs.dispose();
       trash.dispose();
       palettes.dispose();
       ui.dispose();
-      for (const guestFunction of sharedGuestFunctions) guestFunction.dispose();
+      forLibrary.dispose();
       listMediaJobs.dispose();
       getAiJobStatus.dispose();
       enqueueAi.dispose();
