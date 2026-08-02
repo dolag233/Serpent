@@ -28,6 +28,20 @@ const iconsetEntries = [
 
 const icoSizes = [16, 24, 32, 48, 64, 128, 256];
 
+// These ICNS entries use PNG payloads and are understood by current macOS
+// releases. Keeping the fallback here lets Windows regenerate the complete
+// cross-platform icon bundle even though Apple's `iconutil` is unavailable.
+const portableIcnsEntries = [
+  ['ic11', 32],
+  ['ic12', 64],
+  ['ic07', 128],
+  ['ic08', 256],
+  ['ic13', 256],
+  ['ic09', 512],
+  ['ic14', 512],
+  ['ic10', 1024],
+];
+
 async function resizePng(size) {
   return sharp(iconSources.app)
     .resize(size, size, { fit: 'cover' })
@@ -47,9 +61,26 @@ async function writeIco() {
   await writeFile(generatedAppIcons.ico, await toIco(buffers));
 }
 
+async function writePortableIcns() {
+  const entries = await Promise.all(
+    portableIcnsEntries.map(async ([type, size]) => {
+      const payload = await resizePng(size);
+      const header = Buffer.alloc(8);
+      header.write(type, 0, 4, 'ascii');
+      header.writeUInt32BE(payload.length + header.length, 4);
+      return Buffer.concat([header, payload]);
+    }),
+  );
+  const header = Buffer.alloc(8);
+  header.write('icns', 0, 4, 'ascii');
+  header.writeUInt32BE(header.length + entries.reduce((total, entry) => total + entry.length, 0), 4);
+  await writeFile(generatedAppIcons.icns, Buffer.concat([header, ...entries]));
+}
+
 async function writeIcns() {
   if (process.platform !== 'darwin') {
-    console.warn('[icons] skipping app.icns generation (iconutil is macOS-only)');
+    console.warn('[icons] iconutil is macOS-only; generating a portable PNG-based app.icns');
+    await writePortableIcns();
     return;
   }
 
@@ -87,9 +118,7 @@ async function main() {
   console.log('[icons] generated from assets/icons/source-app.png:');
   console.log(`  - assets/icons/app.png`);
   console.log(`  - assets/icons/app.ico`);
-  if (process.platform === 'darwin') {
-    console.log(`  - assets/icons/app.icns`);
-  }
+  console.log(`  - assets/icons/app.icns`);
 }
 
 await main();

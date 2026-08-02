@@ -133,12 +133,14 @@ describe("matchVideoPlaybackSeekKey / videoSeekDeltaSeconds (Serpent-sk1)", () =
     target: { tagName: "DIV" } as const,
   };
 
-  it("maps D to previous frame and F to next frame (Serpent-soii)", () => {
+  it("maps D/F to previous/next frame (Serpent-soii)", () => {
     expect(matchVideoPlaybackSeekKey({ ...base, key: "d" })).toEqual({
       kind: "frame",
       direction: -1,
     });
-    expect(matchVideoPlaybackSeekKey({ ...base, key: "F" })).toEqual({
+    expect(
+      matchVideoPlaybackSeekKey({ ...base, key: "F" }),
+    ).toEqual({
       kind: "frame",
       direction: 1,
     });

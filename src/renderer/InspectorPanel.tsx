@@ -43,6 +43,7 @@ import {
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { PluginInspectorSections } from "./plugin-inspector-sections";
 import { PluginInspectorViews } from "./plugin-inspector-views";
+import { splitFilenameForDisplay } from "./filename-display";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -411,6 +412,9 @@ function InspectorHero({
         count: selectionCount,
       })
     : asset.displayName;
+  const filenameParts = !isMulti
+    ? splitFilenameForDisplay(asset.displayName)
+    : null;
 
   return (
     <div className={`inspector-hero-compact${isMulti ? " is-multi" : ""}`}>
@@ -442,7 +446,19 @@ function InspectorHero({
         />
       )}
       <strong className="inspector-hero-title" title={title}>
-        {title}
+        {filenameParts ? (
+          <>
+            <span className="asset-filename-prefix">{filenameParts.prefix}</span>
+            {filenameParts.tail ? (
+              <span className="asset-filename-tail">{filenameParts.tail}</span>
+            ) : null}
+            {filenameParts.extension ? (
+              <span className="asset-filename-extension">{filenameParts.extension}</span>
+            ) : null}
+          </>
+        ) : (
+          title
+        )}
       </strong>
       {!isMulti && (
         <div className="inspector-compact-info">

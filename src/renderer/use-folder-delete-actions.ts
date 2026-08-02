@@ -34,6 +34,7 @@ interface UseFolderDeleteActionsParams {
   setNotice: (message: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: "loading" | "ready") => void;
+  closePreview: () => Promise<void>;
   reloadCurrentContent: () => Promise<void>;
   /** Navigate away when the current browse scope was deleted. */
   onDeletedCurrentScope: () => void;
@@ -48,6 +49,7 @@ export function useFolderDeleteActions({
   setNotice,
   setError,
   setUiState,
+  closePreview,
   reloadCurrentContent,
   onDeletedCurrentScope,
 }: UseFolderDeleteActionsParams) {
@@ -109,6 +111,7 @@ export function useFolderDeleteActions({
       if (!api || !libraryId) return;
       if (dontShowAgain) setDiskDeletePromptEnabled(false);
       setDiskDeleteTarget(null);
+      await closePreview();
       setUiState("loading");
       try {
         if (target.kind === "managed") {
@@ -159,6 +162,7 @@ export function useFolderDeleteActions({
       setUiState,
       setNotice,
       setError,
+      closePreview,
       afterFolderMutation,
     ],
   );

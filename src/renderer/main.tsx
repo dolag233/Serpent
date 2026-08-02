@@ -11,7 +11,12 @@ import { App } from './App';
 import { ElevationProvider } from './ElevationProvider';
 import { InspectorCardFeelProvider } from './InspectorCardFeelProvider';
 import { LocaleProvider } from './i18n';
+import { MenuAcrylicProvider } from './MenuAcrylicProvider';
 import { applyRendererPlatform } from './renderer-platform';
+import {
+  applyMenuAcrylicPreferences,
+  loadMenuAcrylicPreferences,
+} from './menu-acrylic-preferences';
 import {
   applyShadowPreferences,
   loadShadowPreferences,
@@ -22,6 +27,9 @@ import './styles.css';
 applyRendererPlatform(document.documentElement, navigator.userAgent);
 // Apply elev level before first paint so level 0 never flashes shell shadows.
 applyShadowPreferences(loadShadowPreferences());
+// Apply menu acrylic before first paint so the shared context-menu surface does
+// not flash from the opaque default while React providers mount.
+applyMenuAcrylicPreferences(loadMenuAcrylicPreferences());
 
 const root = document.getElementById('root');
 
@@ -34,9 +42,11 @@ createRoot(root).render(
     <LocaleProvider>
       <ThemeProvider>
         <ElevationProvider>
-          <InspectorCardFeelProvider>
-            <App />
-          </InspectorCardFeelProvider>
+          <MenuAcrylicProvider>
+            <InspectorCardFeelProvider>
+              <App />
+            </InspectorCardFeelProvider>
+          </MenuAcrylicProvider>
         </ElevationProvider>
       </ThemeProvider>
     </LocaleProvider>

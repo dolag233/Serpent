@@ -25,8 +25,11 @@ export type UseDialogEscapeDismissParams = {
   setExportDialogOpen: (open: boolean) => void;
   setImportLibraryChooserOpen: (open: boolean) => void;
   setAppSettingsOpen: (open: boolean) => void;
+  setLibrarySettingsOpen: (open: boolean) => void;
   setAppLogOpen: (open: boolean) => void;
   setScriptSandboxPreviewOpen: (open: boolean) => void;
+  setAboutOpen: (open: boolean) => void;
+  setOpenSourceLicensesOpen: (open: boolean) => void;
   setMediaJobsOpen: (open: boolean) => void;
   setLinkedRulesEditor: (value: null) => void;
   resetConvertLinkedDialog: () => void;
@@ -61,8 +64,11 @@ export function useDialogEscapeDismiss({
   setExportDialogOpen,
   setImportLibraryChooserOpen,
   setAppSettingsOpen,
+  setLibrarySettingsOpen,
   setAppLogOpen,
   setScriptSandboxPreviewOpen,
+  setAboutOpen,
+  setOpenSourceLicensesOpen,
   setMediaJobsOpen,
   setLinkedRulesEditor,
   resetConvertLinkedDialog,
@@ -83,6 +89,10 @@ export function useDialogEscapeDismiss({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      // Dialogs are the topmost interaction layer. Handle Escape during the
+      // capture phase so a viewer/workspace listener cannot close a surface
+      // underneath the dialog first.
+      event.stopPropagation();
       const action = resolveDialogEscapeAction(snapshot);
       switch (action.kind) {
         case "none":
@@ -129,11 +139,20 @@ export function useDialogEscapeDismiss({
         case "close-app-settings":
           setAppSettingsOpen(false);
           return;
+        case "close-library-settings":
+          setLibrarySettingsOpen(false);
+          return;
         case "close-app-log":
           setAppLogOpen(false);
           return;
         case "close-script-sandbox-preview":
           setScriptSandboxPreviewOpen(false);
+          return;
+        case "close-about":
+          setAboutOpen(false);
+          return;
+        case "close-open-source-licenses":
+          setOpenSourceLicensesOpen(false);
           return;
         case "close-media-jobs":
           setMediaJobsOpen(false);
@@ -170,8 +189,8 @@ export function useDialogEscapeDismiss({
       }
     };
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [
     api,
     snapshot,
@@ -187,8 +206,11 @@ export function useDialogEscapeDismiss({
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
+    setLibrarySettingsOpen,
     setAppLogOpen,
     setScriptSandboxPreviewOpen,
+    setAboutOpen,
+    setOpenSourceLicensesOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog,

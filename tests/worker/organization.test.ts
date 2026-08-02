@@ -816,6 +816,45 @@ describe('collection assets', () => {
     service.closeAll();
   });
 
+  it('counts recursive collection assets as a distinct union', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
+    const managedFolder = service.listManagedFolders(libraryId)[0]!;
+    const secondAssetId = createSecondAsset(
+      libraryPath,
+      managedFolder.relativePath,
+      managedFolder.folderId,
+    );
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({
+      libraryId,
+      parentId: parent.collectionId,
+      name: 'Child',
+    });
+
+    service.addCollectionAssets({
+      libraryId,
+      collectionId: parent.collectionId,
+      assetIds: [assetId],
+    });
+    service.addCollectionAssets({
+      libraryId,
+      collectionId: child.collectionId,
+      assetIds: [assetId, secondAssetId],
+    });
+
+    const list = service.listCollections(libraryId);
+    expect(list.find((collection) => collection.collectionId === parent.collectionId))
+      .toMatchObject({ assetCount: 2, childCollectionCount: 1 });
+    expect(list.find((collection) => collection.collectionId === child.collectionId))
+      .toMatchObject({ assetCount: 2, childCollectionCount: 0 });
+
+    service.trashAssets({ libraryId, assetIds: [secondAssetId] });
+    expect(service.listCollections(libraryId).find(
+      (collection) => collection.collectionId === parent.collectionId,
+    )?.assetCount).toBe(1);
+    service.closeAll();
+  });
+
   it('removes assets from a collection', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
     const col = service.createCollection({ libraryId, name: 'Coll' });

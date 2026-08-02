@@ -59,6 +59,7 @@ import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog } from "./ImportLibraryChooserDialog";
@@ -66,6 +67,11 @@ import {
   NavigationSidebar,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { MainMenu } from "./MainMenu";
+import {
+  buildMainMenuSections,
+  SERPENT_VERSION,
+} from "./main-menu-items";
 import { CanvasToolbarControls } from "./CanvasToolbarControls";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
 import {
@@ -146,8 +152,11 @@ import {
   type AiAnalysisSettingsWire,
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
+import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
+import { AboutDialog } from "./AboutDialog";
+import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -169,6 +178,7 @@ import {
   selectPluginJobActivity,
 } from "./plugin-job-activity";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
+import { splitFilenameForDisplay } from "./filename-display";
 
 import {
   ContextMenuProvider,
@@ -282,6 +292,7 @@ import {
 import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
+import { resolveMasonryTabTarget } from "./masonry-focus-order";
 import { shuffleArray } from "./client-shuffle";
 import { toMessage, LibraryOperationError } from "./error-utils";
 
@@ -428,6 +439,39 @@ type OrganizationRenameTarget = {
   id: string;
   name: string;
 };
+function renderFilenameHighlights(value: string, searchValue: string, keyPrefix: string): ReactNode {
+  return splitSearchHighlights(value, searchValue, "filename").map((segment, index) =>
+    segment.matched ? (
+      <mark className="search-text-highlight" key={`${keyPrefix}-match-${index}`}>
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={`${keyPrefix}-text-${index}`}>{segment.text}</span>
+    ),
+  );
+}
+
+function renderMiddleEllipsisFilename(name: string, searchValue: string): ReactNode {
+  const parts = splitFilenameForDisplay(name);
+  return (
+    <>
+      <span className="asset-filename-prefix">
+        {renderFilenameHighlights(parts.prefix, searchValue, "filename-prefix")}
+      </span>
+      {parts.tail ? (
+        <span className="asset-filename-tail">
+          {renderFilenameHighlights(parts.tail, searchValue, "filename-tail")}
+        </span>
+      ) : null}
+      {parts.extension ? (
+        <span className="asset-filename-extension">
+          {renderFilenameHighlights(parts.extension, searchValue, "filename-extension")}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 type SearchDefinition = {
   search?: SearchQuery;
   filters?: FilterClause[];
@@ -885,6 +929,10 @@ function AppInner() {
   const [newCollectionParentId, setNewCollectionParentId] = useState<
     string | null
   >(null);
+  const [inlineCollectionRename, setInlineCollectionRename] = useState<{
+    collectionId: string;
+    value: string;
+  } | null>(null);
   const [renameTarget, setRenameTarget] =
     useState<OrganizationRenameTarget | null>(null);
 
@@ -1025,6 +1073,11 @@ function AppInner() {
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
   const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
+  const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
+  const [gitignoreContent, setGitignoreContent] = useState("");
+  const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
   const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
@@ -1212,6 +1265,11 @@ function AppInner() {
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  // Keep the browse surface visually hidden while the viewer close path
+  // restores its scroll anchor. Revealing the grid before the two-frame
+  // restoration causes a one-frame flash and can make Chromium paint at the
+  // top of the canvas during a rapid open/close.
+  const [previewRestoring, setPreviewRestoring] = useState(false);
   const previewModalRef = useRef<AssetPreviewModalHandle>(null);
   // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
   // callback (which is created once and does not close over fresh state)
@@ -1409,6 +1467,10 @@ function AppInner() {
   // inspector panel toggled and changed the grid's available width).
   const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
+  // Incremented whenever a viewer open/close supersedes a pending close. This
+  // prevents a stale rAF/API completion from clearing the restoring state or
+  // focusing the previous card after a rapid reopen of the same asset.
+  const previewCloseGenerationRef = useRef(0);
   const previewRestoreFrameRef = useRef<number | null>(null);
   useEffect(
     () => () => {
@@ -2283,6 +2345,7 @@ function AppInner() {
       const result = await api.listFolderBrowseEntries({
         libraryId: library.libraryId,
         parentFolderId,
+        showIgnored: showIgnoredItems,
       });
       if (!cancelled && result.ok) setFolderBrowseEntries(result.value);
     }
@@ -2300,6 +2363,7 @@ function AppInner() {
     activeSmartCollectionId,
     folders,
     searchValue,
+    showIgnoredItems,
   ]);
 
   const previewIndex = previewAsset
@@ -2392,8 +2456,8 @@ function AppInner() {
   // to by reflowing (different column/row placement). Left unhandled, that
   // reflow leaves the raw scroll offset pointing at a different area of the
   // grid. Watch the canvas's own box size (not the preview toggle, which
-  // also changes it via `.is-viewing { display: none }`) and re-anchor scroll
-  // the same way the card-size slider does.
+  // moves the host to a full-size overlay while preserving the canvas
+  // viewport) and re-anchor scroll the same way the card-size slider does.
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
@@ -2404,10 +2468,9 @@ function AppInner() {
       // Read the canvas's current width instead of trusting observer entry
       // ordering when both elements resize in the same notification.
       const width = canvas.clientWidth;
-      // `display:none` while viewing reports width 0; ignore both that
-      // transition and the transition back (view-restore.ts owns scroll
-      // restoration for the viewer close path) by requiring a genuine
-      // non-zero-to-non-zero change.
+      // The viewer overlay preserves the canvas width. View-restore.ts owns
+      // scroll restoration for the viewer close path, so a preview transition
+      // must never be interpreted as a reflow.
       if (width <= 0) {
         lastWidth = null;
         return;
@@ -2569,6 +2632,9 @@ function AppInner() {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
     }
+    previewCloseGenerationRef.current += 1;
+    closingPreviewRef.current = null;
+    setPreviewRestoring(false);
     previewFocusReturnRef.current = asset.assetId;
     const canvas = workspaceCanvasRef.current;
     if (canvas) {
@@ -2624,7 +2690,9 @@ function AppInner() {
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
+    setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
     const scrollSnapshot = previewScrollSnapshotRef.current;
@@ -2635,10 +2703,12 @@ function AppInner() {
       previewRestoreFrameRef.current = null;
     }
     if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
-      // React must first commit removal of `.is-viewing` (display:none). A
-      // second frame restores scroll against the visible canvas; restoring in
-      // the first frame is discarded by layout and jumps back to the top.
+      if (closeGeneration !== previewCloseGenerationRef.current) return;
+      // React must first commit the collapsed viewer host. A second frame
+      // restores scroll against the visible canvas; restoring in the first
+      // frame can be discarded by layout and jump back to the top.
       previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+        if (closeGeneration !== previewCloseGenerationRef.current) return;
         const canvas = workspaceCanvasRef.current;
         if (canvas && scrollSnapshot) {
           // REQ-VIEW-008: the grid may have reflowed while the viewer was
@@ -2667,9 +2737,13 @@ function AppInner() {
         canvas
           ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
           ?.focus({ preventScroll: true });
+        if (closeGeneration === previewCloseGenerationRef.current) {
+          setPreviewRestoring(false);
+        }
         previewRestoreFrameRef.current = null;
       });
     });
+    if (!restoreBrowsePosition) setPreviewRestoring(false);
     try {
       if (api && library) {
         await api.closePreview({
@@ -2680,7 +2754,10 @@ function AppInner() {
     } catch {
       // Closing the local viewer must still work while Main is shutting down.
     } finally {
-      if (closingPreviewRef.current === closingAsset.assetId) {
+      if (
+        closingPreviewRef.current === closingAsset.assetId &&
+        closeGeneration === previewCloseGenerationRef.current
+      ) {
         closingPreviewRef.current = null;
       }
     }
@@ -2707,10 +2784,12 @@ function AppInner() {
         trashMode?: boolean;
         discovery?: SearchDefinition;
         searchScope?: SearchScope;
+        showIgnored?: boolean;
       },
     ) => {
       if (!api) return;
       const trashMode = opts?.trashMode ?? false;
+      const includeIgnored = opts?.showIgnored ?? showIgnoredItems;
       const browseScope: SearchScope | undefined =
         opts?.searchScope ??
         (trashMode
@@ -2727,7 +2806,7 @@ function AppInner() {
         smartResult,
         trashedFoldersResult,
       ] = await Promise.all([
-        api.listFolders(libId),
+        api.listFolders({ ...libId, showIgnored: includeIgnored }),
         api.searchAssets({
           ...libId,
           query: opts?.discovery?.search ?? null,
@@ -2735,9 +2814,10 @@ function AppInner() {
           scope: browseScope,
           sort: opts?.discovery?.sort,
           ...BROWSE_SCOPE_SEARCH,
+          showIgnored: includeIgnored,
         }),
         trashMode || scope !== "all"
-          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 })
+          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
           : Promise.resolve(undefined),
         api.listLinkedFolders(libId),
         api.listTags(libId),
@@ -2792,7 +2872,7 @@ function AppInner() {
       setSmartCollections(smartResult.value);
       return assetResult.value.items;
     },
-    [api],
+    [api, showIgnoredItems],
   );
 
   useBrowserSessionRestore({
@@ -3647,6 +3727,7 @@ function AppInner() {
         filters: definition.filters,
         sort: definition.sort,
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3685,6 +3766,7 @@ function AppInner() {
         filters: definition.filters,
         sort: definition.sort,
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -3847,13 +3929,20 @@ function AppInner() {
   // --- Collection CRUD ---
 
   async function createCollection() {
-    if (!api || !library || !collectionInputValue.trim()) return;
+    if (!api || !library) return;
+    const name = collectionInputValue.trim();
+    if (!name) {
+      setShowCollectionInput(false);
+      setCollectionInputValue("");
+      setNewCollectionParentId(null);
+      return;
+    }
     setUiState("loading");
     try {
       const result = await api.createCollection({
         libraryId: library.libraryId,
         parentId: newCollectionParentId ?? undefined,
-        name: collectionInputValue.trim(),
+        name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowCollectionInput(false);
@@ -4102,6 +4191,7 @@ function AppInner() {
           recursive,
         },
         ...BROWSE_SCOPE_SEARCH,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
@@ -4443,6 +4533,87 @@ function AppInner() {
     });
   }
 
+  function openInlineCollectionRename(collectionId: string, currentName: string) {
+    setShowCollectionInput(false);
+    setCollectionInputValue("");
+    setNewCollectionParentId(null);
+    setRenameTarget(null);
+    setInlineCollectionRename({ collectionId, value: currentName });
+  }
+
+  function cancelInlineCollectionRename() {
+    setInlineCollectionRename(null);
+  }
+
+  async function commitInlineCollectionRename() {
+    const session = inlineCollectionRename;
+    if (!session) return;
+    const name = session.value.trim();
+    if (!name) {
+      setInlineCollectionRename(null);
+      return;
+    }
+    if (!api || !library) return;
+    try {
+      const result = await api.updateCollection({
+        libraryId: library.libraryId,
+        collectionId: session.collectionId,
+        name,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setCollections((current) =>
+        current.map((collection) =>
+          collection.collectionId === result.value.collectionId
+            ? result.value
+            : collection,
+        ),
+      );
+      setInlineCollectionRename(null);
+      setError(null);
+      setNotice(t("toast.collectionRenamed"));
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+    }
+  }
+
+  function requestDeleteCollection(collectionId: string, name: string) {
+    const collection = collections.find(
+      (candidate) => candidate.collectionId === collectionId,
+    );
+    const hasContents =
+      (collection?.assetCount ?? 0) > 0 ||
+      (collection?.childCollectionCount ?? 0) > 0;
+    if (
+      hasContents &&
+      !window.confirm(
+        t("command.collection.deleteConfirm", { name }),
+      )
+    ) {
+      return;
+    }
+    void deleteCollection(collectionId);
+  }
+
+  function requestTrashManagedFolder(folderId: string, name: string) {
+    const folder = folders.find((candidate) => candidate.folderId === folderId);
+    const hasContents =
+      (folder?.directAssetCount ?? 0) > 0 ||
+      (folder?.childFolderCount ?? 0) > 0;
+    if (
+      hasContents &&
+      !window.confirm(t("command.folder.moveToTrashConfirm", { name }))
+    ) {
+      return;
+    }
+    void trashManagedFolder(folderId, name);
+  }
+
+  async function refreshCollectionSummaries() {
+    if (!api || !library) return;
+    const result = await api.listCollections({ libraryId: library.libraryId });
+    if (result.ok) setCollections(result.value);
+  }
+
   async function createSelectedImageSequence() {
     if (!api || !library || !imageSequenceDialog) return;
     setImageSequenceDialog((current) =>
@@ -4549,6 +4720,7 @@ function AppInner() {
     clearAssetSelection,
     activeTagId,
     activeCollectionId,
+    setLastUndoableOp,
   });
 
   const {
@@ -4568,9 +4740,11 @@ function AppInner() {
     setNotice,
     setError,
     setUiState,
+    closePreview: releaseAssetPreviewsBeforeDiskDelete,
     reloadCurrentContent,
     onDeletedCurrentScope: () => {
       void chooseFolder("root");
+      void refreshCollectionSummaries();
     },
   });
 
@@ -4683,6 +4857,8 @@ function AppInner() {
     },
     setImageSequenceImportOffer,
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
+    onAssetsDroppedOnFolder: (folderId, assetIds, mode) =>
+      handleAssetsDroppedOnFolder(folderId, assetIds, mode),
   });
 
   const {
@@ -4768,8 +4944,22 @@ function AppInner() {
       openInlineFolderRename(folderId, currentName);
     },
     trashManagedFolder: (folderId, name) => {
-      void trashManagedFolder(folderId, name);
+      requestTrashManagedFolder(folderId, name);
     },
+    deleteFolderFromDisk: (folderId, name) => {
+      openDiskDelete({ kind: "managed", folderId, name });
+    },
+  });
+
+  useCollectionCommandShortcuts({
+    enabled: Boolean(library) && !showTrash,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    renameCollection: (collectionId, currentName) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineCollectionRename(collectionId, currentName);
+    },
+    deleteCollection: requestDeleteCollection,
   });
 
   async function executeSearchDefinition(definition: SearchDefinition) {
@@ -4782,6 +4972,7 @@ function AppInner() {
       scope: currentSearchScope(),
       sort: definition.sort,
       ...BROWSE_SCOPE_SEARCH,
+      showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     if (requestGeneration !== searchRequestGenerationRef.current) return;
@@ -5471,6 +5662,7 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      setLastUndoableOp(null);
       const skippedCount = assetIds.length - result.value.restoredCount;
       setNotice(
         t("toast.restoredCount", { count: result.value.restoredCount }) +
@@ -5480,7 +5672,12 @@ function AppInner() {
           t("common.sentenceEnd"),
       );
       clearAssetSelection();
-      await loadContent(library, "all", { trashMode: true });
+      await refreshCollectionSummaries();
+      if (showTrash) {
+        await loadContent(library, "all", { trashMode: true });
+      } else {
+        await reloadCurrentContent();
+      }
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreFailed"), locale));
     } finally {
@@ -5509,6 +5706,7 @@ function AppInner() {
         }) + t("common.sentenceEnd"),
       );
       clearAssetSelection();
+      await refreshCollectionSummaries();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.restoreTrashedFolderFailed"), locale));
@@ -5596,11 +5794,17 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) {
-        if (
-          result.error.code === "ASSET_MOVE_CONFLICT" &&
-          conflictStrategy === "error"
-        ) {
-          setUndoMoveDialog({ operationId, conflictStrategy: "keep-both" });
+        if (result.error.code === "ASSET_MOVE_CONFLICT") {
+          // Keep the conflict decision available when the filesystem changed
+          // again between the initial prompt and the retry. Previously the
+          // dialog was closed first and the retry degraded into a generic
+          // “move failed” toast, leaving the operation neither undone nor
+          // actionable.
+          setUndoMoveDialog({
+            operationId,
+            conflictStrategy:
+              conflictStrategy === "error" ? "keep-both" : conflictStrategy,
+          });
         }
         throw new LibraryOperationError(result.error);
       }
@@ -5655,6 +5859,10 @@ function AppInner() {
 
   async function undoLastFileOp() {
     if (!lastUndoableOp) return;
+    if (lastUndoableOp.kind === "trash") {
+      await requestRestoreTrashedAssets([...lastUndoableOp.assetIds]);
+      return;
+    }
     if (lastUndoableOp.kind === "copy") {
       await undoManagedCopy(lastUndoableOp.operationId);
       return;
@@ -5705,10 +5913,70 @@ function AppInner() {
   function requestAssetDiskDelete(assetIds: string[]) {
     if (assetIds.length === 0) return;
     if (!isDiskDeletePromptEnabled()) {
-      void deleteManagedAssetsFromDisk(assetIds);
+      void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
       return;
     }
     setAssetDiskDeleteIds(assetIds);
+  }
+
+  async function setIgnoreState(input: {
+    locationKind: "managed" | "linked";
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: "asset" | "folder" | "extension";
+    ignored: boolean;
+    name: string;
+  }) {
+    if (!api || !library) return;
+    try {
+      const result = await api.setIgnore({
+        libraryId: library.libraryId,
+        locationKind: input.locationKind,
+        linkedFolderId: input.linkedFolderId,
+        relativePath: input.relativePath,
+        pathKind: input.pathKind,
+        ignored: input.ignored,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      await reloadCurrentContent();
+      if (input.ignored && input.pathKind === "extension") {
+        setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
+        return;
+      }
+      setNotice(t("toast.ignoreUpdated", {
+        action: input.ignored
+          ? input.pathKind === "folder"
+            ? t("menu.ignoreFolder")
+            : t("menu.ignore")
+          : t("menu.unignore"),
+        name: input.name,
+      }));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.ignoreFailed"), locale));
+    }
+  }
+
+  async function deleteManagedAssetsFromDiskAfterClosingPreview(
+    assetIds: string[],
+  ) {
+    await releaseAssetPreviewsBeforeDiskDelete();
+    await deleteManagedAssetsFromDisk(assetIds);
+  }
+
+  /**
+   * Chromium can keep a source stream open for a card hover/selection even
+   * after the full viewer closes.  Clear every source-backed card first and
+   * give React two frames to unmount the media elements before Windows sees
+   * the filesystem delete request.
+   */
+  async function releaseAssetPreviewsBeforeDiskDelete() {
+    await closeAssetPreview(false);
+    clearAssetSelection();
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
   }
 
   async function confirmAssetDiskDelete(dontShowAgain: boolean) {
@@ -5716,7 +5984,7 @@ function AppInner() {
     if (dontShowAgain) setDiskDeletePromptEnabled(false);
     const assetIds = assetDiskDeleteIds;
     setAssetDiskDeleteIds(null);
-    await deleteManagedAssetsFromDisk(assetIds);
+    await deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
   }
 
   function requestSelectionDiskDelete(
@@ -5759,6 +6027,7 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
+    await releaseAssetPreviewsBeforeDiskDelete();
     setUiState("loading");
     try {
       let deletedAssets = 0;
@@ -5770,6 +6039,10 @@ function AppInner() {
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         deletedAssets = result.value.deletedCount;
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
       }
       for (const folderId of folderIds) {
         const result = await api.deleteFolderFromDisk({
@@ -5816,6 +6089,10 @@ function AppInner() {
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedAssets = result.value.trashedCount;
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
       }
       for (const folderId of folderIds) {
         const result = await api.trashFolder({
@@ -5920,6 +6197,9 @@ function AppInner() {
         );
       }
       if (result.value.deletedCount > 0) clearAssetSelection();
+      if (result.value.deletedCount > 0) {
+        await refreshCollectionSummaries();
+      }
       try {
         await reloadCurrentContent();
       } catch (refreshError) {
@@ -6456,8 +6736,11 @@ function AppInner() {
       exportDialogOpen,
       importLibraryChooserOpen,
       appSettingsOpen,
+      librarySettingsOpen,
       appLogOpen,
       scriptSandboxPreviewOpen,
+      aboutOpen,
+      openSourceLicensesOpen,
       mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
@@ -6483,8 +6766,11 @@ function AppInner() {
     exportDialogOpen,
     importLibraryChooserOpen,
     appSettingsOpen,
+    librarySettingsOpen,
     appLogOpen,
     scriptSandboxPreviewOpen,
+    aboutOpen,
+    openSourceLicensesOpen,
     mediaJobsOpen,
     library,
     linkedRulesEditor,
@@ -6516,8 +6802,11 @@ function AppInner() {
     setExportDialogOpen,
     setImportLibraryChooserOpen,
     setAppSettingsOpen,
+    setLibrarySettingsOpen,
     setAppLogOpen,
     setScriptSandboxPreviewOpen,
+    setAboutOpen,
+    setOpenSourceLicensesOpen,
     setMediaJobsOpen,
     setLinkedRulesEditor,
     resetConvertLinkedDialog: () => {
@@ -6566,8 +6855,11 @@ function AppInner() {
       exportDialogOpen ||
       importLibraryChooserOpen ||
       appSettingsOpen ||
+      librarySettingsOpen ||
       appLogOpen ||
       scriptSandboxPreviewOpen ||
+      aboutOpen ||
+      openSourceLicensesOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
       Boolean(fatalAlertMessage) ||
@@ -6592,6 +6884,7 @@ function AppInner() {
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     showTrash,
+    activeCollectionId,
     libraryOpen: Boolean(library),
     busy,
     selectedAsset,
@@ -6620,6 +6913,11 @@ function AppInner() {
     },
     onPermanentDelete: (assetIds) => {
       setPermanentDeleteDialog([...assetIds]);
+    },
+    onRemoveFromCurrentCollection: (assetIds) => {
+      if (activeCollectionId) {
+        void batchRemoveSelectionFromCollection(activeCollectionId, [...assetIds]);
+      }
     },
     onRefreshDisk: () => {
       void refreshAssets();
@@ -7169,6 +7467,13 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when AI settings surface opens
   }, [appSettingsOpen, appSettingsCategory]);
 
+  useEffect(() => {
+    if (!librarySettingsOpen || !api || !library) return;
+    void api.getGitignore({ libraryId: library.libraryId }).then((gitignoreResult) => {
+      if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
+    });
+  }, [librarySettingsOpen, api, library]);
+
   const probeStoredAiConnection = useCallback(async () => {
     if (!api) return;
     if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
@@ -7649,18 +7954,73 @@ function AppInner() {
   }
   controlAiJobsRef.current = controlAiJobs;
 
-  // Handle inline input keydown for collection creation
-  function handleCollectionInputKeyDown(
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void createCollection();
-    } else if (e.key === "Escape") {
-      setShowCollectionInput(false);
-      setCollectionInputValue("");
-    }
-  }
+  const mainMenuSections = buildMainMenuSections({
+    locale,
+    platform: SHORTCUT_PLATFORM,
+    state: {
+      libraryOpen: Boolean(library),
+      busy,
+      hasUndoableOperation: lastUndoableOp !== null,
+      hasSelectedAssets: selectedAssetIds.length > 0,
+      hasPasteTarget: browsePasteDestination !== undefined,
+      hasBrowseAssets: browseScopeAssetIds.length > 0,
+    },
+    actions: {
+      createLibrary: () => {
+        setDialogValue(t("shell.myLibrary"));
+        setCreateLibraryPhase("start");
+        setDialog("library");
+      },
+      openLibrary: () => void runLibraryOperation("open"),
+      closeLibrary: () => void closeLibrary(),
+      removeLibrary: () => void removeLibrary(),
+      deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
+      importFiles: () => void importAssets("files"),
+      importFolder: () => void importAssets("folder"),
+      importLinkedFolder: () => void importFolderAsLinked(),
+      importLibrary: () => setImportLibraryChooserOpen(true),
+      exportLibrary: () => setExportDialogOpen(true),
+      openLibrarySettings: () => {
+        setAppSettingsOpen(false);
+        setLibrarySettingsOpen(true);
+      },
+      undo: () => void undoLastFileOp(),
+      copySelection: () => {
+        const copyIds = selectedAssets
+          .filter((asset) => asset.availability === "available" && !asset.deletedAt)
+          .map((asset) => asset.assetId);
+        if (copyIds.length > 0) void handleCopyAssetFiles(copyIds);
+      },
+      paste: () => {
+        if (browsePasteDestination !== undefined) {
+          pasteOsClipboardFiles(browsePasteDestination);
+        }
+      },
+      selectAll: () => {
+        setSelectedAssetIds([...browseScopeAssetIds]);
+        setSelectedAssetId(browseScopeAssetIds.at(-1));
+        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
+      },
+      invertSelection: () => {
+        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
+        setSelectedAssetIds(next);
+        setSelectedAssetId(next.at(-1));
+        setAssetSelectionAnchor(next[0] ?? null);
+      },
+      clearSelection: clearAssetSelection,
+      openSettings: () => {
+        setAppSettingsCategory("general");
+        setAppSettingsOpen(true);
+      },
+      openBackgroundJobs: () => setMediaJobsOpen(true),
+      openAppLog,
+      openAbout: () => setAboutOpen(true),
+      openGitHub: () => {
+        void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
+      },
+      openOpenSourceLicenses: () => setOpenSourceLicensesOpen(true),
+    },
+  });
 
   return (
     <>
@@ -7687,13 +8047,17 @@ function AppInner() {
               onBack={() => void goWorkspaceBack()}
               onForward={() => void goWorkspaceForward()}
             />
-            <AppSettingsEntry
-              disabled={busy}
-              onOpen={() => {
-                setAppSettingsCategory("general");
-                setAppSettingsOpen(true);
-              }}
-            />
+            {IS_WINDOWS_PLATFORM ? (
+              <MainMenu disabled={busy} sections={mainMenuSections} />
+            ) : (
+              <AppSettingsEntry
+                disabled={busy}
+                onOpen={() => {
+                  setAppSettingsCategory("general");
+                  setAppSettingsOpen(true);
+                }}
+              />
+            )}
             <LibrarySwitcher
               busy={busy}
               disabled={busy}
@@ -7703,6 +8067,10 @@ function AppInner() {
               onCloseLibrary={() => void closeLibrary()}
               onRemoveLibrary={() => void removeLibrary()}
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
+              onOpenLibrarySettings={() => {
+                setAppSettingsOpen(false);
+                setLibrarySettingsOpen(true);
+              }}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
                 setCreateLibraryPhase("start");
@@ -7827,6 +8195,18 @@ function AppInner() {
         activeTagId={activeTagId}
         activeCollectionId={activeCollectionId}
         activeSmartCollectionId={activeSmartCollectionId}
+        showIgnoredItems={showIgnoredItems}
+        onToggleShowIgnoredItems={() => {
+          const next = !showIgnoredItems;
+          setShowIgnoredItems(next);
+          if (library) {
+            void loadContent(library, assetScope, {
+              trashMode: showTrash,
+              discovery: currentQueryDefinition(),
+              showIgnored: next,
+            });
+          }
+        }}
         allAssetCount={allAssetCount}
         trashedAssetCount={searchTotal ?? trashedAssets.length}
         folders={folders}
@@ -7837,8 +8217,7 @@ function AppInner() {
         showCollectionInput={showCollectionInput}
         collectionInputValue={collectionInputValue}
         newCollectionParentId={newCollectionParentId}
-        collectionRecursive={collectionRecursive}
-        collectionRecursiveRef={collectionRecursiveRef}
+        inlineCollectionRename={inlineCollectionRename}
         draggedCollectionId={draggedCollectionId}
         onSetDraggedCollectionId={setDraggedCollectionId}
         onChooseAllAssets={() => void chooseFolder("all")}
@@ -7887,8 +8266,14 @@ function AppInner() {
         onSetShowCollectionInput={setShowCollectionInput}
         onSetCollectionInputValue={setCollectionInputValue}
         onSetNewCollectionParentId={setNewCollectionParentId}
-        onCollectionInputKeyDown={handleCollectionInputKeyDown}
-        onSetCollectionRecursive={setCollectionRecursive}
+        onCollectionInputCommit={() => createCollection()}
+        onInlineCollectionRenameChange={(value) =>
+          setInlineCollectionRename((current) =>
+            current ? { ...current, value } : current,
+          )
+        }
+        onInlineCollectionRenameCommit={() => commitInlineCollectionRename()}
+        onInlineCollectionRenameCancel={cancelInlineCollectionRename}
         onAddFolder={() => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(selectedFolderId ?? null);
@@ -7922,7 +8307,7 @@ function AppInner() {
       />
       <section className="workspace">
         <div
-          className={`workspace-bar${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-bar${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           <div className="workspace-title">
             {library &&
@@ -7966,6 +8351,30 @@ function AppInner() {
                   }}
                   type="button"
                   {...iconActionAttrs(t("nav.includeChildFolders"))}
+                >
+                  <Icon name="folders" size={14} />
+                </button>
+              )}
+            {library &&
+              !showTrash &&
+              !showTagManagement &&
+              !activeTagId &&
+              activeCollectionId &&
+              !activeSmartCollectionId && (
+                <button
+                  aria-pressed={collectionRecursive}
+                  className="workspace-include-subfolders"
+                  onClick={() => {
+                    // Collection scope uses the same explicit recursive toggle
+                    // as folder scope, but the control lives beside its title.
+                    void closeAssetPreview(false);
+                    const next = !collectionRecursiveRef.current;
+                    collectionRecursiveRef.current = next;
+                    setCollectionRecursive(next);
+                    void chooseCollection(activeCollectionId, next);
+                  }}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildCollections"))}
                 >
                   <Icon name="folders" size={14} />
                 </button>
@@ -8087,7 +8496,7 @@ function AppInner() {
         />
         {!showTagManagement && !showPluginSidebarView && (
         <div
-          className={`workspace-discovery${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-discovery${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           <DimensionFilterBar
             availabilityFilter={availabilityFilter}
@@ -8247,7 +8656,7 @@ function AppInner() {
           />
         )}
         <div
-          className={`workspace-canvas-host${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           {renderedToast && (
             <WorkspaceNoticeBanner
@@ -8264,7 +8673,9 @@ function AppInner() {
                 lastUndoableOp && renderedToast.kind === "notice"
                   ? lastUndoableOp.kind === "copy"
                     ? t("action.undoCopy")
-                    : t("action.undoMove")
+                    : lastUndoableOp.kind === "move"
+                      ? t("action.undoMove")
+                      : t("action.undoTrash")
                   : undefined
               }
             />
@@ -8335,7 +8746,7 @@ function AppInner() {
               </div>
             )}
         <div
-          className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
           onDragEnter={handleExternalDragEnter}
           onDragLeave={handleExternalDragLeave}
           onDragOver={handleExternalDragOver}
@@ -8614,6 +9025,27 @@ function AppInner() {
                       onClick={(event) => {
                         if (renamingThisAsset) return;
                         handleCardClick(asset.assetId, event);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          renamingThisAsset ||
+                          assetViewMode !== "masonry" ||
+                          event.key !== "Tab"
+                        ) {
+                          return;
+                        }
+                        const nextAssetId = resolveMasonryTabTarget(
+                          selectionAssetIds ?? [],
+                          asset.assetId,
+                          event.shiftKey,
+                        );
+                        if (!nextAssetId) return;
+                        const nextCard = workspaceCanvasRef.current?.querySelector<HTMLElement>(
+                          `.asset-card[data-asset-id="${CSS.escape(nextAssetId)}"]`,
+                        );
+                        if (!nextCard) return;
+                        event.preventDefault();
+                        nextCard.focus();
                       }}
                       onDoubleClick={() => {
                         if (renamingThisAsset) return;
@@ -8967,23 +9399,8 @@ function AppInner() {
                                   ) : null}
                                 </span>
                               ) : (
-                                <strong title={asset.displayName}>
-                                  {splitSearchHighlights(
-                                    asset.displayName,
-                                    searchValue,
-                                    "filename",
-                                  ).map((segment, index) =>
-                                    segment.matched ? (
-                                      <mark
-                                        className="search-text-highlight"
-                                        key={index}
-                                      >
-                                        {segment.text}
-                                      </mark>
-                                    ) : (
-                                      <span key={index}>{segment.text}</span>
-                                    ),
-                                  )}
+                                <strong className="asset-caption-filename" title={asset.displayName}>
+                                  {renderMiddleEllipsisFilename(asset.displayName, searchValue)}
                                 </strong>
                               )}
                             </>
@@ -9412,6 +9829,34 @@ function AppInner() {
           plugins={pluginTrustPrompt.pending}
         />
       ) : null}
+      <LibrarySettingsDialog
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
+        library={library}
+        open={librarySettingsOpen}
+        gitignoreContent={gitignoreContent}
+        onClose={() => setLibrarySettingsOpen(false)}
+        onSaveName={async (name) => {
+          if (!api || !library) return;
+          const result = await api.rename({ libraryId: library.libraryId, displayName: name });
+          if (!result.ok) {
+            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            return;
+          }
+          setLibrary(result.value);
+          setNotice(t("toast.librarySettingsSaved"));
+        }}
+        onSaveGitignore={async (content) => {
+          if (!api || !library) return;
+          const result = await api.setGitignore({ libraryId: library.libraryId, content });
+          if (!result.ok) {
+            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            return;
+          }
+          setGitignoreContent(result.value.content);
+          setNotice(t("toast.librarySettingsSaved"));
+          await reloadCurrentContent();
+        }}
+      />
       <AppLogDialog
         automationCorrelationId={appLogAutomationCorrelationId}
         entries={appLogEntries}
@@ -9446,6 +9891,20 @@ function AppInner() {
           openAppLog(logId);
         }}
         open={scriptSandboxPreviewOpen}
+      />
+      <AboutDialog
+        open={aboutOpen}
+        version={SERPENT_VERSION}
+        onClose={() => setAboutOpen(false)}
+        onOpenGitHub={() => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.openExternalUrl) return;
+          void bridge.openExternalUrl("https://github.com/dolag233/Serpent");
+        }}
+      />
+      <OpenSourceLicensesDialog
+        open={openSourceLicensesOpen}
+        onClose={() => setOpenSourceLicensesOpen(false)}
       />
       {smartCollectionSettings ? (
         <SmartCollectionSettingsDialog
@@ -9488,7 +9947,11 @@ function AppInner() {
           setCreateLibraryPhase("start");
         }}
         onOpenExisting={() => {
-          setDialog(null);
+          // Keep the required no-library surface mounted while the native
+          // picker is open. This avoids the auto-open effect racing a cancel
+          // and makes the action visibly await the selected library. When a
+          // library is already open, the menu dialog can close immediately.
+          if (library) setDialog(null);
           void runLibraryOperation("open");
         }}
         onImportLibrary={() => {
@@ -9683,12 +10146,22 @@ function AppInner() {
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}
+        managedFolders={folders}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
         onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
         onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
         onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
-        onRenameOrganization={(id, name) => setRenameTarget({ kind: "collection", id, name })}
+        onRenameOrganization={(id, name) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineCollectionRename(id, name);
+        }}
+        onCreateSubcollection={(parentId) => {
+          cancelInlineSmartCollectionEdit();
+          setShowCollectionInput(true);
+          setCollectionInputValue("");
+          setNewCollectionParentId(parentId);
+        }}
         onEditCollectionDetails={(collectionId) => {
           const collection = collections.find((c) => c.collectionId === collectionId);
           if (collection)
@@ -9698,12 +10171,15 @@ function AppInner() {
               coverAssetId: collection.coverAssetId ?? "",
             });
         }}
-        onDeleteOrganization={(id) => {
-          void deleteCollection(id);
+        onDeleteOrganization={(id, name) => {
+          requestDeleteCollection(id, name);
         }}
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(folderId);
+        }}
+        onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
+          void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });
         }}
         onRenameFolder={(folderId, currentName) => {
           cancelInlineSmartCollectionEdit();
@@ -9734,7 +10210,7 @@ function AppInner() {
         }
         onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
         onTrashManagedFolder={(folderId, name) => {
-          void trashManagedFolder(folderId, name);
+          requestTrashManagedFolder(folderId, name);
         }}
         onDeleteFolderFromDisk={({ folderId, name, locationKind, linkedRelativePath }) => {
           if (locationKind === "managed") {

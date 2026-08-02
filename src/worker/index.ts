@@ -397,6 +397,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       aiJobAbortRegistry.abort(request.command.libraryId);
       libraryService.closeLibrary(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
+    case 'library.rename': {
+      const renamed = libraryService.renameLibrary(request.command);
+      return { ok: true, type: 'library.renamed', library: renamed };
+    }
     case 'library.delete-from-disk': {
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -449,7 +453,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return {
         ok: true,
         type: 'folder.list',
-        folders: libraryService.listManagedFolders(request.command.libraryId),
+        folders: libraryService.listManagedFolders(request.command.libraryId, request.command.showIgnored === true),
       };
     case 'folder.browse-entries':
       return {
@@ -458,6 +462,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         entries: libraryService.listFolderBrowseEntries({
           libraryId: request.command.libraryId,
           parentFolderId: request.command.parentFolderId,
+          showIgnored: request.command.showIgnored === true,
         }),
       };
     case 'folder.list-trashed': {
@@ -478,7 +483,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'folder.delete-from-disk': {
-      const result = libraryService.deleteManagedFolderFromDisk(request.command);
+      const result = await libraryService.deleteManagedFolderFromDiskAsync(request.command);
       return {
         ok: true,
         type: 'folder.deleted-from-disk',
@@ -637,6 +642,28 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(request.command.libraryId, 'linked');
       return { ok: true, type: 'linked-folder.rules.updated', ...result };
     }
+    case 'ignore.list':
+      return {
+        ok: true,
+        type: 'ignore.list',
+        paths: libraryService.listIgnoredPaths(request.command.libraryId),
+      };
+    case 'ignore.gitignore.get':
+      return {
+        ok: true,
+        type: 'ignore.gitignore',
+        content: libraryService.getGitignore(request.command.libraryId).content,
+      };
+    case 'ignore.gitignore.set': {
+      const result = libraryService.setGitignore(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'refresh');
+      return { ok: true, type: 'ignore.gitignore.updated', content: result.content };
+    }
+    case 'ignore.set': {
+      const result = libraryService.setIgnore(request.command);
+      scheduleThumbnailScene(request.command.libraryId, 'refresh');
+      return { ok: true, type: 'ignore.updated', ...result };
+    }
     case 'linked-folder.assets.copy': {
       const result = libraryService.copyAssetsToLinkedFolder(request.command);
       scheduleThumbnailScene(request.command.libraryId, 'linked', result.assets.map((asset) => asset.assetId));
@@ -766,6 +793,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
         scopeMode: request.command.scopeMode ?? false,
+        showIgnored: request.command.showIgnored === true,
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
       });
@@ -952,7 +980,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
     }
     case 'asset.delete-from-disk': {
-      const { deletedCount } = libraryService.deleteAssetsFromDisk(request.command);
+      const { deletedCount } = await libraryService.deleteAssetsFromDiskAsync(request.command);
       return { ok: true, type: 'asset.deleted-from-disk', deletedCount };
     }
     case 'asset.delete-linked': {

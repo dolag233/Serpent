@@ -61,6 +61,10 @@ import {
   registerWindowControls,
 } from "./window-controls";
 import {
+  createWindowsTray,
+  type WindowsTrayController,
+} from "./windows-tray";
+import {
   ASSET_CHANGE_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
@@ -376,6 +380,7 @@ function schedulePluginInputCaptureFlush(): void {
     pluginInputCaptureBroker?.flush();
   }, 0);
 }
+let windowsTray: WindowsTrayController | undefined;
 
 function recentLibraryPath(): string {
   return path.join(app.getPath("userData"), "recent-library.json");
@@ -1392,6 +1397,17 @@ function toRendererResult(
       },
     });
   }
+  if (result.type === "library.renamed") {
+    return parseRendererResult({
+      ok: true,
+      type: result.type,
+      library: {
+        libraryId: result.library.libraryId,
+        displayName: result.library.displayName,
+        displayPath: result.library.libraryPath,
+      },
+    });
+  }
   if (result.type === "library.list") {
     return parseRendererResult({
       ok: true,
@@ -1523,6 +1539,8 @@ async function commandFor(
     }
     case "library.close.request":
       return { type: "library.close", libraryId: request.libraryId };
+    case "library.rename.request":
+      return { type: "library.rename", libraryId: request.libraryId, displayName: request.displayName };
     case "library.delete-from-disk.request":
       return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
@@ -1550,12 +1568,13 @@ async function commandFor(
         newName: request.newName,
       };
     case "folder.list.request":
-      return { type: "folder.list", libraryId: request.libraryId };
+      return { type: "folder.list", libraryId: request.libraryId, showIgnored: request.showIgnored };
     case "folder.browse-entries.request":
       return {
         type: "folder.browse-entries",
         libraryId: request.libraryId,
         parentFolderId: request.parentFolderId,
+        showIgnored: request.showIgnored,
       };
     case "folder.trash.request":
       return {
@@ -1634,6 +1653,7 @@ async function commandFor(
         libraryId: request.libraryId,
         folderId: request.folderId,
         recursive: request.recursive,
+        showIgnored: request.showIgnored,
       };
     case "asset.import-files.request": {
       const sourcePaths = await selectImportSources("files");
@@ -1737,6 +1757,26 @@ async function commandFor(
         libraryId: request.libraryId,
         folderId: request.folderId,
         rules: request.rules,
+      };
+    case "ignore.list.request":
+      return { type: "ignore.list", libraryId: request.libraryId };
+    case "ignore.gitignore.get.request":
+      return { type: "ignore.gitignore.get", libraryId: request.libraryId };
+    case "ignore.gitignore.set.request":
+      return {
+        type: "ignore.gitignore.set",
+        libraryId: request.libraryId,
+        content: request.content,
+      };
+    case "ignore.set.request":
+      return {
+        type: "ignore.set",
+        libraryId: request.libraryId,
+        locationKind: request.locationKind,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        pathKind: request.pathKind,
+        ignored: request.ignored,
       };
     case "linked-folder.assets.copy.request":
       return {
@@ -1926,6 +1966,7 @@ async function commandFor(
         scopeMode: request.scopeMode,
         limit: request.limit,
         offset: request.offset,
+        showIgnored: request.showIgnored,
       };
     case "ai.search-plan.request":
       // Planned directly in Main so provider credentials never enter the
@@ -3277,6 +3318,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (workerResult.ok && workerResult.type === "library.opened") {
+      rememberOpenedLibrary(
+        workerResult.library.libraryPath,
+        workerResult.library.displayName,
+      );
+    } else if (workerResult.ok && workerResult.type === "library.renamed") {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,
         workerResult.library.displayName,
@@ -4996,7 +5042,7 @@ async function startApplication(): Promise<void> {
         );
       }
       const pluginOrigin = `serpent-plugin://${parsed.pluginId}`;
-      return new Response(body, {
+      return new Response(new Uint8Array(body), {
         headers: {
           "cache-control": "no-store",
           "content-security-policy": [
@@ -5317,6 +5363,7 @@ async function startApplication(): Promise<void> {
     }
     appLocale = parsed.locale;
     installApplicationMenu({ locale: appLocale });
+    windowsTray?.updateLocale(appLocale);
   });
 
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
@@ -5468,6 +5515,11 @@ async function startApplication(): Promise<void> {
       logger?.error('desktop.attached-mcp.start', error);
     });
   }
+  windowsTray = createWindowsTray({
+    getMainWindow: () => mainWindow,
+    onQuit: () => app.quit(),
+    locale: appLocale,
+  });
 
   extensionBrowseFoldersStorePath = path.join(
     app.getPath("userData"),
@@ -5523,6 +5575,11 @@ if (!hasSingleInstanceLock) {
     if (process.platform !== "darwin") app.quit();
   });
 
+  app.on("will-quit", () => {
+    windowsTray?.destroy();
+    windowsTray = undefined;
+  });
+
   app.on("before-quit", (event) => {
     aiQueueScheduler.clearAll();
     if (quitAfterShutdown || !workerClient) return;
@@ -5548,7 +5605,12 @@ if (!hasSingleInstanceLock) {
       .then(() => workerClient?.shutdown())
       .finally(() => {
         quitAfterShutdown = true;
-        app.quit();
+      // The first app.quit() is intentionally intercepted above while the
+      // worker drains. Once the worker is shut down there is nothing left to
+      // close asynchronously; app.exit() completes the already-authorized
+      // application shutdown instead of re-entering the quit lifecycle and
+      // leaving a hidden Electron process behind on Windows.
+      app.exit(0);
       });
   });
 }

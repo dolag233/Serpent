@@ -42,6 +42,11 @@ import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
 import {
+  ViewerContextMenu,
+  type ViewerContextMenuPosition,
+} from "./ViewerContextMenu";
+import {
+  applyViewerDisplayTransformAction,
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
   type ViewerDisplayTransform,
 } from "./viewer-display-transform";
@@ -203,6 +208,9 @@ export const AssetPreviewModal = forwardRef<
   const [directApproved, setDirectApproved] = useState(false);
   const [displayTransform, setDisplayTransform] =
     useState<ViewerDisplayTransform>(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
+  const [viewerContextMenu, setViewerContextMenu] =
+    useState<ViewerContextMenuPosition | null>(null);
+  const [fitRequestToken, setFitRequestToken] = useState(0);
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
@@ -602,6 +610,33 @@ export const AssetPreviewModal = forwardRef<
     Boolean(imageSrc) &&
     (ready || Boolean(placeholderUrl));
   const isTextViewer = ready && resolution?.mediaType === "text";
+  const viewerTransformable =
+    Boolean(asset.sequence) ||
+    asset.mediaType === "image" ||
+    asset.mediaType === "video";
+  const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
+
+  const rotateViewer = useCallback(() => {
+    setDisplayTransform((current) =>
+      applyViewerDisplayTransformAction(current, "rotate-clockwise"),
+    );
+  }, []);
+  const flipViewerHorizontal = useCallback(() => {
+    setDisplayTransform((current) =>
+      applyViewerDisplayTransformAction(current, "flip-horizontal"),
+    );
+  }, []);
+  const flipViewerVertical = useCallback(() => {
+    setDisplayTransform((current) =>
+      applyViewerDisplayTransformAction(current, "flip-vertical"),
+    );
+  }, []);
+  const fitViewer = useCallback(() => {
+    setFitRequestToken((current) => current + 1);
+  }, []);
+  const closeViewerContextMenu = useCallback(() => {
+    setViewerContextMenu(null);
+  }, []);
 
   const handleTextSave = useCallback(async () => {
     await textViewerRef.current?.save();
@@ -629,6 +664,10 @@ export const AssetPreviewModal = forwardRef<
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleTextSave, isTextViewer]);
 
+  useEffect(() => {
+    setViewerContextMenu(null);
+  }, [asset.assetId]);
+
   async function openExternal() {
     const result = await api.openExternal({
       libraryId,
@@ -648,6 +687,13 @@ export const AssetPreviewModal = forwardRef<
     <section
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}`}
+      onContextMenu={(event) => {
+        if (!viewerTransformable) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onChromeActivity("pointerdownOrClick");
+        setViewerContextMenu({ x: event.clientX, y: event.clientY });
+      }}
       onPointerDown={() => onChromeActivity("pointerdownOrClick")}
       onPointerMove={() => onChromeActivity("pointermove")}
       ref={modalRef}
@@ -668,9 +714,11 @@ export const AssetPreviewModal = forwardRef<
             <ImageSequencePlayer
               api={api}
               displayTransform={displayTransform}
+              fitRequestToken={fitRequestToken}
               isFullscreen={isFullscreen}
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
+              onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               sequence={asset.sequence}
@@ -678,12 +726,14 @@ export const AssetPreviewModal = forwardRef<
           ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
               displayTransform={displayTransform}
+              fitRequestToken={fitRequestToken}
               isFullscreen={isFullscreen}
               muted={viewerMuted}
               onError={handlePlaybackError}
               onFullscreen={() => void toggleFullscreen()}
               onMutedChange={setViewerMuted}
               onReady={() => setDirectApproved(true)}
+              onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               onUserActivity={() => onChromeActivity("pointerdownOrClick")}
@@ -719,6 +769,7 @@ export const AssetPreviewModal = forwardRef<
             <ZoomableImage
               alt={asset.displayName}
               displayTransform={displayTransform}
+              fitRequestToken={fitRequestToken}
               colorSpaceOptions={resolution?.colorSpace?.options}
               colorSpaceValue={
                 selectedColorSpace ?? resolution?.colorSpace?.id
@@ -727,6 +778,7 @@ export const AssetPreviewModal = forwardRef<
               key={asset.assetId}
               onColorSpaceChange={selectColorSpace}
               onFullscreen={() => void toggleFullscreen()}
+              onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
               placeholderSrc={placeholderUrl ?? undefined}
@@ -902,6 +954,21 @@ export const AssetPreviewModal = forwardRef<
             </>
           ) : null}
         </div>
+        {viewerContextMenu && viewerTransformable ? (
+          <ViewerContextMenu
+            flipHorizontal={displayTransform.flipHorizontal}
+            flipVertical={displayTransform.flipVertical}
+            fitShortcut={fitShortcut}
+            isFullscreen={isFullscreen}
+            onClose={closeViewerContextMenu}
+            onFit={fitViewer}
+            onFlipHorizontal={flipViewerHorizontal}
+            onFlipVertical={flipViewerVertical}
+            onFullscreen={() => void toggleFullscreen()}
+            onRotate={rotateViewer}
+            position={viewerContextMenu}
+          />
+        ) : null}
       </div>
     </section>
   );

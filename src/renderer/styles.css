@@ -92,6 +92,20 @@
     rgb(0 0 0 / calc(0.24 * var(--elev-intensity)));
   /* Floating overlays stay fixed (pre-elevation family; Serpent-4ojz). */
   --shadow-menu: 0 8px 24px rgb(0 0 0 / 28%);
+  /* Shared menu family: context menus, the Windows main menu, and the library
+     switcher must read as one interaction system in both themes. */
+  --menu-surface-background: var(--raised);
+  --menu-surface-border: color-mix(in srgb, var(--divider) 82%, transparent);
+  --menu-surface-radius: 10px;
+  --menu-surface-shadow: var(--shadow-menu);
+  --menu-item-hover-background: var(--hover);
+  --menu-item-focus-background: color-mix(in srgb, var(--text) 11%, transparent);
+  --menu-item-disabled-opacity: 0.4;
+  --menu-danger-color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  --menu-danger-hover-background: color-mix(in srgb, var(--danger) 14%, var(--menu-item-hover-background));
+  --menu-item-padding: 6px 10px;
+  --menu-item-font-size: 12.5px;
+  --menu-item-line-height: 1.4;
   --shadow-elevated: 0 24px 70px rgb(0 0 0 / 42%);
   --shadow-panel: 0 16px 40px rgb(0 0 0 / 42%);
   --shadow-toast: 0 12px 32px rgb(0 0 0 / 28%);
@@ -1203,52 +1217,61 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   left: 0;
   z-index: 40;
   display: grid;
-  min-width: 168px;
+  min-width: 180px;
   padding: 5px;
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--pane);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 36%);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .library-switcher-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
-  padding: 7px 9px;
+  min-height: 30px;
+  gap: 8px;
+  padding: var(--menu-item-padding);
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-family: inherit;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
   text-align: left;
+  white-space: nowrap;
+  cursor: default;
 }
 
-.library-switcher-item:hover:not(:disabled) {
-  background: var(--hover);
+.library-switcher-menu:not(.is-keyboard-navigation) .library-switcher-item:hover:not(:disabled) {
+  background: var(--menu-item-hover-background);
+  color: var(--text);
 }
 
 .library-switcher-menu.is-keyboard-navigation .library-switcher-item:focus-visible:not(:disabled),
 .library-switcher-item:focus-visible:not(:disabled) {
-  background: var(--hover);
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  background: var(--menu-item-focus-background);
+  box-shadow: inset 1px 0 var(--secondary);
+  outline: none;
 }
 
 .library-switcher-item:disabled {
   color: var(--tertiary);
-  opacity: 0.55;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
 .library-switcher-item.is-danger {
-  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  color: var(--menu-danger-color);
 }
 
 .library-switcher-item.is-danger:hover:not(:disabled),
 .library-switcher-menu.is-keyboard-navigation
   .library-switcher-item.is-danger:focus-visible:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 14%, var(--hover));
-  color: var(--danger);
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
 }
 
 .library-switcher-recent-row {
@@ -1984,6 +2007,171 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   white-space: nowrap;
 }
 
+/* Serpent-bnah: Windows replaces the hidden native menu bar with a compact
+   click-to-open in-app menu. The trigger stays toolbar-sized; the two-column
+   surface keeps categories and their actions visible without stretching the
+   browse toolbar. */
+.main-menu {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  overflow: visible;
+}
+
+.main-menu-trigger {
+  display: grid;
+  width: var(--shell-control-height);
+  height: var(--shell-control-height);
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.main-menu-trigger:hover:not(:disabled),
+.main-menu-trigger[aria-expanded="true"]:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.main-menu-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.main-menu-surface {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 42;
+  display: block;
+  min-width: 148px;
+  width: 148px;
+  overflow: visible;
+  padding: 5px;
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+.main-menu-sections {
+  display: grid;
+  width: 100%;
+}
+
+.main-menu-section,
+.main-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  gap: 8px;
+  padding: var(--menu-item-padding);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.main-menu-section:hover,
+.main-menu-section:focus-visible,
+.main-menu-section.is-active,
+.main-menu-item:hover:not(:disabled),
+.main-menu-item:focus-visible {
+  background: var(--menu-item-hover-background);
+  outline: none;
+}
+
+.main-menu-section:disabled,
+.main-menu-section[aria-disabled="true"] {
+  color: var(--tertiary);
+  opacity: var(--menu-item-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.main-menu-section > .icon {
+  display: flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+}
+
+.main-menu-section span:nth-child(2) {
+  flex: 1 1 auto;
+}
+
+.main-menu-chevron,
+.context-menu-submenu-chevron {
+  color: var(--tertiary);
+  font-size: 18px;
+  line-height: 12px;
+}
+
+.main-menu-submenu {
+  position: absolute;
+  z-index: 43;
+  display: grid;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 12px));
+  align-content: start;
+  padding: 5px;
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+.main-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.main-menu-item-shortcut {
+  margin-left: auto;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.main-menu-item.is-disabled,
+.main-menu-item:disabled {
+  color: var(--tertiary);
+  opacity: var(--menu-item-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.main-menu-item.is-danger {
+  color: var(--menu-danger-color);
+}
+
+.main-menu-item.is-danger:hover:not(:disabled),
+.main-menu-item.is-danger:focus-visible {
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
+}
+
+.nav-child-count {
+  color: var(--secondary);
+}
+
 .nav-empty {
   margin: 2px 6px 0 29px;
   color: var(--tertiary);
@@ -1994,6 +2182,16 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 /* REQ-VIEW: hide browse workspace toolbar while the viewer is open. */
 .workspace-bar.is-viewing {
   display: none;
+}
+
+/* Keep the shell's geometry while the browse canvas restores its pre-view
+   scroll anchor. Visibility (rather than display:none) lets the restore code
+   measure the real grid before the next paint, avoiding a one-frame flash. */
+.workspace-bar.is-restoring,
+.workspace-discovery.is-restoring,
+.workspace-canvas-host.is-restoring {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .workspace {
@@ -2455,8 +2653,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--pane);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--shadow-menu);
+  backdrop-filter: blur(14px) saturate(120%);
 }
 
 .workspace-tools-overflow-item-indicator {
@@ -3281,16 +3480,89 @@ body.serpent-modal-open .app-shell {
   position: fixed;
   z-index: 41;
   pointer-events: auto;
-  background: var(--raised);
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 10px;
-  box-shadow:
-    0 8px 24px rgb(0 0 0 / 28%),
-    0 1px 4px rgb(0 0 0 / 16%);
+  /* Default to the current low acrylic treatment so menus remain polished
+     even before the preference provider has mounted. */
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
   min-width: 180px;
   max-height: calc(100vh - 12px);
   overflow-y: auto;
   padding: 5px;
+}
+
+/* Shared context-menu acrylic levels. The viewer menu and every menu rendered
+   through ContextMenu/ContextMenuSubmenu intentionally use these same tokens. */
+:root[data-menu-acrylic="0"] .context-menu {
+  background: var(--menu-surface-background);
+  backdrop-filter: none;
+}
+
+:root[data-menu-acrylic="1"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+:root[data-menu-acrylic="2"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 84%, transparent);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+
+:root[data-menu-acrylic="3"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 74%, transparent);
+  backdrop-filter: blur(28px) saturate(135%);
+}
+
+/* The Windows shell menus use dedicated markup for their layout, but share
+   the same acrylic strength preference as context menus. */
+:root[data-menu-acrylic="0"]
+  .main-menu-surface,
+:root[data-menu-acrylic="0"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="0"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="0"]
+  .workspace-tools-overflow-menu {
+  background: var(--menu-surface-background);
+  backdrop-filter: none;
+}
+
+:root[data-menu-acrylic="1"]
+  .main-menu-surface,
+:root[data-menu-acrylic="1"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="1"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="1"]
+  .workspace-tools-overflow-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
+:root[data-menu-acrylic="2"]
+  .main-menu-surface,
+:root[data-menu-acrylic="2"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="2"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="2"]
+  .workspace-tools-overflow-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 84%, transparent);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+
+:root[data-menu-acrylic="3"]
+  .main-menu-surface,
+:root[data-menu-acrylic="3"]
+  .main-menu-submenu,
+:root[data-menu-acrylic="3"]
+  .library-switcher-menu,
+:root[data-menu-acrylic="3"]
+  .workspace-tools-overflow-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 74%, transparent);
+  backdrop-filter: blur(28px) saturate(135%);
 }
 
 .context-menu-item {
@@ -3298,14 +3570,15 @@ body.serpent-modal-open .app-shell {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  min-height: 30px;
+  padding: var(--menu-item-padding);
   border-radius: 6px;
   border: none;
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 12.5px;
-  line-height: 1.4;
+  font-size: var(--menu-item-font-size);
+  line-height: var(--menu-item-line-height);
   cursor: default;
   text-align: left;
   white-space: nowrap;
@@ -3316,22 +3589,23 @@ body.serpent-modal-open .app-shell {
 }
 
 .context-menu:not(.is-keyboard-navigation) .context-menu-item:hover {
-  background: var(--raised-2);
+  background: var(--menu-item-hover-background);
   color: var(--text);
 }
 
 .context-menu.is-keyboard-navigation .context-menu-item:focus {
-  background: color-mix(in srgb, var(--text) 11%, transparent);
+  background: var(--menu-item-focus-background);
   box-shadow: inset 1px 0 var(--secondary);
 }
 
 .context-menu-item.is-danger:hover,
 .context-menu.is-keyboard-navigation .context-menu-item.is-danger:focus {
-  color: var(--danger-soft);
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
 }
 
 .context-menu-item.is-disabled {
-  opacity: 0.4;
+  opacity: var(--menu-item-disabled-opacity);
   cursor: not-allowed;
 }
 
@@ -3366,12 +3640,6 @@ body.serpent-modal-open .app-shell {
   z-index: 42;
   min-width: 230px;
   max-height: calc(100vh - 12px);
-}
-
-.context-menu-submenu-chevron {
-  color: var(--tertiary, var(--tertiary));
-  font-size: 18px;
-  line-height: 12px;
 }
 
 .context-menu-selection-summary {
@@ -4507,14 +4775,12 @@ body.serpent-modal-open .app-shell {
   color: var(--text);
   cursor: pointer;
 }
-.preview-transform-controls button:hover,
-.preview-transform-controls button:focus-visible,
-.preview-transform-controls button.is-active,
 .preview-sequence-controls button:hover,
 .preview-sequence-controls button:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.preview-transform-controls button.is-active {
+
+.viewer-context-menu .context-menu-item.is-active {
   color: var(--accent);
 }
 .preview-sequence-stage {
@@ -4690,9 +4956,13 @@ body.serpent-modal-open .app-shell {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-/* REQ-VIEW-004: keep canvas mounted (scroll restore) but out of layout while viewing. */
+/* REQ-VIEW-004: keep the scroll container mounted while viewing. Toggling
+   `display:none` here resets Chromium's scrollTop during a rapid open/close;
+   the collapsed host already removes it from flex layout, so visibility is
+   sufficient and preserves the native scroll state for restoration. */
 .workspace-canvas.is-viewing {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .preview-state {
@@ -5831,6 +6101,9 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   min-width: 0;
   padding: 28px 32px 34px;
   overflow-x: hidden;
@@ -5839,7 +6112,14 @@ select.ai-config-input.ai-config-languages {
 }
 
 .app-settings-page-heading {
-  margin-bottom: 16px;
+  margin: 0;
+}
+
+.app-settings-page-heading p {
+  margin: 6px 0 0;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .app-settings-page-heading h3 {
@@ -6788,6 +7068,11 @@ select.ai-config-input.ai-config-languages {
   user-select: none;
 }
 
+.workspace-canvas.is-restoring {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* Serpent-yl67: host owns flex growth; activity strips overlay the scrollport
    instead of living inside the scrolling canvas content. */
 .workspace-canvas-host {
@@ -6803,19 +7088,24 @@ select.ai-config-input.ai-config-languages {
    left the host at flex:1 and split the workspace 50/50 with `.workspace-viewer`
    (empty top half, close chip mid-stage) — VIEWER-019 / 2026-07-21 regression.
    Do not use display:none on the host: WorkspaceNoticeBanner / activity-strip
-   live here and must stay visible while preview is open (SHELL-027). Collapse
-   the host box instead and raise its stacking context above the viewer. */
+   live here and must stay visible while preview is open (SHELL-027). Keep the
+   host as an absolute, full-size overlay instead of collapsing it to height 0:
+   Chromium otherwise clamps the canvas scrollTop while the viewer is mounted,
+   which makes rapid open/close land at the top before the anchor restore runs. */
 .workspace-canvas-host.is-viewing {
-  flex: 0 0 0;
-  height: 0;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  flex: none;
   overflow: visible;
   z-index: 25;
   pointer-events: none;
 }
 
 .workspace-canvas-host.is-viewing > .workspace-canvas {
-  display: none;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .workspace-canvas-host.is-viewing > .workspace-notice,
@@ -6903,18 +7193,313 @@ select.ai-config-input.ai-config-languages {
 }
 
 .workspace-notice.is-error .workspace-notice-icon,
+.workspace-notice.is-error .workspace-notice-undo,
 .workspace-notice.is-error .workspace-notice-dismiss,
 .workspace-notice.is-warning .workspace-notice-icon,
+.workspace-notice.is-warning .workspace-notice-undo,
 .workspace-notice.is-warning .workspace-notice-dismiss {
   color: var(--warning-fg);
 }
 
-.workspace-notice .secondary-button {
+.ignored-paths-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.ignored-paths-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  margin: 12px 0;
+}
+
+.ignored-path-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.ignored-path-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ignored-path-row span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.library-settings-dialog {
+  width: min(860px, calc(100vw - 48px));
+  height: min(680px, calc(100vh - 48px));
+}
+
+.library-settings-frame {
+  min-height: 0;
+}
+
+.library-settings-name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.library-settings-name-row .text-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.library-settings-path {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.library-settings-section-heading {
+  margin-top: 22px;
+}
+
+.library-settings-gitignore-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.library-settings-gitignore-heading,
+.library-settings-gitignore-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.library-settings-help-button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.library-settings-help-button:hover,
+.library-settings-help-button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.library-settings-gitignore-help {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--hover);
+  color: var(--tertiary);
   font-size: 11px;
-  padding: 4px 8px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+.library-settings-gitignore-editor {
+  min-height: 210px;
+  width: 100%;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.library-settings-gitignore-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.library-settings-gitignore-actions {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.about-dialog {
+  position: relative;
+  display: flex;
+  width: min(440px, calc(100vw - 40px));
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--divider));
+  background: var(--raised);
+  box-shadow: var(--shadow-elevated);
+}
+
+.about-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.about-dialog-close:hover,
+.about-dialog-close:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.about-dialog-brand {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 34px 32px 24px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-soft) 72%, var(--raised)), var(--raised));
+  border-bottom: 1px solid var(--divider-soft);
+}
+
+.about-dialog-brand img {
+  width: 76px;
+  height: 76px;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--divider) 72%, transparent);
+  border-radius: 18px;
+  box-shadow: var(--shadow-panel);
+  object-fit: cover;
+}
+
+.about-dialog-brand h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.about-dialog-brand p {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.about-dialog-brand span {
+  margin-top: 3px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.about-dialog-socials {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.about-dialog-social-button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--divider-soft);
+  border-radius: 50%;
+  background: var(--raised-2);
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.about-dialog-social-button:hover,
+.about-dialog-social-button:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+
+.about-dialog-copy {
+  padding: 20px 32px 24px;
+  text-align: center;
+}
+
+.about-dialog-copy p {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.about-dialog-etymology {
+  margin-top: 12px !important;
+  color: var(--tertiary) !important;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px !important;
+  letter-spacing: 0.01em;
+}
+
+.open-source-dialog {
+  display: flex;
+  width: min(560px, calc(100vw - 40px));
+  max-height: min(680px, calc(100vh - 40px));
+  flex-direction: column;
+}
+
+.open-source-dialog-content {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 26px 8px;
+}
+
+.open-source-dialog-content ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.open-source-dialog-content li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--divider-soft);
+  border-radius: 8px;
+  background: var(--raised-2);
+}
+
+.open-source-dialog-content li strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.open-source-dialog-content li span {
+  color: var(--secondary);
+  font-size: 11px;
 }
 
 /* Serpent-2wu4 / fvto: dismiss is a glyph, vertically centered with text. */
+.workspace-notice-undo,
 .workspace-notice-dismiss {
   display: inline-flex;
   align-items: center;
@@ -6932,6 +7517,8 @@ select.ai-config-input.ai-config-languages {
   line-height: 0;
 }
 
+.workspace-notice-undo:hover,
+.workspace-notice-undo:focus-visible,
 .workspace-notice-dismiss:hover,
 .workspace-notice-dismiss:focus-visible {
   color: var(--text);
@@ -6939,6 +7526,7 @@ select.ai-config-input.ai-config-languages {
   outline: none;
 }
 
+.workspace-notice-undo:focus-visible,
 .workspace-notice-dismiss:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-ring);
 }
@@ -7165,13 +7753,14 @@ select.ai-config-input.ai-config-languages {
 }
 
 .folder-card {
+  --folder-card-radius: calc(var(--folder-card-size, 160px) * 0.05);
   display: flex;
   width: var(--folder-card-size, 160px);
   flex-direction: column;
   gap: 0;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--folder-card-radius);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -7230,8 +7819,7 @@ select.ai-config-input.ai-config-languages {
   align-items: stretch;
   justify-content: center;
   overflow: hidden;
-  border-radius: calc(var(--folder-card-size, 160px) * 0.05)
-    calc(var(--folder-card-size, 160px) * 0.05) 0 0;
+  border-radius: var(--folder-card-radius) var(--folder-card-radius) 0 0;
 }
 
 .folder-card-shell {
@@ -7243,7 +7831,7 @@ select.ai-config-input.ai-config-languages {
 .folder-card-back {
   position: absolute;
   inset: 0;
-  border-radius: calc(var(--folder-card-size, 160px) * 0.05);
+  border-radius: var(--folder-card-radius);
   background: color-mix(in srgb, var(--canvas) 55%, var(--pane));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent);
 }
@@ -7880,10 +8468,35 @@ select.ai-config-input.ai-config-languages {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.asset-caption strong.asset-caption-filename {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  overflow: visible;
+  text-overflow: clip;
+}
+.asset-filename-prefix {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asset-filename-tail,
+.asset-filename-extension {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .asset-caption span {
   color: var(--tertiary);
   font-family: "IBM Plex Mono", monospace;
   font-size: 9px;
+}
+.asset-caption strong.asset-caption-filename span {
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 .asset-caption .search-snippet {
   display: block;
@@ -8264,6 +8877,31 @@ select.ai-config-input.ai-config-languages {
   font-weight: 600;
   line-height: 1.7;
   padding-block: 0.1em 0.2em;
+}
+
+/* Keep a single asset's extension visible in the Inspector while the stem
+   prefix absorbs the available width and receives the middle ellipsis. */
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title {
+  display: flex;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-prefix {
+  min-width: 0;
+  /* Do not stretch short prefixes across the whole title row. Let the
+     extension stay adjacent when the full name fits, and only shrink this
+     segment when the title actually overflows. */
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-tail,
+.inspector-hero-compact:not(.is-multi) .inspector-hero-title .asset-filename-extension {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .inspector-hero-stack {

@@ -50,6 +50,7 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     removeLinkedFolder: record('removeLinkedFolder'),
     trashLinkedFolderSubtree: record('trashLinkedFolderSubtree'),
     renameOrganization: record('renameOrganization'),
+    createSubcollection: record('createSubcollection'),
     editCollectionDetails: record('editCollectionDetails'),
     deleteOrganization: record('deleteOrganization'),
     renameSmartCollection: record('renameSmartCollection'),
@@ -301,11 +302,13 @@ describe('合集 / 智能合集分支：三项恒可见且恒启用', () => {
     });
     const menu = registry.resolveMenu(ctx);
     expect(menu.map((item) => item.id)).toEqual([
+      'collection.create-subcollection',
       'collection.rename',
       'collection.edit-details',
       'collection.delete',
     ]);
     expect(menu.map((item) => item.label)).toEqual([
+      '新建子合集',
       '重命名合集',
       '编辑合集详情',
       '删除合集',
@@ -467,10 +470,8 @@ describe('run 委托到 actions 回调包', () => {
   });
 });
 
-describe('删除确认：window.confirm 保留在 run 内', () => {
-  it('collection.delete：confirm 通过 → 删除；文案与历史一致', () => {
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal('window', { confirm });
+describe('删除命令的确认由界面动作统一处理', () => {
+  it('collection.delete：直接委托到界面动作', () => {
     const { ctx, calls } = makeCtx({
       menuKind: 'organization',
       subjectId: 'col-1',
@@ -478,16 +479,12 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
       locationKind: undefined,
     });
     void registry.get('collection.delete')?.run(ctx);
-    expect(confirm).toHaveBeenCalledWith(
-      '删除合集"年度合集"？\n（仅删除合集结构，不删除资产）',
-    );
     expect(calls).toEqual([
       { action: 'deleteOrganization', args: ['col-1', '年度合集'] },
     ]);
   });
 
-  it('collection.delete：confirm 取消 → 不调用任何 action', () => {
-    vi.stubGlobal('window', { confirm: vi.fn(() => false) });
+  it('collection.delete：不在命令层读取 window.confirm', () => {
     const { ctx, calls } = makeCtx({
       menuKind: 'organization',
       subjectId: 'col-1',
@@ -495,7 +492,9 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
       locationKind: undefined,
     });
     void registry.get('collection.delete')?.run(ctx);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([
+      { action: 'deleteOrganization', args: ['col-1', '年度合集'] },
+    ]);
   });
 
   it('smart-collection.delete：confirm 通过 → 删除；文案与历史一致', () => {
@@ -528,7 +527,7 @@ describe('删除确认：window.confirm 保留在 run 内', () => {
 });
 
 describe('注册表完整性', () => {
-  it('18 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('19 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
@@ -542,6 +541,7 @@ describe('注册表完整性', () => {
       'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
+      'collection.create-subcollection',
       'collection.rename',
       'collection.edit-details',
       'collection.delete',

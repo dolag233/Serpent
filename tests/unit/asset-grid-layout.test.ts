@@ -9,6 +9,21 @@ import {
   leftoverWidthPx,
   masonryVisualReadingOrderIds,
 } from "../../src/renderer/asset-grid-layout";
+import { resolveMasonryTabTarget } from "../../src/renderer/masonry-focus-order";
+
+describe("masonry keyboard focus order", () => {
+  it("moves Tab and Shift+Tab through the visual reading order", () => {
+    const order = ["a", "b", "c", "d"];
+    expect(resolveMasonryTabTarget(order, "a", false)).toBe("b");
+    expect(resolveMasonryTabTarget(order, "c", true)).toBe("b");
+    expect(resolveMasonryTabTarget(order, "d", false)).toBeNull();
+    expect(resolveMasonryTabTarget(order, "a", true)).toBeNull();
+  });
+
+  it("ignores cards that are not in the current visible order", () => {
+    expect(resolveMasonryTabTarget(["a", "b"], "missing", false)).toBeNull();
+  });
+});
 
 describe("assetGridLayoutStyle", () => {
   it("defers both modes to explicit layout renderers", () => {

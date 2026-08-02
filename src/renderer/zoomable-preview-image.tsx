@@ -22,18 +22,33 @@ import {
   viewerDisplayTransformCss,
   type ViewerDisplayTransform,
 } from "./viewer-display-transform";
+import { isViewerFitShortcut } from "./viewer-fit-shortcut";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
 };
 
 function isTypingTarget(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) {
+    // Viewer chrome controls are deliberately not typing surfaces: a user
+    // may click the zoom range and then press numpad `.` without first
+    // moving focus back onto the image.
+    const type = target.type.toLowerCase();
+    return ![
+      "button",
+      "checkbox",
+      "file",
+      "radio",
+      "range",
+      "reset",
+      "submit",
+    ].includes(type);
+  }
+  if (target instanceof HTMLSelectElement) return false;
   return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement &&
-      (target.isContentEditable || target.closest('[role="dialog"]') !== null))
+    target instanceof HTMLElement &&
+    (target.isContentEditable || target.closest('[role="dialog"]') !== null)
   );
 }
 
@@ -41,7 +56,9 @@ export const ZoomableImage = forwardRef<
   ZoomableImageHandle,
   {
     alt: string;
-    /** Space+F fit by default; GIF player uses F-only so Space can pause. */
+    /** Space fits by default; GIF/sequence players disable Space so it can
+     * remain available for playback. The numpad decimal shortcut is always
+     * enabled. */
     fitKeybinds?: "space-and-f" | "f-only";
     isFullscreen?: boolean;
     onFullscreen?: () => void;
@@ -50,6 +67,8 @@ export const ZoomableImage = forwardRef<
     colorSpaceOptions?: Array<{ id: string; label: string }>;
     colorSpaceValue?: string;
     onColorSpaceChange?: (colorSpace: string) => void;
+    onRotate?: () => void;
+    fitRequestToken?: number;
     displayTransform?: ViewerDisplayTransform;
     /**
      * Optional ready thumbnail / preview. Shown immediately; full `src`
@@ -69,6 +88,8 @@ export const ZoomableImage = forwardRef<
     colorSpaceOptions,
     colorSpaceValue,
     onColorSpaceChange,
+    onRotate,
+    fitRequestToken,
     displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
     placeholderSrc,
     src,
@@ -103,6 +124,11 @@ export const ZoomableImage = forwardRef<
   );
 
   useImperativeHandle(ref, () => ({ fitToWindow }), [fitToWindow]);
+
+  useEffect(() => {
+    if (fitRequestToken === undefined) return;
+    fitToWindow();
+  }, [fitRequestToken, fitToWindow]);
 
   // Reset decode latch whenever the full URL identity changes.
   useEffect(() => {
@@ -151,8 +177,12 @@ export const ZoomableImage = forwardRef<
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) return;
       const key = event.key;
+      // The numpad decimal key is the viewer-wide fit command.  Chromium
+      // normally reports NumpadDecimal; Windows/IME paths may expose the
+      // legacy Decimal value instead.
+      const numpadDecimalOk = isViewerFitShortcut(event);
       const spaceOk = fitKeybinds === "space-and-f" && key === " ";
-      const fitOk = key === "f" || key === "F" || spaceOk;
+      const fitOk = numpadDecimalOk || spaceOk;
       if (!fitOk) return;
       event.preventDefault();
       event.stopPropagation();
@@ -241,6 +271,16 @@ export const ZoomableImage = forwardRef<
           type="range"
           value={Math.min(sliderMax, Math.max(0.05, view.scale))}
         />
+        {onRotate && (
+          <button
+            onClick={onRotate}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+            {...iconActionAttrs(t("preview.rotateClockwise"))}
+          >
+            <Icon name="rotate-cw" size={14} />
+          </button>
+        )}
         <button
           onClick={fitToWindow}
           tabIndex={VIEWER_CHROME_TAB_INDEX}

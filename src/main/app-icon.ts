@@ -4,11 +4,18 @@ import path from "node:path";
 import { app, nativeImage, type NativeImage } from "electron";
 
 export function appIconImage(): NativeImage | undefined {
-  if (app.isPackaged) return undefined;
-  const png = path.join(process.cwd(), "assets", "icons", "app.png");
-  if (!existsSync(png)) return undefined;
-  const image = nativeImage.createFromPath(png);
-  return image.isEmpty() ? undefined : image;
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, "app.png"),
+        path.join(process.resourcesPath, "app.ico"),
+      ]
+    : [path.join(process.cwd(), "assets", "icons", "app.png")];
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) continue;
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) return image;
+  }
+  return undefined;
 }
 
 export function applyDevAppIcon(): void {

@@ -134,7 +134,8 @@ export type VideoKeyboardSeekAction =
   | { kind: "skip"; direction: 1 | -1 };
 
 /**
- * D = previous frame, F = next frame (Serpent-soii); Ctrl+←/→ = ±2s.
+ * D = previous frame, F = next frame (Serpent-soii);
+ * Ctrl+←/→ = ±2s.
  * Capture-phase callers must stopPropagation so shell ←/→ asset nav does not fire.
  * Uses Ctrl (not Cmd) on all platforms per product request.
  */

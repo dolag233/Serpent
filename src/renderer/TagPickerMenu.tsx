@@ -8,7 +8,11 @@ import {
   type ReactNode,
 } from "react";
 import type { TagSummary } from "../shared/asset-types";
-import { useContextMenu } from "./context-menu";
+import {
+  ContextMenuSubmenu,
+  useContextMenu,
+  type ContextMenuSubmenuChildren,
+} from "./context-menu";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { moveTagSuggestionIndex } from "./tag-suggestions";
@@ -26,8 +30,7 @@ import {
 // role="option" (not role="menuitem") and ContextMenu's focus/arrow handling
 // does not see them. A single `is-active` option follows pointer hover and
 // ArrowUp/ArrowDown, mirroring the menu's one-highlight rule. Escape is left
-// to ContextMenuBackdrop and closes the whole menu; the back button is the
-// explicit return path.
+// to ContextMenuBackdrop and closes the whole menu.
 // ---------------------------------------------------------------------------
 
 interface TagPickerMenuProps {
@@ -35,7 +38,6 @@ interface TagPickerMenuProps {
   tags: TagSummary[];
   /** Tags to hide from the assign picker (e.g. already on the asset). */
   excludedTagIds?: ReadonlySet<string>;
-  onBack: () => void;
   onPick: (tagId: string) => void;
 }
 
@@ -43,7 +45,6 @@ export function TagPickerMenu({
   mode,
   tags,
   excludedTagIds,
-  onBack,
   onPick,
 }: TagPickerMenuProps) {
   const t = useT();
@@ -67,7 +68,8 @@ export function TagPickerMenu({
   );
 
   useEffect(() => {
-    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   // Keep the keyboard-driven highlight visible in long lists.
@@ -121,16 +123,6 @@ export function TagPickerMenu({
   return (
     <div className="tag-picker">
       <div className="tag-picker-header">
-        <button
-          aria-label={t("tagPicker.backAria")}
-          title={t("tagPicker.backAria")}
-          className="tag-picker-back"
-          onClick={onBack}
-          type="button"
-        >
-          <Icon name="chevron-left" size={12} />
-          <span>{t("tagPicker.back")}</span>
-        </button>
         <span className="tag-picker-title">{title}</span>
       </div>
       <div className="tag-picker-search">
@@ -209,11 +201,25 @@ export function TagPickerMenu({
 interface TagPickerEntryProps {
   icon: ReactNode;
   label: string;
-  onOpen: () => void;
+  onOpen?: () => void;
+  children?: ContextMenuSubmenuChildren;
 }
 
-export function TagPickerEntry({ icon, label, onOpen }: TagPickerEntryProps) {
+export function TagPickerEntry({
+  icon,
+  label,
+  onOpen,
+  children,
+}: TagPickerEntryProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  if (children !== undefined) {
+    return (
+      <ContextMenuSubmenu icon={icon} label={label}>
+        {children}
+      </ContextMenuSubmenu>
+    );
+  }
 
   return (
     <button

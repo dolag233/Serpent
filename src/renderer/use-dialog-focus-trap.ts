@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 
 const FOCUSABLE_SELECTOR =
   'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+const DEFAULT_ACTION_SELECTOR =
+  'button.primary-button:not(:disabled), button[type="submit"]:not(:disabled)';
 
 /**
  * When any modal dialog is open: trap Tab inside the topmost dialog, move
@@ -25,6 +27,13 @@ export function useDialogFocusTrap(active: boolean): void {
       );
       if (!modal) return;
       if (modal.contains(document.activeElement)) return;
+      const defaultAction = modal.querySelector<HTMLElement>(
+        DEFAULT_ACTION_SELECTOR,
+      );
+      if (defaultAction) {
+        defaultAction.focus();
+        return;
+      }
       const focusable = modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
       focusable[0]?.focus();
     };

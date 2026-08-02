@@ -11,6 +11,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { useT } from "./i18n";
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,12 @@ interface ContextMenuContextValue {
 
 const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 
+// Only one submenu may own the floating submenu surface at a time. Pointer
+// leave keeps a short grace period so the pointer can cross the gap, but a
+// new hover must close the previous submenu synchronously instead of waiting
+// for that timer and briefly rendering two panels.
+let activeSubmenuClose: (() => void) | null = null;
+
 export function useContextMenu() {
   const ctx = useContext(ContextMenuContext);
   if (!ctx) throw new Error("useContextMenu must be used within a <ContextMenuProvider>");
@@ -144,8 +151,12 @@ export function ContextMenuBackdrop({
   // the context-menu element and dismisses.
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
-      const menu = document.querySelector(".context-menu");
-      if (menu && !menu.contains(e.target as Node)) {
+      const menus = Array.from(document.querySelectorAll<HTMLElement>(".context-menu"));
+      const target = e.target;
+      if (
+        menus.length > 0 &&
+        (!(target instanceof Node) || !menus.some((menu) => menu.contains(target)))
+      ) {
         dismiss();
       }
     };
@@ -169,8 +180,13 @@ export function ContextMenuBackdrop({
   // regions (canvas, nav, document) signal the user has moved on.
   useEffect(() => {
     const handleScroll = (e: Event) => {
-      const menu = document.querySelector(".context-menu");
-      if (menu && e.target instanceof Node && menu.contains(e.target)) {
+      const menus = Array.from(document.querySelectorAll<HTMLElement>(".context-menu"));
+      const target = e.target;
+      if (
+        menus.length > 0 &&
+        target instanceof Node &&
+        menus.some((menu) => menu.contains(target))
+      ) {
         return;
       }
       dismiss();
@@ -393,6 +409,10 @@ export function ContextMenuItem({
 }
 
 /** A Windows-style submenu that opens as soon as the pointer hovers its row. */
+export type ContextMenuSubmenuChildren =
+  | ReactNode
+  | ((close: () => void) => ReactNode);
+
 export function ContextMenuSubmenu({
   icon,
   label,
@@ -402,49 +422,174 @@ export function ContextMenuSubmenu({
   icon?: ReactNode;
   label: string;
   disabled?: boolean;
-  children: ReactNode;
+  children: ContextMenuSubmenuChildren;
 }) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 0, top: 0 });
+  const [positioned, setPositioned] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const submenuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const suppressFocusOpenRef = useRef(false);
 
-  const cancelClose = () => {
+  const cancelClose = useCallback(() => {
     if (closeTimer.current !== null) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
-  };
-  const scheduleClose = () => {
+  }, []);
+  const closeImmediately = useCallback(() => {
+    cancelClose();
+    setOpen(false);
+  }, [cancelClose]);
+  const scheduleClose = useCallback(() => {
     cancelClose();
     closeTimer.current = window.setTimeout(() => setOpen(false), 140);
-  };
-  const openSubmenu = () => {
+  }, [cancelClose]);
+  const scheduleCloseFromBoundary = useCallback(
+    (relatedTarget: EventTarget | null) => {
+      // The submenu is portaled to document.body, so it is no longer a DOM
+      // descendant of the trigger. Treat crossing between the trigger and its
+      // floating panel as staying inside the same hover region; otherwise the
+      // trigger's mouseleave timer closes the panel before it can be clicked.
+      if (
+        relatedTarget instanceof Node &&
+        (triggerRef.current?.contains(relatedTarget) ||
+          submenuRef.current?.contains(relatedTarget))
+      ) {
+        cancelClose();
+        return;
+      }
+      scheduleClose();
+    },
+    [cancelClose, scheduleClose],
+  );
+  const closeSubmenu = useCallback(() => {
+    closeImmediately();
+    if (activeSubmenuClose === closeImmediately) activeSubmenuClose = null;
+    suppressFocusOpenRef.current = true;
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
+  }, [closeImmediately]);
+  const openSubmenu = useCallback(() => {
     if (disabled) return;
+    if (suppressFocusOpenRef.current) {
+      suppressFocusOpenRef.current = false;
+      return;
+    }
+    if (activeSubmenuClose && activeSubmenuClose !== closeImmediately) {
+      activeSubmenuClose();
+    }
+    activeSubmenuClose = closeImmediately;
     cancelClose();
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
       const width = 248;
-      const gap = 4;
-      const left = rect.right + gap + width <= window.innerWidth
-        ? rect.right + gap
-        : Math.max(gap, rect.left - width - gap);
+      // Keep the floating panel flush with the trigger. A visible gap lets
+      // pointer events fall through to the asset grid while the cursor
+      // crosses over, which exposes the grid's grab cursor and closes the
+      // submenu before it can be clicked.
+      const left = rect.right + width <= window.innerWidth
+        ? rect.right
+        : Math.max(0, rect.left - width);
       const top = Math.min(
-        Math.max(gap, rect.top),
-        Math.max(gap, window.innerHeight - 360),
+        Math.max(4, rect.top),
+        Math.max(4, window.innerHeight - 360),
       );
       setPosition({ left, top });
     }
+    setPositioned(false);
     setOpen(true);
-  };
+    // Native click handling can restore focus to the trigger after React
+    // commits the portal. Give searchable submenus one post-click focus pass
+    // so their input remains the active control.
+    window.setTimeout(() => {
+      submenuRef.current?.querySelector<HTMLElement>("input")?.focus();
+    }, 0);
+  }, [cancelClose, closeImmediately, disabled]);
 
-  useEffect(() => () => cancelClose(), []);
+  useEffect(() => {
+    if (!open) return;
+
+    const reposition = () => {
+      const submenu = submenuRef.current;
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      if (!submenu || !trigger) return false;
+
+      const rect = submenu.getBoundingClientRect();
+
+      const viewportGap = 4;
+      const left =
+        trigger.right + rect.width <= window.innerWidth - viewportGap
+          ? trigger.right
+          : Math.max(viewportGap, trigger.left - rect.width);
+      const top = Math.min(
+        Math.max(viewportGap, trigger.top),
+        Math.max(viewportGap, window.innerHeight - rect.height - viewportGap),
+      );
+
+      setPosition((current) =>
+        current.left === left && current.top === top ? current : { left, top },
+      );
+      setPositioned(true);
+      return true;
+    };
+
+    // The picker contents (especially a long tag list) can settle one frame
+    // after the submenu mounts. Measure after layout and keep the panel
+    // anchored if its height changes while filtering or loading data.
+    const observer = new ResizeObserver(() => {
+      reposition();
+    });
+    const frame = window.requestAnimationFrame(() => {
+      if (reposition() && submenuRef.current) {
+        observer.observe(submenuRef.current);
+      }
+    });
+    const handleResize = () => reposition();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      if (activeSubmenuClose === closeImmediately) activeSubmenuClose = null;
+      cancelClose();
+    },
+    [cancelClose, closeImmediately],
+  );
+
+  const submenu = open
+    ? createPortal(
+        <div
+          aria-label={label}
+          className="context-menu context-menu-submenu"
+          ref={submenuRef}
+          role="menu"
+          style={{
+            left: position.left,
+            top: position.top,
+            visibility: positioned ? "visible" : "hidden",
+          }}
+          onMouseEnter={cancelClose}
+          onMouseLeave={(event) => scheduleCloseFromBoundary(event.relatedTarget)}
+        >
+          {/* The render prop receives an event callback; it is not invoked here. */}
+          {/* eslint-disable-next-line react-hooks/refs */}
+          {typeof children === "function" ? children(closeSubmenu) : children}
+        </div>,
+        document.body,
+      )
+    : null;
 
   return (
     <div
       className="context-menu-submenu-trigger"
       onMouseEnter={openSubmenu}
-      onMouseLeave={scheduleClose}
+      onMouseLeave={(event) => scheduleCloseFromBoundary(event.relatedTarget)}
     >
       <button
         aria-expanded={open}
@@ -456,6 +601,7 @@ export function ContextMenuSubmenu({
         role="menuitem"
         tabIndex={-1}
         type="button"
+        onClick={openSubmenu}
         onFocus={openSubmenu}
       >
         {icon && <span className="context-menu-item-icon">{icon}</span>}
@@ -464,18 +610,7 @@ export function ContextMenuSubmenu({
           <span className="context-menu-submenu-chevron">›</span>
         </span>
       </button>
-      {open ? (
-        <div
-          aria-label={label}
-          className="context-menu context-menu-submenu"
-          role="menu"
-          style={{ left: position.left, top: position.top }}
-          onMouseEnter={cancelClose}
-          onMouseLeave={scheduleClose}
-        >
-          {children}
-        </div>
-      ) : null}
+      {submenu}
     </div>
   );
 }

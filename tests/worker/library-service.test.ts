@@ -326,7 +326,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 27 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 31 }]);
     const queueIndexes = database.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?)",
     ).all('jobs_asset_kind_status', 'revision_artifacts_revision_kind_status') as Array<{ name: string }>;
@@ -485,7 +485,7 @@ describe('LibraryService lifecycle', () => {
     expect(second.openLibrary(created.libraryPath)).toMatchObject({ libraryId: created.libraryId });
 
     const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(verification.pragma('user_version')).toEqual([{ user_version: 27 }]);
+    expect(verification.pragma('user_version')).toEqual([{ user_version: 31 }]);
     expect(
       verification.prepare('SELECT sequence FROM library_change_sequence WHERE library_id = ?')
         .get(created.libraryId),
@@ -539,7 +539,7 @@ describe('LibraryService lifecycle', () => {
       expect(secondResult.libraryId).toBe(created.libraryId);
 
       const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-      expect(verification.pragma('user_version')).toEqual([{ user_version: 27 }]);
+      expect(verification.pragma('user_version')).toEqual([{ user_version: 31 }]);
       expect(verification.pragma('quick_check(1)')).toEqual([{ quick_check: 'ok' }]);
       expect(
         verification.prepare(
@@ -556,7 +556,7 @@ describe('LibraryService lifecycle', () => {
         'SELECT version FROM schema_migrations ORDER BY version',
       ).all() as Array<{ version: number }>;
       expect(migrationRows.map((row) => row.version)).toEqual(
-        Array.from({ length: 27 }, (_, index) => index + 1),
+        Array.from({ length: 31 }, (_, index) => index + 1),
       );
       const coordinationTriggers = verification.prepare(
         `SELECT name FROM sqlite_master
@@ -771,7 +771,7 @@ describe('LibraryService lifecycle', () => {
     migratedService.closeAll();
 
     const migratedDatabase = new TestDatabase(databasePath);
-    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 27 }]);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: 31 }]);
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
     expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
@@ -889,7 +889,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 27 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 31 }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -917,7 +917,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 27 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: 31 }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);

@@ -9,31 +9,12 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 test.describe.configure({ timeout: 120_000 });
 
 /**
- * A minimal valid 1×1 PNG whose IDAT payload embeds `token`, so every source
- * file in a batch has distinct content. Identical bytes would trip the
- * content-duplicate detector (SHA-256) and divert the import into the conflict
- * dialog instead of producing N cards.
+ * Use distinct text payloads for selection-only E2E fixtures. The tests cover
+ * geometry and keyboard selection, not media decoding, so a plain text asset
+ * avoids routing malformed image fixtures through the thumbnail worker.
  */
-function pngWithToken(token: string): Buffer {
-  const header = Buffer.from(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489",
-    "hex",
-  );
-  const idatBody = Buffer.concat([
-    Buffer.from([0x78, 0x9c]),
-    Buffer.from(`marquee-${token}`, "utf8"),
-    Buffer.from([0x00, 0x00, 0x00, 0x00]),
-  ]);
-  const idatLen = Buffer.alloc(4);
-  idatLen.writeUInt32BE(idatBody.length, 0);
-  const idat = Buffer.concat([
-    idatLen,
-    Buffer.from("IDAT", "ascii"),
-    idatBody,
-    Buffer.from("ffffffff", "hex"),
-  ]);
-  const iend = Buffer.from("0000000049454e44ae426082", "hex");
-  return Buffer.concat([header, idat, iend]);
+function textWithToken(token: string): Buffer {
+  return Buffer.from(`marquee-${token}`, "utf8");
 }
 
 // ---------------------------------------------------------------------------
@@ -59,9 +40,9 @@ async function setupLibrary(assetCount: number) {
   const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
     const sourcePath = path.join(
       sourceRoot,
-      `marquee-${index.toString().padStart(2, "0")}.png`,
+      `marquee-${index.toString().padStart(2, "0")}.txt`,
     );
-    writeFileSync(sourcePath, pngWithToken(index.toString().padStart(2, "0")));
+    writeFileSync(sourcePath, textWithToken(index.toString().padStart(2, "0")));
     return sourcePath;
   });
 
@@ -111,6 +92,36 @@ async function selectedCount(
     () => document.querySelectorAll(".asset-card.is-selected").length,
   );
 }
+
+test("masonry Tab follows the left-to-right reading order", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(5);
+  try {
+    await createAndImport(window, "瀑布流键盘顺序验收", 5);
+    const masonryButton = window.getByRole("button", { name: "瀑布流视图" });
+    if ((await masonryButton.getAttribute("aria-pressed")) !== "true") {
+      await masonryButton.click();
+    }
+    await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
+    await expect(window.locator(".masonry-columns")).toBeVisible();
+
+    const firstCard = window.locator('.asset-card[title="marquee-00.txt"]');
+    const secondCard = window.locator('.asset-card[title="marquee-01.txt"]');
+    await firstCard.click();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await firstCard.focus();
+    await window.keyboard.press("Tab");
+    await expect(secondCard).toBeFocused();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
+    await window.keyboard.press("Shift+Tab");
+    await expect(firstCard).toBeFocused();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Test 1 — Marquee drag-select in grid mode

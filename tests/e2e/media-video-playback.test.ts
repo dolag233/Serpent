@@ -168,6 +168,13 @@ async function expectDecodedPoster(card: Locator, name: string) {
 async function expectPlayableAndSeekable(video: Locator) {
   await expect(video).toBeVisible({ timeout: 30_000 });
   await expect
+    .poll(() =>
+      video.evaluate(
+        (element) => element instanceof HTMLVideoElement && element.loop,
+      ),
+    )
+    .toBe(true);
+  await expect
     .poll(
       () =>
         video.evaluate(

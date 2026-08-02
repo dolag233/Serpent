@@ -33,6 +33,7 @@ export interface SidebarCommandActions {
     name: string,
   ) => void;
   readonly renameOrganization: (id: string, name: string) => void;
+  readonly createSubcollection: (collectionId: string) => void;
   readonly editCollectionDetails: (collectionId: string) => void;
   readonly deleteOrganization: (id: string, name: string) => void;
   readonly renameSmartCollection: (id: string, name: string) => void;
@@ -206,6 +207,15 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.folder.deleteFromDisk'),
     group: 'delete',
+    shortcut: {
+      mac: {
+        label: '⌥⌘Delete',
+        key: 'Delete',
+        metaKey: true,
+        altKey: true,
+      },
+      windows: { label: 'Shift+Delete', key: 'Delete', shiftKey: true },
+    },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
       (ctx.locationKind === 'managed' ||
@@ -227,10 +237,26 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       ctx.actions.removeLinkedFolder(ctx.subjectId, ctx.subjectName),
   },
   {
+    id: 'collection.create-subcollection',
+    title: (ctx) =>
+      translateForLocale(ctx.locale, 'command.collection.newSubcollection'),
+    group: 'organize',
+    shortcut: {
+      mac: { label: '⌘⇧N', key: 'n', metaKey: true, shiftKey: true },
+      windows: { label: 'Ctrl+Shift+N', key: 'n', ctrlKey: true, shiftKey: true },
+    },
+    visible: (ctx) => ctx.menuKind === 'organization',
+    run: (ctx) => ctx.actions.createSubcollection(ctx.subjectId),
+  },
+  {
     id: 'collection.rename',
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.collection.rename'),
     group: 'organize',
+    shortcut: {
+      mac: { label: 'F2', key: 'F2' },
+      windows: { label: 'F2', key: 'F2' },
+    },
     visible: (ctx) => ctx.menuKind === 'organization',
     run: (ctx) =>
       ctx.actions.renameOrganization(ctx.subjectId, ctx.subjectName),
@@ -248,17 +274,14 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     title: (ctx) =>
       translateForLocale(ctx.locale, 'command.collection.delete'),
     group: 'delete',
-    visible: (ctx) => ctx.menuKind === 'organization',
-    run: (ctx) => {
-      const confirmed = window.confirm(
-        translateForLocale(ctx.locale, 'command.collection.deleteConfirm', {
-          name: ctx.subjectName,
-        }),
-      );
-      if (confirmed) {
-        ctx.actions.deleteOrganization(ctx.subjectId, ctx.subjectName);
-      }
+    shortcut: {
+      mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
+      windows: { label: 'Delete', key: 'Delete' },
     },
+    visible: (ctx) => ctx.menuKind === 'organization',
+    // Confirmation is resolved by the renderer action, which can distinguish
+    // empty collections (direct delete) from collections with members/children.
+    run: (ctx) => ctx.actions.deleteOrganization(ctx.subjectId, ctx.subjectName),
   },
   {
     id: 'smart-collection.rename',

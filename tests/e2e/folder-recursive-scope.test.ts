@@ -195,3 +195,61 @@ test("folder browse stays direct until include-subfolders is checked", async () 
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test("asset cards can be dropped onto folder cards in the browse canvas", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-folder-card-drop-e2e-"),
+  );
+  const libraryName = "文件夹卡片拖放验收";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  mkdirSync(sourceRoot);
+  const firstSourcePath = path.join(sourceRoot, "move-me.txt");
+  const secondSourcePath = path.join(sourceRoot, "stay.txt");
+  writeFileSync(firstSourcePath, "move me");
+  writeFileSync(secondSourcePath, "stay");
+
+  const application = await launchApp(
+    temporaryRoot,
+    libraryPath,
+    [firstSourcePath, secondSourcePath].join(path.delimiter),
+  );
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolderViaSidebar(window, "父文件夹");
+    await sidebarFolderRow(window, "父文件夹").click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "父文件夹",
+    );
+    await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
+    await expect(window.getByRole("button", { name: /move-me\.txt/i })).toBeVisible();
+
+    const parentMenu = await openFolderContextMenu(window, "父文件夹");
+    await parentMenu.getByRole("menuitem", { name: "新建子文件夹" }).click();
+    await commitInlineFolderEdit(window, "子文件夹");
+    await sidebarFolderRow(window, "父文件夹").click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "父文件夹",
+    );
+    const folderCard = window
+      .locator(".folder-card")
+      .filter({ hasText: "子文件夹" });
+    const assetCard = window.getByRole("button", { name: /move-me\.txt/i });
+    await expect(folderCard).toBeVisible();
+    await assetCard.dragTo(folderCard);
+    await expect(window.locator(".workspace-notice")).toContainText(
+      "已移动 1 项资产",
+    );
+    await expect(assetCard).toHaveCount(0);
+    expect(
+      existsSync(
+        path.join(libraryPath, "Assets", "父文件夹", "子文件夹", "move-me.txt"),
+      ),
+    ).toBe(true);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});

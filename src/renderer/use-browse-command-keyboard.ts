@@ -25,6 +25,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly platform: CommandPlatform;
   readonly previewOpen: boolean;
   readonly showTrash: boolean;
+  readonly activeCollectionId: string | null;
   readonly libraryOpen: boolean;
   readonly busy: boolean;
   readonly selectedAsset: AssetSummary | undefined;
@@ -45,6 +46,7 @@ export type UseBrowseCommandKeyboardArgs = {
     folderIds: readonly string[],
   ) => void;
   readonly onPermanentDelete: (assetIds: readonly string[]) => void;
+  readonly onRemoveFromCurrentCollection: (assetIds: readonly string[]) => void;
   readonly onRefreshDisk: () => void;
 };
 
@@ -56,6 +58,7 @@ export function useBrowseCommandKeyboard(
     platform,
     previewOpen,
     showTrash,
+    activeCollectionId,
     libraryOpen,
     busy,
     selectedAsset,
@@ -73,6 +76,7 @@ export function useBrowseCommandKeyboard(
     onRevealInFolder,
     onDiskDelete,
     onPermanentDelete,
+    onRemoveFromCurrentCollection,
     onRefreshDisk,
   } = args;
 
@@ -133,6 +137,23 @@ export function useBrowseCommandKeyboard(
       ) {
         event.preventDefault();
         onRevealInFolder(selectedAsset.assetId);
+        return;
+      }
+
+      if (
+        !showTrash &&
+        activeCollectionId !== null &&
+        matchAssetActionKeyboardCommand(
+          "asset.move-to-trash",
+          event,
+          platform,
+        ) &&
+        selectedAssets.length > 0
+      ) {
+        event.preventDefault();
+        onRemoveFromCurrentCollection(
+          selectedAssets.map((asset) => asset.assetId),
+        );
         return;
       }
 
@@ -233,6 +254,7 @@ export function useBrowseCommandKeyboard(
     platform,
     previewOpen,
     showTrash,
+    activeCollectionId,
     libraryOpen,
     busy,
     selectedAsset,
@@ -250,6 +272,7 @@ export function useBrowseCommandKeyboard(
     onRevealInFolder,
     onDiskDelete,
     onPermanentDelete,
+    onRemoveFromCurrentCollection,
     onRefreshDisk,
   ]);
 }

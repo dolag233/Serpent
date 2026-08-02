@@ -865,19 +865,18 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // Create a collection and add the asset to it
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
-      .getByPlaceholder("输入合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .fill("偏好测试合集");
     await window
-      .getByPlaceholder("输入合集名称，回车创建")
+      .getByPlaceholder("新建合集")
       .press("Enter");
     await expect(
       window.getByRole("button", { name: /偏好测试合集/ }),
     ).toBeVisible();
 
     await cardById.click({ button: "right" });
-    await window
-      .getByRole("menuitem", { name: "加入合集：偏好测试合集" })
-      .click();
+    await window.getByRole("menuitem", { name: "添加到合集" }).hover();
+    await window.getByRole("option", { name: "偏好测试合集" }).click();
     await expect(window.locator(".workspace-notice")).toContainText("资产已加入合集");
 
     // Navigate to collection scope through sidebar and verify consistency

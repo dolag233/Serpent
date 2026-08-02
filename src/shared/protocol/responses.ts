@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
@@ -597,6 +597,27 @@ const assetOperationSuccessSchemas = [
     rules: z.array(linkedFolderRuleSchema),
     hiddenCount: z.number().int().nonnegative(),
     restoredCount: z.number().int().nonnegative(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.list'),
+    paths: z.array(ignoredPathSchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.gitignore'),
+    content: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.gitignore.updated'),
+    content: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ignore.updated'),
+    ignored: z.boolean(),
+    path: ignoredPathSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1229,6 +1250,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.renamed'),
+    library: internalLibrarySummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.deleted'),
     libraryId: nonBlankString,
     displayName: nonBlankString,
@@ -1467,6 +1493,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.renamed'),
+    library: rendererLibrarySummarySchema,
   }),
   z.strictObject({
     ok: z.literal(true),

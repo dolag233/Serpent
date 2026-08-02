@@ -4,6 +4,7 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { formatBatchTagNotice } from "./batch-tag-notice";
 import { translateForLocale, useLocale } from "./i18n";
+import type { UndoableFileOp } from "./use-asset-drag-drop-handlers";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -19,6 +20,7 @@ export interface UseBatchActionsParams {
   clearAssetSelection: () => void;
   activeTagId: string | null;
   activeCollectionId: string | null;
+  setLastUndoableOp: (op: UndoableFileOp | null) => void;
 }
 
 export interface UseBatchActionsResult {
@@ -45,8 +47,15 @@ export function useBatchActions({
   clearAssetSelection,
   activeTagId,
   activeCollectionId,
+  setLastUndoableOp,
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
+
+  async function refreshCollections() {
+    if (!api || !library) return;
+    const result = await api.listCollections({ libraryId: library.libraryId });
+    if (result.ok) setCollections(result.value);
+  }
 
   async function batchAssignTagToSelection(tagId: string, assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;
@@ -215,11 +224,13 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      setLastUndoableOp({ kind: "trash", assetIds: [...assetIds] });
       setNotice(
         translateForLocale(locale, "toast.batchTrashed", {
           count: result.value.trashedCount,
         }),
       );
+      await refreshCollections();
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
@@ -244,11 +255,14 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      // Disk deletion is irreversible, so it must invalidate any prior undo.
+      setLastUndoableOp(null);
       setNotice(
         translateForLocale(locale, "toast.assetsDeletedFromDisk", {
           count: result.value.deletedCount,
         }),
       );
+      await refreshCollections();
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {

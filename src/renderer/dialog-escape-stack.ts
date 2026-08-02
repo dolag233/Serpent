@@ -16,8 +16,11 @@ export type DialogEscapeSnapshot = {
   exportDialogOpen: boolean;
   importLibraryChooserOpen: boolean;
   appSettingsOpen: boolean;
+  librarySettingsOpen: boolean;
   appLogOpen: boolean;
   scriptSandboxPreviewOpen: boolean;
+  aboutOpen: boolean;
+  openSourceLicensesOpen: boolean;
   mediaJobsOpen: boolean;
   linkedRulesEditorOpen: boolean;
   convertLinkedOpen: boolean;
@@ -46,8 +49,11 @@ export type DialogEscapeAction =
   | { kind: "close-export" }
   | { kind: "close-import-library-chooser" }
   | { kind: "close-app-settings" }
+  | { kind: "close-library-settings" }
   | { kind: "close-app-log" }
   | { kind: "close-script-sandbox-preview" }
+  | { kind: "close-about" }
+  | { kind: "close-open-source-licenses" }
   | { kind: "close-media-jobs" }
   | { kind: "close-linked-rules" }
   | { kind: "close-convert-linked" }
@@ -87,10 +93,14 @@ export function resolveDialogEscapeAction(
   if (snapshot.importLibraryChooserOpen)
     return { kind: "close-import-library-chooser" };
   if (snapshot.appSettingsOpen) return { kind: "close-app-settings" };
+  if (snapshot.librarySettingsOpen) return { kind: "close-library-settings" };
   if (snapshot.appLogOpen) return { kind: "close-app-log" };
   if (snapshot.scriptSandboxPreviewOpen) {
     return { kind: "close-script-sandbox-preview" };
   }
+  if (snapshot.aboutOpen) return { kind: "close-about" };
+  if (snapshot.openSourceLicensesOpen)
+    return { kind: "close-open-source-licenses" };
   if (snapshot.mediaJobsOpen) return { kind: "close-media-jobs" };
   if (snapshot.linkedRulesEditorOpen) return { kind: "close-linked-rules" };
   if (snapshot.convertLinkedOpen) return { kind: "close-convert-linked" };

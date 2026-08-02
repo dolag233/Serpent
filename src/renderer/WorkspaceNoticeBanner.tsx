@@ -44,9 +44,13 @@ export function WorkspaceNoticeBanner({
       <span className="workspace-notice-text">{message.text}</span>
       <span className="workspace-notice-actions">
         {undoLabel && onUndo ? (
-          <button className="secondary-button" onClick={onUndo} type="button">
-            {undoLabel}
-          </button>
+          <IconActionButton
+            className="workspace-notice-undo"
+            icon="undo"
+            label={undoLabel}
+            onClick={onUndo}
+            size={14}
+          />
         ) : null}
         <IconActionButton
           className="workspace-notice-dismiss"

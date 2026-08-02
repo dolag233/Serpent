@@ -13,10 +13,15 @@ import {
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { useLocale, useT } from "./i18n";
 
-export type UndoableFileOp = {
-  readonly kind: "move" | "copy";
-  readonly operationId: string;
-};
+export type UndoableFileOp =
+  | {
+      readonly kind: "move" | "copy";
+      readonly operationId: string;
+    }
+  | {
+      readonly kind: "trash";
+      readonly assetIds: readonly string[];
+    };
 
 export type UseAssetDragDropHandlersParams = {
   api: SerpentLibraryApi | null;

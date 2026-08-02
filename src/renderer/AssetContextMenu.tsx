@@ -4,6 +4,7 @@ import type {
   CollectionSummary,
   LinkedFolderSummary,
   AssetSummary,
+  ManagedFolderSummary,
 } from "../shared/asset-types";
 import {
   ContextMenu,
@@ -16,6 +17,7 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { TagPickerEntry, TagPickerMenu } from "./TagPickerMenu";
+import { CollectionPickerMenu } from "./CollectionPickerMenu";
 import { ColorSpaceSubmenuItems } from "./ColorSpacePickerMenu";
 import { isMacPlatform } from "./commands/command-types";
 import { createCommandRegistry } from "./commands/command-registry";
@@ -276,15 +278,25 @@ interface AssetContextMenuProps {
   tags: TagSummary[];
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
+  managedFolders: ManagedFolderSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
   onRenameSmartCollection: (id: string, name: string) => void;
   onUpdateSmartCollection: (id: string) => void;
   onDeleteSmartCollection: (id: string, name: string) => void;
   onRenameOrganization: (id: string, name: string) => void;
+  onCreateSubcollection: (collectionId: string) => void;
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  onSetIgnore: (args: {
+    locationKind: "managed" | "linked";
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: "asset" | "folder" | "extension";
+    ignored: boolean;
+    name: string;
+  }) => void;
   onRenameFolder: (folderId: string, currentName: string) => void;
   onOpenFolderInFileManager: (folderId: string) => void;
   onCopyFolderPath: (folderId: string) => void;
@@ -365,15 +377,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     tags,
     collections,
     linkedFolders,
+    managedFolders,
     activeCollectionId,
     assets,
     onRenameSmartCollection,
     onUpdateSmartCollection,
     onDeleteSmartCollection,
     onRenameOrganization,
+    onCreateSubcollection,
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onSetIgnore,
     onRenameFolder,
     onOpenFolderInFileManager,
     onCopyFolderPath,
@@ -574,23 +589,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
         {tagPicker ? (
           <TagPickerMenu
             mode={tagPicker.mode}
-            onBack={() => {
-              const entryLabel =
-                tagPicker.mode === "assign"
-                  ? t("command.asset.addTags")
-                  : t("command.asset.removeTags");
-              setTagPicker(null);
-              // The menu's initial-focus effect does not re-run when the body
-              // swaps back; return keyboard focus to the entry that opened
-              // the picker so arrow-key navigation keeps working.
-              requestAnimationFrame(() => {
-                document
-                  .querySelector<HTMLElement>(
-                    `.context-menu [role="menuitem"][aria-label="${entryLabel}"]`,
-                  )
-                  ?.focus();
-              });
-            }}
             onPick={(tagId) => {
               if (tagPicker.mode === "assign") {
                 const [singleAssetId] = tagPicker.assetIds;
@@ -698,6 +696,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,
@@ -726,6 +725,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="smart" size={14} />}
                   label={renameItem.label}
+                  shortcut={renameItem.shortcutLabel ?? undefined}
                   onAction={() => runSidebarCommand("smart-collection.rename")}
                 />
               )}
@@ -742,6 +742,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteItem.label}
+                  shortcut={deleteItem.shortcutLabel ?? undefined}
                   danger
                   onAction={() => runSidebarCommand("smart-collection.delete")}
                 />
@@ -786,6 +787,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,
@@ -804,14 +806,28 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             void sidebarCommandRegistry.get(id)?.run(commandContext);
           };
           const renameItem = resolvedById.get("collection.rename");
+          const createSubcollectionItem = resolvedById.get(
+            "collection.create-subcollection",
+          );
           const editDetailsItem = resolvedById.get("collection.edit-details");
           const deleteItem = resolvedById.get("collection.delete");
           return (
             <>
+              {createSubcollectionItem && (
+                <ContextMenuItem
+                  icon={<Icon name="collection" size={14} />}
+                  label={createSubcollectionItem.label}
+                  shortcut={createSubcollectionItem.shortcutLabel ?? undefined}
+                  onAction={() =>
+                    runSidebarCommand("collection.create-subcollection")
+                  }
+                />
+              )}
               {renameItem && (
                 <ContextMenuItem
                   icon={<Icon name="collection" size={14} />}
                   label={renameItem.label}
+                  shortcut={renameItem.shortcutLabel ?? undefined}
                   onAction={() => runSidebarCommand("collection.rename")}
                 />
               )}
@@ -826,6 +842,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteItem.label}
+                  shortcut={deleteItem.shortcutLabel ?? undefined}
                   danger
                   onAction={() => runSidebarCommand("collection.delete")}
                 />
@@ -891,6 +908,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               removeLinkedFolder: onRemoveLinkedFolder,
               trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
+              createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
               deleteOrganization: onDeleteOrganization,
               renameSmartCollection: onRenameSmartCollection,
@@ -961,6 +979,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   <ContextMenuItem
                     icon={<Icon name="folder" size={14} />}
                     label={createSubfolderItem.label}
+                    shortcut={createSubfolderItem.shortcutLabel ?? undefined}
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
@@ -975,6 +994,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="edit" size={14} />}
                       label={renameItem.label}
+                      shortcut={renameItem.shortcutLabel ?? undefined}
                       onAction={() => runSidebarCommand("folder.rename")}
                     />
                     <PluginMenuItems
@@ -1028,6 +1048,25 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   items={pluginItemsForHostGroup(pluginFolderMenuItems, "organize", "after")}
                   onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
                 />
+                <ContextMenuItem
+                  icon={<Icon name="close" size={14} />}
+                  label={t("menu.ignoreFolder")}
+                  onAction={() => {
+                    const managed = desc.locationKind === "managed"
+                      ? managedFolders.find((folder) => folder.folderId === desc.folderId)
+                      : undefined;
+                    onSetIgnore({
+                      locationKind: desc.locationKind,
+                      linkedFolderId: desc.locationKind === "linked" ? desc.folderId : null,
+                      relativePath: desc.locationKind === "linked"
+                        ? desc.linkedRelativePath ?? ""
+                        : managed?.relativePath ?? desc.name,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: desc.name,
+                    });
+                  }}
+                />
               </ContextMenuSection>
               {(trashItem
                 || deleteFromDiskItem
@@ -1043,6 +1082,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={trashItem.label}
+                      shortcut={trashItem.shortcutLabel ?? undefined}
                       danger
                       disabled={trashItem.disabled}
                       disabledReason={trashItem.disabledReason ?? undefined}
@@ -1053,6 +1093,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={deleteFromDiskItem.label}
+                      shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                       danger
                       disabled={deleteFromDiskItem.disabled}
                       disabledReason={
@@ -1201,6 +1242,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const clearSelectionItem = resolvedById.get(
               "assets.clear-selection",
             );
+            const addableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          targetAssetIds,
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showAdd,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
+            const removableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          targetAssetIds,
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showRemove,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
 
             return (
               <>
@@ -1292,57 +1361,75 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <TagPickerEntry
                   icon={<Icon name="tag" size={14} />}
                   label={assignTagItem.label}
-                  onOpen={() => runMultiCommand("assets.assign-tag")}
-                />
+                >
+                  {() => (
+                    <TagPickerMenu
+                      mode="assign"
+                      onPick={(tagId) => onBatchAssignTag(tagId, targetAssetIds)}
+                      tags={tags}
+                    />
+                  )}
+                </TagPickerEntry>
                 <TagPickerEntry
                   icon={<Icon name="close" size={14} />}
                   label={removeTagItem.label}
-                  onOpen={() => runMultiCommand("assets.remove-tag")}
-                />
+                >
+                  {() => (
+                    <TagPickerMenu
+                      mode="remove"
+                      onPick={(tagId) => onBatchRemoveTag(tagId, targetAssetIds)}
+                      tags={tags}
+                    />
+                  )}
+                </TagPickerEntry>
               </ContextMenuSection>
             )}
             {collections.length > 0 && memberIdsByCollection && (
               <ContextMenuSection label={t("command.group.batchCollections")}>
-                {collections.map((collection) => {
-                  const actions = resolveCollectionMenuForSelection(
-                    targetAssetIds,
-                    collection.collectionId,
-                    memberIdsByCollection,
-                  );
-                  if (!actions.showAdd && !actions.showRemove) return null;
-                  return (
-                    <Fragment key={`batch-col-${collection.collectionId}`}>
-                      {actions.showAdd && (
-                        <ContextMenuItem
-                          icon={<Icon name="collection" size={14} />}
-                          label={t("command.collection.addTo", {
-                            name: collection.name,
-                          })}
-                          onAction={() => {
-                            onBatchAddToCollection(
-                              collection.collectionId,
-                              targetAssetIds,
-                            );
-                          }}
-                        />
+                {addableCollectionIds && addableCollectionIds.size > 0 && (
+                  <ContextMenuSubmenu
+                    icon={<Icon name="collection" size={14} />}
+                    label={t("menu.addToCollection")}
+                  >
+                    <CollectionPickerMenu
+                      collections={collections}
+                      excludedCollectionIds={new Set(
+                        collections
+                          .filter(
+                            (collection) =>
+                              !addableCollectionIds.has(collection.collectionId),
+                          )
+                          .map((collection) => collection.collectionId),
                       )}
-                      {actions.showRemove && (
-                        <ContextMenuItem
-                          icon={<Icon name="close" size={14} />}
-                          label={t("command.collection.removeFrom", {
-                            name: collection.name,
-                          })}
-                          onAction={() => {
-                            onBatchRemoveFromCollection(
-                              collection.collectionId,
-                              targetAssetIds,
-                            );
-                          }}
-                        />
+                      onPick={(collectionId) =>
+                        onBatchAddToCollection(collectionId, targetAssetIds)
+                      }
+                      title={t("menu.addToCollection")}
+                    />
+                  </ContextMenuSubmenu>
+                )}
+                {removableCollectionIds && removableCollectionIds.size > 0 && (
+                  <ContextMenuSubmenu
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.removeFromCollection")}
+                  >
+                    <CollectionPickerMenu
+                      collections={collections}
+                      excludedCollectionIds={new Set(
+                        collections
+                          .filter(
+                            (collection) =>
+                              !removableCollectionIds.has(collection.collectionId),
+                          )
+                          .map((collection) => collection.collectionId),
                       )}
-                    </Fragment>
-                  );
-                })}
+                      onPick={(collectionId) =>
+                        onBatchRemoveFromCollection(collectionId, targetAssetIds)
+                      }
+                      title={t("menu.removeFromCollection")}
+                    />
+                  </ContextMenuSubmenu>
+                )}
               </ContextMenuSection>
             )}
               {moveToFolderItem && (
@@ -1354,6 +1441,31 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+              <ContextMenuItem
+                icon={<Icon name="close" size={14} />}
+                label={t("menu.ignore")}
+                onAction={() => {
+                  targetAssets.forEach((asset) => onSetIgnore({
+                    locationKind: asset.locationKind,
+                    linkedFolderId: asset.linkedFolderId ?? null,
+                    relativePath: asset.relativeFilePath,
+                    pathKind: "asset",
+                    ignored: true,
+                    name: asset.displayName,
+                  }));
+                  targetFolderIds.forEach((folderId) => {
+                    const folder = managedFolders.find((item) => item.folderId === folderId);
+                    if (folder) onSetIgnore({
+                      locationKind: "managed",
+                      linkedFolderId: null,
+                      relativePath: folder.relativePath,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: folder.name,
+                    });
+                  });
+                }}
+              />
                   {copyItem && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
@@ -1409,6 +1521,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 <ContextMenuItem
                   icon={<Icon name="trash" size={14} />}
                   label={deleteFromDiskItem.label}
+                  shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                   danger
                   disabled={deleteFromDiskItem.disabled}
                   disabledReason={
@@ -1517,6 +1630,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               "asset.delete-from-disk",
             );
             const deleteLinkedItem = resolvedById.get("asset.delete-linked");
+            const addableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          [assetId],
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showAdd,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
+            const removableCollectionIds = memberIdsByCollection
+              ? new Set(
+                  collections
+                    .filter(
+                      (collection) =>
+                        resolveCollectionMenuForSelection(
+                          [assetId],
+                          collection.collectionId,
+                          memberIdsByCollection,
+                        ).showRemove,
+                    )
+                    .map((collection) => collection.collectionId),
+                )
+              : null;
             return (
               <>
                 <div className="context-menu-selection-summary">
@@ -1587,6 +1728,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="folder" size={14} />}
                       label={revealInFolderItem.label}
+                      shortcut={revealInFolderItem.shortcutLabel ?? undefined}
                       disabled={revealInFolderItem.disabled}
                       disabledReason={
                         revealInFolderItem.disabledReason ?? undefined
@@ -1698,6 +1840,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="edit" size={14} />}
                       label={renameItem.label}
+                      shortcut={renameItem.shortcutLabel ?? undefined}
                       disabled={renameItem.disabled}
                       disabledReason={renameItem.disabledReason ?? undefined}
                       onAction={() => runAssetCommand("asset.rename")}
@@ -1707,6 +1850,44 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onRun={(item) => runPluginCommand(item, { assetIds: [assetId] })}
                     />
                     </>
+                  )}
+                  <ContextMenuItem
+                    icon={<Icon name="close" size={14} />}
+                    label={t("menu.ignore")}
+                    onAction={() => {
+                      const relativePath = singleAsset?.relativeFilePath;
+                      if (!relativePath) return;
+                      onSetIgnore({
+                        locationKind,
+                        linkedFolderId: singleAsset?.locationKind === "linked"
+                          ? singleAsset.linkedFolderId
+                          : null,
+                        relativePath,
+                        pathKind: "asset",
+                        ignored: true,
+                        name: displayName,
+                      });
+                    }}
+                  />
+                  {singleAsset?.relativeFilePath?.includes(".") && (
+                    <ContextMenuItem
+                      icon={<Icon name="close" size={14} />}
+                      label={t("menu.ignoreExtension", {
+                        extension: singleAsset.relativeFilePath.split(".").pop()?.toLowerCase() ?? "",
+                      })}
+                      onAction={() => {
+                        const extension = singleAsset.relativeFilePath.split(".").pop()?.toLowerCase();
+                        if (!extension) return;
+                        onSetIgnore({
+                          locationKind,
+                          linkedFolderId: singleAsset.locationKind === "linked" ? singleAsset.linkedFolderId : null,
+                          relativePath: extension,
+                          pathKind: "extension",
+                          ignored: true,
+                          name: extension,
+                        });
+                      }}
+                    />
                   )}
                   {linkedFolders
                     .filter((f) => f.status === "available")
@@ -1724,59 +1905,63 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                         }
                       />
                     ))}
-                  {memberIdsByCollection &&
-                    collections.map((collection) => {
-                      const actions = resolveCollectionMenuForSelection(
-                        [assetId],
-                        collection.collectionId,
-                        memberIdsByCollection,
-                      );
-                      if (!actions.showAdd && !actions.showRemove) return null;
-                      return (
-                        <Fragment key={`collection-${collection.collectionId}`}>
-                          {actions.showRemove && (
-                            <ContextMenuItem
-                              icon={<Icon name="close" size={14} />}
-                              label={t("command.collection.removeFrom", {
-                                name: collection.name,
-                              })}
-                              onAction={() => {
-                                onRemoveFromCollection(
-                                  assetId,
-                                  collection.collectionId,
-                                );
-                              }}
-                            />
-                          )}
-                          {actions.showAdd && (
-                            <ContextMenuItem
-                              icon={<Icon name="collection" size={14} />}
-                              label={t("command.collection.addTo", {
-                                name: collection.name,
-                              })}
-                              onAction={() => {
-                                onAddToCollection(
-                                  assetId,
-                                  collection.collectionId,
-                                );
-                              }}
-                            />
-                          )}
-                        </Fragment>
-                      );
-                    })}
+                  {addableCollectionIds && addableCollectionIds.size > 0 && (
+                    <ContextMenuSubmenu
+                      icon={<Icon name="collection" size={14} />}
+                      label={t("menu.addToCollection")}
+                    >
+                      <CollectionPickerMenu
+                        collections={collections}
+                        excludedCollectionIds={new Set(
+                          collections
+                            .filter(
+                              (collection) =>
+                                !addableCollectionIds.has(collection.collectionId),
+                            )
+                            .map((collection) => collection.collectionId),
+                        )}
+                        onPick={(collectionId) =>
+                          onAddToCollection(assetId, collectionId)
+                        }
+                        title={t("menu.addToCollection")}
+                      />
+                    </ContextMenuSubmenu>
+                  )}
+                  {removableCollectionIds && removableCollectionIds.size > 0 && (
+                    <ContextMenuSubmenu
+                      icon={<Icon name="close" size={14} />}
+                      label={t("menu.removeFromCollection")}
+                    >
+                      <CollectionPickerMenu
+                        collections={collections}
+                        excludedCollectionIds={new Set(
+                          collections
+                            .filter(
+                              (collection) =>
+                                !removableCollectionIds.has(collection.collectionId),
+                            )
+                            .map((collection) => collection.collectionId),
+                        )}
+                        onPick={(collectionId) =>
+                          onRemoveFromCollection(assetId, collectionId)
+                        }
+                        title={t("menu.removeFromCollection")}
+                      />
+                    </ContextMenuSubmenu>
+                  )}
                   {tags.length > 0 && (
                     <TagPickerEntry
                       icon={<Icon name="tag" size={14} />}
                       label={t("command.asset.addTags")}
-                      onOpen={() =>
-                        setTagPicker({
-                          mode: "assign",
-                          assetIds: [assetId],
-                          single: true,
-                        })
-                      }
-                    />
+                    >
+                      {() => (
+                        <TagPickerMenu
+                          mode="assign"
+                          onPick={(tagId) => onAssignTag(assetId, tagId)}
+                          tags={tags}
+                        />
+                      )}
+                    </TagPickerEntry>
                   )}
                   <PluginMenuItems
                     items={pluginItemsForHostGroup(pluginAssetMenuItems, "organize", "after")}
@@ -1846,6 +2031,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
                       label={deleteFromDiskItem.label}
+                      shortcut={deleteFromDiskItem.shortcutLabel ?? undefined}
                       danger
                       disabled={deleteFromDiskItem.disabled}
                       disabledReason={

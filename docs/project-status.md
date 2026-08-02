@@ -3,127 +3,26 @@
 > 更新时间：2026-08-02
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
-## 2026-08-02 面向开发者的插件、脚本与 MCP 文档
-
-- 已整理面向用户的 [插件、脚本与 MCP 手册](manual/README.md)，覆盖[插件开发](manual/plugins/development.md)、[插件 API](manual/plugins/api-reference.md)、[Desktop Console 脚本](manual/scripts/development.md)、[脚本 API](manual/scripts/api-reference.md)、[MCP 开发](manual/mcp/development.md)和 [MCP API](manual/mcp/api-reference.md)。文档以当前实现和 Registry/类型声明为准，明确区分插件 UI Contribution Context、脚本领域 API、MCP attached/headless 入口及权限/计划确认边界。
-- 当前真实自动化入口为 Desktop Console、`npm run mcp`（默认附着 Desktop）、`npm run mcp -- --headless ...` 和 `npm run mcp:session ...`；没有可用的通用 `serpent run` / `serpent repl` CLI，也没有当前仓库可直接调用的独立 `serpent-mcp` 可执行文件。
-- 文档检查已完成；packaged MCP、Windows 和跨平台发布旅程仍按 `Serpent-y51c.10` 的既有验收范围记录为未验证，不能由开发态文档或单元测试替代。
-
-## 2026-08-02 插件平台最终架构设计
-
-- [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md) 已升级为权威最终设计；新增 [ADR-0027](adr/0027-plugin-instance-lifecycle-and-interaction-context.md)。核心边界为：安装范围与运行实例范围分离，global/library 实例统一使用 `setup(context)` / `dispose(reason)`，不增加 `openLibrary` 生命周期。
-- 插件交互分为 Contribution Context（UI 条件）、Invocation Context（触发时冻结目标）和完整 Domain API（实际功能）；复杂条件异步解析为 Context Key，菜单打开不得等待插件 RPC。Command Registry 为行为源，菜单保持树结构并通过稳定 ID、group、before/after 约束定位。
-- 主线 UI 尚未标准化，因此 toggle/dropdown/slider 等视觉 primitives 明确延期；现有 Host-rendered 控件仅为实验实现。项目未发布，后续直接替换旧 Manifest/Contribution 契约，不维护兼容层。
-- Image Upscaler 反馈经取舍后纳入：新增通用批量内容替换、Job 进度/取消、设置字段级容错和 Worker 协议故障隔离；拒绝 Host 通用 GPU/VRAM/CPU/内存接口与强制共享模型 Worker，非受限插件自行探测和调度。
-- Beads：`Serpent-2qsq` 生命周期基础单已关闭；`Serpent-gtih`、`Serpent-upsn.10`–`.13` 的核心实现已落地并进入验证收口，`Serpent-fkq3` 仍依赖 Context 菜单轨道；视觉组件工单 `Serpent-7nah.2` 继续 deferred。实现不等同于完整切片验收：当前插件定向测试 21 files / 271 passed，隔离 Electron E2E 4/4；全量 Vitest 为 307 files 中 298 passed、3 skipped、6 failed（14 个测试失败），失败为既有 schema 27/28、历史迁移重复建表和 100k 搜索性能基线；packaged/Windows/Computer Use 未执行。详见 [插件平台开发日志](development/2026-08-02-plugin-platform-runtime-management-development-log.md) 与 [验收清单 PLUGIN-040–044](qa/human-acceptance-checklist.md)。
-
-## 2026-08-02 脚本/MCP/插件 ui.notify
-
-- 新增 Gateway `ui.notify` / Guest `serpent.ui.notify` / MCP `serpent_ui_notify`：info/warning/error toast 与可选阻塞弹窗；权限/能力 `ui.notify`；无库可调用。见 [开发日志](development/2026-08-02-ui-notify-development-log.md)；`AUT-021`。工单 `Serpent-99zs`。
-- `Serpent-fkq3` / `Serpent-7nah.1` 已落地插件菜单树与 Host 设置控件的早期增量：菜单支持三级 submenu、宿主/自定义分组与 before/after 锚点；设置支持 boolean toggle、select options、description hover/focus 帮助和提交值校验。定向测试通过；Electron 启动 SIGABRT、packaged/Windows 仍未验证，见 [开发日志](development/2026-08-02-plugin-native-controls-and-menu-tree-development-log.md)。按同日最终架构，`fkq3` 已重新打开用于统一 Command Registry/Placement Solver；设置控件不视为稳定插件 UI API。
-- **`Serpent-l2tj` 已关闭**：settings.pages/menus 贡献解析与启动激活回归测试落地——全 view target + 混合数组单测、IPC `serpent-plugin://` 经 Preload 解析保留、E2E（含 `SERPENT_E2E_RESTORE_RECENT` 完整重启）。见 [贡献回归开发日志](development/2026-08-02-plugin-contribution-regression-tests-development-log.md)。仍开放：`Serpent-2qsq`（全局 user-scope 插件激活不应依赖打开资源库）。
-
-## 2026-08-01 插件设置 IA 与列表样式
-
-- 设置侧栏分类列表最后为可展开「插件设置」；有设置贡献的插件点选进详情。管理页卡片：标题含版本、来源图标、权限 info hover、非受限警告色与默认不启用、刷新/设置/垃圾桶操作；空列表仅「暂未安装」。MCP 声明命令默认暴露（无设置开关）。见 [开发日志](development/2026-08-01-plugin-settings-ui-ia-development-log.md)；`PLUGIN-001` / `PLUGIN-031` 已更新。
-- 跟进：`Serpent-oupm` 安装目录去掉 `<version>` 子路径（open）。`Serpent-0mj2` 已修：卸载清 resolution / 重装后可启用、不再误报更新确认。
-- 设置页 `plugin-manager.list` 改为元信息快路径（不重哈希整包、不联网查 GitHub 更新）；完整校验与远程更新检查保留在 Reload / 安装 / 更新动作。菜单与 `settings.pages` 仍依赖插件已启用并激活。
-- **贡献列表过滤修复**：`listContributions` / `listMcpCommandContributions` 曾用 `#activeByLibrary` 的 **pluginId 键** 去匹配贡献上的 **pluginInstanceId**，导致已激活插件的菜单、设置页、工具栏等 UI 贡献一律被滤空（Image Upscaler 已启用仍无右键/设置页即此根因）。现改为按 `record.instanceId` 过滤；激活刷新 `listInstalled` 同步改用 `integrity: 'metadata'`。定向单测 `plugin-activation-coordinator` 6 passed。
-- **启动恢复库未激活插件**：Main 启动时用 Worker 直连 `library.open` 恢复最近库，**绕过** `handleLibraryRequest`，因而从未调用 `onLibraryOpened`；`plugin-contrib-diag` 显示正确 `libraryId` 但 `active: []`、无 `plugin.activation.*` 日志。现与对话框开库共用 `notifyLibraryOpenedSideEffects`，启动路径 `await` 激活后再继续起窗。
-- **Renderer 解析 view 贡献失败**：激活与 Main `list-contributions` 已正常（含全局 `user` 包），但 Preload `parsePluginManagerResponse` 因 Zod 4 `discriminatedUnion('kind')` 对五个 `kind: "view"` 分支报 `Duplicate discriminator value "view"`，整表贡献被丢弃，设置 iframe / 自定义页恒空。现合并为单一 `pluginManagerViewContributionSchema`（按 `target` 区分）。定向单测见 `plugin-manager-response-parse`。
-
-## 2026-08-01 插件分发与更新规范
-
-- 安装通道定为 GitHub / ZIP / 文件夹；GitHub 以 **Release 平台 asset** 为主（非源码 zipball + npm）。规范见 [`插件分发与更新手册`](manual/plugins/distribution-and-updates.md)。
-- 实现：`Serpent-u3nx`（Release + 平台匹配）与 `Serpent-8r91`（更新提示与自动更新风险说明）一并落地；`Serpent-x9ci`（源码目录 npm）已关闭不做。`upsn.9` 仍排最后。
-
-## 2026-08-01 插件/脚本自动化验收与 Agent Playbook
-
-- 产品决定：`PLUGIN-*` / `AUT-*` **以自动化测试为准**，测试档位绿即「自动化验收通过」，不要求人类逐步点验。规则见 [`qa/human-acceptance-checklist.md`](qa/human-acceptance-checklist.md)；Agent 流程见 [`agent-plugin-playbook.md`](agent-plugin-playbook.md)。人读 API 见 [`插件开发手册`](manual/plugins/development.md) / [`插件 API 参考`](manual/plugins/api-reference.md)。
-- 应用级插件文件数据：`{userData}/plugin-files/<pluginId>/`；库级：`<库>/.serpent/plugin-files/<pluginId>/`。既有 KV storage 路径保持不变。
-
-## 2026-08-01 插件开发者文档与平台接缝
-
-- `Serpent-n34b` / `Serpent-s0gf`：对用户改称受限/无限制；Safe Mode 只停用无限制；Wire 枚举已迁到 `restricted`/`unrestricted`（旧 `standard`/`trusted` 读入映射）。`PLUGIN-036` 定向自动化通过。
-- 已关闭：`029r`（Guest Gateway 命令面同源）、`pn7k`（content replace/read）、`2nxg`（plugin-files 数据目录）。
-- 仍开放：`upsn.9` 打包/最终 QA（排到插件平台收口最后做）。外部 Template / Upscaler 插件仓由外部 agent 跟进，本仓不再挂 `8csl`。
-
-## 2026-07-30 脚本优先于插件
-
-- 产品负责人确认：插件建立在脚本/Gateway Action 之上，**先完成脚本化既定目标，再推进插件切片**。
-- Phase C（MCP stdio）、Phase D（低风险写入 + 执行历史）与 Phase E 的建库/导入计划接缝已实现；Desktop Console 建库/导入、计划取消后重试、asset.move Electron E2E 已通过，真实 headless MCP stdio create/inspect/import/绑定重开 E2E 已补；Console 无库 headless UI 的隔离 Electron E2E 现已通过并接入 AUT-010，双 Host 已有真实 stdio E2E 证据，Computer Use、packaged/Windows 仍未验证。
-- 当前执行焦点：`Serpent-y51c.8` / `.9` / `.10` 的 Computer Use、packaged、Windows 收口；Phase E/Console/MCP 自动化证据（含计划取消、幂等、双 Host、`library.changed`、Undo、最近脚本）已齐，AUT-009–017 待人类验收。`npm run package` 仍被 `media:verify` 阻断（darwin-arm64 未晋升不可变 HTTPS artifact）。`bb56.2` 已关闭；20k 导入 soak 已通过 53.07 秒门槛。
-- Desktop 附着 MCP 已开始实现：本机控制面、附着确认、`serpent_desktop_focus` 与 `serpent_desktop_select_assets` 的协议/Main/Renderer/MCP 代理接缝已加入；仍需当前 HEAD 的真实 Desktop E2E、Computer Use、packaged 和 Windows 验证。规格 [`2026-07-31-desktop-attached-mcp-design.md`](superpowers/specs/2026-07-31-desktop-attached-mcp-design.md)，实施工单 `Serpent-lq5y.1`（父 Epic `Serpent-lq5y`）。
-- 2026-08-01 脚本/MCP **开发态收口**：跨文件夹 reveal E2E、mcp-session/`mcp:session`、Skill/指南 Desktop 工具列表对齐；见 [收口日志](development/2026-08-01-automation-script-mcp-wrapup-development-log.md)。`lq5y.1/.2` 已关；**Computer Use 已通过**（产品负责人确认）；剩余 media 晋升后 packaged、Windows。
-- 2026-08-01 产品确认：**脚本/MCP 开发态收口完成，恢复插件平台实施**。Epic `Serpent-upsn` 解除「暂停加宽」。Phase A/B 已关；Phase C（`upsn.3`/`.4`）Host 垂直切片与 PLUGIN-002–004 开发态证据已齐，编码态收口后 packaged/Windows 另开验证跟进 `Serpent-b6x6`；Phase D 已落地 did 事件/cause chain（`PLUGIN-005`）、`asset.trash` blocking onWill（`PLUGIN-006`）和插件 Job（`PLUGIN-008`）；当前编码前沿为 Phase E `Serpent-upsn.6`，已完成 Host-rendered 菜单命令（`PLUGIN-009`/`PLUGIN-010`/`PLUGIN-015` 待人类验收）、`settings.sections` 设置行（`PLUGIN-011` 待人类验收）、工作区工具栏（`PLUGIN-012` 待人类验收）、Inspector 区块（`PLUGIN-013` 待人类验收）、查看器动作（`PLUGIN-014` 待人类验收）、快捷键贡献（`PLUGIN-021` 待人类验收）与全部五个 sandboxed iframe 位置：`workspace.views`（`PLUGIN-016`）、`sidebar.entries`（`PLUGIN-017`）、`inspector.views`（`PLUGIN-018`）、`viewer.overlays`（`PLUGIN-019`）、`settings.pages`（`PLUGIN-020`）均待人类验收。见 [事件开发日志](development/2026-08-01-plugin-domain-events-development-log.md) / [Hook 开发日志](development/2026-08-01-plugin-blocking-hooks-development-log.md) / [Job 开发日志](development/2026-08-01-plugin-jobs-development-log.md) / [菜单贡献开发日志](development/2026-08-01-plugin-ui-menu-contributions-development-log.md) / [设置行开发日志](development/2026-08-01-plugin-settings-sections-development-log.md) / [工具栏贡献开发日志](development/2026-08-01-plugin-toolbar-contributions-development-log.md) / [Inspector/Viewer 贡献开发日志](development/2026-08-01-plugin-inspector-viewer-contributions-development-log.md) / [快捷键贡献开发日志](development/2026-08-01-plugin-shortcut-contributions-development-log.md) / [Custom UI iframe 开发日志](development/2026-08-01-plugin-custom-ui-iframe-development-log.md)。
-- 2026-08-01：`Serpent-upsn.7` 新增应用内 Input Capture Session（`PLUGIN-022` 待人类验收）。Main broker 已接入 application keyboard capture、权限/mutex/Escape/window blur/实例与库生命周期，Renderer fan-in（composition/text/pointer/wheel 与 viewer/view keyboard）、system modal 暂停接缝，以及 Standard/Trusted Host typed RPC 和 Guest SDK；真实 Electron/packaged/Windows/Computer Use 仍未验证。见 [Input Capture 开发日志](development/2026-08-01-plugin-input-capture-development-log.md)。
-- 2026-08-01：`Serpent-upsn.8` 完成 Phase F 首个 `derived-field.provider` 垂直切片（`PLUGIN-023` 待人类验收）。已接入 provider 注册/撤销、Standard/Trusted Host bounded invoke、Main 批处理调度、Worker `plugin_derived_fields` namespaced materialize/query 与 package hash 失效；真实 Electron、完整重启、search.provider、packaged/Windows/Computer Use 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.8` 增加实时 `search.provider`（`PLUGIN-024` 待人类验收）：search request/chunk/complete/cancel、分页/deadline/maxResults、Standard/Trusted Host signal 取消、Main 与原生 Worker 搜索并行合并及 provider 单独降级；新增 `plugin-manager.search-providers` 最小 IPC/Preload 调用面和 `derived-field-probe` fixed-token fixture。类型检查与 3 个定向单测文件（14 tests）通过；真实 Electron、Trusted Host 旅程、完整重启、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.8` 增加 `preview.provider` / `thumbnail.provider` broker seam（`PLUGIN-025` 待人类验收）：Manifest 要求 opt-in 扩展名，Main Scheduler 单资产、单 provider、deadline 调用并以 256 KiB 上限的 MIME/base64 bytes 成功返回，未声明扩展、失败和超时均 native fallback；新增 `plugin-manager.preview-provider` / `plugin-manager.thumbnail-provider` 与 `.probe` 固定探针插件。定向 Provider/Scheduler 单测 8 tests 通过；完整媒体管线接入、真实 Electron、媒体解码、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.8` 增加 `metadata.extractor` broker seam（`PLUGIN-026` 待人类验收）：Manifest 要求 opt-in 扩展名，Main Scheduler 单资产、单 provider、deadline 调用并以 ≤16 KiB 扁平 JSON 成功返回（禁 path/secret 键与路径样字符串），未声明扩展、失败和超时均 native fallback；扩展 `preview-thumbnail-probe` 为 `.probe` 注册 metadata provider，新增 `plugin-manager.metadata-provider` IPC/Preload 调用面。定向 Provider/Scheduler/IPC 单测通过；完整元数据管线接入、import/export/ai provider、真实 Electron、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.8` 增加 `import.provider` / `export.provider` / `ai.provider` broker seam（`PLUGIN-027`–`029` 待人类验收）：Manifest 要求 import 声明扩展名和/或 MIME、export/ai 声明扩展名；Main Scheduler 对导入候选或单资产执行 deadline 调用，成功分别返回有界 import plan（≤8 KiB）、export descriptor（≤256 KiB base64）或 analysis stub（description/tags/rating），未匹配、失败和超时均 native fallback；扩展 `preview-thumbnail-probe` 并新增 `plugin-manager.import-provider` / `export-provider` / `ai-provider` IPC/Preload 调用面。定向 Provider/Scheduler/IPC 单测通过；完整导入/导出/AI 管线接入、真实 Electron、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.8` 完成 `PLUGIN-030` 媒体 Provider 接入：Worker media queue、`media.generate-thumbnail` 与 `media.get-preview-artifact` 通过内部 Worker→Main callback 先调用匹配的 preview/thumbnail broker；provided MIME/base64 bytes 写入现有 thumbnail artifact store 并继续通过 `serpent://preview` 服务，native-fallback/超时/异常保持原生路径。视频/音频 proxy、真实 Electron 媒体解码、完整重启、Trusted Host、packaged/Windows/Computer Use、背压/crash recovery 和 100k soak 未验证；待 `PLUGIN-030` 人类验收。见 [Provider 开发日志](development/2026-08-01-plugin-providers-development-log.md)。
-- 2026-08-01：`Serpent-upsn.9` 的 `PLUGIN-031`：Manifest 支持命令级 `mcp.export`（并兼容顶层声明）；激活后声明命令默认对 MCP 暴露（无设置页开关）；tools/call 经 library-bound Activation Coordinator `runCommand`；输入仅允许有界 asset/folder/collection ID。见 [MCP 插件开发日志](development/2026-08-01-plugin-mcp-export-development-log.md) / [设置 IA 日志](development/2026-08-01-plugin-settings-ui-ia-development-log.md)。
-- 2026-08-01：同一 `Serpent-upsn.9` 完成 `PLUGIN-032` 主题 token 包垂直切片（待人类验收）：Manifest `contributes.themes` bounded light/dark token 覆盖、`plugin-ui.theme` 合并 Host CSS variables 与插件覆盖下发 iframe、`theme.trusted-css` 信任/设置披露、扩展 `iframe-workspace-probe`。定向单测 `plugin-themes` + `plugin-ui` 通过，`npx tsc --noEmit` exit 0。真实 Electron 亮暗切换、完整重启、packaged/Windows/Computer Use 未执行；`upsn.9` 打包/最终 QA 仍开放（排后）。见 [主题 token 开发日志](development/2026-08-01-plugin-theme-tokens-development-log.md)。
-- 2026-08-01：`Serpent-pn7k` 增加 `PLUGIN-033` 开发态垂直切片：Gateway `asset.content.replace` 要求 `content.write`、执行计划确认，Worker 按 assetId 原子替换托管文件并创建 `origin: replace` 修订、失效旧衍生物、重新入队缩略图；Guest SDK 暴露 `serpent.assets.replaceContent`。MCP 保持 `public: false`，大文件流式 staging、`content.read`、真实 Electron/完整重启、packaged/Windows/Computer Use 未验证。见 [内容替换开发日志](development/2026-08-01-plugin-asset-content-replace-development-log.md)。
-- 2026-08-01：`Serpent-029r` 将 Gateway 命令面（assets/library/folders/tags/collections/smartCollections/linkedFolders/files/trash/palettes）收敛到共享 `serpent-guest-api.ts`；Trusted/QuickJS 同源；storage/events/hooks 等仍分 Host 适配。脚本专用 `jobs.media`/`jobs.ai` 仍仅 QuickJS 挂载。
-- 独立插件仓（Template / ImageUpscaler）交由外部 agent；主仓不再跟踪 `Serpent-8csl`。
-- 2026-08-01：被动发现未信任库插件时提示信任（`Serpent-c2rm` / `PLUGIN-007`）——开库与窗口 focus 均可发现磁盘复制进 `.serpent/plugins` 的包。
-- Attached MCP 浏览增量 `Serpent-lq5y.2.1/.2/.3/.4/.5` 已加入 `serpent_desktop_get_state`、`serpent_desktop_open_folder`、`serpent_desktop_set_discovery`、`serpent_desktop_reveal_asset`、`serpent_desktop_open_viewer` 与 `serpent_desktop_close_viewer`；`Serpent-990x` / `Serpent-ap4u` 继续补齐 `serpent_desktop_navigate_viewer`（Viewer 前后切换）与完整 Discovery 过滤字段（format/tag/rating/favorite/sourceUrl/availability 与宽高/长边/宽高比/时长范围）。AUT-023–AUT-028 待人类验收；跨文件夹 reveal E2E 与 Computer Use 已通过；跨分页 fixture、packaged、Windows 仍未验证。
-- 2026-07-31 天气图片 Agent 反馈已吸收：即时修 `run-mcp.mjs` 语法、MCP 搜索字符串归一、`library.inspect` 去路径；产品缺口 epic `Serpent-b2qv`（`file.move`=`Serpent-7v2i` 已关闭、序列显式=`Serpent-rvw3` 延后至主线、MCP 超时/幂等=`Serpent-3d32` 进行中）。详见 [`2026-07-31-weather-agent-automation-feedback.md`](development/2026-07-31-weather-agent-automation-feedback.md)。
-- 当前脚本推进：`Serpent-3d32` Slice A（`serpent_execution_status` + MCP/plan 超时对齐）与 Slice B（`library.create` / `file.import` 幂等键）已实现并关闭；`bb56.2` 已关闭，MCP `notifications/message` 形式的 `library.changed` 推送、绑定库过滤和并发迁移时序证据已保留。真实绑定 MCP 推送旅程已由 `tests/e2e/automation-mcp-library-changed.test.ts` 覆盖并通过；未绑定/不同库过滤与双 Host 真实 stdio E2E 已由 `tests/e2e/automation-mcp-dual-host.test.ts` 覆盖并通过；AUT-012 的真实 MCP 状态查询/幂等重试 E2E 已由 `tests/e2e/automation-mcp-idempotency.test.ts` 覆盖并通过，AUT-012/AUT-013/AUT-017 均进入待人类验收；自动化脚本轨道可编码增量基本收完，剩余为 Computer Use、media 晋升后的 packaged smoke、Windows。
-- `Serpent-b2qv.1` 已完成 AI 结果读取 Action：`asset.ai-content.get` / `serpent_asset_ai_content_get` / `serpent.assets.getAiContent(assetId)` 复用 Worker 只读 `ai.content.get`，返回 AI 描述、AI 标签、建议评分和模型版本；无 AI 结果返回空值，不混入人工 metadata，不返回路径或密钥。AUT-020 已加入待人类验收；真实供应商、Computer Use、packaged、Windows 未验证。
-- `Serpent-b2qv.2` 已补齐 Automation Worker Adapter → Main `AiQueueScheduler` 接缝：成功 `ai.enqueue`（新入队或已有 pending）触发绑定库调度；拒绝、失败、取消、只读查询和空结果不触发；调度器失败不回滚已入队结果。AUT-020 已同步更新；真实 AI 供应商状态推进、Computer Use、packaged、Windows 未验证。
-- 插件 Epic `Serpent-upsn`：**已恢复实施**（2026-08-01）。下一编码工单 `Serpent-upsn.5`；Phase C packaged/Windows 验证不阻断 Phase D 开工。
-- `Serpent-jftz` 已完成 entity_version / Revision 语义澄清：Inspector 不再把元数据并发
-  token 显示为“版本”，自动化资产声明补充 `currentRevisionId`，并以 Worker 回归与专用
-  Electron E2E 锁定元数据写入不改变内容修订。组织元数据旧 E2E 仍有跨进程冲突和多选
-  fixture 红灯，未将其归入本增量通过；Computer Use、packaged、Windows 未验证。
-
-## 2026-07-29 脚本—插件平台设计
-
-- 产品负责人确认 0024 顶层设计：插件与脚本共享 Automation Command Gateway 和
-  `serpent` SDK，但插件拥有安装、生命周期、UI、Hook、Provider、输入捕获和后台任务。
-- 插件一等语言为 TypeScript/JavaScript，不建设 Serpent Python 运行时。标准插件使用受控
-  JS Host；可信插件使用独立 Node.js UtilityProcess，并明确其权限清单无法完全拦截直接
-  系统行为。
-- 同时支持用户级和资源库级安装。资源库插件代码/配置随库同步，但每台设备独立信任；
-  同 ID 的用户级/资源库级版本冲突时由用户选择，不设隐式优先级。
-- 第一阶段支持本地包、本地目录和规范 GitHub 仓库 URL，不依赖 GitHub Release，不运行
-  远程构建/安装脚本，不建设插件社区或协作权限。
-- 完整规格见 [`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md)，
-  架构决策见 [ADR-0026](adr/0026-plugin-runtime-installation-and-trust.md) 与 [ADR-0027](adr/0027-plugin-instance-lifecycle-and-interaction-context.md)。设计不表示插件
-  运行时已经实现，也不进入 v0.1.0 发布完成度。实施 Epic 为 `Serpent-upsn`
-  （`Serpent-upsn.1`–`.13`）与 `Serpent-7nah`。
-
-## 2026-07-28 发布准备评估
-
-- 后续收口统一跟踪于 Beads epic `Serpent-d112`（同步受影响测试、媒体 bundle、packaged 与双平台安装流程）。
-- 当前工作树为 `codex/slice-002-asset-ingestion`，与对应远端分支一致，但尚未合入 `main`；仓库仍为 Private，尚无发布 tag 或当前 HEAD 的可交付安装包。
-- 静态门禁和搜索性能门禁已通过；完整测试与开发态 Electron E2E 仍有红灯。部分 E2E 失败来自序列图折叠、离散滑块、代理视频和近期 UI 变化造成的旧 fixture/断言失配，必须同步更新测试并重新验证，不能直接归类为无关失败。
-- 用户已明确：Inspector 描述切换、标签管理 Ctrl/Command 多选目前未复现问题；Shell 顶部坐标、普通选择、回收站和媒体播放不作为本轮已确认缺陷。它们只保留为测试规格核对项，除非后续出现可复现用户反馈。
-- 人类验收队列保持较大规模，因人力有限不要求全部清空；发布前按首发范围挑选核心旅程并记录其验收证据。
-- 发布主线仍被媒体 bundle 晋升、packaged 验证、macOS/Windows 安装卸载重装证据、测试同步和 `main` 合流阻断。
-- 新增 MVP 后路线图：优先研究 FBX/OBJ 模型预览与 PBR 渲染，其次是 PBR 贴图和 HDRI 预览；Blend/Maya/3ds Max/Cinema 4D 先做可行性研究，不承诺首版支持。详见 [`mvp-roadmap.md`](implementation/mvp-roadmap.md)。
-- 产品负责人确认脚本化 + MCP 比 3D/PBR 更重要。通用 CLI 与其只读实现已撤回；共享 Automation Registry/Gateway，Desktop Console 与 MCP **同一领域 Action 面**（差别仅调用者）。2026-07-30 对齐：`library.create` / `file.import` 等属脚本/MCP Action；菜单/Hook/UI 属插件；高风险操作对本机用户与 Agent 同等批准且禁止自提权；脚本可 headless 无库建库。完整规范见 [`0023`](implementation/0023-automation-scripting-mcp-framework.md) 与 [`ADR-0025`](adr/0025-automation-core-script-runtime-and-mcp.md)。
-- 自动化分阶段工作记录为 Beads epic `Serpent-y51c`：先做 Registry/Gateway 和沙箱原型，再做 Desktop Console 与 MCP 适配器，之后是写租约、导入/建库计划批准和打包。
-- `Serpent-bb56.1` 的旧 CLI 基础层及 `CLI-001/002` 验收项已随用户决定撤回；不得用其历史冒烟或数据库哈希结果证明当前自动化实现。
-
 ## 2026-07-27 画布精确锚点与序列图
 
 - `Serpent-32p` 的侧栏/窗口重排锚点已按用户硬性要求收口：拖动中冻结重排，松手后以拖动前同一资产内部点为锚，连续两帧稳定后结束补偿；macOS 冷启动真实源码实例双向拖动均保持 `clientY=125`，提交 `2fa3cd5`。
-- `Serpent-j8dl` 序列图已完成用户验收：单文件/文件夹/链接目录自动识别连续编号图片，缺口拆段且至少三帧；支持解散、手动创建和 1–240 FPS；卡片/Inspector/查看页提供逐帧预览与播放；SQLite schema v23 持久化资产组关系。详见 [`0022 规格`](implementation/0022-image-sequences-and-viewer-transforms.md)。
-- 图片、视频和序列查看页新增仅影响显示的顺时针 90°、水平镜像、垂直镜像。定向单元/Worker 测试及生产式 Electron E2E 已通过；Windows、packaged 与完整主线仍未验证。相关人类验收记录见 `e064e91`。
+- `Serpent-j8dl` 序列图形成待验候选：单文件/文件夹/链接目录自动识别连续编号图片，缺口拆段且至少三帧；支持解散、手动创建和 1–240 FPS；卡片/Inspector/查看页提供逐帧预览与播放；SQLite schema v23 持久化资产组关系。详见 [`0022 规格`](implementation/0022-image-sequences-and-viewer-transforms.md)。
+- 图片、视频和序列查看页新增仅影响显示的顺时针 90°、水平镜像、垂直镜像。相关 89 项定向单元/Worker 测试及 1 条生产式 file:// Electron E2E 通过；IMAGESEQ-001/002 与 VIEWER-024 已进入待人类验收。Windows、packaged 与完整主线仍未验证。
+- 2026-08-02 `Serpent-ls2p` 继续收口查看器交互：旋转入口已移入图片/视频/序列底部 toolbar；新增与资产菜单同款的图片/视频/序列右键操作菜单（旋转、双向镜像、适应窗口、全屏），并保留轻微透明模糊。定向类型、lint 和 5 项变换动作单测通过；`VIEWER-026` 待 Windows/macOS 人工视觉验收。
 
 ## 2026-07-25 产品待办入池与工单卫生
 
-- 产品负责人新增待办：**ignore**（`Serpent-v6m3`）已入 backlog 与 beads、未实现；**常用媒体格式**（`Serpent-aav1`）正在实现。后者已有 Windows 本地 bundle、真实 Worker 解码/代理矩阵和开发态 Electron 媒体预览 E2E 证据，但 Windows/macOS 打包应用的查看/播放与人工验收尚未执行，不能标记完成。
+- 产品负责人新增待办：**ignore**（`Serpent-v6m3`）已完成实现，支持托管/链接文件、文件夹和后缀的持久化忽略、扫描/浏览/搜索过滤、显示隐藏切换、资源库设置及恢复入口；资源库级规则已迁移为可编辑 `.serpentignore`（兼容常用 Git 忽略语法，迁移 v26），当前待人类验收；文件夹级删除回归反馈记录为 `Serpent-nplj`。
+- **常用媒体格式**（`Serpent-aav1`）正在实现；Windows 本地 bundle、真实 Worker 解码/代理矩阵和开发态 Electron 媒体预览证据已有，但 Windows/macOS 打包应用查看/播放与人工验收尚未执行，不能标记完成。
 - 2026-07-26 媒体验收补充：用户已明确验收通过 SVG、TIFF、TGA、EXR、ARAW（按用户原文）和 PSD；后续需求已拆为 `Serpent-aoj0`（EXR 多通道 + 色彩空间读取/选择，P2）与 `Serpent-oc6g`（RGBA 单通道/组合查看器，P3）。
 - **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
 - 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
 - **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。
-- **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
+- **2026-07-25 快捷键与 Inspector**：筛选后快捷键收口 epic（`Serpent-x78x` / REQ-COMMAND-004）；视频 D/F 逐帧、小键盘 `.` 适应窗口 + X/C 倍速档（`Serpent-soii`）；**全局音量 P1**（`Serpent-8w6x` / REQ-VIEW-017）；Windows 文案「在文件浏览器中显示」（`Serpent-a74i`）；AI 描述 textarea（`Serpent-vo24`）。原则文档 [`docs/ui/0003-keyboard-shortcut-ux-principles.md`](ui/0003-keyboard-shortcut-ux-principles.md)。均未实现。
+- **2026-08-01 最新验收反馈**：合集创建输入焦点偶发失效为 P0（`Serpent-to9y`）；合集 F2/Delete 与非空删除确认（`Serpent-b7uy`）；硬盘删除确认/Shift+Delete 回归（`Serpent-wuma`）；瀑布流 Tab 单选与 Shift 连续选择（`Serpent-xzmz`）；文件夹卡片圆角（`Serpent-kttg`）、标签 hover 二级定位（`Serpent-hn9u`）和通知按钮视觉（`Serpent-agyz`）已完成代码收口。合集资产跳转来源文件夹（`Serpent-udj5`）按用户要求暂记后续；本轮硬盘删除、媒体句柄释放与瀑布流恢复已获用户验收，通知撤销入口继续收口为无边框回撤图标。
+- **2026-08-01 复验结果**：合集创建焦点、合集删除语义、合集 inline 重命名、文件夹卡片圆角、标签 hover 基础行为、合集递归、submenu 生命周期、Windows 硬盘删除与删除前释放媒体句柄、瀑布流原布局恢复、删除通知无边框回撤图标与恢复后刷新均已通过用户验收。
+- **2026-08-01 Windows 主菜单**：Windows 隐藏原生 menu bar 后，原设置入口已替换为点击打开的主菜单；菜单项拆分为文件、编辑、资源库、窗口、关于、设置。二级菜单默认不展开并以浮动面板呈现，设置直接打开原设置中心，窗口承载后台任务/诊断日志；关于拆分为独立的「关于 Serpent」产品信息对话框与「开源组件与许可」依赖说明对话框，前者提供 GitHub、版本信息。macOS 原生 menu bar 与齿轮入口保持不变。定向单测、typecheck、lint 与壳层 E2E 已通过，Windows 主菜单相关路径已由用户验收通过（`Serpent-yne1`，2026-08-02）。
 
 ## 2026-07-18 MVP 循环前沿
 
@@ -141,7 +40,7 @@
 
 ## 当前方向
 
-v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确认的 0013–0019 产品化范围。0011 CLI 已撤回；后续自动化以 0023 的 Desktop Console 脚本与本地 MCP 为准，仍需遵守领域语义与跨进程写入依赖。0012 已完成 macOS 开发态验收；0014 形成候选 `f1330a7`，但新反馈确认 Inspector、框选修饰键、瀑布流、完整文件菜单、应用壳、目录浏览、标签、双语和主题仍属于 MVP 待办。
+v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确认的 0013–0019 产品化范围。0011 CLI 仍排入 v0.2.0，这只表达领域语义与运行时依赖。0012 已完成 macOS 开发态验收；0014 形成候选 `f1330a7`，但新反馈确认 Inspector、框选修饰键、瀑布流、完整文件菜单、应用壳、目录浏览、标签、双语和主题仍属于 MVP 待办。
 
 ## 当前前沿
 
@@ -202,6 +101,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 验证：typecheck/lint、unit 391 passed；E2E 16/17 文件当次全绿（含新选择器交互用例，context-menu 10/10）。双轴审查：Standards 通过、Spec 有条件通过（HARD-1/MEDIUM-1 已本回合修复复验）。
 - **Computer Use 未执行**（当前环境无桌面控制能力）：TAG-004/TAG-005 保持不通过、待补截图证据后重新验收；SHELL-004/005/006 与 NAV-002 的 0016-A 修复已按用户指示重新进入待验收。
 - **known-red 移交**：`tests/e2e/linked-folders.test.ts` 为另一 agent 未提交改动，其 `.empty-actions` 作用域下不存在「导入链接文件夹」按钮（该按钮在 `.tool-group-import` 与侧栏 secondaryAction），3/3 红；本回合未触碰该文件，修正方向已记录在开发日志。
+- **2026-08-01 验收反馈跟进**：合集 inline 重命名/快捷键展示与右键二级菜单互斥已按用户反馈通过；删除通知已改为“撤销”并在恢复后刷新当前范围，无边框回撤图标也已验收通过，`Serpent-mxxc` 关闭。Windows 硬盘删除真实权限错误与删除前媒体句柄释放已获用户验收通过，`Serpent-cwor` 关闭；瀑布流已用 `git diff` 恢复原有显式列布局并获用户验收通过，`SELECT-014/015` 与 `Serpent-6b3i` 关闭。
 - 详见 `docs/development/0017-0018-searchable-tag-picker-and-file-commands-development-log.md`。
 
 ## 2026-07-16 新增 MVP UI/UX 与文件管理需求

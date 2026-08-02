@@ -1,4 +1,6 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -146,5 +148,46 @@ test('the packaged application FTS5 search finds and filters imported assets', a
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test('the packaged Windows close button hides the window and keeps the tray process alive', async () => {
+  test.skip(process.platform !== 'win32', 'This lifecycle rule is Windows-specific.');
+  const executablePath = process.env.SERPENT_E2E_PACKAGED_EXECUTABLE;
+  if (!executablePath) {
+    throw new Error('Set SERPENT_E2E_PACKAGED_EXECUTABLE after packaging.');
+  }
+
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-packaged-close-'));
+  const application = await electron.launch({
+    executablePath,
+    args: [],
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+    },
+  });
+  const childProcess = application.process();
+
+  try {
+    const window = await application.firstWindow();
+    // Dispatch the renderer handler so a fresh profile's startup backdrop
+    // cannot obscure the caption button hit target in automated QA.
+    await window.locator('.windows-caption-button-close').dispatchEvent('click');
+    await expect
+      .poll(() =>
+        application.evaluate(
+          ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isVisible() ?? false,
+        ),
+      )
+      .toBe(false);
+    expect(childProcess.exitCode).toBeNull();
+  } finally {
+    if (childProcess.exitCode === null) {
+      await application.evaluate(({ app }) => app.quit());
+      await once(childProcess, 'exit');
+    }
+    await rm(temporaryRoot, { force: true, recursive: true, maxRetries: 20, retryDelay: 250 });
   }
 });

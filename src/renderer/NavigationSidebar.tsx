@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Icon, type IconName } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
 import {
@@ -64,6 +70,8 @@ function NavRow({
   icon,
   label,
   count,
+  childCount,
+  childCountLabel,
   active,
   onClick,
   onContextMenu,
@@ -81,10 +89,14 @@ function NavRow({
   disclosure,
   navFolderId,
   navFolderKind,
+  navCollectionId,
 }: {
   icon: IconName;
   label: string;
   count?: number;
+  /** Optional secondary count, used for collection children. */
+  childCount?: number;
+  childCountLabel?: string;
   active?: boolean;
   onClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -105,6 +117,8 @@ function NavRow({
   /** Serpent-vf8x: focus target for folder keyboard shortcuts. */
   navFolderId?: string;
   navFolderKind?: "managed" | "linked";
+  /** Focus target for collection keyboard shortcuts. */
+  navCollectionId?: string;
 }) {
   // CU-D9: always expose the full label on hover; when a status title is also
   // provided (e.g. offline linked folder), append it after the name.
@@ -118,6 +132,7 @@ function NavRow({
         className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
         data-nav-folder-id={navFolderId}
         data-nav-folder-kind={navFolderKind}
+        data-nav-collection-id={navCollectionId}
         disabled={disabled}
         draggable={draggable}
         onClick={onClick}
@@ -133,6 +148,15 @@ function NavRow({
       >
         <Icon name={icon} size={15} color={iconColor} />
         <span className="nav-row-label">{label}</span>
+        {childCount !== undefined && childCount > 0 && (
+          <span
+            aria-label={childCountLabel}
+            className="nav-count nav-child-count"
+            title={childCountLabel}
+          >
+            {childCount}
+          </span>
+        )}
         {count !== undefined && <span className="nav-count">{count}</span>}
       </button>
     </div>
@@ -215,6 +239,106 @@ function InlineFolderEditRow({
   );
 }
 
+/** The collection equivalent of the folder in-tree create row. */
+function InlineCollectionEditRow({
+  depth,
+  value,
+  ariaLabel,
+  placeholder,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  value: string;
+  ariaLabel?: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  onCommit: () => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
+  const blurCommitTimerRef = useRef<number | null>(null);
+
+  const cancelScheduledBlurCommit = () => {
+    if (blurCommitTimerRef.current === null) return;
+    window.clearTimeout(blurCommitTimerRef.current);
+    blurCommitTimerRef.current = null;
+  };
+
+  const commitOnce = () => {
+    cancelScheduledBlurCommit();
+    if (committingRef.current) return;
+    committingRef.current = true;
+    void Promise.resolve(onCommit()).finally(() => {
+      committingRef.current = false;
+    });
+  };
+
+  // Context-menu dismissal and row insertion happen in the same interaction
+  // for “new subcollection”. Layout focus handles the initial mount before
+  // paint; the frame retry covers a menu teardown that briefly reclaims focus.
+  useLayoutEffect(() => {
+    const focusInput = () => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      input.select();
+    };
+    focusInput();
+    const frame = window.requestAnimationFrame(() => {
+      if (document.activeElement !== inputRef.current) focusInput();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (blurCommitTimerRef.current !== null) {
+        window.clearTimeout(blurCommitTimerRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <div className="nav-tree-row">
+      <span className="nav-disclosure-spacer" aria-hidden="true" />
+      <div className="nav-inline-edit" style={{ paddingLeft: 7 + depth * 14 }}>
+        <Icon name="collection" size={15} />
+        <input
+          aria-label={ariaLabel ?? t("nav.newCollection")}
+          className="text-field"
+          maxLength={255}
+          onBlur={() => {
+            cancelScheduledBlurCommit();
+            blurCommitTimerRef.current = window.setTimeout(() => {
+              blurCommitTimerRef.current = null;
+              if (document.activeElement !== inputRef.current) commitOnce();
+            }, 0);
+          }}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={cancelScheduledBlurCommit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commitOnce();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              onCancel();
+            }
+          }}
+          placeholder={placeholder ?? t("nav.newCollection")}
+          ref={inputRef}
+          value={value}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // InlineSmartCollectionEditRow — SMART-007 sidebar create row
 // ---------------------------------------------------------------------------
@@ -288,6 +412,9 @@ function Section({
   title,
   action,
   actionLabel,
+  toggleAction,
+  toggleActive,
+  toggleLabel,
   secondaryAction,
   secondaryLabel,
   children,
@@ -296,6 +423,9 @@ function Section({
   action?: () => void;
   /** Explicit primary tooltip; defaults to nav.addSection. */
   actionLabel?: string;
+  toggleAction?: () => void;
+  toggleActive?: boolean;
+  toggleLabel?: string;
   secondaryAction?: () => void;
   secondaryLabel?: string;
   children: ReactNode;
@@ -307,8 +437,15 @@ function Section({
     <section className="nav-section">
       <div className="nav-section-heading">
         <span>{title}</span>
-        {(action || secondaryAction) && (
+        {(action || secondaryAction || toggleAction) && (
           <span className="nav-section-actions">
+            {toggleAction && (
+              <IconActionButton
+                icon={toggleActive ? "eye" : "eye-off"}
+                label={toggleLabel ?? t("nav.showIgnored")}
+                onClick={toggleAction}
+              />
+            )}
             {action && (
               <IconActionButton
                 icon="plus"
@@ -348,6 +485,8 @@ export interface NavigationSidebarProps {
   activeTagId: string | null;
   activeCollectionId: string | null;
   activeSmartCollectionId: string | null;
+  showIgnoredItems: boolean;
+  onToggleShowIgnoredItems: () => void;
 
   // --- Data ---
   allAssetCount: number;
@@ -362,9 +501,10 @@ export interface NavigationSidebarProps {
   showCollectionInput: boolean;
   collectionInputValue: string;
   newCollectionParentId: string | null;
-  collectionRecursive: boolean;
-  collectionRecursiveRef: React.MutableRefObject<boolean>;
-
+  inlineCollectionRename: {
+    collectionId: string;
+    value: string;
+  } | null;
   // --- Collection drag state ---
   draggedCollectionId: string | null;
   onSetDraggedCollectionId: (id: string | null) => void;
@@ -422,11 +562,10 @@ export interface NavigationSidebarProps {
   onSetShowCollectionInput: (show: boolean) => void;
   onSetCollectionInputValue: (value: string) => void;
   onSetNewCollectionParentId: (id: string | null) => void;
-  onCollectionInputKeyDown: (
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) => void;
-  onSetCollectionRecursive: (recursive: boolean) => void;
-
+  onCollectionInputCommit: () => void | Promise<void>;
+  onInlineCollectionRenameChange: (value: string) => void;
+  onInlineCollectionRenameCommit: () => void | Promise<void>;
+  onInlineCollectionRenameCancel: () => void;
   // --- Folder creation entry (sidebar 「+」; opens the inline edit row) ---
   onAddFolder: () => void;
   /** SMART-007: open sidebar inline smart-collection name row. */
@@ -484,6 +623,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     activeTagId,
     activeCollectionId,
     activeSmartCollectionId,
+    showIgnoredItems,
+    onToggleShowIgnoredItems,
     allAssetCount,
     trashedAssetCount,
     folders,
@@ -494,8 +635,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     showCollectionInput,
     collectionInputValue,
     newCollectionParentId,
-    collectionRecursive,
-    collectionRecursiveRef,
+    inlineCollectionRename,
     draggedCollectionId,
     onSetDraggedCollectionId,
     onChooseAllAssets,
@@ -521,8 +661,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onSetShowCollectionInput,
     onSetCollectionInputValue,
     onSetNewCollectionParentId,
-    onCollectionInputKeyDown,
-    onSetCollectionRecursive,
+    onCollectionInputCommit,
+    onInlineCollectionRenameChange,
+    onInlineCollectionRenameCommit,
+    onInlineCollectionRenameCancel,
     onAddFolder,
     onAddSmartCollection,
     inlineFolderEdit,
@@ -888,10 +1030,27 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     depth: number,
   ): ReactNode {
     const children = collectionTree.get(parentId) ?? [];
-    return children.map((c) => (
+    const rows: ReactNode[] = [];
+    if (showCollectionInput && newCollectionParentId === parentId) {
+      rows.push(
+        <InlineCollectionEditRow
+          depth={depth}
+          key={`inline-collection-create-${parentId ?? "root"}`}
+          onCancel={() => {
+            onSetShowCollectionInput(false);
+            onSetCollectionInputValue("");
+            onSetNewCollectionParentId(null);
+          }}
+          onChange={onSetCollectionInputValue}
+          onCommit={onCollectionInputCommit}
+          value={collectionInputValue}
+        />,
+      );
+    }
+    rows.push(...children.map((c) => (
       <div
         className="collection-drop-target"
-        draggable
+        draggable={inlineCollectionRename?.collectionId !== c.collectionId}
         key={c.collectionId}
         onDragEnd={() => onSetDraggedCollectionId(null)}
         onDragOver={(event) => {
@@ -936,58 +1095,76 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
         }}
       >
-        <NavRow
-          icon="collection"
-          label={c.name}
-          count={c.assetCount}
-          active={activeCollectionId === c.collectionId && !activeTagId}
-          depth={depth}
-          dropActive={assetDropTarget === `collection:${c.collectionId}`}
-          onDragEnter={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer)) {
-              setAssetDropTarget(`collection:${c.collectionId}`);
-            }
-          }}
-          onDragLeave={(event) => {
-            if (event.currentTarget.contains(event.relatedTarget as Node | null))
-              return;
-            setAssetDropTarget((current) =>
-              current === `collection:${c.collectionId}` ? null : current,
-            );
-          }}
-          onDragOver={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer)) {
-              applyManagedAssetDragOver(event);
-            }
-          }}
-          onDrop={(event) => {
-            const assetIds = parseManagedAssetDrag(event.dataTransfer);
-            if (!assetIds || assetIds.length === 0) return;
-            event.preventDefault();
-            event.stopPropagation();
-            setAssetDropTarget(null);
-            onAssetsDroppedOnCollection(
-              c.collectionId,
-              assetIds,
-              resolveDragDropMode({ altKey: event.altKey }),
-            );
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            onOpenContextMenu(
-              {
-                type: "organization",
-                id: c.collectionId,
-                name: c.name,
-              },
-              { x: e.clientX, y: e.clientY },
-            );
-          }}
-          onClick={() => void onChooseCollection(c.collectionId)}
-        />
+        {inlineCollectionRename?.collectionId === c.collectionId ? (
+          <InlineCollectionEditRow
+            ariaLabel={t("nav.renameCollection")}
+            depth={depth}
+            onCancel={onInlineCollectionRenameCancel}
+            onChange={onInlineCollectionRenameChange}
+            onCommit={onInlineCollectionRenameCommit}
+            placeholder={c.name}
+            value={inlineCollectionRename.value}
+          />
+        ) : (
+          <NavRow
+            icon="collection"
+            label={c.name}
+            count={c.assetCount}
+            childCount={c.childCollectionCount}
+            childCountLabel={t("nav.childCollectionCount", {
+              count: c.childCollectionCount,
+            })}
+            active={activeCollectionId === c.collectionId && !activeTagId}
+            depth={depth}
+            navCollectionId={c.collectionId}
+            dropActive={assetDropTarget === `collection:${c.collectionId}`}
+            onDragEnter={(event) => {
+              if (supportsManagedAssetDrag(event.dataTransfer)) {
+                setAssetDropTarget(`collection:${c.collectionId}`);
+              }
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null))
+                return;
+              setAssetDropTarget((current) =>
+                current === `collection:${c.collectionId}` ? null : current,
+              );
+            }}
+            onDragOver={(event) => {
+              if (supportsManagedAssetDrag(event.dataTransfer)) {
+                applyManagedAssetDragOver(event);
+              }
+            }}
+            onDrop={(event) => {
+              const assetIds = parseManagedAssetDrag(event.dataTransfer);
+              if (!assetIds || assetIds.length === 0) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setAssetDropTarget(null);
+              onAssetsDroppedOnCollection(
+                c.collectionId,
+                assetIds,
+                resolveDragDropMode({ altKey: event.altKey }),
+              );
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onOpenContextMenu(
+                {
+                  type: "organization",
+                  id: c.collectionId,
+                  name: c.name,
+                },
+                { x: e.clientX, y: e.clientY },
+              );
+            }}
+            onClick={() => void onChooseCollection(c.collectionId)}
+          />
+        )}
         {renderCollectionNodes(c.collectionId, depth + 1)}
       </div>
-    ));
+    )));
+    return rows;
   }
 
   return (
@@ -1069,6 +1246,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           title={t("nav.folders")}
           action={library ? onAddFolder : undefined}
           actionLabel={t("nav.addFolder")}
+          toggleAction={library ? onToggleShowIgnoredItems : undefined}
+          toggleActive={showIgnoredItems}
+          toggleLabel={t("nav.showIgnored")}
           secondaryAction={library ? onImportFolderAsLinked : undefined}
           secondaryLabel={t("nav.importLinkedFolder")}
         >
@@ -1095,68 +1275,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         >
           {library ? (
             <>
-              {showCollectionInput && (
-                <div className="nav-tree-row">
-                  <span className="nav-disclosure-spacer" aria-hidden="true" />
-                  <div
-                    className="nav-inline-edit"
-                    style={{
-                      paddingLeft: 7 + (newCollectionParentId ? 14 : 0),
-                    }}
-                  >
-                    <Icon name="collection" size={15} />
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        onSetShowCollectionInput(false);
-                        onSetCollectionInputValue("");
-                        onSetNewCollectionParentId(null);
-                      }}
-                      onChange={(e) => onSetCollectionInputValue(e.target.value)}
-                      onKeyDown={onCollectionInputKeyDown}
-                      placeholder={
-                        newCollectionParentId
-                          ? t("nav.subcollectionNamePlaceholder")
-                          : t("nav.collectionNamePlaceholder")
-                      }
-                      value={collectionInputValue}
-                    />
-                  </div>
-                </div>
-              )}
-              {activeCollectionId && (
-                <div style={{ padding: "0 5px 2px" }}>
-                  <label
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      fontSize: 10,
-                      color: "var(--tertiary)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <input
-                      checked={collectionRecursive}
-                      onChange={(e) => {
-                        const recursive = e.target.checked;
-                        collectionRecursiveRef.current = recursive;
-                        onSetCollectionRecursive(recursive);
-                        if (activeCollectionId)
-                          void onChooseCollection(activeCollectionId, recursive);
-                      }}
-                      type="checkbox"
-                    />
-                    {t("nav.includeChildCollections")}
-                  </label>
-                </div>
-              )}
               {collections.length ? (
                 renderCollectionNodes(null, 0)
               ) : (
-                <p className="nav-empty">{t("nav.emptyCollections")}</p>
+                showCollectionInput && newCollectionParentId === null ? (
+                  renderCollectionNodes(null, 0)
+                ) : (
+                  <p className="nav-empty">{t("nav.emptyCollections")}</p>
+                )
               )}
             </>
           ) : (

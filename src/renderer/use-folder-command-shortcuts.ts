@@ -24,6 +24,7 @@ const FOLDER_SHORTCUT_COMMAND_IDS = [
   "folder.create-subfolder",
   "folder.rename",
   "folder.move-to-trash",
+  "folder.delete-from-disk",
 ] as const satisfies readonly FolderShortcutCommandId[];
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -58,6 +59,7 @@ export type UseFolderCommandShortcutsArgs = {
   readonly createSubfolder: (parentFolderId: string | null) => void;
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly trashManagedFolder: (folderId: string, name: string) => void;
+  readonly deleteFolderFromDisk: (folderId: string, name: string) => void;
 };
 
 /**
@@ -78,6 +80,7 @@ export function useFolderCommandShortcuts(
     createSubfolder,
     renameFolder,
     trashManagedFolder,
+    deleteFolderFromDisk,
   } = args;
 
   useEffect(() => {
@@ -110,6 +113,10 @@ export function useFolderCommandShortcuts(
           renameFolder(action.folderId, action.currentName);
           return;
         }
+        if (action.type === "delete-from-disk") {
+          deleteFolderFromDisk(action.folderId, action.name);
+          return;
+        }
         trashManagedFolder(action.folderId, action.name);
         return;
       }
@@ -128,5 +135,6 @@ export function useFolderCommandShortcuts(
     createSubfolder,
     renameFolder,
     trashManagedFolder,
+    deleteFolderFromDisk,
   ]);
 }
