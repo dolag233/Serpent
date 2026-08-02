@@ -467,9 +467,9 @@ describe('PluginActivationCoordinator', () => {
       libraryDirectory: '/libraries/one',
     });
     expect(contributions.list().map((entry) => entry.id).sort()).toEqual([
-      'com.example.contrib.board',
-      'com.example.contrib.do-thing',
-      'com.example.contrib.menu.asset.do-thing',
+      'com.example.contrib.library-1.board',
+      'com.example.contrib.library-1.do-thing',
+      'com.example.contrib.library-1.menu.asset.do-thing',
     ]);
 
     // listContributions must match by instanceId (active map is keyed by pluginId).
@@ -479,7 +479,7 @@ describe('PluginActivationCoordinator', () => {
     });
     expect(listedMenus).toEqual([expect.objectContaining({
       kind: 'menu',
-      id: 'com.example.contrib.menu.asset.do-thing',
+      id: 'com.example.contrib.library-1.menu.asset.do-thing',
       pluginId: 'com.example.contrib',
       commandId: 'do-thing',
       target: 'menus.asset',
@@ -491,7 +491,7 @@ describe('PluginActivationCoordinator', () => {
       libraryId: 'library-1',
       target: 'workspace.views',
     })).toEqual([expect.objectContaining({
-      id: 'com.example.contrib.board',
+      id: 'com.example.contrib.library-1.board',
       pluginId: 'com.example.contrib',
     })]);
 
@@ -499,5 +499,80 @@ describe('PluginActivationCoordinator', () => {
     expect(contributions.list()).toEqual([]);
     expect(coordinator.listContributions({ libraryId: 'library-1' })).toEqual([]);
     expect(deactivateLibrary).toHaveBeenCalledWith('library-1', 'library-closed');
+  });
+
+  it('allows the same plugin contributions in two open libraries without ID collision', async () => {
+    const { createContributionRegistry } = await import('../../src/plugins/plugin-contributions');
+    const contributions = createContributionRegistry();
+    const activate = vi.fn(async () => undefined);
+    const contribPackage = {
+      lock: { pluginId: 'com.example.contrib', version: '1.0.0', packageHash: 'f'.repeat(64) },
+      manifest: {
+        runtime: { mode: 'restricted', entry: 'dist/main.js' },
+        permissions: ['library.read', 'asset.read'],
+        contributes: {
+          commands: [{ id: 'do-thing', title: 'Do thing' }],
+          menus: { asset: [{ command: 'do-thing' }] },
+          views: [],
+          settings: [],
+          hooks: [],
+          providers: [],
+        },
+      },
+      packageDirectory: '/plugins/contrib',
+    };
+    const coordinator = new PluginActivationCoordinator({
+      packageManager: {
+        getSafeMode: async () => false,
+        listInstalled: async () => [{ status: 'valid', package: contribPackage }],
+        resolve: async () => ({
+          status: 'resolved',
+          selection: 'use-global',
+          package: contribPackage,
+        }),
+      } as never,
+      supervisor: {
+        activate,
+        deactivate: vi.fn(),
+        deactivateLibrary: vi.fn(),
+      } as never,
+      contributions,
+      readEntryFile: async () => 'async function activate() {}',
+    });
+
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-1',
+      libraryDirectory: '/libraries/one',
+    });
+    await coordinator.onLibraryOpened({
+      libraryId: 'library-2',
+      libraryDirectory: '/libraries/two',
+    });
+
+    expect(activate).toHaveBeenCalledTimes(2);
+    expect(coordinator.listContributions({
+      libraryId: 'library-1',
+      target: 'menus.asset',
+    })).toEqual([expect.objectContaining({
+      id: 'com.example.contrib.library-1.menu.asset.do-thing',
+      pluginId: 'com.example.contrib',
+    })]);
+    expect(coordinator.listContributions({
+      libraryId: 'library-2',
+      target: 'menus.asset',
+    })).toEqual([expect.objectContaining({
+      id: 'com.example.contrib.library-2.menu.asset.do-thing',
+      pluginId: 'com.example.contrib',
+    })]);
+    expect(contributions.list()).toHaveLength(4);
+
+    coordinator.onLibraryClosed('library-1');
+    expect(coordinator.listContributions({
+      libraryId: 'library-2',
+      target: 'menus.asset',
+    })).toEqual([expect.objectContaining({
+      id: 'com.example.contrib.library-2.menu.asset.do-thing',
+    })]);
+    expect(coordinator.listContributions({ libraryId: 'library-1' })).toEqual([]);
   });
 });

@@ -18,6 +18,7 @@ export const AUTOMATION_READ_ONLY_WORKER_COMMAND_TYPES = [
   'asset.search',
   'asset.list-trash',
   'asset.palette.aggregate-recent',
+  'asset.content.read',
   'automation.file-operation-plan',
   'tag.list',
   'collection.list',
@@ -118,6 +119,12 @@ export function executeAutomationReadOnlyWorkerCommand(
         ok: true,
         type: 'asset.palette.aggregated-recent',
         ...libraryService.aggregateRecentAssetPalette(command),
+      };
+    case 'asset.content.read':
+      return {
+        ok: true,
+        type: 'asset.content.read',
+        ...libraryService.readManagedAssetContent(command),
       };
     case 'automation.file-operation-plan':
       return {

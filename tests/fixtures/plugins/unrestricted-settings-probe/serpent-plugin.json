@@ -26,6 +26,10 @@
       {
         "id": "probe.write-selection",
         "title": "Write unrestricted selection"
+      },
+      {
+        "id": "probe.nested-selection",
+        "title": "Write nested selection"
       }
     ],
     "menus": {
@@ -33,6 +37,17 @@
         {
           "command": "probe.write-selection",
           "group": "probe"
+        },
+        {
+          "id": "processing",
+          "title": "Probe processing",
+          "group": "probe",
+          "submenu": [
+            {
+              "command": "probe.nested-selection",
+              "before": "asset.rename"
+            }
+          ]
         }
       ]
     },
@@ -48,7 +63,24 @@
         "entry": "entry/ui/settings.html"
       }
     ],
-    "settings": [],
+    "settings": [
+      {
+        "id": "enabled-demo",
+        "title": "Probe enabled",
+        "type": "boolean",
+        "description": "Enable the unrestricted probe."
+      },
+      {
+        "id": "quality",
+        "title": "Probe quality",
+        "type": "select",
+        "description": "Choose the probe processing quality.",
+        "options": [
+          { "value": "fast", "label": "Fast" },
+          { "value": "high", "label": "High" }
+        ]
+      }
+    ],
     "hooks": [],
     "jobs": [],
     "providers": [],

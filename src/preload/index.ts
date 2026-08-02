@@ -50,6 +50,7 @@ import {
   AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
   AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
   PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
@@ -86,7 +87,6 @@ import {
 import {
   parsePluginManagerResponse,
   type PluginHostContributionTarget,
-  type PluginHostMenuTarget,
   type PluginManagerRequest,
   type PluginManagerResponse,
   type SerpentPluginManagerApi,
@@ -97,7 +97,7 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
-import { shellNotifyPayloadSchema } from '../shared/shell-notify';
+import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
 import {
   desktopControlSelectionEventSchema,
   desktopBrowseActionSchema,
@@ -1921,7 +1921,7 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(INVERT_SELECTION_CHANNEL, handler);
     };
   },
-  onShellNotify(listener) {
+  onShellNotify(listener: (input: ShellNotifyPayload) => void) {
     const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
       const parsed = shellNotifyPayloadSchema.safeParse(input);
       if (!parsed.success) return;
@@ -2126,6 +2126,23 @@ const plugins: SerpentPluginManagerApi = Object.freeze({
     return 'ai' in response || response.ok === false
       ? response as Awaited<ReturnType<SerpentPluginManagerApi['aiProvider']>>
       : { ok: false as const, code: 'operation-failed' as const };
+  },
+  onContributionsChanged(listener: (event: {
+    libraryId: string | null;
+    requestType: string;
+  }) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      if (typeof payload !== 'object' || payload === null) return;
+      const record = payload as { libraryId?: unknown; requestType?: unknown };
+      listener({
+        libraryId: typeof record.libraryId === 'string' ? record.libraryId : null,
+        requestType: typeof record.requestType === 'string' ? record.requestType : 'unknown',
+      });
+    };
+    ipcRenderer.on(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, handler);
+    };
   },
 });
 

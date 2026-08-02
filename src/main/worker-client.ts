@@ -85,6 +85,16 @@ export function requestTimeoutForCommand(
   return REQUEST_TIMEOUT_MS;
 }
 
+/** True when a Worker message looks like a push event rather than a request/response. */
+export function isWorkerEventShapedMessage(message: unknown): boolean {
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) return false;
+  const record = message as Record<string, unknown>;
+  if (typeof record.type !== 'string' || record.type.length === 0) return false;
+  if ('requestId' in record) return false;
+  if ('result' in record) return false;
+  return true;
+}
+
 export class LibraryWorkerClient {
   readonly #modulePath: string;
   #child: UtilityProcess | undefined;
@@ -368,6 +378,17 @@ export class LibraryWorkerClient {
     try {
       response = parseWorkerResponse(message);
     } catch (error) {
+      // Event-shaped payloads that fail their dedicated parsers (schema drift,
+      // new source enums, etc.) must not take down the Library Worker. Only
+      // kill the process when the message cannot be classified as an event.
+      if (isWorkerEventShapedMessage(message)) {
+        this.logger.error('worker.protocol.ignored-event', error, {
+          type: typeof message === 'object' && message !== null && 'type' in message
+            ? String((message as { type: unknown }).type)
+            : undefined,
+        });
+        return;
+      }
       this.#protocolFailure(new Error('Library Worker sent a malformed response.', { cause: error }));
       return;
     }

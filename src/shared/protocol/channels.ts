@@ -62,6 +62,9 @@ export const AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL = 'serpent:automation:script-
 export const AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL = 'serpent:automation:script-recent-open' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
+/** Main → Renderer: plugin contributions changed after install/enable/refresh. */
+export const PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL =
+  'serpent:plugin:contributions-changed' as const;
 /** Main → Renderer: active plugin input capture sessions for fan-in gating. */
 export const PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL =
   'serpent:plugin:input-capture-sessions' as const;

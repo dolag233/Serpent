@@ -573,6 +573,45 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
     })).resolves.toMatchObject({ status: 'resolved', selection: 'use-global' });
   });
 
+  it('inherits user-scoped enablement across libraries for unrestricted global plugins', async () => {
+    const source = temporaryRoot('serpent-plugin-unrestricted-inherit-');
+    const userData = temporaryRoot('serpent-plugin-unrestricted-inherit-user-');
+    const libraryA = temporaryRoot('serpent-plugin-unrestricted-inherit-library-a-');
+    const libraryB = temporaryRoot('serpent-plugin-unrestricted-inherit-library-b-');
+    writePlugin(source, { runtime: 'unrestricted', version: '1.0.0' });
+    const manager = createManager(userData);
+    const installed = await manager.installFromDirectory({
+      directory: source,
+      scope: 'user',
+      source: { kind: 'local-directory', fingerprint: 'local:unrestricted-inherit' },
+    });
+
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: installed.package.lock.packageHash,
+      propagateUserScoped: true,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-b',
+      libraryDirectory: libraryB,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'resolved', selection: 'use-global' });
+
+    await manager.chooseResolution({
+      libraryId: 'library-b',
+      pluginId: installed.package.lock.pluginId,
+      selection: 'disabled',
+      propagateUserScoped: true,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: libraryA,
+      pluginId: installed.package.lock.pluginId,
+    })).resolves.toMatchObject({ status: 'disabled', reason: 'user-disabled' });
+  });
+
   it('uses Safe Mode to suppress unrestricted (trusted) resolution while leaving restricted packages resolvable', async () => {
     const trustedSource = temporaryRoot('serpent-plugin-trusted-source-');
     const restrictedSource = temporaryRoot('serpent-plugin-restricted-source-');

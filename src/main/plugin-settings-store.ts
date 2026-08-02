@@ -133,6 +133,10 @@ export class PluginSettingsStore {
     if (!isExpectedType) {
       throw new PluginSettingsStoreError('PLUGIN_SETTING_VALUE_INVALID', 'The setting value does not match the declared type.');
     }
+    if (setting.type === 'select'
+      && !setting.options?.some((option) => option.value === value)) {
+      throw new PluginSettingsStoreError('PLUGIN_SETTING_VALUE_INVALID', 'The setting value is not one of the declared options.');
+    }
   }
 
   #emptyDocument(pluginId: string): PluginSettingsDocument {
@@ -159,8 +163,24 @@ export class PluginSettingsStore {
       if (document.pluginId !== input.manifest.id) {
         throw new PluginSettingsStoreError('PLUGIN_SETTINGS_INVALID', 'The plugin settings file belongs to another plugin.');
       }
-      for (const [settingId, value] of Object.entries(document.values)) this.#assertValue(input.manifest, settingId, value);
-      return document;
+      const values: PluginSettingsDocument['values'] = {};
+      for (const [settingId, value] of Object.entries(document.values)) {
+        const declared = input.manifest.contributes.settings.some((setting) => setting.id === settingId);
+        if (!declared) continue;
+        try {
+          this.#assertValue(input.manifest, settingId, value);
+        } catch (error) {
+          // Stale values from older plugin versions must not wipe the whole
+          // settings document; skip them so the UI can fall back to defaults.
+          if (error instanceof PluginSettingsStoreError
+            && error.code === 'PLUGIN_SETTING_VALUE_INVALID') {
+            continue;
+          }
+          throw error;
+        }
+        values[settingId] = value;
+      }
+      return { ...document, values };
     } catch (error) {
       if (error instanceof PluginSettingsStoreError) throw error;
       throw new PluginSettingsStoreError('PLUGIN_SETTINGS_INVALID', 'The plugin settings file is invalid.');

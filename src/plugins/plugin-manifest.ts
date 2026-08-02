@@ -249,10 +249,55 @@ const contributionCommandSchema = z.strictObject({
     export: z.literal(true),
   }).optional(),
 });
-const contributionMenuItemSchema = z.strictObject({
-  command: pluginLocalIdSchema,
+type ContributionMenuItem = {
+  command?: string;
+  id?: string;
+  title?: string;
+  group?: string;
+  before?: string;
+  after?: string;
+  submenu?: ContributionMenuItem[];
+};
+
+const contributionMenuItemSchema: z.ZodType<ContributionMenuItem> = z.lazy(() => z.strictObject({
+  command: pluginLocalIdSchema.optional(),
+  id: pluginLocalIdSchema.optional(),
+  title: z.string().min(1).max(160).optional(),
   group: z.string().min(1).max(64).optional(),
-});
+  before: pluginLocalIdSchema.optional(),
+  after: pluginLocalIdSchema.optional(),
+  submenu: z.array(contributionMenuItemSchema).max(64).optional(),
+}).superRefine((item, context) => {
+  const hasCommand = item.command !== undefined;
+  const hasSubmenu = item.submenu !== undefined;
+  if (hasCommand === hasSubmenu) {
+    context.addIssue({
+      code: 'custom',
+      message: 'A menu item must declare either command or submenu.',
+    });
+  }
+  if (hasSubmenu && (item.id === undefined || item.title === undefined)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['id'],
+      message: 'A submenu must declare id and title.',
+    });
+  }
+  if (hasCommand && item.id !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['id'],
+      message: 'A command menu item must not declare id.',
+    });
+  }
+  if (item.before !== undefined && item.after !== undefined) {
+    context.addIssue({
+      code: 'custom',
+      path: ['before'],
+      message: 'A menu item may declare before or after, not both.',
+    });
+  }
+}));
 const contributionToolbarItemSchema = z.strictObject({
   id: pluginLocalIdSchema,
   command: pluginLocalIdSchema,
@@ -284,6 +329,27 @@ const contributionSettingSchema = z.strictObject({
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   type: z.enum(['boolean', 'number', 'string', 'select']),
+  description: z.string().min(1).max(2_000).optional(),
+  options: z.array(z.strictObject({
+    value: z.string().min(1).max(128),
+    label: z.string().min(1).max(160),
+  })).max(64).optional(),
+}).superRefine((setting, context) => {
+  if (setting.type === 'select' && (setting.options === undefined || setting.options.length === 0)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['options'],
+      message: 'Select settings must declare at least one option.',
+    });
+  }
+  if (setting.options !== undefined
+    && new Set(setting.options.map((option) => option.value)).size !== setting.options.length) {
+    context.addIssue({
+      code: 'custom',
+      path: ['options'],
+      message: 'Setting option values must be unique.',
+    });
+  }
 });
 const contributionHookSchema = z.strictObject({
   id: pluginLocalIdSchema,
@@ -486,16 +552,36 @@ export const pluginManifestSchema = pluginManifestObjectSchema.superRefine((mani
   }
 
   const commandIds = new Set(manifest.contributes.commands.map((command) => command.id));
-  for (const [menuName, items] of Object.entries(manifest.contributes.menus)) {
+  const validateMenuItems = (
+    menuName: string,
+    items: ContributionMenuItem[],
+    parentPath: number[] = [],
+    depth = 1,
+  ): void => {
+    if (depth > 3) {
+      context.addIssue({
+        code: 'custom',
+        path: ['contributes', 'menus', menuName, ...parentPath],
+        message: 'Plugin submenus may be nested at most three levels deep.',
+      });
+      return;
+    }
     for (const [index, item] of items.entries()) {
-      if (!commandIds.has(item.command)) {
+      const itemPath = [...parentPath, index];
+      if (item.command !== undefined && !commandIds.has(item.command)) {
         context.addIssue({
           code: 'custom',
-          path: ['contributes', 'menus', menuName, index, 'command'],
+          path: ['contributes', 'menus', menuName, ...itemPath, 'command'],
           message: 'Menu items must reference a command declared by this manifest.',
         });
       }
+      if (item.submenu !== undefined) {
+        validateMenuItems(menuName, item.submenu, itemPath, depth + 1);
+      }
     }
+  };
+  for (const [menuName, items] of Object.entries(manifest.contributes.menus)) {
+    validateMenuItems(menuName, items);
   }
   for (const [index, item] of manifest.contributes.toolbar.entries()) {
     if (!commandIds.has(item.command)) {

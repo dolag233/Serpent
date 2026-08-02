@@ -6,6 +6,7 @@
 ## 2026-08-02 脚本/MCP/插件 ui.notify
 
 - 新增 Gateway `ui.notify` / Guest `serpent.ui.notify` / MCP `serpent_ui_notify`：info/warning/error toast 与可选阻塞弹窗；权限/能力 `ui.notify`；无库可调用。见 [开发日志](development/2026-08-02-ui-notify-development-log.md)；`AUT-021`。工单 `Serpent-99zs`。
+- `Serpent-fkq3` / `Serpent-7nah.1` 已落地插件菜单树与 Host 设置控件增量：菜单支持三级 submenu、宿主/自定义分组与 before/after 锚点；设置支持 boolean toggle、select options、description hover/focus 帮助和提交值校验。定向测试通过；Electron 启动 SIGABRT、packaged/Windows 仍未验证，见 [开发日志](development/2026-08-02-plugin-native-controls-and-menu-tree-development-log.md)。
 - **`Serpent-l2tj` 已关闭**：settings.pages/menus 贡献解析与启动激活回归测试落地——全 view target + 混合数组单测、IPC `serpent-plugin://` 经 Preload 解析保留、E2E（含 `SERPENT_E2E_RESTORE_RECENT` 完整重启）。见 [贡献回归开发日志](development/2026-08-02-plugin-contribution-regression-tests-development-log.md)。仍开放：`Serpent-2qsq`（全局 user-scope 插件激活不应依赖打开资源库）。
 
 ## 2026-08-01 插件设置 IA 与列表样式

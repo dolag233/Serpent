@@ -979,12 +979,21 @@ function AppInner() {
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [appSettingsCategory, setAppSettingsCategory] =
     useState<AppSettingsCategoryId>("general");
+  const [pluginContributionEpoch, setPluginContributionEpoch] = useState(0);
   const pluginTrustPrompt = usePluginTrustPrompt({
     api: (window as RendererWindow).serpent?.plugins,
     libraryId: library?.libraryId,
     suppressWhileSettingsOpen: appSettingsOpen && appSettingsCategory === "plugins",
   });
-  const pluginSidebarRefreshKey = appSettingsOpen ? "settings" : "browse";
+  const pluginContributionRefreshKey = `${appSettingsOpen ? "settings" : "browse"}:${pluginContributionEpoch}`;
+  const pluginSidebarRefreshKey = pluginContributionRefreshKey;
+  useEffect(() => {
+    const api = (window as RendererWindow).serpent?.plugins;
+    if (api?.onContributionsChanged === undefined) return;
+    return api.onContributionsChanged(() => {
+      setPluginContributionEpoch((current) => current + 1);
+    });
+  }, []);
   const pluginSidebarViews = usePluginSidebarViews(
     (window as RendererWindow).serpent?.plugins,
     library?.libraryId,
@@ -6275,7 +6284,7 @@ function AppInner() {
               }),
             );
           }
-          // source === 'client' (or omitted): silent canvas refresh only.
+          // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
         } catch (caught) {
           setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
         }
@@ -7957,7 +7966,7 @@ function AppInner() {
               disabled={busy || library === null || showTagManagement || showPluginSidebarView}
               libraryId={library?.libraryId}
               pluginApi={(window as RendererWindow).serpent?.plugins}
-              refreshKey={appSettingsOpen ? "settings" : "browse"}
+              refreshKey={pluginContributionRefreshKey}
               selectedAssetIds={selectedAssetIds}
             />
             <WorkspaceToolsOverflow
@@ -7982,7 +7991,7 @@ function AppInner() {
           disabled={busy || library === null || showTagManagement || showPluginSidebarView}
           libraryId={library?.libraryId}
           pluginApi={(window as RendererWindow).serpent?.plugins}
-          refreshKey={appSettingsOpen ? "settings" : "browse"}
+          refreshKey={pluginContributionRefreshKey}
         />
         {!showTagManagement && !showPluginSidebarView && (
         <div
@@ -8993,7 +9002,7 @@ function AppInner() {
                 : undefined
             }
             pluginApi={(window as RendererWindow).serpent?.plugins}
-            pluginContributionRefreshKey={appSettingsOpen ? "settings" : "browse"}
+            pluginContributionRefreshKey={pluginContributionRefreshKey}
           />
         )}
       </section>
@@ -9043,7 +9052,7 @@ function AppInner() {
         versionConflict={versionConflict}
         pluginApi={(window as RendererWindow).serpent?.plugins}
         libraryId={library?.libraryId}
-        pluginContributionRefreshKey={appSettingsOpen ? "settings" : "browse"}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
       />
       <ImageSequenceDialog
         count={
@@ -9568,6 +9577,7 @@ function AppInner() {
       <AssetContextMenu
         libraryId={library?.libraryId}
         pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
         tags={tags}
         collections={collections}
         linkedFolders={linkedFolders}

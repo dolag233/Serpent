@@ -542,6 +542,8 @@ export class PluginActivationCoordinator {
           settingId: contribution.settingId,
           title: contribution.title,
           type: contribution.type,
+          ...(contribution.description === undefined ? {} : { description: contribution.description }),
+          ...(contribution.options === undefined ? {} : { options: contribution.options }),
           target: 'settings.sections' as const,
         }));
     }
@@ -674,9 +676,13 @@ export class PluginActivationCoordinator {
         id: contribution.id,
         pluginId: contribution.pluginId,
         pluginInstanceId: contribution.pluginInstanceId,
-        commandId: contribution.commandId,
+        ...(contribution.commandId === undefined ? {} : { commandId: contribution.commandId }),
         title: contribution.title,
         target: contribution.target,
+        ...(contribution.group === undefined ? {} : { group: contribution.group }),
+        ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),
+        ...(contribution.before === undefined ? {} : { before: contribution.before }),
+        ...(contribution.after === undefined ? {} : { after: contribution.after }),
       }));
   }
 
@@ -712,12 +718,12 @@ export class PluginActivationCoordinator {
       .filter((item): item is Extract<
         ReturnType<PluginActivationCoordinator['listContributions']>[number],
         { kind: 'command' } | { kind: 'menu' } | { kind: 'toolbar' } | { kind: 'inspector-section' } | { kind: 'viewer-action' } | { kind: 'shortcut' }
-      > => item.kind === 'menu'
+      > & { commandId: string } => (item.kind === 'menu'
         || item.kind === 'command'
         || item.kind === 'toolbar'
         || item.kind === 'inspector-section'
         || item.kind === 'viewer-action'
-        || item.kind === 'shortcut');
+        || item.kind === 'shortcut') && item.commandId !== undefined);
     const contribution = input.contributionId === undefined
       ? candidates.find((item) => item.pluginId === input.pluginId && item.commandId === input.commandId)
       : candidates.find((item) => item.id === input.contributionId);
@@ -798,6 +804,7 @@ export class PluginActivationCoordinator {
         registerManifestContributions(registry, {
           pluginInstanceId: instanceId,
           pluginId,
+          libraryId,
           contributes: pluginPackage.manifest.contributes,
           mcpExportedCommandIds: getPluginMcpExportedCommandIds(pluginPackage.manifest),
           uiEntryPath: pluginPackage.manifest.ui?.entry,

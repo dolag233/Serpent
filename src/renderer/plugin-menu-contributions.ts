@@ -9,8 +9,12 @@ export type PluginMenuDescriptor = {
   id: string;
   label: string;
   contributionId: string;
-  commandId: string;
+  commandId?: string;
   pluginId: string;
+  group?: string;
+  before?: string;
+  after?: string;
+  children: PluginMenuDescriptor[];
 };
 
 export function buildPluginMenuDescriptors(
@@ -18,19 +22,42 @@ export function buildPluginMenuDescriptors(
     kind: 'menu';
     id: string;
     title: string;
-    commandId: string;
+    commandId?: string;
     pluginId: string;
+    group?: string;
+    before?: string;
+    after?: string;
+    parentId?: string;
   }[],
 ): PluginMenuDescriptor[] {
-  return contributions
-    .map((contribution) => ({
+  const descriptors: PluginMenuDescriptor[] = contributions.map((contribution) => ({
       id: contribution.id,
       label: contribution.title,
       contributionId: contribution.id,
-      commandId: contribution.commandId,
+      ...(contribution.commandId === undefined ? {} : { commandId: contribution.commandId }),
       pluginId: contribution.pluginId,
-    }))
-    .sort((left, right) => left.id.localeCompare(right.id));
+      ...(contribution.group === undefined ? {} : { group: contribution.group }),
+      ...(contribution.before === undefined ? {} : { before: contribution.before }),
+      ...(contribution.after === undefined ? {} : { after: contribution.after }),
+      children: [] as PluginMenuDescriptor[],
+    }));
+  const byId = new Map(descriptors.map((descriptor) => [descriptor.id, descriptor]));
+  const roots: PluginMenuDescriptor[] = [];
+  for (const [index, descriptor] of descriptors.entries()) {
+    const parentId = contributions[index]?.parentId;
+    const parent = parentId === undefined ? undefined : byId.get(parentId);
+    if (parent === undefined) {
+      roots.push(descriptor);
+    } else {
+      parent.children.push(descriptor);
+    }
+  }
+  const sort = (items: PluginMenuDescriptor[]): void => {
+    items.sort((left, right) => left.id.localeCompare(right.id));
+    for (const item of items) sort(item.children);
+  };
+  sort(roots);
+  return roots;
 }
 
 /** @deprecated Use {@link buildPluginMenuDescriptors} */
@@ -47,7 +74,7 @@ export function usePluginMenuContributions(
 
   useEffect(() => {
     if (!enabled || pluginApi === undefined || libraryId === undefined) {
-      setItems([]);
+      queueMicrotask(() => setItems([]));
       return;
     }
     let cancelled = false;

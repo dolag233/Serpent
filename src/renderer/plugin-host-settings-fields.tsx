@@ -104,25 +104,35 @@ export function PluginHostSettingsFields({
 
   return (
     <div className="plugin-host-settings-fields">
-      <div className="app-settings-row-copy">
-        <strong>{t('settings.pluginHostSettingsTitle')}</strong>
-        <span>{t('settings.pluginHostSettingsHint')}</span>
-      </div>
       {error === undefined ? null : (
         <p className="plugin-settings-error" role="status">{error}</p>
       )}
       {sections.map((section) => {
         const fieldDisabled = disabled || savingId !== undefined;
+        const descriptionId = section.description === undefined
+          ? undefined
+          : `plugin-setting-help-${section.id}`;
+        const help = section.description === undefined ? null : (
+          <span className="visually-hidden" id={descriptionId}>
+            {section.description}
+          </span>
+        );
         if (section.type === 'boolean') {
           const checked = section.value === true;
           return (
-            <label className="app-settings-toggle-row plugin-host-settings-field" key={section.id}>
+            <label
+              className="app-settings-toggle-row plugin-host-settings-field"
+              data-hover-tip={section.description}
+              key={section.id}
+              title={section.description}
+            >
               <span className="app-settings-row-copy">
                 <strong>{section.title}</strong>
               </span>
               <span className="app-settings-toggle-control">
                 <input
                   aria-label={section.title}
+                  aria-describedby={descriptionId}
                   checked={checked}
                   disabled={fieldDisabled}
                   onChange={(event) => void save(section, event.target.checked)}
@@ -130,15 +140,54 @@ export function PluginHostSettingsFields({
                 />
                 <span aria-hidden="true" className="app-settings-toggle-track" />
               </span>
+              {help}
+            </label>
+          );
+        }
+        if (section.type === 'select') {
+          const options = section.options ?? [];
+          const selectValue = typeof section.value === 'string'
+            && options.some((option) => option.value === section.value)
+            ? section.value
+            : (options[0]?.value ?? '');
+          return (
+            <label
+              className="plugin-host-settings-field"
+              data-hover-tip={section.description}
+              key={section.id}
+              title={section.description}
+            >
+              <span className="micro-label">{section.title}</span>
+              <select
+                aria-label={section.title}
+                aria-describedby={descriptionId}
+                className="text-field"
+                disabled={fieldDisabled}
+                onChange={(event) => void save(section, event.target.value)}
+                value={selectValue}
+              >
+                {options.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              {help}
             </label>
           );
         }
         if (section.type === 'number') {
           const numericValue = typeof section.value === 'number' ? section.value : '';
           return (
-            <label className="plugin-host-settings-field" key={section.id}>
+            <label
+              className="plugin-host-settings-field"
+              data-hover-tip={section.description}
+              key={section.id}
+              title={section.description}
+            >
               <span className="micro-label">{section.title}</span>
               <input
+                aria-describedby={descriptionId}
                 className="text-field"
                 disabled={fieldDisabled}
                 onChange={(event) => {
@@ -151,14 +200,21 @@ export function PluginHostSettingsFields({
                 type="number"
                 value={numericValue}
               />
+              {help}
             </label>
           );
         }
         const textValue = typeof section.value === 'string' ? section.value : '';
         return (
-          <label className="plugin-host-settings-field" key={section.id}>
+          <label
+            className="plugin-host-settings-field"
+            data-hover-tip={section.description}
+            key={section.id}
+            title={section.description}
+          >
             <span className="micro-label">{section.title}</span>
             <input
+              aria-describedby={descriptionId}
               className="text-field"
               disabled={fieldDisabled}
               onBlur={(event) => void save(section, event.target.value)}
@@ -175,6 +231,7 @@ export function PluginHostSettingsFields({
                 )));
               }}
             />
+            {help}
           </label>
         );
       })}

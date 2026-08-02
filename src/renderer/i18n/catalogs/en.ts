@@ -479,7 +479,10 @@ export const en = {
     }
   },
   contextMenu: {
-    pluginCommands: "Plugin commands"
+    pluginCommands: "Plugin commands",
+    pluginGroups: {
+      imageProcessing: "Image processing"
+    }
   },
   menu: {
     createImageSequence: "Create image sequence…",

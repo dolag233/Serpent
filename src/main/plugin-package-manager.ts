@@ -685,15 +685,32 @@ export class PluginPackageManager {
   }
 
   async chooseResolution(input: PluginManagerResolutionChoice): Promise<PluginResolution> {
+    const { propagateUserScoped, ...resolutionInput } = input;
     const resolution = pluginResolutionSchema.parse({
-      ...input,
+      ...resolutionInput,
       deviceId: this.options.deviceId,
       updatePolicy: input.updatePolicy ?? 'follow-latest',
     });
     const state = await this.#readDeviceState();
-    state.resolutions = state.resolutions.filter((candidate) => !(candidate.libraryId === resolution.libraryId
-      && candidate.pluginId === resolution.pluginId));
-    state.resolutions.push(resolution);
+    const shouldPropagate = propagateUserScoped === true
+      && (resolution.selection === 'use-global' || resolution.selection === 'disabled');
+    if (shouldPropagate) {
+      const libraryIds = new Set<string>([resolution.libraryId]);
+      for (const candidate of state.resolutions) {
+        if (candidate.pluginId === resolution.pluginId) libraryIds.add(candidate.libraryId);
+      }
+      state.resolutions = state.resolutions.filter((candidate) => candidate.pluginId !== resolution.pluginId);
+      for (const libraryId of libraryIds) {
+        state.resolutions.push(pluginResolutionSchema.parse({
+          ...resolution,
+          libraryId,
+        }));
+      }
+    } else {
+      state.resolutions = state.resolutions.filter((candidate) => !(candidate.libraryId === resolution.libraryId
+        && candidate.pluginId === resolution.pluginId));
+      state.resolutions.push(resolution);
+    }
     await this.#writeDeviceState(state);
     return resolution;
   }
@@ -906,6 +923,31 @@ export class PluginPackageManager {
     if (saved?.selection === 'disabled') return { status: 'disabled', reason: 'user-disabled' };
     if (global !== undefined && library !== undefined && saved === undefined) {
       return { status: 'conflict', global, library };
+    }
+
+    // User-scoped (global) plugins keep one enablement decision across libraries:
+    // if this library has no resolution yet, inherit any existing use-global choice.
+    if (saved === undefined && global !== undefined) {
+      const peerEnabled = state.resolutions.find((resolution) => (
+        resolution.pluginId === input.pluginId
+        && resolution.selection === 'use-global'
+      ));
+      if (peerEnabled !== undefined) {
+        const packageHash = peerEnabled.packageHash ?? global.lock.packageHash;
+        await this.chooseResolution({
+          libraryId: input.libraryId,
+          pluginId: input.pluginId,
+          selection: 'use-global',
+          packageHash,
+          ...(peerEnabled.updatePolicy === undefined ? {} : { updatePolicy: peerEnabled.updatePolicy }),
+        });
+        return this.#resolvedOrAwaitingTrust(
+          await this.#readDeviceState(),
+          input.libraryId,
+          'use-global',
+          globalPackages.find((candidate) => candidate.lock.packageHash === packageHash) ?? global,
+        );
+      }
     }
 
     const selection = saved?.selection ?? (global === undefined ? 'use-library' : 'use-global');

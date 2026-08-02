@@ -213,6 +213,7 @@ export function PluginSettingsPage({
         libraryId,
         pluginId: pluginPackage.pluginId,
         selection: 'disabled',
+        ...(pluginPackage.scope === 'user' ? { propagateUserScoped: true } : {}),
       });
       return;
     }
@@ -222,6 +223,7 @@ export function PluginSettingsPage({
       pluginId: pluginPackage.pluginId,
       selection: pluginPackage.scope === 'user' ? 'use-global' : 'use-library',
       packageHash: pluginPackage.packageHash,
+      ...(pluginPackage.scope === 'user' ? { propagateUserScoped: true } : {}),
     });
   }, [execute, libraryId]);
 
@@ -587,6 +589,7 @@ export function PluginSettingsPage({
                         pluginId,
                         selection: candidate.scope === 'user' ? 'use-global' : 'use-library',
                         packageHash: candidate.packageHash,
+                        ...(candidate.scope === 'user' ? { propagateUserScoped: true } : {}),
                       })}
                       type="button"
                     >
@@ -601,6 +604,7 @@ export function PluginSettingsPage({
                       libraryId: libraryId!,
                       pluginId,
                       selection: 'disabled',
+                      propagateUserScoped: true,
                     })}
                     type="button"
                   >
@@ -623,6 +627,7 @@ export function PluginSettingsPage({
                         pluginId,
                         selection: target.scope === 'user' ? 'use-global' : 'use-library',
                         packageHash: target.packageHash,
+                        ...(target.scope === 'user' ? { propagateUserScoped: true } : {}),
                       });
                     }}
                     type="button"
@@ -637,6 +642,7 @@ export function PluginSettingsPage({
                       libraryId: libraryId!,
                       pluginId,
                       selection: 'disabled',
+                      propagateUserScoped: true,
                     })}
                     type="button"
                   >

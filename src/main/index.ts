@@ -84,6 +84,7 @@ import {
   DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
   PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
@@ -4245,6 +4246,12 @@ async function startApplication(): Promise<void> {
       input: commandInput,
     });
     if (!result.ok) {
+      logger?.error('plugin.host-command.gateway-failed', new Error(result.error.message ?? result.error.code), {
+        instanceId: context.instanceId,
+        pluginId: context.pluginId,
+        commandId,
+        errorCode: result.error.code,
+      });
       throw new Error(result.error.message ?? result.error.code);
     }
     return result.result;
@@ -4934,18 +4941,24 @@ async function startApplication(): Promise<void> {
         const coordinator = pluginActivationCoordinator;
         if (coordinator === undefined) return;
         try {
-          if (libraryId !== undefined && libraryDirectory !== undefined) {
-            await coordinator.refreshLibrary({ libraryId, libraryDirectory });
-            return;
-          }
-          // Safe Mode and user-scope package changes can affect every open library.
-          if (requestType === 'plugin-manager.safe-mode'
+          if (requestType === 'plugin-manager.resolve'
+            || requestType === 'plugin-manager.safe-mode'
             || requestType === 'plugin-manager.install-local'
             || requestType === 'plugin-manager.install-github'
             || requestType === 'plugin-manager.uninstall'
             || requestType === 'plugin-manager.trust'
             || requestType === 'plugin-manager.reload') {
+            // Enable/disable (especially user-scoped) and package lifecycle can
+            // change contributions in every open library Host.
             await coordinator.refreshOpenLibraries();
+          } else if (libraryId !== undefined && libraryDirectory !== undefined) {
+            await coordinator.refreshLibrary({ libraryId, libraryDirectory });
+          }
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL, {
+              libraryId: libraryId ?? null,
+              requestType,
+            });
           }
         } catch (error) {
           logger?.error('plugin.activation.after-mutation', error, { requestType, libraryId });

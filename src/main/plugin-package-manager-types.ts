@@ -163,4 +163,6 @@ export type PluginResolutionResult =
 
 export type PluginManagerResolutionChoice = Omit<PluginResolution, 'deviceId' | 'updatePolicy'> & {
   updatePolicy?: 'follow-latest' | 'pinned';
+  /** When true, mirror use-global / disabled across every library that already resolved this plugin. */
+  propagateUserScoped?: boolean;
 };

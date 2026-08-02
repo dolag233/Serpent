@@ -267,13 +267,14 @@ describe('Plugin package, installation, trust and resolution contracts', () => {
 
 describe('Plugin contribution registry and generated SDK', () => {
   it('namespaces stable contribution IDs and revokes all active contributions on deactivation', () => {
-    expect(createPluginContributionId(validManifest.id, 'extract-palette'))
-      .toBe('com.example.palette-tools.extract-palette');
+    expect(createPluginContributionId(validManifest.id, 'extract-palette', 'library-a'))
+      .toBe('com.example.palette-tools.library-a.extract-palette');
 
     const registry = createContributionRegistry();
     registry.register({
       pluginInstanceId: 'instance-a',
       pluginId: validManifest.id,
+      libraryId: 'library-a',
       localId: 'extract-palette',
       kind: 'command',
       target: 'commands',
@@ -282,6 +283,7 @@ describe('Plugin contribution registry and generated SDK', () => {
     registry.register({
       pluginInstanceId: 'instance-a',
       pluginId: validManifest.id,
+      libraryId: 'library-a',
       localId: 'palette-board',
       kind: 'view',
       target: 'workspace.views',
@@ -292,12 +294,24 @@ describe('Plugin contribution registry and generated SDK', () => {
     expect(() => registry.register({
       pluginInstanceId: 'instance-b',
       pluginId: validManifest.id,
+      libraryId: 'library-a',
       localId: 'extract-palette',
       kind: 'command',
       target: 'commands',
       title: 'Duplicate',
     })).toThrow(/already registered/u);
+    expect(() => registry.register({
+      pluginInstanceId: 'instance-b',
+      pluginId: validManifest.id,
+      libraryId: 'library-b',
+      localId: 'extract-palette',
+      kind: 'command',
+      target: 'commands',
+      title: 'Same command other library',
+    })).not.toThrow();
     expect(registry.revokePluginInstance('instance-a')).toBe(2);
+    expect(registry.list()).toHaveLength(1);
+    expect(registry.revokePluginInstance('instance-b')).toBe(1);
     expect(registry.list()).toEqual([]);
   });
 
@@ -306,6 +320,7 @@ describe('Plugin contribution registry and generated SDK', () => {
     const registry = createContributionRegistry();
     const count = registerManifestContributions(registry, {
       pluginInstanceId: 'instance-manifest',
+      libraryId: 'library-a',
       pluginId: validManifest.id,
       contributes: validManifest.contributes,
     });

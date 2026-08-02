@@ -169,6 +169,47 @@ Host 渲染（声明式）：`commands`、`menus.*`、`toolbar`、`inspector`、
 
 Sandboxed iframe：`workspace.views`、`sidebar.entries`、`inspector.views`、`viewer.overlays`、`settings.pages`。  
 
+菜单贡献支持宿主分组、二级/三级子菜单和相对宿主命令定位：
+
+```json
+{
+  "menus": {
+    "asset": [
+      {
+        "id": "processing",
+        "title": "Processing",
+        "group": "organize",
+        "submenu": [
+          { "command": "probe.fast", "before": "asset.rename" },
+          {
+            "id": "advanced",
+            "title": "Advanced",
+            "submenu": [{ "command": "probe.high-quality" }]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`group` 可使用 `open`、`organize`、`metadata`、`delete` 放入宿主语义分组，也可填写自定义分组名。`before` / `after` 使用稳定宿主命令 ID；同一项不能同时填写二者，子菜单最多三层。
+
+Host 设置项支持 `boolean` toggle、带 `options` 的 `select`、`number` 和 `string`。`description` 会作为悬停/无障碍帮助提示；`select` 的值只能从声明的选项中提交：
+
+```json
+{
+  "id": "quality",
+  "title": "Quality",
+  "type": "select",
+  "description": "Choose processing quality.",
+  "options": [
+    { "value": "fast", "label": "Fast" },
+    { "value": "high", "label": "High" }
+  ]
+}
+```
+
 ### 7.1 插件设置入口（产品 UI）
 
 - **设置 → 插件**：安装、启用开关、信任、卸载、来源图标（本地文件夹 / GitHub）、刷新。  

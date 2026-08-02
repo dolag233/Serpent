@@ -200,6 +200,7 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     pluginId: pluginIdSchema,
     selection: z.enum(['use-global', 'use-library', 'disabled']),
     packageHash: packageHashSchema.optional(),
+    propagateUserScoped: z.boolean().optional(),
   }).superRefine((value, context) => {
     if (value.selection !== 'disabled' && value.packageHash === undefined) {
       context.addIssue({ code: 'custom', path: ['packageHash'], message: 'An enabled selection needs an exact package hash.' });
@@ -277,8 +278,12 @@ export const pluginManagerMenuContributionSchema = z.strictObject({
   id: z.string().min(1).max(255),
   pluginId: pluginIdSchema,
   pluginInstanceId: z.string().min(1).max(255),
-  commandId: pluginLocalIdSchema,
+  commandId: pluginLocalIdSchema.optional(),
   title: z.string().min(1).max(160),
+  group: z.string().min(1).max(64).optional(),
+  parentId: z.string().min(1).max(255).optional(),
+  before: z.string().min(1).max(255).optional(),
+  after: z.string().min(1).max(255).optional(),
   target: pluginHostMenuTargetSchema,
 });
 export type PluginManagerMenuContribution = z.infer<typeof pluginManagerMenuContributionSchema>;
@@ -358,6 +363,11 @@ export const pluginManagerSettingsContributionSchema = z.strictObject({
   settingId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   type: pluginSettingTypeSchema,
+  description: z.string().min(1).max(2_000).optional(),
+  options: z.array(z.strictObject({
+    value: z.string().min(1).max(128),
+    label: z.string().min(1).max(160),
+  })).max(64).optional(),
   target: z.literal('settings.sections'),
 });
 export type PluginManagerSettingsContribution = z.infer<typeof pluginManagerSettingsContributionSchema>;
@@ -433,6 +443,11 @@ export const pluginManagerPluginSettingSectionSchema = z.strictObject({
   id: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   type: pluginSettingTypeSchema,
+  description: z.string().min(1).max(2_000).optional(),
+  options: z.array(z.strictObject({
+    value: z.string().min(1).max(128),
+    label: z.string().min(1).max(160),
+  })).max(64).optional(),
   value: pluginSettingValueSchema.nullable(),
 });
 export type PluginManagerPluginSettingSection = z.infer<typeof pluginManagerPluginSettingSectionSchema>;
@@ -692,4 +707,9 @@ export interface SerpentPluginManagerApi {
   aiProvider(input: Extract<PluginManagerRequest, { type: 'plugin-manager.ai-provider' }>): Promise<
     Extract<PluginManagerResponse, { ai: unknown }> | PluginManagerErrorResponse
   >;
+  /** Subscribe to Main contribution registry changes (enable/disable/install/refresh). */
+  onContributionsChanged?(listener: (event: {
+    libraryId: string | null;
+    requestType: string;
+  }) => void): () => void;
 }

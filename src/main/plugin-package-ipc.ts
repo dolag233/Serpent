@@ -23,10 +23,10 @@ import type { PluginPackageManager } from './plugin-package-manager';
 import type { PluginActivationCoordinator } from './plugin-activation-coordinator';
 import type { PluginManifest } from '../plugins/plugin-manifest';
 import {
-  PluginSettingsStore,
   PluginSettingsStoreError,
   type PluginSettingValue,
 } from './plugin-settings-store';
+import type { PluginSettingsStore } from './plugin-settings-store';
 import type { PluginStorageStore } from './plugin-storage-store';
 import type { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
 import { createPluginUiUrl } from './plugin-ui-assets';
@@ -352,6 +352,8 @@ async function getPluginSettingsSections(
     id: setting.id,
     title: setting.title,
     type: setting.type,
+    ...(setting.description === undefined ? {} : { description: setting.description }),
+    ...(setting.options === undefined ? {} : { options: setting.options }),
     value: snapshot.values[setting.id] ?? null,
   }));
 }
@@ -721,6 +723,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           pluginId: request.pluginId,
           selection: request.selection,
           ...(request.packageHash === undefined ? {} : { packageHash: request.packageHash }),
+          ...(request.propagateUserScoped === true ? { propagateUserScoped: true } : {}),
         });
       } else if (request.type === 'plugin-manager.safe-mode') {
         await options.manager.setSafeMode(request.enabled);

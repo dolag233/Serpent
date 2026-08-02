@@ -118,4 +118,74 @@ describe('PluginSettingsStore', () => {
     await expect(store.set({ ...input, settingId: 'palette-size', value: 'large' }))
       .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
   });
+
+  it('rejects select values outside the declared options', async () => {
+    const library = temporaryRoot('serpent-plugin-select-library-');
+    const userData = temporaryRoot('serpent-plugin-select-user-');
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [{
+          id: 'quality',
+          title: 'Quality',
+          type: 'select',
+          options: [
+            { value: 'fast', label: 'Fast' },
+            { value: 'high', label: 'High' },
+          ],
+        }],
+      },
+    });
+    const store = new PluginSettingsStore(userData);
+    const input = { libraryId: 'library-a', libraryDirectory: library, manifest, layer: 'library' as const };
+
+    await expect(store.set({ ...input, settingId: 'quality', value: 'high' }))
+      .resolves.toMatchObject({ values: { quality: 'high' } });
+    await expect(store.set({ ...input, settingId: 'quality', value: 'ultra' }))
+      .rejects.toMatchObject({ code: 'PLUGIN_SETTING_VALUE_INVALID' });
+  });
+
+  it('skips stale invalid select values when reading an existing settings document', async () => {
+    const library = temporaryRoot('serpent-plugin-select-stale-library-');
+    const userData = temporaryRoot('serpent-plugin-select-stale-user-');
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [{
+          id: 'quality',
+          title: 'Quality',
+          type: 'select',
+          options: [
+            { value: 'fast', label: 'Fast' },
+            { value: 'high', label: 'High' },
+          ],
+        }],
+      },
+    });
+    const store = new PluginSettingsStore(userData);
+    const defaultsDirectory = path.join(userData, 'plugin-settings', 'defaults');
+    mkdirSync(defaultsDirectory, { recursive: true });
+    writeFileSync(
+      path.join(defaultsDirectory, `${manifest.id}.json`),
+      `${JSON.stringify({
+        version: 1,
+        pluginId: manifest.id,
+        values: {
+          quality: '',
+          'removed-setting': true,
+        },
+      }, null, 2)}\n`,
+    );
+
+    await expect(store.getEffective({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      manifest,
+    })).resolves.toEqual({
+      values: {},
+      sources: {},
+    });
+  });
 });

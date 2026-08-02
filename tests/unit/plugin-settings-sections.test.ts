@@ -8,6 +8,7 @@ import { createPluginPackageRequestHandler } from '../../src/main/plugin-package
 import { PluginPackageManager } from '../../src/main/plugin-package-manager';
 import { PluginSettingsStore } from '../../src/main/plugin-settings-store';
 import { PluginStorageStore } from '../../src/main/plugin-storage-store';
+import { pluginManifestSchema } from '../../src/plugins/plugin-manifest';
 import { pluginManagerRequestSchema } from '../../src/shared/plugin-manager-api';
 import manifestFixture from '../fixtures/plugin-manifests/palette-tools.serpent-plugin.json';
 
@@ -45,6 +46,35 @@ afterEach(() => {
 });
 
 describe('Plugin settings sections IPC', () => {
+  it('accepts select options and hover help metadata in a settings contribution', () => {
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        settings: [{
+          id: 'quality',
+          title: 'Quality',
+          type: 'select',
+          description: 'Controls processing quality.',
+          options: [
+            { value: 'fast', label: 'Fast' },
+            { value: 'high', label: 'High' },
+          ],
+        }],
+      },
+    });
+
+    expect(manifest.contributes.settings[0]).toMatchObject({
+      id: 'quality',
+      type: 'select',
+      description: 'Controls processing quality.',
+      options: [
+        { value: 'fast', label: 'Fast' },
+        { value: 'high', label: 'High' },
+      ],
+    });
+  });
+
   it('parses settings contribution listing and get/set requests', () => {
     expect(pluginManagerRequestSchema.parse({
       type: 'plugin-manager.list-contributions',

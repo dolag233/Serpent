@@ -101,6 +101,49 @@ describe('plugin manager response parse', () => {
     });
   });
 
+  it('preserves menu tree metadata and host setting control metadata', () => {
+    const parsed = parsePluginManagerResponse({
+      ok: true,
+      contributions: [{
+        kind: 'menu',
+        id: 'com.example.menu.processing',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: '59847245-d394-4012-ad75-35f837393a8f',
+        title: 'Processing',
+        target: 'menus.asset',
+        group: 'organize',
+        before: 'asset.rename',
+      }, {
+        kind: 'settings-section',
+        id: 'com.example.settings.quality',
+        pluginId: 'com.example.settings',
+        pluginInstanceId: '59847245-d394-4012-ad75-35f837393a8f',
+        settingId: 'quality',
+        title: 'Quality',
+        type: 'select',
+        description: 'Choose quality.',
+        options: [{ value: 'high', label: 'High' }],
+        target: 'settings.sections',
+      }],
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!('contributions' in parsed)) throw new Error('expected contributions');
+    expect(parsed.contributions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'menu',
+        group: 'organize',
+        before: 'asset.rename',
+      }),
+      expect.objectContaining({
+        kind: 'settings-section',
+        type: 'select',
+        description: 'Choose quality.',
+        options: [{ value: 'high', label: 'High' }],
+      }),
+    ]));
+  });
+
   it('parses awaiting-trust resolution', () => {
     const hash = 'a'.repeat(64);
     expect(parsePluginManagerResponse({

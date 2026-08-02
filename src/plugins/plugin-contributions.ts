@@ -42,9 +42,12 @@ export type PluginContributionTarget = z.infer<typeof pluginContributionTargetSc
 
 const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
 
+const pluginContributionLibraryIdSchema = z.string().min(1).max(64);
+
 const pluginContributionRegistrationSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
   pluginId: pluginIdSchema,
+  libraryId: pluginContributionLibraryIdSchema,
   localId: pluginLocalIdSchema,
   kind: pluginContributionKindSchema,
   target: pluginContributionTargetSchema,
@@ -52,7 +55,16 @@ const pluginContributionRegistrationSchema = z.strictObject({
   mcpExported: z.boolean().optional(),
   commandId: pluginLocalIdSchema.optional(),
   commandTitle: z.string().min(1).max(160).optional(),
+  group: z.string().min(1).max(64).optional(),
+  parentId: z.string().min(1).max(255).optional(),
+  before: z.string().min(1).max(255).optional(),
+  after: z.string().min(1).max(255).optional(),
   settingType: pluginSettingTypeSchema.optional(),
+  settingDescription: z.string().min(1).max(2_000).optional(),
+  settingOptions: z.array(z.strictObject({
+    value: z.string().min(1).max(128),
+    label: z.string().min(1).max(160),
+  })).max(64).optional(),
   uiEntryPath: z.string().min(1).max(1_024).optional(),
   accelerator: z.string().min(1).max(64).optional(),
 });
@@ -62,8 +74,20 @@ export interface RegisteredPluginContribution extends PluginContributionRegistra
   id: string;
 }
 
-export function createPluginContributionId(pluginId: string, localId: string): string {
-  return `${pluginIdSchema.parse(pluginId)}.${pluginLocalIdSchema.parse(localId)}`;
+/**
+ * Contribution IDs are scoped by library so the same plugin can activate in
+ * multiple open libraries without colliding on the process-wide registry.
+ */
+export function createPluginContributionId(
+  pluginId: string,
+  localId: string,
+  libraryId: string,
+): string {
+  return [
+    pluginIdSchema.parse(pluginId),
+    pluginContributionLibraryIdSchema.parse(libraryId),
+    pluginLocalIdSchema.parse(localId),
+  ].join('.');
 }
 
 export interface PluginContributionRegistry {
@@ -84,9 +108,13 @@ export type PluginMenuContribution = {
   id: string;
   pluginId: string;
   pluginInstanceId: string;
-  commandId: string;
+  commandId?: string;
   title: string;
   target: PluginHostMenuTarget;
+  group?: string;
+  parentId?: string;
+  before?: string;
+  after?: string;
 };
 
 /** @deprecated Use {@link PluginMenuContribution} */
@@ -119,6 +147,7 @@ export function registerManifestContributions(
   input: {
     pluginInstanceId: string;
     pluginId: string;
+    libraryId: string;
     contributes: PluginManifest['contributes'] | undefined;
     mcpExportedCommandIds?: ReadonlySet<string>;
     uiEntryPath?: string;
@@ -143,6 +172,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: command.id,
       kind: 'command',
       target: 'commands',
@@ -151,26 +181,50 @@ export function registerManifestContributions(
     });
     registered += 1;
   }
-  for (const [menuName, items] of Object.entries(contributes.menus)) {
-    const target = MENU_TARGET_BY_NAME[menuName];
-    if (target === undefined) continue;
-    for (const item of items) {
-      registry.register({
+  const registerMenuItems = (
+    menuName: string,
+    items: NonNullable<PluginManifest['contributes']['menus'][string]>,
+    target: PluginHostMenuTarget,
+    parentId?: string,
+    parentPath: string[] = [],
+  ): void => {
+    for (const [index, item] of items.entries()) {
+      const segment = item.id ?? item.command ?? `item-${index + 1}`;
+      const localId = `menu.${menuName}.${[...parentPath, segment].join('.')}`;
+      const title = item.title
+        ?? (item.command === undefined
+          ? item.id ?? segment
+          : contributes.commands.find((command) => command.id === item.command)?.title ?? item.command);
+      const registeredItem = registry.register({
         pluginInstanceId: input.pluginInstanceId,
         pluginId: input.pluginId,
-        localId: `menu.${menuName}.${item.command}`,
+        libraryId: input.libraryId,
+        localId,
         kind: 'menu',
         target,
-        title: contributes.commands.find((command) => command.id === item.command)?.title ?? item.command,
-        commandId: item.command,
+        title,
+        ...(item.command === undefined ? {} : { commandId: item.command }),
+        ...(item.group === undefined ? {} : { group: item.group }),
+        ...(item.before === undefined ? {} : { before: item.before }),
+        ...(item.after === undefined ? {} : { after: item.after }),
+        ...(parentId === undefined ? {} : { parentId }),
       });
       registered += 1;
+      if (item.submenu !== undefined) {
+        registerMenuItems(menuName, item.submenu, target, registeredItem.id, [...parentPath, segment]);
+      }
     }
+  };
+  for (const [menuName, items] of Object.entries(contributes.menus)) {
+    const target = MENU_TARGET_BY_NAME[menuName] as PluginHostMenuTarget | undefined;
+    if (target === undefined) continue;
+    registerMenuItems(menuName, items, target);
   }
   for (const item of contributes.toolbar ?? []) {
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: `toolbar.${item.id}`,
       kind: 'toolbar',
       target: 'toolbar',
@@ -187,6 +241,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: `inspector.${item.id}`,
       kind: 'inspector-section',
       target: 'inspector.sections',
@@ -200,6 +255,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: `viewer-action.${item.id}`,
       kind: 'viewer-action',
       target: 'viewer.actions',
@@ -218,6 +274,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: `shortcut.${item.id}`,
       kind: 'shortcut',
       target: 'shortcuts',
@@ -233,6 +290,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: view.id,
       kind: 'view',
       target,
@@ -247,11 +305,14 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: setting.id,
       kind: 'settings-section',
       target: 'settings.sections',
       title: setting.title,
       settingType: setting.type,
+      ...(setting.description === undefined ? {} : { settingDescription: setting.description }),
+      ...(setting.options === undefined ? {} : { settingOptions: setting.options }),
     });
     registered += 1;
   }
@@ -259,6 +320,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: hook.id,
       kind: 'hook',
       target: 'hooks',
@@ -270,6 +332,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: job.id,
       kind: 'job',
       target: 'jobs',
@@ -281,6 +344,7 @@ export function registerManifestContributions(
     registry.register({
       pluginInstanceId: input.pluginInstanceId,
       pluginId: input.pluginId,
+      libraryId: input.libraryId,
       localId: provider.id,
       kind: 'provider',
       target: 'providers',
@@ -302,7 +366,7 @@ export function createContributionRegistry(): PluginContributionRegistry {
   return {
     register(value: PluginContributionRegistration): RegisteredPluginContribution {
       const parsed = pluginContributionRegistrationSchema.parse(value);
-      const id = createPluginContributionId(parsed.pluginId, parsed.localId);
+      const id = createPluginContributionId(parsed.pluginId, parsed.localId, parsed.libraryId);
       if (contributions.has(id)) {
         throw new Error(`Plugin contribution ${id} is already registered.`);
       }
@@ -492,16 +556,19 @@ export function listMenuContributions(
 ): PluginMenuContribution[] {
   return registry.list()
     .filter((contribution): contribution is RegisteredPluginContribution & {
-      commandId: string;
       target: PluginHostMenuTarget;
-    } => contribution.target === target && contribution.commandId !== undefined)
+    } => contribution.target === target && contribution.kind === 'menu')
     .map((contribution) => ({
       id: contribution.id,
       pluginId: contribution.pluginId,
       pluginInstanceId: contribution.pluginInstanceId,
-      commandId: contribution.commandId,
+      ...(contribution.commandId === undefined ? {} : { commandId: contribution.commandId }),
       title: contribution.title,
       target: contribution.target,
+      ...(contribution.group === undefined ? {} : { group: contribution.group }),
+      ...(contribution.parentId === undefined ? {} : { parentId: contribution.parentId }),
+      ...(contribution.before === undefined ? {} : { before: contribution.before }),
+      ...(contribution.after === undefined ? {} : { after: contribution.after }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -519,6 +586,8 @@ export type PluginSettingsContribution = {
   settingId: string;
   title: string;
   type: z.infer<typeof pluginSettingTypeSchema>;
+  description?: string;
+  options?: Array<{ value: string; label: string }>;
 };
 
 export function listSettingsContributions(
@@ -535,6 +604,12 @@ export function listSettingsContributions(
       settingId: contribution.localId,
       title: contribution.title,
       type: contribution.settingType,
+      ...(contribution.settingDescription === undefined
+        ? {}
+        : { description: contribution.settingDescription }),
+      ...(contribution.settingOptions === undefined
+        ? {}
+        : { options: contribution.settingOptions }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

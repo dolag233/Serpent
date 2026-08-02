@@ -113,6 +113,55 @@ describe('Automation read-only Worker dispatch', () => {
     expect(digest(databasePath)).toBe(before);
   });
 
+  it('admits asset.content.read through the readonly executor', () => {
+    let readCalls = 0;
+    const service = {
+      readManagedAssetContent: (command: { assetId: string; maxBytes: number }) => {
+        readCalls += 1;
+        expect(command).toEqual({
+          type: 'asset.content.read',
+          libraryId: 'library-1',
+          assetId: 'asset-1',
+          maxBytes: 4,
+        });
+        return {
+          assetId: 'asset-1',
+          revisionId: 'revision-1',
+          byteSize: 8,
+          dataBase64: 'AQIDBA==',
+          truncated: true,
+          mimeType: 'image/png',
+        };
+      },
+    } as unknown as LibraryService;
+
+    expect(isAutomationReadOnlyWorkerCommand({
+      type: 'asset.content.read',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      maxBytes: 4,
+    })).toBe(true);
+
+    const result = executeAutomationReadOnlyWorkerCommand(service, {
+      type: 'asset.content.read',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      maxBytes: 4,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      type: 'asset.content.read',
+      assetId: 'asset-1',
+      revisionId: 'revision-1',
+      byteSize: 8,
+      dataBase64: 'AQIDBA==',
+      truncated: true,
+      mimeType: 'image/png',
+    });
+    expect(readCalls).toBe(1);
+  });
+
   it('reads the current AI layer without mutating the library', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-automation-ai-readonly-'));
     roots.push(root);

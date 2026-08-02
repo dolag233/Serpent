@@ -13,9 +13,19 @@ const FIXTURE_ROOT = path.resolve('tests/fixtures/plugins/unrestricted-settings-
 const PLUGIN_ID = 'com.serpent.unrestricted-settings-probe';
 const SETTINGS_PAGE_ID = `${PLUGIN_ID}.settings-page`;
 const MENU_ID = `${PLUGIN_ID}.menu.asset.probe.write-selection`;
+const SUBMENU_ID = `${PLUGIN_ID}.menu.asset.processing`;
+const SUBMENU_ITEM_ID = `${SUBMENU_ID}.probe.nested-selection`;
 
 type ContributionListing = {
-  menus: Array<{ id: string; pluginId: string; target?: string }>;
+  menus: Array<{
+    id: string;
+    pluginId: string;
+    target?: string;
+    group?: string;
+    parentId?: string;
+    before?: string;
+    after?: string;
+  }>;
   pages: Array<{ id: string; pluginId: string; target?: string; hasUrl: boolean }>;
   error?: 'no-plugin-api';
 };
@@ -28,7 +38,16 @@ async function listContributions(window: Page, libraryId: string): Promise<Contr
           listPluginContributions: (input: {
             libraryId: string;
             target: string;
-          }) => Promise<{ contributions: Array<{ id: string; pluginId: string; target?: string; url?: string }> }>;
+          }) => Promise<{ contributions: Array<{
+            id: string;
+            pluginId: string;
+            target?: string;
+            url?: string;
+            group?: string;
+            parentId?: string;
+            before?: string;
+            after?: string;
+          }> }>;
         };
       };
     }).serpent?.plugins;
@@ -40,6 +59,10 @@ async function listContributions(window: Page, libraryId: string): Promise<Contr
         id: item.id,
         pluginId: item.pluginId,
         target: item.target,
+        group: item.group,
+        parentId: item.parentId,
+        before: item.before,
+        after: item.after,
       })),
       pages: pages.contributions.map((item) => ({
         id: item.id,
@@ -71,10 +94,24 @@ async function readOpenLibraryId(window: Page): Promise<string> {
 async function expectContributionsAndSettingsIframe(window: Page, libraryId: string): Promise<void> {
   const listed = await listContributions(window, libraryId);
   expect(listed).toMatchObject({
-    menus: [expect.objectContaining({
-      id: MENU_ID,
-      pluginId: PLUGIN_ID,
-    })],
+    menus: expect.arrayContaining([
+      expect.objectContaining({
+        id: MENU_ID,
+        pluginId: PLUGIN_ID,
+        group: 'probe',
+      }),
+      expect.objectContaining({
+        id: SUBMENU_ID,
+        pluginId: PLUGIN_ID,
+        group: 'probe',
+      }),
+      expect.objectContaining({
+        id: SUBMENU_ITEM_ID,
+        pluginId: PLUGIN_ID,
+        parentId: SUBMENU_ID,
+        before: 'asset.rename',
+      }),
+    ]),
     pages: [expect.objectContaining({
       id: SETTINGS_PAGE_ID,
       pluginId: PLUGIN_ID,
@@ -89,6 +126,15 @@ async function expectContributionsAndSettingsIframe(window: Page, libraryId: str
   await dialog.locator('.app-settings-nav-plugin-settings-item').filter({
     hasText: 'Unrestricted Settings Probe',
   }).click();
+  const hostSettings = dialog.locator('.plugin-host-settings-fields');
+  await expect(hostSettings.getByRole('checkbox', { name: 'Probe enabled' })).toBeVisible();
+  await hostSettings.getByRole('checkbox', { name: 'Probe enabled' }).check();
+  const quality = hostSettings.getByRole('combobox', { name: 'Probe quality' });
+  await quality.selectOption('high');
+  await expect(quality).toHaveValue('high');
+  await expect(hostSettings.locator('[data-hover-tip="Choose the probe processing quality."]')).toBeVisible();
+  await hostSettings.locator('[data-hover-tip="Choose the probe processing quality."]').hover();
+  await expect(window.locator('.hover-tip')).toHaveText('Choose the probe processing quality.');
   await expect(dialog.getByText('该插件暂无设置页。')).toHaveCount(0);
   await expect(dialog.locator('iframe.plugin-settings-page-frame')).toBeVisible({ timeout: 15_000 });
   await dialog.getByRole('button', { name: '关闭' }).click();

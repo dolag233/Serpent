@@ -469,7 +469,10 @@ export const zhCN = {
     }
   },
   contextMenu: {
-    pluginCommands: "插件命令"
+    pluginCommands: "插件命令",
+    pluginGroups: {
+      imageProcessing: "图像处理"
+    }
   },
   menu: {
     createImageSequence: "创建序列图…",
