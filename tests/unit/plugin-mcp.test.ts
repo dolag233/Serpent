@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getPluginMcpExportedCommandIds,
@@ -13,6 +13,7 @@ import {
   pluginMcpToolName,
 } from '../../src/mcp/plugin-tool-catalog';
 import { PluginMcpExposureStore } from '../../src/main/plugin-mcp-exposure-store';
+import { PluginMcpToolProvider } from '../../src/main/plugin-mcp-tool-provider';
 import { callSerpentMcpTool } from '../../src/mcp/call-tool';
 
 const roots: string[] = [];
@@ -101,6 +102,54 @@ describe('PLUGIN-031 manifest and MCP exposure contract', () => {
 });
 
 describe('PLUGIN-031 MCP call gate', () => {
+  it('does not invoke an exported plugin command from a read-only MCP connection', async () => {
+    const toolName = pluginMcpToolName('com.example.mcp-probe', 'declared');
+    const result = await callSerpentMcpTool({
+      toolName,
+      arguments: { assetIds: ['asset-1'] },
+      executionId: 'mcp-execution',
+      exposure: { writeAccessGranted: false },
+      gateway: {} as never,
+      pluginTools: {
+        list: () => listPluginMcpTools([{
+          pluginId: 'com.example.mcp-probe',
+          commandId: 'declared',
+          title: 'Declared',
+          mcpExported: true,
+        }]),
+        isKnown: () => true,
+        call: async () => {
+          throw new Error('must not be called');
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'MCP_TOOL_NOT_EXPOSED',
+    });
+  });
+
+  it('lists only active exported plugin commands for the bound library', () => {
+    const coordinator = {
+      listMcpCommandContributions: vi.fn(() => [{
+        pluginId: 'com.example.mcp-probe',
+        commandId: 'declared',
+        title: 'Declared',
+        mcpExported: true as const,
+      }]),
+    };
+    const provider = new PluginMcpToolProvider({
+      activationCoordinator: coordinator as never,
+      getLibraryId: () => 'library-1',
+    });
+
+    expect(provider.list()).toMatchObject([{
+      name: pluginMcpToolName('com.example.mcp-probe', 'declared'),
+    }]);
+    expect(coordinator.listMcpCommandContributions).toHaveBeenCalledWith({ libraryId: 'library-1' });
+  });
+
   it('refuses a plugin command that is not currently listed', async () => {
     const result = await callSerpentMcpTool({
       toolName: pluginMcpToolName('com.example.mcp-probe', 'declared'),

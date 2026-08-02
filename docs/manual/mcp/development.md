@@ -158,7 +158,7 @@ MCP 输入不能提交可作为授权依据的 `libraryId`、`source`、能力�
 - 默认只列出 `mcp.public: true` 工具；
 - 有本地写配置时，再列出符合写入暴露条件的工具；
 - 工具名、描述、JSON Schema、影响级别和审批元数据来自 Automation Registry；
-- 插件工具只有在插件已启用且声明 `mcpExported` 时才列出。
+- 插件工具只有在插件已启用、声明 `mcpExported` 且本次 MCP 连接请求了本地写入配置时才列出；插件命令目前按可能产生副作用处理，不能通过只读连接调用。
 
 不要缓存一个会话以外的工具清单，也不要通过猜测工具名绕过暴露过滤。工具名中明确禁止 `eval`、`shell`、`sql`、`fetch`、`net`、`fs`、`process`、`exec` 等旁路语义。
 

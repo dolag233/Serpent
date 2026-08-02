@@ -105,11 +105,34 @@ export async function startAutomationMcpHost(
   const server = createSerpentMcpServer({
     gateway: options.gateway,
     getExecutionId: () => started.executionId,
+    getLibraryId: () => options.journal.get(started.executionId)?.libraryId ?? null,
     getExposure: () => exposure,
     getPluginTools: () => options.pluginTools,
   });
-  await connectSerpentMcpStdio(server);
-  const unsubscribeLibraryChanged = options.onLibraryChanged?.((event) => {
+  let transport: Awaited<ReturnType<typeof connectSerpentMcpStdio>>;
+  try {
+    transport = await connectSerpentMcpStdio(server);
+  } catch (error) {
+    // Do not leave a live Main-owned execution behind when the stdio transport
+    // fails before the MCP client can use it. The deadline timer alone would
+    // otherwise retain the execution and its capabilities until expiry.
+    options.journal.cancel(started.executionId);
+    throw error;
+  }
+  let closed = false;
+  let unsubscribeLibraryChanged: (() => void) | undefined;
+  const cleanup = (): void => {
+    if (closed) return;
+    closed = true;
+    unsubscribeLibraryChanged?.();
+    options.journal.cancel(started.executionId);
+  };
+  const previousOnClose = transport.onclose;
+  transport.onclose = () => {
+    previousOnClose?.();
+    cleanup();
+  };
+  const registeredUnsubscribe = options.onLibraryChanged?.((event) => {
     const boundLibraryId = options.journal.get(started.executionId)?.libraryId;
     if (boundLibraryId === undefined || boundLibraryId === null || boundLibraryId !== event.libraryId) {
       return;
@@ -126,14 +149,15 @@ export async function startAutomationMcpHost(
       // A disconnected MCP client cannot receive a push; close() owns cleanup.
     });
   });
+  if (closed) registeredUnsubscribe?.();
+  else unsubscribeLibraryChanged = registeredUnsubscribe;
 
   return {
     executionId: started.executionId,
     sessionId,
     exposure,
     close: async () => {
-      unsubscribeLibraryChanged?.();
-      options.journal.cancel(started.executionId);
+      cleanup();
       await server.close();
     },
   };

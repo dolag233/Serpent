@@ -111,7 +111,7 @@ npm run mcp:session -- --user-data /tmp/serpent-mcp-test stop
 - 没有写配置：只列公开只读/提示工具；
 - 有写配置：公开工具加上允许 MCP 来源、能力和审批策略匹配的写工具；
 - `plan` 工具可被发现，但每次仍必须经过 Main 本机计划批准；
-- 插件工具以 `serpent_plugin_<pluginId>_<commandId>` 形式追加，仅限已启用且声明导出的插件命令；
+- 插件工具以 `serpent_plugin_<pluginId>_<commandId>` 形式追加，仅限已启用、声明导出且本次连接请求本地写入配置的插件命令；插件命令目前按可能产生副作用处理；
 - headless Registry 不包含 `serpent_desktop_*` 工具；附着会话会在 Registry 工具后追加 Desktop-only 工具。
 
 `inputSchema` 是 JSON Schema，`additionalProperties` 通常为 false。未知字段、缺少必填字段、超出 ID/数组/字符串限制会在 Gateway 前被拒绝。

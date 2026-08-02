@@ -18,6 +18,7 @@ import {
   type DesktopControlEndpointInfo,
 } from './desktop-control-plane';
 import { callSerpentMcpTool } from '../mcp/call-tool';
+import type { SerpentMcpPluginToolBridge } from '../mcp/call-tool';
 import { listSerpentMcpTools } from '../mcp/tool-catalog';
 
 const DEFAULT_READ_CAPABILITIES = [
@@ -70,6 +71,7 @@ type DesktopAttachedMcpOptions = {
     DesktopBrowseControl,
     'getState' | 'openFolder' | 'setDiscovery' | 'revealAsset' | 'openViewer' | 'closeViewer' | 'navigateViewer'
   >;
+  pluginTools?: SerpentMcpPluginToolBridge;
   logger: DesktopControlPlaneLogger;
 };
 
@@ -226,10 +228,28 @@ export async function startDesktopAttachedMcp(
         const registryTools = listSerpentMcpTools({
           writeAccessGranted: attachedSession.writeAccessGranted,
         });
+        const pluginTools = attachedSession.writeAccessGranted
+          ? options.pluginTools?.list(attachedSession.libraryId) ?? []
+          : [];
+        const names = new Set(registryTools.tools.map((tool) => tool.name));
+        for (const tool of pluginTools) {
+          if (names.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`);
+          names.add(tool.name);
+        }
         return {
           apiVersion: registryTools.apiVersion,
           tools: [
             ...registryTools.tools,
+            ...pluginTools.map((tool) => ({
+              name: tool.name,
+              description: `${tool.description} · requires local write access`,
+              inputSchema: tool.inputSchema,
+              annotations: {
+                readOnlyHint: false,
+                destructiveHint: false,
+                openWorldHint: false as const,
+              },
+            })),
             ...desktopControlToolDefinitions.map((tool) => ({
               name: tool.name,
               description: `${tool.description} · attached Desktop only`,
@@ -369,8 +389,10 @@ export async function startDesktopAttachedMcp(
         toolName,
         arguments: toolArguments,
         executionId: attachedSession.executionId,
+        libraryId: attachedSession.libraryId,
         exposure: { writeAccessGranted: attachedSession.writeAccessGranted },
         gateway: options.gateway,
+        pluginTools: options.pluginTools,
       });
       if (!result.ok) {
         return {

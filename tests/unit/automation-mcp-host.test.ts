@@ -105,4 +105,18 @@ describe('automation MCP host library.changed push', () => {
 
     await handle.close();
   });
+
+  it('cancels the Main-owned execution if stdio transport setup fails', async () => {
+    const journal = createJournal('library-1');
+    const server = { sendLoggingMessage: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
+    mocks.createSerpentMcpServer.mockReturnValueOnce(server);
+    mocks.connectSerpentMcpStdio.mockRejectedValueOnce(new Error('stdio unavailable'));
+
+    await expect(startAutomationMcpHost({
+      journal: journal as never,
+      gateway: {} as never,
+      libraryId: 'library-1',
+    })).rejects.toThrow('stdio unavailable');
+    expect(journal.cancel).toHaveBeenCalledWith('execution-1');
+  });
 });

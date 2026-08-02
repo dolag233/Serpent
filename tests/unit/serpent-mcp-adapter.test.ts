@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import {
   createAutomationCommandGateway,
@@ -242,5 +244,64 @@ describe('Serpent MCP tools/call → Gateway', () => {
     expect(server).toBeTruthy();
     expect(listSerpentMcpTools({ writeAccessGranted: false }).tools.map((tool) => tool.name))
       .toContain('serpent_asset_search');
+  });
+
+  it('keeps exported plugin tools behind the local write-access gate', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'library.list', libraries: [] });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const pluginTool = {
+      name: 'serpent_plugin_com_example_probe_declared',
+      description: 'Declared plugin command',
+      pluginId: 'com.example.probe',
+      commandId: 'declared',
+      inputSchema: {
+        type: 'object' as const,
+        additionalProperties: false as const,
+        properties: {},
+        anyOf: [{ required: ['assetIds'] }],
+      },
+    };
+    const pluginTools = {
+      list: () => [pluginTool],
+      isKnown: () => true,
+      call: async () => ({ status: 'succeeded' }),
+    };
+    const readOnlyServer = createSerpentMcpServer({
+      gateway,
+      getExecutionId: () => 'mcp-execution',
+      getExposure: () => ({ writeAccessGranted: false }),
+      getPluginTools: () => pluginTools,
+    });
+    const [readClientTransport, readServerTransport] = InMemoryTransport.createLinkedPair();
+    const readClient = new Client({ name: 'plugin-read-only', version: '1.0.0' });
+    await Promise.all([
+      readOnlyServer.connect(readServerTransport),
+      readClient.connect(readClientTransport),
+    ]);
+    expect((await readClient.listTools()).tools.map((tool) => tool.name))
+      .not.toContain(pluginTool.name);
+    const denied = await readClient.callTool({ name: pluginTool.name, arguments: { assetIds: ['asset-1'] } });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied.content)).toContain('MCP_TOOL_NOT_EXPOSED');
+    await readClient.close();
+    await readOnlyServer.close();
+
+    const writeServer = createSerpentMcpServer({
+      gateway,
+      getExecutionId: () => 'mcp-execution',
+      getExposure: () => ({ writeAccessGranted: true }),
+      getPluginTools: () => pluginTools,
+    });
+    const [writeClientTransport, writeServerTransport] = InMemoryTransport.createLinkedPair();
+    const writeClient = new Client({ name: 'plugin-write', version: '1.0.0' });
+    await Promise.all([
+      writeServer.connect(writeServerTransport),
+      writeClient.connect(writeClientTransport),
+    ]);
+    expect((await writeClient.listTools()).tools.map((tool) => tool.name)).toContain(pluginTool.name);
+    const called = await writeClient.callTool({ name: pluginTool.name, arguments: { assetIds: ['asset-1'] } });
+    expect(called.isError).not.toBe(true);
+    await writeClient.close();
+    await writeServer.close();
   });
 });

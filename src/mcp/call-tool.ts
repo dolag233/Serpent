@@ -44,19 +44,21 @@ export type SerpentMcpCallToolInput = {
   toolName: string;
   arguments: unknown;
   executionId: string | undefined;
+  libraryId?: string;
   exposure: SerpentMcpToolExposure;
   gateway: AutomationCommandGateway;
   pluginTools?: SerpentMcpPluginToolBridge;
 };
 
 export type SerpentMcpPluginToolBridge = {
-  list: () => readonly PluginMcpToolDefinition[];
-  isKnown: (toolName: string) => boolean;
+  list: (libraryId?: string) => readonly PluginMcpToolDefinition[];
+  isKnown: (toolName: string, libraryId?: string) => boolean;
   call: (input: {
     pluginId: string;
     commandId: string;
     context: unknown;
     executionId: string;
+    libraryId?: string;
   }) => Promise<unknown>;
 };
 
@@ -69,7 +71,15 @@ export async function callSerpentMcpTool(
 ): Promise<SerpentMcpCallToolResult> {
   const tool = resolveSerpentMcpTool(input.toolName, input.exposure);
   if (!tool) {
-    const pluginTool = input.pluginTools?.list().find((candidate) => candidate.name === input.toolName);
+    const knownPluginTool = input.pluginTools?.isKnown(input.toolName, input.libraryId) === true;
+    if (knownPluginTool && !input.exposure.writeAccessGranted) {
+      return {
+        ok: false,
+        code: 'MCP_TOOL_NOT_EXPOSED',
+        message: `Plugin MCP tool ${input.toolName} requires local write access configuration.`,
+      };
+    }
+    const pluginTool = input.pluginTools?.list(input.libraryId).find((candidate) => candidate.name === input.toolName);
     if (pluginTool) {
       if (input.executionId === undefined || input.executionId.trim().length === 0) {
         return {
@@ -85,6 +95,7 @@ export async function callSerpentMcpTool(
           commandId: pluginTool.commandId,
           context,
           executionId: input.executionId,
+          ...(input.libraryId === undefined ? {} : { libraryId: input.libraryId }),
         });
         return {
           ok: true,
@@ -104,7 +115,7 @@ export async function callSerpentMcpTool(
         };
       }
     }
-    if (input.pluginTools?.isKnown(input.toolName)) {
+    if (knownPluginTool) {
       return {
         ok: false,
         code: 'MCP_TOOL_NOT_EXPOSED',

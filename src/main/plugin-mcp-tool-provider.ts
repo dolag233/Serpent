@@ -11,7 +11,8 @@ import type { SerpentMcpPluginToolBridge } from '../mcp/call-tool';
 /**
  * Main-owned bridge between MCP and active plugin command contributions.
  * Commands declared with `mcp.export` are listed and callable whenever the
- * owning plugin is active for the bound library — no separate device toggle.
+ * owning plugin is active for the bound library. MCP still applies the local
+ * write-access gate before invoking this bridge.
  */
 export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
   constructor(
@@ -21,15 +22,15 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
     },
   ) {}
 
-  list(): readonly PluginMcpToolDefinition[] {
-    const libraryId = this.options.getLibraryId();
+  list(libraryIdOverride?: string): readonly PluginMcpToolDefinition[] {
+    const libraryId = libraryIdOverride ?? this.options.getLibraryId();
     if (libraryId === null) return [];
     const commands = this.options.activationCoordinator.listMcpCommandContributions({ libraryId });
     return listPluginMcpTools(commands);
   }
 
-  isKnown(toolName: string): boolean {
-    const libraryId = this.options.getLibraryId();
+  isKnown(toolName: string, libraryIdOverride?: string): boolean {
+    const libraryId = libraryIdOverride ?? this.options.getLibraryId();
     if (libraryId === null) return false;
     return this.options.activationCoordinator
       .listMcpCommandContributions({ libraryId })
@@ -41,8 +42,9 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
     commandId: string;
     context: unknown;
     executionId: string;
+    libraryId?: string;
   }): Promise<unknown> {
-    const libraryId = this.options.getLibraryId();
+    const libraryId = input.libraryId ?? this.options.getLibraryId();
     if (libraryId === null) throw new Error('Plugin MCP commands require an open library.');
     const command = this.options.activationCoordinator
       .listMcpCommandContributions({ libraryId })

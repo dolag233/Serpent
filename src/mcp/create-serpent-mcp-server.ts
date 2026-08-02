@@ -19,6 +19,7 @@ export type SerpentMcpServerOptions = {
    * `source: 'mcp'` and a session id before exposing tools/call.
    */
   getExecutionId: () => string | undefined;
+  getLibraryId?: () => string | null;
   getExposure?: () => SerpentMcpToolExposure;
   getPluginTools?: () => SerpentMcpPluginToolBridge | undefined;
   serverName?: string;
@@ -64,7 +65,9 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const listed = listSerpentMcpTools(exposure());
-    const pluginTools: readonly PluginMcpToolDefinition[] = options.getPluginTools?.()?.list() ?? [];
+    const pluginTools: readonly PluginMcpToolDefinition[] = exposure().writeAccessGranted
+      ? options.getPluginTools?.()?.list(options.getLibraryId?.() ?? undefined) ?? []
+      : [];
     const names = new Set(listed.tools.map((tool) => tool.name));
     for (const tool of pluginTools) {
       if (names.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`);
@@ -79,11 +82,14 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
           annotations: tool.annotations,
         })),
         ...pluginTools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
+          name: tool.name,
+          description: `${tool.description} · requires local write access`,
+          inputSchema: tool.inputSchema,
           annotations: {
-            readOnlyHint: true,
+            // Plugin commands have no declarative impact metadata yet. Treat
+            // every exported command as side-effect-capable until that contract
+            // exists, so a read-only MCP connection cannot invoke one.
+            readOnlyHint: false,
             destructiveHint: false,
             openWorldHint: false,
           },
@@ -97,6 +103,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       toolName: request.params.name,
       arguments: request.params.arguments ?? {},
       executionId: options.getExecutionId(),
+      libraryId: options.getLibraryId?.() ?? undefined,
       exposure: exposure(),
       gateway: options.gateway,
       pluginTools: options.getPluginTools?.(),

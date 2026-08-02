@@ -5449,6 +5449,7 @@ async function startApplication(): Promise<void> {
       focusMainWindow,
       applySelection: applyDesktopAutomationSelection,
       browseControl: desktopBrowseControl,
+      pluginTools: pluginMcpToolProvider,
       logger,
     }).then((handle) => {
       desktopAttachedMcp = handle;
