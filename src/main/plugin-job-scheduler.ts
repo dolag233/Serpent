@@ -56,6 +56,7 @@ export type PluginJobSchedulerInstanceBinding = {
  */
 export class PluginJobScheduler {
   #inFlight = new Set<string>();
+  #drainingInstances = new Set<string>();
 
   constructor(private readonly options: {
     supervisor: PluginRuntimeSupervisor;
@@ -81,26 +82,33 @@ export class PluginJobScheduler {
     libraryId: string,
     instance: PluginJobSchedulerInstanceBinding,
   ): Promise<void> {
-    for (;;) {
-      const claimed = await this.options.requestWorker({
-        type: 'plugin.jobs.claim-next',
-        libraryId,
-        ownerPluginId: instance.pluginId,
-        ownerPackageHash: instance.packageHash,
-        ownerPluginInstanceId: instance.instanceId,
-        ownerScope: instance.instanceScope,
-        ownerLibraryId: libraryId,
-      });
-      if (!claimed.ok || claimed.type !== 'plugin.jobs.claimed' || claimed.job === null || claimed.job === undefined) {
-        return;
+    const drainKey = `${libraryId}\u0000${instance.instanceId}`;
+    if (this.#drainingInstances.has(drainKey)) return;
+    this.#drainingInstances.add(drainKey);
+    try {
+      for (;;) {
+        const claimed = await this.options.requestWorker({
+          type: 'plugin.jobs.claim-next',
+          libraryId,
+          ownerPluginId: instance.pluginId,
+          ownerPackageHash: instance.packageHash,
+          ownerPluginInstanceId: instance.instanceId,
+          ownerScope: instance.instanceScope,
+          ownerLibraryId: libraryId,
+        });
+        if (!claimed.ok || claimed.type !== 'plugin.jobs.claimed' || claimed.job === null || claimed.job === undefined) {
+          return;
+        }
+        if (this.#inFlight.has(claimed.job.jobId)) return;
+        this.#inFlight.add(claimed.job.jobId);
+        try {
+          await this.#runClaimedJob(libraryId, instance, claimed.job);
+        } finally {
+          this.#inFlight.delete(claimed.job.jobId);
+        }
       }
-      if (this.#inFlight.has(claimed.job.jobId)) return;
-      this.#inFlight.add(claimed.job.jobId);
-      try {
-        await this.#runClaimedJob(libraryId, instance, claimed.job);
-      } finally {
-        this.#inFlight.delete(claimed.job.jobId);
-      }
+    } finally {
+      this.#drainingInstances.delete(drainKey);
     }
   }
 
