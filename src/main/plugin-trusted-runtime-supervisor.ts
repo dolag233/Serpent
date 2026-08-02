@@ -53,6 +53,12 @@ type PluginRuntimeCrash = {
   failureCode: string;
 };
 
+type PendingJobTermination = {
+  status: 'failed' | 'cancelled';
+  errorCode: string;
+  errorDetail: string;
+};
+
 export interface PluginTrustedRuntimeSupervisorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -132,9 +138,11 @@ export class PluginTrustedRuntimeSupervisor {
     timer: ReturnType<typeof setTimeout>;
   }>();
   #pendingJobCompletions = new Map<string, {
+    instanceId: string;
     resolve(complete: PluginJobComplete): void;
   }>();
   #jobOwners = new Map<string, string>();
+  #ignoredJobCompletions = new Set<string>();
   #pendingProviderCompletions = new Map<string, {
     resolve(result: PluginProviderBatchResult): void;
     timer: ReturnType<typeof setTimeout>;
@@ -252,10 +260,12 @@ export class PluginTrustedRuntimeSupervisor {
   deactivate(instanceId: string, reason: PluginRuntimeDeactivateReason): void {
     const tracked = this.#instances.get(instanceId);
     if (tracked === undefined) return;
+    this.#settlePendingJobs(instanceId, {
+      status: 'cancelled',
+      errorCode: 'PLUGIN_JOB_INSTANCE_DEACTIVATED',
+      errorDetail: `The trusted plugin instance was deactivated (${reason}).`,
+    });
     this.options.onInstanceDeactivated?.(instanceId);
-    for (const [jobId, owner] of this.#jobOwners) {
-      if (owner === instanceId) this.#jobOwners.delete(jobId);
-    }
     // An instance that never completed setup cannot run dispose(). Activated
     // instances get a bounded grace period so their cleanup is observable.
     if (!tracked.activated) {
@@ -379,8 +389,10 @@ export class PluginTrustedRuntimeSupervisor {
         },
       });
     }
+    this.#ignoredJobCompletions.delete(this.#jobCompletionKey(input.instanceId, input.job.jobId));
     return new Promise((resolve) => {
       this.#pendingJobCompletions.set(input.job.jobId, {
+        instanceId: input.instanceId,
         resolve: (complete) => resolve({ complete }),
       });
       this.#jobOwners.set(input.job.jobId, input.instanceId);
@@ -680,7 +692,11 @@ export class PluginTrustedRuntimeSupervisor {
       failureCode: 'HEARTBEAT_TIMEOUT',
     });
     tracked.child.kill();
-    this.#clearTracked(tracked.instanceId);
+    this.#clearTracked(tracked.instanceId, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_HEARTBEAT_TIMEOUT',
+      errorDetail: 'The trusted plugin runtime stopped responding before the job completed.',
+    });
   }
 
   #waitReady(tracked: TrackedInstance): Promise<void> {
@@ -729,9 +745,17 @@ export class PluginTrustedRuntimeSupervisor {
     tracked.child.postMessage(message);
   }
 
-  #clearTracked(instanceId: string): void {
+  #clearTracked(
+    instanceId: string,
+    termination: PendingJobTermination = {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_ENDED',
+      errorDetail: 'The trusted plugin runtime ended before the job completed.',
+    },
+  ): void {
     const tracked = this.#instances.get(instanceId);
     if (tracked === undefined) return;
+    this.#settlePendingJobs(instanceId, termination);
     this.#stopHeartbeatWatch(tracked);
     if (tracked.readyTimer !== undefined) clearTimeout(tracked.readyTimer);
     if (tracked.activateTimer !== undefined) clearTimeout(tracked.activateTimer);
@@ -739,15 +763,17 @@ export class PluginTrustedRuntimeSupervisor {
     tracked.deactivationTimer = undefined;
     this.#failActivate(tracked, new Error('Trusted plugin host ended before activate completed.'));
     this.#instances.delete(instanceId);
-    for (const [jobId, owner] of this.#jobOwners) {
-      if (owner === instanceId) this.#jobOwners.delete(jobId);
-    }
   }
 
   #onExit(instanceId: string): void {
     const tracked = this.#instances.get(instanceId);
     if (tracked === undefined) return;
     this.#failReady(tracked, new Error('Trusted plugin host exited unexpectedly.'));
+    this.#clearTracked(instanceId, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED',
+      errorDetail: 'The trusted plugin host exited before the job completed.',
+    });
     this.#notifyCrash({
       instanceId: tracked.instanceId,
       libraryId: tracked.libraryId,
@@ -756,7 +782,6 @@ export class PluginTrustedRuntimeSupervisor {
       packageHash: tracked.packageHash,
       failureCode: 'RUNTIME_PROCESS_EXITED',
     });
-    this.#clearTracked(instanceId);
   }
 
   #notifyCrash(input: PluginRuntimeCrash): void {
@@ -785,7 +810,10 @@ export class PluginTrustedRuntimeSupervisor {
       return;
     }
     if (protocol.kind === 'fault') {
-      this.#handleProtocolFault(protocol.instanceId ?? instanceId, protocol.reason);
+      // Trusted hosts are one child per tracked instance. Attribute faults to
+      // the child that delivered the message instead of trusting a potentially
+      // malformed instanceId embedded in the payload.
+      this.#handleProtocolFault(instanceId, protocol.reason);
       return;
     }
     const message = protocol.message;
@@ -885,6 +913,7 @@ export class PluginTrustedRuntimeSupervisor {
       return;
     }
     if (message.type === 'plugin-trusted.job-complete') {
+      if (this.#ignoredJobCompletions.delete(this.#jobCompletionKey(message.instanceId, message.jobId))) return;
       if (this.#jobOwners.get(message.jobId) !== message.instanceId) {
         this.#handleProtocolFault(tracked.instanceId, `Job completion ownership mismatch for ${message.jobId}.`);
         return;
@@ -977,14 +1006,6 @@ export class PluginTrustedRuntimeSupervisor {
       instanceId === undefined ? undefined : { instanceId },
     );
     if (tracked === undefined) return;
-    this.#notifyCrash({
-      instanceId: tracked.instanceId,
-      libraryId: tracked.libraryId,
-      libraryDirectory: tracked.libraryDirectory,
-      pluginId: tracked.pluginId,
-      packageHash: tracked.packageHash,
-      failureCode: 'RUNTIME_PROTOCOL_ERROR',
-    });
     try {
       tracked.child.postMessage({
         type: 'plugin-trusted.deactivate',
@@ -995,7 +1016,45 @@ export class PluginTrustedRuntimeSupervisor {
       // The child may already be gone.
     }
     tracked.child.kill();
-    this.#clearTracked(tracked.instanceId);
+    this.#clearTracked(tracked.instanceId, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+      errorDetail: `The trusted plugin host reported a protocol fault: ${reason}`,
+    });
+    this.#notifyCrash({
+      instanceId: tracked.instanceId,
+      libraryId: tracked.libraryId,
+      libraryDirectory: tracked.libraryDirectory,
+      pluginId: tracked.pluginId,
+      packageHash: tracked.packageHash,
+      failureCode: 'RUNTIME_PROTOCOL_ERROR',
+    });
+  }
+
+  #settlePendingJobs(instanceId: string | undefined, termination: PendingJobTermination): void {
+    for (const [jobId, pending] of this.#pendingJobCompletions) {
+      if (instanceId !== undefined && pending.instanceId !== instanceId) continue;
+      this.#pendingJobCompletions.delete(jobId);
+      this.#jobOwners.delete(jobId);
+      this.#rememberIgnoredJobCompletion(pending.instanceId, jobId);
+      pending.resolve({
+        jobId,
+        status: termination.status,
+        errorCode: termination.errorCode,
+        errorDetail: termination.errorDetail,
+      });
+    }
+  }
+
+  #jobCompletionKey(instanceId: string, jobId: string): string {
+    return `${instanceId}\u0000${jobId}`;
+  }
+
+  #rememberIgnoredJobCompletion(instanceId: string, jobId: string): void {
+    this.#ignoredJobCompletions.add(this.#jobCompletionKey(instanceId, jobId));
+    if (this.#ignoredJobCompletions.size <= 1_024) return;
+    const oldest = this.#ignoredJobCompletions.values().next().value as string | undefined;
+    if (oldest !== undefined) this.#ignoredJobCompletions.delete(oldest);
   }
 
   async #respondHostCommand(

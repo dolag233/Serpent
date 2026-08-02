@@ -31,7 +31,6 @@ import {
   PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS,
   freezePluginCommandContext,
   pluginTargetLibraryIdSchema,
-  type PluginCommandContext,
   type PluginCommandComplete,
 } from '../plugins/plugin-commands';
 import {
@@ -794,7 +793,7 @@ export class PluginActivationCoordinator {
         });
       });
     } else {
-      const pause = this.pauseLibraryPluginJobs(record.activationLibraryId);
+      const pause = this.#pauseJobsForInstance(record);
       const active = this.#activeByLibrary.get(record.activationLibraryId);
       if (active?.get(record.pluginId)?.instanceId === record.instanceId) {
         active.delete(record.pluginId);

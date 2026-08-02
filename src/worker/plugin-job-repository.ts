@@ -151,7 +151,10 @@ function stateFromRecord(job: PluginJobRecord): PersistedPluginJobState {
 
 function resetIdempotentRecoveryState(state: PersistedPluginJobState): PersistedPluginJobState {
   return {
-    ...(state.ownerPluginInstanceId === undefined ? {} : { ownerPluginInstanceId: state.ownerPluginInstanceId }),
+    // Runtime instance IDs are process-local. Clearing the old value marks an
+    // idempotent job as eligible for one-time rebinding to the instance that
+    // claims it after the host restarts, while ordinary queued jobs remain
+    // isolated by their current instance ID.
     ...(state.ownerScope === undefined ? {} : { ownerScope: state.ownerScope }),
     ...(state.ownerLibraryId === undefined ? {} : { ownerLibraryId: state.ownerLibraryId }),
     executionAvailability: 'ready',
@@ -161,6 +164,17 @@ function resetIdempotentRecoveryState(state: PersistedPluginJobState): Persisted
     ...(state.retryInput === undefined ? {} : { retryInput: state.retryInput }),
     cancellation: { requested: false },
   };
+}
+
+function pluginJobExecutionMatches(
+  job: Pick<PluginJobRecord, 'ownerPluginId' | 'ownerPackageHash' | 'ownerScope' | 'ownerLibraryId' | 'libraryId'>,
+  owner: Pick<PluginJobOwnerFields, 'pluginId' | 'packageHash' | 'scope' | 'libraryId'>,
+): boolean {
+  return job.ownerPluginId === owner.pluginId
+    && job.ownerPackageHash === owner.packageHash
+    && job.ownerScope === owner.scope
+    && job.ownerLibraryId === owner.libraryId
+    && job.libraryId === owner.libraryId;
 }
 
 export function enqueuePluginJobRecord(
@@ -259,7 +273,16 @@ export function claimNextPluginJobRecord(
       || (job.ownerPluginInstanceId === input.ownerPluginInstanceId
         && job.ownerScope === input.ownerScope
         && job.ownerLibraryId === input.ownerLibraryId
-        && job.libraryId === input.libraryId));
+        && job.libraryId === input.libraryId)
+      || (job.ownerPluginInstanceId === undefined
+        && job.recoveryStrategy === 'idempotent'
+        && input.ownerScope !== undefined
+        && pluginJobExecutionMatches(job, {
+          pluginId: input.ownerPluginId,
+          packageHash: input.ownerPackageHash,
+          scope: input.ownerScope,
+          libraryId: input.ownerLibraryId ?? input.libraryId,
+        })));
   if (candidate === undefined) return null;
 
   const updated = connection.prepare(
@@ -276,17 +299,15 @@ export function claimNextPluginJobRecord(
 
   const row = connection.prepare(`${SELECT_PLUGIN_JOB} WHERE job_id = ?`).get(candidate.jobId) as JobRow | undefined;
   if (row === undefined) return null;
-  const job = mapRow(row);
-  if (input.ownerPluginInstanceId !== undefined
-    && (job.ownerPluginInstanceId !== input.ownerPluginInstanceId
-      || job.ownerScope !== input.ownerScope
-      || job.ownerLibraryId !== input.ownerLibraryId
-      || job.libraryId !== input.libraryId)) {
-    return null;
-  }
   const stored = parseStoredJobPayload(row.payload_json);
   connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
-    serializeStoredJobPayload(stored.payload, { ...stored.state, phase: 'running' }),
+    serializeStoredJobPayload(stored.payload, {
+      ...stored.state,
+      ...(input.ownerPluginInstanceId === undefined ? {} : { ownerPluginInstanceId: input.ownerPluginInstanceId }),
+      ...(input.ownerScope === undefined ? {} : { ownerScope: input.ownerScope }),
+      ...(input.ownerLibraryId === undefined ? {} : { ownerLibraryId: input.ownerLibraryId }),
+      phase: 'running',
+    }),
     candidate.jobId,
   );
   return readPluginJob(connection, candidate.jobId);
@@ -611,7 +632,14 @@ export function recoverInterruptedPluginJobs(
     `${SELECT_PLUGIN_JOB}
       WHERE library_id = ?
         AND kind = ?
-        AND status = 'running'`,
+        AND (
+          status = 'running'
+          OR (
+            status = 'paused'
+            AND recovery_strategy = 'idempotent'
+            AND error_code = 'PLUGIN_INSTANCE_INACTIVE'
+          )
+        )`,
   ).all(libraryId, PLUGIN_BACKGROUND_JOB_KIND) as JobRow[];
   if (interrupted.length === 0) return 0;
 
@@ -627,7 +655,7 @@ export function recoverInterruptedPluginJobs(
       WHERE job_id = ?
         AND library_id = ?
         AND kind = ?
-        AND status = 'running'`,
+        AND status = ?`,
   );
   let recovered = 0;
   for (const row of interrupted) {
@@ -645,6 +673,7 @@ export function recoverInterruptedPluginJobs(
       row.job_id,
       libraryId,
       PLUGIN_BACKGROUND_JOB_KIND,
+      row.status,
     );
     recovered += result.changes;
   }

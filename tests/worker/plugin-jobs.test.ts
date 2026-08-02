@@ -339,4 +339,75 @@ describe('plugin job repository via LibraryService', () => {
     recovered.closeLibrary(library.libraryId);
     crashed.closeLibrary(library.libraryId);
   });
+
+  it('requeues idempotent jobs paused by an inactive plugin instance on restart', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-inactive-recovery-'));
+    roots.push(root);
+    const crashed = new LibraryService();
+    const library = crashed.createLibrary({ displayName: 'Plugin Job Inactive Recovery', selectedParentPath: root });
+    const packageHash = 'd'.repeat(64);
+    const owner = {
+      ownerPluginId: 'com.serpent.job-recovery',
+      ownerPackageHash: packageHash,
+      ownerPluginInstanceId: 'instance-recovery',
+      ownerScope: 'library' as const,
+      ownerLibraryId: library.libraryId,
+    };
+    const idempotentJob = crashed.enqueuePluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      pluginHandlerId: 'recover',
+      payload: { assetId: 'asset-1' },
+      recoveryStrategy: 'idempotent',
+    });
+    const checkpointJob = crashed.enqueuePluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'checkpoint-instance',
+      pluginHandlerId: 'recover-checkpoint',
+      payload: { assetId: 'asset-2' },
+      recoveryStrategy: 'checkpoint',
+    });
+    crashed.claimNextPluginJob({ libraryId: library.libraryId, ...owner });
+    crashed.claimNextPluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'checkpoint-instance',
+    });
+    expect(crashed.pausePluginJobsForOwners({
+      libraryId: library.libraryId,
+      owners: [{ pluginId: owner.ownerPluginId, packageHash }],
+      errorCode: 'PLUGIN_INSTANCE_INACTIVE',
+      errorDetail: 'The plugin instance is no longer active.',
+    })).toBe(2);
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    expect(recovered.listPluginJobs(library.libraryId).find((job) => job.jobId === idempotentJob.jobId))
+      .toMatchObject({
+        status: 'queued',
+        progress: 0,
+        errorCode: null,
+        errorDetail: null,
+        phase: 'queued',
+        message: '',
+      });
+    expect(recovered.listPluginJobs(library.libraryId).find((job) => job.jobId === checkpointJob.jobId))
+      .toMatchObject({
+        status: 'paused',
+        errorCode: 'PLUGIN_INSTANCE_INACTIVE',
+      });
+    expect(recovered.claimNextPluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'instance-recovery-after-restart',
+    })).toMatchObject({
+      jobId: idempotentJob.jobId,
+      status: 'running',
+      ownerPluginInstanceId: 'instance-recovery-after-restart',
+    });
+
+    recovered.closeLibrary(library.libraryId);
+    crashed.closeLibrary(library.libraryId);
+  });
 });

@@ -50,6 +50,43 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function createJob(jobId: string, ownerPluginId = 'com.example.trusted-jobs'): PluginJobRecord {
+  return {
+    jobId,
+    libraryId: 'library-1', kind: 'plugin.background', status: 'running', progress: 0,
+    attemptCount: 1, errorCode: null, errorDetail: null, ownerPluginId,
+    ownerPackageHash: 'a'.repeat(64), pluginHandlerId: 'handler', payload: {}, recoveryStrategy: 'idempotent',
+    createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+  } as PluginJobRecord;
+}
+
+async function activateTrustedInstance(
+  supervisor: PluginTrustedRuntimeSupervisor,
+  child: FakeRuntimeChild,
+  instanceId: string,
+): Promise<void> {
+  const activation = supervisor.activate({
+    instanceId,
+    libraryId: 'library-1',
+    libraryDirectory: '/tmp/library',
+    pluginId: 'com.example.trusted',
+    version: '1.0.0',
+    packageHash: 'a'.repeat(64),
+    packageDirectory: '/plugins/trusted',
+    entryRelativePath: 'dist/main.js',
+    permissions: ['job.manage'],
+  });
+  child.emit('message', { type: 'plugin-trusted.ready' } as never);
+  await flush();
+  child.emit('message', {
+    type: 'plugin-trusted.activated',
+    instanceId,
+    pluginId: 'com.example.trusted',
+    packageHash: 'a'.repeat(64),
+  } as never);
+  await activation;
+}
+
 describe('PluginTrustedRuntimeSupervisor', () => {
   it('forks one child per trusted instance and brokers host commands', async () => {
     const child = new FakeRuntimeChild();
@@ -364,5 +401,133 @@ describe('PluginTrustedRuntimeSupervisor', () => {
     expect(first.killCount).toBe(1);
     expect(second.killCount).toBe(0);
     expect(supervisor.listActiveInstanceIds()).toEqual(['22222222-2222-4222-8222-222222222222']);
+  });
+
+  it('settles pending jobs when a trusted runtime exits and ignores its late completion', async () => {
+    const child = new FakeRuntimeChild();
+    const crashes: string[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onInstanceCrashed: ({ failureCode }) => crashes.push(failureCode),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateTrustedInstance(supervisor, child, instanceId);
+
+    const job = createJob('66666666-6666-4666-8666-666666666666');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    child.emit('exit');
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED',
+      },
+    });
+    child.emit('message', {
+      type: 'plugin-trusted.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    expect(crashes).toEqual(['RUNTIME_PROCESS_EXITED']);
+  });
+
+  it('cancels pending jobs as soon as a trusted instance is deactivated', async () => {
+    const child = new FakeRuntimeChild();
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateTrustedInstance(supervisor, child, instanceId);
+
+    const job = createJob('77777777-7777-4777-8777-777777777777');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    supervisor.deactivate(instanceId, 'library-closed');
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'cancelled',
+        errorCode: 'PLUGIN_JOB_INSTANCE_DEACTIVATED',
+      },
+    });
+    child.emit('message', {
+      type: 'plugin-trusted.deactivated',
+      instanceId,
+      reason: 'library-closed',
+    } as never);
+    child.emit('message', {
+      type: 'plugin-trusted.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+  });
+
+  it('fails pending jobs when a trusted runtime protocol fault isolates their instance', async () => {
+    const child = new FakeRuntimeChild();
+    const crashes: string[] = [];
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onInstanceCrashed: ({ failureCode }) => crashes.push(failureCode),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateTrustedInstance(supervisor, child, instanceId);
+
+    const job = createJob('88888888-8888-4888-8888-888888888888');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    child.emit('message', {
+      type: 'plugin-trusted.control.future',
+      instanceId,
+    } as never);
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+      },
+    });
+    expect(crashes).toEqual(['RUNTIME_PROTOCOL_ERROR']);
+    child.emit('message', {
+      type: 'plugin-trusted.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    expect(crashes).toEqual(['RUNTIME_PROTOCOL_ERROR']);
+  });
+
+  it('settles the source instance when a trusted fault carries a stale instance id', async () => {
+    const child = new FakeRuntimeChild();
+    const supervisor = new PluginTrustedRuntimeSupervisor({
+      modulePath: '/safe/plugin_trusted_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateTrustedInstance(supervisor, child, instanceId);
+
+    const job = createJob('99999999-9999-4999-8999-999999999999');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    child.emit('message', {
+      type: 'plugin-trusted.control.future',
+      instanceId: '22222222-2222-4222-8222-222222222222',
+    } as never);
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+      },
+    });
   });
 });

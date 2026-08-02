@@ -21,7 +21,12 @@
     "storage.write"
   ],
   "contributes": {
-    "commands": [],
+    "commands": [
+      {
+        "id": "start",
+        "title": "Start probe"
+      }
+    ],
     "menus": {},
     "views": [],
     "settings": [],

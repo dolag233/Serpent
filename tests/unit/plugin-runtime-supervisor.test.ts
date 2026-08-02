@@ -50,6 +50,43 @@ async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function createJob(jobId: string, ownerPluginId = 'com.example.demo'): PluginJobRecord {
+  return {
+    jobId,
+    libraryId: 'library-1', kind: 'plugin.background', status: 'running', progress: 0,
+    attemptCount: 1, errorCode: null, errorDetail: null, ownerPluginId,
+    ownerPackageHash: 'a'.repeat(64), pluginHandlerId: 'handler', payload: {}, recoveryStrategy: 'idempotent',
+    createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+  } as PluginJobRecord;
+}
+
+async function activateStandardInstance(
+  supervisor: PluginRuntimeSupervisor,
+  child: FakeRuntimeChild,
+  instanceId: string,
+): Promise<void> {
+  const ready = supervisor.ensureHostRunning();
+  child.emit('message', { type: 'plugin-runtime.ready' } as never);
+  await ready;
+  const activation = supervisor.activate({
+    instanceId,
+    libraryId: 'library-1',
+    libraryDirectory: '/tmp/library',
+    pluginId: 'com.example.demo',
+    version: '1.0.0',
+    packageHash: 'a'.repeat(64),
+    entryJavaScript: 'async function setup() {}',
+    permissions: ['job.manage'],
+  });
+  await activation;
+  child.emit('message', {
+    type: 'plugin-runtime.activated',
+    instanceId,
+    pluginId: 'com.example.demo',
+    packageHash: 'a'.repeat(64),
+  } as never);
+}
+
 describe('PluginRuntimeSupervisor', () => {
   it('forks once, activates an instance, and brokers host commands', async () => {
     const child = new FakeRuntimeChild();
@@ -365,5 +402,152 @@ describe('PluginRuntimeSupervisor', () => {
     await completion;
     expect(crashes).toEqual([]);
     supervisor.shutdown();
+  });
+
+  it('settles pending jobs when the standard runtime exits and ignores its late completion', async () => {
+    const child = new FakeRuntimeChild();
+    const crashes: string[] = [];
+    const supervisor = new PluginRuntimeSupervisor({
+      modulePath: '/safe/plugin_standard_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onInstanceCrashed: ({ failureCode }) => crashes.push(failureCode),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateStandardInstance(supervisor, child, instanceId);
+
+    const job = createJob('33333333-3333-4333-8333-333333333333');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    child.emit('exit', 1 as never);
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED',
+      },
+    });
+    child.emit('message', {
+      type: 'plugin-runtime.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    expect(crashes).toEqual(['RUNTIME_PROCESS_EXITED']);
+  });
+
+  it('does not consume a new instance completion after an old instance is settled', async () => {
+    const firstChild = new FakeRuntimeChild();
+    const secondChild = new FakeRuntimeChild();
+    let activeChild = firstChild;
+    const supervisor = new PluginRuntimeSupervisor({
+      modulePath: '/safe/plugin_standard_host.js',
+      fork: () => activeChild,
+      executeHostCommand: async () => ({}),
+    });
+    const firstInstanceId = '11111111-1111-4111-8111-111111111111';
+    const secondInstanceId = '22222222-2222-4222-8222-222222222222';
+    await activateStandardInstance(supervisor, firstChild, firstInstanceId);
+
+    const job = createJob('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const firstCompletion = supervisor.invokeJob({ instanceId: firstInstanceId, job });
+    firstChild.emit('exit', 1 as never);
+    await expect(firstCompletion).resolves.toMatchObject({
+      complete: { errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED' },
+    });
+
+    activeChild = secondChild;
+    await activateStandardInstance(supervisor, secondChild, secondInstanceId);
+    const secondCompletion = supervisor.invokeJob({ instanceId: secondInstanceId, job });
+    firstChild.emit('message', {
+      type: 'plugin-runtime.job-complete',
+      instanceId: firstInstanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    await flush();
+    secondChild.emit('message', {
+      type: 'plugin-runtime.job-complete',
+      instanceId: secondInstanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    await expect(secondCompletion).resolves.toMatchObject({
+      complete: { jobId: job.jobId, status: 'succeeded' },
+    });
+  });
+
+  it('cancels pending jobs as soon as a standard instance is deactivated', async () => {
+    const child = new FakeRuntimeChild();
+    const supervisor = new PluginRuntimeSupervisor({
+      modulePath: '/safe/plugin_standard_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateStandardInstance(supervisor, child, instanceId);
+
+    const job = createJob('44444444-4444-4444-8444-444444444444');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    supervisor.deactivate(instanceId, 'library-closed');
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'cancelled',
+        errorCode: 'PLUGIN_JOB_INSTANCE_DEACTIVATED',
+      },
+    });
+    child.emit('message', {
+      type: 'plugin-runtime.deactivated',
+      instanceId,
+      reason: 'library-closed',
+    } as never);
+    child.emit('message', {
+      type: 'plugin-runtime.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    supervisor.shutdown();
+  });
+
+  it('fails pending jobs when a standard runtime protocol fault isolates their instance', async () => {
+    const child = new FakeRuntimeChild();
+    const crashes: string[] = [];
+    const supervisor = new PluginRuntimeSupervisor({
+      modulePath: '/safe/plugin_standard_host.js',
+      fork: () => child,
+      executeHostCommand: async () => ({}),
+      onInstanceCrashed: ({ failureCode }) => crashes.push(failureCode),
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateStandardInstance(supervisor, child, instanceId);
+
+    const job = createJob('55555555-5555-4555-8555-555555555555');
+    const completion = supervisor.invokeJob({ instanceId, job });
+    child.emit('message', {
+      type: 'plugin-runtime.event',
+      instanceId,
+      eventType: 'future.policy',
+      critical: true,
+      payload: null,
+    } as never);
+
+    await expect(completion).resolves.toMatchObject({
+      complete: {
+        jobId: job.jobId,
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+      },
+    });
+    expect(crashes).toEqual(['RUNTIME_PROTOCOL_ERROR']);
+    child.emit('message', {
+      type: 'plugin-runtime.job-complete',
+      instanceId,
+      jobId: job.jobId,
+      status: 'succeeded',
+    } as never);
+    expect(crashes).toEqual(['RUNTIME_PROTOCOL_ERROR']);
   });
 });

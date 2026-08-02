@@ -50,6 +50,12 @@ type PluginRuntimeCrash = {
   failureCode: string;
 };
 
+type PendingJobTermination = {
+  status: 'failed' | 'cancelled';
+  errorCode: string;
+  errorDetail: string;
+};
+
 export interface PluginRuntimeSupervisorLogger {
   info(scope: string, message: string, context?: Record<string, unknown>): void;
   error(scope: string, error: unknown, context?: Record<string, unknown>): void;
@@ -176,9 +182,11 @@ export class PluginRuntimeSupervisor {
     timer: ReturnType<typeof setTimeout>;
   }>();
   #pendingJobCompletions = new Map<string, {
+    instanceId: string;
     resolve(complete: PluginJobComplete): void;
   }>();
   #jobOwners = new Map<string, string>();
+  #ignoredJobCompletions = new Set<string>();
   #pendingProviderCompletions = new Map<string, {
     resolve(result: PluginProviderBatchResult): void;
     timer: ReturnType<typeof setTimeout>;
@@ -280,10 +288,12 @@ export class PluginRuntimeSupervisor {
 
   deactivate(instanceId: string, reason: PluginRuntimeDeactivateReason): void {
     if (!this.#instances.has(instanceId)) return;
+    this.#settlePendingJobs(instanceId, {
+      status: 'cancelled',
+      errorCode: 'PLUGIN_JOB_INSTANCE_DEACTIVATED',
+      errorDetail: `The plugin instance was deactivated (${reason}).`,
+    });
     this.options.onInstanceDeactivated?.(instanceId);
-    for (const [jobId, owner] of this.#jobOwners) {
-      if (owner === instanceId) this.#jobOwners.delete(jobId);
-    }
     this.#post({
       type: 'plugin-runtime.deactivate',
       instanceId,
@@ -398,8 +408,10 @@ export class PluginRuntimeSupervisor {
         },
       });
     }
+    this.#ignoredJobCompletions.delete(this.#jobCompletionKey(input.instanceId, input.job.jobId));
     return new Promise((resolve) => {
       this.#pendingJobCompletions.set(input.job.jobId, {
+        instanceId: input.instanceId,
         resolve: (complete) => resolve({ complete }),
       });
       this.#jobOwners.set(input.job.jobId, input.instanceId);
@@ -659,6 +671,11 @@ export class PluginRuntimeSupervisor {
 
   shutdown(): void {
     this.#stopHeartbeatWatch();
+    this.#settlePendingJobs(undefined, {
+      status: 'cancelled',
+      errorCode: 'PLUGIN_JOB_RUNTIME_SHUTDOWN',
+      errorDetail: 'The plugin runtime was shut down before the job completed.',
+    });
     const child = this.#child;
     if (child === undefined) return;
     try {
@@ -701,6 +718,11 @@ export class PluginRuntimeSupervisor {
     );
     const instances = [...this.#instances.values()];
     this.#child.kill();
+    this.#settlePendingJobs(undefined, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_HEARTBEAT_TIMEOUT',
+      errorDetail: 'The plugin runtime stopped responding before the job completed.',
+    });
     this.#child = undefined;
     this.#ready = false;
     this.#instances.clear();
@@ -742,9 +764,40 @@ export class PluginRuntimeSupervisor {
     this.#child?.postMessage(message);
   }
 
+  #settlePendingJobs(instanceId: string | undefined, termination: PendingJobTermination): void {
+    for (const [jobId, pending] of this.#pendingJobCompletions) {
+      if (instanceId !== undefined && pending.instanceId !== instanceId) continue;
+      this.#pendingJobCompletions.delete(jobId);
+      this.#jobOwners.delete(jobId);
+      this.#rememberIgnoredJobCompletion(pending.instanceId, jobId);
+      pending.resolve({
+        jobId,
+        status: termination.status,
+        errorCode: termination.errorCode,
+        errorDetail: termination.errorDetail,
+      });
+    }
+  }
+
+  #jobCompletionKey(instanceId: string, jobId: string): string {
+    return `${instanceId}\u0000${jobId}`;
+  }
+
+  #rememberIgnoredJobCompletion(instanceId: string, jobId: string): void {
+    this.#ignoredJobCompletions.add(this.#jobCompletionKey(instanceId, jobId));
+    if (this.#ignoredJobCompletions.size <= 1_024) return;
+    const oldest = this.#ignoredJobCompletions.values().next().value as string | undefined;
+    if (oldest !== undefined) this.#ignoredJobCompletions.delete(oldest);
+  }
+
   #onExit(code: unknown): void {
     this.#stopHeartbeatWatch();
     const instances = [...this.#instances.values()];
+    this.#settlePendingJobs(undefined, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED',
+      errorDetail: `The standard plugin host exited before the job completed (${String(code)}).`,
+    });
     this.#child = undefined;
     this.#ready = false;
     this.#instances.clear();
@@ -789,6 +842,8 @@ export class PluginRuntimeSupervisor {
       return;
     }
     const message = protocol.message;
+    if (message.type === 'plugin-runtime.job-complete'
+      && this.#ignoredJobCompletions.delete(this.#jobCompletionKey(message.instanceId, message.jobId))) return;
     if (message.type === 'plugin-runtime.ready') {
       if (this.#ready) {
         this.#handleProtocolFault(undefined, 'Duplicate standard Host ready handshake.');
@@ -862,6 +917,11 @@ export class PluginRuntimeSupervisor {
     }
     if (message.type === 'plugin-runtime.activation-failed') {
       const instance = this.#instances.get(message.instanceId);
+      this.#settlePendingJobs(message.instanceId, {
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_ACTIVATION_FAILED',
+        errorDetail: message.message,
+      });
       this.#instances.delete(message.instanceId);
       if (instance !== undefined) {
         this.#notifyCrash({
@@ -876,10 +936,12 @@ export class PluginRuntimeSupervisor {
       return;
     }
     if (message.type === 'plugin-runtime.deactivated') {
+      this.#settlePendingJobs(message.instanceId, {
+        status: 'cancelled',
+        errorCode: 'PLUGIN_JOB_INSTANCE_DEACTIVATED',
+        errorDetail: `The plugin instance was deactivated (${message.reason}).`,
+      });
       this.#instances.delete(message.instanceId);
-      for (const [jobId, owner] of this.#jobOwners) {
-        if (owner === message.instanceId) this.#jobOwners.delete(jobId);
-      }
       return;
     }
     if (message.type === 'plugin-runtime.console') {
@@ -993,10 +1055,12 @@ export class PluginRuntimeSupervisor {
     );
     const instance = instanceId === undefined ? undefined : this.#instances.get(instanceId);
     if (instance !== undefined) {
+      this.#settlePendingJobs(instance.instanceId, {
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+        errorDetail: `The standard plugin host reported a protocol fault: ${reason}`,
+      });
       this.#instances.delete(instance.instanceId);
-      for (const [jobId, owner] of this.#jobOwners) {
-        if (owner === instance.instanceId) this.#jobOwners.delete(jobId);
-      }
       try {
         this.#post({
           type: 'plugin-runtime.deactivate',
@@ -1018,6 +1082,11 @@ export class PluginRuntimeSupervisor {
     }
     // A control-plane fault without an attributable instance invalidates the
     // shared handshake. There is no safe way to isolate it to one plugin.
+    this.#settlePendingJobs(undefined, {
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_RUNTIME_PROTOCOL_ERROR',
+      errorDetail: `The standard plugin host reported a protocol fault: ${reason}`,
+    });
     const child = this.#child;
     if (child === undefined) return;
     const instances = [...this.#instances.values()];

@@ -52,3 +52,12 @@
 - `WorkspaceToolsOverflow` 的后台任务入口在存在插件 Job 时显示活动标记；完成、失败、取消或暂停结果在活动条中保留短暂时间，任务面板仍保留完整历史。
 - 移除 Host 对 Plugin Job handler 的统一墙钟超时；插件自行决定超时策略并通过 handler 抛错或完成结果报告失败。Host 只在插件实例停用、运行时崩溃、心跳丢失或协议故障时终止运行时。
 - 新增 `plugin-job-activity` 选择逻辑测试及运行时/调度器回归测试；本次没有执行完整 Electron E2E、packaged 或 Windows 验收。
+
+## 2026-08-02 P1 收口
+
+- Standard/Trusted runtime 在实例停用、进程退出、心跳超时、协议故障和 shutdown 时结算全部 pending Job，避免 Scheduler drain 永久等待；故障结算后的迟到 completion 会被忽略。
+- Scheduler 捕获 Worker/运行时 rejection 并释放实例 drain 锁；运行时合成的退出/协议故障结果交由 owner-scoped pause 处理，避免与持久化暂停竞态写成终态 failed；实例崩溃只暂停对应插件 owner，不再暂停同库其他插件。
+- 迟到 completion tombstone 按 `instanceId + jobId` 隔离，旧实例消息不会吞掉重绑定实例的同 Job completion。
+- Host 展示百分比统一以 `completed / total` 为权威来源；仅在 total 未知或为 0 时回退插件上报的 `progress`，并对插件错误详情做长度限制和路径脱敏。
+- 完整退出时由实例失活产生的 idempotent Job 会在下次打开资源库时恢复为 queued；恢复会清除进程内实例 ID，下一次 claim 时绑定新实例，普通 queued Job 和 checkpoint/用户主动暂停仍保持实例隔离与暂停状态。
+- 新增 Worker 恢复/重绑定回归测试和完整 Electron 退出→启动恢复 E2E：`node scripts/run-e2e.mjs tests/e2e/plugin-job-recovery.test.ts`，1 passed；Worker 插件 Job 测试 4 passed。

@@ -186,4 +186,116 @@ describe('PluginJobScheduler', () => {
       complete: { jobId: libraryTwoJob.jobId, status: 'succeeded' },
     });
   });
+
+  it('does not persist synthetic runtime termination as a terminal job result', async () => {
+    const requestWorker = vi.fn()
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: job() })
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: null });
+    const invokeJob = vi.fn().mockResolvedValue({
+      complete: {
+        jobId: '00000000-0000-4000-8000-000000000001',
+        status: 'failed',
+        errorCode: 'PLUGIN_JOB_RUNTIME_PROCESS_EXITED',
+      },
+    });
+    const scheduler = new PluginJobScheduler({
+      supervisor: { invokeJob } as never,
+      requestWorker,
+      resolveInstances: () => [{
+        instanceId: 'instance-01',
+        instanceScope: 'library',
+        mode: 'restricted',
+        pluginId: 'com.example.worker',
+        packageHash: 'a'.repeat(64),
+        activated: true,
+      }],
+    });
+
+    scheduler.tick('library-01');
+    await vi.waitFor(() => expect(invokeJob).toHaveBeenCalledOnce());
+    expect(requestWorker).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'plugin.jobs.complete',
+    }));
+  });
+
+  it('settles a claimed job when the runtime invocation rejects', async () => {
+    const requestWorker = vi.fn()
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: job() })
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.completed', job: job({ status: 'failed' }) })
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: null });
+    const scheduler = new PluginJobScheduler({
+      supervisor: { invokeJob: vi.fn().mockRejectedValue(new Error('host failed')) } as never,
+      requestWorker,
+      resolveInstances: () => [{
+        instanceId: 'instance-01',
+        instanceScope: 'library',
+        mode: 'restricted',
+        pluginId: 'com.example.worker',
+        packageHash: 'a'.repeat(64),
+        activated: true,
+      }],
+    });
+
+    scheduler.tick('library-01');
+    await vi.waitFor(() => expect(requestWorker).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'plugin.jobs.complete',
+      status: 'failed',
+      errorCode: 'PLUGIN_JOB_SCHEDULER_ERROR',
+    })));
+  });
+
+  it('retries a completion after a transient Worker rejection', async () => {
+    const requestWorker = vi.fn()
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: job() })
+      .mockRejectedValueOnce(new Error('worker restarted'))
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.claimed', job: null })
+      .mockResolvedValueOnce({ ok: true, type: 'plugin.jobs.completed', job: job({ status: 'succeeded' }) });
+    const scheduler = new PluginJobScheduler({
+      supervisor: { invokeJob: vi.fn().mockResolvedValue({ complete: { jobId: job().jobId, status: 'succeeded' } }) } as never,
+      requestWorker,
+      resolveInstances: () => [{
+        instanceId: 'instance-01',
+        instanceScope: 'library',
+        mode: 'restricted',
+        pluginId: 'com.example.worker',
+        packageHash: 'a'.repeat(64),
+        activated: true,
+      }],
+    });
+
+    scheduler.tick('library-01');
+    await vi.waitFor(() => expect(requestWorker).toHaveBeenCalledTimes(4), { timeout: 2_000 });
+    expect(requestWorker).toHaveBeenNthCalledWith(4, expect.objectContaining({
+      type: 'plugin.jobs.complete',
+      status: 'succeeded',
+    }));
+  });
+
+  it('logs worker failures and releases the instance drain lock', async () => {
+    const requestWorker = vi.fn().mockRejectedValue(new Error('worker unavailable'));
+    const logger = { error: vi.fn() };
+    const scheduler = new PluginJobScheduler({
+      supervisor: { invokeJob: vi.fn() } as never,
+      requestWorker,
+      resolveInstances: () => [{
+        instanceId: 'instance-01',
+        instanceScope: 'library',
+        mode: 'restricted',
+        pluginId: 'com.example.worker',
+        packageHash: 'a'.repeat(64),
+        activated: true,
+      }],
+      logger,
+    });
+
+    scheduler.tick('library-01');
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledOnce());
+    scheduler.tick('library-01');
+    await vi.waitFor(() => expect(requestWorker).toHaveBeenCalledTimes(2));
+    expect(logger.error).toHaveBeenCalledWith(
+      'plugin.job.instance-drain-failed',
+      expect.any(Error),
+      expect.objectContaining({ instanceId: 'instance-01' }),
+    );
+  });
 });

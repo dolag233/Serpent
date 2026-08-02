@@ -2,8 +2,10 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import {
+  formatPluginJobError,
   formatPluginJobProgressMessage,
   formatPluginJobProgressSummary,
+  getPluginJobDisplayProgress,
 } from "./plugin-job-display";
 import type { MediaJobStatus, AiJobStatus, PluginJobStatus } from "../shared/library-api";
 
@@ -313,6 +315,7 @@ export function MediaJobsDialog({
                     pluginJobs.jobs.map((job) => {
                       const progressSummary = formatPluginJobProgressSummary(job);
                       const progressMessage = formatPluginJobProgressMessage(job);
+                      const progress = getPluginJobDisplayProgress(job);
                       return (
                         <div
                           key={job.jobId}
@@ -335,8 +338,7 @@ export function MediaJobsDialog({
                             </span>
                             <strong>{job.status}</strong>
                             <span title={job.errorCode ?? undefined}>
-                              {job.errorDetail ??
-                                job.errorCode ??
+                              {formatPluginJobError(job.errorDetail, job.errorCode) ||
                                 progressSummary}
                             </span>
                           </div>
@@ -353,7 +355,7 @@ export function MediaJobsDialog({
                               <div
                                 className="task-progress-fill"
                                 style={{
-                                  width: `${Math.max(0, Math.min(1, job.progress)) * 100}%`,
+                                  width: `${progress * 100}%`,
                                 }}
                               />
                             </div>

@@ -2,6 +2,8 @@ import type { PluginJobRecord } from "../plugins/plugin-jobs";
 import {
   formatPluginJobProgressMessage,
   formatPluginJobProgressSummary,
+  formatPluginJobError,
+  getPluginJobDisplayProgress,
 } from "./plugin-job-display";
 import { useT } from "./i18n";
 
@@ -17,8 +19,9 @@ export function PluginJobActivityBanner({
   const t = useT();
   const progressMessage = formatPluginJobProgressMessage(job);
   const progressSummary = formatPluginJobProgressSummary(job);
-  const errorMessage = job.errorDetail ?? job.errorCode;
-  const progressWidth = `${Math.max(0, Math.min(1, job.progress)) * 100}%`;
+  const errorMessage = formatPluginJobError(job.errorDetail, job.errorCode);
+  const progress = getPluginJobDisplayProgress(job);
+  const progressWidth = `${progress * 100}%`;
   const statusLabel = t(`dialog.mediaJobs.pluginJobStatus.${job.status}`);
 
   return (
@@ -64,7 +67,7 @@ export function PluginJobActivityBanner({
         <div
           aria-valuemax={100}
           aria-valuemin={0}
-          aria-valuenow={Math.round(job.progress * 100)}
+          aria-valuenow={Math.round(progress * 100)}
           className="plugin-job-activity-track"
           role="progressbar"
         >
