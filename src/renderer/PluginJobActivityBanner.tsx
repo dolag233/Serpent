@@ -25,30 +25,32 @@ export function PluginJobActivityBanner({
       role="status"
       aria-live="polite"
     >
-      <div className="plugin-job-activity-main">
-        <div className="plugin-job-activity-headline">
+      <div className="plugin-job-activity-header">
+        <div
+          className="plugin-job-activity-title"
+          title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
+        >
           <span aria-hidden="true" className="plugin-job-activity-status-mark" />
-          <strong
-            className="plugin-job-activity-source"
-            title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
-          >
-            <span>{job.ownerPluginId}</span>
-            <span aria-hidden="true" className="plugin-job-activity-separator">
-              ·
-            </span>
-            <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
-          </strong>
-          <span className="plugin-job-activity-status">{statusLabel}</span>
-        </div>
-        <div className="plugin-job-activity-progress-meta">
-          <span
-            className="plugin-job-activity-message"
-            title={progressMessage || statusLabel}
-          >
+          <strong className="plugin-job-activity-plugin">{job.ownerPluginId}</strong>
+          <span aria-hidden="true" className="plugin-job-activity-separator">
+            ·
+          </span>
+          <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
+          <span className="plugin-job-activity-stage">
             {progressMessage || statusLabel}
           </span>
-          <strong>{progressSummary}</strong>
         </div>
+        <div className="plugin-job-activity-actions">
+          <button
+            className="secondary-button"
+            onClick={onOpenJobs}
+            type="button"
+          >
+            {t("dialog.mediaJobs.openPluginJobs")}
+          </button>
+        </div>
+      </div>
+      <div className="plugin-job-activity-progress-row">
         <div
           aria-valuemax={100}
           aria-valuemin={0}
@@ -61,21 +63,15 @@ export function PluginJobActivityBanner({
             style={{ width: progressWidth }}
           />
         </div>
-        {errorMessage && (
-          <div className="plugin-job-activity-error" title={errorMessage}>
-            {errorMessage}
-          </div>
-        )}
+        <strong className="plugin-job-activity-progress-summary">
+          {progressSummary}
+        </strong>
       </div>
-      <div className="plugin-job-activity-actions">
-        <button
-          className="secondary-button"
-          onClick={onOpenJobs}
-          type="button"
-        >
-          {t("dialog.mediaJobs.openPluginJobs")}
-        </button>
-      </div>
+      {errorMessage && (
+        <div className="plugin-job-activity-error" title={errorMessage}>
+          {errorMessage}
+        </div>
+      )}
     </div>
   );
 }

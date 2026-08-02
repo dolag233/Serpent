@@ -2112,16 +2112,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: var(--raised);
 }
 
-/* Plugin jobs use a compact status card rather than exposing protocol states
-   such as "running" as raw UI copy. The status chip and progress row keep the
-   plugin identity, current phase and quantitative progress distinct. */
+/* Plugin jobs keep identity and current phase on one header row, with the
+   quantitative progress track on its own full-width row. Protocol states such
+   as "running" are not exposed as raw UI copy. */
 .workspace-plugin-job-progress {
   --plugin-job-status-color: var(--accent);
 
   display: flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   min-width: 0;
   padding: 11px 14px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 22%, var(--divider));
@@ -2147,17 +2148,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   --plugin-job-status-color: var(--danger);
 }
 
-.plugin-job-activity-main {
+.plugin-job-activity-header {
   display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 14px;
   min-width: 0;
 }
 
-.plugin-job-activity-headline {
+.plugin-job-activity-title {
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   gap: 8px;
   min-width: 0;
   line-height: 1.2;
@@ -2176,23 +2177,27 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   animation: plugin-job-status-pulse 1.1s ease-in-out infinite;
 }
 
-.plugin-job-activity-source {
-  display: flex;
-  flex: 1 1 auto;
+.plugin-job-activity-plugin,
+.plugin-job-activity-handler,
+.plugin-job-activity-stage {
   min-width: 0;
   overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.plugin-job-activity-source > span:first-child,
+.plugin-job-activity-plugin {
+  flex: 0 1 auto;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 620;
+}
+
 .plugin-job-activity-handler {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 560;
 }
 
 .plugin-job-activity-separator {
@@ -2202,52 +2207,33 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   font-weight: 500;
 }
 
-.plugin-job-activity-handler {
-  color: var(--secondary);
-  font-weight: 560;
-}
-
-.plugin-job-activity-status {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 34%, var(--divider));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--plugin-job-status-color) 11%, transparent);
+.plugin-job-activity-stage {
+  flex: 1 1 auto;
+  margin-left: 2px;
   color: var(--plugin-job-status-color);
   font-size: 11px;
-  font-weight: 620;
-  line-height: 1;
-}
-
-.plugin-job-activity-message {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--secondary);
-  font-size: 11px;
+  font-weight: 560;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.plugin-job-activity-progress-meta {
+.plugin-job-activity-progress-row {
   display: flex;
-  min-width: 0;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  color: var(--tertiary);
-  font-size: 11px;
-  line-height: 1;
 }
 
-.plugin-job-activity-progress-meta strong {
+.plugin-job-activity-progress-summary {
+  flex: 0 0 auto;
   color: var(--text);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   font-weight: 620;
+  line-height: 1;
 }
 
 .plugin-job-activity-track {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 5px;
   overflow: hidden;
   border-radius: 999px;
@@ -2313,21 +2299,22 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 @media (max-width: 720px) {
-  .workspace-plugin-job-progress {
+  .plugin-job-activity-header {
     align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .plugin-job-activity-actions {
+    align-self: flex-end;
+  }
+
+  .plugin-job-activity-title {
+    width: 100%;
+  }
+
+  .plugin-job-activity-progress-row {
     gap: 10px;
-  }
-
-  .plugin-job-activity-headline {
-    flex-wrap: wrap;
-  }
-
-  .plugin-job-activity-source {
-    min-width: calc(100% - 28px);
-  }
-
-  .plugin-job-activity-status {
-    margin-left: 16px;
   }
 }
 
