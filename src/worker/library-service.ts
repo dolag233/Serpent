@@ -4476,6 +4476,13 @@ export class LibraryService {
     if (openLibrary.readOnly || text === openLibrary.gitignoreText) return;
     const rules = parseGitignore(text);
     const transaction = openLibrary.connection.transaction(() => {
+      // Managed ignore state is file-backed. Older versions also mirrored
+      // managed rules into explicit_ignored_paths; clear those stale rows
+      // before materializing the current .serpentignore contents so removing
+      // a rule immediately restores the affected assets.
+      openLibrary.connection
+        .prepare("DELETE FROM explicit_ignored_paths WHERE location_kind = 'managed'")
+        .run();
       openLibrary.connection.prepare('DELETE FROM gitignore_ignored_paths').run();
       const insert = openLibrary.connection.prepare(
         'INSERT OR IGNORE INTO gitignore_ignored_paths(relative_path, path_kind) VALUES (?, ?)',
