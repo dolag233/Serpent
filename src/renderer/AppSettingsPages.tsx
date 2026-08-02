@@ -24,6 +24,12 @@ import {
   SHADOW_LEVEL_MIN,
   clampShadowLevel,
 } from "./shadow-preferences";
+import { useMenuAcrylic } from "./MenuAcrylicProvider";
+import {
+  MENU_ACRYLIC_LEVEL_MAX,
+  MENU_ACRYLIC_LEVEL_MIN,
+  clampMenuAcrylicLevel,
+} from "./menu-acrylic-preferences";
 import { useTheme } from "./theme";
 import {
   ACCENT_PRESET_HEX,
@@ -32,6 +38,7 @@ import {
 } from "./theme/accent-preferences";
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
+const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
 
 type SettingsCardProps = { children: ReactNode };
 
@@ -138,6 +145,8 @@ export function AppearanceSettingsPage(): ReactNode {
     setAccentHex,
   } = useTheme();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
+  const { preferences: menuAcrylicPrefs, setLevel: setMenuAcrylicLevel } =
+    useMenuAcrylic();
   const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
     useInspectorCardFeel();
   const [accentDraft, setAccentDraft] = useState(accentHex);
@@ -261,6 +270,54 @@ export function AppearanceSettingsPage(): ReactNode {
         <div aria-hidden="true" className="app-settings-elevation-ends">
           <span>{t("settings.elevationOff")}</span>
           <span>{t("settings.elevationStrong")}</span>
+        </div>
+      </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.menuAcrylicSection")}</strong>
+        <span>{t("settings.menuAcrylicHint")}</span>
+      </div>
+      <div className="app-settings-elevation-scale">
+        <div className="app-settings-elevation-rail">
+          <input
+            aria-label={t("settings.menuAcrylicSection")}
+            aria-valuemax={MENU_ACRYLIC_LEVEL_MAX}
+            aria-valuemin={MENU_ACRYLIC_LEVEL_MIN}
+            aria-valuenow={menuAcrylicPrefs.level}
+            aria-valuetext={t("settings.menuAcrylicLevelValue", {
+              level: menuAcrylicPrefs.level,
+            })}
+            className="app-settings-elevation-slider"
+            max={MENU_ACRYLIC_LEVEL_MAX}
+            min={MENU_ACRYLIC_LEVEL_MIN}
+            onChange={(event) =>
+              setMenuAcrylicLevel(
+                clampMenuAcrylicLevel(Number(event.target.value)),
+              )
+            }
+            step={1}
+            type="range"
+            value={menuAcrylicPrefs.level}
+          />
+          <div aria-hidden="true" className="app-settings-elevation-ticks">
+            {MENU_ACRYLIC_LEVEL_TICKS.map((tick) => (
+              <button
+                className={
+                  menuAcrylicPrefs.level === tick
+                    ? "app-settings-elevation-tick is-active"
+                    : "app-settings-elevation-tick"
+                }
+                key={tick}
+                onClick={() => setMenuAcrylicLevel(tick)}
+                type="button"
+              >
+                <span className="app-settings-elevation-tick-mark" />
+                <span className="app-settings-elevation-tick-label">
+                  {t(`settings.menuAcrylicLevel${tick}` as const)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className="app-settings-card-divider" />

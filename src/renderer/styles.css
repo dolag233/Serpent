@@ -3235,21 +3235,39 @@ body.serpent-modal-open .app-shell {
   position: fixed;
   z-index: 41;
   pointer-events: auto;
-  background: var(--menu-surface-background);
+  /* Default to the current low acrylic treatment so menus remain polished
+     even before the preference provider has mounted. */
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   border: 1px solid var(--menu-surface-border);
   border-radius: var(--menu-surface-radius);
   box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
   min-width: 180px;
   max-height: calc(100vh - 12px);
   overflow-y: auto;
   padding: 5px;
 }
 
-/* Viewer-local context menus keep the asset menu geometry, with only a subtle
-   acrylic veil over the media behind them. */
-.viewer-context-menu {
+/* Shared context-menu acrylic levels. The viewer menu and every menu rendered
+   through ContextMenu/ContextMenuSubmenu intentionally use these same tokens. */
+:root[data-menu-acrylic="0"] .context-menu {
+  background: var(--menu-surface-background);
+  backdrop-filter: none;
+}
+
+:root[data-menu-acrylic="1"] .context-menu {
   background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   backdrop-filter: blur(14px) saturate(120%);
+}
+
+:root[data-menu-acrylic="2"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 84%, transparent);
+  backdrop-filter: blur(20px) saturate(125%);
+}
+
+:root[data-menu-acrylic="3"] .context-menu {
+  background: color-mix(in srgb, var(--menu-surface-background) 74%, transparent);
+  backdrop-filter: blur(28px) saturate(135%);
 }
 
 .context-menu-item {

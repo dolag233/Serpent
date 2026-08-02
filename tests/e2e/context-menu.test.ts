@@ -711,7 +711,12 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
       const open = await api.listOpen();
       const libraryId = open.value?.[0]?.libraryId;
       if (!libraryId) throw new Error("No open library");
-      for (const name of ["甲标签", "乙标签"]) {
+      const names = [
+        "甲标签",
+        "乙标签",
+        ...Array.from({ length: 40 }, (_, index) => `测试标签${index + 1}`),
+      ];
+      for (const name of names) {
         const created = await api.createTag({ libraryId, name });
         if (!created.ok) throw new Error(`Could not create tag ${name}.`);
       }
@@ -720,14 +725,35 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
 
     // Enter the tag picker from the asset context menu
     await assetCard.click({ button: "right" });
-    await window.getByRole("menuitem", { name: "添加标签…" }).click();
+    const tagTrigger = window.getByRole("menuitem", { name: "添加标签…" });
+    const tagTriggerBox = await tagTrigger.boundingBox();
+    expect(tagTriggerBox).not.toBeNull();
+    await tagTrigger.click();
     const pickerMenu = window.getByRole("menu", { name: "添加标签" });
     await expect(pickerMenu).toBeVisible({ timeout: 5_000 });
+    const pickerMenuBox = await pickerMenu.boundingBox();
+    expect(pickerMenuBox).not.toBeNull();
+    // The floating panel touches the trigger horizontally; no transparent
+    // four-pixel bridge may expose the draggable asset grid underneath.
+    expect(
+      Math.abs(pickerMenuBox!.x - (tagTriggerBox!.x + tagTriggerBox!.width)),
+    ).toBeLessThanOrEqual(1);
+    const pickerPanelBox = await pickerMenu.boundingBox();
+    const pickerContentBox = await pickerMenu.locator(".tag-picker").boundingBox();
+    expect(pickerPanelBox).not.toBeNull();
+    expect(pickerContentBox).not.toBeNull();
+    expect(pickerContentBox!.y - pickerPanelBox!.y).toBeLessThanOrEqual(12);
     await expect(
       window.getByRole("combobox", { name: "搜索要添加的标签" }),
     ).toBeFocused();
     await expect(window.getByRole("option", { name: "甲标签" })).toBeVisible();
     await expect(window.getByRole("option", { name: "乙标签" })).toBeVisible();
+
+    // The picker is rendered as a floating submenu. Moving the pointer from
+    // the trigger into that portal must not let the trigger's mouseleave
+    // timer close the menu before an option can be clicked.
+    await window.getByRole("option", { name: "甲标签" }).hover();
+    await expect(pickerMenu).toBeVisible();
 
     // Scrolling inside the picker's own list must not dismiss the menu
     // (regression: backdrop scroll-dismiss used to fire on in-menu scrolls,

@@ -894,6 +894,18 @@ export const zhCN = {
     elevationOff: "关闭",
     elevationStrong: "最强",
     elevationLevelValue: "等级 {level}",
+    menuAcrylicSection: "右键菜单亚克力",
+    menuAcrylicHint:
+      "控制资产、文件夹、合集和查看器右键菜单的透明与背景模糊强度；立即生效并跨重启保存。",
+    menuAcrylicNone: "无",
+    menuAcrylicLow: "低",
+    menuAcrylicMedium: "中",
+    menuAcrylicHigh: "高",
+    menuAcrylicLevel0: "无",
+    menuAcrylicLevel1: "低",
+    menuAcrylicLevel2: "中",
+    menuAcrylicLevel3: "高",
+    menuAcrylicLevelValue: "亚克力等级 {level}",
     inspectorCardFeel: "Inspector 预览卡片动效",
     inspectorCardFeelHint:
       "右侧 Inspector 预览卡在指针悬停时的倾斜、高光与按下景深；浏览网格卡片不受影响。开启时仍遵循系统「减少动态效果」。",

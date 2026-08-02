@@ -68,7 +68,8 @@ export function TagPickerMenu({
   );
 
   useEffect(() => {
-    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   // Keep the keyboard-driven highlight visible in long lists.

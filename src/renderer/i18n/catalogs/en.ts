@@ -909,6 +909,18 @@ export const en = {
     elevationOff: "Off",
     elevationStrong: "Strong",
     elevationLevelValue: "Level {level}",
+    menuAcrylicSection: "Context-menu acrylic",
+    menuAcrylicHint:
+      "Controls transparency and background blur for asset, folder, collection, and viewer context menus. Applies immediately and persists across restarts.",
+    menuAcrylicNone: "None",
+    menuAcrylicLow: "Low",
+    menuAcrylicMedium: "Medium",
+    menuAcrylicHigh: "High",
+    menuAcrylicLevel0: "None",
+    menuAcrylicLevel1: "Low",
+    menuAcrylicLevel2: "Medium",
+    menuAcrylicLevel3: "High",
+    menuAcrylicLevelValue: "Acrylic level {level}",
     inspectorCardFeel: "Inspector preview card motion",
     inspectorCardFeelHint:
       "Pointer tilt, glare, and press depth on the Inspector preview card. Browse grid cards are unchanged. Respects system reduced-motion when on.",

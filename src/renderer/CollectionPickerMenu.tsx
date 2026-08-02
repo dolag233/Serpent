@@ -1,4 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import type { CollectionSummary } from "../shared/asset-types";
 import { useContextMenu } from "./context-menu";
 import { Icon } from "./Icons";
@@ -75,7 +82,8 @@ export function CollectionPickerMenu({
   }, [collections, excludedCollectionIds, query]);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
