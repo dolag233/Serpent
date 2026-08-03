@@ -439,7 +439,28 @@ export type PluginToolbarContribution = {
   pluginInstanceId: string;
   commandId: string;
   title: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
+
+function commandForContribution(
+  registry: PluginContributionRegistry,
+  contribution: RegisteredPluginContribution,
+): RegisteredPluginContribution | undefined {
+  if (contribution.commandId === undefined) return undefined;
+  return registry.list().find((candidate) => candidate.kind === 'command'
+    && candidate.pluginInstanceId === contribution.pluginInstanceId
+    && candidate.localId === contribution.commandId);
+}
+
+function effectiveCondition(
+  registry: PluginContributionRegistry,
+  contribution: RegisteredPluginContribution,
+  key: 'when' | 'enablement' | 'checked',
+): string | undefined {
+  return contribution[key] ?? commandForContribution(registry, contribution)?.[key];
+}
 
 export function listToolbarContributions(
   registry: PluginContributionRegistry,
@@ -455,6 +476,12 @@ export function listToolbarContributions(
       pluginInstanceId: contribution.pluginInstanceId,
       commandId: contribution.commandId,
       title: contribution.title,
+      ...(effectiveCondition(registry, contribution, 'when') === undefined
+        ? {} : { when: effectiveCondition(registry, contribution, 'when') }),
+      ...(effectiveCondition(registry, contribution, 'enablement') === undefined
+        ? {} : { enablement: effectiveCondition(registry, contribution, 'enablement') }),
+      ...(effectiveCondition(registry, contribution, 'checked') === undefined
+        ? {} : { checked: effectiveCondition(registry, contribution, 'checked') }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -522,6 +549,9 @@ export type PluginInspectorSectionContribution = {
   commandId: string;
   title: string;
   commandTitle: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 export function listInspectorSectionContributions(
@@ -542,6 +572,12 @@ export function listInspectorSectionContributions(
       commandId: contribution.commandId,
       title: contribution.title,
       commandTitle: contribution.commandTitle,
+      ...(effectiveCondition(registry, contribution, 'when') === undefined
+        ? {} : { when: effectiveCondition(registry, contribution, 'when') }),
+      ...(effectiveCondition(registry, contribution, 'enablement') === undefined
+        ? {} : { enablement: effectiveCondition(registry, contribution, 'enablement') }),
+      ...(effectiveCondition(registry, contribution, 'checked') === undefined
+        ? {} : { checked: effectiveCondition(registry, contribution, 'checked') }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -552,6 +588,9 @@ export type PluginViewerActionContribution = {
   pluginInstanceId: string;
   commandId: string;
   title: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 export function listViewerActionContributions(
@@ -568,6 +607,12 @@ export function listViewerActionContributions(
       pluginInstanceId: contribution.pluginInstanceId,
       commandId: contribution.commandId,
       title: contribution.title,
+      ...(effectiveCondition(registry, contribution, 'when') === undefined
+        ? {} : { when: effectiveCondition(registry, contribution, 'when') }),
+      ...(effectiveCondition(registry, contribution, 'enablement') === undefined
+        ? {} : { enablement: effectiveCondition(registry, contribution, 'enablement') }),
+      ...(effectiveCondition(registry, contribution, 'checked') === undefined
+        ? {} : { checked: effectiveCondition(registry, contribution, 'checked') }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -579,6 +624,9 @@ export type PluginShortcutContribution = {
   commandId: string;
   title: string;
   accelerator: string;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 export function listShortcutContributions(
@@ -599,6 +647,12 @@ export function listShortcutContributions(
       commandId: contribution.commandId,
       title: contribution.title,
       accelerator: contribution.accelerator,
+      ...(effectiveCondition(registry, contribution, 'when') === undefined
+        ? {} : { when: effectiveCondition(registry, contribution, 'when') }),
+      ...(effectiveCondition(registry, contribution, 'enablement') === undefined
+        ? {} : { enablement: effectiveCondition(registry, contribution, 'enablement') }),
+      ...(effectiveCondition(registry, contribution, 'checked') === undefined
+        ? {} : { checked: effectiveCondition(registry, contribution, 'checked') }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }
@@ -624,9 +678,12 @@ export function listMenuContributions(
       ...(contribution.after === undefined ? {} : { after: contribution.after }),
       ...(contribution.first === undefined ? {} : { first: contribution.first }),
       ...(contribution.last === undefined ? {} : { last: contribution.last }),
-      ...(contribution.when === undefined ? {} : { when: contribution.when }),
-      ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
-      ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+      ...(effectiveCondition(registry, contribution, 'when') === undefined
+        ? {} : { when: effectiveCondition(registry, contribution, 'when') }),
+      ...(effectiveCondition(registry, contribution, 'enablement') === undefined
+        ? {} : { enablement: effectiveCondition(registry, contribution, 'enablement') }),
+      ...(effectiveCondition(registry, contribution, 'checked') === undefined
+        ? {} : { checked: effectiveCondition(registry, contribution, 'checked') }),
       ...(contribution.shortcut === undefined ? {} : { shortcut: contribution.shortcut }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));

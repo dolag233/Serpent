@@ -33,6 +33,7 @@ import { useT } from "./i18n";
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { formatAudioTechnicalLine, formatVideoTechnicalLine } from "./video-metadata-format";
 import { isGifDisplayName } from "./gif-player-controls";
@@ -43,6 +44,7 @@ import {
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
 import { PluginInspectorSections } from "./plugin-inspector-sections";
 import { PluginInspectorViews } from "./plugin-inspector-views";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { splitFilenameForDisplay } from "./filename-display";
 
 // --- Local utility helpers (extracted from App.tsx) ---
@@ -543,6 +545,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
     selectedAssets.length,
     selectedAsset ? 1 : 0,
   );
+  const pluginContributionContext = useMemo<PluginContributionContext>(() => {
+    const contextAssets = selectedAssets.length > 0
+      ? selectedAssets
+      : selectedAsset === undefined ? [] : [selectedAsset];
+    return createPluginMenuContributionContext({
+      descriptor: { type: "workspace", assetIds: contextAssets.map((asset) => asset.assetId) },
+      assets: contextAssets,
+      libraryId: libraryId ?? library?.libraryId,
+    });
+  }, [library?.libraryId, libraryId, selectedAsset, selectedAssets]);
 
   // Serpent-a9n: single-selection GIF/video loops in the Inspector hero;
   // multi-selection never plays (isPreviewable is gated on selectionCount < 2,
@@ -1039,6 +1051,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             pluginApi={pluginApi}
             refreshKey={pluginContributionRefreshKey}
             selectedAssetIds={inspectorSelectedAssetIds}
+            context={pluginContributionContext}
           />
 
           <PluginInspectorViews

@@ -41,6 +41,30 @@ export type PluginMenuDescriptor = {
   children: PluginMenuDescriptor[];
 };
 
+export type PluginContributionConditions = {
+  when?: PluginContextExpression;
+  enablement?: PluginContextExpression;
+  checked?: PluginContextExpression;
+};
+
+export function resolvePluginContributionConditions(
+  contribution: PluginContributionConditions,
+  context?: PluginContributionContext,
+): { visible: boolean; disabled: boolean; checked?: boolean } {
+  if (context === undefined) return { visible: true, disabled: false };
+  const visible = contribution.when === undefined
+    || evaluatePluginContextExpression(contribution.when, context);
+  const disabled = contribution.enablement !== undefined
+    && !evaluatePluginContextExpression(contribution.enablement, context);
+  return {
+    visible,
+    disabled,
+    ...(contribution.checked === undefined
+      ? {}
+      : { checked: evaluatePluginContextExpression(contribution.checked, context) }),
+  };
+}
+
 type MenuContributionNode = {
   descriptor: PluginMenuDescriptor;
   sourceIndex: number;
@@ -161,9 +185,7 @@ export function buildPluginMenuDescriptors(
     const cached = visibilityById.get(contribution.id);
     if (cached !== undefined) return cached;
 
-    const ownVisibility = context === undefined
-      || contribution.when === undefined
-      || evaluatePluginContextExpression(contribution.when, context);
+    const ownVisibility = resolvePluginContributionConditions(contribution, context).visible;
     if (!ownVisibility) {
       visibilityById.set(contribution.id, false);
       return false;
@@ -210,12 +232,10 @@ export function buildPluginMenuDescriptors(
       ...(contribution.shortcut === undefined
         ? {}
         : { shortcut: formatElectronAcceleratorLabel(contribution.shortcut, pluginMenuPlatform) }),
-      disabled: context !== undefined
-        && contribution.enablement !== undefined
-        && !evaluatePluginContextExpression(contribution.enablement, context),
-      ...(context !== undefined && contribution.checked !== undefined
-        ? { checked: evaluatePluginContextExpression(contribution.checked, context) }
-        : {}),
+      disabled: resolvePluginContributionConditions(contribution, context).disabled,
+      ...(resolvePluginContributionConditions(contribution, context).checked === undefined
+        ? {}
+        : { checked: resolvePluginContributionConditions(contribution, context).checked }),
       ...(condition === undefined ? {} : { condition }),
       children: [] as PluginMenuDescriptor[],
     };

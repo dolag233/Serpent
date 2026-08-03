@@ -959,6 +959,9 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           commandId: contribution.commandId,
           title: contribution.title,
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
           target: 'toolbar' as const,
         }));
     }
@@ -973,6 +976,9 @@ export class PluginActivationCoordinator {
           commandId: contribution.commandId,
           title: contribution.title,
           commandTitle: contribution.commandTitle,
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
           target: 'inspector.sections' as const,
         }));
     }
@@ -986,6 +992,9 @@ export class PluginActivationCoordinator {
           pluginInstanceId: contribution.pluginInstanceId,
           commandId: contribution.commandId,
           title: contribution.title,
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
           target: 'viewer.actions' as const,
         }));
     }
@@ -1000,6 +1009,9 @@ export class PluginActivationCoordinator {
           commandId: contribution.commandId,
           title: contribution.title,
           accelerator: contribution.accelerator,
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
           target: 'shortcuts' as const,
         }));
     }

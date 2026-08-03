@@ -348,6 +348,7 @@ import {
   buildPluginBrowseScope,
   buildPluginViewerState,
 } from "./plugin-context-state";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { InspectorPanel } from "./InspectorPanel";
 import {
   CARD_SIZE_MAX,
@@ -1716,6 +1717,14 @@ function AppInner() {
     () => buildPluginViewerState(previewAsset, Boolean(document.fullscreenElement)),
     [previewAsset],
   );
+  const pluginSurfaceContext = useMemo(() => createPluginMenuContributionContext({
+    descriptor: { type: "workspace", assetIds: [...selectedAssetIds] },
+    assets: visibleAssets,
+    libraryId: library?.libraryId,
+    locale,
+    browse: pluginBrowseScope,
+    viewer: pluginViewerState,
+  }), [library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -7056,6 +7065,7 @@ function AppInner() {
     refreshKey: pluginSidebarRefreshKey,
     previewOpen: Boolean(previewAsset),
     selectedAssetIds,
+    context: pluginSurfaceContext,
   });
 
   usePluginInputCaptureFanIn({
@@ -8593,6 +8603,7 @@ function AppInner() {
               pluginApi={(window as RendererWindow).serpent?.plugins}
               refreshKey={pluginContributionRefreshKey}
               selectedAssetIds={selectedAssetIds}
+              context={pluginSurfaceContext}
             />
             <WorkspaceToolsOverflow
               items={[

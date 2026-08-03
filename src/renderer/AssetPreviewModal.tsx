@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -15,6 +16,8 @@ import type {
   SerpentLibraryApi,
 } from "../shared/library-api";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
+import { buildPluginViewerState } from "./plugin-context-state";
 import {
   DirectPlayCapabilityService,
   type DirectPlayMediaDescriptor,
@@ -200,6 +203,19 @@ export const AssetPreviewModal = forwardRef<
     `${asset.assetId}:${resolution?.url ?? ""}:${resolution?.posterUrl ?? ""}`,
   );
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const pluginContributionContext = useMemo(() => createPluginMenuContributionContext({
+    descriptor: {
+      type: "asset",
+      assetId: asset.assetId,
+      displayName: asset.displayName,
+      locationKind: asset.locationKind,
+      isAvailable: asset.availability === "available",
+      isDeleted: asset.deletedAt !== null,
+    },
+    assets: [asset],
+    libraryId,
+    viewer: buildPluginViewerState(asset, isFullscreen),
+  }), [asset, isFullscreen, libraryId]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
@@ -911,6 +927,7 @@ export const AssetPreviewModal = forwardRef<
           ) : null}
           <PluginViewerActionButtons
             assetId={asset.assetId}
+            context={pluginContributionContext}
             libraryId={libraryId}
             pluginApi={pluginApi}
             refreshKey={pluginContributionRefreshKey}

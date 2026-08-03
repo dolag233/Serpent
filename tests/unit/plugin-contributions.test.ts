@@ -495,6 +495,48 @@ describe('plugin Contributions', () => {
     }]);
   });
 
+  it('reuses command conditions for every command-backed surface', () => {
+    const registry = createContributionRegistry();
+    const conditional = {
+      id: 'probe.conditional',
+      title: 'Conditional',
+      when: 'library.open',
+      enablement: 'library.writable',
+      checked: 'app.busy',
+    } as const;
+
+    registerManifestContributions(registry, {
+      pluginInstanceId: '44444444-4444-4444-8444-444444444444',
+      libraryId: 'library-a',
+      pluginId: 'com.example.surfaces',
+      contributes: {
+        commands: [conditional],
+        menus: { asset: [{ command: conditional.id }] },
+        toolbar: [{ id: 'conditional-toolbar', command: conditional.id }],
+        inspector: [{ id: 'conditional-inspector', command: conditional.id, title: 'Inspector' }],
+        viewerActions: [{ id: 'conditional-viewer', command: conditional.id }],
+        shortcuts: [{ id: 'conditional-shortcut', command: conditional.id, accelerator: 'F9' }],
+        views: [],
+        settings: [],
+        hooks: [],
+        jobs: [],
+        providers: [],
+        themes: [],
+      },
+    });
+
+    const expected = {
+      when: conditional.when,
+      enablement: conditional.enablement,
+      checked: conditional.checked,
+    };
+    expect(listAssetMenuContributions(registry)[0]).toMatchObject(expected);
+    expect(listToolbarContributions(registry)[0]).toMatchObject(expected);
+    expect(listInspectorSectionContributions(registry)[0]).toMatchObject(expected);
+    expect(listViewerActionContributions(registry)[0]).toMatchObject(expected);
+    expect(listShortcutContributions(registry)[0]).toMatchObject(expected);
+  });
+
   it('registers sidebar view contributions with entry paths', () => {
     const registry = createContributionRegistry();
 

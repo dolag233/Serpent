@@ -1,7 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
-import { runPluginMenuCommand } from "./plugin-menu-contributions";
+import {
+  resolvePluginContributionConditions,
+  runPluginMenuCommand,
+} from "./plugin-menu-contributions";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
 export type PluginViewerActionDescriptor = {
@@ -10,6 +14,10 @@ export type PluginViewerActionDescriptor = {
   contributionId: string;
   commandId: string;
   pluginId: string;
+  disabled: boolean;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 export function buildPluginViewerActionDescriptors(
@@ -19,16 +27,28 @@ export function buildPluginViewerActionDescriptors(
     title: string;
     commandId: string;
     pluginId: string;
+    when?: string;
+    enablement?: string;
+    checked?: string;
   }[],
+  context?: PluginContributionContext,
 ): PluginViewerActionDescriptor[] {
   return contributions
-    .map((contribution) => ({
-      id: contribution.id,
-      label: contribution.title,
-      contributionId: contribution.id,
-      commandId: contribution.commandId,
-      pluginId: contribution.pluginId,
-    }))
+    .flatMap((contribution) => {
+      const conditions = resolvePluginContributionConditions(contribution, context);
+      if (!conditions.visible) return [];
+      return [{
+        id: contribution.id,
+        label: contribution.title,
+        contributionId: contribution.id,
+        commandId: contribution.commandId,
+        pluginId: contribution.pluginId,
+        ...(contribution.when === undefined ? {} : { when: contribution.when }),
+        ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        disabled: conditions.disabled,
+      }];
+    })
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
@@ -37,6 +57,7 @@ export function usePluginViewerActionContributions(
   libraryId: string | undefined,
   enabled: boolean,
   refreshKey: string | null,
+  context?: PluginContributionContext,
 ): PluginViewerActionDescriptor[] {
   const [items, setItems] = useState<PluginViewerActionDescriptor[]>([]);
   const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
@@ -56,7 +77,7 @@ export function usePluginViewerActionContributions(
       const actionContributions = result.contributions.filter(
         (contribution): contribution is Extract<typeof contribution, { kind: 'viewer-action' }> => contribution.kind === 'viewer-action',
       );
-      setItems(buildPluginViewerActionDescriptors(actionContributions));
+      setItems(buildPluginViewerActionDescriptors(actionContributions, context));
     }).catch((error: unknown) => {
       if (!cancelled) {
         setItems([]);
@@ -66,7 +87,7 @@ export function usePluginViewerActionContributions(
     return () => {
       cancelled = true;
     };
-  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
+  }, [context, libraryId, pluginApi, refreshKey, shouldLoad]);
 
   return shouldLoad ? items : [];
 }
@@ -77,18 +98,21 @@ export function PluginViewerActionButtons({
   assetId,
   disabled = false,
   refreshKey,
+  context,
 }: {
   pluginApi: SerpentPluginManagerApi | undefined;
   libraryId: string | undefined;
   assetId: string;
   disabled?: boolean;
   refreshKey: string | null;
+  context?: PluginContributionContext;
 }): ReactNode {
   const items = usePluginViewerActionContributions(
     pluginApi,
     libraryId,
     pluginApi !== undefined && libraryId !== undefined && !disabled,
     refreshKey,
+    context,
   );
 
   if (items.length === 0) return null;
@@ -100,7 +124,7 @@ export function PluginViewerActionButtons({
     >
       {items.map((item) => (
         <button
-          disabled={disabled}
+          disabled={disabled || item.disabled}
           key={item.id}
           onClick={() => {
             if (pluginApi === undefined || libraryId === undefined) return;

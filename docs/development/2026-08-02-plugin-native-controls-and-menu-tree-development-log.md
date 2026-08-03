@@ -40,3 +40,20 @@
 
 - 当前相对定位在宿主语义分组内按 `before`/`after` 边缘放置；完整结构化 UI 描述与更细粒度菜单布局仍属于 `Serpent-7nah` 后续范围。
 - packaged、Windows 和 Computer Use 未执行。
+
+## 2026-08-04：命令条件语义扩展到所有入口
+
+`gtih` 的审查发现，命令注册表已有 `when` / `enablement` / `checked`，但工具栏、Inspector action、Viewer action 和快捷键列表没有继承这些条件，导致同一命令换入口后行为不一致。本次把命令条件作为这些 command-backed Contribution 的统一有效条件来源，并在 Renderer 依据当前 Contribution Context 隐藏、置灰或跳过不可用快捷键。
+
+自动化证据：
+
+```text
+npx vitest run --config vitest.config.ts tests/unit/plugin-surface-conditions.test.ts tests/unit/plugin-contributions.test.ts tests/unit/plugin-menu-contributions.test.ts
+# 3 files / 25 tests passed
+
+npm run typecheck
+npx eslint <本次变更的插件贡献、入口组件与测试文件>
+# 均通过
+```
+
+仍未执行 packaged、Windows、真实右键/Viewer/无选择矩阵和 Computer Use，因此 `Serpent-gtih` 保持 `in_progress`，不能据此声明整套插件交互内核完成。

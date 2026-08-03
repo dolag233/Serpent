@@ -389,6 +389,9 @@ export const pluginManagerToolbarContributionSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
   commandId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   target: z.literal('toolbar'),
 });
 export type PluginManagerToolbarContribution = z.infer<typeof pluginManagerToolbarContributionSchema>;
@@ -401,6 +404,9 @@ export const pluginManagerInspectorSectionContributionSchema = z.strictObject({
   commandId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   commandTitle: z.string().min(1).max(160),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   target: z.literal('inspector.sections'),
 });
 export type PluginManagerInspectorSectionContribution = z.infer<typeof pluginManagerInspectorSectionContributionSchema>;
@@ -412,6 +418,9 @@ export const pluginManagerViewerActionContributionSchema = z.strictObject({
   pluginInstanceId: z.string().min(1).max(255),
   commandId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   target: z.literal('viewer.actions'),
 });
 export type PluginManagerViewerActionContribution = z.infer<typeof pluginManagerViewerActionContributionSchema>;
@@ -424,6 +433,9 @@ export const pluginManagerShortcutContributionSchema = z.strictObject({
   commandId: pluginLocalIdSchema,
   title: z.string().min(1).max(160),
   accelerator: z.string().min(1).max(64),
+  when: pluginContextExpressionSchema.optional(),
+  enablement: pluginContextExpressionSchema.optional(),
+  checked: pluginContextExpressionSchema.optional(),
   target: z.literal('shortcuts'),
 });
 export type PluginManagerShortcutContribution = z.infer<typeof pluginManagerShortcutContributionSchema>;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import type { PluginContributionContext } from "../plugins/plugin-context";
 import { parseElectronAccelerator } from "../shared/plugin-accelerator";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import {
@@ -8,7 +9,10 @@ import {
   type ShortcutEvent,
 } from "./commands/command-types";
 import { isEditableAssetActionKeyboardTarget } from "./asset-action-keyboard";
-import { runPluginMenuCommand } from "./plugin-menu-contributions";
+import {
+  resolvePluginContributionConditions,
+  runPluginMenuCommand,
+} from "./plugin-menu-contributions";
 
 export type PluginShortcutDescriptor = {
   id: string;
@@ -17,6 +21,10 @@ export type PluginShortcutDescriptor = {
   commandId: string;
   pluginId: string;
   accelerator: string;
+  disabled: boolean;
+  when?: string;
+  enablement?: string;
+  checked?: string;
 };
 
 export function buildPluginShortcutDescriptors(
@@ -27,17 +35,29 @@ export function buildPluginShortcutDescriptors(
     commandId: string;
     pluginId: string;
     accelerator: string;
+    when?: string;
+    enablement?: string;
+    checked?: string;
   }[],
+  context?: PluginContributionContext,
 ): PluginShortcutDescriptor[] {
   return contributions
-    .map((contribution) => ({
-      id: contribution.id,
-      label: contribution.title,
-      contributionId: contribution.id,
-      commandId: contribution.commandId,
-      pluginId: contribution.pluginId,
-      accelerator: contribution.accelerator,
-    }))
+    .flatMap((contribution) => {
+      const conditions = resolvePluginContributionConditions(contribution, context);
+      if (!conditions.visible) return [];
+      return [{
+        id: contribution.id,
+        label: contribution.title,
+        contributionId: contribution.id,
+        commandId: contribution.commandId,
+        pluginId: contribution.pluginId,
+        accelerator: contribution.accelerator,
+        ...(contribution.when === undefined ? {} : { when: contribution.when }),
+        ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        disabled: conditions.disabled,
+      }];
+    })
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
@@ -46,6 +66,7 @@ export function usePluginShortcutContributions(
   libraryId: string | undefined,
   enabled: boolean,
   refreshKey: string | null,
+  context?: PluginContributionContext,
 ): PluginShortcutDescriptor[] {
   const [items, setItems] = useState<PluginShortcutDescriptor[]>([]);
   const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
@@ -65,7 +86,7 @@ export function usePluginShortcutContributions(
       const shortcutContributions = result.contributions.filter(
         (contribution): contribution is Extract<typeof contribution, { kind: 'shortcut' }> => contribution.kind === 'shortcut',
       );
-      setItems(buildPluginShortcutDescriptors(shortcutContributions));
+      setItems(buildPluginShortcutDescriptors(shortcutContributions, context));
     }).catch((error: unknown) => {
       if (!cancelled) {
         setItems([]);
@@ -75,7 +96,7 @@ export function usePluginShortcutContributions(
     return () => {
       cancelled = true;
     };
-  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
+  }, [context, libraryId, pluginApi, refreshKey, shouldLoad]);
 
   return shouldLoad ? items : [];
 }
@@ -86,6 +107,7 @@ export function matchPluginShortcut(
   platform: CommandPlatform,
 ): PluginShortcutDescriptor | null {
   for (const shortcut of shortcuts) {
+    if (shortcut.disabled) continue;
     const chord = parseElectronAccelerator(shortcut.accelerator, platform);
     if (chord !== null && matchesShortcut({ mac: chord, windows: chord }, event, platform)) {
       return shortcut;
@@ -113,6 +135,7 @@ export function usePluginShortcutKeyboard(args: {
   readonly refreshKey: string | null;
   readonly previewOpen: boolean;
   readonly selectedAssetIds: readonly string[];
+  readonly context?: PluginContributionContext;
 }): void {
   const {
     enabled,
@@ -122,12 +145,14 @@ export function usePluginShortcutKeyboard(args: {
     refreshKey,
     previewOpen,
     selectedAssetIds,
+    context,
   } = args;
   const shortcuts = usePluginShortcutContributions(
     pluginApi,
     libraryId,
     enabled && pluginApi !== undefined && libraryId !== undefined,
     refreshKey,
+    context,
   );
 
   useEffect(() => {
@@ -162,6 +187,7 @@ export function usePluginShortcutKeyboard(args: {
     pluginApi,
     previewOpen,
     selectedAssetIds,
+    context,
     shortcuts,
   ]);
 }
