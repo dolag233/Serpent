@@ -5,6 +5,8 @@
 
 export type DialogEscapeSnapshot = {
   assetRenameOpen: boolean;
+  imageSequenceImportOpen: boolean;
+  imageSequenceDialogOpen: boolean;
   permanentDeleteOpen: boolean;
   diskDeleteOpen: boolean;
   deleteLinkedOpen: boolean;
@@ -38,6 +40,8 @@ export type DialogEscapeSnapshot = {
 export type DialogEscapeAction =
   | { kind: "none" }
   | { kind: "cancel-asset-rename" }
+  | { kind: "close-image-sequence-import" }
+  | { kind: "close-image-sequence-dialog" }
   | { kind: "close-permanent-delete" }
   | { kind: "close-disk-delete" }
   | { kind: "close-delete-linked" }
@@ -81,6 +85,14 @@ export function resolveDialogEscapeAction(
     return { kind: "abort-ai-connection-failure" };
   }
   if (snapshot.assetRenameOpen) return { kind: "cancel-asset-rename" };
+  // Sequence import is rendered above the regular sequence settings dialog;
+  // keep its pending offer and focus trap together when Escape dismisses it.
+  if (snapshot.imageSequenceImportOpen) {
+    return { kind: "close-image-sequence-import" };
+  }
+  if (snapshot.imageSequenceDialogOpen) {
+    return { kind: "close-image-sequence-dialog" };
+  }
   if (snapshot.permanentDeleteOpen) return { kind: "close-permanent-delete" };
   if (snapshot.diskDeleteOpen) return { kind: "close-disk-delete" };
   if (snapshot.deleteLinkedOpen) return { kind: "close-delete-linked" };

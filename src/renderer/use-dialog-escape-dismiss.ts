@@ -14,6 +14,8 @@ export type UseDialogEscapeDismissParams = {
   api: SerpentLibraryApi | null;
   snapshot: DialogEscapeSnapshot;
   cancelAssetRename: () => void;
+  cancelImageSequenceImport: () => void;
+  cancelImageSequenceDialog: () => void;
   cancelBatchRelink: () => void | Promise<void>;
   setPermanentDeleteDialog: (value: null) => void;
   cancelDiskDelete: () => void;
@@ -53,6 +55,8 @@ export function useDialogEscapeDismiss({
   api,
   snapshot,
   cancelAssetRename,
+  cancelImageSequenceImport,
+  cancelImageSequenceDialog,
   cancelBatchRelink,
   setPermanentDeleteDialog,
   cancelDiskDelete,
@@ -105,6 +109,12 @@ export function useDialogEscapeDismiss({
           return;
         case "cancel-asset-rename":
           cancelAssetRename();
+          return;
+        case "close-image-sequence-import":
+          cancelImageSequenceImport();
+          return;
+        case "close-image-sequence-dialog":
+          cancelImageSequenceDialog();
           return;
         case "close-permanent-delete":
           setPermanentDeleteDialog(null);
@@ -195,6 +205,8 @@ export function useDialogEscapeDismiss({
     api,
     snapshot,
     cancelAssetRename,
+    cancelImageSequenceImport,
+    cancelImageSequenceDialog,
     cancelBatchRelink,
     cancelDiskDelete,
     setPermanentDeleteDialog,

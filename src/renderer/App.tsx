@@ -6919,6 +6919,8 @@ function AppInner() {
   const dialogEscapeSnapshot = useMemo((): DialogEscapeSnapshot => {
     return {
       assetRenameOpen: Boolean(assetRenameDialog),
+      imageSequenceImportOpen: Boolean(imageSequenceImportOffer),
+      imageSequenceDialogOpen: Boolean(imageSequenceDialog),
       permanentDeleteOpen: Boolean(permanentDeleteDialog),
       diskDeleteOpen:
         Boolean(diskDeleteTarget) ||
@@ -6950,6 +6952,8 @@ function AppInner() {
     };
   }, [
     assetRenameDialog,
+    imageSequenceImportOffer,
+    imageSequenceDialog,
     permanentDeleteDialog,
     diskDeleteTarget,
     libraryDiskDeletePending,
@@ -6985,6 +6989,11 @@ function AppInner() {
     api: api ?? null,
     snapshot: dialogEscapeSnapshot,
     cancelAssetRename,
+    cancelImageSequenceImport: () => {
+      setImageSequenceImportOffer(null);
+      setImageSequenceImportError(null);
+    },
+    cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
     setPermanentDeleteDialog,
     cancelDiskDelete: () => {
@@ -7055,6 +7064,7 @@ function AppInner() {
       openSourceLicensesOpen ||
       Boolean(smartCollectionSettings) ||
       Boolean(imageSequenceDialog) ||
+      Boolean(imageSequenceImportOffer) ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
       Boolean(pluginTrustPrompt.pending) ||

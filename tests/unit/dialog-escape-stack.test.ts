@@ -8,6 +8,8 @@ import {
 
 const empty: DialogEscapeSnapshot = {
   assetRenameOpen: false,
+  imageSequenceImportOpen: false,
+  imageSequenceDialogOpen: false,
   permanentDeleteOpen: false,
   diskDeleteOpen: false,
   deleteLinkedOpen: false,
@@ -49,6 +51,18 @@ describe("dialog-escape-stack", () => {
         conflictsImportId: "imp_1",
       }),
     ).toEqual({ kind: "cancel-asset-rename" });
+  });
+
+  it("closes the topmost sequence import dialog before sequence settings", () => {
+    expect(resolveDialogEscapeAction({
+      ...empty,
+      imageSequenceImportOpen: true,
+      imageSequenceDialogOpen: true,
+    })).toEqual({ kind: "close-image-sequence-import" });
+    expect(resolveDialogEscapeAction({
+      ...empty,
+      imageSequenceDialogOpen: true,
+    })).toEqual({ kind: "close-image-sequence-dialog" });
   });
 
   it("prefers fatal alert over AI connection failure and other layers (Serpent-99lv)", () => {
