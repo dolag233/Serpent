@@ -30,6 +30,19 @@ bd list --status=in_progress --json
 3. 用 `bd show <id>` 看描述；用 `rg Serpent-<id>` / `rg REQ-` 在 `docs/` 补上下文。
 4. 实现完成后：`bd close <id> --reason "…"`（若仍有 packaged/Windows 等开放条件则保持 open 并备注）。UI 增量更新清单为「待人类验收」；`PLUGIN-*`/`AUT-*` 按自动化档位更新为「自动化验收通过」等（见清单规则与 `agent-plugin-playbook.md`）。
 
+### 分支合并前后的工单迁移（强制）
+
+`.beads/embeddeddolt` 是本地嵌入式 Dolt 数据库，不属于 Git 版本化内容；切换分支、回退提交和普通 `git merge` 都不会把两个分支的 Dolt 工单自动合并。`.beads/issues.jsonl` 是可提交的镜像，但历史上可能只是部分导出，因此不能只比较它的行数。
+
+每次合并包含工单变更的分支时，必须按以下流程执行：
+
+1. 在两个分支分别记录 `git rev-parse HEAD`、`bd stats`，并导出带分支和提交标识的工单快照（例如 `bd export --all -o /tmp/serpent-beads/<branch>-<commit>.jsonl`）。快照是工单记录的迁移输入，不等同于完整 Dolt 历史备份；需要审计历史时另行使用 `bd backup`。
+2. 先完成代码合并，再以两份快照按工单 ID 做并集；逐项比较 `updated_at`、状态、优先级、负责人、标签、依赖和评论。相同时间戳或语义冲突必须人工记录并解决，不能直接选择 ours/theirs。
+3. 对现有 Dolt 使用 `bd import <snapshot> --json` 做增量 upsert，禁止使用 `bd init --from-jsonl`、`--reinit-local` 或覆盖式重建。`bd import --dry-run` 的 `created` 数量只是批次统计，不能当作逐项迁移证据。
+4. 迁移后核对实际 ID 集合、重复 ID、状态/优先级冲突和依赖，再运行 `bd export -o .beads/issues.jsonl` 生成完整镜像；将 `.beads/issues.jsonl`、`.beads/interactions.jsonl` 与代码一起提交，并在开发日志中记录来源快照、迁移数量、冲突及验证命令。
+
+如果原分支只有本地 Dolt、没有可读快照，只能根据可靠的 ID/标题/优先级/状态恢复工单；缺少的描述、依赖和验收字段必须显式标记为不完整，不能凭标题臆造。
+
 ---
 
 ## 真实编码待办从哪里看

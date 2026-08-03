@@ -83,6 +83,9 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 发现新需求/缺陷随时开单：`bd create "<标题>" -d "<说明>" -p <0-4> -t <feature|bug|task|epic> -l "<标签>"`。优先级语义：P1=用户点名/验收失败修复，P2=本迭代主线，P3=后续打磨。
 - 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
 - 跨设备 / 多 agent：先 `git pull` 再用 bd；认领或关闭后尽快 `bd dolt push`（并随代码提交同步 `.beads/`），否则其他会话看不到认领状态，仍可能撞单。
+- **分支合并工单（强制）**：内置 Dolt 数据库位于未纳入 Git 分支切换的 `.beads/embeddeddolt`，不能把 `git merge` 当作工单合并；合并前必须在两个分支分别记录 `git rev-parse HEAD`、`bd export --all` 快照和 `bd stats`。合并后以两份快照按工单 ID 做并集，按 `updated_at` 逐项迁移；同时间戳或状态/优先级语义冲突必须人工记录和解决，禁止直接选 ours/theirs。
+- **工单迁移安全**：已有 Dolt 数据库禁止直接运行 `bd init --from-jsonl`、`--reinit-local` 或覆盖式重建。使用 `bd import <snapshot> --json` 做增量 upsert，检查实际 ID 集合、重复 ID、状态/优先级冲突和依赖，再运行 `bd export -o .beads/issues.jsonl` 生成完整镜像；`bd import --dry-run` 的批次计数不能作为逐项迁移证据。
+- **合并后的提交门禁**：`.beads/issues.jsonl` 与 `.beads/interactions.jsonl` 的工单变更必须和代码合并一起提交；提交前核对 `bd list --all --json` 与完整导出的 ID 集合一致，并在开发日志中记录来源快照、迁移结果和未解决冲突。若原分支只有本地 Dolt、没有快照，不能凭标题猜测恢复描述、依赖或验收条件。
 - 可运行 `bd prime` 获取完整命令参考。
 - **真实编码待办怎么查**（与「待人类验收」清单区分）：见 [`docs/agent-work-queue.md`](docs/agent-work-queue.md)。开工顺序：`bd ready --json` → `docs/project-status.md` 当前前沿 → 清单中仅「人类验收不通过」作缺陷池。
 
