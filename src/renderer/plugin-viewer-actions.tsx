@@ -6,6 +6,7 @@ import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
 } from "./plugin-menu-contributions";
+import { sortPluginSurfaceContributions } from "./plugin-surface-ordering";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
 export type PluginViewerActionDescriptor = {
@@ -27,13 +28,14 @@ export function buildPluginViewerActionDescriptors(
     title: string;
     commandId: string;
     pluginId: string;
+    pluginInstanceId?: string;
     when?: string;
     enablement?: string;
     checked?: string;
   }[],
   context?: PluginContributionContext,
 ): PluginViewerActionDescriptor[] {
-  return contributions
+  return sortPluginSurfaceContributions(contributions)
     .flatMap((contribution) => {
       const conditions = resolvePluginContributionConditions(contribution, context);
       if (!conditions.visible) return [];

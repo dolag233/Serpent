@@ -13,6 +13,7 @@ import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
 } from "./plugin-menu-contributions";
+import { sortPluginSurfaceContributions } from "./plugin-surface-ordering";
 
 export type PluginShortcutDescriptor = {
   id: string;
@@ -34,6 +35,7 @@ export function buildPluginShortcutDescriptors(
     title: string;
     commandId: string;
     pluginId: string;
+    pluginInstanceId?: string;
     accelerator: string;
     when?: string;
     enablement?: string;
@@ -41,7 +43,7 @@ export function buildPluginShortcutDescriptors(
   }[],
   context?: PluginContributionContext,
 ): PluginShortcutDescriptor[] {
-  return contributions
+  return sortPluginSurfaceContributions(contributions)
     .flatMap((contribution) => {
       const conditions = resolvePluginContributionConditions(contribution, context);
       if (!conditions.visible) return [];

@@ -101,6 +101,41 @@ describe('plugin Contributions', () => {
     expect(listAssetMenuContributions(registry)).toHaveLength(5);
   });
 
+  it('resolves plugin-local placement anchors to stable contribution ids', () => {
+    const manifest = pluginManifestSchema.parse({
+      ...manifestFixture,
+      contributes: {
+        ...manifestFixture.contributes,
+        commands: [
+          { id: 'probe.first', title: 'First' },
+          { id: 'probe.second', title: 'Second' },
+        ],
+        menus: {
+          asset: [
+            { command: 'probe.first' },
+            { command: 'probe.second', after: 'probe.first' },
+          ],
+        },
+        settings: [],
+      },
+    });
+    const registry = createContributionRegistry();
+
+    registerManifestContributions(registry, {
+      pluginInstanceId: '88888888-8888-4888-8888-888888888888',
+      libraryId: 'library-a',
+      pluginId: manifest.id,
+      contributes: manifest.contributes,
+    });
+
+    expect(listAssetMenuContributions(registry)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        commandId: 'probe.second',
+        after: `${manifest.id}.library-a.menu.asset.probe.first`,
+      }),
+    ]));
+  });
+
   it('registers command conditions and keeps them in the command descriptor', () => {
     const registry = createContributionRegistry();
     const manifest = pluginManifestSchema.parse({

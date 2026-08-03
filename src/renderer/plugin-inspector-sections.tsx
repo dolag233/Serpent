@@ -6,6 +6,7 @@ import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
 } from "./plugin-menu-contributions";
+import { sortPluginSurfaceContributions } from "./plugin-surface-ordering";
 
 export type PluginInspectorSectionDescriptor = {
   id: string;
@@ -28,13 +29,14 @@ export function buildPluginInspectorSectionDescriptors(
     commandTitle: string;
     commandId: string;
     pluginId: string;
+    pluginInstanceId?: string;
     when?: string;
     enablement?: string;
     checked?: string;
   }[],
   context?: PluginContributionContext,
 ): PluginInspectorSectionDescriptor[] {
-  return contributions
+  return sortPluginSurfaceContributions(contributions)
     .flatMap((contribution) => {
       const conditions = resolvePluginContributionConditions(contribution, context);
       if (!conditions.visible) return [];

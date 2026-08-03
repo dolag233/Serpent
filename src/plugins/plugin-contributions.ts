@@ -221,9 +221,33 @@ export function registerManifestContributions(
     parentId?: string,
     parentPath: string[] = [],
   ): void => {
-    for (const [index, item] of items.entries()) {
+    const siblingContributionIds = new Map<string, string>();
+    const ambiguousSiblingAnchors = new Set<string>();
+    const rememberSiblingAnchor = (anchor: string, contributionId: string): void => {
+      const previous = siblingContributionIds.get(anchor);
+      if (previous !== undefined && previous !== contributionId) {
+        ambiguousSiblingAnchors.add(anchor);
+        siblingContributionIds.delete(anchor);
+        return;
+      }
+      if (!ambiguousSiblingAnchors.has(anchor)) {
+        siblingContributionIds.set(anchor, contributionId);
+      }
+    };
+    const entries = items.map((item, index) => {
       const segment = item.id ?? item.command ?? `item-${index + 1}`;
       const localId = `menu.${menuName}.${[...parentPath, segment].join('.')}`;
+      const contributionId = createPluginContributionId(input.pluginId, localId, input.libraryId);
+      rememberSiblingAnchor(segment, contributionId);
+      rememberSiblingAnchor(localId, contributionId);
+      if (item.command !== undefined) rememberSiblingAnchor(item.command, contributionId);
+      return { item, segment, localId };
+    });
+    const resolveSiblingAnchor = (anchor: string | undefined): string | undefined => {
+      if (anchor === undefined || ambiguousSiblingAnchors.has(anchor)) return anchor;
+      return siblingContributionIds.get(anchor) ?? anchor;
+    };
+    for (const { item, segment, localId } of entries) {
       const title = item.title
         ?? (item.command === undefined
           ? item.id ?? segment
@@ -238,8 +262,8 @@ export function registerManifestContributions(
         title,
         ...(item.command === undefined ? {} : { commandId: item.command }),
         ...(item.group === undefined ? {} : { group: item.group }),
-        ...(item.before === undefined ? {} : { before: item.before }),
-        ...(item.after === undefined ? {} : { after: item.after }),
+        ...(item.before === undefined ? {} : { before: resolveSiblingAnchor(item.before) }),
+        ...(item.after === undefined ? {} : { after: resolveSiblingAnchor(item.after) }),
         ...(item.first === undefined ? {} : { first: item.first }),
         ...(item.last === undefined ? {} : { last: item.last }),
         ...(item.when === undefined ? {} : { when: item.when }),

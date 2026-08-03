@@ -6,6 +6,7 @@ import {
   resolvePluginContributionConditions,
   runPluginMenuCommand,
 } from "./plugin-menu-contributions";
+import { sortPluginSurfaceContributions } from "./plugin-surface-ordering";
 
 export type PluginToolbarDescriptor = {
   id: string;
@@ -26,13 +27,14 @@ export function buildPluginToolbarDescriptors(
     title: string;
     commandId: string;
     pluginId: string;
+    pluginInstanceId?: string;
     when?: string;
     enablement?: string;
     checked?: string;
   }[],
   context?: PluginContributionContext,
 ): PluginToolbarDescriptor[] {
-  return contributions
+  return sortPluginSurfaceContributions(contributions)
     .flatMap((contribution) => {
       const conditions = resolvePluginContributionConditions(contribution, context);
       if (!conditions.visible) return [];

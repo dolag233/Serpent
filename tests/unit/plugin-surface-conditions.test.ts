@@ -73,4 +73,29 @@ describe('plugin command-backed surface conditions', () => {
       kind: 'shortcut', id: 'shortcut', title: 'Shortcut', commandId: 'run', pluginId: 'plugin', accelerator: 'F9', ...conditions,
     }], current)[0]).toMatchObject({ disabled: true });
   });
+
+  it('orders every command-backed surface by plugin and instance identity', () => {
+    const current = context();
+    const toolbar = buildPluginToolbarDescriptors([
+      { kind: 'toolbar', id: 'z', title: 'Z', commandId: 'z', pluginId: 'plugin-b', pluginInstanceId: 'instance-b' },
+      { kind: 'toolbar', id: 'a', title: 'A', commandId: 'a', pluginId: 'plugin-a', pluginInstanceId: 'instance-a' },
+    ], current);
+    const inspector = buildPluginInspectorSectionDescriptors([
+      { kind: 'inspector-section', id: 'z', title: 'Z', commandTitle: 'Run Z', commandId: 'z', pluginId: 'plugin-b', pluginInstanceId: 'instance-b' },
+      { kind: 'inspector-section', id: 'a', title: 'A', commandTitle: 'Run A', commandId: 'a', pluginId: 'plugin-a', pluginInstanceId: 'instance-a' },
+    ], current);
+    const viewer = buildPluginViewerActionDescriptors([
+      { kind: 'viewer-action', id: 'z', title: 'Z', commandId: 'z', pluginId: 'plugin-b', pluginInstanceId: 'instance-b' },
+      { kind: 'viewer-action', id: 'a', title: 'A', commandId: 'a', pluginId: 'plugin-a', pluginInstanceId: 'instance-a' },
+    ], current);
+    const shortcuts = buildPluginShortcutDescriptors([
+      { kind: 'shortcut', id: 'z', title: 'Z', commandId: 'z', pluginId: 'plugin-b', pluginInstanceId: 'instance-b', accelerator: 'F9' },
+      { kind: 'shortcut', id: 'a', title: 'A', commandId: 'a', pluginId: 'plugin-a', pluginInstanceId: 'instance-a', accelerator: 'F10' },
+    ], current);
+
+    expect(toolbar.map((item) => item.id)).toEqual(['a', 'z']);
+    expect(inspector.map((item) => item.id)).toEqual(['a', 'z']);
+    expect(viewer.map((item) => item.id)).toEqual(['a', 'z']);
+    expect(shortcuts.map((item) => item.id)).toEqual(['a', 'z']);
+  });
 });

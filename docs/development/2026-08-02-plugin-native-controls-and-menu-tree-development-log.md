@@ -64,6 +64,27 @@ git diff --check
 
 `Serpent-fkq3` 仍保持 `in_progress`：完整的 native item/plugin item 统一树、toolbar/Inspector/Viewer 复用同一 Placement Solver、真实 Electron 菜单旅程、packaged/Windows 和 Computer Use 证据仍需在 `Serpent-gtih`、`Serpent-upsn.6` 等依赖收口后继续完成。
 
+## 2026-08-04：命令表面顺序与插件内锚点
+
+补齐两个会让不同入口表现漂移的边界：
+
+- toolbar、Inspector、Viewer action 和快捷键现在共用同一个稳定排序器，按 plugin ID、plugin instance ID、Contribution ID 排序，不再分别依赖各自接口返回顺序；隐藏、置灰和 checked 仍统一使用同一个 Context 条件解析器。
+- 插件菜单的 `before` / `after` 如果引用同一插件同级的 command 或 submenu 局部 ID，会在注册阶段解析成稳定 Contribution ID；Host 锚点（例如 `asset.rename`）仍保持原值，避免与 Host 菜单定位协议混淆。
+
+自动化证据：
+
+```text
+npx vitest run tests/unit/plugin-contributions.test.ts tests/unit/plugin-menu-contributions.test.ts tests/unit/plugin-surface-conditions.test.ts --reporter=dot
+# 3 files / 30 tests passed
+
+npx eslint <本次变更的插件注册、Renderer surface 与测试文件>
+npm run typecheck -- --pretty false
+git diff --check
+# 均通过
+```
+
+这仍是 `Serpent-fkq3` 的增量，不是完整关闭证据：native/plugin 合并后的单一 `ResolvedMenuTree`、toolbar/Inspector/Viewer 的完整 placement 语义、真实 Electron 菜单旅程和 packaged/Windows/CU 尚未完成或执行。
+
 ## 2026-08-04：命令条件语义扩展到所有入口
 
 `gtih` 的审查发现，命令注册表已有 `when` / `enablement` / `checked`，但工具栏、Inspector action、Viewer action 和快捷键列表没有继承这些条件，导致同一命令换入口后行为不一致。本次把命令条件作为这些 command-backed Contribution 的统一有效条件来源，并在 Renderer 依据当前 Contribution Context 隐藏、置灰或跳过不可用快捷键。
