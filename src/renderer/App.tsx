@@ -9,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 
 import { Icon, type IconName } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
@@ -242,7 +242,11 @@ import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
 import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
 import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
 import { usePluginInputCaptureModalSeam } from "./use-plugin-input-capture-modal-seam";
-import { PluginSidebarViewPanel, usePluginSidebarViews } from "./plugin-sidebar-views";
+import {
+  isPluginSidebarViewsEnabled,
+  PluginSidebarViewPanel,
+  usePluginSidebarViews,
+} from "./plugin-sidebar-views";
 import { PluginWorkspaceViews } from "./plugin-workspace-views";
 import { useExternalImportHandlers } from "./use-external-import-handlers";
 import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
@@ -970,6 +974,7 @@ function AppInner() {
   const [showTagManagement, setShowTagManagement] = useState(false);
   const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
+  const [trashedAssetCount, setTrashedAssetCount] = useState(0);
 
   const {
     multiEdit,
@@ -1080,7 +1085,7 @@ function AppInner() {
   const pluginSidebarViews = usePluginSidebarViews(
     (window as RendererWindow).serpent?.plugins,
     library?.libraryId,
-    Boolean(library) && !busy,
+    isPluginSidebarViewsEnabled(library?.libraryId),
     pluginSidebarRefreshKey,
   );
   const activePluginSidebarView = useMemo(
@@ -2909,6 +2914,7 @@ function AppInner() {
         folderResult,
         assetResult,
         allResult,
+        trashCountResult,
         linkedResult,
         tagResult,
         collectionResult,
@@ -2928,6 +2934,14 @@ function AppInner() {
         trashMode || scope !== "all"
           ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
           : Promise.resolve(undefined),
+        api.searchAssets({
+          ...libId,
+          query: null,
+          limit: 1,
+          offset: 0,
+          scope: { kind: "trash" },
+          showIgnored: includeIgnored,
+        }),
         api.listLinkedFolders(libId),
         api.listTags(libId),
         api.listCollections(libId),
@@ -2940,6 +2954,8 @@ function AppInner() {
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
       if (allResult && !allResult.ok)
         throw new LibraryOperationError(allResult.error);
+      if (!trashCountResult.ok)
+        throw new LibraryOperationError(trashCountResult.error);
       if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       if (!collectionResult.ok)
@@ -2972,6 +2988,7 @@ function AppInner() {
       });
       // CU-B2: keep library-wide count fresh even while browsing trash.
       setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
+      setTrashedAssetCount(trashCountResult.value.total);
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
@@ -5374,6 +5391,7 @@ function AppInner() {
     fps: number;
     lastFrame: number;
     sequenceIndex: number;
+    applyToRest: boolean;
   }) {
     if (!api || !library || !imageSequenceImportOffer) return;
     setImageSequenceImportSubmitting(true);
@@ -5388,6 +5406,7 @@ function AppInner() {
         firstFrame: input.firstFrame,
         lastFrame: input.lastFrame,
         fps: input.fps,
+        applyToRest: input.applyToRest,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setImageSequenceImportOffer(null);
@@ -5677,6 +5696,7 @@ function AppInner() {
     setShowTagManagement(false);
     setActivePluginSidebarViewId(null);
     setTrashedAssets([]);
+    setTrashedAssetCount(0);
     setTags([]);
     setCollections([]);
     setSmartCollections([]);
@@ -6618,8 +6638,9 @@ function AppInner() {
       setHiddenPluginJobActivityId(null);
       setShowTrash(false);
       setShowTagManagement(false);
-    setActivePluginSidebarViewId(null);
+      setActivePluginSidebarViewId(null);
       setTrashedAssets([]);
+      setTrashedAssetCount(0);
       setAssetScope("all");
       setActiveTagId(null);
       setActiveCollectionId(null);
@@ -8317,7 +8338,7 @@ function AppInner() {
           }
         }}
         allAssetCount={allAssetCount}
-        trashedAssetCount={searchTotal ?? trashedAssets.length}
+        trashedAssetCount={trashedAssetCount}
         folders={folders}
         collections={collections}
         collectionTree={collectionTree}
@@ -8767,28 +8788,31 @@ function AppInner() {
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
-          {renderedToast && (
-            <WorkspaceNoticeBanner
-              closing={toastClosing}
-              message={renderedToast}
-              onDismiss={() => dismissVisible()}
-              onTransitionEnd={handleToastTransitionEnd}
-              onUndo={
-                lastUndoableOp && renderedToast.kind === "notice"
-                  ? () => void undoLastFileOp()
-                  : undefined
-              }
-              undoLabel={
-                lastUndoableOp && renderedToast.kind === "notice"
-                  ? lastUndoableOp.kind === "copy"
-                    ? t("action.undoCopy")
-                    : lastUndoableOp.kind === "move"
-                      ? t("action.undoMove")
-                      : t("action.undoTrash")
-                  : undefined
-              }
-            />
-          )}
+          {renderedToast
+            ? createPortal(
+                <WorkspaceNoticeBanner
+                  closing={toastClosing}
+                  message={renderedToast}
+                  onDismiss={() => dismissVisible()}
+                  onTransitionEnd={handleToastTransitionEnd}
+                  onUndo={
+                    lastUndoableOp && renderedToast.kind === "notice"
+                      ? () => void undoLastFileOp()
+                      : undefined
+                  }
+                  undoLabel={
+                    lastUndoableOp && renderedToast.kind === "notice"
+                      ? lastUndoableOp.kind === "copy"
+                        ? t("action.undoCopy")
+                        : lastUndoableOp.kind === "move"
+                          ? t("action.undoMove")
+                          : t("action.undoTrash")
+                      : undefined
+                  }
+                />,
+                document.body,
+              )
+            : null}
           {uiState === "importing" && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
@@ -10441,7 +10465,7 @@ function AppInner() {
         onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
         onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
         onLoadCollectionMemberships={loadCollectionMemberships}
-        trashedAssetCount={searchTotal ?? trashedAssets.length}
+        trashedAssetCount={trashedAssetCount}
         trashedFolderCount={trashedFolders.length}
         onRestoreTrashedFolder={(tombstoneId, name) => {
           void restoreTrashedManagedFolder(tombstoneId, name);

@@ -1132,6 +1132,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           (() => {
             const descriptor = activeContextMenu.descriptor;
             const targetAssetIds = [...descriptor.assetIds];
+            const addToCollectionLabel = t("menu.addToCollectionCount", {
+              count: targetAssetIds.length,
+            });
             const targetFolderIds = [...(descriptor.folderIds ?? [])];
             const targetIdSet = new Set(targetAssetIds);
             const targetAssets = assets.filter((asset) =>
@@ -1389,7 +1392,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 {addableCollectionIds && addableCollectionIds.size > 0 && (
                   <ContextMenuSubmenu
                     icon={<Icon name="collection" size={14} />}
-                    label={t("menu.addToCollection")}
+                    label={addToCollectionLabel}
                   >
                     <CollectionPickerMenu
                       collections={collections}
@@ -1404,7 +1407,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onPick={(collectionId) =>
                         onBatchAddToCollection(collectionId, targetAssetIds)
                       }
-                      title={t("menu.addToCollection")}
+                      title={addToCollectionLabel}
                     />
                   </ContextMenuSubmenu>
                 )}

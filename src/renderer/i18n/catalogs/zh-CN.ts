@@ -508,6 +508,7 @@ export const zhCN = {
   },
   menu: {
     addToCollection: "添加到合集",
+    addToCollectionCount: "添加到合集（{count} 项）",
     removeFromCollection: "从合集移除",
     createImageSequence: "创建序列图…",
     dissolveImageSequence: "解散序列图",
@@ -700,6 +701,7 @@ export const zhCN = {
       rangeCaption: "第 {first}–{last} 帧（共 {count} 帧）",
       fps: "帧率（FPS）",
       help: "默认 30 FPS。仅分辨率一致的帧会进入同一序列。",
+      applyToRest: "将当前设置应用到后面的序列",
       importSelected: "只导入所选文件",
       importSequence: "作为序列导入 {count} 帧",
       importing: "正在导入…"

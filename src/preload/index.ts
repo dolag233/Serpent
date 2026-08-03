@@ -599,6 +599,7 @@ const library: SerpentLibraryApi = Object.freeze({
     firstFrame?: number;
     lastFrame?: number;
     fps?: number;
+    applyToRest?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
     const result = await importRequest({ type: 'asset.import-sequence.confirm', ...input });
     if (!result.ok) return { ok: false, error: result.error };

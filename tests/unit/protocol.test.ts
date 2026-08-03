@@ -1697,6 +1697,25 @@ describe('worker request protocol', () => {
     ).toMatchObject({
       command: { type: 'asset.import.prepare', sourceKind: 'files' },
     });
+    expect(
+      parseWorkerRequest({
+        requestId: 'req-03',
+        command: {
+          type: 'asset.import.prepare',
+          createImageSequence: false,
+          libraryId: 'library-01',
+          sourceKind: 'files',
+          sourcePaths: ['/private/selected/source-001.png'],
+        },
+      }).command,
+    ).toMatchObject({ createImageSequence: false });
+    expect(parseRendererRequest({
+      type: 'asset.import-sequence.confirm',
+      action: 'import-sequence',
+      applyToRest: true,
+      libraryId: 'library-01',
+      offerId: 'offer-01',
+    })).toMatchObject({ applyToRest: true });
   });
 });
 

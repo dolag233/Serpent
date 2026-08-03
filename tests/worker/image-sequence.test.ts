@@ -2,6 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -33,6 +34,30 @@ function writeFrames(directory: string, names: readonly string[]): string[] {
   });
 }
 
+async function writePngFrames(
+  directory: string,
+  names: readonly string[],
+  size: { width: number; height: number },
+): Promise<string[]> {
+  mkdirSync(directory, { recursive: true });
+  return Promise.all(
+    names.map(async (name) => {
+      const filePath = path.join(directory, name);
+      await sharp({
+        create: {
+          background: { b: 32, g: 96, r: 192 },
+          channels: 3,
+          height: size.height,
+          width: size.width,
+        },
+      })
+        .png()
+        .toFile(filePath);
+      return filePath;
+    }),
+  );
+}
+
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of roots.splice(0)) {
@@ -41,6 +66,64 @@ afterEach(() => {
 });
 
 describe("image sequence persistence", () => {
+  it("offers a sequence only when every candidate frame has matching dimensions", async () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "source");
+    const frames = await writePngFrames(
+      source,
+      ["shot_001.png", "shot_002.png", "shot_003.png"],
+      { height: 2, width: 2 },
+    );
+    await sharp({
+      create: {
+        background: { b: 32, g: 96, r: 192 },
+        channels: 3,
+        height: 3,
+        width: 2,
+      },
+    })
+      .png()
+      .toFile(frames[1]!);
+
+    await expect(
+      service.probeImageSequenceImportOffer({
+        libraryId: library.libraryId,
+        sourcePaths: [frames[0]!],
+      }),
+    ).resolves.toBeNull();
+
+    await writePngFrames(source, ["shot_002.png"], { height: 2, width: 2 });
+    const offer = await service.probeImageSequenceImportOffer({
+      libraryId: library.libraryId,
+      sourcePaths: [frames[0]!],
+    });
+    expect(offer?.sequences).toHaveLength(1);
+    expect(offer?.sequences[0]).toMatchObject({
+      frameCount: 3,
+      height: 2,
+      width: 2,
+    });
+  });
+
+  it("keeps a normal file import as separate assets when sequence creation is disabled", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "still_001.png",
+      "still_002.png",
+      "still_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      createImageSequence: false,
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+    });
+    expect("importId" in completion).toBe(false);
+    expect(
+      service.listAssets({ libraryId: library.libraryId, recursive: true }),
+    ).toHaveLength(3);
+  });
+
   it("expands a single selected frame to its continuous sibling run", () => {
     const { library, root, service } = fixture();
     const frames = writeFrames(path.join(root, "source"), [

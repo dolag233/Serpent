@@ -2198,6 +2198,7 @@ interface ManagedRelinkPlacedMarkerV1 {
 interface PendingImport {
   directories: string[];
   entries: ImportSourceEntry[];
+  createImageSequence?: boolean;
   expiryHandle?: unknown;
   imageSequenceFps?: number;
   libraryId: string;
@@ -5769,8 +5770,9 @@ export class LibraryService {
 
   /**
    * Probe disk siblings for numbered image runs covering the selection.
-   * Frames must share one pixel size (sharp metadata); mismatched / unreadable
-   * frames are dropped and consecutive runs of length ≥ 3 are re-emitted.
+   * Frames must share one pixel size (sharp metadata). A candidate is offered
+   * only when every frame in the numbered run is readable and has the same
+   * dimensions; a mismatched frame rejects the complete candidate.
    */
   async probeImageSequenceImportOffer(input: {
     libraryId: string;
@@ -5856,11 +5858,13 @@ export class LibraryService {
       if (!referenceSize) continue;
 
       const matching: ImageSequenceFrameCandidate[] = [];
+      let complete = true;
       for (const frame of candidate.frames) {
         let absolutePath: string;
         try {
           absolutePath = normalizeAbsolutePath(frame.value);
         } catch {
+          complete = false;
           continue;
         }
         const size = metadataCache.get(absolutePath);
@@ -5869,50 +5873,37 @@ export class LibraryService {
           size.width !== referenceSize.width ||
           size.height !== referenceSize.height
         ) {
+          complete = false;
           continue;
         }
         matching.push({ ...frame, value: absolutePath });
       }
-
-      let run: ImageSequenceFrameCandidate[] = [];
-      const emitRun = (): void => {
-        if (run.length < 3) return;
-        if (!run.some((frame) => selectedPathSet.has(frame.value))) return;
-        const runKey = run.map((frame) => frame.value).join('\0');
-        if (seenRunKeys.has(runKey)) return;
-        seenRunKeys.add(runKey);
-        const firstFrame = run[0]!.frameNumber;
-        const lastFrame = run.at(-1)!.frameNumber;
-        sequences.push({
-          displayName: formatImageSequenceDisplayName({
-            prefix: candidate.prefix,
-            firstFrame,
-            lastFrame,
-            numberStyle: candidate.numberStyle,
-            numericWidth: candidate.numericWidth,
-          }),
-          extension: candidate.extension,
+      if (!complete || matching.length !== candidate.frames.length) continue;
+      if (!matching.some((frame) => selectedPathSet.has(frame.value))) continue;
+      const runKey = matching.map((frame) => frame.value).join('\0');
+      if (seenRunKeys.has(runKey)) continue;
+      seenRunKeys.add(runKey);
+      const firstFrame = matching[0]!.frameNumber;
+      const lastFrame = matching.at(-1)!.frameNumber;
+      sequences.push({
+        displayName: formatImageSequenceDisplayName({
+          prefix: candidate.prefix,
           firstFrame,
-          frameCount: run.length,
-          framePaths: run.map((frame) => frame.value),
-          height: referenceSize.height,
           lastFrame,
           numberStyle: candidate.numberStyle,
           numericWidth: candidate.numericWidth,
-          prefix: candidate.prefix,
-          width: referenceSize.width,
-        });
-      };
-      for (const frame of matching) {
-        const previous = run.at(-1);
-        if (!previous || frame.frameNumber === previous.frameNumber + 1) {
-          run = [...run, frame];
-          continue;
-        }
-        emitRun();
-        run = [frame];
-      }
-      emitRun();
+        }),
+        extension: candidate.extension,
+        firstFrame,
+        frameCount: matching.length,
+        framePaths: matching.map((frame) => frame.value),
+        height: referenceSize.height,
+        lastFrame,
+        numberStyle: candidate.numberStyle,
+        numericWidth: candidate.numericWidth,
+        prefix: candidate.prefix,
+        width: referenceSize.width,
+      });
     }
 
     if (sequences.length === 0) return null;
@@ -21608,6 +21599,7 @@ export class LibraryService {
     sourcePaths: string[];
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
+    createImageSequence?: boolean;
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
@@ -21770,6 +21762,9 @@ export class LibraryService {
       entries: stagedEntries,
       libraryId: input.libraryId,
       operationPath,
+      ...(input.createImageSequence !== undefined
+        ? { createImageSequence: input.createImageSequence }
+        : {}),
       ...(input.imageSequenceFps !== undefined
         ? { imageSequenceFps: input.imageSequenceFps }
         : {}),
@@ -21795,6 +21790,7 @@ export class LibraryService {
     sourcePaths: string[];
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
+    createImageSequence?: boolean;
     automationPlan?: {
       expectedChangeSequence: number;
       sourceStates: Array<{ sourcePath: string; stateToken: string }>;
@@ -22371,11 +22367,13 @@ export class LibraryService {
         .prepare("UPDATE file_operations SET status = 'committed', updated_at = ? WHERE operation_id = ?")
         .run(new Date().toISOString(), operationId);
       committed = true;
-      this.createDetectedImageSequences(
-        openLibrary,
-        affectedAssetIds,
-        pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
-      );
+      if (pending.createImageSequence !== false) {
+        this.createDetectedImageSequences(
+          openLibrary,
+          affectedAssetIds,
+          pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
+        );
+      }
 
       const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
       // The SQLite commit is the point of no return. Cleanup is recoverable from the
@@ -22423,11 +22421,13 @@ export class LibraryService {
         } catch {
           // Recovery can finalize a stale applying row on the next open.
         }
-        this.createDetectedImageSequences(
-          openLibrary,
-          affectedAssetIds,
-          pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
-        );
+        if (pending.createImageSequence !== false) {
+          this.createDetectedImageSequences(
+            openLibrary,
+            affectedAssetIds,
+            pending.imageSequenceFps ?? DEFAULT_IMAGE_SEQUENCE_FPS,
+          );
+        }
         const affected = new Set([...affectedAssetIds, ...mergedAssetIds]);
         let assets: AssetSummary[] = [];
         try {

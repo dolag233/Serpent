@@ -3030,6 +3030,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: false,
+          createImageSequence: false,
         };
       } else if (
         sourceKind === "files" &&
@@ -3082,8 +3083,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
             libraryId: request.libraryId,
             targetFolderId: request.targetFolderId,
             sourceKind: "files",
-            sourcePaths: rangedPaths.length >= 3 ? rangedPaths : framePaths,
+            sourcePaths:
+              request.imageSequenceDecision.applyToRest
+                ? request.sourcePaths
+                : rangedPaths.length >= 3
+                  ? rangedPaths
+                  : framePaths,
             expandImageSequences: false,
+            createImageSequence: true,
             imageSequenceFps:
               request.imageSequenceDecision.fps ??
               probeResult.offer.defaultFps,
@@ -3097,6 +3104,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: e2eAutoExpand && sourceKind === "files",
+          ...(sourceKind === "files" && !e2eAutoExpand
+            ? { createImageSequence: false }
+            : {}),
           imageSequenceFps: e2eAutoExpand ? 30 : undefined,
         };
       }
@@ -3125,6 +3135,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           sourceKind: "files",
           sourcePaths: stored.selectedPaths ?? [],
           expandImageSequences: false,
+          createImageSequence: false,
         };
       } else {
         const sequenceIndex = request.sequenceIndex ?? 0;
@@ -3138,6 +3149,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
             sourceKind: "files",
             sourcePaths: stored.selectedPaths ?? [],
             expandImageSequences: false,
+            createImageSequence: false,
           };
         } else {
           const firstFrame = request.firstFrame ?? sequence.firstFrame;
@@ -3153,10 +3165,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
             libraryId: request.libraryId,
             targetFolderId: stored.targetFolderId,
             sourceKind: "files",
-            sourcePaths:
-              rangedPaths.length >= 3 ? rangedPaths : sequence.framePaths,
+            sourcePaths: request.applyToRest
+              ? stored.selectedPaths ?? []
+              : rangedPaths.length >= 3
+                ? rangedPaths
+                : sequence.framePaths,
             expandImageSequences: false,
             imageSequenceFps: request.fps ?? stored.defaultFps,
+            createImageSequence: true,
           };
         }
       }
@@ -3286,6 +3302,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           offer: rememberImageSequenceOffer(probeResult.offer),
         } satisfies RendererResult;
       }
+      // The explicit normal-file path must not run the legacy post-import
+      // sequence detector. Folder imports and automation calls that opt into
+      // expansion keep the existing behavior above.
+      command = { ...command, createImageSequence: false };
     }
     if (
       (request.type === "asset.relink-batch.request" ||

@@ -19,6 +19,7 @@ export interface ImageSequenceImportDialogProps {
     fps: number;
     lastFrame: number;
     sequenceIndex: number;
+    applyToRest: boolean;
   }): void;
   open: boolean;
   submitting?: boolean;
@@ -61,6 +62,7 @@ function ImageSequenceImportDialogForm({
   const [firstFrame, setFirstFrame] = useState(sequence.firstFrame);
   const [lastFrame, setLastFrame] = useState(sequence.lastFrame);
   const [fps, setFps] = useState(offer.defaultFps ?? DEFAULT_IMAGE_SEQUENCE_FPS);
+  const [applyToRest, setApplyToRest] = useState(false);
 
   if (!open || !offer || !sequence) return null;
 
@@ -103,6 +105,7 @@ function ImageSequenceImportDialogForm({
               fps,
               lastFrame,
               sequenceIndex: 0,
+              applyToRest,
             });
           }
         }}
@@ -231,6 +234,15 @@ function ImageSequenceImportDialogForm({
             value={fps}
           />
           <p className="field-help">{t("dialog.imageSequenceImport.help")}</p>
+          <label className="checkbox-field">
+            <input
+              checked={applyToRest}
+              disabled={submitting}
+              onChange={(event) => setApplyToRest(event.currentTarget.checked)}
+              type="checkbox"
+            />
+            <span>{t("dialog.imageSequenceImport.applyToRest")}</span>
+          </label>
         </div>
 
         {error ? <p className="field-error" role="alert">{error}</p> : null}
@@ -245,6 +257,7 @@ function ImageSequenceImportDialogForm({
                 fps,
                 lastFrame: sequence.lastFrame,
                 sequenceIndex: 0,
+                applyToRest,
               })
             }
             type="button"

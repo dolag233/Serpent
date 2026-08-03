@@ -518,6 +518,7 @@ export const en = {
   },
   menu: {
     addToCollection: "Add to collection",
+    addToCollectionCount: "Add to collection ({count} items)",
     removeFromCollection: "Remove from collection",
     createImageSequence: "Create image sequence…",
     dissolveImageSequence: "Dissolve image sequence",
@@ -711,6 +712,7 @@ export const en = {
       rangeCaption: "Frames {first}–{last} ({count} frames)",
       fps: "Frame rate (FPS)",
       help: "Default is 30 FPS. Only frames with the same resolution stay in the sequence.",
+      applyToRest: "Apply these settings to later sequences",
       importSelected: "Import selected file only",
       importSequence: "Import {count} frames as sequence",
       importing: "Importing…"

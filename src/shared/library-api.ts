@@ -303,6 +303,7 @@ export interface SerpentLibraryApi {
     firstFrame?: number;
     lastFrame?: number;
     fps?: number;
+    applyToRest?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   resolveImport(input: {
     importId: string;

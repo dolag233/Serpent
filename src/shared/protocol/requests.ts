@@ -311,6 +311,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
         fps: z.number().int().min(1).max(240).optional(),
         lastFrame: z.number().int().nonnegative().optional(),
         sequenceIndex: z.number().int().nonnegative().optional(),
+        applyToRest: z.boolean().optional(),
       })
       .optional(),
   }),
@@ -327,6 +328,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     firstFrame: z.number().int().nonnegative().optional(),
     lastFrame: z.number().int().nonnegative().optional(),
     fps: z.number().int().min(1).max(240).optional(),
+    applyToRest: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-web.request'),
@@ -1120,6 +1122,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     imageSequenceFps: z.number().int().min(1).max(240).optional(),
     /** When true, expand single selected frames to continuous sibling runs. */
     expandImageSequences: z.boolean().optional(),
+    /** Explicitly disable automatic sequence creation for a normal import. */
+    createImageSequence: z.boolean().optional(),
     automationPlan: automationImportPlanProofSchema.optional(),
   }),
   z.strictObject({

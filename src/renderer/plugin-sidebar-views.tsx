@@ -18,6 +18,17 @@ export function buildPluginSidebarViewDescriptors(
   return buildPluginIframeViewDescriptors(contributions);
 }
 
+/**
+ * Sidebar contribution entries belong to the library shell, not to the
+ * currently loading browse result. Keep them mounted while a folder switch
+ * is fetching content so the navigation affordance does not blink away.
+ */
+export function isPluginSidebarViewsEnabled(
+  libraryId: string | undefined,
+): boolean {
+  return libraryId !== undefined;
+}
+
 export function usePluginSidebarViews(
   pluginApi: SerpentPluginManagerApi | undefined,
   libraryId: string | undefined,

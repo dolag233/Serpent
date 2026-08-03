@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -168,7 +169,7 @@ export const ZoomableImage = forwardRef<
   });
   const paintSrc = display.displayUrl ?? src;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const image = imageRef.current;
     if (image && image.naturalWidth > 0) measureFromImage(image);
   }, [paintSrc, measureFromImage]);
