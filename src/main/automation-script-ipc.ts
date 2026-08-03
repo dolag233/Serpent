@@ -21,7 +21,10 @@ import {
   type AutomationRecentScriptsListResult,
 } from '../shared/automation-script-api';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
-import type { PublicError } from '../shared/protocol/errors';
+import {
+  automationScriptHostErrorSchema,
+  AutomationScriptHostCommandError,
+} from '../shared/automation-host-command-error';
 import {
   AUTOMATION_SCRIPT_OPEN_CHANNEL,
   AUTOMATION_SCRIPT_SAVE_CHANNEL,
@@ -176,15 +179,15 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       input: commandInput,
     });
     if (!result.ok) {
-      if (result.error.code.startsWith('AUTOMATION_')) {
-        options.logger()?.info('automation.script.command-denied', 'Automation Gateway rejected a script command.', {
+      const failure = automationScriptHostErrorSchema.safeParse(result.error);
+      if (!failure.success) {
+        options.logger()?.error('automation.script.invalid-command-error', failure.error, {
           executionId,
           commandId,
-          code: result.error.code,
         });
         return { ok: false, error: createPublicError('INTERNAL_ERROR') };
       }
-      return { ok: false, error: result.error as PublicError };
+      return { ok: false, error: failure.data };
     }
     return {
       ok: true,
@@ -317,7 +320,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
         host: {
           execute: async (commandId, commandInput) => {
             const command = await executeOwnedCommand(executionId, commandId, commandInput);
-            if (!command.ok) throw new Error(command.error.message);
+            if (!command.ok) throw new AutomationScriptHostCommandError(command.error);
             return command.result;
           },
         },

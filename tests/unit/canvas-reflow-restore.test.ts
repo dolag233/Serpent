@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   captureReflowAnchorFromCards,
+  isCanvasReflowRestorationPending,
   pickTopmostVisibleCard,
   retainReflowAnchor,
   scheduleAnchorRestore,
@@ -57,6 +58,33 @@ describe("retainReflowAnchor", () => {
     );
     expect(retained).toBe(first);
     expect(retained?.assetId).toBe("first");
+  });
+});
+
+describe("isCanvasReflowRestorationPending", () => {
+  const element = (classes: string[]) => ({
+    classList: {
+      contains: (name: string) => classes.includes(name),
+    },
+  });
+
+  it("suspends child raw-scroll restoration while the canvas is frozen", () => {
+    expect(isCanvasReflowRestorationPending(element(["is-reflow-frozen"]))).toBe(
+      true,
+    );
+  });
+
+  it("suspends child raw-scroll restoration while the anchor settles", () => {
+    expect(
+      isCanvasReflowRestorationPending(element(["is-reflow-restoring"])),
+    ).toBe(true);
+  });
+
+  it("allows child restoration outside a reflow", () => {
+    expect(isCanvasReflowRestorationPending(element(["workspace-canvas"]))).toBe(
+      false,
+    );
+    expect(isCanvasReflowRestorationPending(null)).toBe(false);
   });
 });
 

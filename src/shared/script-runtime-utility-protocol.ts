@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { automationScriptCommandIdSchema } from './automation-script-api';
+import { automationScriptHostErrorSchema, type AutomationScriptHostError } from './automation-host-command-error';
 
 const executionIdSchema = z.string().min(1).max(255);
 const requestIdSchema = z.string().uuid();
@@ -52,10 +53,7 @@ export const scriptRuntimeParentMessageSchema = z.discriminatedUnion('type', [
     requestId: requestIdSchema,
     ok: z.boolean(),
     result: z.unknown().optional(),
-    error: z.strictObject({
-      code: z.string().min(1).max(128),
-      message: z.string().min(1).max(1_024),
-    }).optional(),
+    error: automationScriptHostErrorSchema.optional(),
   }).superRefine((value, context) => {
     if (value.ok && value.error !== undefined) {
       context.addIssue({ code: 'custom', path: ['error'], message: 'Successful host results cannot contain an error.' });
@@ -66,6 +64,8 @@ export const scriptRuntimeParentMessageSchema = z.discriminatedUnion('type', [
   }),
 ]);
 export type ScriptRuntimeParentMessage = z.infer<typeof scriptRuntimeParentMessageSchema>;
+
+export type ScriptRuntimeHostFailure = AutomationScriptHostError;
 
 export const scriptRuntimeChildMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('script-runtime.ready') }),

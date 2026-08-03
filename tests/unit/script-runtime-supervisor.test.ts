@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ScriptRuntimeSupervisor } from '../../src/main/script-runtime-supervisor';
+import { AutomationScriptHostCommandError } from '../../src/shared/automation-host-command-error';
 import type { ScriptRuntimeChildMessage } from '../../src/shared/script-runtime-utility-protocol';
 
 type Listener = (...args: never[]) => void;
@@ -141,5 +142,52 @@ describe('ScriptRuntimeSupervisor', () => {
     await expect(execution).resolves.toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
     expect(child.posted).toContainEqual({ type: 'script-runtime.abort', executionId: 'execution-b' });
     expect(child.killCount).toBe(1);
+  });
+
+  it('forwards a marked Gateway failure through the host-result envelope', async () => {
+    const child = new FakeRuntimeChild();
+    const supervisor = new ScriptRuntimeSupervisor({
+      modulePath: '/safe/script-runtime-utility.js',
+      fork: () => child,
+    });
+    const execution = supervisor.run({
+      executionId: 'execution-host-failure',
+      source: 'return await serpent.assets.search({ query: null });',
+      host: {
+        execute: async () => {
+          throw new AutomationScriptHostCommandError({
+            code: 'AUTOMATION_CAPABILITY_DENIED',
+            message: 'The automation execution has not been granted the required capability.',
+          });
+        },
+      },
+    });
+    child.emit('message', { type: 'script-runtime.ready' } as never);
+    child.emit('message', {
+      type: 'script-runtime.host-command',
+      executionId: 'execution-host-failure',
+      requestId: 'ad4d0ff9-6d9d-4c5f-9167-206a42eb3e25',
+      commandId: 'asset.search',
+      input: { query: null },
+    } as never);
+    await flush();
+    expect(child.posted).toContainEqual({
+      type: 'script-runtime.host-result',
+      executionId: 'execution-host-failure',
+      requestId: 'ad4d0ff9-6d9d-4c5f-9167-206a42eb3e25',
+      ok: false,
+      error: {
+        code: 'AUTOMATION_CAPABILITY_DENIED',
+        message: 'The automation execution has not been granted the required capability.',
+      },
+    });
+    child.emit('message', {
+      type: 'script-runtime.completed',
+      executionId: 'execution-host-failure',
+      value: null,
+      output: [],
+      transpiledJavaScript: '',
+    } as never);
+    await expect(execution).resolves.toMatchObject({ ok: true });
   });
 });

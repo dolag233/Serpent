@@ -15,6 +15,11 @@ import {
 } from './command-registry';
 import type { PublicError } from '../shared/protocol/errors';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
+import {
+  createAutomationGatewayError,
+  type AutomationGatewayError,
+  type AutomationGatewayErrorCode,
+} from '../shared/automation-host-command-error';
 import { PluginHookBlockedError } from '../plugins/plugin-hooks';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
@@ -52,25 +57,6 @@ export const automationCommandEnvelopeSchema = z.strictObject({
 });
 
 export type AutomationCommandEnvelope = z.infer<typeof automationCommandEnvelopeSchema>;
-
-export type AutomationGatewayErrorCode =
-  | 'AUTOMATION_INVALID_REQUEST'
-  | 'AUTOMATION_API_VERSION_UNSUPPORTED'
-  | 'AUTOMATION_COMMAND_NOT_FOUND'
-  | 'AUTOMATION_EXECUTION_NOT_FOUND'
-  | 'AUTOMATION_SOURCE_NOT_ALLOWED'
-  | 'AUTOMATION_CAPABILITY_DENIED'
-  | 'AUTOMATION_LIBRARY_NOT_BOUND'
-  | 'AUTOMATION_LIBRARY_OPEN_FAILED'
-  | 'AUTOMATION_CONCURRENCY_LIMIT_REACHED'
-  | 'AUTOMATION_EXECUTION_CANCELLED'
-  | 'AUTOMATION_EXECUTION_TIMED_OUT'
-  | 'AUTOMATION_RESULT_INVALID';
-
-export interface AutomationGatewayError {
-  code: AutomationGatewayErrorCode;
-  message: string;
-}
 
 export type AutomationGatewayFailure = {
   ok: false;
@@ -212,23 +198,8 @@ export interface AutomationCommandGateway {
   execute(envelope: unknown): Promise<AutomationGatewayResult>;
 }
 
-const errorMessages: Record<AutomationGatewayErrorCode, string> = {
-  AUTOMATION_INVALID_REQUEST: 'The automation command request is invalid.',
-  AUTOMATION_API_VERSION_UNSUPPORTED: 'This automation API version is not supported.',
-  AUTOMATION_COMMAND_NOT_FOUND: 'This automation command is not available.',
-  AUTOMATION_EXECUTION_NOT_FOUND: 'This automation execution is no longer available.',
-  AUTOMATION_SOURCE_NOT_ALLOWED: 'This automation source cannot call the requested command.',
-  AUTOMATION_CAPABILITY_DENIED: 'The automation execution has not been granted the required capability.',
-  AUTOMATION_LIBRARY_NOT_BOUND: 'This automation execution must open and bind a library before calling this command.',
-  AUTOMATION_LIBRARY_OPEN_FAILED: 'The created library could not be opened and bound to this automation execution.',
-  AUTOMATION_CONCURRENCY_LIMIT_REACHED: 'This automation execution has reached its concurrent command limit.',
-  AUTOMATION_EXECUTION_CANCELLED: 'This automation execution has been cancelled.',
-  AUTOMATION_EXECUTION_TIMED_OUT: 'This automation execution timed out.',
-  AUTOMATION_RESULT_INVALID: 'Serpent received an invalid result from the automation command.',
-};
-
 function gatewayFailure(code: AutomationGatewayErrorCode): AutomationGatewayFailure {
-  return { ok: false, error: { code, message: errorMessages[code] } };
+  return { ok: false, error: createAutomationGatewayError(code) };
 }
 
 function cancellationFailure(signal: AbortSignal): AutomationGatewayFailure {

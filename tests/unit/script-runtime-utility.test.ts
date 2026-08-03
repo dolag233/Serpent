@@ -79,4 +79,42 @@ describe('Script Runtime Utility handler', () => {
     expect(failed).toMatchObject({ executionId: 'execution-b', code: 'CANCELLED' });
     handler.dispose();
   });
+
+  it('makes the stable Host error code available to script catch handlers', async () => {
+    const messages: ScriptRuntimeChildMessage[] = [];
+    const handler = createScriptRuntimeUtilityHandler({ postMessage: (message) => messages.push(message) });
+    handler.handle({
+      type: 'script-runtime.run',
+      executionId: 'execution-catch-error',
+      source: `
+        try {
+          await serpent.assets.search({ query: null });
+          return 'unexpected success';
+        } catch (error) {
+          return { code: error.code, message: error.message };
+        }
+      `,
+    });
+    const hostCommand = await waitForMessage(messages, (message) => message.type === 'script-runtime.host-command');
+    if (hostCommand.type !== 'script-runtime.host-command') throw new Error('Expected a host command.');
+    handler.handle({
+      type: 'script-runtime.host-result',
+      executionId: hostCommand.executionId,
+      requestId: hostCommand.requestId,
+      ok: false,
+      error: {
+        code: 'AUTOMATION_CAPABILITY_DENIED',
+        message: 'The automation execution has not been granted the required capability.',
+      },
+    });
+    const completed = await waitForMessage(messages, (message) => message.type === 'script-runtime.completed');
+    expect(completed).toMatchObject({
+      executionId: 'execution-catch-error',
+      value: {
+        code: 'AUTOMATION_CAPABILITY_DENIED',
+        message: 'The automation execution has not been granted the required capability.',
+      },
+    });
+    handler.dispose();
+  });
 });

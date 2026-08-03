@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { publicErrorSchema, type PublicError } from './protocol/errors';
+import { publicErrorSchema } from './protocol/errors';
+import {
+  automationScriptHostErrorSchema,
+  type AutomationScriptHostError,
+} from './automation-host-command-error';
 
 const identifier = z.string().uuid();
 export const automationScriptSourceSchema = z.string().min(1).max(64 * 1024);
@@ -170,7 +174,12 @@ export type AutomationScriptCommandInput = z.infer<typeof automationScriptComman
 
 export type AutomationScriptCommandResult =
   | { ok: true; result: unknown; undoGroupId?: string }
-  | { ok: false; error: PublicError };
+  | { ok: false; error: AutomationScriptHostError };
+
+export const automationScriptCommandResultSchema = z.union([
+  z.strictObject({ ok: z.literal(true), result: z.unknown(), undoGroupId: z.string().min(1).optional() }),
+  z.strictObject({ ok: z.literal(false), error: automationScriptHostErrorSchema }),
+]);
 
 export const automationScriptCompleteInputSchema = z.strictObject({
   executionId: z.string().min(1),

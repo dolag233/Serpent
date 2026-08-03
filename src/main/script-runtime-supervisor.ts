@@ -6,6 +6,7 @@ import {
   type ScriptRuntimeLimitOverrides,
 } from '../shared/script-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { toAutomationScriptHostFailure } from '../shared/automation-host-command-error';
 
 const READY_TIMEOUT_MS = 5_000;
 const TERMINATION_GRACE_MS = 1_500;
@@ -160,13 +161,14 @@ export class ScriptRuntimeSupervisor implements ScriptRuntimeExecutor {
               executionId: input.executionId,
               commandId: message.commandId,
             });
+            const failure = toAutomationScriptHostFailure(error);
             if (settled) return;
             child.postMessage({
               type: 'script-runtime.host-result',
               executionId: message.executionId,
               requestId: message.requestId,
               ok: false,
-              error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+              error: failure,
             });
           },
         );

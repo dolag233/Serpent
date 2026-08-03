@@ -391,6 +391,7 @@ import {
 } from "./canvas-scroll-anchor";
 import {
   captureReflowAnchorFromCards,
+  isCanvasReflowRestorationPending,
   retainReflowAnchor,
   scheduleAnchorRestore,
   type ScrollOffsetSnapshot,
@@ -569,6 +570,21 @@ function MasonryColumns({
     };
     const updateWidth = () => {
       const width = element.clientWidth;
+      const root = canvas();
+      if (isCanvasReflowRestorationPending(root)) {
+        // The outer canvas anchor is the single owner of scroll restoration
+        // during panel/window reflow. Still accept the new width so the
+        // columns can calculate their final layout, but never snapshot or
+        // replay a competing raw scrollTop here.
+        availableWidthRef.current = width;
+        scrollSnapshotRef.current = null;
+        if (restoreFrameRef.current !== null) {
+          cancelAnimationFrame(restoreFrameRef.current);
+          restoreFrameRef.current = null;
+        }
+        setAvailableWidth(width);
+        return;
+      }
       if (suspendScrollRestorationRef.current) {
         availableWidthRef.current = width;
         scrollSnapshotRef.current = null;
@@ -582,7 +598,6 @@ function MasonryColumns({
       const widthChanged = width !== availableWidthRef.current;
       if (widthChanged) {
         availableWidthRef.current = width;
-        const root = canvas();
         if (root) scrollSnapshotRef.current = root.scrollTop;
         setAvailableWidth(width);
       }
@@ -1368,6 +1383,7 @@ function AppInner() {
   const capturePanelResizeAnchor = useCallback((lock = true) => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
+    canvas.classList.remove("is-reflow-restoring");
     const cards: AnchorCard[] = Array.from(
       canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
     ).map((el) => ({
@@ -1395,13 +1411,23 @@ function AppInner() {
     panelResizeLockRef.current = false;
     const canvas = workspaceCanvasRef.current;
     const anchor = reflowAnchorRef.current;
-    if (!canvas || !anchor) return;
+    if (!canvas || !anchor) {
+      canvas?.classList.remove("is-reflow-restoring");
+      return;
+    }
+    // Keep the child layout observers suspended until the outer anchor has
+    // converged. Removing the frozen width is what allows the real reflow;
+    // this second class prevents Masonry's legacy raw-scroll loop from
+    // racing the anchor compensation during that reflow.
+    canvas.classList.remove("is-reflow-frozen");
+    canvas.classList.add("is-reflow-restoring");
     scheduleAnchorRestore(
       canvas,
       anchor,
       reflowRestoreFrameRef,
       12,
       () => {
+        canvas.classList.remove("is-reflow-restoring");
         reflowAnchorRef.current = null;
         reflowScrollSnapshotRef.current = null;
       },
@@ -2567,6 +2593,7 @@ function AppInner() {
         10,
         () => {
           if (!panelResizingRef.current) {
+      canvas.classList.remove("is-reflow-restoring");
       reflowAnchorRef.current = null;
       reflowScrollSnapshotRef.current = null;
       cardResizeAnchorRef.current = null;

@@ -8,6 +8,7 @@ import {
   type ScriptRuntimeParentMessage,
 } from '../shared/script-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { AutomationScriptHostCommandError } from '../shared/automation-host-command-error';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
@@ -140,7 +141,12 @@ export function createScriptRuntimeUtilityHandler(options: {
       if (pending === undefined) return;
       current.pendingHostRequests.delete(message.requestId);
       if (message.ok) pending.resolve(message.result);
-      else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+      else pending.reject(new AutomationScriptHostCommandError(
+        message.error ?? {
+          code: 'INTERNAL_ERROR',
+          message: 'Serpent could not complete the request.',
+        },
+      ));
     },
     dispose(): void {
       active?.abortController.abort();

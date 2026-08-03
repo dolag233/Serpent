@@ -86,6 +86,14 @@ describe('Desktop Console automation IPC', () => {
         expect(input.source).toBe("const matches = await serpent.assets.search({ query: 'Ser' });");
         const matches = await input.host.execute('asset.search', { query: 'Ser' });
         const updated = await input.host.execute('asset.rating.set', { assetIds: ['asset-1'], rating: 4 });
+        await expect(input.host.execute('asset.content.replace', {
+          assetId: 'asset-1', dataBase64: 'AQ==',
+        })).rejects.toMatchObject({
+          failure: {
+            code: 'AUTOMATION_CAPABILITY_DENIED',
+            message: 'The automation execution has not been granted the required capability.',
+          },
+        });
         return { ok: true, value: { matches, updated }, output: ['Updated 1 asset.'], transpiledJavaScript: '/* isolated */' };
       },
     };
@@ -124,7 +132,7 @@ describe('Desktop Console automation IPC', () => {
       { type: 'asset.rating.set', libraryId, assetIds: ['asset-1'], rating: 4 },
     ]);
     expect(journal.get('execution-1')).toMatchObject({
-      status: 'succeeded', commandCount: 2, succeededCommandCount: 2,
+      status: 'partially-succeeded', commandCount: 3, succeededCommandCount: 2, failedCommandCount: 1,
     });
   });
 

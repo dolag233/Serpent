@@ -14,6 +14,14 @@ Desktop Console 不再在 Renderer Web Worker 中执行用户脚本。每次已�
 
 本次仅修复启动故障域，未改变脚本能力边界或超时策略；macOS/Windows packaged、Windows 实机和 Computer Use 仍未验证，因此工单继续保持 `in_progress`。
 
+## 2026-08-04 增量：Automation Host 错误码透传
+
+补齐 `Serpent-8mmp`：`automation-script-ipc.ts` 不再把 Gateway 的所有 `AUTOMATION_*` 失败压成 `INTERNAL_ERROR`。新增共享的白名单错误 envelope，固定 Gateway 错误码与安全文案，同时允许既有 `PublicError` 的 `reason` 和 `currentEntityVersion` 继续透传。未知错误仍只返回 `INTERNAL_ERROR`。
+
+运行时 supervisor 将该 envelope 原样发给 Script Utility；QuickJS 的 Host Promise 拒绝现在会创建带 `error.code`、`error.message`（以及可用时的 `reason` / `currentEntityVersion`）的 Guest Error。因此脚本可以按稳定错误码处理权限拒绝、参数错误、资源不存在和版本冲突，而不依赖文案或内部诊断。
+
+定向验证：`automation-script-ipc.test.ts`、`script-runtime-supervisor.test.ts`、`script-runtime-utility.test.ts` 覆盖 Gateway 错误、IPC envelope 和脚本 `catch`；共 12 个测试通过。相关 Gateway、协议和 QuickJS 回归合计 142 个测试通过；typecheck 与定向 lint 通过。未执行 packaged/Windows/Computer Use。
+
 ## 四列证据
 
 | 需求 | 实现位置 | 自动化证据 | 人工/平台证据 |

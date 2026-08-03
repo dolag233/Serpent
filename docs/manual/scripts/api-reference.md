@@ -24,6 +24,26 @@ interface Asset {
 }
 ```
 
+### 错误处理
+
+Host 命令失败会以异常方式进入脚本的 `catch`。错误对象至少包含稳定的 `code` 和安全的 `message`；PublicError 还可能包含 `reason`，版本冲突会包含 `currentEntityVersion`。未知的宿主内部异常统一使用 `INTERNAL_ERROR`，不会把路径、数据库或进程诊断泄露给脚本。
+
+```ts
+try {
+  await serpent.assets.setRating(assetIds, 4);
+} catch (error) {
+  if (error.code === 'AUTOMATION_CAPABILITY_DENIED') {
+    console.log('当前脚本没有所需权限');
+  } else if (error.code === 'ASSET_NOT_FOUND') {
+    console.log('资产已经不存在，跳过');
+  } else {
+    throw error;
+  }
+}
+```
+
+常见 Gateway 错误码包括 `AUTOMATION_INVALID_REQUEST`、`AUTOMATION_CAPABILITY_DENIED`、`AUTOMATION_LIBRARY_NOT_BOUND`、`AUTOMATION_EXECUTION_CANCELLED` 和 `AUTOMATION_EXECUTION_TIMED_OUT`；具体命令也可能返回 `ASSET_NOT_FOUND`、`FOLDER_NOT_FOUND`、`VERSION_CONFLICT`、`CANCELLED` 等 PublicError。脚本应按错误码决定是否提示、重新读取或停止，不要仅按英文文案判断。
+
 分页默认 `limit=50`，最大 `limit=200`；`offset` 从 0 开始。批量数组通常最多 10,000 项，具体以 Registry Schema 为准。`currentRevisionId` 是文件内容修订 token；元数据写入使用 `entityVersion`，两者不可混用。
 
 ## `library`

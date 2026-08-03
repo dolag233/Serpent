@@ -18689,6 +18689,17 @@ export class LibraryService {
         }
       })();
 
+      // Soft-delete is a library mutation, not only a local UI action. Emit
+      // after the filesystem move and DB transaction both succeed so other
+      // renderer windows, plugins, and automation refresh their trash count.
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId: input.libraryId,
+        changedCount: assetIds.length,
+        missingCount: 0,
+        source: 'client',
+      });
+
       return { trashedCount: logicalCount, operationId };
     } catch (error) {
       // Rollback filesystem: move trashed files back
@@ -19166,6 +19177,19 @@ export class LibraryService {
         restoredAssets.map((asset) => asset.assetId),
       );
 
+      // Restore changes the library-wide Trash count even when the caller is
+      // browsing another scope. Publish only after the committed operation
+      // and sequence reconstruction have completed.
+      if (restoredAssets.length > 0) {
+        this.options.onAssetsChanged?.({
+          type: 'asset.changed',
+          libraryId: input.libraryId,
+          changedCount: restoredAssets.length,
+          missingCount: 0,
+          source: 'client',
+        });
+      }
+
       return {
         // `skip` can remove every planned file (or only a subset of a
         // sequence). Report the logical units actually restored, never the
@@ -19502,6 +19526,16 @@ export class LibraryService {
     }
 
     this.syncTrashedFolderTombstones(openLibrary);
+
+    if (deletedAssetIds.length > 0) {
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId: input.libraryId,
+        changedCount: deletedAssetIds.length,
+        missingCount: 0,
+        source: 'client',
+      });
+    }
 
     return {
       deletedCount,

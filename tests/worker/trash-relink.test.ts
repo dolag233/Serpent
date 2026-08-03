@@ -254,6 +254,55 @@ describe('downgrade helpers still work with v9', () => {
 });
 
 describe('trashAssets (soft delete)', () => {
+  it('publishes library mutation events for trash count consumers', () => {
+    const root = temporaryRoot();
+    const events: Array<{
+      type: 'asset.changed';
+      libraryId: string;
+      changedCount: number;
+      missingCount: number;
+      source?: string;
+    }> = [];
+    const service = newService({ onAssetsChanged: (event) => events.push(event) });
+    const created = service.createLibrary({ displayName: 'Trash Events', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'event.jpg'), 'event');
+    const imported = importNoConflict(service, created.libraryId, path.join(root, 'event.jpg'));
+    const assetId = imported.assets[0]!.assetId;
+    events.length = 0;
+
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    expect(events.at(-1)).toEqual({
+      type: 'asset.changed',
+      libraryId: created.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'client',
+    });
+
+    events.length = 0;
+    service.restoreAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    expect(events.at(-1)).toMatchObject({
+      type: 'asset.changed',
+      libraryId: created.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'client',
+    });
+
+    events.length = 0;
+    service.trashAssets({ libraryId: created.libraryId, assetIds: [assetId] });
+    events.length = 0;
+    service.deleteAssetsPermanent({ libraryId: created.libraryId, assetIds: [assetId] });
+    expect(events.at(-1)).toMatchObject({
+      type: 'asset.changed',
+      libraryId: created.libraryId,
+      changedCount: 1,
+      missingCount: 0,
+      source: 'client',
+    });
+  });
+
   it('moves managed asset to .serpent/trash/ and sets deleted_at', () => {
     const root = temporaryRoot();
     const service = newService();

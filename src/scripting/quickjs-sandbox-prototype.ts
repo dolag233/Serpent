@@ -8,6 +8,7 @@ import {
 import ts from 'typescript';
 import { utf8ByteLength } from '../shared/script-sandbox-limits';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { automationScriptHostFailureFromError } from '../shared/automation-host-command-error';
 import { pluginTargetLibraryIdSchema } from '../plugins/plugin-commands';
 import {
   SERPENT_GUEST_COMMANDS,
@@ -907,10 +908,35 @@ export async function runQuickJsSandboxPrototype(
             }
           });
         },
-        () => {
+        (error: unknown) => {
           settleHostPromise(deferred, () => {
-            const guestError = context.newError('The host request failed.');
+            const failure = automationScriptHostFailureFromError(error);
+            const guestError = context.newError(failure?.message ?? 'The host request failed.');
             try {
+              if (failure !== undefined) {
+                const code = context.newString(failure.code);
+                try {
+                  context.setProp(guestError, 'code', code);
+                } finally {
+                  code.dispose();
+                }
+                if ('reason' in failure && failure.reason !== undefined) {
+                  const reason = context.newString(failure.reason);
+                  try {
+                    context.setProp(guestError, 'reason', reason);
+                  } finally {
+                    reason.dispose();
+                  }
+                }
+                if ('currentEntityVersion' in failure && failure.currentEntityVersion !== undefined) {
+                  const version = context.newNumber(failure.currentEntityVersion);
+                  try {
+                    context.setProp(guestError, 'currentEntityVersion', version);
+                  } finally {
+                    version.dispose();
+                  }
+                }
+              }
               deferred.reject(guestError);
             } finally {
               guestError.dispose();

@@ -25,6 +25,22 @@ export interface ScrollOffsetSnapshot {
 }
 
 /**
+ * The outer canvas owns scroll restoration while a panel/window reflow is in
+ * flight. Masonry has a legacy raw-scroll restoration loop of its own; it
+ * must stand down for both the frozen-width drag phase and the anchored
+ * post-drag settle phase, otherwise it can overwrite the anchor compensation
+ * on the next animation frame.
+ */
+export function isCanvasReflowRestorationPending(
+  element: { classList: Pick<DOMTokenList, "contains"> } | null,
+): boolean {
+  return Boolean(
+    element?.classList.contains("is-reflow-frozen") ||
+      element?.classList.contains("is-reflow-restoring"),
+  );
+}
+
+/**
  * Among cards that vertically overlap the viewport, pick the one whose top
  * edge is closest to the viewport top (then leftmost on ties). Anchoring the
  * topmost visible card keeps the visible set stable when column count changes
