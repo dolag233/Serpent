@@ -350,6 +350,10 @@ type Setting =
 iframe view 的 Host target 为 `sidebar.entries`、`workspace.views`、`inspector.views`、`viewer.overlays`、`settings.pages`；Manifest 对应
 `views[].location`。页面只能经 typed bridge 通信。当前不提供动态 UI Registrar、任意 React 组件、宿主 DOM 或稳定 UI primitives。
 
+插件标准化 UI 的后续设计（Host 内部 UI library、菜单/设置语义 descriptor、状态与可访问性契约）记录在
+[`0028 UI 标准化与插件结构化 UI 设计分析`](../../implementation/0028-ui-standardization-and-plugin-ui.md)，尚未成为当前 API。
+在实现发布前，不要从宿主 CSS class、React 结构或 DOM 层级推导插件行为。
+
 ## 8. 错误与测试契约
 
 - 权限缺失、库未打开、实例范围不符、资产 revision 冲突、超时和取消必须作为可处理失败；不要把失败吞掉后报告成功。

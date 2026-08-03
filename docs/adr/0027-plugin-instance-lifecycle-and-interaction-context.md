@@ -35,6 +35,10 @@ Houdini 等成熟宿主的经验表明，稳定标识、声明式位置、可计
 
 Command Registry 是标题、图标、启用条件、快捷键和 handler 的行为源。菜单等 Contribution 只引用 command。菜单保持树结构，使用稳定 Host/item ID、语义 group 和 before/after 约束定位；不按文案或 DOM 位置定位。
 
+### UI 标准化的后续边界（2026-08-04 更新）
+
+本 ADR 只决定插件实例、生命周期、Context/Invocation Context 和 Command/Menu 的交互边界，不决定宿主视觉组件的公共 API。产品已将全量 UI 标准化提升为 `Serpent-nzxh` P1 Epic；内部 UI library、Host-rendered semantic descriptor、菜单树递归可见性和迁移顺序由 [0028 UI 标准化与插件结构化 UI 设计分析](../implementation/0028-ui-standardization-and-plugin-ui.md) 设计。实现时仍必须保持本 ADR 的原则：插件不访问宿主 DOM/React/CSS，Context 只服务 UI，功能通过完整 Domain API 执行。
+
 ## 原因
 
 - 全局模型 Worker 可以由 global Plugin Instance 自己复用，而不需要 Host 建立跨插件共享进程抽象。
@@ -49,7 +53,7 @@ Command Registry 是标题、图标、启用条件、快捷键和 handler 的行
 - Manifest、SDK、fixture 和测试直接升级；项目未发布，不保留旧协议适配层。
 - Host 必须维护窗口级 `contextId`、单调 `revision`、Context Key Store 和 Predicate 缓存取消。
 - 全局插件通过显式 library binding 执行领域操作，不能依赖当前 GUI 焦点。
-- 当前只稳定交互协议。toggle、dropdown、slider 等视觉组件 API 等主线 UI 设计系统稳定后另行决定。
+- 当前只稳定本 ADR 定义的交互协议；toggle、dropdown、slider 等视觉组件 API 不由本 ADR 直接承诺，待 0028 的内部 UI library 和 semantic descriptor 设计冻结后再按其阶段实施。
 
 ## 否决方案
 

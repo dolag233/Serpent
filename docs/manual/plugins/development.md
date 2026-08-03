@@ -256,7 +256,8 @@ default 必须在 minimum/maximum 内。静态设置 schema 非法会拒绝插�
 
 自定义页面是 sandboxed iframe，声明在 `contributes.views`，location 为 `sidebar`、`workspace`、`inspector`、`viewer` 或 `settings`，
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
-当前页面与视觉 token 仍是开发态；不要依赖未来的 `@serpent/ui` 或 UI primitives。
+当前页面与视觉 token 仍是开发态；不要依赖未来的 `@serpent/ui` 或 UI primitives。全量 UI 标准化及插件结构化 UI descriptor 的设计基线见
+[`0028 UI 标准化与插件结构化 UI 设计分析`](../../implementation/0028-ui-standardization-and-plugin-ui.md)。在该设计完成实现和发布前，插件只能使用本节已经列出的 settings schema 与 sandboxed iframe，不得把宿主 CSS class 当作 API。
 
 ## 9. Jobs、storage 与 data
 

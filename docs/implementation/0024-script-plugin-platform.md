@@ -4,11 +4,13 @@
 >
 > 日期：2026-07-29
 >
-> 最后修订：2026-08-02
+> 最后修订：2026-08-04
 >
 > 上位决策：[ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md)、[ADR-0026](../adr/0026-plugin-runtime-installation-and-trust.md)、[ADR-0027](../adr/0027-plugin-instance-lifecycle-and-interaction-context.md)
 >
 > 相关规格：[0023 脚本自动化与 Agent MCP](0023-automation-scripting-mcp-framework.md)
+
+> UI 设计基线：[0028 UI 标准化与插件结构化 UI 设计分析](0028-ui-standardization-and-plugin-ui.md)
 >
 > Beads 实施 Epic：`Serpent-upsn`、`Serpent-7nah`
 
@@ -37,7 +39,7 @@ Serpent 插件平台要让第三方扩展像原生能力一样参与应用，但
 6. **条件计算不阻塞 UI 热路径**：同步条件只读取 Host 发布的 Context Key；复杂异步计算先解析成插件命名空间 Context Key。
 7. **Host 保持领域不变量**：插件使用 Gateway 时继续受到权限、实体版本、Execution Plan、Worker 所有权和恢复机制约束。
 8. **非受限插件不伪装成沙箱**：完整 Node.js 能力意味着插件可自行探测 GPU/CPU/内存、启动模型进程或直接访问系统；Host 不承诺拦截这些行为。
-9. **视觉 UI 标准化延期**：主线 Serpent 尚未完成组件与视觉规范，当前只稳定交互语义、结构和边界，不把 toggle/dropdown/slider 枚举包装成稳定 UI Kit。
+9. **视觉 UI 标准化独立收口**：本规格先稳定插件交互语义、结构和边界；完整的内部 UI library 与插件结构化 UI descriptor 由 0028 单独设计并分阶段实施，不把当前实验性的 toggle/dropdown/slider 枚举直接包装成稳定 UI Kit。
 10. **无需旧协议兼容**：项目尚未发布；实施时直接替换旧 Manifest、Contribution 和生命周期契约，同步迁移仓内 fixture、测试和文档，不维护兼容适配层或弃用周期。
 
 ## 3. 脚本、插件和 MCP
@@ -344,6 +346,8 @@ interface ConfigurationProperty {
 
 现有 Host-rendered boolean/select 等设置行视为实验实现，不是稳定公开组件 API。等主线 Serpent 自身形成设计 token、交互状态、布局、表单、无障碍和组件规范后，再单独设计插件 UI primitives（toggle、dropdown、slider、field、section 等）及 `@serpent/ui` 包。届时插件只描述语义，Host 组件负责原生一致性；当前不得继续无限扩张 `setting.type` 枚举。
 
+2026-08-04 产品设计更新：UI 标准化已提升为 `Serpent-nzxh` 的 P1 重点，但本规格仍不直接实现视觉组件 API。全量 UI 盘点、内部 library 分层、插件 semantic descriptor、迁移顺序和验收门禁以 [0028](0028-ui-standardization-and-plugin-ui.md) 为准；在 0028 的 schema 冻结前，现有 settings schema 仍属于实验性 Host-rendered 配置接口。
+
 ## 10. Domain API、批量写回与 Execution Plan
 
 插件复用 0023 的完整 `serpent` SDK：assets、folders、tags、collections、files、jobs、ai、content、storage、secrets、net、clipboard 和 library binding。受限插件不获得任意绝对路径；非受限插件直接系统访问不享受 Gateway 保证。
@@ -465,7 +469,7 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 4. **菜单与表面统一**：树形菜单、Placement Solver、快捷键显示，并让 toolbar/Inspector/Viewer 复用同一语义。
 5. **批处理与 Job 能力**：batch replace、staging/recovery、进度/取消/可选 checkpoint。
 6. **故障域收口**：设置值字段降级、协议控制面/事件面分层、多实例回归。
-7. **视觉组件体系（延期）**：只在主线 Serpent UI 设计系统稳定后实施插件 primitives 与统一设置 UI。
+7. **视觉组件体系（由 0028 设计、分阶段实施）**：先完成主线内部 UI library 和语义契约，再实施插件 primitives、统一设置 UI 与结构化 descriptor。
 
 具体 Beads ID 和依赖以 `Serpent-upsn`、`Serpent-7nah` 子工单为准。
 
@@ -476,7 +480,7 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 - 在 Context 表达式中执行插件 JS 或等待 RPC。
 - 把 Contribution Context 扩成完整资产对象或功能 API。
 - 通用 GPU/CPU/内存探测 API、Host 推理调度器或跨插件模型 Worker。
-- 在主线 UI 规范形成前承诺 toggle/dropdown/slider 的稳定视觉组件 API。
+- 在 0028 的内部 UI library、schema 和验收门禁冻结前承诺插件 toggle/dropdown/slider 的稳定视觉组件 API。
 - 为未发布的旧插件协议维护兼容层。
 
 ## 20. 给实施 Agent 的硬约束
@@ -491,5 +495,5 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 8. 不得声称多文件替换具有文件系统原子性；必须设计 staging 和恢复 journal。
 9. 不得因未知非关键事件、单个坏设置值或单个坏菜单分支杀死整个插件 Host/UI。
 10. 不得为 GPU 探测或模型并发增加无必要 Host 能力。
-11. UI 组件标准化工单在主线设计系统稳定前保持延期，不用临时枚举冒充最终抽象。
+11. UI 组件标准化不在本规格内临时实现；按 0028 先完成设计系统和 semantic descriptor 设计，不用现有 settings 枚举冒充最终抽象。
 12. 每个行为变更同步更新 Schema、SDK 类型、fixture、文档和相关测试。
