@@ -42,13 +42,11 @@ export function usePluginSettingsNavEntries(
   refreshKey: string | null,
 ): PluginSettingsNavEntry[] {
   const [packages, setPackages] = useState<PluginManagerPackageSummary[]>([]);
+  const shouldLoad = pluginApi !== undefined;
   const pages = usePluginSettingsPages(pluginApi, libraryId, true, refreshKey);
 
   useEffect(() => {
-    if (pluginApi === undefined) {
-      setPackages([]);
-      return;
-    }
+    if (!shouldLoad || pluginApi === undefined) return;
     let cancelled = false;
     void pluginApi.request({
       type: 'plugin-manager.list',
@@ -62,7 +60,7 @@ export function usePluginSettingsNavEntries(
     return () => {
       cancelled = true;
     };
-  }, [pluginApi, libraryId, refreshKey]);
+  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
 
   return useMemo(() => {
     const pageTitles = new Map<string, string>();
@@ -70,11 +68,11 @@ export function usePluginSettingsNavEntries(
       if (!pageTitles.has(page.pluginId)) pageTitles.set(page.pluginId, page.title);
     }
     return collectPluginSettingsNavEntries(
-      packages,
+      shouldLoad ? packages : [],
       pages.map((page) => page.pluginId),
       pageTitles,
     );
-  }, [packages, pages]);
+  }, [packages, pages, shouldLoad]);
 }
 
 export function PluginSettingsDetailPage({
@@ -94,14 +92,13 @@ export function PluginSettingsDetailPage({
   const pages = usePluginSettingsPages(pluginApi, libraryId, true, refreshKey)
     .filter((page) => page.pluginId === pluginId);
   const [activePageId, setActivePageId] = useState<string | null>(null);
-  const activePage = pages.find((page) => page.id === activePageId) ?? pages[0];
+  const selectedPageId = pages.some((page) => page.id === activePageId) ? activePageId : null;
+  const activePage = pages.find((page) => page.id === selectedPageId) ?? pages[0];
   const [scopes, setScopes] = useState<Array<'user' | 'library'>>([]);
+  const hasPluginApi = pluginApi !== undefined;
 
   useEffect(() => {
-    if (pluginApi === undefined) {
-      setScopes([]);
-      return;
-    }
+    if (!hasPluginApi || pluginApi === undefined) return;
     let cancelled = false;
     void pluginApi.request({
       type: 'plugin-manager.list',
@@ -121,18 +118,12 @@ export function PluginSettingsDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [pluginApi, libraryId, pluginId, refreshKey]);
-
-  useEffect(() => {
-    if (activePageId !== null && !pages.some((page) => page.id === activePageId)) {
-      setActivePageId(null);
-    }
-  }, [activePageId, pages]);
+  }, [hasPluginApi, pluginApi, libraryId, pluginId, refreshKey]);
 
   return (
     <div className="plugin-settings-detail-page">
       <p className="app-settings-hint">{pluginName}</p>
-      {scopes.map((scope) => (
+      {(hasPluginApi ? scopes : []).map((scope) => (
         <PluginHostSettingsFields
           api={pluginApi}
           key={`${pluginId}:${scope}`}
@@ -173,7 +164,7 @@ export function PluginSettingsDetailPage({
           )}
         </section>
       )}
-      {scopes.length === 0 && pages.length === 0 ? (
+      {(!hasPluginApi || scopes.length === 0) && pages.length === 0 ? (
         <p className="app-settings-hint">{t('settings.pluginSettingsEmpty')}</p>
       ) : null}
     </div>

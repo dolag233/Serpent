@@ -13,6 +13,27 @@ import {
   SERPENT_GUEST_COMMANDS,
 } from './serpent-guest-api';
 import { projectPluginStorageResult } from './plugin-storage-result';
+import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
+import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
+import type {
+  PluginJobComplete,
+  PluginJobCheckpoint,
+  PluginJobRecord,
+} from '../plugins/plugin-jobs';
+import type {
+  PluginProviderBatchResult,
+  PluginProviderInvoke,
+} from '../plugins/plugin-providers';
+import type {
+  PluginSearchChunk,
+  PluginSearchComplete,
+  PluginSearchEvent,
+} from '../plugins/plugin-search';
+import type { PluginCommandComplete, PluginCommandInvoke } from '../plugins/plugin-commands';
+import type {
+  PluginInputCaptureEvent,
+  PluginInputCaptureOptions,
+} from '../shared/plugin-input-capture';
 
 /**
  * This is an engine-selection prototype, not the public Script Runtime API.
@@ -58,35 +79,35 @@ export interface QuickJsSandboxPrototypeHost {
    * Plugin Host domain-event pull. Resolves with the next event or null when
    * the instance is deactivating.
    */
-  waitForDomainEvent?(): Promise<import('../plugins/plugin-domain-events').PluginDomainEvent | null>;
+  waitForDomainEvent?(): Promise<PluginDomainEvent | null>;
   /**
    * Plugin Host onWill hook invoke pull. Resolves with the next invoke or null
    * when the instance is deactivating.
    */
-  waitForHookInvoke?(): Promise<import('../plugins/plugin-hooks').PluginHookInvoke | null>;
+  waitForHookInvoke?(): Promise<PluginHookInvoke | null>;
   /**
    * Posts an onWill decision back to Main for a pending hook invoke.
    */
   respondHookDecision?(
     invokeId: string,
-    decision: import('../plugins/plugin-hooks').PluginHookDecision,
+    decision: PluginHookDecision,
   ): Promise<void>;
-  waitForJobInvoke?(): Promise<import('../plugins/plugin-jobs').PluginJobRecord | null>;
+  waitForJobInvoke?(): Promise<PluginJobRecord | null>;
   respondJobComplete?(
     jobId: string,
-    complete: import('../plugins/plugin-jobs').PluginJobComplete,
+    complete: PluginJobComplete,
   ): Promise<void>;
-  waitForProviderInvoke?(): Promise<import('../plugins/plugin-providers').PluginProviderInvoke | null>;
+  waitForProviderInvoke?(): Promise<PluginProviderInvoke | null>;
   respondProviderComplete?(
     invokeId: string,
-    result: import('../plugins/plugin-providers').PluginProviderBatchResult,
+    result: PluginProviderBatchResult,
   ): Promise<void>;
-  waitForSearchEvent?(): Promise<import('../plugins/plugin-search').PluginSearchEvent | null>;
+  waitForSearchEvent?(): Promise<PluginSearchEvent | null>;
   respondSearchChunk?(
-    chunk: import('../plugins/plugin-search').PluginSearchChunk,
+    chunk: PluginSearchChunk,
   ): Promise<void>;
   respondSearchComplete?(
-    complete: import('../plugins/plugin-search').PluginSearchComplete,
+    complete: PluginSearchComplete,
   ): Promise<void>;
   enqueuePluginJob?(input: {
     handlerId: string;
@@ -108,26 +129,26 @@ export interface QuickJsSandboxPrototypeHost {
     action: 'pause' | 'resume' | 'cancel' | 'retry';
     reason?: string;
     retryInput?: Record<string, unknown>;
-    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+    checkpoint?: PluginJobCheckpoint;
     targetLibraryId?: string;
   }): Promise<unknown>;
   isJobAborted?(jobId: string): boolean;
-  waitForCommandInvoke?(): Promise<import('../plugins/plugin-commands').PluginCommandInvoke | null>;
+  waitForCommandInvoke?(): Promise<PluginCommandInvoke | null>;
   respondCommandComplete?(
     invokeId: string,
-    complete: import('../plugins/plugin-commands').PluginCommandComplete,
+    complete: PluginCommandComplete,
   ): Promise<void>;
   /**
    * Sets the cause chain inherited by subsequent host commands until cleared.
    */
   setActiveCauseChain?(causeChain: readonly string[]): void;
-  requestInputCapture?(input: import('../shared/plugin-input-capture').PluginInputCaptureOptions): Promise<{
+  requestInputCapture?(input: PluginInputCaptureOptions): Promise<{
     sessionId: string;
   }>;
   releaseInputCapture?(sessionId: string): void;
   waitForInputCaptureEvent?(
     sessionId: string,
-  ): Promise<import('../shared/plugin-input-capture').PluginInputCaptureEvent | null>;
+  ): Promise<PluginInputCaptureEvent | null>;
 }
 
 export interface QuickJsSandboxPrototypeLimits {
@@ -642,23 +663,6 @@ function newQuickJsJsonValue(context: QuickJSContext, value: unknown): QuickJSHa
   }
 }
 
-function scriptExtractedMetadataResult(value: unknown): unknown {
-  if (!value || typeof value !== 'object') return value;
-  const wrapper = value as Record<string, unknown>;
-  const payload = wrapper.result && typeof wrapper.result === 'object'
-    ? wrapper.result as Record<string, unknown>
-    : wrapper;
-  if (typeof payload.assetId !== 'string') return value;
-  return {
-    assetId: payload.assetId,
-    status: payload.status === 'pending' || payload.status === 'failed' || payload.status === 'missing'
-      ? payload.status
-      : 'ready',
-    metadata: payload.metadata ?? null,
-    errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : null,
-  };
-}
-
 async function waitForGuestPromise(
   context: QuickJSContext,
   promiseHandle: QuickJSHandle,
@@ -988,7 +992,7 @@ export async function runQuickJsSandboxPrototype(
       const respond = context.newFunction('__respond', (invokeIdHandle, decisionHandle) => createDeferredHostCall(
         host.respondHookDecision!(
           String(context.dump(invokeIdHandle)),
-          context.dump(decisionHandle) as import('../plugins/plugin-hooks').PluginHookDecision,
+          context.dump(decisionHandle) as PluginHookDecision,
         ),
         () => context.undefined,
       ));
@@ -1065,7 +1069,7 @@ export async function runQuickJsSandboxPrototype(
               jobId?: unknown;
               reason?: unknown;
               retryInput?: Record<string, unknown>;
-              checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+              checkpoint?: PluginJobCheckpoint;
                 }
               : {};
             return createDeferredHostCall(
@@ -1120,7 +1124,7 @@ export async function runQuickJsSandboxPrototype(
           const respondJob = context.newFunction('__respond', (jobIdHandle, completeHandle) => createDeferredHostCall(
             host.respondJobComplete!(
               String(context.dump(jobIdHandle)),
-              context.dump(completeHandle) as import('../plugins/plugin-jobs').PluginJobComplete,
+              context.dump(completeHandle) as PluginJobComplete,
             ),
             () => context.undefined,
           ));
@@ -1149,7 +1153,7 @@ export async function runQuickJsSandboxPrototype(
       const respondProvider = context.newFunction('__respond', (invokeIdHandle, resultHandle) => createDeferredHostCall(
         host.respondProviderComplete!(
           String(context.dump(invokeIdHandle)),
-          context.dump(resultHandle) as import('../plugins/plugin-providers').PluginProviderBatchResult,
+          context.dump(resultHandle) as PluginProviderBatchResult,
         ),
         () => context.undefined,
       ));
@@ -1171,7 +1175,7 @@ export async function runQuickJsSandboxPrototype(
         nextSearchEvent.dispose();
         const respondSearchChunk = context.newFunction('__respondSearchChunk', (chunkHandle) => createDeferredHostCall(
           host.respondSearchChunk!(
-            context.dump(chunkHandle) as import('../plugins/plugin-search').PluginSearchChunk,
+            context.dump(chunkHandle) as PluginSearchChunk,
           ),
           () => context.undefined,
         ));
@@ -1179,7 +1183,7 @@ export async function runQuickJsSandboxPrototype(
         respondSearchChunk.dispose();
         const respondSearchComplete = context.newFunction('__respondSearchComplete', (completeHandle) => createDeferredHostCall(
           host.respondSearchComplete!(
-            context.dump(completeHandle) as import('../plugins/plugin-search').PluginSearchComplete,
+            context.dump(completeHandle) as PluginSearchComplete,
           ),
           () => context.undefined,
         ));
@@ -1200,7 +1204,7 @@ export async function runQuickJsSandboxPrototype(
       const respondCommand = context.newFunction('__respond', (invokeIdHandle, completeHandle) => createDeferredHostCall(
         host.respondCommandComplete!(
           String(context.dump(invokeIdHandle)),
-          context.dump(completeHandle) as import('../plugins/plugin-commands').PluginCommandComplete,
+            context.dump(completeHandle) as PluginCommandComplete,
         ),
         () => context.undefined,
       ));
@@ -1294,7 +1298,7 @@ export async function runQuickJsSandboxPrototype(
     ) {
       const input = context.newObject();
       const start = context.newFunction('__start', (optionsHandle) => createDeferredHostCall(
-        host.requestInputCapture!(context.dump(optionsHandle) as import('../shared/plugin-input-capture').PluginInputCaptureOptions),
+        host.requestInputCapture!(context.dump(optionsHandle) as PluginInputCaptureOptions),
         (value) => newQuickJsJsonValue(context, value),
       ));
       const release = context.newFunction('__release', (sessionIdHandle) => {

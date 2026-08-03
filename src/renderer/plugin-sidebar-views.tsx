@@ -25,12 +25,10 @@ export function usePluginSidebarViews(
   refreshKey: string | null,
 ): PluginSidebarViewDescriptor[] {
   const [items, setItems] = useState<PluginSidebarViewDescriptor[]>([]);
+  const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
 
   useEffect(() => {
-    if (!enabled || pluginApi === undefined || libraryId === undefined) {
-      setItems([]);
-      return;
-    }
+    if (!shouldLoad || pluginApi === undefined || libraryId === undefined) return;
     let cancelled = false;
     void pluginApi.listPluginContributions({
       libraryId,
@@ -48,9 +46,9 @@ export function usePluginSidebarViews(
     return () => {
       cancelled = true;
     };
-  }, [enabled, libraryId, pluginApi, refreshKey]);
+  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
 
-  return items;
+  return shouldLoad ? items : [];
 }
 
 export function PluginSidebarViewPanel({

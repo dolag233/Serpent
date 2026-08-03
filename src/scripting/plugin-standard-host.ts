@@ -37,6 +37,7 @@ import type {
   PluginInputCaptureEvent,
   PluginInputCaptureOptions,
 } from '../shared/plugin-input-capture';
+import type { PluginJobCheckpoint } from '../plugins/plugin-jobs';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
@@ -426,7 +427,7 @@ export function createPluginStandardHostHandler(options: {
       action: 'pause' | 'resume' | 'cancel' | 'retry';
       reason?: string;
       retryInput?: Record<string, unknown>;
-      checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+      checkpoint?: PluginJobCheckpoint;
       targetLibraryId?: string;
     }): Promise<unknown> => new Promise((resolve, reject) => {
       const current = instances.get(request.instanceId);

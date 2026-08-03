@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 const require = createRequire(path.resolve('package.json'));
 
@@ -15,6 +15,60 @@ export function resolveElectronExecutablePath(): string {
   }
 
   return executablePath;
+}
+
+/** Locate a browse card by its stable filename title, independent of caption formatting. */
+export function assetCard(window: Page, displayName: string): Locator {
+  const escaped = displayName.replaceAll('"', '\\"');
+  return window.locator(`.asset-card[title="${escaped}"]`);
+}
+
+/** Run the E2E-selected file import through the typed preload contract. */
+export async function importFilesThroughBridge(
+  window: Page,
+  targetFolderName?: string,
+): Promise<void> {
+  await window.evaluate(async (folderName) => {
+    interface Result<T> {
+      ok: boolean;
+      value?: T;
+      error?: { code: string; message?: string };
+    }
+    type Folder = { folderId: string; name: string };
+    type LibraryApi = {
+      listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+      listFolders(input: { libraryId: string }): Promise<Result<Folder[]>>;
+      importFiles(input: {
+        libraryId: string;
+        targetFolderId?: string;
+      }): Promise<Result<{ assets: unknown[] }>>;
+    };
+    const bridge = globalThis as typeof globalThis & {
+      serpent: { library: LibraryApi };
+    };
+    const opened = await bridge.serpent.library.listOpen();
+    const libraryId = opened.value?.[0]?.libraryId;
+    if (!opened.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    if (!folders.ok) throw new Error('Could not list folders.');
+    const targetFolderId = folderName === undefined
+      ? undefined
+      : folders.value?.find((folder) => folder.name === folderName)?.folderId;
+    if (folderName !== undefined && !targetFolderId) {
+      throw new Error(`Expected folder ${folderName}.`);
+    }
+    const imported = await bridge.serpent.library.importFiles({
+      libraryId,
+      ...(targetFolderId ? { targetFolderId } : {}),
+    });
+    if (!imported.ok || !imported.value) {
+      throw new Error(imported.error?.message ?? 'Could not import files.');
+    }
+  }, targetFolderName);
+  // A direct preload call bypasses the renderer's import-reveal refresh. The
+  // normal refresh command makes the helper observe the same complete browse
+  // scope that a user sees after the import dialog closes.
+  await window.getByRole('button', { name: '刷新磁盘变化' }).click();
 }
 
 /**

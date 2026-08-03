@@ -4,7 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  assetCard,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -224,7 +227,7 @@ test("asset cards can be dropped onto folder cards in the browse canvas", async 
       "父文件夹",
     );
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
-    await expect(window.getByRole("button", { name: /move-me\.txt/i })).toBeVisible();
+    await expect(assetCard(window, "move-me.txt")).toBeVisible();
 
     const parentMenu = await openFolderContextMenu(window, "父文件夹");
     await parentMenu.getByRole("menuitem", { name: "新建子文件夹" }).click();
@@ -236,13 +239,13 @@ test("asset cards can be dropped onto folder cards in the browse canvas", async 
     const folderCard = window
       .locator(".folder-card")
       .filter({ hasText: "子文件夹" });
-    const assetCard = window.getByRole("button", { name: /move-me\.txt/i });
+    const moveAssetCard = assetCard(window, "move-me.txt");
     await expect(folderCard).toBeVisible();
-    await assetCard.dragTo(folderCard);
+    await moveAssetCard.dragTo(folderCard);
     await expect(window.locator(".workspace-notice")).toContainText(
       "已移动 1 项资产",
     );
-    await expect(assetCard).toHaveCount(0);
+    await expect(moveAssetCard).toHaveCount(0);
     expect(
       existsSync(
         path.join(libraryPath, "Assets", "父文件夹", "子文件夹", "move-me.txt"),

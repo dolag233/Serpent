@@ -16,3 +16,5 @@ async function setup(serpent) {
     await serpent.storage.set("input-capture-count", count);
   }
 }
+
+void setup;

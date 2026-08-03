@@ -493,6 +493,54 @@ describe('LibraryService lifecycle', () => {
     verification.close();
   });
 
+  it('normalizes libraries created with the pre-merge plugin migration history', () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({
+      displayName: 'Legacy plugin migration history',
+      selectedParentPath: root,
+    });
+    creatingService.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.exec(`
+      DROP TABLE explicit_ignored_paths;
+      DROP TABLE gitignore_ignored_paths;
+      DELETE FROM schema_migrations WHERE version >= 24;
+      PRAGMA user_version = 28;
+    `);
+    const legacyChecksums = [
+      '7dc6f9927d613b15fca8393a9b17c2f88e05eb38ddaa9367c0994f03ea5d1a83',
+      'b7af3b7d40699ce2961689b18eebbbb8fa89246d3893ab19b558f4644830e7b0',
+      '934c70e0de6b38a5119bccbb1c678d601dac9b16224c2b5728887047d70add47',
+      '639e696480e3f3910d91674c6ac7dd3f7027aed06eecd919545e8c54a528a397',
+      '6e218ba9992d63df6a2b9e10e115a4329fb7bd33480b999d099379be5f3b7d46',
+    ];
+    const insertMigration = database.prepare(
+      'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+    );
+    legacyChecksums.forEach((checksum, index) => {
+      insertMigration.run(24 + index, checksum, new Date().toISOString());
+    });
+    database.close();
+
+    const service = newService();
+    expect(service.openLibrary(created.libraryPath)).toMatchObject({
+      libraryId: created.libraryId,
+    });
+
+    const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verification.pragma('user_version')).toEqual([{ user_version: 31 }]);
+    expect(verification.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name IN ('explicit_ignored_paths', 'gitignore_ignored_paths')`,
+    ).all()).toHaveLength(2);
+    expect(verification.prepare(
+      'SELECT version FROM schema_migrations ORDER BY version',
+    ).all()).toHaveLength(31);
+    verification.close();
+  });
+
   it('serializes overlapping v23-to-v24 migrations from independent Electron processes', async () => {
     const root = temporaryRoot();
     const creatingService = newService();

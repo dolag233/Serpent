@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   APP_SETTINGS_CATEGORIES,
@@ -30,11 +30,8 @@ export function AppSettingsNavigation({
     () => activePluginSettingsId !== null,
   );
 
-  useEffect(() => {
-    if (activePluginSettingsId !== null) {
-      setPluginSettingsExpanded(true);
-    }
-  }, [activePluginSettingsId]);
+  const isPluginSettingsExpanded =
+    pluginSettingsExpanded || activePluginSettingsId !== null;
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     if (activeCategory === null) return;
@@ -87,7 +84,7 @@ export function AppSettingsNavigation({
 
       <div className="app-settings-nav-plugin-settings">
         <button
-          aria-expanded={pluginSettingsExpanded}
+          aria-expanded={isPluginSettingsExpanded}
           className="app-settings-nav-item app-settings-nav-plugin-settings-toggle"
           onClick={() => setPluginSettingsExpanded((value) => !value)}
           type="button"
@@ -96,12 +93,12 @@ export function AppSettingsNavigation({
           <span>{t("settings.categoryPluginSettings")}</span>
           <span
             aria-hidden="true"
-            className={`app-settings-nav-chevron${pluginSettingsExpanded ? " is-expanded" : ""}`}
+            className={`app-settings-nav-chevron${isPluginSettingsExpanded ? " is-expanded" : ""}`}
           >
             <Icon name="chevron-right" size={14} />
           </span>
         </button>
-        {pluginSettingsExpanded ? (
+        {isPluginSettingsExpanded ? (
           <div className="app-settings-nav-plugin-settings-list" role="list">
             {pluginSettingsEntries.length === 0 ? (
               <p className="app-settings-nav-plugin-settings-empty">

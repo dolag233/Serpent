@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { assetCard, resolveElectronExecutablePath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -64,7 +64,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
-    await window.getByRole('button', { name: /a\.png/i }).click({ button: 'right' });
+    await assetCard(window, 'a.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
     await expect(window.getByRole('heading', { name: '删除链接资产' })).toBeVisible();
     const deleteSource = window.getByLabel('同时删除磁盘源文件');
@@ -73,7 +73,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await expect(window.getByRole('button', { name: '移入系统回收站并移除' })).toBeVisible();
     await window.getByRole('dialog').locator('.secondary-button').click();
 
-    await window.getByRole('button', { name: /delete-me\.png/i }).click({ button: 'right' });
+    await assetCard(window, 'delete-me.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
     await window.getByLabel('同时删除磁盘源文件').check();
     await window.getByRole('button', { name: '移入系统回收站并移除' }).click();

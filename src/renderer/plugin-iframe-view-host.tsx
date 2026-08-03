@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 import {
   buildPluginUiThemeHostMessage,
@@ -78,13 +78,8 @@ export function PluginIframeViewHost({
   const { resolved } = useTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
-  // Defer src until the message listener is attached so plugin-ui.ready is not dropped.
-  const [frameSrc, setFrameSrc] = useState<string | undefined>(undefined);
-
-  useEffect(() => {
-    readyRef.current = false;
-    setFrameSrc(undefined);
-  }, [view.id, view.url]);
+  // The contribution id is part of the iframe key, so changing a view creates
+  // a fresh document. The message effect cleanup resets the ready handshake.
 
   useEffect(() => {
     if (!readyRef.current) return;
@@ -185,11 +180,9 @@ export function PluginIframeViewHost({
       }
     };
     window.addEventListener('message', onMessage);
-    setFrameSrc(view.url);
     return () => {
       window.removeEventListener('message', onMessage);
       readyRef.current = false;
-      setFrameSrc(undefined);
     };
   }, [libraryId, pluginApi, resolved, view]);
 
@@ -199,7 +192,7 @@ export function PluginIframeViewHost({
       key={view.id}
       ref={frameRef}
       sandbox="allow-scripts"
-      src={frameSrc}
+      src={view.url}
       title={title ?? view.title}
     />
   );

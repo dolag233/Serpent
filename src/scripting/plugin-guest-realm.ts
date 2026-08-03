@@ -8,6 +8,20 @@ import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
 import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
 import type { PluginJobComplete, PluginJobRecord } from '../plugins/plugin-jobs';
 import type { PluginCommandComplete, PluginCommandInvoke } from '../plugins/plugin-commands';
+import type { PluginJobCheckpoint } from '../plugins/plugin-jobs';
+import type {
+  PluginProviderBatchResult,
+  PluginProviderInvoke,
+} from '../plugins/plugin-providers';
+import type {
+  PluginSearchChunk,
+  PluginSearchComplete,
+  PluginSearchEvent,
+} from '../plugins/plugin-search';
+import type {
+  PluginInputCaptureEvent,
+  PluginInputCaptureOptions,
+} from '../shared/plugin-input-capture';
 
 /**
  * Standard plugin entries may use ESM `export` forms or plain function
@@ -410,23 +424,23 @@ export async function runPluginGuestActivate(input: {
   respondHookDecision?: (invokeId: string, decision: PluginHookDecision) => Promise<void>;
   waitForJobInvoke?: () => Promise<PluginJobRecord | null>;
   respondJobComplete?: (jobId: string, complete: PluginJobComplete) => Promise<void>;
-  waitForProviderInvoke?: () => Promise<import('../plugins/plugin-providers').PluginProviderInvoke | null>;
+  waitForProviderInvoke?: () => Promise<PluginProviderInvoke | null>;
   respondProviderComplete?: (
     invokeId: string,
-    result: import('../plugins/plugin-providers').PluginProviderBatchResult,
+    result: PluginProviderBatchResult,
   ) => Promise<void>;
-  waitForSearchEvent?: () => Promise<import('../plugins/plugin-search').PluginSearchEvent | null>;
-  respondSearchChunk?: (chunk: import('../plugins/plugin-search').PluginSearchChunk) => Promise<void>;
-  respondSearchComplete?: (complete: import('../plugins/plugin-search').PluginSearchComplete) => Promise<void>;
+  waitForSearchEvent?: () => Promise<PluginSearchEvent | null>;
+  respondSearchChunk?: (chunk: PluginSearchChunk) => Promise<void>;
+  respondSearchComplete?: (complete: PluginSearchComplete) => Promise<void>;
   waitForCommandInvoke?: () => Promise<PluginCommandInvoke | null>;
   respondCommandComplete?: (invokeId: string, complete: PluginCommandComplete) => Promise<void>;
   requestInputCapture?: (
-    input: import('../shared/plugin-input-capture').PluginInputCaptureOptions,
+    input: PluginInputCaptureOptions,
   ) => Promise<{ sessionId: string }>;
   releaseInputCapture?: (sessionId: string) => void;
   waitForInputCaptureEvent?: (
     sessionId: string,
-  ) => Promise<import('../shared/plugin-input-capture').PluginInputCaptureEvent | null>;
+  ) => Promise<PluginInputCaptureEvent | null>;
   enqueuePluginJob?: (input: {
     handlerId: string;
     payload: Record<string, unknown>;
@@ -447,7 +461,7 @@ export async function runPluginGuestActivate(input: {
     action: 'pause' | 'resume' | 'cancel' | 'retry';
     reason?: string;
     retryInput?: Record<string, unknown>;
-    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
+    checkpoint?: PluginJobCheckpoint;
     targetLibraryId?: string;
   }) => Promise<unknown>;
   isJobAborted?: (jobId: string) => boolean;

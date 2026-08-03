@@ -44,7 +44,10 @@ export function usePluginTrustPrompt(options: {
       setPending(null);
       return;
     }
-    if (suppressWhileSettingsOpen) return;
+    if (suppressWhileSettingsOpen) {
+      setPending(null);
+      return;
+    }
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     try {
@@ -67,8 +70,10 @@ export function usePluginTrustPrompt(options: {
   }, [api, libraryId, suppressWhileSettingsOpen]);
 
   useEffect(() => {
-    setPending(null);
-    void scan();
+    const timer = window.setTimeout(() => {
+      void scan();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [scan]);
 
   useEffect(() => {

@@ -26,12 +26,10 @@ export function usePluginSettingsPages(
   refreshKey: string | null,
 ): PluginSettingsPageDescriptor[] {
   const [items, setItems] = useState<PluginSettingsPageDescriptor[]>([]);
+  const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
 
   useEffect(() => {
-    if (!enabled || pluginApi === undefined || libraryId === undefined) {
-      setItems([]);
-      return;
-    }
+    if (!shouldLoad || pluginApi === undefined || libraryId === undefined) return;
     let cancelled = false;
     void pluginApi.listPluginContributions({
       libraryId,
@@ -49,9 +47,9 @@ export function usePluginSettingsPages(
     return () => {
       cancelled = true;
     };
-  }, [enabled, libraryId, pluginApi, refreshKey]);
+  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
 
-  return items;
+  return shouldLoad ? items : [];
 }
 
 export function PluginSettingsPages({
@@ -68,15 +66,9 @@ export function PluginSettingsPages({
   const t = useT();
   const items = usePluginSettingsPages(pluginApi, libraryId, !disabled, refreshKey);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const active = useMemo(
-    () => items.find((item) => item.id === activeId) ?? items[0],
-    [activeId, items],
-  );
-
-  useEffect(() => {
-    if (activeId !== null && !items.some((item) => item.id === activeId)) {
-      setActiveId(null);
-    }
+  const active = useMemo(() => {
+    const selectedId = items.some((item) => item.id === activeId) ? activeId : null;
+    return items.find((item) => item.id === selectedId) ?? items[0];
   }, [activeId, items]);
 
   if (items.length === 0) return null;

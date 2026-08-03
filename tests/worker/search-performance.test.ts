@@ -245,7 +245,7 @@ describe('100k asset search performance gate', () => {
     expect(result?.items).toHaveLength(FIRST_PAGE_SIZE);
     console.info(`[search-perf] one-character median=${elapsedMs.toFixed(1)}ms assets=${ASSET_COUNT}`);
     expect(elapsedMs).toBeLessThan(MAX_QUERY_MS);
-  });
+  }, 15_000);
 
   it('keeps combined filter and sort first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;

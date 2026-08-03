@@ -81,6 +81,11 @@ async function createAndImport(
   await expect(window.locator(".asset-card")).toHaveCount(expectedCardCount, {
     timeout: 30_000,
   });
+  // Import reveal intentionally selects the imported set. Each selection
+  // contract below starts from an empty selection so the gesture under test is
+  // the only source of selected cards.
+  await window.keyboard.press("Escape");
+  await expect.poll(() => selectedCount(window)).toBe(0);
 }
 
 /** Count selected asset cards via .is-selected CSS class. */

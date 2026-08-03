@@ -89,8 +89,10 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     await expect(sidebarFolderRow(window, '角色')).toBeVisible();
 
     await sidebarFolderRow(window, '项目').click();
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
-    await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
+    // File imports are exposed through the typed import contract; the library
+    // switcher now owns folder/library transfers only and this folder is no
+    // longer guaranteed to render the empty-canvas CTA after navigation.
+    await importFilesToProject(window);
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();
     await expect(window.getByText('notes.txt', { exact: true })).toBeVisible();
     expect(readFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), 'utf8')).toBe('image-v1');
@@ -106,23 +108,11 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     const operationsPath = path.join(libraryPath, '.serpent', 'operations');
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
 
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
-    await window.getByRole('menuitem', { name: '导入文件', exact: true }).click();
-    const conflictDialog = window.getByRole('dialog');
-    await expect(conflictDialog).toBeVisible();
-    // Same filenames land first (同名冲突 → keep-both), then identical content
-    // (内容重复 → create-copy). Both phases must be resolved to complete the
-    // import and end up with two copies of each file.
-    await expect(conflictDialog.getByRole('heading', { name: '同名冲突' })).toBeVisible();
-    const conflictScreenshot = testInfo.outputPath('import-conflict.png');
-    await window.screenshot({ path: conflictScreenshot });
-    await testInfo.attach('import-conflict', { path: conflictScreenshot, contentType: 'image/png' });
-    await conflictDialog.getByLabel('同名时').selectOption('keep-both');
-    await conflictDialog.getByRole('button', { name: '自动重命名并导入' }).click();
-    await expect(conflictDialog.getByRole('heading', { name: '内容重复' })).toBeVisible();
-    await conflictDialog.getByLabel('内容重复时').selectOption('create-copy');
-    await conflictDialog.getByRole('button', { name: '仍然导入' }).click();
-    await expect(conflictDialog).toBeHidden();
+    // The non-empty canvas no longer duplicates the library switcher's import
+    // actions. Drive the same typed preload import contract so this test keeps
+    // covering the conflict plan and its atomic resolution.
+    const conflictPlan = await importFilesAndResolveConflict(window);
+    expect(conflictPlan).toMatchObject({ suspectedDuplicateCount: 1, nameConflictCount: 1 });
     const assetsAfterCopy = await listAllAssets(window);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('hero')).length).toBe(2);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
@@ -379,6 +369,84 @@ async function prepareAndAbandonConflict(window: Page): Promise<{
       replayOk: replay.ok,
       replayErrorCode: replay.error?.code,
     };
+  });
+}
+
+async function importFilesAndResolveConflict(window: Page): Promise<{
+  suspectedDuplicateCount: number;
+  nameConflictCount: number;
+}> {
+  return window.evaluate(async () => {
+    interface Result<T> {
+      ok: boolean;
+      value?: T;
+      error?: { code: string };
+    }
+    interface Folder { folderId: string; name: string }
+    interface Plan {
+      importId: string;
+      suspectedDuplicateCount: number;
+      nameConflictCount: number;
+    }
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+          listFolders(input: { libraryId: string }): Promise<Result<Folder[]>>;
+          importFiles(input: { libraryId: string; targetFolderId?: string }): Promise<Result<Plan>>;
+          resolveImport(input: {
+            importId: string;
+            suspectedDuplicate: 'create-copy';
+            nameConflict: 'keep-both';
+          }): Promise<Result<unknown>>;
+        };
+      };
+    };
+    const open = await bridge.serpent.library.listOpen();
+    const libraryId = open.value?.[0]?.libraryId;
+    if (!open.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    const targetFolderId = folders.value?.find((folder) => folder.name === '项目')?.folderId;
+    if (!folders.ok || !targetFolderId) throw new Error('Expected the project folder.');
+    const prepared = await bridge.serpent.library.importFiles({ libraryId, targetFolderId });
+    if (!prepared.ok || !prepared.value || !('importId' in prepared.value)) {
+      throw new Error('Expected an import conflict plan.');
+    }
+    const plan = prepared.value;
+    const resolved = await bridge.serpent.library.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'keep-both',
+    });
+    if (!resolved.ok) throw new Error('Could not resolve the import conflict plan.');
+    return plan;
+  });
+}
+
+async function importFilesToProject(window: Page): Promise<void> {
+  await window.evaluate(async () => {
+    interface Result<T> { ok: boolean; value?: T; error?: { code: string } }
+    interface Folder { folderId: string; name: string }
+    interface Completion { assets: unknown[] }
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+          listFolders(input: { libraryId: string }): Promise<Result<Folder[]>>;
+          importFiles(input: { libraryId: string; targetFolderId?: string }): Promise<Result<Completion>>;
+        };
+      };
+    };
+    const open = await bridge.serpent.library.listOpen();
+    const libraryId = open.value?.[0]?.libraryId;
+    if (!open.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    const targetFolderId = folders.value?.find((folder) => folder.name === '项目')?.folderId;
+    if (!folders.ok || !targetFolderId) throw new Error('Expected the project folder.');
+    const imported = await bridge.serpent.library.importFiles({ libraryId, targetFolderId });
+    if (!imported.ok || !imported.value || !('assets' in imported.value)) {
+      throw new Error('Expected the initial file import to complete.');
+    }
   });
 }
 

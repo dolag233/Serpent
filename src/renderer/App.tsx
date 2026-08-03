@@ -510,23 +510,37 @@ function MasonryColumns({
   cardSize,
   children,
   showCaption,
+  suspendScrollRestoration = false,
 }: {
   assets: AssetSummary[];
   cardSize: number;
   children: ReactNode[];
   showCaption: boolean;
+  suspendScrollRestoration?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const availableWidthRef = useRef(0);
   const restoreFrameRef = useRef<number | null>(null);
   const scrollSnapshotRef = useRef<number | null>(null);
+  const suspendScrollRestorationRef = useRef(suspendScrollRestoration);
+
+  useLayoutEffect(() => {
+    suspendScrollRestorationRef.current = suspendScrollRestoration;
+    if (!suspendScrollRestoration) return;
+    if (restoreFrameRef.current !== null) {
+      cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = null;
+    }
+    scrollSnapshotRef.current = null;
+  }, [suspendScrollRestoration]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
     if (!element) return;
     const canvas = () => element.closest<HTMLElement>(".workspace-canvas");
     const scheduleRawRestore = () => {
+      if (suspendScrollRestorationRef.current) return;
       if (restoreFrameRef.current !== null) return;
       const settle = (remaining: number) => {
         const root = canvas();
@@ -550,6 +564,16 @@ function MasonryColumns({
     };
     const updateWidth = () => {
       const width = element.clientWidth;
+      if (suspendScrollRestorationRef.current) {
+        availableWidthRef.current = width;
+        scrollSnapshotRef.current = null;
+        if (restoreFrameRef.current !== null) {
+          cancelAnimationFrame(restoreFrameRef.current);
+          restoreFrameRef.current = null;
+        }
+        setAvailableWidth(width);
+        return;
+      }
       const widthChanged = width !== availableWidthRef.current;
       if (widthChanged) {
         availableWidthRef.current = width;
@@ -1064,11 +1088,6 @@ function AppInner() {
     [activePluginSidebarViewId, pluginSidebarViews],
   );
   const showPluginSidebarView = activePluginSidebarView !== undefined;
-  useEffect(() => {
-    if (activePluginSidebarViewId !== null && activePluginSidebarView === undefined) {
-      setActivePluginSidebarViewId(null);
-    }
-  }, [activePluginSidebarView, activePluginSidebarViewId]);
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
@@ -1275,6 +1294,7 @@ function AppInner() {
   // callback (which is created once and does not close over fresh state)
   // to skip the reflow-anchor logic while the viewer hides the canvas.
   const previewAssetRef = useRef<AssetSummary | null>(null);
+  const previewRestoringRef = useRef(false);
   useLayoutEffect(() => {
     previewAssetRef.current = previewAsset;
   }, [previewAsset]);
@@ -1922,7 +1942,6 @@ function AppInner() {
     return showTrash ? trashedAssets.length : visibleAssets.length;
   }, [
     showTagManagement,
-    showPluginSidebarView,
     tags.length,
     searchTotal,
     showTrash,
@@ -2480,7 +2499,11 @@ function AppInner() {
         lastWidth = width;
         return;
       }
-      if (width === lastWidth || previewAssetRef.current) {
+      if (
+        width === lastWidth ||
+        previewAssetRef.current ||
+        previewRestoringRef.current
+      ) {
         lastWidth = width;
         return;
       }
@@ -2534,6 +2557,22 @@ function AppInner() {
     if (host) observer.observe(host);
     return () => observer.disconnect();
   }, []);
+
+  useLayoutEffect(() => {
+    if (!previewAsset && !previewRestoring) return;
+    if (cardSizeRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cardSizeRestoreFrameRef.current = null;
+    }
+    if (reflowRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      reflowRestoreFrameRef.current = null;
+    }
+    cardResizeAnchorRef.current = null;
+    cardResizeScrollSnapshotRef.current = null;
+    reflowAnchorRef.current = null;
+    reflowScrollSnapshotRef.current = null;
+  }, [previewAsset, previewRestoring]);
 
   useEffect(() => {
     saveCanvasPreferences(canvasPrefs);
@@ -2634,7 +2673,23 @@ function AppInner() {
     }
     previewCloseGenerationRef.current += 1;
     closingPreviewRef.current = null;
+    previewRestoringRef.current = false;
     setPreviewRestoring(false);
+    // A card-size or panel reflow may still have an anchor-restoration frame
+    // queued when the user opens the viewer immediately after resizing. That
+    // stale callback must not overwrite the viewer-close snapshot later.
+    if (cardSizeRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cardSizeRestoreFrameRef.current = null;
+    }
+    if (reflowRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      reflowRestoreFrameRef.current = null;
+    }
+    cardResizeAnchorRef.current = null;
+    cardResizeScrollSnapshotRef.current = null;
+    reflowAnchorRef.current = null;
+    reflowScrollSnapshotRef.current = null;
     previewFocusReturnRef.current = asset.assetId;
     const canvas = workspaceCanvasRef.current;
     if (canvas) {
@@ -2692,6 +2747,7 @@ function AppInner() {
     if (closingPreviewRef.current === closingAsset.assetId) return;
     const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
+    previewRestoringRef.current = restoreBrowsePosition;
     setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
@@ -2734,13 +2790,66 @@ function AppInner() {
           );
           canvas.scrollTo({ left: target.left, top: target.top });
         }
-        canvas
-          ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
-          ?.focus({ preventScroll: true });
         if (closeGeneration === previewCloseGenerationRef.current) {
+          previewRestoringRef.current = false;
           setPreviewRestoring(false);
+          // The restoring class intentionally hides and disables the canvas.
+          // Wait several frames for layout/reflow restoration to settle before
+          // returning focus; focusing while the ancestor is hidden is ignored
+          // by the browser and leaves keyboard users on <body>. Re-checking
+          // each frame also prevents a pending card-size/masonry reflow from
+          // moving the focused card out of view immediately after close.
+          const settleRestoredFocus = (remaining: number): void => {
+            if (closeGeneration !== previewCloseGenerationRef.current) return;
+            const currentCanvas = workspaceCanvasRef.current;
+            const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
+              `[data-asset-id="${assetId ?? ""}"]`,
+            );
+            if (currentCanvas && restoredFocusTarget) {
+              const canvasRect = currentCanvas.getBoundingClientRect();
+              const cardRect = restoredFocusTarget.getBoundingClientRect();
+              const cardIsVisible =
+                cardRect.bottom > canvasRect.top &&
+                cardRect.top < canvasRect.bottom &&
+                cardRect.right > canvasRect.left &&
+                cardRect.left < canvasRect.right;
+              if (!cardIsVisible) {
+                const cardTop =
+                  currentCanvas.scrollTop + cardRect.top - canvasRect.top;
+                const cardBottom = cardTop + cardRect.height;
+                const nextTop =
+                  cardTop < currentCanvas.scrollTop
+                    ? cardTop
+                    : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
+                      ? cardBottom - currentCanvas.clientHeight
+                      : currentCanvas.scrollTop;
+                currentCanvas.scrollTo({
+                  left: Math.max(
+                    0,
+                    currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
+                  ),
+                  top: Math.max(0, nextTop),
+                });
+              }
+              if (remaining <= 0) {
+                restoredFocusTarget.focus({ preventScroll: true });
+                previewRestoreFrameRef.current = null;
+                return;
+              }
+            } else if (!currentCanvas || remaining <= 0) {
+              previewRestoreFrameRef.current = null;
+              return;
+            }
+            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+              settleRestoredFocus(remaining - 1),
+            );
+          };
+          previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+            settleRestoredFocus(12),
+          );
+        } else {
+          previewRestoreFrameRef.current = null;
         }
-        previewRestoreFrameRef.current = null;
       });
     });
     if (!restoreBrowsePosition) setPreviewRestoring(false);
@@ -9446,6 +9555,9 @@ function AppInner() {
                               canvasPrefs.fields.name ||
                               canvasPrefs.fields.size ||
                               canvasPrefs.fields.date
+                            }
+                            suspendScrollRestoration={
+                              Boolean(previewAsset || previewRestoring)
                             }
                           >
                             {section.assets.map(renderAssetCard)}

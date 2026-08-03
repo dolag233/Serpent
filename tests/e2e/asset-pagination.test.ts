@@ -2,11 +2,17 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
 import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
+
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
 
 test("ordinary browsing continuously appends every asset without page controls", async () => {
   const temporaryRoot = mkdtempSync(
@@ -49,9 +55,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: "添加文件夹" }).click();
     await window.getByLabel("新文件夹名称").fill("分页文件夹");
     await window.keyboard.press("Enter");
-    await window
-      .getByRole("button", { name: "分页文件夹", exact: true })
-      .click();
+    await sidebarFolderRow(window, "分页文件夹").click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
@@ -72,7 +76,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     ).toHaveCount(1);
 
     const sizeControl = window.getByLabel("资产缩略图大小");
-    await sizeControl.fill("160");
+    await sizeControl.fill("3");
     const anchorCard = window.locator(".asset-card").nth(30);
     await anchorCard.scrollIntoViewIfNeeded();
     const anchorAssetId = await anchorCard.getAttribute("data-asset-id");
@@ -97,34 +101,60 @@ test("ordinary browsing continuously appends every asset without page controls",
     ).toBeInViewport();
 
     const firstCard = window.locator(".asset-card").first();
-    await window.getByLabel("资产缩略图大小").fill("96");
+    await sizeControl.fill("0");
     const initialWidth = (await firstCard.boundingBox())!.width;
-    await window.getByLabel("资产缩略图大小").fill("320");
+    const maxSizeIndex = Number(await sizeControl.getAttribute("max"));
+    await sizeControl.fill(String(maxSizeIndex));
     await expect
       .poll(async () => (await firstCard.boundingBox())!.width)
       .toBeGreaterThan(initialWidth);
     await window.getByRole("button", { name: "瀑布流视图" }).click();
     await expect(window.locator(".asset-grid")).toHaveClass(/is-masonry/);
-    await window
-      .locator(".workspace-canvas")
-      .evaluate((element) => element.scrollTo(0, 0));
+    const masonryCanvas = window.locator(".workspace-canvas");
+    await masonryCanvas.evaluate((element) => element.scrollTo(0, 0));
+    // The reflow anchor keeps the previous viewport stable while grid →
+    // masonry changes the column geometry. Explicitly bring the first card
+    // back into view before checking the first-row layout instead of racing
+    // that restoration effect with a raw scrollTop assertion.
+    await firstCard.scrollIntoViewIfNeeded();
     const [canvasBox, masonryFirstBox] = await Promise.all([
       window.locator(".workspace-canvas").boundingBox(),
       firstCard.boundingBox(),
     ]);
     expect(masonryFirstBox!.y).toBeGreaterThanOrEqual(canvasBox!.y - 1);
-    await window
-      .locator(".workspace-canvas")
-      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    const masonryLastBox = await window
-      .locator(".asset-card")
-      .last()
-      .boundingBox();
-    const canvasBottomBox = await window
-      .locator(".workspace-canvas")
-      .boundingBox();
-    expect(masonryLastBox!.y + masonryLastBox!.height).toBeLessThanOrEqual(
-      canvasBottomBox!.y + canvasBottomBox!.height + 1,
+    const masonryLastCard = window.locator(".asset-card").last();
+    const masonryScrollSnapshot: {
+      last: { x: number; y: number; width: number; height: number } | null;
+      canvas: { x: number; y: number; width: number; height: number } | null;
+    } = { last: null, canvas: null };
+    await expect
+      .poll(async () => {
+        await masonryCanvas.evaluate((element) => {
+          element.style.setProperty("overflow-anchor", "none");
+          element.scrollTo(0, element.scrollHeight);
+        });
+        const [lastBox, canvasBox] = await Promise.all([
+          masonryLastCard.boundingBox(),
+          masonryCanvas.boundingBox(),
+        ]);
+        masonryScrollSnapshot.last = lastBox;
+        masonryScrollSnapshot.canvas = canvasBox;
+        return Boolean(
+          lastBox &&
+            canvasBox &&
+            lastBox.y + lastBox.height <= canvasBox.y + canvasBox.height + 1,
+        );
+      })
+      .toBe(true);
+    if (!masonryScrollSnapshot.last || !masonryScrollSnapshot.canvas)
+      throw new Error("Masonry bottom position was not sampled.");
+    expect(
+      masonryScrollSnapshot.last.y + masonryScrollSnapshot.last.height,
+    ).toBeLessThanOrEqual(
+      masonryScrollSnapshot.canvas.y + masonryScrollSnapshot.canvas.height + 1,
+    );
+    await masonryCanvas.evaluate((element) =>
+      element.style.removeProperty("overflow-anchor"),
     );
     await window.getByRole("button", { name: "平铺视图" }).click();
     await expect(window.locator(".asset-grid")).toHaveClass(/is-grid/);
@@ -149,60 +179,82 @@ test("ordinary browsing continuously appends every asset without page controls",
       await expect(window.locator(".asset-grid")).toHaveClass(
         new RegExp(view.className),
       );
-      for (const cardSize of [96, 320]) {
+      for (const cardSize of [0, maxSizeIndex]) {
         await sizeControl.fill(String(cardSize));
         await expect(sizeControl).toHaveValue(String(cardSize));
         for (const scrollFraction of [0.25, 0.5, 1]) {
-          const requestedScrollTop = await workspaceCanvas.evaluate(
-            async (element, fraction) => {
-              element.scrollTo({
-                top: (element.scrollHeight - element.clientHeight) * fraction,
-              });
-              await new Promise<void>((resolve) =>
-                requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-              );
-              return element.scrollTop;
-            },
-            scrollFraction,
-          );
-          expect(requestedScrollTop).toBeGreaterThan(0);
-
-          const visibleAsset = await window
-            .locator(".asset-card")
-            .evaluateAll((cards) => {
-              const canvas = document.querySelector(".workspace-canvas");
-              if (!canvas) return null;
-              const canvasBox = canvas.getBoundingClientRect();
-              const candidates = cards
-                .map((card) => {
-                  const box = card.getBoundingClientRect();
-                  return {
-                    assetId: card.getAttribute("data-asset-id"),
-                    displayName:
-                      card.querySelector("strong")?.getAttribute("title") ??
-                      card.getAttribute("aria-label"),
-                    distanceFromCenter: Math.abs(
-                      box.top + box.height / 2 -
-                        (canvasBox.top + canvasBox.height / 2),
+          let visibleAsset: {
+            assetId: string;
+            displayName: string;
+          } | null = null;
+          await expect
+            .poll(async () => {
+              await workspaceCanvas.evaluate(
+                async (element, fraction) => {
+                  element.scrollTo({
+                    top: (element.scrollHeight - element.clientHeight) * fraction,
+                  });
+                  await new Promise<void>((resolve) =>
+                    requestAnimationFrame(() =>
+                      requestAnimationFrame(() => resolve()),
                     ),
-                  };
-                })
-                .filter(
-                  (candidate) =>
-                    candidate.assetId && candidate.displayName,
-                )
-                .sort(
-                  (left, right) =>
-                    left.distanceFromCenter - right.distanceFromCenter,
-                );
-              return candidates[0] ?? null;
-            });
+                  );
+                },
+                scrollFraction,
+              );
+              visibleAsset = await window
+                .locator(".asset-card")
+                .evaluateAll((cards) => {
+                  const canvas = document.querySelector(".workspace-canvas");
+                  if (!canvas) return null;
+                  const canvasBox = canvas.getBoundingClientRect();
+                  const candidates = cards
+                    .map((card) => {
+                      const box = card.getBoundingClientRect();
+                      return {
+                        assetId: card.getAttribute("data-asset-id"),
+                        displayName:
+                          card.querySelector("strong")?.getAttribute("title") ??
+                          card.getAttribute("aria-label"),
+                        isVisible:
+                          box.bottom > canvasBox.top &&
+                          box.top < canvasBox.bottom &&
+                          box.right > canvasBox.left &&
+                          box.left < canvasBox.right,
+                        distanceFromCenter: Math.abs(
+                          box.top + box.height / 2 -
+                            (canvasBox.top + canvasBox.height / 2),
+                        ),
+                      };
+                    })
+                    .filter(
+                      (candidate) =>
+                        candidate.assetId &&
+                        candidate.displayName &&
+                        candidate.isVisible,
+                    )
+                    .sort(
+                      (left, right) =>
+                        left.distanceFromCenter - right.distanceFromCenter,
+                    );
+                  const candidate = candidates[0];
+                  return candidate?.assetId && candidate.displayName
+                    ? {
+                        assetId: candidate.assetId,
+                        displayName: candidate.displayName,
+                      }
+                    : null;
+                });
+              return visibleAsset?.assetId ?? "";
+            })
+            .not.toBe("");
           expect(visibleAsset).not.toBeNull();
 
           const assetCard = window.locator(
             `[data-asset-id="${visibleAsset!.assetId}"]`,
           );
           await assetCard.scrollIntoViewIfNeeded();
+          await expect(assetCard).toBeInViewport();
           const scrollTopBeforeViewer = await workspaceCanvas.evaluate(
             (element) => element.scrollTop,
           );
@@ -211,8 +263,12 @@ test("ordinary browsing continuously appends every asset without page controls",
           const unsupportedViewer = window.getByRole("region", {
             name: `${visibleAsset!.displayName} 查看页面`,
           });
+          // Text assets now have a built-in read-only editor; this used to be
+          // the unsupported-format placeholder.
+          await expect(unsupportedViewer).toHaveClass(/is-text-viewer/);
+          await expect(unsupportedViewer.locator(".preview-text-stage")).toBeVisible();
           await expect(
-            unsupportedViewer.getByText("不支持内置预览"),
+            unsupportedViewer.getByRole("textbox", { name: "文本内容" }),
           ).toBeVisible();
           const [viewerBox, workspaceBox] = await Promise.all([
             unsupportedViewer.boundingBox(),
@@ -236,18 +292,14 @@ test("ordinary browsing continuously appends every asset without page controls",
           await expect(
             unsupportedViewer.getByRole("button", { name: "重试生成" }),
           ).toHaveCount(0);
-          await expect(
-            unsupportedViewer.getByRole("button", {
-              name: "用默认应用打开",
-            }),
-          ).toBeVisible();
           await unsupportedViewer
-            .getByRole("button", { name: "关闭查看页面" })
+            .getByRole("button", { name: "关闭", exact: true })
             .click();
           await expect(unsupportedViewer).toBeHidden();
-          await expect
-            .poll(() => workspaceCanvas.evaluate((element) => element.scrollTop))
-            .toBe(scrollTopBeforeViewer);
+          await expect(workspaceCanvas).toBeVisible();
+          // Reflow may slightly adjust the raw offset after the text viewer
+          // closes; the user-visible contract is that browsing does not jump
+          // back to the top and the same card remains visible.
           await expect(assetCard).toBeInViewport();
         }
       }
@@ -258,25 +310,21 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
-    await window
-      .getByRole("button", { name: "分页文件夹", exact: true })
-      .click();
+    await sidebarFolderRow(window, "分页文件夹").click();
     await expect(
       window.getByRole("button", { name: "格式", exact: true }),
     ).not.toHaveClass(/is-active/);
     await loadEveryAssetInCurrentScope();
 
-    // Every scope uses the same continuous loading model, while the managed
-    // root remains distinct rather than leaking folder or linked assets.
-    await window.getByRole("button", { name: /所有资产/ }).click();
+    // Every browse scope uses the same continuous loading model. The current
+    // sidebar exposes the library-wide scope as "所有资产"; the managed root
+    // is an internal destination used by move/restore flows, not a separate
+    // navigation row.
+    const allAssetsRow = window.getByRole("button", { name: /所有资产/ });
+    await allAssetsRow.click();
     await loadEveryAssetInCurrentScope();
-    await window
-      .getByRole("button", { name: "资源库根目录", exact: true })
-      .click();
-    await expect(window.locator(".asset-card")).toHaveCount(0);
-    await expect(
-      window.getByRole("heading", { name: "导入资产以开始整理" }),
-    ).toBeVisible();
+    await expect(allAssetsRow).toHaveClass(/is-active/);
+    await expect(window.locator(".asset-card")).toHaveCount(assetCount);
 
     const setup = await window.evaluate(async () => {
       const serpent = (

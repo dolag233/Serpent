@@ -48,12 +48,10 @@ export function usePluginShortcutContributions(
   refreshKey: string | null,
 ): PluginShortcutDescriptor[] {
   const [items, setItems] = useState<PluginShortcutDescriptor[]>([]);
+  const shouldLoad = enabled && pluginApi !== undefined && libraryId !== undefined;
 
   useEffect(() => {
-    if (!enabled || pluginApi === undefined || libraryId === undefined) {
-      setItems([]);
-      return;
-    }
+    if (!shouldLoad || pluginApi === undefined || libraryId === undefined) return;
     let cancelled = false;
     void pluginApi.listPluginContributions({
       libraryId,
@@ -77,9 +75,9 @@ export function usePluginShortcutContributions(
     return () => {
       cancelled = true;
     };
-  }, [enabled, libraryId, pluginApi, refreshKey]);
+  }, [libraryId, pluginApi, refreshKey, shouldLoad]);
 
-  return items;
+  return shouldLoad ? items : [];
 }
 
 export function matchPluginShortcut(

@@ -2,12 +2,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
 import {
   closeLibraryViaSwitcher,
   resolveElectronExecutablePath,
 } from "./electron-test-helpers";
+
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
 
 test("creates, closes, and reopens a library through the sandboxed UI", async () => {
   const testInfo = test.info();
@@ -148,9 +154,7 @@ test("restores the recent library and focuses the last browsed asset after a ful
     await window.getByRole("button", { name: "添加文件夹" }).click();
     await window.getByLabel("新文件夹名称").fill("恢复文件夹");
     await window.keyboard.press("Enter");
-    await window
-      .getByRole("button", { name: "恢复文件夹", exact: true })
-      .click();
+    await sidebarFolderRow(window, "恢复文件夹").click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
       .first()

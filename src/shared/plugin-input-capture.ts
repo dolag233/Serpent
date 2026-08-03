@@ -359,7 +359,9 @@ export class PluginInputCaptureBroker {
   }
 
   #publicSession(session: ActiveSession): PluginInputCaptureSession {
-    const { permissions: _permissions, pendingHighFrequency: _pending, ...publicSession } = session;
+    const { permissions, pendingHighFrequency, ...publicSession } = session;
+    void permissions;
+    void pendingHighFrequency;
     return publicSession;
   }
 }

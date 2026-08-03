@@ -92,6 +92,14 @@ import {
   parseColorFilterIds,
 } from '../shared/color-filter-presets';
 import type { LibraryChangedEvent, TagOperationSkip } from '../shared/protocol/responses';
+import type {
+  PluginJobCheckpoint,
+  PluginJobHandlerCapabilities,
+  PluginJobItemResult,
+  PluginJobRecord,
+  PluginJobRecoveryStrategy,
+} from '../plugins/plugin-jobs';
+import type { PluginProviderFieldType } from '../plugins/plugin-providers';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -3172,6 +3180,69 @@ function verifyMigrationHistory(connection: DatabaseConnection, version: number)
   }
 }
 
+function hasSchemaObject(connection: DatabaseConnection, name: string): boolean {
+  return connection.prepare(
+    "SELECT 1 AS present FROM sqlite_master WHERE name = ? LIMIT 1",
+  ).get(name) !== undefined;
+}
+
+/**
+ * The scripting/plugin branch used v24-v28 for plugin runtime tables before
+ * the ingestion branch claimed v24-v26 for ignore rules. Libraries created by
+ * that branch are valid and contain the complete plugin schema, but their
+ * history cannot be checked against the merged linear sequence. Recognize
+ * that exact old history so it can be normalized once without weakening the
+ * normal checksum validation for any other database.
+ */
+function hasLegacyPluginMigrationHistory(
+  connection: DatabaseConnection,
+  version: number,
+): boolean {
+  if (version !== 28) return false;
+  const history = connection
+    .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 24 ORDER BY version')
+    .all() as MigrationRow[];
+  const legacyChecksums = [
+    WRITE_COORDINATION_SCHEMA_CHECKSUM,
+    JOB_LEASE_SCHEMA_CHECKSUM,
+    THUMBNAIL_QUEUE_INDEX_SCHEMA_CHECKSUM,
+    PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM,
+    PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM,
+  ];
+  return (
+    history.length === legacyChecksums.length &&
+    history.every((row, index) =>
+      row.version === 24 + index && row.checksum === legacyChecksums[index],
+    ) &&
+    hasSchemaObject(connection, 'library_write_leases') &&
+    hasSchemaObject(connection, 'library_job_leases') &&
+    hasSchemaObject(connection, 'plugin_derived_fields') &&
+    !hasSchemaObject(connection, 'explicit_ignored_paths') &&
+    !hasSchemaObject(connection, 'gitignore_ignored_paths')
+  );
+}
+
+/**
+ * Normalize the old plugin-first history into the merged v31 history. The
+ * plugin tables already exist under their old migrations, so only the three
+ * ingestion schemas need to be applied. The history rows are then rewritten
+ * to the canonical checksums in one transaction (the caller already owns the
+ * migration transaction for v23+ databases).
+ */
+function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): void {
+  connection.exec(EXPLICIT_IGNORES_SCHEMA_SQL);
+  connection.exec(EXTENSION_IGNORES_SCHEMA_SQL);
+  connection.exec(GITIGNORE_SCHEMA_SQL);
+  connection.prepare('DELETE FROM schema_migrations WHERE version >= 24').run();
+  const insert = connection.prepare(
+    'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+  );
+  for (const migration of MIGRATIONS.slice(23)) {
+    insert.run(migration.version, migration.checksum, new Date().toISOString());
+  }
+  connection.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+}
+
 /**
  * Migration v20 helper: ADD COLUMN is not idempotent under simulated
  * downgrade fixtures that leave the column in place. Apply only if missing;
@@ -3662,6 +3733,11 @@ function migrateDatabase(
 
 function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh: boolean): void {
   const currentVersion = schemaVersion(connection);
+  if (hasLegacyPluginMigrationHistory(connection, currentVersion)) {
+    migrateLegacyPluginMigrationHistory(connection);
+    verifyMigrationHistory(connection, SUPPORTED_SCHEMA_VERSION);
+    return;
+  }
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
     throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
   }
@@ -11201,9 +11277,9 @@ export class LibraryService {
     ownerLibraryId: string;
     pluginHandlerId: string;
     payload?: Record<string, unknown>;
-    recoveryStrategy: import('../plugins/plugin-jobs').PluginJobRecoveryStrategy;
+    recoveryStrategy: PluginJobRecoveryStrategy;
     priority?: number;
-  }): import('../plugins/plugin-jobs').PluginJobRecord {
+  }): PluginJobRecord {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.ownerLibraryId === '__serpent_global_runtime__'
       || input.ownerLibraryId !== openLibrary.summary.libraryId) {
@@ -11223,7 +11299,7 @@ export class LibraryService {
     });
   }
 
-  listPluginJobs(libraryId: string): import('../plugins/plugin-jobs').PluginJobRecord[] {
+  listPluginJobs(libraryId: string): PluginJobRecord[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     return listPluginJobRecords(openLibrary.connection, openLibrary.summary.libraryId);
   }
@@ -11235,7 +11311,7 @@ export class LibraryService {
     ownerPluginInstanceId: string;
     ownerScope: 'library' | 'global';
     ownerLibraryId: string;
-  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+  }): PluginJobRecord | null {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.ownerLibraryId === '__serpent_global_runtime__'
       || input.ownerLibraryId !== openLibrary.summary.libraryId) {
@@ -11267,11 +11343,11 @@ export class LibraryService {
     total?: number;
     phase?: string;
     message?: string;
-    itemResults?: import('../plugins/plugin-jobs').PluginJobItemResult[];
+    itemResults?: PluginJobItemResult[];
     failedAssetIds?: string[];
     retryInput?: Record<string, unknown>;
-    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
-  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    checkpoint?: PluginJobCheckpoint;
+  }): PluginJobRecord | null {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     return completePluginJobRecord(openLibrary.connection, {
       jobId: input.jobId,
@@ -11308,9 +11384,9 @@ export class LibraryService {
     ownerLibraryId: string;
     reason?: string;
     retryInput?: Record<string, unknown>;
-    capabilities?: import('../plugins/plugin-jobs').PluginJobHandlerCapabilities;
-    checkpoint?: import('../plugins/plugin-jobs').PluginJobCheckpoint;
-  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+    capabilities?: PluginJobHandlerCapabilities;
+    checkpoint?: PluginJobCheckpoint;
+  }): PluginJobRecord | null {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.ownerLibraryId === '__serpent_global_runtime__'
       || input.ownerLibraryId !== openLibrary.summary.libraryId) {
@@ -11367,7 +11443,7 @@ export class LibraryService {
     phase: string;
     message: string;
     progress?: number;
-  }): import('../plugins/plugin-jobs').PluginJobRecord | null {
+  }): PluginJobRecord | null {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.ownerLibraryId === '__serpent_global_runtime__'
       || input.ownerLibraryId !== openLibrary.summary.libraryId) {
@@ -11411,7 +11487,7 @@ export class LibraryService {
     pluginId: string;
     packageHash: string;
     fieldId: string;
-    fieldType: import('../plugins/plugin-providers').PluginProviderFieldType;
+    fieldType: PluginProviderFieldType;
     values: ReadonlyArray<{ assetId: string; value: string | number | boolean | null }>;
   }): { writtenCount: number; fieldKey: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);

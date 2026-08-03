@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { assetCard, resolveElectronExecutablePath } from './electron-test-helpers';
 
 test('cancels a batch relink preview and later applies a fresh preview', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-relink-e2e-'));
@@ -37,7 +37,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    await expect(window.getByRole('button', { name: /missing\.txt/i })).toBeVisible();
+    await expect(assetCard(window, 'missing.txt')).toBeVisible();
 
     const managedPath = path.join(libraryPath, 'Assets', 'missing.txt');
     rmSync(managedPath);

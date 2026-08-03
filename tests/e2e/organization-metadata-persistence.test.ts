@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  assetCard as locateAssetCard,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test("persists organization and metadata across restart and surfaces optimistic-lock conflicts", async () => {
   const temporaryRoot = mkdtempSync(
@@ -49,9 +52,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
       .first()
       .click();
 
-    const assetCard = window.getByRole("button", {
-      name: /persistent-asset\.txt/i,
-    });
+    const assetCard = locateAssetCard(window, "persistent-asset.txt");
     await expect(assetCard).toBeVisible();
 
     // The sidebar no longer enumerates or creates tags (REQ-TAG-001); seed
@@ -191,20 +192,16 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await window.getByLabel("标签过滤").fill("持久标签");
     await window.getByRole("option", { name: /持久标签/ }).click();
     await expect(
-      window.getByRole("button", { name: /persistent-asset\.txt/i }),
+      locateAssetCard(window, "persistent-asset.txt"),
     ).toBeVisible();
     await window.getByRole("button", { name: /持久合集/ }).click();
-    let restoredCard = window.getByRole("button", {
-      name: /persistent-asset\.txt/i,
-    });
+    let restoredCard = locateAssetCard(window, "persistent-asset.txt");
     await expect(restoredCard).toBeVisible();
     await expect(
       window.getByRole("button", { name: /持久子合集/ }),
     ).toBeVisible();
     await window.getByRole("button", { name: /持久子合集/ }).click();
-    restoredCard = window.getByRole("button", {
-      name: /persistent-asset\.txt/i,
-    });
+    restoredCard = locateAssetCard(window, "persistent-asset.txt");
     await expect(restoredCard).toBeVisible();
     await restoredCard.click();
 
@@ -455,6 +452,10 @@ test("switches Inspector assets without connection flashes or mixed metadata", a
       .filter({ hasText: "beta-inspector.txt" });
     await expect(alphaCard).toBeVisible();
     await expect(betaCard).toBeVisible();
+    // Import reveal selects the whole imported set; Inspector switching below
+    // is intentionally single-selection behavior.
+    await window.keyboard.press("Escape");
+    await expect(window.locator('.asset-card[aria-pressed="true"]')).toHaveCount(0);
 
     const description = window.getByLabel("描述");
     const readMetadataDescription = async (assetId: string) =>

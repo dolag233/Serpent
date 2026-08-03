@@ -108,9 +108,10 @@ test("tag management chip grid: create, sort, select, menu, merge, delete", asyn
     await chips.filter({ hasText: "alpha" }).click();
     const selectionIndicator = workspace.getByText(/已选 \d+ 个标签/);
     await expect(selectionIndicator).toHaveText("已选 1 个标签");
+    const additiveModifier = process.platform === "darwin" ? "Meta" : "Control";
     await chips
       .filter({ hasText: "beta" })
-      .click({ modifiers: ["Control"] });
+      .click({ modifiers: [additiveModifier] });
     await expect(selectionIndicator).toHaveText("已选 2 个标签");
 
     // Escape clears the selection.
@@ -140,7 +141,7 @@ test("tag management chip grid: create, sort, select, menu, merge, delete", asyn
 
     // Multi-select menu exposes AND/OR search, merge and batch delete.
     await chips.filter({ hasText: "gamma" }).click();
-    await chips.filter({ hasText: "beta" }).click({ modifiers: ["Control"] });
+    await chips.filter({ hasText: "beta" }).click({ modifiers: [additiveModifier] });
     await chips.filter({ hasText: "beta" }).click({ button: "right" });
     await expect(
       menu.getByRole("menuitem", { name: "搜索包含这 2 个标签的资产" }),

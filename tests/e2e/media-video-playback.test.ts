@@ -332,12 +332,13 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     const directViewer = window.getByRole("region", {
       name: "direct-playback.mp4 查看页面",
     });
-    // REQ-VIEW-001 removed the media-type caption (视频原文件预览); the
-    // serpent://source/ scheme below is the proof of direct playback.
+    // Video playback is served through the Host-owned WebM derivative. The
+    // source container remains the direct MP4 input, while the viewer gets a
+    // renderer-safe proxy URL.
     const directVideo = directViewer.locator("video.preview-video");
     await expect
       .poll(() => directVideo.getAttribute("src"), { timeout: 30_000 })
-      .toMatch(/^serpent:\/\/source\//);
+      .toMatch(/^serpent:\/\/proxy\//);
     await expectPlayableAndSeekable(directVideo);
     // Video zoom/pan/fit mirrors the image viewer (Serpent-190): the mouse
     // wheel zooms, a drag pans while zoomed, and Fit restores fit-to-window.

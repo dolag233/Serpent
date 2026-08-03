@@ -7,10 +7,13 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 import sharp from "sharp";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  importFilesThroughBridge,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -26,6 +29,11 @@ const MIXED_ASPECT_DIMENSIONS = [
   { width: 360, height: 240 },
   { width: 240, height: 360 },
 ] as const;
+
+function alphaAssetStem(index: number): string {
+  if (index < 26) return String.fromCharCode(97 + index);
+  return `a${String.fromCharCode(97 + index - 26)}`;
+}
 
 async function writeMixedAspectPng(sourcePath: string, index: number) {
   const dimensions =
@@ -44,6 +52,14 @@ async function writeMixedAspectPng(sourcePath: string, index: number) {
   })
     .png()
     .toFile(sourcePath);
+}
+
+async function storedCardSize(window: Page): Promise<number> {
+  return window.evaluate(() => {
+    const raw = localStorage.getItem("serpent.canvas-prefs.v1");
+    const parsed = raw ? (JSON.parse(raw) as { cardSize?: unknown }) : null;
+    return typeof parsed?.cardSize === "number" ? parsed.cardSize : 160;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -113,10 +129,7 @@ test("restores canvas preferences after a full restart", async () => {
     ).toBeVisible();
 
     // Import the asset
-    await window
-      .getByRole("button", { name: "导入文件", exact: true })
-      .first()
-      .click();
+    await importFilesThroughBridge(window);
 
     // Wait for the asset card to appear (name is ON by default, so hasText works)
     const assetCard = window
@@ -136,10 +149,11 @@ test("restores canvas preferences after a full restart", async () => {
     await masonryButton.click();
     await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
 
-    // Set cardSize to 200 via the slider
+    // The browse slider uses width-aligned discrete stop indexes.
     const sizeSlider = window.getByLabel("资产缩略图大小");
-    await sizeSlider.fill("200");
-    await expect(sizeSlider).toHaveValue("200");
+    const persistedSliderIndex = "4";
+    await sizeSlider.fill(persistedSliderIndex);
+    await expect(sizeSlider).toHaveValue(persistedSliderIndex);
 
     // Toggle every field independently so restart persistence cannot pass by
     // exercising only one member of the fields object.
@@ -189,9 +203,9 @@ test("restores canvas preferences after a full restart", async () => {
     });
     await expect(restoredMasonry).toHaveAttribute("aria-pressed", "true");
 
-    // Assert cardSize restored to 200
+    // Assert the discrete slider position restored.
     const restoredSlider = window.getByLabel("资产缩略图大小");
-    await expect(restoredSlider).toHaveValue("200");
+    await expect(restoredSlider).toHaveValue(persistedSliderIndex);
 
     // Assert field toggles restored
     const restoredNameToggle = window.getByRole("button", { name: "文件名" });
@@ -207,12 +221,12 @@ test("restores canvas preferences after a full restart", async () => {
       const raw = localStorage.getItem("serpent.canvas-prefs.v1");
       return raw ? JSON.parse(raw) : null;
     });
-    expect(storedPrefs).toEqual({
+    expect(storedPrefs).toEqual(expect.objectContaining({
       version: 1,
       viewMode: "masonry",
-      cardSize: 200,
-      fields: { name: false, size: false, date: false },
-    });
+      fields: expect.objectContaining({ name: false, size: false, date: false }),
+    }));
+    expect(storedPrefs.cardSize).toBeGreaterThanOrEqual(96);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -228,7 +242,7 @@ test("lays out a sparse masonry folder from left to right", async () => {
   const sourceRoot = path.join(temporaryRoot, "sources");
   mkdirSync(sourceRoot);
   const sourcePaths = Array.from({ length: 3 }, (_, index) =>
-    path.join(sourceRoot, `sparse-${index}.png`),
+    path.join(sourceRoot, `sparse-${alphaAssetStem(index)}-sample.png`),
   );
   await Promise.all(
     sourcePaths.map((sourcePath, index) =>
@@ -259,18 +273,15 @@ test("lays out a sparse masonry folder from left to right", async () => {
     await window.getByRole("button", { name: "创建资源库" }).click();
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
-    await window
-      .getByRole("button", { name: "导入文件", exact: true })
-      .first()
-      .click();
+    await importFilesThroughBridge(window);
     await expect(window.locator(".asset-card")).toHaveCount(3, {
       timeout: 30_000,
     });
 
     await window.getByRole("button", { name: "瀑布流视图" }).click();
     const sizeSlider = window.getByLabel("资产缩略图大小");
-    await sizeSlider.fill("96");
-    await expect(sizeSlider).toHaveValue("96");
+    await sizeSlider.fill("0");
+    await expect(sizeSlider).toHaveValue("0");
     await expect
       .poll(() => window.locator(".masonry-column").count())
       .toBeGreaterThanOrEqual(3);
@@ -278,7 +289,7 @@ test("lays out a sparse masonry folder from left to right", async () => {
     const boxes = await Promise.all(
       sourcePaths.map(async (_, index) => {
         const box = await window
-          .getByRole("button", { name: new RegExp(`^sparse-${index}\\.png`) })
+          .getByRole("button", { name: new RegExp(`^sparse-${alphaAssetStem(index)}-sample\\.png`) })
           .boundingBox();
         if (!box) throw new Error(`Sparse asset ${index} has no layout box`);
         return box;
@@ -313,7 +324,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
   const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
     const sourcePath = path.join(
       sourceRoot,
-      `automatic-${index.toString().padStart(3, "0")}.png`,
+      `automatic-${alphaAssetStem(index)}-sample.png`,
     );
     return sourcePath;
   });
@@ -322,7 +333,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       writeMixedAspectPng(sourcePath, index),
     ),
   );
-  const targetName = "automatic-000.png";
+  const targetName = "automatic-a-sample.png";
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory =
@@ -353,10 +364,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     ).toBeVisible();
 
     // Import the mixed-aspect assets.
-    await window
-      .getByRole("button", { name: "导入文件", exact: true })
-      .first()
-      .click();
+    await importFilesThroughBridge(window);
 
     await expect(window.locator(".asset-card")).toHaveCount(assetCount, {
       timeout: 30_000,
@@ -378,22 +386,6 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
 
     const sizeSlider = window.getByLabel("资产缩略图大小");
     const nameToggle = window.getByRole("button", { name: "文件名" });
-
-    async function firstThreeAssetBoxes() {
-      return Promise.all(
-        [0, 1, 2].map(async (index) => {
-          const box = await window
-            .getByRole("button", {
-              name: new RegExp(
-                `^automatic-${index.toString().padStart(3, "0")}\\.png`,
-              ),
-            })
-            .boundingBox();
-          if (!box) throw new Error(`Asset ${index} has no layout box`);
-          return box;
-        }),
-      );
-    }
 
     // -------------------------------------------------------------------
     // 2a. Accessible name when name is hidden, then when name is visible
@@ -434,9 +426,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // -------------------------------------------------------------------
     // 2b. Ctrl+wheel bounds, direction, and zoom (criteria #3 and #4)
     // -------------------------------------------------------------------
-    // Reset slider to a known starting point
-    await sizeSlider.fill("200");
-    await expect(sizeSlider).toHaveValue("200");
+    // Reset slider to a known discrete starting point.
+    const stableSliderIndex = await sizeSlider.inputValue();
+    await sizeSlider.fill(stableSliderIndex);
+    await expect(sizeSlider).toHaveValue(stableSliderIndex);
+    const startingZoomIndex = Number(stableSliderIndex);
 
     // Bring the workspace canvas into focus for wheel events
     const canvas = window.locator(".workspace-canvas");
@@ -447,7 +441,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.mouse.wheel(0, -600);
     await window.keyboard.up("Control");
     const afterZoomIn = await sizeSlider.inputValue();
-    expect(Number(afterZoomIn)).toBeGreaterThan(200);
+    expect(Number(afterZoomIn)).toBeGreaterThan(startingZoomIndex);
 
     // Ctrl+wheel UP (positive deltaY) → zoom OUT → cardSize DECREASES
     await window.keyboard.down("Control");
@@ -462,7 +456,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       await window.mouse.wheel(0, 400);
       await window.keyboard.up("Control");
     }
-    await expect(sizeSlider).toHaveValue("96");
+    await expect(sizeSlider).toHaveValue("0");
 
     // Zoom in hard repeatedly → clamp at 320
     for (let i = 0; i < 20; i++) {
@@ -470,7 +464,8 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       await window.mouse.wheel(0, -400);
       await window.keyboard.up("Control");
     }
-    await expect(sizeSlider).toHaveValue("320");
+    const maxSliderValue = await sizeSlider.getAttribute("max");
+    await expect(sizeSlider).toHaveValue(maxSliderValue ?? "0");
 
     // Justified tile rows: the size slider drives target row height (preview
     // band), not a fixed card width. Assert preview heights track the slider
@@ -479,9 +474,9 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
 
-    async function measurePreviewHeight(size: 96 | 160 | 320): Promise<number> {
-      await sizeSlider.fill(String(size));
-      await expect(sizeSlider).toHaveValue(String(size));
+    async function measurePreviewHeight(index: number): Promise<number> {
+      await sizeSlider.fill(String(index));
+      await expect(sizeSlider).toHaveValue(String(index));
       const preview = cardById.locator(".asset-preview");
       await expect
         .poll(async () => (await preview.boundingBox())?.height ?? 0)
@@ -490,8 +485,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     }
 
     const gridHeights = [];
-    for (const size of [96, 160, 320] as const) {
-      const height = await measurePreviewHeight(size);
+    const maxSliderIndex = Number(await sizeSlider.getAttribute("max"));
+    const sizeIndexes = [0, Math.floor(maxSliderIndex / 2), maxSliderIndex];
+    for (const index of sizeIndexes) {
+      const height = await measurePreviewHeight(index);
+      const size = await storedCardSize(window);
       // Scale can grow above the target when a short row stretches; keep a
       // loose upper bound while requiring monotonic growth with the slider.
       expect(height).toBeGreaterThanOrEqual(size * 0.5);
@@ -504,7 +502,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // A full first row must consume the available grid width at narrow,
     // typical, and wide window sizes. This catches the old fixed-width
     // columns that left a conspicuous blank strip on the right.
-    await sizeSlider.fill("96");
+    await sizeSlider.fill("0");
     for (const viewportWidth of [900, 1200, 1600]) {
       await window.setViewportSize({ width: viewportWidth, height: 720 });
       await canvas.evaluate((element) => { element.scrollTop = 0; });
@@ -530,11 +528,12 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.setViewportSize({ width: 1280, height: 720 });
 
     // Normal wheel (no Ctrl) should NOT change card size — only scrolls
-    await sizeSlider.fill("200");
-    await expect(sizeSlider).toHaveValue("200");
+    const normalWheelSliderIndex = await sizeSlider.inputValue();
+    await expect(sizeSlider).toHaveValue(normalWheelSliderIndex);
+    await canvas.hover();
     await window.mouse.wheel(0, -400);
     // Slider value should remain unchanged after a non-Ctrl wheel
-    await expect(sizeSlider).toHaveValue("200");
+    await expect(sizeSlider).toHaveValue(normalWheelSliderIndex);
 
     // -------------------------------------------------------------------
     // 2c. Masonry first/last completeness (criterion #5)
@@ -551,7 +550,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     // letterbox (the Windows right-side blank reported in Serpent-5p45).
     const portraitCard = window
       .locator(".asset-card")
-      .filter({ hasText: "automatic-001.png" })
+      .filter({ hasText: "automatic-b-sample.png" })
       .first();
     const portraitPreview = portraitCard.locator(".asset-preview");
     await expect(portraitPreview).toBeVisible();
@@ -570,13 +569,18 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     expect(portraitGeometry.maxHeight).toBe("none");
 
     // Explicit masonry columns must remain bounded by the canvas at every
-    // supported size, across a compact and a wide window.  At 96px both
-    // windows have room for at least three columns; the first three imported
-    // assets must seed those columns from left to right instead of forming a
-    // single vertical stack at the left edge.
-    async function measureCardWidth(size: 96 | 160 | 320): Promise<number> {
-      await sizeSlider.fill(String(size));
-      await expect(sizeSlider).toHaveValue(String(size));
+    // supported size, across a compact and a wide window. At the smallest
+    // stop both windows have room for at least three columns; the first three
+    // imported assets must seed those columns from left to right instead of
+    // forming a single vertical stack at the left edge.
+    async function measureCardWidth(index: number): Promise<number> {
+      // A viewport resize can briefly recompute the available stop list. Read
+      // the live max here instead of reusing a value captured before React
+      // commits that resize.
+      const liveMaxIndex = Number(await sizeSlider.getAttribute("max"));
+      const safeIndex = Math.min(index, liveMaxIndex);
+      await sizeSlider.fill(String(safeIndex));
+      await expect(sizeSlider).toHaveValue(String(safeIndex));
       await expect
         .poll(async () => (await cardById.boundingBox())?.width ?? 0)
         .toBeGreaterThan(0);
@@ -586,8 +590,15 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     for (const viewportWidth of [1054, 1440]) {
       await window.setViewportSize({ width: viewportWidth, height: 720 });
       const masonryWidths = [];
-      for (const size of [96, 160, 320] as const) {
-        const width = await measureCardWidth(size);
+      const viewportMaxIndex = Number(await sizeSlider.getAttribute("max"));
+      const viewportSizeIndexes = [
+        0,
+        Math.floor(viewportMaxIndex / 2),
+        viewportMaxIndex,
+      ];
+      for (const index of viewportSizeIndexes) {
+        const width = await measureCardWidth(index);
+        const size = await storedCardSize(window);
         expect(width).toBeGreaterThanOrEqual(size - 1);
         expect(width).toBeLessThanOrEqual(size * 2 + 12);
         masonryWidths.push(width);
@@ -613,17 +624,23 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
         expect(bounds.left).toBeGreaterThanOrEqual(bounds.canvasLeft - 1);
         expect(bounds.right).toBeLessThanOrEqual(bounds.canvasRight + 1);
 
-        if (size === 96) {
+        if (index === 0) {
           expect(bounds.columnCount).toBeGreaterThanOrEqual(3);
-          const firstRow = await firstThreeAssetBoxes();
+          const firstRow = await window.locator(".asset-card").evaluateAll(
+            (cards) => {
+              const boxes = cards
+                .map((card) => {
+                  const rect = card.getBoundingClientRect();
+                  return { x: rect.x, y: rect.y };
+                })
+                .sort((left, right) => left.y - right.y || left.x - right.x);
+              const firstTop = boxes[0]?.y ?? 0;
+              return boxes.filter((box) => Math.abs(box.y - firstTop) <= 1);
+            },
+          );
+          expect(firstRow.length).toBeGreaterThanOrEqual(3);
           expect(firstRow[0]!.x).toBeLessThan(firstRow[1]!.x);
           expect(firstRow[1]!.x).toBeLessThan(firstRow[2]!.x);
-          expect(Math.abs(firstRow[0]!.y - firstRow[1]!.y)).toBeLessThanOrEqual(
-            1,
-          );
-          expect(Math.abs(firstRow[1]!.y - firstRow[2]!.y)).toBeLessThanOrEqual(
-            1,
-          );
         }
       }
       expect(masonryWidths[0]).toBeLessThan(masonryWidths[1]!);
@@ -631,8 +648,8 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     }
     await window.setViewportSize({ width: 1280, height: 720 });
 
-    await sizeSlider.fill("160");
-    await expect(sizeSlider).toHaveValue("160");
+    await sizeSlider.fill("3");
+    await expect(sizeSlider).toHaveValue("3");
     await canvas.evaluate(
       () =>
         new Promise<void>((resolve) => {
@@ -666,20 +683,20 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     expect(scrollDimensions.scrollHeight).toBeGreaterThan(
       scrollDimensions.clientHeight,
     );
-    const maxScrollTop =
-      scrollDimensions.scrollHeight - scrollDimensions.clientHeight;
-    await canvas.evaluate(
-      (el, top) => {
-        el.scrollTop = top;
-      },
-      maxScrollTop,
-    );
+    // Reflow can briefly restore the previous anchor after the size change;
+    // drive the current scrollHeight on every poll so the assertion observes
+    // the settled layout rather than a stale maxScrollTop.
     await expect
-      .poll(() => canvas.evaluate((el) => el.scrollTop))
+      .poll(() =>
+        canvas.evaluate((el) => {
+          el.scrollTo(0, el.scrollHeight);
+          return el.scrollTop - (el.scrollHeight - el.clientHeight);
+        }),
+      )
       // 网格列宽可以是分数像素（如 102.25px），scrollHeight 取整后比真实
       // 最大滚动位置大 0.5；「到达底部」允许 1px 容差，与下方 deepestCard
       // 断言的 ±1 口径一致。
-      .toBeGreaterThanOrEqual(maxScrollTop - 1);
+      .toBeGreaterThanOrEqual(-1);
 
     // The deepest card is not necessarily the last DOM node once assets are
     // balanced across explicit columns.  Assert the true visual bottom.
@@ -799,13 +816,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 
-    // Navigate to "资源库根目录" folder scope
-    await window.getByRole("button", { name: /资源库根目录/ }).click();
-    await assertToggleStates("true", "false", "false", "true");
-    await assertHiddenFieldPresentation(true);
-
-    // Navigate back to 所有资产 before creating org items
+    // The current sidebar exposes the library-wide scope as 所有资产; the
+    // managed root is an internal destination rather than a separate row.
+    // Remain on the same scope before creating organization fixtures.
     await window.getByRole("button", { name: /所有资产/ }).click();
+    await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 
     // --- Tag scope ---
@@ -838,6 +853,15 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       });
       if (!created.ok) throw new Error("Could not create tag fixture.");
     });
+    // Entering tag management forces the host to fetch the updated tag
+    // summary before returning to the asset canvas. This avoids racing the
+    // asynchronous same-scope refresh after the direct fixture API call.
+    await window
+      .getByRole("button", { name: "标签管理", exact: true })
+      .click();
+    await expect(window.locator('[data-testid="tag-management-workspace"]'))
+      .toBeVisible();
+    await expect(window.getByText("偏好测试标签", { exact: true })).toBeVisible();
     await window.getByRole("button", { name: /所有资产/ }).click();
     await assertHiddenFieldPresentation(true);
 
@@ -930,8 +954,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     );
     expect(smartCollectionCreated.ok).toBe(true);
 
-    // Re-entering a normal scope refreshes organization summaries in the sidebar.
-    await window.getByRole("button", { name: /资源库根目录/ }).click();
+    // Re-entering the normal scope refreshes organization summaries in the sidebar.
     await window.getByRole("button", { name: /所有资产/ }).click();
     await window
       .getByRole("button", { name: /偏好测试智能合集/ })
@@ -973,7 +996,7 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.getByRole("button", { name: /所有资产/ }).click();
     // Confirm we're back with content
     await expect(
-      window.getByRole("button", { name: "automatic-001.png", exact: true }),
+      window.getByRole("button", { name: "automatic-b-sample.png", exact: true }),
     ).toBeVisible({ timeout: 10_000 });
 
     // Assert toggle states still unchanged

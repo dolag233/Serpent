@@ -1,3 +1,5 @@
+/* global URLSearchParams, location, document, window, crypto */
+
 const params = new URLSearchParams(location.search);
 const contributionId = params.get('contributionId') ?? 'com.serpent.iframe-workspace-probe.settings-page-probe';
 const instanceId = decodeURIComponent(location.pathname.split('/')[1] || '');

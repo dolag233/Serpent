@@ -13,6 +13,7 @@ import type {
   PluginInputCapturePublishPayload,
   PluginInputCaptureRendererSession,
 } from './plugin-input-capture-renderer';
+import type { ShellNotifyPayload } from './shell-notify';
 
 /**
  * 「在系统浏览器中打开外部链接」的共享规则与类型。
@@ -150,7 +151,7 @@ export interface SerpentShellApi {
   /** macOS Edit 菜单反选（Serpent-te8p）；与 ⌘I / Ctrl+I 等价。 */
   onInvertSelection(listener: () => void): () => void;
   /** Main → Renderer: script/MCP/plugin toast or blocking dialog (`ui.notify`). */
-  onShellNotify(listener: (payload: import('./shell-notify').ShellNotifyPayload) => void): () => void;
+  onShellNotify(listener: (payload: ShellNotifyPayload) => void): () => void;
   /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；
    * 否则回退为原生文本复制。
    */

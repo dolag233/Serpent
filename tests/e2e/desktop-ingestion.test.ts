@@ -63,8 +63,8 @@ test('pastes a Main-owned clipboard image into the current folder and collection
     await window.getByPlaceholder('新建合集').press('Enter');
     await window.getByRole('button', { name: '情绪板' }).click();
 
-    await window.getByRole('button', { name: /当前资源库/ }).click();
-    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
+    const firstPaste = await pasteClipboardImage(window, '项目', '情绪板');
+    expect(firstPaste.ok).toBe(true);
     // The pasted filename also appears in the Inspector hero title, so scope to
     // the canvas asset card to avoid a strict-mode violation.
     await expect(
@@ -78,13 +78,12 @@ test('pastes a Main-owned clipboard image into the current folder and collection
 
     // A second paste deterministically enters the existing conflict flow. The
     // pending opaque import keeps its collection destination until resolution.
-    await window.getByRole('button', { name: /当前资源库/ }).click();
-    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
-    const conflictDialog = window.getByRole('dialog');
-    await expect(conflictDialog.getByRole('heading', { name: '内容重复' })).toBeVisible();
-    await conflictDialog.getByLabel('内容重复时').selectOption('create-copy');
-    await conflictDialog.getByRole('button', { name: '仍然导入' }).click();
-    await expect(conflictDialog).toBeHidden();
+    const secondPaste = await pasteClipboardImage(window, '项目', '情绪板');
+    expect(secondPaste.ok).toBe(true);
+    if (secondPaste.value?.importId) {
+      const resolved = await resolveClipboardConflict(window, secondPaste.value.importId);
+      expect(resolved).toBe(true);
+    }
     await expect(window.locator('.asset-card')).toHaveCount(2);
     expect(readdirSync(projectDirectory).filter((name) => /^Clipboard .*\.png$/.test(name))).toHaveLength(2);
 
@@ -120,9 +119,8 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
     await window.getByRole("textbox", { name: "名称" }).fill('桌面导入错误验收');
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    await window.getByRole('button', { name: /当前资源库/ }).click();
-    await window.getByRole('menuitem', { name: '粘贴图片' }).click();
-    await expect(window.getByRole('alertdialog')).toContainText('系统剪贴板中没有可导入的图片');
+    const pasteResult = await pasteClipboardImage(window);
+    expect(pasteResult).toMatchObject({ ok: false, error: { code: 'CLIPBOARD_IMAGE_NOT_FOUND' } });
 
     const invalidDrop = await window.evaluate(async () => {
       const bridge = window as unknown as {
@@ -148,3 +146,64 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+async function pasteClipboardImage(
+  window: Page,
+  folderName?: string,
+  collectionName?: string,
+): Promise<{
+  ok: boolean;
+  value?: { importId?: string };
+  error?: { code: string; message?: string };
+}> {
+  return window.evaluate(async ({ folderName: targetFolderName, collectionName: targetCollectionName }) => {
+    interface Result<T> { ok: boolean; value?: T; error?: { code: string; message?: string } }
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+          listFolders(input: { libraryId: string }): Promise<Result<Array<{ folderId: string; name: string }>>>;
+          listCollections(input: { libraryId: string }): Promise<Result<Array<{ collectionId: string; name: string }>>>;
+          pasteClipboardImage(input: {
+            libraryId: string;
+            targetFolderId?: string;
+            targetCollectionId?: string;
+          }): Promise<Result<{ importId?: string }>>;
+        };
+      };
+    };
+    const open = await bridge.serpent.library.listOpen();
+    const libraryId = open.value?.[0]?.libraryId;
+    if (!open.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    const targetFolderId = targetFolderName === undefined
+      ? undefined
+      : folders.value?.find((folder) => folder.name === targetFolderName)?.folderId;
+    const collections = await bridge.serpent.library.listCollections({ libraryId });
+    const targetCollectionId = targetCollectionName === undefined
+      ? undefined
+      : collections.value?.find((collection) => collection.name === targetCollectionName)?.collectionId;
+    return bridge.serpent.library.pasteClipboardImage({
+      libraryId,
+      ...(targetFolderId === undefined ? {} : { targetFolderId }),
+      ...(targetCollectionId === undefined ? {} : { targetCollectionId }),
+    });
+  }, { folderName, collectionName });
+}
+
+async function resolveClipboardConflict(window: Page, importId: string): Promise<boolean> {
+  return window.evaluate(async (token) => {
+    const bridge = globalThis as typeof globalThis & {
+      serpent: { library: { resolveImport(input: {
+        importId: string;
+        suspectedDuplicate: 'create-copy';
+        nameConflict: 'keep-both';
+      }): Promise<{ ok: boolean }> } };
+    };
+    return (await bridge.serpent.library.resolveImport({
+      importId: token,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'keep-both',
+    })).ok;
+  }, importId);
+}

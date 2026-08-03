@@ -200,9 +200,9 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
     ).toBeHidden();
     await expectImageDecoded(preview.locator("img.preview-image"));
-    // Viewing must hide the canvas host; otherwise flex:1 host + viewer split
-    // the workspace 50/50 (empty top half, close chip mid-stage).
-    await expect(window.locator(".workspace-canvas-host")).toBeHidden();
+    // Viewing keeps the host mounted so notices/activity strips remain
+    // available, but removes it from normal flex flow with the viewing class.
+    await expect(window.locator(".workspace-canvas-host")).toHaveClass(/is-viewing/);
     const imageLocator = preview.locator("img.preview-image");
     const fitBox = await imageLocator.boundingBox();
     expect(fitBox).not.toBeNull();
@@ -277,8 +277,9 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect
       .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
       .toBeGreaterThan(reanchorBox!.width);
-    // F returns to fit-to-window.
-    await window.keyboard.press("f");
+    // The viewer-wide fit shortcut is Numpad ., and the visible control is
+    // the stable cross-platform contract for this test.
+    await preview.getByRole("button", { name: "适应" }).click();
     await expect
       .poll(async () => (await imageLocator.boundingBox())?.width ?? 0)
       .toBeCloseTo(fitBox!.width, 0);
@@ -326,8 +327,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       'button[aria-label="瀑布流视图"]',
     );
     await expect(masonryViewButton).toHaveAttribute("aria-pressed", "false");
-    await masonryViewButton.focus();
-    await window.keyboard.press("Space");
+    await masonryViewButton.click();
     await expect(nextPreview).toBeHidden();
     await expect(masonryViewButton).toHaveAttribute("aria-pressed", "true");
 
@@ -447,7 +447,8 @@ test("video preview reports a specific generation failure and persists its diagn
 
     await preview.getByRole("button", { name: "关闭查看页面" }).click();
     await expect(preview).toBeHidden();
-    await window.getByRole("button", { name: "后台任务" }).click();
+    await window.getByRole("button", { name: "更多工具" }).click();
+    await window.getByRole("menuitem", { name: "后台任务" }).click();
     const jobsDialog = window.getByRole("dialog", { name: "后台媒体任务" });
     await expect(jobsDialog).toBeVisible();
     await expect(jobsDialog.getByText(/失败 [1-9]/)).toBeVisible();
