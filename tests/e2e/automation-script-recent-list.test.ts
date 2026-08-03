@@ -5,6 +5,7 @@ import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 
 import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { DEFAULT_AUTOMATION_RATING_SCRIPT } from '../../src/renderer/script-sandbox-preview-default';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -47,6 +48,7 @@ test('reopens a saved script from the recent scripts list', async () => {
     await window.getByRole('menuitem', { name: '自动化脚本' }).click();
     const dialog = window.getByRole('dialog', { name: '自动化脚本' });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole('textbox', { name: '脚本' }).fill(DEFAULT_AUTOMATION_RATING_SCRIPT);
     await dialog.getByRole('button', { name: '保存脚本' }).click();
     await expect(dialog).toContainText('已保存脚本：rating.serpent.ts');
     await expect(dialog.getByRole('button', { name: 'rating.serpent.ts' })).toBeVisible();

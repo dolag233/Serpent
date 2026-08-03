@@ -22,6 +22,8 @@ Desktop Console 不再在 Renderer Web Worker 中执行用户脚本。每次已�
 
 定向验证：`automation-script-ipc.test.ts`、`script-runtime-supervisor.test.ts`、`script-runtime-utility.test.ts` 覆盖 Gateway 错误、IPC envelope 和脚本 `catch`；共 12 个测试通过。相关 Gateway、协议和 QuickJS 回归合计 142 个测试通过；typecheck 与定向 lint 通过。未执行 packaged/Windows/Computer Use。
 
+2026-08-04 Electron 回归：在按环境约定将 `better-sqlite3` 重编译为 Electron ABI 后，`node scripts/run-e2e-isolated.mjs tests/e2e/automation-script-rating.test.ts` 与 `tests/e2e/automation-script-recent-list.test.ts` 各 1 passed。此前一次失败是本地 native module 仍为 Node ABI，资源库创建未完成，非产品断言失败；已修正测试环境并重新运行。
+
 ## 四列证据
 
 | 需求 | 实现位置 | 自动化证据 | 人工/平台证据 |
