@@ -25,8 +25,6 @@ export interface CreateDialogProps {
   onOpenExisting: () => void;
   /** Import a library folder/ZIP (same entry as the former empty-state CTA). */
   onImportLibrary: () => void;
-  /** Open the unbound automation Console without creating a library first. */
-  onOpenAutomation: () => void;
   /** One-click open from the recent list. */
   onOpenRecent: (path: string) => void;
   recentLibraries?: RecentLibraryMenuEntry[];
@@ -56,7 +54,6 @@ export function CreateDialog({
   onBackToStart,
   onOpenExisting,
   onImportLibrary,
-  onOpenAutomation,
   onOpenRecent,
   recentLibraries = [],
   busy = false,
@@ -164,14 +161,6 @@ export function CreateDialog({
             >
               <Icon name="download" size={15} />
               {t("toolbar.importLibrary")}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={busy}
-              onClick={onOpenAutomation}
-              type="button"
-            >
-              {t("automation.preview.open")}
             </button>
           </div>
         )}

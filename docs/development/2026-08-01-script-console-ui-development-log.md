@@ -15,7 +15,7 @@
 
 - `npx vitest run tests/unit/toolbar-commands.test.ts`：15/15 通过。
 - `npm run typecheck`：主 TypeScript 与扩展 TypeScript 通过。
-- `node scripts/run-e2e.mjs tests/e2e/automation-script-console.test.ts`：1 passed（6.3s）；覆盖首次空编辑器、结果区域滚动样式、脚本执行后状态、常驻工具栏无后台任务按钮，以及“更多工具 → 后台任务”入口。
+- 当时的 `node scripts/run-e2e.mjs tests/e2e/automation-script-console.test.ts`：1 passed（6.3s）；覆盖首次空编辑器、结果区域滚动样式、脚本执行后状态、常驻工具栏无后台任务按钮，以及“更多工具 → 后台任务”入口。2026-08-03 按产品反馈撤回无资源库创建面板中的脚本入口后，该测试改为验证入口不存在；已有资源库内的脚本面板由脚本文件操作 E2E 继续覆盖。
 
 ## 人类验收边界
 

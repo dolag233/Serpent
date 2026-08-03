@@ -6,7 +6,7 @@ API 版本：`AUTOMATION_API_VERSION = 1`。本文以当前 Console 实际注入
 
 ## 先跑起来
 
-打开资源库后，从“更多工具”→“自动化脚本”打开 Console。欢迎页也能打开未绑定 Console：这时脚本只能先调用 `serpent.library.create()`；创建成功后，Serpent 会绑定新资源库，脚本的后续命令才能访问它。
+打开资源库后，从“更多工具”→“自动化脚本”打开 Console。未打开资源库时，创建资源库面板不提供脚本入口；需要无库执行时，请使用 MCP 的未绑定会话。未绑定执行只能先调用 `serpent.library.create()`；创建成功后，Serpent 会绑定新资源库，后续命令才能访问它。
 
 Console 运行的是脚本正文，最简单的入口是顶层 `return`：
 

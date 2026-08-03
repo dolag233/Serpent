@@ -734,7 +734,6 @@ function AppInner() {
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
   const hadLibraryRef = useRef(false);
-  const allowRequiredDialogDismissRef = useRef(false);
   const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
@@ -6946,11 +6945,6 @@ function AppInner() {
       // Serpent-kipk: required no-library surface cannot dismiss; Escape returns
       // to the start phase instead of leaving an empty canvas.
       if (value === null && !library) {
-        if (allowRequiredDialogDismissRef.current) {
-          allowRequiredDialogDismissRef.current = false;
-          setDialog(value);
-          return;
-        }
         setCreateLibraryPhase("start");
         return;
       }
@@ -10017,12 +10011,10 @@ function AppInner() {
         automation={(window as RendererWindow).serpent?.automation}
         libraryId={library?.libraryId ?? null}
         onClose={() => {
-          allowRequiredDialogDismissRef.current = false;
           setScriptSandboxPreviewOpen(false);
         }}
         onExecutionSettled={() => refreshAfterAutomationScript()}
         onOpenExecutionLog={(logId) => {
-          allowRequiredDialogDismissRef.current = false;
           setScriptSandboxPreviewOpen(false);
           openAppLog(logId);
         }}
@@ -10093,11 +10085,6 @@ function AppInner() {
         onImportLibrary={() => {
           setDialog(null);
           setImportLibraryChooserOpen(true);
-        }}
-        onOpenAutomation={() => {
-          allowRequiredDialogDismissRef.current = true;
-          setDialog(null);
-          setScriptSandboxPreviewOpen(true);
         }}
         onOpenRecent={(path) => {
           setDialog(null);
