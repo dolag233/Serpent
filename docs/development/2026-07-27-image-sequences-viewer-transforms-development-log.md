@@ -29,6 +29,11 @@
 
 ### 当次验证
 
+- 2026-08-04：按当前 UI 契约同步 `tests/e2e/image-sequence-viewer.test.ts`。序列网格断言使用逻辑卡片的完整帧范围名称；播放态验证 `SequenceFrameCanvas` 实际绘制，滑块使用键盘输入触发暂停后再验证客户端预览图解码，并将旋转/镜像断言限定到查看器变换工具栏。
+  - `node scripts/run-e2e-isolated.mjs tests/e2e/image-sequence-viewer.test.ts`
+  - 1 passed（4.4s）；覆盖逻辑序列卡、Canvas 播放、滑块暂停后的真实预览解码、FPS 持久化、旋转与双镜像。
+  - 该证据不替代批量导入弹窗、尺寸不一致拆分、多选解散的人工验收；packaged/Windows 未执行。
+
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/image-sequence.test.ts tests/unit/image-sequence.test.ts tests/unit/viewer-display-transform.test.ts tests/unit/protocol.test.ts tests/unit/asset-card-hover-preview.test.ts`
   - 5 files / 89 tests passed。
 - `node scripts/run-e2e.mjs tests/e2e/image-sequence-viewer.test.ts`

@@ -26,6 +26,20 @@ async function expectDecodedImage(image: Locator): Promise<void> {
     .toBe(true);
 }
 
+async function expectPaintedSequenceCanvas(canvas: Locator): Promise<void> {
+  await expect(canvas).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(
+      () =>
+        canvas.evaluate((element) => {
+          const paint = element.querySelector('canvas');
+          return paint !== null && paint.width > 0 && paint.height > 0;
+        }),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
 test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an image sequence", async () => {
   const testInfo = test.info();
   const temporaryRoot = mkdtempSync(
@@ -89,13 +103,14 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
       .first()
       .click();
 
-    const primaryCard = window.locator(
-      '.asset-card[title="motion_000.png"]',
-    );
+    // A sequence is represented by one logical card whose display name is
+    // derived from the complete frame range (for example motion_000~002),
+    // not by the first source frame's filename.
+    const primaryCard = window.locator('.asset-card').first();
     await expect(primaryCard).toBeVisible({ timeout: 30_000 });
     await expect(window.locator(".asset-card")).toHaveCount(1);
     await expect(primaryCard.getByText("3F · 30 FPS · 0.10s", { exact: true })).toBeVisible();
-    await expectDecodedImage(primaryCard.locator('img[alt="motion_000.png"]'));
+    await expectDecodedImage(primaryCard.locator('img').first());
 
     const browseCanvas = window.locator(".workspace-canvas");
     const browseCanvasBox = await browseCanvas.boundingBox();
@@ -153,19 +168,26 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
 
     await primaryCard.dblclick();
     const viewer = window.getByRole("region", {
-      name: "motion_000.png 查看页面",
+      name: "motion_000~002 查看页面",
     });
     await expect(viewer).toBeVisible();
     await expect(viewer.getByText("1 / 3 · 17 FPS", { exact: true })).toBeVisible();
-    const previewImage = viewer.locator("img.preview-image");
-    await expectDecodedImage(previewImage);
+    const sequenceCanvas = viewer.locator(".sequence-frame-canvas");
+    await expectPaintedSequenceCanvas(sequenceCanvas);
     await expect(window.getByRole("button", { name: "暂停序列" })).toBeVisible();
     // Background Electron windows suspend requestAnimationFrame. Scrubbing
     // proves that frames resolve and switch without bringing the E2E window
     // to the user's foreground; resuming proves the playback state transition.
-    await window.getByLabel("序列帧").fill("1");
-    await expect(previewImage).toHaveAttribute("alt", "motion_001.png");
+    const frameSlider = window.getByLabel("序列帧");
+    // Use the same keyboard path as a user. Playwright's range `fill()` can
+    // update the DOM value without exercising React's onChange handler,
+    // leaving the player in playback mode and never mounting ZoomableImage.
+    await frameSlider.press("Home");
+    await frameSlider.press("ArrowRight");
+    await expect(window.getByRole("button", { name: "播放序列" })).toBeVisible();
+    const previewImage = viewer.locator("img.preview-image");
     await expectDecodedImage(previewImage);
+    await expect(previewImage).toHaveAttribute("alt", "motion_001.png");
     await window.getByRole("button", { name: "播放序列" }).click();
     await expect(window.getByRole("button", { name: "暂停序列" })).toBeVisible();
     await window.getByRole("button", { name: "暂停序列" }).click();
@@ -183,7 +205,9 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     expect(sourceMetrics.boxWidth / sourceMetrics.boxHeight).toBeCloseTo(16 / 9, 1);
 
     await viewer.hover({ position: { x: 40, y: 80 } });
+    const transformControls = viewer.locator(".preview-transform-controls");
     await window
+      .locator(".preview-transform-controls")
       .getByRole("button", { name: "顺时针旋转 90°" })
       .click();
     await expect(previewImage).toHaveAttribute(
@@ -204,8 +228,8 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     expect(rotatedMetrics.cssWidth / rotatedMetrics.cssHeight).toBeCloseTo(16 / 9, 1);
     expect(rotatedMetrics.boxWidth / rotatedMetrics.boxHeight).toBeCloseTo(9 / 16, 1);
 
-    const horizontalMirror = window.getByRole("button", { name: "水平镜像" });
-    const verticalMirror = window.getByRole("button", { name: "垂直镜像" });
+    const horizontalMirror = transformControls.getByRole("button", { name: "水平镜像" });
+    const verticalMirror = transformControls.getByRole("button", { name: "垂直镜像" });
     await horizontalMirror.click();
     await verticalMirror.click();
     await expect(horizontalMirror).toHaveClass(/is-active/);
@@ -225,9 +249,7 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     await application.close();
     application = await launch();
     window = await application.firstWindow();
-    const restoredCard = window.locator(
-      '.asset-card[title="motion_000.png"]',
-    );
+    const restoredCard = window.locator('.asset-card').first();
     await expect(restoredCard).toBeVisible({ timeout: 30_000 });
     await expect(window.locator(".asset-card")).toHaveCount(1);
     await expect(restoredCard.getByText("3F · 17 FPS · 0.18s", { exact: true })).toBeVisible();
