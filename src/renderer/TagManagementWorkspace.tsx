@@ -30,6 +30,7 @@ import {
   type TagSortDirection,
   type TagSortKey,
 } from "./tag-management-model";
+import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 
 export type TagManagementWorkspaceProps = {
   tags: readonly TagSummary[];
@@ -184,6 +185,7 @@ export function TagManagementWorkspace({
   // escape stack has no active layer while tag management is open, so a
   // plain document listener is sufficient and cannot double-fire.
   const activeDialog = pendingDeleteIds !== null || pendingMergeIds !== null;
+  useDialogFocusTrap(activeDialog);
   useEffect(() => {
     if (!activeDialog) return;
     const onKeyDown = (event: KeyboardEvent) => {

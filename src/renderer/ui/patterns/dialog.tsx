@@ -197,3 +197,47 @@ export function DialogShell({
 
 /** Keeps the boundary selector private while allowing focused tests/consumers to identify it. */
 export const dialogFocusableSelector = FOCUSABLE_SELECTOR;
+
+/**
+ * The host's convention for the default action in a modal.
+ *
+ * An explicit marker wins so a dialog can opt into the contract without
+ * coupling its markup to a visual button class. Existing dialogs continue to
+ * use `primary-button` or a submit button while they migrate to the marker.
+ */
+export const dialogDefaultActionSelector = [
+  'button[data-dialog-default-action="true"]:not(:disabled)',
+  "button.primary-button:not(:disabled)",
+  'button[type="submit"]:not(:disabled)',
+].join(",");
+
+/** Returns the first enabled primary action in a dialog, if one exists. */
+export function getDialogDefaultAction(
+  dialog: HTMLElement | null,
+): HTMLButtonElement | null {
+  return dialog?.querySelector<HTMLButtonElement>(dialogDefaultActionSelector) ?? null;
+}
+
+/**
+ * Enter should submit a text-oriented dialog, but must not steal the native
+ * interaction of controls whose Enter key has another meaning.
+ */
+export function shouldActivateDialogDefaultAction(
+  target: EventTarget | null,
+): boolean {
+  if (!(target instanceof HTMLElement)) return true;
+  if (target.closest("[data-dialog-enter-ignore=\"true\"]")) return false;
+  if (target.isContentEditable || target.closest("[contenteditable=\"true\"]")) {
+    return false;
+  }
+  if (target instanceof HTMLTextAreaElement) return false;
+  if (target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement) {
+    return false;
+  }
+  if (target instanceof HTMLInputElement) {
+    return !["checkbox", "radio", "file", "button", "submit", "reset"].includes(
+      target.type,
+    );
+  }
+  return true;
+}

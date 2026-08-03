@@ -103,7 +103,7 @@ export function LibrarySettingsDialog({
                       <span>{t("settings.libraryNameHint")}</span>
                     </div>
                     <div className="library-settings-name-row">
-                      <input className="text-field" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveName(); }} />
+                      <input className="text-field" value={name} onChange={(event) => setName(event.target.value)} />
                       <button className="primary-button" disabled={!name.trim() || savingName} onClick={() => void saveName()} type="button">{t("common.save")}</button>
                     </div>
                   </div>

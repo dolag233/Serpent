@@ -5,8 +5,10 @@ import type { ReactElement } from "react";
 
 import {
   DialogShell,
+  getDialogDefaultAction,
   getDialogFocusBoundary,
   getTopmostDialog,
+  shouldActivateDialogDefaultAction,
   type DialogStackEntry,
 } from "../../src/renderer/ui/patterns/dialog";
 import {
@@ -71,6 +73,37 @@ describe("UI patterns: modal focus boundary", () => {
     expect(boundary?.root).toBe(dialog);
     expect(boundary?.firstFocusable?.id).toBe("first");
     expect(boundary?.lastFocusable?.id).toBe("last");
+  });
+
+  it("resolves an enabled explicit or primary default action", () => {
+    document.body.innerHTML = `
+      <section role="dialog" aria-modal="true">
+        <button class="primary-button" disabled>Disabled</button>
+        <button data-dialog-default-action="true" id="default">Default</button>
+        <button class="primary-button" id="primary">Primary</button>
+      </section>
+    `;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+
+    expect(getDialogDefaultAction(dialog)?.id).toBe("default");
+  });
+
+  it("keeps Enter available for text fields but leaves native controls alone", () => {
+    document.body.innerHTML = `
+      <section role="dialog" aria-modal="true">
+        <input id="text" />
+        <textarea id="multiline"></textarea>
+        <select id="select"><option>one</option></select>
+        <input id="checkbox" type="checkbox" />
+        <button id="button">Button</button>
+      </section>
+    `;
+
+    expect(shouldActivateDialogDefaultAction(document.querySelector("#text"))).toBe(true);
+    expect(shouldActivateDialogDefaultAction(document.querySelector("#multiline"))).toBe(false);
+    expect(shouldActivateDialogDefaultAction(document.querySelector("#select"))).toBe(true);
+    expect(shouldActivateDialogDefaultAction(document.querySelector("#checkbox"))).toBe(false);
+    expect(shouldActivateDialogDefaultAction(document.querySelector("#button"))).toBe(false);
   });
 });
 

@@ -240,7 +240,9 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     const smartSettings = window.getByRole('dialog');
     await expect(smartSettings).toBeVisible();
     await smartSettings.getByLabel('名称').fill('英雄精选');
-    await smartSettings.getByRole('button', { name: '保存当前条件' }).click();
+    // Plain Enter follows the shared modal default-action contract; this
+    // dialog is intentionally not a form so the host keyboard path is tested.
+    await smartSettings.getByLabel('名称').press('Enter');
     await expect(smartSettings).toBeHidden();
     await expect(window.getByRole('button', { name: /英雄精选/ })).toBeVisible();
     await window.getByRole('button', { name: /英雄精选/ }).click();

@@ -1,9 +1,12 @@
 import { useEffect, useRef } from "react";
 
+import {
+  getDialogDefaultAction,
+  shouldActivateDialogDefaultAction,
+} from "./ui/patterns/dialog";
+
 const FOCUSABLE_SELECTOR =
   'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
-const DEFAULT_ACTION_SELECTOR =
-  'button.primary-button:not(:disabled), button[type="submit"]:not(:disabled)';
 
 /**
  * When any modal dialog is open: trap Tab inside the topmost dialog, move
@@ -22,14 +25,10 @@ export function useDialogFocusTrap(active: boolean): void {
         : null;
 
     const focusFirst = () => {
-      const modal = document.querySelector<HTMLElement>(
-        '[role="dialog"][aria-modal="true"]',
-      );
+      const modal = getTopmostModal();
       if (!modal) return;
       if (modal.contains(document.activeElement)) return;
-      const defaultAction = modal.querySelector<HTMLElement>(
-        DEFAULT_ACTION_SELECTOR,
-      );
+      const defaultAction = getDialogDefaultAction(modal);
       if (defaultAction) {
         defaultAction.focus();
         return;
@@ -41,10 +40,30 @@ export function useDialogFocusTrap(active: boolean): void {
     const raf = requestAnimationFrame(focusFirst);
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === "Enter" &&
+        !event.defaultPrevented &&
+        !event.isComposing
+      ) {
+        const modal = getTopmostModal();
+        const target = event.target;
+        if (
+          modal &&
+          target instanceof Node &&
+          modal.contains(target) &&
+          shouldActivateDialogDefaultAction(target)
+        ) {
+          const defaultAction = getDialogDefaultAction(modal);
+          if (defaultAction) {
+            event.preventDefault();
+            event.stopPropagation();
+            defaultAction.click();
+            return;
+          }
+        }
+      }
       if (event.key !== "Tab") return;
-      const modal = document.querySelector<HTMLElement>(
-        '[role="dialog"][aria-modal="true"]',
-      );
+      const modal = getTopmostModal();
       const focusable = modal?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
       if (!focusable?.length) return;
       const first = focusable[0];
@@ -68,4 +87,13 @@ export function useDialogFocusTrap(active: boolean): void {
       }
     };
   }, [active]);
+}
+
+function getTopmostModal(): HTMLElement | null {
+  const modals = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[role="dialog"][aria-modal="true"]',
+    ),
+  ).filter((modal) => !modal.hidden && modal.getAttribute("aria-hidden") !== "true");
+  return modals.at(-1) ?? null;
 }
