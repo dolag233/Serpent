@@ -125,6 +125,28 @@ describe('plugin context kernel', () => {
     expect(cache.read({ pluginInstanceId: 'plugin-1', predicateId: 'can-run', context: second })).toBe(true);
   });
 
+  it('settles a stale resolve with its fallback after a newer revision supersedes it', async () => {
+    const cache = new PluginPredicateResolverCache({ defaultDeadlineMs: 100 });
+    const resolver = vi.fn(() => new Promise<boolean>(() => {}));
+    const first = context(1);
+    const second = context(2);
+    const stale = cache.resolve({
+      pluginInstanceId: 'plugin-1',
+      predicateId: 'can-run',
+      context: first,
+      resolver,
+      fallback: false,
+    });
+    await Promise.resolve();
+    cache.start({
+      pluginInstanceId: 'plugin-1',
+      predicateId: 'can-run',
+      context: second,
+      resolver: async () => true,
+    });
+    await expect(stale).resolves.toBe(false);
+  });
+
   it('uses fallback for resolver errors and deadlines while reads remain synchronous', async () => {
     const cache = new PluginPredicateResolverCache({ defaultDeadlineMs: 5 });
     const current = context();

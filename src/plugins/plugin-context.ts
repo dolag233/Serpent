@@ -488,10 +488,15 @@ export class PluginPredicateResolverCache {
 
   async resolve(input: PredicateResolverRequest): Promise<boolean> {
     const key = createPluginPredicateCacheKey(input);
+    const fallback = input.fallback ?? false;
     if (!this.#entries.has(key)) this.start(input);
     while (true) {
       const entry = this.#entries.get(key);
       if (entry?.status === 'resolved') return entry.value;
+      // A newer context revision removes a superseded pending entry. Do not
+      // leave a caller waiting forever for a value that is intentionally no
+      // longer valid; the caller can re-resolve against the new context.
+      if (entry === undefined) return fallback;
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
@@ -530,9 +535,15 @@ export class PluginPredicateResolverCache {
         }),
       ]);
       const entry = this.#entries.get(key);
-      if (entry !== undefined && !controller.signal.aborted) {
-        entry.status = 'resolved';
-        entry.value = result === true;
+      if (entry !== undefined) {
+        if (controller.signal.aborted) {
+          // A resolver may ignore the AbortSignal and settle after its
+          // revision was superseded. Never leave that stale entry pending.
+          this.#entries.delete(key);
+        } else {
+          entry.status = 'resolved';
+          entry.value = result === true;
+        }
       }
     } catch {
       const entry = this.#entries.get(key);

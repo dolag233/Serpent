@@ -61,6 +61,24 @@
 - 同一资产集合切换到多选后，PNG 项仍可见但 `aria-disabled=true`、`aria-checked=false`，同时二级菜单 child 按 `selection.assetCount == 2` 出现。
 - 这补齐了开发态菜单的扩展过滤、禁用和选中态证据；无选择、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
 
+### 2026-08-04 旧 Predicate revision 不再悬挂
+
+发现 `PluginPredicateResolverCache.resolve(oldContext)` 在旧 revision 被新 revision 取消后会持续轮询：旧条目被删除，但等待方没有把“已取消”视为终态。现在旧条目缺失时返回调用方指定的 fallback；即使 resolver 忽略 AbortSignal 并在取消后才 settle，也会删除 stale pending entry。这样菜单只会重新按新 revision 求值，不会留下悬挂 Promise。
+
+自动化证据：
+
+```text
+npx vitest run tests/unit/plugin-context.test.ts tests/unit/plugin-contribution-context.test.ts tests/unit/plugin-surface-conditions.test.ts tests/unit/plugin-menu-contributions.test.ts --reporter=dot
+# 4 files / 27 tests passed
+
+npx eslint src/plugins/plugin-context.ts tests/unit/plugin-context.test.ts
+npm run typecheck -- --pretty false
+git diff --check
+# 均通过
+```
+
+这属于 `Serpent-gtih` 的 P1 增量；旧 revision 取消契约已补齐，但真实 Electron 的无选择/混合/Viewer 全矩阵、packaged/Windows/CU 仍未执行，工单不关闭。
+
 - `npm run typecheck`：通过（主 TypeScript 与 extension TypeScript）。
 - 变更相关文件定向 ESLint：通过；`git diff --check`：通过。
 - `node scripts/run-vitest-with-electron.mjs run` 定向插件集合：21 files，271 passed。
