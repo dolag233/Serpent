@@ -42,6 +42,13 @@
 
 ## 当前验证记录
 
+### 2026-08-04 条件菜单真实右键回归
+
+- `tests/fixtures/plugins/unrestricted-settings-probe/serpent-plugin.json` 增加了单选可见、双选可见的 `when` 条件。
+- `tests/e2e/plugin-unrestricted-settings-pages.test.ts` 在安装并启用插件后实际导入资产、打开资产右键菜单，验证单选命令出现；条件为 false 的子项被过滤后，空的父级子菜单也不渲染。
+- `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-unrestricted-settings-pages.test.ts`：1 passed（6.1s）。
+- 这只补齐了开发态单选右键路径；无选择、多选、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
+
 - `npm run typecheck`：通过（主 TypeScript 与 extension TypeScript）。
 - 变更相关文件定向 ESLint：通过；`git diff --check`：通过。
 - `node scripts/run-vitest-with-electron.mjs run` 定向插件集合：21 files，271 passed。

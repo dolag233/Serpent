@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -11,6 +11,10 @@ test.describe.configure({ timeout: 180_000 });
 
 const FIXTURE_ROOT = path.resolve('tests/fixtures/plugins/unrestricted-settings-probe');
 const PLUGIN_ID = 'com.serpent.unrestricted-settings-probe';
+const PROBE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4kKBwIEGBAUIBACWOBQHzNCW5AAAAAElFTkSuQmCC',
+  'base64',
+);
 const CONTRIBUTION_ID_SUFFIXES = {
   settingsPage: '.settings-page',
   menu: '.menu.asset.probe.write-selection',
@@ -154,7 +158,11 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
   const libraryName = '无限制设置探测';
   const userDataPath = path.join(temporaryRoot, 'user-data');
   const packageDirectory = path.join(temporaryRoot, 'unrestricted-settings-probe');
+  const sourceDirectory = path.join(temporaryRoot, 'sources');
+  const sourcePath = path.join(sourceDirectory, 'probe.png');
   cpSync(FIXTURE_ROOT, packageDirectory, { recursive: true });
+  mkdirSync(sourceDirectory, { recursive: true });
+  writeFileSync(sourcePath, PROBE_PNG);
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
@@ -168,6 +176,7 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
       SERPENT_E2E_RESTORE_RECENT: '1',
       SERPENT_E2E_USER_DATA_PATH: userDataPath,
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FILES: sourcePath,
       SERPENT_E2E_PLUGIN_PACKAGE: packageDirectory,
     }),
   });
@@ -220,6 +229,16 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
 
     await dialog.getByRole('button', { name: '关闭' }).click();
     await expectContributionsAndSettingsIframe(window, libraryId);
+
+    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    const probeCard = window.locator('.asset-card[title="probe.png"]');
+    await expect(probeCard).toBeVisible({ timeout: 30_000 });
+    await probeCard.click({ button: 'right' });
+    await expect(window.getByRole('menuitem', { name: 'Write unrestricted selection' })).toBeVisible();
+    // The only child is false for a single selection; the parent must not
+    // remain as an empty submenu after the child is filtered out.
+    await expect(window.getByRole('menuitem', { name: 'Probe processing' })).toHaveCount(0);
+    await window.keyboard.press('Escape');
 
     const storage = JSON.parse(readFileSync(storagePath, 'utf8')) as {
       values: Record<string, { activated?: boolean; source?: string }>;

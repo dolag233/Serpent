@@ -36,7 +36,8 @@
       "asset": [
         {
           "command": "probe.write-selection",
-          "group": "probe"
+          "group": "probe",
+          "when": "selection.assetCount == 1"
         },
         {
           "id": "processing",
@@ -45,7 +46,8 @@
           "submenu": [
             {
               "command": "probe.nested-selection",
-              "before": "asset.rename"
+              "before": "asset.rename",
+              "when": "selection.assetCount == 2"
             }
           ]
         }
