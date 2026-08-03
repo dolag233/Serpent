@@ -111,6 +111,37 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
       db.close();
     }
   });
+
+  it('includes ignored descendants when trashing a managed folder', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'FolderTrashIgnored',
+      selectedParentPath: temp,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'hidden-content',
+    });
+    const source = path.join(temp, 'ignored.png');
+    writeFileSync(source, 'ignored-asset-bytes');
+    const asset = importFile(service, library.libraryId, source, folder.folderId).assets[0]!;
+
+    service.setIgnore({
+      libraryId: library.libraryId,
+      locationKind: 'managed',
+      relativePath: 'hidden-content',
+      pathKind: 'folder',
+      ignored: true,
+    });
+    expect(service.listAssets({ libraryId: library.libraryId, folderId: folder.folderId, recursive: true })).toEqual([]);
+
+    expect(service.trashManagedFolder({ libraryId: library.libraryId, folderId: folder.folderId })).toMatchObject({
+      trashedAssetCount: 1,
+      removedFolderCount: 1,
+    });
+    expect(service.listTrash(library.libraryId).map((row) => row.assetId)).toEqual([asset.assetId]);
+  });
 });
 
 describe('deleteAssetsFromDisk (clarification #7 / Serpent-9zc)', () => {
@@ -201,6 +232,43 @@ describe('deleteManagedFolderFromDisk (clarification #7 / Serpent-ekj)', () => {
         .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
         .get(asset.assetId);
       expect(assetRow).toBeUndefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('includes ignored descendants when deleting a managed folder from disk', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'FolderDiskDeleteIgnored',
+      selectedParentPath: temp,
+    });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'hidden-content',
+    });
+    const source = path.join(temp, 'ignored.png');
+    writeFileSync(source, 'ignored-disk-delete');
+    const asset = importFile(service, library.libraryId, source, folder.folderId).assets[0]!;
+
+    service.setIgnore({
+      libraryId: library.libraryId,
+      locationKind: 'managed',
+      relativePath: 'hidden-content',
+      pathKind: 'folder',
+      ignored: true,
+    });
+    expect(service.listAssets({ libraryId: library.libraryId, folderId: folder.folderId, recursive: true })).toEqual([]);
+
+    expect(service.deleteManagedFolderFromDisk({ libraryId: library.libraryId, folderId: folder.folderId })).toMatchObject({
+      deletedAssetCount: 1,
+      removedFolderCount: 1,
+    });
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'hidden-content'))).toBe(false);
+    const db = database(library.libraryPath);
+    try {
+      expect(db.prepare('SELECT asset_id FROM assets WHERE asset_id = ?').get(asset.assetId)).toBeUndefined();
     } finally {
       db.close();
     }
