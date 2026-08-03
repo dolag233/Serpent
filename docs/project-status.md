@@ -3,6 +3,11 @@
 > 更新时间：2026-08-02
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-04 Renderer 诊断**：`Serpent-lyf8` 已补齐开发态与 packaged 的 Renderer
+  `console-message` error、`render-process-gone`、`unresponsive`/`responsive` 以及
+  App child-process 退出日志；定向单测、lint、typecheck 通过。真实崩溃、GPU、Windows
+  packaged 与 Computer Use 仍待执行。
+
 ## 2026-07-27 画布精确锚点与序列图
 
 - `Serpent-32p` 的侧栏/窗口重排锚点已按用户硬性要求收口：拖动中冻结重排，松手后以拖动前同一资产内部点为锚，连续两帧稳定后结束补偿；macOS 冷启动真实源码实例双向拖动均保持 `clientY=125`，提交 `2fa3cd5`。

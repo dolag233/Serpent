@@ -209,6 +209,13 @@ import {
 import { LibraryWorkerClient } from "./worker-client";
 import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
+import {
+  logRendererChildProcessGone,
+  logRendererConsoleMessage,
+  logRendererProcessGone,
+  logRendererResponsive,
+  logRendererUnresponsive,
+} from "./renderer-diagnostics";
 import { pickIsolatedWindowPlacement } from "./e2e-isolated-window";
 import {
   clearActiveRecentLibrary,
@@ -782,23 +789,21 @@ async function loadRendererDevUrl(
   throw new Error(`Renderer remained blank after dev load retries: ${url}`);
 }
 
-function attachRendererDevDiagnostics(window: BrowserWindow): void {
+function attachRendererDiagnostics(window: BrowserWindow): void {
   window.webContents.on(
     "console-message",
     (_event, level, message, line, sourceId) => {
-      const scope =
-        level >= 3 ? "renderer.console.error" : "renderer.console";
-      logger?.info(scope, message, {
-        level,
-        line,
-        sourceId,
-      });
+      logRendererConsoleMessage(logger, level, message, line, sourceId);
     },
   );
   window.webContents.on("render-process-gone", (_event, details) => {
-    logger?.error("renderer.process-gone", new Error(details.reason), {
-      exitCode: details.exitCode,
-    });
+    logRendererProcessGone(logger, window.id, details);
+  });
+  window.webContents.on("unresponsive", () => {
+    logRendererUnresponsive(logger, window.id);
+  });
+  window.webContents.on("responsive", () => {
+    logRendererResponsive(logger, window.id);
   });
 }
 
@@ -844,6 +849,10 @@ async function createMainWindow(): Promise<void> {
 
   mainWindow = window;
   const mainContentsId = window.webContents.id;
+  // Keep renderer diagnostics active in both development and packaged builds.
+  // A blank window in a packaged build must leave the same evidence as one
+  // started from Vite; idle windows produce no log entries.
+  attachRendererDiagnostics(window);
   window.on("ready-to-show", () => window.show());
   // Cleanup while webContents/HWND still exist (`closed` is too late).
   window.on("close", () => {
@@ -933,7 +942,6 @@ async function createMainWindow(): Promise<void> {
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    attachRendererDevDiagnostics(window);
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (errorCode === -3) return; // aborted
       const detail = [
@@ -4123,6 +4131,9 @@ async function startApplication(): Promise<void> {
   app.setAppLogsPath();
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
   logger = new AppLogger(appLogPath);
+  app.on("child-process-gone", (_event, details) => {
+    logRendererChildProcessGone(logger, undefined, details);
+  });
   applyDevAppIcon();
   const staleClipboardCount = cleanupStaleClipboardImages(app.getPath("temp"));
   if (staleClipboardCount > 0) {
