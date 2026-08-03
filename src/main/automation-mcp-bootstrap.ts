@@ -63,6 +63,7 @@ export async function maybeStartAutomationMcpMode(
     libraryId,
     onLibraryChanged: deps.onLibraryChanged,
     writeAccessGranted,
+    pluginTools: deps.pluginTools,
   });
   deps.logger.info('automation.mcp', 'MCP stdio server connected.', {
     executionId: handle.executionId,

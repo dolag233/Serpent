@@ -46,6 +46,7 @@ describe('automation MCP bootstrap', () => {
       gateway: {} as never,
       request: vi.fn(),
       logger: { info: vi.fn(), error: vi.fn() },
+      pluginTools: { list: vi.fn(), isKnown: vi.fn(), call: vi.fn() },
       env: { SERPENT_MCP: '1', SERPENT_MCP_ALLOW_UNBOUND: '1' },
     });
 
@@ -53,6 +54,7 @@ describe('automation MCP bootstrap', () => {
     expect(mocks.startAutomationMcpHost).toHaveBeenCalledWith(expect.objectContaining({
       libraryId: null,
       writeAccessGranted: false,
+      pluginTools: expect.any(Object),
     }));
   });
 });

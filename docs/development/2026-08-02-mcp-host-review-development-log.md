@@ -42,3 +42,9 @@
 - packaged/Windows MCP Host 尚未执行。
 - Desktop attached 的真实最小化、切换其他应用、Desktop 退出后的系统级旅程仍保留原有 QA 风险。
 - 插件命令目前没有独立 impact metadata，因此统一按可能产生副作用处理；后续若要允许只读插件 MCP，需要新增命令影响级别并沿 Registry/Gateway 统一授权，不能只修改 MCP annotations。
+
+## 2026-08-04：headless 插件桥与工具名碰撞收口
+
+补齐 headless bootstrap 的 `pluginTools` 传递，使已授予本地写权限的 stdio MCP 会话能够看到并调用插件 MCP 命令；未授予写权限的会话仍不会列出插件工具，调用也继续返回 `MCP_TOOL_NOT_EXPOSED`。同时，插件 ID/命令 ID 经规范化后若产生同名工具，现在追加稳定短后缀而不是让整个 `tools/list` 失败；Provider 的 `isKnown` 与最终列表使用同一命名结果。
+
+新增回归：bootstrap 传递插件桥、stdio transport `onclose` 取消 Main execution、只读/写入插件工具列表与调用、规范化名称碰撞。验证：6 个 MCP 单测文件 / 27 个测试通过；定向 ESLint 与 `npm run typecheck` 通过。packaged/Windows 与真实 stdio 客户端断开旅程仍未执行。

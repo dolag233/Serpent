@@ -17,6 +17,7 @@ export type PluginMcpCommandSource = {
   commandId: string;
   title: string;
   mcpExported: boolean;
+  pluginInstanceId?: string;
 };
 
 export type PluginMcpToolDefinition = {
@@ -45,20 +46,46 @@ export function pluginMcpToolName(pluginId: string, commandId: string): string {
   ].join('_');
 }
 
+function stableCollisionSuffix(pluginId: string, commandId: string, pluginInstanceId?: string): string {
+  let hash = 2166136261;
+  const input = `${pluginId}\u0000${commandId}\u0000${pluginInstanceId ?? ''}`;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 export function listPluginMcpTools(
   commands: readonly PluginMcpCommandSource[],
   isEnabled: (command: PluginMcpCommandSource) => boolean = () => true,
 ): PluginMcpToolDefinition[] {
-  const tools = commands
+  const candidates = commands
     .filter((command) => command.mcpExported && isEnabled(command))
     .map((command) => ({
-      name: pluginMcpToolName(command.pluginId, command.commandId),
+      command,
+      baseName: pluginMcpToolName(command.pluginId, command.commandId),
       description: `${command.title} (plugin command ${command.pluginId}.${command.commandId})`,
       pluginId: pluginIdSchema.parse(command.pluginId),
       commandId: pluginLocalIdSchema.parse(command.commandId),
       inputSchema: pluginMcpInputSchemaJson,
     }))
-    .sort((left, right) => left.name.localeCompare(right.name));
+    .sort((left, right) => left.baseName.localeCompare(right.baseName)
+      || left.pluginId.localeCompare(right.pluginId)
+      || left.commandId.localeCompare(right.commandId));
+  const baseNameCounts = new Map<string, number>();
+  for (const candidate of candidates) {
+    baseNameCounts.set(candidate.baseName, (baseNameCounts.get(candidate.baseName) ?? 0) + 1);
+  }
+  const tools = candidates.map(({ command, baseName, description, pluginId, commandId, inputSchema }) => ({
+    name: (baseNameCounts.get(baseName) ?? 0) > 1
+      ? `${baseName}_${stableCollisionSuffix(pluginId, commandId, command.pluginInstanceId)}`
+      : baseName,
+    description,
+    pluginId,
+    commandId,
+    inputSchema,
+  }));
   const seenNames = new Set<string>();
   for (const tool of tools) {
     if (seenNames.has(tool.name)) throw new Error(`Duplicate MCP tool name: ${tool.name}`);

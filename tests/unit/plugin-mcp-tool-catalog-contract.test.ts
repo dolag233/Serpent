@@ -21,4 +21,25 @@ describe('plugin MCP tool input schema', () => {
     expect(() => parsePluginMcpToolArguments(tool, { assetIds: [] })).toThrow();
     expect(parsePluginMcpToolArguments(tool, { assetIds: ['asset-1'] })).toEqual({ assetIds: ['asset-1'] });
   });
+
+  it('disambiguates sanitized plugin tool names instead of failing tools/list', () => {
+    const tools = listPluginMcpTools([
+      {
+        pluginId: 'com.example.alpha-beta',
+        commandId: 'inspect',
+        title: 'Alpha',
+        mcpExported: true,
+      },
+      {
+        pluginId: 'com.example.alpha_beta',
+        commandId: 'inspect',
+        title: 'Beta',
+        mcpExported: true,
+      },
+    ]);
+
+    expect(tools).toHaveLength(2);
+    expect(new Set(tools.map((tool) => tool.name)).size).toBe(2);
+    expect(tools.every((tool) => tool.name.startsWith('serpent_plugin_com_example_alpha_beta_inspect_'))).toBe(true);
+  });
 });

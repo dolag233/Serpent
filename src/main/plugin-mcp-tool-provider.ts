@@ -2,7 +2,6 @@ import type { PluginActivationCoordinator } from './plugin-activation-coordinato
 import {
   listPluginMcpTools,
   pluginMcpCommandContextSchema,
-  pluginMcpToolName,
   type PluginMcpCommandContext,
   type PluginMcpToolDefinition,
 } from '../mcp/plugin-tool-catalog';
@@ -32,9 +31,7 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
   isKnown(toolName: string, libraryIdOverride?: string): boolean {
     const libraryId = libraryIdOverride ?? this.options.getLibraryId();
     if (libraryId === null) return false;
-    return this.options.activationCoordinator
-      .listMcpCommandContributions({ libraryId })
-      .some((command) => pluginMcpToolName(command.pluginId, command.commandId) === toolName);
+    return this.list(libraryId).some((tool) => tool.name === toolName);
   }
 
   async call(input: {

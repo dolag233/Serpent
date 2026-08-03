@@ -119,4 +119,22 @@ describe('automation MCP host library.changed push', () => {
     })).rejects.toThrow('stdio unavailable');
     expect(journal.cancel).toHaveBeenCalledWith('execution-1');
   });
+
+  it('cancels the Main-owned execution when the stdio transport closes', async () => {
+    const journal = createJournal('library-1');
+    const server = { sendLoggingMessage: vi.fn(), close: vi.fn().mockResolvedValue(undefined) };
+    const transport: { onclose?: () => void } = {};
+    mocks.createSerpentMcpServer.mockReturnValueOnce(server);
+    mocks.connectSerpentMcpStdio.mockResolvedValueOnce(transport);
+
+    const handle = await startAutomationMcpHost({
+      journal: journal as never,
+      gateway: {} as never,
+      libraryId: 'library-1',
+    });
+
+    transport.onclose?.();
+    expect(journal.cancel).toHaveBeenCalledWith('execution-1');
+    await handle.close();
+  });
 });
