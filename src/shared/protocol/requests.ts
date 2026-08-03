@@ -1555,6 +1555,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       { message: 'assetIds must not contain duplicates.' },
     ),
     newBaseName: assetFileBaseNameSchema.optional(),
+    renameItems: z.array(z.strictObject({
+      assetId: identifierSchema,
+      newBaseName: assetFileBaseNameSchema,
+    })).min(1).max(10_000).optional(),
     targetFolderId: identifierSchema.nullable().optional(),
     conflictStrategy: nameConflictDecisionSchema.optional(),
   }),

@@ -18,7 +18,7 @@ export type PluginViewerActionDescriptor = {
   disabled: boolean;
   when?: string;
   enablement?: string;
-  checked?: string;
+  checked?: boolean;
 };
 
 export function buildPluginViewerActionDescriptors(
@@ -47,11 +47,10 @@ export function buildPluginViewerActionDescriptors(
         pluginId: contribution.pluginId,
         ...(contribution.when === undefined ? {} : { when: contribution.when }),
         ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
-        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
         disabled: conditions.disabled,
       }];
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    });
 }
 
 export function usePluginViewerActionContributions(
@@ -126,12 +125,14 @@ export function PluginViewerActionButtons({
     >
       {items.map((item) => (
         <button
+          aria-pressed={item.checked}
           disabled={disabled || item.disabled}
           key={item.id}
           onClick={() => {
             if (pluginApi === undefined || libraryId === undefined) return;
             void runPluginMenuCommand(pluginApi, libraryId, item, {
               assetIds: [assetId],
+              contributionContext: context,
             });
           }}
           tabIndex={VIEWER_CHROME_TAB_INDEX}

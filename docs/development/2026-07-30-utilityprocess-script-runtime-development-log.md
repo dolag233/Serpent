@@ -69,6 +69,14 @@ npm run typecheck
 
 结果：3 个单测文件、26 个测试通过；定向 lint 与 typecheck 通过。
 
+## 2026-08-04 增量：CPU 时间与 Host 等待解耦
+
+QuickJS 的 interrupt handler 原先用一次执行的墙钟起点判断 `cpuTimeoutMs`。脚本在等待合法 Host Gateway RPC 时，下一轮 Promise pump 仍会看到已经流逝的墙钟时间，导致短 CPU 预算把正常的 Host 等待误判为 `CPU_TIMEOUT`。
+
+现改为只累计 QuickJS 实际执行窗口：脚本初次求值、pending-job pump，以及 Host Promise settle 后触发的 QuickJS job pump 都通过同一层计时；等待外部 Host Promise 本身不计入 CPU 预算。墙钟超时仍由原有 `wallTimeoutMs` 独立控制，因此无限循环仍会被 CPU 中断，永不返回的 Host 调用仍会被 WALL_TIMEOUT 终止。
+
+验证：`tests/unit/quickjs-sandbox-prototype.test.ts` 22 tests passed，新增回归覆盖 `cpuTimeoutMs=10ms`、Host 延迟 40ms 的合法调用；`npm run typecheck` 通过。macOS/Windows packaged、Windows 实机和 Computer Use 仍未验证，`Serpent-y51c.3` 继续保持 `in_progress`。
+
 ## 未验证/未完成
 
 - macOS packaged、Windows packaged 和 Windows 实机尚未验证，不能据此关闭跨平台打包门禁。

@@ -672,6 +672,7 @@ async function waitForGuestPromise(
   isCancelled: () => boolean,
   maxPendingJobBatches: number,
   afterPendingJobs: () => void,
+  executePendingJobs: () => ReturnType<QuickJSRuntime['executePendingJobs']>,
 ): Promise<QuickJSHandle> {
   let pendingJobBatches = 0;
   while (true) {
@@ -689,7 +690,7 @@ async function waitForGuestPromise(
       throw new QuickJsSandboxPrototypeError('WALL_TIMEOUT', 'The script exceeded its wall-clock time limit.');
     }
 
-    const pendingJobs = runtime.executePendingJobs(128);
+    const pendingJobs = executePendingJobs();
     try {
       if (pendingJobs.error) {
         const error = guestError(context, pendingJobs.error, isCancelled());
@@ -743,6 +744,17 @@ export async function runQuickJsSandboxPrototype(
   const deferreds = new Set<QuickJSDeferredPromise>();
   const trackedGuestPromises = new Set<TrackedGuestPromise>();
   const retiredPromiseCallbacks = new Set<QuickJSHandle>();
+  let cpuConsumedMs = 0;
+  let cpuSliceStartedAt: number | undefined;
+  const runQuickJsSlice = <T>(operation: () => T): T => {
+    cpuSliceStartedAt = Date.now();
+    try {
+      return operation();
+    } finally {
+      cpuConsumedMs += Date.now() - cpuSliceStartedAt;
+      cpuSliceStartedAt = undefined;
+    }
+  };
   let nativePromiseThen: QuickJSHandle | undefined;
   let promiseTracker: QuickJSHandle | undefined;
 
@@ -753,7 +765,11 @@ export async function runQuickJsSandboxPrototype(
   };
   options?.signal?.addEventListener('abort', abort, { once: true });
   runtime.setInterruptHandler(
-    () => cancellationRequested || Date.now() - startedAt >= limits.cpuTimeoutMs,
+    () => cancellationRequested || (
+      cpuConsumedMs
+      + (cpuSliceStartedAt === undefined ? 0 : Date.now() - cpuSliceStartedAt)
+      >= limits.cpuTimeoutMs
+    ),
   );
   const context = runtime.newContext();
   // The generated promise-budget closure keeps the original Promise constructor
@@ -804,7 +820,7 @@ export async function runQuickJsSandboxPrototype(
         deferreds.delete(deferred);
         deferred.dispose();
         if (active) {
-          const pendingJobs = runtime.executePendingJobs();
+          const pendingJobs = runQuickJsSlice(() => runtime.executePendingJobs());
           if (pendingJobs.error) pendingJobs.error.dispose();
           disposeRetiredPromiseCallbacks();
         }
@@ -1462,14 +1478,14 @@ export async function runQuickJsSandboxPrototype(
     consoleObject.dispose();
     log.dispose();
 
-    const evaluation = context.evalCode(
-      buildPromiseBudgetHarness(
-        transpiledJavaScript,
-        promiseTrackerIdentifier,
-      ),
-      'script.serpent.js',
-      { type: 'global' },
-    );
+    const evaluation = runQuickJsSlice(() => context.evalCode(
+        buildPromiseBudgetHarness(
+          transpiledJavaScript,
+          promiseTrackerIdentifier,
+        ),
+        'script.serpent.js',
+        { type: 'global' },
+      ));
     if (evaluation.error) {
       const error = guestError(context, evaluation.error, cancellationRequested);
       evaluation.error.dispose();
@@ -1486,6 +1502,7 @@ export async function runQuickJsSandboxPrototype(
         () => cancellationRequested,
         limits.maxPendingJobBatches,
         disposeRetiredPromiseCallbacks,
+        () => runQuickJsSlice(() => runtime.executePendingJobs(128)),
       );
       const value = context.dump(result);
       const serialized = stringifyValue(value);

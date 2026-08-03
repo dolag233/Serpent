@@ -19,6 +19,7 @@ export interface DesktopAutomationFilePlanSummary {
   targetCount: number;
   executableCount: number;
   blockedCount: number;
+  conflictCount?: number;
   undoSupported: boolean;
   /** Optional plugin onWill warnings to show before confirmation. */
   hookWarnings?: readonly string[];
@@ -100,6 +101,7 @@ function planCommandFor(
         libraryId,
         operation: 'rename-files',
         assetIds: input.items.map((item) => item.assetId),
+        renameItems: input.items,
       };
     }
     case 'asset.restore-if-original-vacant': {
@@ -203,13 +205,7 @@ export function createDesktopAutomationFilePlanApprovalHandler(
           undoSupported: true,
         });
         if (!approved) return undefined;
-        const planHash = createHash('sha256').update(JSON.stringify({
-          executionId,
-          commandId,
-          libraryId,
-          commandInput: input,
-          plan: parsedPlan,
-        }), 'utf8').digest('hex');
+        const planHash = parsedPlan.planHash;
         return {
           planHash,
           expectedChangeSequence: parsedPlan.changeSequence,
@@ -233,6 +229,7 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         targetCount: planned.targetCount,
         executableCount: planned.executableCount,
         blockedCount: planned.blockedCount,
+        ...(planned.conflictCount > 0 ? { conflictCount: planned.conflictCount } : {}),
         undoSupported: planned.undoSupported,
       };
       let hookWarnings: readonly string[] = [];
@@ -251,16 +248,11 @@ export function createDesktopAutomationFilePlanApprovalHandler(
       });
       if (!approved) return undefined;
 
-      const planHash = createHash('sha256').update(JSON.stringify({
-        executionId,
-        commandId,
-        libraryId,
-        commandInput,
-        expectedChangeSequence: planned.changeSequence,
-        assetStates: planned.assetStates,
-      }), 'utf8').digest('hex');
+      if (planned.planHash === undefined) {
+        throw new Error('Worker returned a file-operation plan without a plan hash.');
+      }
       return {
-        planHash,
+        planHash: planned.planHash,
         expectedChangeSequence: planned.changeSequence,
         assetStates: planned.assetStates,
       };

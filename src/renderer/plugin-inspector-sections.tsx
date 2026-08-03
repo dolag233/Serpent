@@ -18,7 +18,7 @@ export type PluginInspectorSectionDescriptor = {
   disabled: boolean;
   when?: string;
   enablement?: string;
-  checked?: string;
+  checked?: boolean;
 };
 
 export function buildPluginInspectorSectionDescriptors(
@@ -49,11 +49,10 @@ export function buildPluginInspectorSectionDescriptors(
         pluginId: contribution.pluginId,
         ...(contribution.when === undefined ? {} : { when: contribution.when }),
         ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
-        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
         disabled: conditions.disabled,
       }];
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    });
 }
 
 export function usePluginInspectorSectionContributions(
@@ -130,10 +129,12 @@ export function PluginInspectorSections({
             <button
               className="plugin-inspector-section-action"
               disabled={disabled || item.disabled}
+              aria-pressed={item.checked}
               onClick={() => {
                 if (pluginApi === undefined || libraryId === undefined) return;
                 void runPluginMenuCommand(pluginApi, libraryId, item, {
                   assetIds: [...selectedAssetIds],
+                  contributionContext: context,
                 });
               }}
               type="button"

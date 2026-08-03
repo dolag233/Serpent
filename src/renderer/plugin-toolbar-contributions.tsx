@@ -17,7 +17,7 @@ export type PluginToolbarDescriptor = {
   disabled: boolean;
   when?: string;
   enablement?: string;
-  checked?: string;
+  checked?: boolean;
 };
 
 export function buildPluginToolbarDescriptors(
@@ -46,11 +46,10 @@ export function buildPluginToolbarDescriptors(
         pluginId: contribution.pluginId,
         ...(contribution.when === undefined ? {} : { when: contribution.when }),
         ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
-        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
         disabled: conditions.disabled,
       };
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    });
 }
 
 export function usePluginToolbarContributions(
@@ -100,8 +99,9 @@ export async function runPluginToolbarCommand(
   context: {
     assetIds?: string[];
   },
+  contributionContext?: PluginContributionContext,
 ): Promise<void> {
-  await runPluginMenuCommand(pluginApi, libraryId, item, context);
+  await runPluginMenuCommand(pluginApi, libraryId, item, { ...context, contributionContext });
 }
 
 export function PluginToolbarButtons({
@@ -136,6 +136,7 @@ export function PluginToolbarButtons({
         <button
           className="compact-action"
           disabled={disabled || item.disabled}
+          aria-pressed={item.checked}
           key={item.id}
           onClick={() => {
             if (pluginApi === undefined || libraryId === undefined) return;
@@ -143,7 +144,7 @@ export function PluginToolbarButtons({
               ...(selectedAssetIds.length === 0
                 ? {}
                 : { assetIds: [...selectedAssetIds] }),
-            });
+            }, context);
           }}
           type="button"
         >

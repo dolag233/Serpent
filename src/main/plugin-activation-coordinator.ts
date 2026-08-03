@@ -44,6 +44,7 @@ import {
   type PluginHookEvent,
 } from '../plugins/plugin-hooks';
 import type { PluginPackageManager } from './plugin-package-manager';
+import type { PluginInvocationContext } from '../plugins/plugin-context';
 import type { PluginRuntimeSupervisor } from './plugin-runtime-supervisor';
 import type { PluginTrustedRuntimeSupervisor } from './plugin-trusted-runtime-supervisor';
 import type { InstalledPluginPackage } from './plugin-package-manager-types';
@@ -1125,6 +1126,7 @@ export class PluginActivationCoordinator {
     assetIds?: readonly string[];
     folderIds?: readonly string[];
     collectionIds?: readonly string[];
+    invocation?: PluginInvocationContext;
     timeoutMs?: number;
   }): Promise<{ complete: PluginCommandComplete; timedOut: boolean }> {
     const targetLibrary = pluginTargetLibraryIdSchema.safeParse(input.libraryId);
@@ -1166,6 +1168,9 @@ export class PluginActivationCoordinator {
     if (activeRecord.instanceScope === 'library' && activeRecord.activationLibraryId !== targetLibrary.data) {
       throw new Error('A library-scoped plugin instance cannot serve another library.');
     }
+    if (input.invocation !== undefined && input.invocation.libraryId !== targetLibrary.data) {
+      throw new Error('The invocation context targets another library.');
+    }
     const cloneNonEmptyIds = (values: readonly string[] | undefined): string[] | undefined => (
       values === undefined || values.length === 0 ? undefined : [...values]
     );
@@ -1177,6 +1182,7 @@ export class PluginActivationCoordinator {
       ...(assetIds === undefined ? {} : { assetIds }),
       ...(folderIds === undefined ? {} : { folderIds }),
       ...(collectionIds === undefined ? {} : { collectionIds }),
+      ...(input.invocation === undefined ? {} : { invocation: input.invocation }),
     });
     return activeRecord.mode === 'restricted'
       ? this.options.supervisor.invokeCommand({

@@ -115,6 +115,7 @@ export function generatePluginSdkTypeDeclaration(_moduleSpecifier = '@serpent/pl
     '    readonly assetIds?: readonly string[];',
     '    readonly folderIds?: readonly string[];',
     '    readonly collectionIds?: readonly string[];',
+    '    readonly invocation?: { readonly contextId: string; readonly revision: number; readonly libraryId: string; readonly selection: { readonly ref?: string; readonly refs: readonly string[]; readonly assetIds: readonly string[]; readonly folderIds: readonly string[]; readonly collectionIds: readonly string[] }; readonly browse: Readonly<Record<string, unknown>>; readonly viewer: { readonly active: boolean; readonly assetId?: string } };',
     '  }',
     '',
     '  interface SerpentPluginApi {',

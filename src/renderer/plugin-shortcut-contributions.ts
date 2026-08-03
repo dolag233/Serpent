@@ -25,7 +25,7 @@ export type PluginShortcutDescriptor = {
   disabled: boolean;
   when?: string;
   enablement?: string;
-  checked?: string;
+  checked?: boolean;
 };
 
 export function buildPluginShortcutDescriptors(
@@ -56,11 +56,10 @@ export function buildPluginShortcutDescriptors(
         accelerator: contribution.accelerator,
         ...(contribution.when === undefined ? {} : { when: contribution.when }),
         ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
-        ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
         disabled: conditions.disabled,
       }];
-    })
-    .sort((left, right) => left.id.localeCompare(right.id));
+    });
 }
 
 export function usePluginShortcutContributions(
@@ -125,8 +124,9 @@ export async function runPluginShortcutCommand(
   context: {
     assetIds?: string[];
   },
+  contributionContext?: PluginContributionContext,
 ): Promise<void> {
-  await runPluginMenuCommand(pluginApi, libraryId, item, context);
+  await runPluginMenuCommand(pluginApi, libraryId, item, { ...context, contributionContext });
 }
 
 export function usePluginShortcutKeyboard(args: {
@@ -175,7 +175,7 @@ export function usePluginShortcutKeyboard(args: {
         ...(selectedAssetIds.length === 0
           ? {}
           : { assetIds: [...selectedAssetIds] }),
-      });
+      }, context);
     };
 
     window.addEventListener('keydown', onKeyDown);

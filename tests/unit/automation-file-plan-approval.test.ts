@@ -18,15 +18,22 @@ class RecordingWorker {
   }
 }
 
-const plannedResult: WorkerResult = {
+type PlannedFileOperationResult = Extract<WorkerResult, {
+  ok: true;
+  type: 'automation.file-operation-planned';
+}>;
+
+const plannedResult: PlannedFileOperationResult = {
   ok: true,
   type: 'automation.file-operation-planned',
   libraryId: 'library-1',
   operation: 'rename-file',
+  planHash: 'c'.repeat(64),
   changeSequence: 17,
   targetCount: 1,
   executableCount: 1,
   blockedCount: 0,
+  conflictCount: 0,
   undoSupported: false,
   assetStates: [{ assetId: 'asset-1', stateToken: 'a'.repeat(64) }],
 };
@@ -244,6 +251,7 @@ describe('Desktop automation file-plan approval', () => {
       type: 'automation.file-import-planned',
       plan: {
         libraryId: 'library-1',
+        planHash: 'd'.repeat(64),
         changeSequence: 21,
         fileCount: 2,
         totalBytes: 2048,
@@ -337,6 +345,10 @@ describe('Desktop automation file-plan approval', () => {
       libraryId: 'library-1',
       operation: 'rename-files',
       assetIds: ['asset-1', 'asset-2'],
+      renameItems: [
+        { assetId: 'asset-1', newBaseName: 'first-concept' },
+        { assetId: 'asset-2', newBaseName: 'second-concept' },
+      ],
     }]);
   });
 

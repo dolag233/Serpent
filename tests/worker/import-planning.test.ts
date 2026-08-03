@@ -101,6 +101,20 @@ describe('pending import plans', () => {
     expect(plan.sourceStates).toHaveLength(1);
     expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
 
+    expectServiceCode(
+      () => service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+        automationPlan: {
+          planHash: '0'.repeat(64),
+          expectedChangeSequence: plan.changeSequence,
+          sourceStates: plan.sourceStates,
+        },
+      }),
+      'VERSION_CONFLICT',
+    );
+
     writeFileSync(source, 'after!');
     expectServiceCode(
       () => service.prepareOrExecuteImport({
@@ -108,6 +122,7 @@ describe('pending import plans', () => {
         sourceKind: 'files',
         sourcePaths: [source],
         automationPlan: {
+          planHash: plan.planHash,
           expectedChangeSequence: plan.changeSequence,
           sourceStates: plan.sourceStates,
         },

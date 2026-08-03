@@ -182,14 +182,14 @@ interface PluginContributionContext {
 ```ts
 interface PluginInvocationContext {
   contextId: string; revision: number; libraryId: string;
-  selection: { ref?: string; refs: string[]; assetIds: string[]; folderIds: string[] };
+  selection: { ref?: string; refs: string[]; assetIds: string[]; folderIds: string[]; collectionIds: string[] };
   browse: { folderId?: string; collectionId?: string; tagId?: string; search?: string; filter?: string };
   viewer: { active: boolean; assetId?: string };
 }
 ```
 
-异步命令必须使用这份快照，不要在等待之后读取新的 UI 选择。当前生成的独立 Guest SDK 类型把 `commands.register` handler 参数
-收窄为 `{ assetIds?: readonly string[] }`；完整 Invocation Context 是 Host 内部契约，插件不要访问未由 SDK 声明的字段。
+异步命令必须使用这份快照，不要在等待之后读取新的 UI 选择。命令 handler 的 `context.invocation` 提供这份快照；顶层
+`targetLibraryId` 与 ID 数组仍保留为便捷字段。`collectionIds` 只表示触发时的合集目标，合集浏览范围仍在 `invocation.browse.collectionId`。
 
 ## 5. Guest API
 

@@ -1757,10 +1757,11 @@ function AppInner() {
     descriptor: { type: "workspace", assetIds: [...selectedAssetIds] },
     assets: visibleAssets,
     libraryId: library?.libraryId,
+    busy,
     locale,
     browse: pluginBrowseScope,
     viewer: pluginViewerState,
-  }), [library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
+  }), [busy, library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
 
   // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
   const assetRenderSections = useMemo(
@@ -10343,6 +10344,7 @@ function AppInner() {
       />
       {/* Unified context menu */}
       <AssetContextMenu
+        busy={busy}
         libraryId={library?.libraryId}
         pluginBrowseScope={pluginBrowseScope}
         pluginViewerState={pluginViewerState}

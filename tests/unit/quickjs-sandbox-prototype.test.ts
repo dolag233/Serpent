@@ -597,6 +597,20 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
     });
   });
 
+  it('does not charge time spent awaiting a host call against the CPU budget', async () => {
+    const delayedHost = {
+      readText: async () => new Promise<string>((resolve) => {
+        setTimeout(() => resolve('delayed'), 40);
+      }),
+    };
+    await expect(
+      runQuickJsSandboxPrototype('return await serpent.readText("wait");', delayedHost, {
+        cpuTimeoutMs: 10,
+        wallTimeoutMs: 250,
+      }),
+    ).resolves.toMatchObject({ value: 'delayed' });
+  });
+
   it('honours cancellation while awaiting an untrusted script host call', async () => {
     const controller = new AbortController();
     const neverResolvingHost = { readText: async () => new Promise<string>(() => undefined) };

@@ -856,6 +856,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'trash',
+          assetIds: request.command.assetIds,
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });
@@ -867,6 +870,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'replace-content',
+          assetIds: [request.command.assetId],
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });
@@ -880,6 +886,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'asset.content.staged', ...result };
     }
     case 'asset.content.replace-batch': {
+      if (request.command.automationPlan) {
+        libraryService.validateAutomationFileOperationPlan({
+          libraryId: request.command.libraryId,
+          operation: 'replace-content',
+          assetIds: request.command.items.map((item) => item.assetId),
+          planHash: request.command.automationPlan.planHash,
+          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
+          assetStates: request.command.automationPlan.assetStates,
+        });
+      }
       const result = libraryService.replaceManagedAssetContentBatch(request.command);
       scheduleThumbnailScene(
         request.command.libraryId,
@@ -905,6 +921,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'move',
+          assetIds: request.command.assetIds,
+          targetFolderId: request.command.targetFolderId,
+          ...(request.command.conflictStrategy === undefined
+            ? {}
+            : { conflictStrategy: request.command.conflictStrategy }),
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });
@@ -937,6 +960,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'rename-file',
+          assetIds: [request.command.assetId],
+          newBaseName: request.command.newBaseName,
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });
@@ -948,6 +975,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'rename-files',
+          assetIds: request.command.items.map((item) => item.assetId),
+          renameItems: request.command.items,
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });
@@ -959,6 +990,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (request.command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
+          operation: 'restore-if-original-vacant',
+          assetIds: request.command.assetIds,
+          planHash: request.command.automationPlan.planHash,
           expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
           assetStates: request.command.automationPlan.assetStates,
         });

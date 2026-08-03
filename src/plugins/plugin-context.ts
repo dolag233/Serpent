@@ -78,6 +78,7 @@ export const pluginInvocationContextSchema = z.strictObject({
     refs: boundedList(boundedId, 10_000),
     assetIds: boundedList(boundedId, 10_000),
     folderIds: boundedList(boundedId, 10_000),
+    collectionIds: boundedList(boundedId, 10_000),
   }),
   browse: z.strictObject({
     folderId: boundedId.optional(),
@@ -100,7 +101,8 @@ export type PluginInvocationTarget = {
     ref?: string;
     refs?: readonly string[];
     assetIds?: readonly string[];
-    folderIds?: readonly string[];
+  folderIds?: readonly string[];
+  collectionIds?: readonly string[];
   };
 };
 
@@ -142,7 +144,8 @@ export function createPluginInvocationContext(
       ref: selection?.ref ?? parsed.selection.ref,
       refs: [...(selection?.refs ?? [])],
       assetIds: [...(selection?.assetIds ?? [])],
-      folderIds: [...(selection?.folderIds ?? [])],
+    folderIds: [...(selection?.folderIds ?? [])],
+      collectionIds: [...(selection?.collectionIds ?? [])],
     },
     browse: parsed.browse,
     viewer: {

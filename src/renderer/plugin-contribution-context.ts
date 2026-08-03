@@ -57,6 +57,22 @@ function contextToken(values: readonly string[]): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
+const revisionStateByContextId = new Map<string, { signature: string; revision: number }>();
+
+function automaticRevision(contextId: string, signature: string): number {
+  const previous = revisionStateByContextId.get(contextId);
+  if (previous?.signature === signature) return previous.revision;
+  const revision = Math.max(1, (previous?.revision ?? 0) + 1);
+  revisionStateByContextId.set(contextId, { signature, revision });
+  // Context IDs are derived from bounded surface/selection identity. Keep the
+  // renderer-side cache bounded when a long session visits many selections.
+  if (revisionStateByContextId.size > 256) {
+    const oldest = revisionStateByContextId.keys().next().value;
+    if (oldest !== undefined && oldest !== contextId) revisionStateByContextId.delete(oldest);
+  }
+  return revision;
+}
+
 function selectedIds(descriptor: ContextMenuDescriptor): {
   assetIds: string[];
   folderIds: string[];
@@ -81,6 +97,9 @@ export function createPluginMenuContributionContext(input: {
   libraryId?: string;
   locale?: string;
   theme?: "light" | "dark" | "system";
+  busy?: boolean;
+  libraryWritable?: boolean;
+  libraryOffline?: boolean;
   revision?: number;
   browse?: Partial<PluginContributionContext["browse"]>;
   viewer?: Partial<PluginContributionContext["viewer"]>;
@@ -113,22 +132,32 @@ export function createPluginMenuContributionContext(input: {
   const descriptorKey = input.descriptor.type === "workspace"
     ? "workspace"
     : input.descriptor.type;
+  const contextId = `menu:${descriptorKey}:${refs.length}:${contextToken(refs)}`;
+  const revision = input.revision ?? automaticRevision(contextId, JSON.stringify({
+    assets: selectedAssets,
+    browse: input.browse,
+    libraryId: input.libraryId,
+    viewer: input.viewer,
+    busy: input.busy ?? false,
+    libraryWritable: input.libraryWritable ?? input.libraryId !== undefined,
+    libraryOffline: input.libraryOffline ?? false,
+  }));
   return createPluginContributionContext({
-    contextId: `menu:${descriptorKey}:${refs.length}:${contextToken(refs)}`,
-    revision: Math.max(1, input.revision ?? 1),
+    contextId,
+    revision,
     app: {
       platform: navigator.platform || "unknown",
       locale: input.locale ?? (document.documentElement.lang || "en-US"),
       theme: input.theme ?? "system",
-      busy: false,
+      busy: input.busy ?? false,
     },
     surface: { id: `menus.${descriptorKey}`, kind: "context-menu" },
     window: { windowId: window.name || "main" },
     library: {
       ...(input.libraryId === undefined ? {} : { id: input.libraryId }),
       open: input.libraryId !== undefined,
-      writable: input.libraryId !== undefined,
-      offline: false,
+      writable: input.libraryWritable ?? input.libraryId !== undefined,
+      offline: input.libraryOffline ?? false,
     },
     selection: {
       ...(selectionRef === undefined ? {} : { ref: selectionRef }),

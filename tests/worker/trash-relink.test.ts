@@ -997,15 +997,29 @@ describe('restoreAssets', () => {
     });
     service.validateAutomationFileOperationPlan({
       libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [asset.assetId],
+      planHash: plan.planHash,
       expectedChangeSequence: plan.changeSequence,
       assetStates: plan.assetStates,
     });
+    expectServiceError(() => service.validateAutomationFileOperationPlan({
+      libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [asset.assetId],
+      planHash: '0'.repeat(64),
+      expectedChangeSequence: plan.changeSequence,
+      assetStates: plan.assetStates,
+    }), 'VERSION_CONFLICT');
 
     // Even an unrelated committed write invalidates this plan: Main must ask
     // again instead of applying a stale file-operation preview.
     service.createTag({ libraryId: created.libraryId, name: 'changes-the-plan' });
     expectServiceError(() => service.validateAutomationFileOperationPlan({
       libraryId: created.libraryId,
+      operation: 'trash',
+      assetIds: [asset.assetId],
+      planHash: plan.planHash,
       expectedChangeSequence: plan.changeSequence,
       assetStates: plan.assetStates,
     }), 'VERSION_CONFLICT');

@@ -75,7 +75,7 @@ export type ImportConflictPlan = z.infer<typeof importConflictPlanSchema>;
 
 export const automationImportPlanSchema = z.strictObject({
   libraryId: nonBlankString,
-  planHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
   changeSequence: z.number().int().nonnegative(),
   fileCount: z.number().int().nonnegative(),
   totalBytes: z.number().int().nonnegative(),
@@ -947,10 +947,12 @@ const assetOperationSuccessSchemas = [
     type: z.literal('automation.file-operation-planned'),
     libraryId: nonBlankString,
     operation: z.enum(['trash', 'replace-content', 'move', 'rename-file', 'rename-files', 'restore-if-original-vacant']),
+    planHash: z.string().regex(/^[a-f0-9]{64}$/u),
     changeSequence: z.number().int().nonnegative(),
     targetCount: z.number().int().positive(),
     executableCount: z.number().int().nonnegative(),
     blockedCount: z.number().int().nonnegative(),
+    conflictCount: z.number().int().nonnegative(),
     undoSupported: z.boolean(),
     assetStates: z.array(z.strictObject({
       assetId: nonBlankString,

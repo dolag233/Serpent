@@ -4050,6 +4050,9 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
     message: `准备${action} ${plan.executableCount} 项资产。`,
     detail: [
       `本次选中 ${plan.targetCount} 项；${plan.blockedCount} 项因当前状态或冲突不会处理。`,
+      ...(plan.conflictCount !== undefined && plan.conflictCount > 0
+        ? [`其中 ${plan.conflictCount} 项检测到目标冲突。`]
+        : []),
       plan.undoSupported
         ? '移入回收站后可在回收站中恢复。'
         : plan.operation === 'replace-content'

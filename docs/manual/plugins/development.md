@@ -196,9 +196,9 @@ Contribution Context 是 Host 发布的有界 UI 快照，只用于菜单/命令
 
 Context 带 `contextId` 和单调递增 `revision`。它只含摘要；要读取完整资产，使用 Domain API。
 
-Invocation Context 是命令触发时冻结的目标快照，包含 `contextId`、`revision`、目标 `libraryId`、selection refs/assetIds/folderIds、
-浏览范围和 viewer 目标。异步等待后不能重新猜测当前焦点或选择。当前生成的独立 SDK 声明对命令 handler 暴露的是受限的
-`{ assetIds?: readonly string[] }` 形状；更完整的 Invocation Context 是 Host 内部契约，调用方不要假定存在未声明字段。
+Invocation Context 是命令触发时冻结的目标快照，包含 `contextId`、`revision`、目标 `libraryId`、selection refs/assetIds/folderIds/collectionIds、
+浏览范围和 viewer 目标。异步等待后不能重新猜测当前焦点或选择；在 `commands.register` 的 handler 中从 `context.invocation` 读取这份快照，
+顶层 `targetLibraryId` 与 ID 数组只是便捷字段。
 
 复杂条件不能在打开菜单时 RPC 插件。开发态的 Predicate Resolver 会在 Context revision 变化后异步计算，缓存键包含
 `pluginInstanceId + contextId + revision + predicateId`；新 revision 会取消旧计算，超时/错误使用 fallback。当前 Manifest 没有

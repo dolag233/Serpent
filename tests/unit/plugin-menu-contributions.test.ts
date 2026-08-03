@@ -490,4 +490,25 @@ describe('plugin menu contribution descriptors', () => {
     });
     expect(descriptor?.checked).toBeUndefined();
   });
+
+  it('breaks a parent cycle without dropping the entire menu tree', () => {
+    const diagnostics: unknown[] = [];
+    const descriptors = buildPluginMenuDescriptors([
+      {
+        kind: 'menu', id: 'a', pluginId: 'com.example.menu', title: 'A', parentId: 'b', commandId: 'a',
+      },
+      {
+        kind: 'menu', id: 'b', pluginId: 'com.example.menu', title: 'B', parentId: 'a', commandId: 'b',
+      },
+    ] as never, createContext(), {
+      onPlacementDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+    });
+
+    expect(descriptors.length).toBeGreaterThan(0);
+    expect(JSON.stringify(descriptors)).toContain('A');
+    expect(JSON.stringify(descriptors)).toContain('B');
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'cycle-broken' }),
+    ]));
+  });
 });

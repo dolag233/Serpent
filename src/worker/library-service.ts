@@ -88,6 +88,10 @@ import {
 } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
+import {
+  createAutomationFilePlanHash,
+  createAutomationImportPlanHash,
+} from '../shared/automation-file-plan';
 import { hasMeaningfulSmartCollectionCondition } from '../shared/smart-collection-query';
 import {
   colorFilterSql,
@@ -5441,14 +5445,18 @@ export class LibraryService {
     operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
     assetIds: string[];
     newBaseName?: string;
+    renameItems?: Array<{ assetId: string; newBaseName: string }>;
     targetFolderId?: string | null;
+    conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): {
     libraryId: string;
     operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    planHash: string;
     changeSequence: number;
     targetCount: number;
     executableCount: number;
     blockedCount: number;
+    conflictCount: number;
     undoSupported: boolean;
     assetStates: Array<{ assetId: string; stateToken: string }>;
   } {
@@ -5467,7 +5475,7 @@ export class LibraryService {
     }
     const rows = openLibrary.connection.prepare(
       `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
-              availability, location_kind
+              availability, location_kind, linked_folder_id
          FROM assets
         WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})`,
     ).all(...input.assetIds) as Array<{
@@ -5477,10 +5485,24 @@ export class LibraryService {
       deleted_at: string | null;
       availability: 'available' | 'missing';
       location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
     }>;
     const rowById = new Map(rows.map((row) => [row.asset_id, row]));
     const assetStates: Array<{ assetId: string; stateToken: string }> = [];
+    const resolutionFacts: Array<{
+      assetId: string;
+      outcome: 'execute' | 'blocked' | 'no-op';
+      destination?: string;
+      conflict?: boolean;
+    }> = [];
     let executableCount = 0;
+    let conflictCount = 0;
+    const plannedDestinations = new Set<string>();
+    const selectedIds = new Set(input.assetIds);
+    const moveStrategy = input.conflictStrategy ?? 'keep-both';
+    const renameItems = new Map(
+      (input.renameItems ?? []).map((item) => [item.assetId, item.newBaseName]),
+    );
     for (const assetId of input.assetIds) {
       const row = rowById.get(assetId);
       if (!row) {
@@ -5488,36 +5510,160 @@ export class LibraryService {
           assetId,
           stateToken: createHash('sha256').update(`missing:${assetId}`, 'utf8').digest('hex'),
         });
+        resolutionFacts.push({ assetId, outcome: 'blocked' });
         continue;
       }
       assetStates.push({
         assetId,
         stateToken: this.automationAssetStateToken(row),
       });
-      const executable = input.operation === 'trash'
-        ? row.location_kind === 'managed' && row.deleted_at === null
-        : input.operation === 'replace-content'
-          ? row.location_kind === 'managed'
-            && row.deleted_at === null
-            && row.availability === 'available'
-        : input.operation === 'move'
-          ? row.location_kind === 'managed'
-            && row.deleted_at === null
-            && row.availability === 'available'
-          : input.operation === 'rename-file'
-            ? row.deleted_at === null && row.availability === 'available' && typeof input.newBaseName === 'string'
-            : input.operation === 'rename-files'
-              ? row.deleted_at === null && row.availability === 'available'
-            : row.location_kind === 'managed' && row.deleted_at !== null;
-      if (executable) executableCount++;
+      let outcome: 'execute' | 'blocked' | 'no-op' = 'blocked';
+      let destination: string | undefined;
+      let hasConflict = false;
+      if (input.operation === 'trash') {
+        if (row.location_kind === 'managed' && row.deleted_at === null) outcome = 'execute';
+      } else if (input.operation === 'replace-content') {
+        if (
+          row.location_kind === 'managed'
+          && row.deleted_at === null
+          && row.availability === 'available'
+        ) outcome = 'execute';
+      } else if (input.operation === 'restore-if-original-vacant') {
+        if (row.location_kind === 'managed' && row.deleted_at !== null) outcome = 'execute';
+      } else if (input.operation === 'move') {
+        const movable = row.location_kind === 'managed'
+          && row.deleted_at === null
+          && row.availability === 'available';
+        if (movable) {
+          if (!realFileExists(this.folderPath(openLibrary, row.relative_file_path))) {
+            resolutionFacts.push({ assetId, outcome: 'blocked' });
+            continue;
+          }
+          const targetPrefix = input.targetFolderId
+            ? (openLibrary.connection.prepare('SELECT relative_path FROM managed_folders WHERE folder_id = ?')
+              .get(input.targetFolderId) as { relative_path: string } | undefined)?.relative_path ?? ''
+            : '';
+          const filename = path.posix.basename(row.relative_file_path);
+          destination = targetPrefix ? path.posix.join(targetPrefix, filename) : filename;
+          let identity = portablePathIdentity(destination);
+          if (identity === portablePathIdentity(row.relative_file_path)) {
+            plannedDestinations.add(identity);
+            outcome = 'no-op';
+          } else {
+            const conflict = this.managedMoveConflict(
+              openLibrary,
+              'automation-plan',
+              String(resolutionFacts.length),
+              destination,
+              assetId,
+            );
+            const selectedConflict = conflict?.assetId ? selectedIds.has(conflict.assetId) : false;
+            const batchConflict = plannedDestinations.has(identity) || selectedConflict;
+            if (conflict || batchConflict) {
+              hasConflict = true;
+              conflictCount += 1;
+              if (moveStrategy === 'skip') {
+                outcome = 'blocked';
+              } else if (moveStrategy === 'keep-both' || batchConflict) {
+                destination = this.availableMoveDestination(openLibrary, destination, plannedDestinations);
+                identity = portablePathIdentity(destination);
+                plannedDestinations.add(identity);
+                outcome = 'execute';
+              } else {
+                plannedDestinations.add(identity);
+                outcome = 'execute';
+              }
+            } else {
+              plannedDestinations.add(identity);
+              outcome = 'execute';
+            }
+          }
+        }
+      } else if (input.operation === 'rename-file' || input.operation === 'rename-files') {
+        const requestedBaseName = input.operation === 'rename-file'
+          ? input.newBaseName
+          : renameItems.get(assetId);
+        if (row.deleted_at === null && row.availability === 'available' && requestedBaseName !== undefined) {
+          try {
+            const baseName = normalizeAssetFileBaseName(requestedBaseName);
+            const currentFileName = path.posix.basename(row.relative_file_path);
+            const extension = path.posix.extname(currentFileName);
+            const newFileName = `${baseName}${extension}`;
+            const currentDirectory = path.posix.dirname(row.relative_file_path);
+            destination = currentDirectory === '.'
+              ? newFileName
+              : path.posix.join(currentDirectory, newFileName);
+            if (Buffer.byteLength(newFileName, 'utf8') > 255) throw new Error('filename too long');
+            if (newFileName === currentFileName) {
+              outcome = 'no-op';
+            } else {
+              const newIdentity = portablePathIdentity(destination);
+              const dbConflict = row.location_kind === 'managed'
+                ? openLibrary.connection.prepare(
+                  `SELECT asset_id FROM assets
+                    WHERE path_identity = ? AND location_kind = 'managed'
+                      AND deleted_at IS NULL AND asset_id != ?`,
+                ).get(newIdentity, row.asset_id)
+                : openLibrary.connection.prepare(
+                  `SELECT asset_id FROM assets
+                    WHERE linked_folder_id = ? AND path_identity = ?
+                      AND location_kind = 'linked' AND deleted_at IS NULL AND asset_id != ?`,
+                ).get(row.linked_folder_id, newIdentity, row.asset_id);
+              const sourcePath = row.location_kind === 'managed'
+                ? this.folderPath(openLibrary, row.relative_file_path)
+                : this.linkedAssetPath(openLibrary, row.linked_folder_id, row.relative_file_path);
+              if (!realFileExists(sourcePath)) throw new Error('source missing');
+              let diskConflict = false;
+              try {
+                const entries = readdirSync(path.dirname(sourcePath), { withFileTypes: true });
+                const targetSegmentIdentity = portablePathSegmentIdentity(newFileName);
+                diskConflict = entries.some((entry) => (
+                  entry.name !== currentFileName
+                  && portablePathSegmentIdentity(entry.name) === targetSegmentIdentity
+                ));
+              } catch {
+                diskConflict = true;
+              }
+              hasConflict = Boolean(dbConflict) || diskConflict;
+              if (hasConflict) {
+                conflictCount += 1;
+              } else {
+                outcome = 'execute';
+              }
+            }
+          } catch {
+            outcome = 'blocked';
+          }
+        }
+      }
+      if (outcome === 'execute' || outcome === 'no-op') executableCount += 1;
+      resolutionFacts.push({
+        assetId,
+        outcome,
+        ...(destination === undefined ? {} : { destination }),
+        ...(hasConflict ? { conflict: true } : {}),
+      });
     }
+    const changeSequence = this.getChangeSequence(input.libraryId);
     return {
       libraryId: input.libraryId,
       operation: input.operation,
-      changeSequence: this.getChangeSequence(input.libraryId),
+      planHash: createAutomationFilePlanHash({
+        operation: input.operation,
+        assetIds: input.assetIds,
+        ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+        ...(input.newBaseName === undefined ? {} : { newBaseName: input.newBaseName }),
+        ...(input.renameItems === undefined ? {} : { renameItems: input.renameItems }),
+        ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }),
+        expectedChangeSequence: changeSequence,
+        assetStates,
+        resolutionFacts,
+      }),
+      changeSequence,
       targetCount: input.assetIds.length,
       executableCount,
-      blockedCount: input.assetIds.length - executableCount,
+      blockedCount: resolutionFacts.filter((fact) => fact.outcome === 'blocked').length,
+      conflictCount,
       undoSupported: input.operation === 'trash' || input.operation === 'move',
       assetStates,
     };
@@ -5525,33 +5671,40 @@ export class LibraryService {
 
   validateAutomationFileOperationPlan(input: {
     libraryId: string;
+    operation: 'trash' | 'replace-content' | 'move' | 'rename-file' | 'rename-files' | 'restore-if-original-vacant';
+    assetIds: string[];
+    newBaseName?: string;
+    renameItems?: Array<{ assetId: string; newBaseName: string }>;
+    targetFolderId?: string | null;
+    conflictStrategy?: 'keep-both' | 'replace' | 'skip';
     expectedChangeSequence: number;
+    planHash: string;
     assetStates: Array<{ assetId: string; stateToken: string }>;
   }): void {
-    const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const currentSequence = this.getChangeSequence(input.libraryId);
-    if (currentSequence !== input.expectedChangeSequence) {
-      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
-    }
-    if (input.assetStates.length === 0 || new Set(input.assetStates.map((state) => state.assetId)).size !== input.assetStates.length) {
+    if (input.assetIds.length === 0
+      || new Set(input.assetIds).size !== input.assetIds.length
+      || input.assetStates.length !== input.assetIds.length
+      || input.assetStates.some((state) => !input.assetIds.includes(state.assetId))) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
-    const rows = openLibrary.connection.prepare(
-      `SELECT asset_id, current_revision_id, relative_file_path, deleted_at,
-              availability, location_kind
-         FROM assets
-        WHERE asset_id IN (${input.assetStates.map(() => '?').join(',')})`,
-    ).all(...input.assetStates.map((state) => state.assetId)) as Array<{
-      asset_id: string;
-      current_revision_id: string;
-      relative_file_path: string;
-      deleted_at: string | null;
-      availability: 'available' | 'missing';
-      location_kind: 'managed' | 'linked';
-    }>;
-    const tokens = new Map(rows.map((row) => [row.asset_id, this.automationAssetStateToken(row)]));
-    if (input.assetStates.some((state) => tokens.get(state.assetId) !== state.stateToken)) {
-      throw new LibraryServiceError('VERSION_CONFLICT', { currentEntityVersion: currentSequence });
+    const plan = this.previewAutomationFileOperation({
+      libraryId: input.libraryId,
+      operation: input.operation,
+      assetIds: input.assetIds,
+      ...(input.newBaseName === undefined ? {} : { newBaseName: input.newBaseName }),
+      ...(input.renameItems === undefined ? {} : { renameItems: input.renameItems }),
+      ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+      ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }),
+    });
+    if (plan.changeSequence !== input.expectedChangeSequence
+      || plan.planHash !== input.planHash
+      || plan.assetStates.some((state, index) => (
+        state.assetId !== input.assetStates[index]?.assetId
+        || state.stateToken !== input.assetStates[index]?.stateToken
+      ))) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: plan.changeSequence,
+      });
     }
   }
 
@@ -17869,6 +18022,7 @@ export class LibraryService {
       stagingToken?: string;
     }>;
     automationPlan?: {
+      planHash: string;
       expectedChangeSequence: number;
       assetStates: Array<{ assetId: string; stateToken: string }>;
     };
@@ -17889,6 +18043,9 @@ export class LibraryService {
     if (input.automationPlan !== undefined) {
       this.validateAutomationFileOperationPlan({
         libraryId: input.libraryId,
+        operation: 'replace-content',
+        assetIds: input.items.map((item) => item.assetId),
+        planHash: input.automationPlan.planHash,
         expectedChangeSequence: input.automationPlan.expectedChangeSequence,
         assetStates: input.automationPlan.assetStates,
       });
@@ -21704,9 +21861,19 @@ export class LibraryService {
         seenDestinations.set(identity, entry.byteSize);
       }
     }
+    const changeSequence = this.getChangeSequence(input.libraryId);
     return {
       libraryId: input.libraryId,
-      changeSequence: this.getChangeSequence(input.libraryId),
+      planHash: createAutomationImportPlanHash({
+        sourceKind: input.sourceKind,
+        sourcePaths: input.sourcePaths,
+        ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+        ...(input.imageSequenceFps === undefined ? {} : { imageSequenceFps: input.imageSequenceFps }),
+        ...(input.expandImageSequences === undefined ? {} : { expandImageSequences: input.expandImageSequences }),
+        expectedChangeSequence: changeSequence,
+        sourceStates,
+      }),
+      changeSequence,
       fileCount: entries.length,
       totalBytes,
       suspectedDuplicateCount,
@@ -21724,13 +21891,17 @@ export class LibraryService {
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
     automationPlan?: {
+      planHash: string;
       expectedChangeSequence: number;
       sourceStates: Array<{ sourcePath: string; stateToken: string }>;
     };
   }): void {
     if (input.automationPlan === undefined) return;
     const plan = this.previewAutomationImport(input);
-    if (plan.changeSequence !== input.automationPlan.expectedChangeSequence) {
+    if (
+      plan.changeSequence !== input.automationPlan.expectedChangeSequence
+      || plan.planHash !== input.automationPlan.planHash
+    ) {
       throw new LibraryServiceError('VERSION_CONFLICT', {
         currentEntityVersion: plan.changeSequence,
       });
@@ -21952,6 +22123,7 @@ export class LibraryService {
     createImageSequence?: boolean;
     sourcePageUrl?: string;
     automationPlan?: {
+      planHash: string;
       expectedChangeSequence: number;
       sourceStates: Array<{ sourcePath: string; stateToken: string }>;
     };

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { pluginLocalIdSchema } from './plugin-manifest';
+import { pluginInvocationContextSchema, type PluginInvocationContext } from './plugin-context';
 
 export const PLUGIN_COMMAND_DEFAULT_TIMEOUT_MS = 5_000;
 const NUL = String.fromCharCode(0);
@@ -19,8 +20,11 @@ export const pluginCommandContextSchema = z.strictObject({
   assetIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
   folderIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
   collectionIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
+  invocation: pluginInvocationContextSchema.optional(),
 });
-export type PluginCommandContext = z.infer<typeof pluginCommandContextSchema>;
+export type PluginCommandContext = z.infer<typeof pluginCommandContextSchema> & {
+  readonly invocation?: PluginInvocationContext;
+};
 
 /**
  * Command context is a snapshot. Freeze both the target and all collection
@@ -30,6 +34,16 @@ export function freezePluginCommandContext(context: PluginCommandContext): Plugi
   for (const key of ['assetIds', 'folderIds', 'collectionIds'] as const) {
     const values = context[key];
     if (values !== undefined) Object.freeze(values);
+  }
+  if (context.invocation !== undefined) {
+    Object.freeze(context.invocation.selection.refs);
+    Object.freeze(context.invocation.selection.assetIds);
+    Object.freeze(context.invocation.selection.folderIds);
+    Object.freeze(context.invocation.selection.collectionIds);
+    Object.freeze(context.invocation.selection);
+    Object.freeze(context.invocation.browse);
+    Object.freeze(context.invocation.viewer);
+    Object.freeze(context.invocation);
   }
   return Object.freeze(context);
 }

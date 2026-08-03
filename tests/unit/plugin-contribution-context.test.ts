@@ -181,4 +181,24 @@ describe('plugin menu contribution context', () => {
       fullscreen: true,
     });
   });
+
+  it('advances revision when the same context identity receives new state', () => {
+    const asset = image({ assetId: 'revision-1', displayName: 'Revision.png' });
+    const base = {
+      descriptor: assetDescriptor(asset),
+      assets: [asset],
+      libraryId: 'library-a',
+    } as const;
+    const first = createPluginMenuContributionContext(base);
+    const unchanged = createPluginMenuContributionContext(base);
+    const changed = createPluginMenuContributionContext({
+      ...base,
+      busy: true,
+      browse: { folderId: 'folder-2' },
+    });
+
+    expect(unchanged.revision).toBe(first.revision);
+    expect(changed.revision).toBeGreaterThan(first.revision);
+    expect(changed.app.busy).toBe(true);
+  });
 });

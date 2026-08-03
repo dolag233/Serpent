@@ -271,6 +271,7 @@ function descriptorKey(descriptor: ContextMenuDescriptor): string {
 
 interface AssetContextMenuProps {
   libraryId?: string;
+  busy?: boolean;
   pluginBrowseScope?: Partial<PluginContributionContext["browse"]>;
   pluginViewerState?: Partial<PluginContributionContext["viewer"]>;
   pluginApi?: SerpentPluginManagerApi;
@@ -453,6 +454,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
       descriptor: activeContextMenu.descriptor,
       assets: props.assets,
       libraryId: props.libraryId,
+      busy: props.busy,
       locale,
       browse: props.pluginBrowseScope,
       viewer: props.pluginViewerState,
@@ -460,6 +462,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   }, [
     activeContextMenu,
     locale,
+    props.busy,
     props.assets,
     props.libraryId,
     props.pluginBrowseScope,
@@ -541,7 +544,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     },
   ) => {
     if (!props.pluginApi || !props.libraryId) return;
-    void runPluginMenuCommand(props.pluginApi, props.libraryId, item, context);
+    void runPluginMenuCommand(props.pluginApi, props.libraryId, item, {
+      ...context,
+      contributionContext: pluginContributionContext,
+    });
   };
 
   if (!activeContextMenu) return null;

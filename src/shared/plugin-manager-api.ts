@@ -11,6 +11,7 @@ import {
 import { pluginProviderMediaSchema, pluginProviderMetadataSchema, pluginProviderAiAnalysisSchema, pluginProviderExportDescriptorSchema, pluginProviderImportPlanSchema } from '../plugins/plugin-providers';
 import { pluginThemePackageSchema } from '../plugins/plugin-themes';
 import { pluginRuntimeModeSchema } from '../plugins/plugin-runtime-mode';
+import { pluginInvocationContextSchema } from '../plugins/plugin-context';
 import {
   pluginContextExpressionSchema,
   pluginSettingTypeSchema,
@@ -100,6 +101,7 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     assetIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
     folderIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
     collectionIds: z.array(z.string().min(1).max(255)).max(10_000).optional(),
+    invocation: pluginInvocationContextSchema.optional(),
   }).superRefine((value, context) => {
     const hasContributionId = value.contributionId !== undefined;
     const hasCommandPair = value.pluginId !== undefined && value.commandId !== undefined;

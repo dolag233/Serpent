@@ -101,3 +101,28 @@ npx eslint <本次变更的插件贡献、入口组件与测试文件>
 ```
 
 仍未执行 packaged、Windows、真实右键/Viewer/无选择矩阵和 Computer Use，因此 `Serpent-gtih` 保持 `in_progress`，不能据此声明整套插件交互内核完成。
+
+## 2026-08-04：上下文 revision、菜单循环与 Invocation Context
+
+交叉审查又发现三处会让插件入口和实际命令漂移的缺口：Renderer 菜单 Context 默认一直是 revision 1，Host busy 状态恒为 false；父级菜单循环会让整棵树没有 root；命令触发只传 asset/folder/collection ID，没有携带触发时的 browse/viewer/revision 快照。
+
+本次补齐：
+
+- `createPluginMenuContributionContext` 对同一 contextId 按状态签名自动维护单调 revision，并接收当前 busy；菜单条件不再读取固定的假状态。
+- 菜单树在建 children 前检测 parentId 环，断开一个确定的冲突父边并记录 `cycle-broken`，其它分支继续 materialize。
+- toolbar、Inspector、Viewer 的 checked 条件解析为布尔值并渲染 `aria-pressed`；去掉覆盖共享排序器结果的二次 ID 排序。
+- `runPluginMenuCommand` 从 Contribution Context 构造冻结 Invocation Context，携带 contextId、revision、完整有界 selection（含合集 ID）、browse 和 viewer 快照；Main 校验目标库一致后再交给 Standard/Trusted handler。
+
+自动化证据：
+
+```text
+npx vitest run tests/unit/plugin-menu-contributions.test.ts tests/unit/plugin-surface-conditions.test.ts tests/unit/plugin-contribution-context.test.ts --reporter=dot
+# 3 files / 21 tests passed
+npx vitest run tests/unit/plugin-context.test.ts tests/unit/plugin-contract.test.ts tests/unit/plugin-manager-response-parse.test.ts --reporter=dot
+# 3 files / 46 tests passed
+npm run typecheck -- --pretty false
+npx eslint <本次插件上下文、菜单、表面入口及协议文件>
+# 均通过
+```
+
+无选择/混合/Viewer 的真实右键旅程、packaged/Windows/Computer Use 仍未执行；`Serpent-gtih` 与 `Serpent-fkq3` 继续保持 `in_progress`。

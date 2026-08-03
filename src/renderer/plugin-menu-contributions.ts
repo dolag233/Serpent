@@ -6,7 +6,9 @@ import type {
 } from "../shared/plugin-manager-api";
 import {
   evaluatePluginContextExpression,
+  createPluginInvocationContext,
   type PluginContributionContext,
+  type PluginInvocationContext,
 } from "../plugins/plugin-context";
 import type { PluginContextExpression } from "../plugins/plugin-manifest";
 import {
@@ -392,10 +394,43 @@ export function buildPluginMenuDescriptors(
     };
   });
   const byId = new Map(nodes.map((node) => [node.descriptor.id, node]));
+  const effectiveParentById = new Map(
+    nodes.map((node) => [node.descriptor.id, node.parentId]),
+  );
+  const inspected = new Set<string>();
+  for (const node of nodes) {
+    if (inspected.has(node.descriptor.id)) continue;
+    const chain: string[] = [];
+    const positionById = new Map<string, number>();
+    let currentId: string | undefined = node.descriptor.id;
+    while (currentId !== undefined && !inspected.has(currentId)) {
+      const cycleStart = positionById.get(currentId);
+      if (cycleStart !== undefined) {
+        const cycleIds = chain.slice(cycleStart);
+        const detachId = [...cycleIds].sort().at(-1);
+        if (detachId !== undefined) {
+          const detachNode = byId.get(detachId);
+          const oldParent = effectiveParentById.get(detachId);
+          effectiveParentById.set(detachId, undefined);
+          options?.onPlacementDiagnostic?.({
+            code: "cycle-broken",
+            itemId: detachNode?.descriptor.id ?? detachId,
+            ...(oldParent === undefined ? {} : { anchorId: oldParent }),
+          });
+        }
+        break;
+      }
+      positionById.set(currentId, chain.length);
+      chain.push(currentId);
+      const parentId = effectiveParentById.get(currentId);
+      currentId = parentId !== undefined && byId.has(parentId) ? parentId : undefined;
+    }
+    for (const id of chain) inspected.add(id);
+  }
   const childrenByParent = new Map<string, MenuContributionNode[]>();
   const roots: MenuContributionNode[] = [];
   for (const node of nodes) {
-    const parentId = node.parentId;
+    const parentId = effectiveParentById.get(node.descriptor.id);
     const parent = parentId === undefined ? undefined : byId.get(parentId);
     if (parent === undefined || parent === node) {
       roots.push(node);
@@ -491,8 +526,27 @@ export async function runPluginMenuCommand(
     assetIds?: string[];
     folderIds?: string[];
     collectionIds?: string[];
+    contributionContext?: PluginContributionContext;
+    invocationContext?: PluginInvocationContext;
   },
 ): Promise<void> {
+  const invocation = context.invocationContext ?? (
+    context.contributionContext === undefined
+      ? undefined
+      : createPluginInvocationContext(context.contributionContext, {
+        libraryId,
+        selection: {
+          refs: [
+            ...(context.assetIds ?? []),
+            ...(context.folderIds ?? []),
+            ...(context.collectionIds ?? []),
+          ],
+          ...(context.assetIds === undefined ? {} : { assetIds: context.assetIds }),
+          ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
+          ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
+        },
+      })
+  );
   const result = await pluginApi.runPluginCommand({
     type: "plugin-manager.run-command",
     libraryId,
@@ -500,6 +554,7 @@ export async function runPluginMenuCommand(
     ...(context.assetIds === undefined ? {} : { assetIds: context.assetIds }),
     ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
     ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
+    ...(invocation === undefined ? {} : { invocation }),
   });
   if (!result.ok) {
     console.warn("plugin-command-failed", item.id, result.code);
