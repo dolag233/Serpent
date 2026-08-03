@@ -41,6 +41,29 @@
 - 当前相对定位在宿主语义分组内按 `before`/`after` 边缘放置；完整结构化 UI 描述与更细粒度菜单布局仍属于 `Serpent-7nah` 后续范围。
 - packaged、Windows 和 Computer Use 未执行。
 
+## 2026-08-04：Placement Solver 稳定性增量
+
+本次继续推进 `Serpent-fkq3` 的可独立验证部分，但不宣称整个 Command Registry/菜单表面统一已经完成：
+
+- 将菜单同级排序收敛为可复用的 `solvePluginMenuPlacement`，默认平局按 group、plugin ID、plugin instance ID、item ID 和注册顺序确定，避免依赖 IPC 返回顺序。
+- 保留 Host 稳定锚点（如 `asset.rename`、`host.asset.open-with`）的放置语义；未知锚点不丢弃菜单项，而是降级为普通同级项并记录 `missing-anchor` 诊断。
+- 父节点缺失、循环约束和超过三级的子菜单分别记录 `orphan-parent`、`cycle-broken`、`max-depth` 诊断；循环只移除冲突边，超深只拒绝超出的分支，其他菜单继续显示。
+- 诊断通过开发态 `console.warn` 输出，不进入用户可见 UI，也不让单个坏 Contribution 清空整张菜单。
+
+自动化证据：
+
+```text
+npx vitest run tests/unit/plugin-menu-contributions.test.ts --reporter=dot
+# 1 file / 11 tests passed
+
+npx eslint src/renderer/plugin-menu-contributions.ts tests/unit/plugin-menu-contributions.test.ts
+npm run typecheck -- --pretty false
+git diff --check
+# 均通过
+```
+
+`Serpent-fkq3` 仍保持 `in_progress`：完整的 native item/plugin item 统一树、toolbar/Inspector/Viewer 复用同一 Placement Solver、真实 Electron 菜单旅程、packaged/Windows 和 Computer Use 证据仍需在 `Serpent-gtih`、`Serpent-upsn.6` 等依赖收口后继续完成。
+
 ## 2026-08-04：命令条件语义扩展到所有入口
 
 `gtih` 的审查发现，命令注册表已有 `when` / `enablement` / `checked`，但工具栏、Inspector action、Viewer action 和快捷键列表没有继承这些条件，导致同一命令换入口后行为不一致。本次把命令条件作为这些 command-backed Contribution 的统一有效条件来源，并在 Renderer 依据当前 Contribution Context 隐藏、置灰或跳过不可用快捷键。

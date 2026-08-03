@@ -65,11 +65,61 @@ export function resolvePluginContributionConditions(
   };
 }
 
-type MenuContributionNode = {
+export type MenuContributionNode = {
   descriptor: PluginMenuDescriptor;
   sourceIndex: number;
   parentId?: string;
+  pluginId: string;
+  pluginInstanceId?: string;
 };
+
+export type PluginMenuPlacementDiagnostic = {
+  code: "missing-anchor" | "cycle-broken" | "orphan-parent" | "max-depth";
+  itemId: string;
+  anchorId?: string;
+};
+
+export type PluginMenuPlacementResult = {
+  nodes: MenuContributionNode[];
+  diagnostics: PluginMenuPlacementDiagnostic[];
+};
+
+export type BuildPluginMenuDescriptorsOptions = {
+  onPlacementDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void;
+};
+
+/** Host command ids that may be used as placement anchors by a plugin. */
+const KNOWN_HOST_MENU_ANCHORS = new Set([
+  "asset.view",
+  "asset.open-with",
+  "host.asset.open-with",
+  "asset.open-external",
+  "asset.reveal-in-folder",
+  "folder.open-in-file-manager",
+  "asset.remove-from-current-collection",
+  "asset.relink",
+  "asset.move-to-folder",
+  "asset.copy",
+  "asset.paste",
+  "asset.copy-file-path",
+  "asset.rename",
+  "folder.create-subfolder",
+  "folder.rename",
+  "folder.linked-rules",
+  "folder.copy",
+  "folder.paste",
+  "folder.clone",
+  "folder.copy-path",
+  "asset.ai-analyze",
+  "asset.clear-ai-content",
+  "asset.move-to-trash",
+  "asset.delete-from-disk",
+  "asset.delete-linked",
+  "asset.delete-permanent",
+  "folder.move-to-trash",
+  "folder.delete-from-disk",
+  "folder.remove-from-library",
+]);
 
 function compareGroup(
   left: MenuContributionNode,
@@ -83,7 +133,14 @@ function compareGroup(
     const groupOrder = leftGroup.localeCompare(rightGroup);
     if (groupOrder !== 0) return groupOrder;
   }
-  return left.sourceIndex - right.sourceIndex;
+  return (
+    left.pluginId.localeCompare(right.pluginId) ||
+    (left.pluginInstanceId ?? "").localeCompare(
+      right.pluginInstanceId ?? "",
+    ) ||
+    left.descriptor.id.localeCompare(right.descriptor.id) ||
+    left.sourceIndex - right.sourceIndex
+  );
 }
 
 function compareCycleFallback(
@@ -98,10 +155,23 @@ function compareCycleFallback(
  * Orders one menu level without mutating the contribution input. Explicit
  * before/after edges win over the default group order; groups determine the
  * stable choice whenever no edge makes one item ready first. If an edge cycle
- * remains, choosing the smallest id breaks it deterministically.
+ * remains, the weakest conflicting edge is removed and reported so the rest
+ * of the menu can still be resolved.
  */
-function sortMenuLevel(nodes: readonly MenuContributionNode[]): MenuContributionNode[] {
+function sortMenuLevel(
+  nodes: readonly MenuContributionNode[],
+  onDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void,
+): MenuContributionNode[] {
   const byId = new Map(nodes.map((node) => [node.descriptor.id, node]));
+  const report = (diagnostic: PluginMenuPlacementDiagnostic): void => {
+    onDiagnostic?.(diagnostic);
+  };
+  type PlacementEdge = {
+    from: string;
+    to: string;
+    kind: "anchor" | "first" | "last";
+  };
+  const edges: PlacementEdge[] = [];
   const outgoing = new Map<string, Set<string>>();
   const indegree = new Map<string, number>();
   for (const node of nodes) {
@@ -109,23 +179,38 @@ function sortMenuLevel(nodes: readonly MenuContributionNode[]): MenuContribution
     indegree.set(node.descriptor.id, 0);
   }
 
-  const addEdge = (from: string, to: string): void => {
+  const addEdge = (
+    from: string,
+    to: string,
+    kind: PlacementEdge["kind"],
+  ): void => {
     if (from === to || !byId.has(from) || !byId.has(to)) return;
-    const edges = outgoing.get(from);
-    if (edges === undefined || edges.has(to)) return;
-    edges.add(to);
+    const outgoingTargets = outgoing.get(from);
+    if (outgoingTargets === undefined || outgoingTargets.has(to)) return;
+    outgoingTargets.add(to);
     indegree.set(to, (indegree.get(to) ?? 0) + 1);
+    edges.push({ from, to, kind });
   };
 
   for (const node of nodes) {
     const { id, before, after } = node.descriptor;
-    if (before !== undefined) addEdge(id, before);
-    if (after !== undefined) addEdge(after, id);
+    if (before !== undefined) {
+      if (byId.has(before)) addEdge(id, before, "anchor");
+      else if (!KNOWN_HOST_MENU_ANCHORS.has(before)) {
+        report({ code: "missing-anchor", itemId: id, anchorId: before });
+      }
+    }
+    if (after !== undefined) {
+      if (byId.has(after)) addEdge(after, id, "anchor");
+      else if (!KNOWN_HOST_MENU_ANCHORS.has(after)) {
+        report({ code: "missing-anchor", itemId: id, anchorId: after });
+      }
+    }
     if (node.descriptor.first === true) {
-      for (const other of nodes) addEdge(id, other.descriptor.id);
+      for (const other of nodes) addEdge(id, other.descriptor.id, "first");
     }
     if (node.descriptor.last === true) {
-      for (const other of nodes) addEdge(other.descriptor.id, id);
+      for (const other of nodes) addEdge(other.descriptor.id, id, "last");
     }
   }
 
@@ -141,9 +226,34 @@ function sortMenuLevel(nodes: readonly MenuContributionNode[]): MenuContribution
   };
 
   while (remaining.size > 0) {
-    // A cycle has no zero-indegree node. Break only one edge endpoint at a
-    // time, then continue normal topological ordering for the remainder.
-    const node = choose(false) ?? choose(true);
+    let node = choose(false);
+    if (node === undefined) {
+      // A cycle has no zero-indegree node. Remove one weakest explicit edge,
+      // report it, then continue normal topological ordering. This rejects
+      // only the conflicting placement relation instead of dropping a menu
+      // branch or making the entire surface disappear.
+      const cycleEdge = edges
+        .filter((edge) => remaining.has(edge.from) && remaining.has(edge.to))
+        .sort((left, right) =>
+          (left.kind === "anchor" ? 1 : 0) - (right.kind === "anchor" ? 1 : 0) ||
+          left.from.localeCompare(right.from) ||
+          left.to.localeCompare(right.to),
+        )[0];
+      if (cycleEdge === undefined) break;
+      const cycleEdgeIndex = edges.indexOf(cycleEdge);
+      if (cycleEdgeIndex >= 0) edges.splice(cycleEdgeIndex, 1);
+      outgoing.get(cycleEdge.from)?.delete(cycleEdge.to);
+      indegree.set(
+        cycleEdge.to,
+        Math.max(0, (indegree.get(cycleEdge.to) ?? 0) - 1),
+      );
+      report({
+        code: "cycle-broken",
+        itemId: cycleEdge.from,
+        anchorId: cycleEdge.to,
+      });
+      node = choose(false) ?? choose(true);
+    }
     if (node === undefined) break;
     remaining.delete(node.descriptor.id);
     result.push(node);
@@ -156,6 +266,21 @@ function sortMenuLevel(nodes: readonly MenuContributionNode[]): MenuContribution
   return result;
 }
 
+/**
+ * Solves one sibling level. Kept as a named export so non-React contract tests
+ * and future toolbar/Inspector/Viewer surfaces can share the exact ordering
+ * semantics instead of reimplementing menu placement.
+ */
+export function solvePluginMenuPlacement(
+  nodes: readonly MenuContributionNode[],
+): PluginMenuPlacementResult {
+  const diagnostics: PluginMenuPlacementDiagnostic[] = [];
+  return {
+    nodes: sortMenuLevel(nodes, (diagnostic) => diagnostics.push(diagnostic)),
+    diagnostics,
+  };
+}
+
 export function buildPluginMenuDescriptors(
   contributions: readonly {
     kind: 'menu';
@@ -163,6 +288,7 @@ export function buildPluginMenuDescriptors(
     title: string;
     commandId?: string;
     pluginId: string;
+    pluginInstanceId?: string;
     group?: string;
     before?: string;
     after?: string;
@@ -175,6 +301,7 @@ export function buildPluginMenuDescriptors(
     checked?: PluginContextExpression;
   }[],
   context?: PluginContributionContext,
+  options?: BuildPluginMenuDescriptorsOptions,
 ): PluginMenuDescriptor[] {
   const contributionById = new Map(
     contributions.map((contribution) => [contribution.id, contribution]),
@@ -208,6 +335,18 @@ export function buildPluginMenuDescriptors(
     return visible;
   };
   const visibleContributions = contributions.filter(isVisible);
+  for (const contribution of visibleContributions) {
+    if (
+      contribution.parentId !== undefined &&
+      !contributionById.has(contribution.parentId)
+    ) {
+      options?.onPlacementDiagnostic?.({
+        code: "orphan-parent",
+        itemId: contribution.id,
+        anchorId: contribution.parentId,
+      });
+    }
+  }
   const descriptors: PluginMenuDescriptor[] = visibleContributions.map((contribution) => {
     const condition = contribution.when === undefined
       && contribution.enablement === undefined
@@ -240,11 +379,18 @@ export function buildPluginMenuDescriptors(
       children: [] as PluginMenuDescriptor[],
     };
   });
-  const nodes: MenuContributionNode[] = descriptors.map((descriptor, sourceIndex) => ({
-    descriptor,
-    sourceIndex,
-    parentId: visibleContributions[sourceIndex]?.parentId,
-  }));
+  const nodes: MenuContributionNode[] = descriptors.map((descriptor, sourceIndex) => {
+    const contribution = visibleContributions[sourceIndex];
+    return {
+      descriptor,
+      sourceIndex,
+      parentId: contribution?.parentId,
+      pluginId: contribution?.pluginId ?? descriptor.pluginId,
+      ...(contribution?.pluginInstanceId === undefined
+        ? {}
+        : { pluginInstanceId: contribution.pluginInstanceId }),
+    };
+  });
   const byId = new Map(nodes.map((node) => [node.descriptor.id, node]));
   const childrenByParent = new Map<string, MenuContributionNode[]>();
   const roots: MenuContributionNode[] = [];
@@ -260,14 +406,28 @@ export function buildPluginMenuDescriptors(
     }
   }
 
-  const materialize = (node: MenuContributionNode): PluginMenuDescriptor => {
+  const materialize = (
+    node: MenuContributionNode,
+    depth = 1,
+  ): PluginMenuDescriptor => {
     const children = childrenByParent.get(node.descriptor.id) ?? [];
+    if (depth >= 3) {
+      for (const child of children) {
+        options?.onPlacementDiagnostic?.({
+          code: "max-depth",
+          itemId: child.descriptor.id,
+        });
+      }
+      return node.descriptor;
+    }
     node.descriptor.children.push(
-      ...sortMenuLevel(children).map((child) => materialize(child)),
+      ...sortMenuLevel(children, options?.onPlacementDiagnostic).map((child) =>
+        materialize(child, depth + 1),
+      ),
     );
     return node.descriptor;
   };
-  return sortMenuLevel(roots).map((root) => materialize(root));
+  return sortMenuLevel(roots, options?.onPlacementDiagnostic).map((root) => materialize(root));
 }
 
 /** @deprecated Use {@link buildPluginMenuDescriptors} */
@@ -301,7 +461,14 @@ export function usePluginMenuContributions(
       const menuContributions = result.contributions.filter(
         (contribution): contribution is Extract<typeof contribution, { kind: 'menu' }> => contribution.kind === 'menu',
       );
-      setItems(buildPluginMenuDescriptors(menuContributions, context));
+      setItems(buildPluginMenuDescriptors(menuContributions, context, {
+        onPlacementDiagnostic: (diagnostic) => {
+          console.warn("plugin-menu-placement-diagnostic", {
+            target,
+            ...diagnostic,
+          });
+        },
+      }));
     }).catch((error: unknown) => {
       if (!cancelled) {
         setItems([]);

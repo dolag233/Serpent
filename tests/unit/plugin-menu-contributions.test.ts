@@ -106,16 +106,6 @@ describe('plugin menu contribution descriptors', () => {
       disabled: false,
       group: 'analysis',
       children: [{
-        id: 'com.example.menu.menu.asset.processing.fast',
-        label: 'Fast',
-        contributionId: 'com.example.menu.menu.asset.processing.fast',
-        commandId: 'probe.fast',
-        pluginId: 'com.example.menu',
-        disabled: false,
-        before: 'asset.rename',
-        shortcut: 'F9',
-        children: [],
-      }, {
         id: 'com.example.menu.menu.asset.processing.advanced',
         label: 'Advanced',
         contributionId: 'com.example.menu.menu.asset.processing.advanced',
@@ -130,6 +120,16 @@ describe('plugin menu contribution descriptors', () => {
           disabled: false,
           children: [],
         }],
+      }, {
+        id: 'com.example.menu.menu.asset.processing.fast',
+        label: 'Fast',
+        contributionId: 'com.example.menu.menu.asset.processing.fast',
+        commandId: 'probe.fast',
+        pluginId: 'com.example.menu',
+        disabled: false,
+        before: 'asset.rename',
+        shortcut: 'F9',
+        children: [],
       }],
     }]);
   });
@@ -167,6 +167,116 @@ describe('plugin menu contribution descriptors', () => {
     ] as never);
 
     expect(descriptors.map((descriptor) => descriptor.id)).toEqual(['first', 'middle', 'last']);
+  });
+
+  it('keeps deterministic plugin ties and reports unknown anchors without dropping items', () => {
+    const diagnostics: unknown[] = [];
+    const descriptors = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'z-item',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'Z',
+        target: 'menus.asset',
+        before: 'missing.host.command',
+      },
+      {
+        kind: 'menu',
+        id: 'a-item',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'A',
+        target: 'menus.asset',
+      },
+    ] as never, undefined, { onPlacementDiagnostic: (diagnostic) => diagnostics.push(diagnostic) });
+
+    expect(descriptors.map((item) => item.id)).toEqual(['a-item', 'z-item']);
+    expect(diagnostics).toEqual([{
+      code: 'missing-anchor',
+      itemId: 'z-item',
+      anchorId: 'missing.host.command',
+    }]);
+  });
+
+  it('breaks only a cyclic placement relation and keeps every branch', () => {
+    const diagnostics: unknown[] = [];
+    const descriptors = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'a',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'A',
+        target: 'menus.asset',
+        after: 'b',
+      },
+      {
+        kind: 'menu',
+        id: 'b',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'B',
+        target: 'menus.asset',
+        after: 'a',
+      },
+    ] as never, undefined, { onPlacementDiagnostic: (diagnostic) => diagnostics.push(diagnostic) });
+
+    expect(descriptors.map((item) => item.id)).toEqual(['b', 'a']);
+    expect(diagnostics).toEqual([{
+      code: 'cycle-broken',
+      itemId: 'a',
+      anchorId: 'b',
+    }]);
+  });
+
+  it('rejects only children beyond the supported menu depth', () => {
+    const diagnostics: unknown[] = [];
+    const descriptors = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'level-1',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'Level 1',
+        target: 'menus.asset',
+      },
+      {
+        kind: 'menu',
+        id: 'level-2',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'Level 2',
+        target: 'menus.asset',
+        parentId: 'level-1',
+      },
+      {
+        kind: 'menu',
+        id: 'level-3',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'Level 3',
+        target: 'menus.asset',
+        parentId: 'level-2',
+      },
+      {
+        kind: 'menu',
+        id: 'level-4',
+        pluginId: 'com.example.menu',
+        pluginInstanceId: 'instance',
+        title: 'Level 4',
+        target: 'menus.asset',
+        parentId: 'level-3',
+      },
+    ] as never, undefined, { onPlacementDiagnostic: (diagnostic) => diagnostics.push(diagnostic) });
+
+    expect(descriptors).toHaveLength(1);
+    expect(descriptors[0]?.children[0]?.children).toHaveLength(1);
+    expect(descriptors[0]?.children[0]?.children[0]?.children).toEqual([]);
+    expect(diagnostics).toEqual([{
+      code: 'max-depth',
+      itemId: 'level-4',
+    }]);
   });
 
   it('filters when, computes enablement and checked from a Contribution Context', () => {
@@ -222,7 +332,7 @@ describe('plugin menu contribution descriptors', () => {
       },
     ] as never, createContext());
 
-    expect(descriptors.map((item) => item.id)).toEqual(['jpg-only', 'disabled', 'checked', 'advanced']);
+    expect(descriptors.map((item) => item.id)).toEqual(['advanced', 'checked', 'disabled', 'jpg-only']);
     expect(descriptors.find((item) => item.id === 'hidden-gif')).toBeUndefined();
     expect(descriptors.find((item) => item.id === 'jpg-only')).toMatchObject({
       disabled: false,
@@ -288,7 +398,7 @@ describe('plugin menu contribution descriptors', () => {
       },
     ] as never, context);
 
-    expect(descriptors.map((item) => item.id)).toEqual(['extension', 'mime', 'media-kind']);
+    expect(descriptors.map((item) => item.id)).toEqual(['extension', 'media-kind', 'mime']);
   });
 
   it('preserves conditional state on nested parent and child menu descriptors', () => {
