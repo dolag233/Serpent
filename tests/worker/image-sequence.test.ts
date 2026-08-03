@@ -27,9 +27,13 @@ function fixture() {
 
 function writeFrames(directory: string, names: readonly string[]): string[] {
   mkdirSync(directory, { recursive: true });
-  return names.map((name, index) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4kKBwIEGBAUIBACWOBQHzNCW5AAAAAElFTkSuQmCC",
+    "base64",
+  );
+  return names.map((name) => {
     const filePath = path.join(directory, name);
-    writeFileSync(filePath, `frame-${index}-${name}`);
+    writeFileSync(filePath, png);
     return filePath;
   });
 }
@@ -105,6 +109,39 @@ describe("image sequence persistence", () => {
     });
   });
 
+  it("does not auto-group a folder import when frame dimensions differ", async () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "mismatched");
+    const frames = await writePngFrames(
+      source,
+      ["shot_001.png", "shot_002.png", "shot_003.png"],
+      { height: 2, width: 2 },
+    );
+    await sharp({
+      create: {
+        background: { b: 32, g: 96, r: 192 },
+        channels: 3,
+        height: 3,
+        width: 2,
+      },
+    })
+      .png()
+      .toFile(frames[1]!);
+
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+    });
+    expect("importId" in completion).toBe(false);
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(3);
+    expect(assets.every((asset) => asset.sequence === null)).toBe(true);
+  });
+
   it("keeps a normal file import as separate assets when sequence creation is disabled", () => {
     const { library, root, service } = fixture();
     const frames = writeFrames(path.join(root, "source"), [
@@ -165,7 +202,10 @@ describe("image sequence persistence", () => {
     const { library, root, service } = fixture();
     const source = path.join(root, "source");
     mkdirSync(source, { recursive: true });
-    const bytes = Buffer.from("same-particle-frame");
+    const bytes = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWM4kKBwIEGBAUIBACWOBQHzNCW5AAAAAElFTkSuQmCC",
+      "base64",
+    );
     const frames = ["spark_000.png", "spark_001.png", "spark_002.png"].map(
       (name) => {
         const filePath = path.join(source, name);
@@ -291,12 +331,24 @@ describe("image sequence persistence", () => {
       .toEqual([0, 1, 2]);
   });
 
-  it("creates and dissolves a manual sequence with a chosen fps", () => {
+  it("creates and dissolves a manual sequence with a chosen fps", async () => {
     const { library, root, service } = fixture();
-    const frames = ["anim_10.png", "anim_11.png", "anim_12.png"].map(
-      (name, index) =>
-        writeFrames(path.join(root, `source-${index}`), [name])[0]!,
-    );
+    const frames: string[] = [];
+    for (const [index, name] of ["anim_10.png", "anim_11.png", "anim_12.png"].entries()) {
+      mkdirSync(path.join(root, `source-${index}`), { recursive: true });
+      const filePath = path.join(root, `source-${index}`, name);
+      await sharp({
+        create: {
+          background: { b: 32, g: 96, r: 192 + index },
+          channels: 3,
+          height: 2,
+          width: 2,
+        },
+      })
+        .png()
+        .toFile(filePath);
+      frames.push(filePath);
+    }
     for (const frame of frames) {
       const result = service.prepareOrExecuteImport({
         libraryId: library.libraryId,
@@ -339,6 +391,37 @@ describe("image sequence persistence", () => {
       libraryId: library.libraryId,
       recursive: true,
     })).toHaveLength(3);
+  });
+
+  it("dissolves multiple sequence groups in one mutation", async () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "batch");
+    await writePngFrames(
+      source,
+      ["a_001.png", "a_002.png", "a_003.png", "b_001.png", "b_002.png", "b_003.png"],
+      { height: 2, width: 2 },
+    );
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+    });
+    expect("importId" in completion).toBe(false);
+    const sequences = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(sequences).toHaveLength(2);
+    const sequenceIds = sequences.map((asset) => asset.sequence!.sequenceId);
+
+    expect(service.dissolveImageSequences({
+      libraryId: library.libraryId,
+      sequenceIds,
+    })).toEqual({ sequenceIds });
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    })).toHaveLength(6);
   });
 
   it("reports total sequence bytes and updates playback FPS", () => {

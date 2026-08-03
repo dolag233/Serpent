@@ -346,6 +346,7 @@ interface AssetContextMenuProps {
     fps: number,
   ) => void;
   onDissolveImageSequence: (sequenceId: string) => void;
+  onDissolveImageSequences: (sequenceIds: string[]) => void;
   onRevealInFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
@@ -1166,6 +1167,13 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   asset.availability === "available" &&
                   !asset.sequence,
               );
+            const sequenceIdsToDissolve = targetAssets
+              .map((asset) => asset.sequence?.sequenceId)
+              .filter((sequenceId): sequenceId is string => sequenceId !== undefined);
+            const canDissolveImageSequences =
+              targetAssets.length === targetAssetIds.length &&
+              targetAssets.length > 0 &&
+              sequenceIdsToDissolve.length === targetAssets.length;
             const skipFooter = formatMultiAssetMenuSkipFooter(
               skipReport,
               locale,
@@ -1359,6 +1367,15 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 disabled={!canCreateImageSequence}
                 onAction={() => props.onCreateImageSequence(targetAssetIds)}
               />
+              {canDissolveImageSequences && (
+                <ContextMenuItem
+                  icon={<Icon name="close" size={14} />}
+                  label={t("menu.dissolveImageSequencesCount", {
+                    count: sequenceIdsToDissolve.length,
+                  })}
+                  onAction={() => props.onDissolveImageSequences(sequenceIdsToDissolve)}
+                />
+              )}
             {tags.length > 0 && assignTagItem && removeTagItem && (
               <ContextMenuSection label={t("command.group.batchTags")}>
                 <TagPickerEntry

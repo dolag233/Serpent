@@ -512,6 +512,7 @@ export const zhCN = {
     removeFromCollection: "从合集移除",
     createImageSequence: "创建序列图…",
     dissolveImageSequence: "解散序列图",
+    dissolveImageSequencesCount: "解散序列图（{count} 项）",
     setImageSequenceFps: "设置序列帧率…",
     batchAssetOps: "批量资产操作：{count} 项",
     assetOps: "资产操作：{name}",
@@ -694,6 +695,7 @@ export const zhCN = {
     },
     imageSequenceImport: {
       title: "导入序列帧？",
+      progress: "第 {current}/{total} 组",
       summary: "检测到「{name}」（{count} 帧，{width}×{height}）。请确认导入范围与帧率。",
       range: "帧范围",
       rangeStart: "开始帧",

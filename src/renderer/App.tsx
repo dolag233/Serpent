@@ -739,11 +739,21 @@ function AppInner() {
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
     useState<ImageSequenceImportOffer | null>(null);
+  const [imageSequenceImportIndex, setImageSequenceImportIndex] = useState(0);
+  const imageSequenceOfferIdRef = useRef<string | null>(null);
   const [imageSequenceImportError, setImageSequenceImportError] = useState<
     string | null
   >(null);
   const [imageSequenceImportSubmitting, setImageSequenceImportSubmitting] =
     useState(false);
+
+  useEffect(() => {
+    const offerId = imageSequenceImportOffer?.offerId ?? null;
+    if (offerId !== imageSequenceOfferIdRef.current) {
+      imageSequenceOfferIdRef.current = offerId;
+      setImageSequenceImportIndex(0);
+    }
+  }, [imageSequenceImportOffer]);
   const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
     null,
   );
@@ -4815,6 +4825,20 @@ function AppInner() {
     clearAssetSelection();
     await reloadCurrentContent();
   }
+
+  async function dissolveSelectedImageSequences(sequenceIds: string[]) {
+    if (!api || !library || sequenceIds.length === 0) return;
+    const result = await api.dissolveImageSequences({
+      libraryId: library.libraryId,
+      sequenceIds,
+    });
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    clearAssetSelection();
+    await reloadCurrentContent();
+  }
   useEffect(() => {
     reloadCurrentContentRef.current = reloadCurrentContent;
   });
@@ -5417,13 +5441,22 @@ function AppInner() {
         applyToRest: input.applyToRest,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setImageSequenceImportOffer(null);
       if (isImportConflictPlan(result.value)) {
+        setImageSequenceImportOffer(null);
         presentImportConflicts(result.value);
         return;
       }
       setNotice(importSummaryMessage(result.value, locale));
       await revealAfterImport(result.value);
+      const nextSequenceIndex = input.sequenceIndex + 1;
+      if (
+        !input.applyToRest &&
+        nextSequenceIndex < imageSequenceImportOffer.sequences.length
+      ) {
+        setImageSequenceImportIndex(nextSequenceIndex);
+      } else {
+        setImageSequenceImportOffer(null);
+      }
     } catch (caught) {
       setImageSequenceImportError(
         toMessage(caught, t("toast.importFailed"), locale),
@@ -9739,6 +9772,7 @@ function AppInner() {
       <ImageSequenceImportDialog
         error={imageSequenceImportError}
         offer={imageSequenceImportOffer}
+        sequenceIndex={imageSequenceImportIndex}
         onCancel={() => {
           setImageSequenceImportOffer(null);
           setImageSequenceImportError(null);
@@ -10448,6 +10482,9 @@ function AppInner() {
         }}
         onDissolveImageSequence={(sequenceId) => {
           void dissolveSelectedImageSequence(sequenceId);
+        }}
+        onDissolveImageSequences={(sequenceIds) => {
+          void dissolveSelectedImageSequences(sequenceIds);
         }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}

@@ -488,6 +488,13 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { sequenceId: result.sequenceId } };
   },
 
+  async dissolveImageSequences({ libraryId, sequenceIds }: { libraryId: string; sequenceIds: string[] }): Promise<LibraryApiResult<{ sequenceIds: string[] }>> {
+    const result = await request({ type: 'asset.sequence.dissolve-batch.request', libraryId, sequenceIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.sequence.dissolved-batch') throw new Error('Unexpected dissolve-image-sequences response.');
+    return { ok: true, value: { sequenceIds: result.sequenceIds } };
+  },
+
   async setImageSequenceFps({ libraryId, sequenceId, fps }: { libraryId: string; sequenceId: string; fps: number }): Promise<LibraryApiResult<{ sequenceId: string; fps: number }>> {
     const result = await request({ type: 'asset.sequence.set-fps.request', libraryId, sequenceId, fps });
     if (!result.ok) return failure(result);

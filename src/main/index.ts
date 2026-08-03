@@ -207,6 +207,7 @@ import {
   parseAiContentClearedEvent,
 } from "../shared/protocol/responses";
 import { LibraryWorkerClient } from "./worker-client";
+import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
 import { pickIsolatedWindowPlacement } from "./e2e-isolated-window";
 import {
@@ -446,7 +447,11 @@ type StoredImageSequenceOffer = ImageSequenceImportOffer;
 
 const pendingImageSequenceOffers = new Map<
   string,
-  { offer: StoredImageSequenceOffer; expiresAt: number }
+  {
+    offer: StoredImageSequenceOffer;
+    expiresAt: number;
+    nextSequenceIndex: number;
+  }
 >();
 
 function rememberImageSequenceOffer(
@@ -456,6 +461,7 @@ function rememberImageSequenceOffer(
   pendingImageSequenceOffers.set(offerId, {
     offer,
     expiresAt: Date.now() + 10 * 60_000,
+    nextSequenceIndex: 0,
   });
   for (const [id, entry] of pendingImageSequenceOffers) {
     if (entry.expiresAt <= Date.now()) pendingImageSequenceOffers.delete(id);
@@ -2026,6 +2032,12 @@ async function commandFor(
         libraryId: request.libraryId,
         sequenceId: request.sequenceId,
       };
+    case "asset.sequence.dissolve-batch.request":
+      return {
+        type: "asset.sequence.dissolve-batch",
+        libraryId: request.libraryId,
+        sequenceIds: request.sequenceIds,
+      };
     case "asset.sequence.set-fps.request":
       return {
         type: "asset.sequence.set-fps",
@@ -3127,56 +3139,45 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           error: createPublicError("IMPORT_NOT_FOUND"),
         } satisfies RendererResult;
       }
-      pendingImageSequenceOffers.delete(request.offerId);
       const stored = pending.offer;
-      if (request.action === "import-selected") {
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: stored.targetFolderId,
-          sourceKind: "files",
-          sourcePaths: stored.selectedPaths ?? [],
-          expandImageSequences: false,
-          createImageSequence: false,
-        };
+      const sequenceIndex = request.sequenceIndex ?? pending.nextSequenceIndex;
+      if (sequenceIndex !== pending.nextSequenceIndex) {
+        return {
+          ok: false,
+          error: createPublicError("INVALID_IMPORT_DECISION"),
+        } satisfies RendererResult;
+      }
+      const sequence = stored.sequences[sequenceIndex];
+      const decision = resolveImageSequenceImportPaths({
+        action: request.action,
+        applyToRest: request.applyToRest === true,
+        firstFrame: request.firstFrame ?? sequence?.firstFrame ?? 0,
+        lastFrame: request.lastFrame ?? sequence?.lastFrame ?? 0,
+        offer: stored,
+        sequenceIndex,
+      });
+      if (decision.sourcePaths.length === 0) {
+        return {
+          ok: false,
+          error: createPublicError("INVALID_IMPORT_DECISION"),
+        } satisfies RendererResult;
+      }
+      command = {
+        type: "asset.import.prepare",
+        libraryId: request.libraryId,
+        targetFolderId: stored.targetFolderId,
+        sourceKind: "files",
+        sourcePaths: decision.sourcePaths,
+        expandImageSequences: false,
+        createImageSequence: decision.createImageSequence,
+        ...(decision.createImageSequence
+          ? { imageSequenceFps: request.fps ?? stored.defaultFps }
+          : {}),
+      };
+      if (decision.nextSequenceIndex === null) {
+        pendingImageSequenceOffers.delete(request.offerId);
       } else {
-        const sequenceIndex = request.sequenceIndex ?? 0;
-        const sequence =
-          stored.sequences[sequenceIndex] ?? stored.sequences[0];
-        if (!sequence?.framePaths || sequence.framePaths.length < 3) {
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: stored.targetFolderId,
-            sourceKind: "files",
-            sourcePaths: stored.selectedPaths ?? [],
-            expandImageSequences: false,
-            createImageSequence: false,
-          };
-        } else {
-          const firstFrame = request.firstFrame ?? sequence.firstFrame;
-          const lastFrame = request.lastFrame ?? sequence.lastFrame;
-          const rangedPaths: string[] = [];
-          for (let index = 0; index < sequence.framePaths.length; index += 1) {
-            const frameNumber = sequence.firstFrame + index;
-            if (frameNumber < firstFrame || frameNumber > lastFrame) continue;
-            rangedPaths.push(sequence.framePaths[index]!);
-          }
-          command = {
-            type: "asset.import.prepare",
-            libraryId: request.libraryId,
-            targetFolderId: stored.targetFolderId,
-            sourceKind: "files",
-            sourcePaths: request.applyToRest
-              ? stored.selectedPaths ?? []
-              : rangedPaths.length >= 3
-                ? rangedPaths
-                : sequence.framePaths,
-            expandImageSequences: false,
-            imageSequenceFps: request.fps ?? stored.defaultFps,
-            createImageSequence: true,
-          };
-        }
+        pending.nextSequenceIndex = decision.nextSequenceIndex;
       }
     } else if (request.type === "asset.import-clipboard.request") {
       let image;

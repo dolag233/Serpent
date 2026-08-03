@@ -12,6 +12,7 @@ import { useT } from "./i18n";
 export interface ImageSequenceImportDialogProps {
   error?: string | null;
   offer: ImageSequenceImportOffer | null;
+  sequenceIndex?: number;
   onCancel(): void;
   onConfirm(input: {
     action: "import-sequence" | "import-selected";
@@ -31,14 +32,19 @@ function clampFrame(value: number, min: number, max: number): number {
 }
 
 export function ImageSequenceImportDialog(props: ImageSequenceImportDialogProps) {
-  const sequence = props.offer?.sequences[0];
+  const sequenceIndex = Math.min(
+    props.sequenceIndex ?? 0,
+    Math.max(0, (props.offer?.sequences.length ?? 1) - 1),
+  );
+  const sequence = props.offer?.sequences[sequenceIndex];
   if (!props.open || !props.offer || !sequence) return null;
   return (
     <ImageSequenceImportDialogForm
       {...props}
-      key={`${props.offer.offerId ?? ""}:${sequence.displayName}:${sequence.firstFrame}:${sequence.lastFrame}`}
+      key={`${props.offer.offerId ?? ""}:${sequenceIndex}:${sequence.displayName}:${sequence.firstFrame}:${sequence.lastFrame}`}
       offer={props.offer}
       sequence={sequence}
+      sequenceIndex={sequenceIndex}
     />
   );
 }
@@ -47,6 +53,7 @@ interface ImageSequenceImportDialogFormProps
   extends Omit<ImageSequenceImportDialogProps, "offer" | "open"> {
   offer: ImageSequenceImportOffer;
   sequence: ImageSequenceImportCandidate;
+  sequenceIndex: number;
 }
 
 function ImageSequenceImportDialogForm({
@@ -56,6 +63,7 @@ function ImageSequenceImportDialogForm({
   onConfirm,
   open,
   sequence,
+  sequenceIndex,
   submitting = false,
 }: ImageSequenceImportDialogFormProps & { open: boolean }) {
   const t = useT();
@@ -104,7 +112,7 @@ function ImageSequenceImportDialogForm({
               firstFrame,
               fps,
               lastFrame,
-              sequenceIndex: 0,
+              sequenceIndex,
               applyToRest,
             });
           }
@@ -117,6 +125,14 @@ function ImageSequenceImportDialogForm({
               {t("dialog.imageSequenceImport.title")}
             </h2>
             <p className="field-help">
+              {offer.sequences.length > 1 ? (
+                <>
+                  {t("dialog.imageSequenceImport.progress", {
+                    current: sequenceIndex + 1,
+                    total: offer.sequences.length,
+                  })}{" "}
+                </>
+              ) : null}
               {t("dialog.imageSequenceImport.summary", {
                 name: sequence.displayName,
                 count: sequence.frameCount,
@@ -256,7 +272,7 @@ function ImageSequenceImportDialogForm({
                 firstFrame: sequence.firstFrame,
                 fps,
                 lastFrame: sequence.lastFrame,
-                sequenceIndex: 0,
+                sequenceIndex,
                 applyToRest,
               })
             }

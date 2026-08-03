@@ -539,6 +539,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const sequenceId = libraryService.dissolveImageSequence(request.command);
       return { ok: true, type: 'asset.sequence.dissolved', sequenceId };
     }
+    case 'asset.sequence.dissolve-batch': {
+      const result = libraryService.dissolveImageSequences(request.command);
+      return { ok: true, type: 'asset.sequence.dissolved-batch', ...result };
+    }
     case 'asset.sequence.set-fps': {
       const result = libraryService.setImageSequenceFps(request.command);
       return { ok: true, type: 'asset.sequence.fps-updated', ...result };

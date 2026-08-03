@@ -522,6 +522,7 @@ export const en = {
     removeFromCollection: "Remove from collection",
     createImageSequence: "Create image sequence…",
     dissolveImageSequence: "Dissolve image sequence",
+    dissolveImageSequencesCount: "Dissolve image sequences ({count} items)",
     setImageSequenceFps: "Set sequence FPS…",
     batchAssetOps: "Batch asset actions: {count}",
     assetOps: "Asset actions: {name}",
@@ -704,6 +705,7 @@ export const en = {
     },
     imageSequenceImport: {
       title: "Import image sequence?",
+      progress: "Sequence {current} of {total}",
       summary:
         "Detected “{name}” ({count} frames, {width}×{height}). Confirm the frame range and playback rate.",
       range: "Frame range",

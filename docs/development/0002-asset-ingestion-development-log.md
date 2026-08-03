@@ -86,3 +86,21 @@
 
 - Windows filesystem conflict and rename semantics need a Windows runner.
 - Crash recovery across database commit and multi-file rename requires explicit fault-injection tests.
+
+## 2026-08-04 sequence import batch decisions
+
+- Automatic sequence synthesis now requires equal decoded pixel dimensions for every candidate frame.
+  The Worker uses a bounded header probe for common raster formats and rejects unknown/corrupt headers
+  instead of falling back to filename-only grouping. The import probe already uses Sharp for the same
+  rule before the confirmation dialog.
+- The sequence import dialog now walks multiple candidates in order. Choosing normal assets leaves
+  later candidates for the next confirmation; applying the current choice to the rest expands complete
+  frame paths for later candidates, so a single selected frame cannot silently truncate a sequence.
+- Added one Worker mutation for dissolving multiple selected sequences. The asset context menu shows
+  `解散序列图（N 项）` only when every selected asset is a sequence.
+- Evidence: `tests/worker/image-sequence.test.ts` 14 passed; sequence-import/protocol/image-sequence
+  focused tests 84 passed; full `npm run test` 321 files passed / 3 skipped, 2787 tests passed / 8
+  skipped; typecheck and lint passed. `verify:mainline` reached the E2E suite but remained red on the
+  pre-existing `asset-pagination` stale fixture waiting for the 回收站 button; no sequence test failed.
+- Human acceptance remains pending for the dialog flow, multi-candidate behavior, and multi-select
+  dissolve. Packaged and Windows evidence remain unexecuted.

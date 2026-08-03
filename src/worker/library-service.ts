@@ -50,6 +50,7 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
+import { readImageDimensionsSync } from './image-dimensions';
 import {
   claimNextPluginJobRecord,
   cancelPluginJobRecord,
@@ -8096,13 +8097,18 @@ export class LibraryService {
     );
     const rowsByDirectory = new Map<
       string,
-      Array<{ asset_id: string; relative_file_path: string }>
+      Array<{
+        asset_id: string;
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+      }>
     >();
     for (const directory of directories) {
       const directoryRows = (
         directory === "."
           ? openLibrary.connection.prepare(
-              `SELECT a.asset_id, a.relative_file_path
+              `SELECT a.asset_id, a.relative_file_path, a.location_kind, a.linked_folder_id
                  FROM assets a
                 WHERE a.deleted_at IS NULL
                   AND instr(a.relative_file_path, '/') = 0
@@ -8113,7 +8119,7 @@ export class LibraryService {
                   )`,
             ).all()
           : openLibrary.connection.prepare(
-              `SELECT a.asset_id, a.relative_file_path
+              `SELECT a.asset_id, a.relative_file_path, a.location_kind, a.linked_folder_id
                  FROM assets a
                 WHERE a.deleted_at IS NULL
                   AND a.relative_file_path LIKE ? ESCAPE '\\'
@@ -8125,7 +8131,12 @@ export class LibraryService {
             ).all(
               `${directory.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}/%`,
             )
-      ) as Array<{ asset_id: string; relative_file_path: string }>;
+      ) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+      }>;
       rowsByDirectory.set(
         directory,
         directoryRows.filter(
@@ -8142,8 +8153,17 @@ export class LibraryService {
         for (const candidate of detectImageSequences(
           rows.map((row) => row.relative_file_path),
         )) {
-          const frames = candidate.frames.map((frame) => ({
-            assetId: rowsByPath.get(frame.value)!.asset_id,
+          const candidateRows = candidate.frames.map((frame) => rowsByPath.get(frame.value));
+          if (candidateRows.some((row) => row === undefined)) continue;
+          const reference = this.imageDimensionsForAsset(openLibrary, candidateRows[0]!);
+          if (!reference) continue;
+          const dimensionsMatch = candidateRows.every((row) => {
+            const size = this.imageDimensionsForAsset(openLibrary, row!);
+            return size?.width === reference.width && size.height === reference.height;
+          });
+          if (!dimensionsMatch) continue;
+          const frames = candidate.frames.map((frame, index) => ({
+            assetId: candidateRows[index]!.asset_id,
             frameNumber: frame.frameNumber,
           }));
           created.push(this.insertImageSequence(openLibrary, frames, fps));
@@ -8151,6 +8171,20 @@ export class LibraryService {
       }
     })();
     return created;
+  }
+
+  private imageDimensionsForAsset(
+    openLibrary: OpenLibrary,
+    asset: {
+      relative_file_path: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+    },
+  ): { width: number; height: number } | null {
+    const filePath = asset.location_kind === 'linked'
+      ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
+      : this.folderPath(openLibrary, asset.relative_file_path);
+    return readImageDimensionsSync(filePath);
   }
 
   private withImageSequenceSummaries(
@@ -8312,12 +8346,31 @@ export class LibraryService {
     libraryId: string;
     sequenceId: string;
   }): string {
+    const result = this.dissolveImageSequences({
+      libraryId: input.libraryId,
+      sequenceIds: [input.sequenceId],
+    });
+    return result.sequenceIds[0]!;
+  }
+
+  dissolveImageSequences(input: {
+    libraryId: string;
+    sequenceIds: string[];
+  }): { sequenceIds: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const result = openLibrary.connection.prepare(
-      'DELETE FROM asset_sequences WHERE sequence_id = ?',
-    ).run(input.sequenceId);
-    if (result.changes !== 1) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    return input.sequenceId;
+    const sequenceIds = [...new Set(input.sequenceIds)];
+    if (sequenceIds.length === 0) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    const placeholders = sequenceIds.map(() => '?').join(',');
+    const existing = openLibrary.connection
+      .prepare(`SELECT sequence_id FROM asset_sequences WHERE sequence_id IN (${placeholders})`)
+      .all(...sequenceIds) as Array<{ sequence_id: string }>;
+    if (existing.length !== sequenceIds.length) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
+    openLibrary.connection
+      .prepare(`DELETE FROM asset_sequences WHERE sequence_id IN (${placeholders})`)
+      .run(...sequenceIds);
+    return { sequenceIds };
   }
 
   setImageSequenceFps(input: {

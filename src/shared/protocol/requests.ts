@@ -280,6 +280,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     sequenceId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.sequence.dissolve-batch.request'),
+    libraryId: identifierSchema,
+    sequenceIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (sequenceIds) => new Set(sequenceIds).size === sequenceIds.length,
+      { message: 'sequenceIds must not contain duplicates.' },
+    ),
+  }),
+  z.strictObject({
     type: z.literal('asset.sequence.set-fps.request'),
     libraryId: identifierSchema,
     sequenceId: identifierSchema,
@@ -1099,6 +1107,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.sequence.dissolve'),
     libraryId: identifierSchema,
     sequenceId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve-batch'),
+    libraryId: identifierSchema,
+    sequenceIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (sequenceIds) => new Set(sequenceIds).size === sequenceIds.length,
+      { message: 'sequenceIds must not contain duplicates.' },
+    ),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.set-fps'),

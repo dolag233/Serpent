@@ -270,6 +270,10 @@ export interface SerpentLibraryApi {
     libraryId: string;
     sequenceId: string;
   }): Promise<LibraryApiResult<{ sequenceId: string }>>;
+  dissolveImageSequences(input: {
+    libraryId: string;
+    sequenceIds: string[];
+  }): Promise<LibraryApiResult<{ sequenceIds: string[] }>>;
   setImageSequenceFps(input: {
     libraryId: string;
     sequenceId: string;

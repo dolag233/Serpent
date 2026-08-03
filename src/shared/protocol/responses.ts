@@ -540,6 +540,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.sequence.dissolved-batch'),
+    sequenceIds: z.array(nonBlankString).min(1),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.sequence.fps-updated'),
     sequenceId: nonBlankString,
     fps: z.number().min(1).max(240),
