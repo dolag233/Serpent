@@ -50,6 +50,27 @@ async function flush(): Promise<void> {
 }
 
 describe('ScriptRuntimeSupervisor', () => {
+  it('converts a synchronous UtilityProcess spawn failure into a runtime result', async () => {
+    const supervisor = new ScriptRuntimeSupervisor({
+      modulePath: '/safe/script-runtime-utility.js',
+      fork: () => {
+        throw new Error('spawn failed');
+      },
+    });
+
+    await expect(supervisor.run({
+      executionId: 'execution-spawn-failure',
+      source: 'return 1;',
+      host: { execute: async () => undefined },
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'RUNTIME_PROCESS_EXITED',
+        message: 'The isolated script runtime could not start.',
+      },
+    });
+  });
+
   it('waits for the isolated child, brokers a declared command, then terminates that one child', async () => {
     const child = new FakeRuntimeChild();
     const supervisor = new ScriptRuntimeSupervisor({

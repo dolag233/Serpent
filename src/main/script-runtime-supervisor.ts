@@ -75,7 +75,24 @@ export class ScriptRuntimeSupervisor implements ScriptRuntimeExecutor {
 
   run(input: ScriptRuntimeSupervisorRunInput): Promise<ScriptRuntimeSupervisorResult> {
     return new Promise((resolve) => {
-      const child = this.options.fork(this.options.modulePath);
+      let child: RuntimeChild;
+      try {
+        child = this.options.fork(this.options.modulePath);
+      } catch (error) {
+        this.options.logger?.error(
+          'automation.runtime.spawn-failed',
+          error,
+          { executionId: input.executionId },
+        );
+        resolve({
+          ok: false,
+          error: {
+            code: 'RUNTIME_PROCESS_EXITED',
+            message: 'The isolated script runtime could not start.',
+          },
+        });
+        return;
+      }
       child.stdout?.on('data', (chunk) => {
         this.options.logger?.info('automation.runtime.stdout', String(chunk).trim(), {
           executionId: input.executionId,

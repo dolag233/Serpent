@@ -8,6 +8,12 @@ Desktop Console 不再在 Renderer Web Worker 中执行用户脚本。每次已�
 
 本轮补入保存和打开 `.serpent.js` / `.serpent.ts` 的最小闭环。原生文件选择和读写只在 Main；Renderer 仅得到脚本文本、文件名和 Main 签发的 opaque `scriptId`，绝不得到绝对路径。`scriptId` 与 `WebContents` 和精确文本绑定，编辑后不能将任意新代码伪装成已保存脚本以继承持久授权。保存脚本的 grant 仍由 execution journal 以脚本哈希、资源库和能力集合精确匹配。
 
+## 2026-08-04 增量：运行时启动失败收口
+
+`ScriptRuntimeSupervisor` 现在也会处理 `UtilityProcess.fork()` 的同步抛错：记录安全诊断后返回稳定的 `RUNTIME_PROCESS_EXITED` 结果，不把原始进程错误直接抛入 Main 调用链。这样启动失败与子进程运行期退出使用同一错误契约，调用方可以统一结束 Execution 并展示可理解的错误。
+
+本次仅修复启动故障域，未改变脚本能力边界或超时策略；macOS/Windows packaged、Windows 实机和 Computer Use 仍未验证，因此工单继续保持 `in_progress`。
+
 ## 四列证据
 
 | 需求 | 实现位置 | 自动化证据 | 人工/平台证据 |
@@ -42,6 +48,16 @@ node scripts/run-e2e-isolated.mjs tests/e2e/automation-script-rating.test.ts
 ```
 
 2026-07-30 结果：25 个定向单测通过；评分 Electron E2E 1 passed，测试实际保存脚本、修改编辑器文本、重新打开并验证恢复内容，再执行默认评分脚本和运行日志筛选。
+
+2026-08-04 启动失败回归验证：
+
+```bash
+npx vitest run --config vitest.config.ts tests/unit/script-runtime-supervisor.test.ts tests/unit/script-runtime-utility.test.ts tests/unit/quickjs-sandbox-prototype.test.ts
+npx eslint src/main/script-runtime-supervisor.ts tests/unit/script-runtime-supervisor.test.ts
+npm run typecheck
+```
+
+结果：3 个单测文件、26 个测试通过；定向 lint 与 typecheck 通过。
 
 ## 未验证/未完成
 
