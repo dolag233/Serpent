@@ -80,7 +80,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 工单管理（beads）
 
-本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
+本仓库使用 beads（`bd` CLI）作为唯一工单系统。`.beads/issues.jsonl` 和 `.beads/interactions.jsonl` 是随 Git 同步的工单镜像；`.beads/embeddeddolt` 是未纳入 Git 的本地嵌入式 Dolt 数据库，不能假设会随分支切换同步。`docs/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
 
 - 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
 - **排他认领（强制）**：同一工单同一时间只允许一个 agent 实施。选中后立刻 `bd update <id> --claim`（原子认领：设 assignee + `in_progress`）；不要只改状态却不认领。禁止对已是 `in_progress`、或已有其他 assignee 的工单动手；不确定时先 `bd show <id>` / `bd list --status=in_progress`。不得与其他 agent「一起做」同一工单，也不得绕过 `bd ready` 凭标题或记忆开干。
@@ -88,6 +88,10 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 发现新需求/缺陷随时开单：`bd create "<标题>" -d "<说明>" -p <0-4> -t <feature|bug|task|epic> -l "<标签>"`。优先级语义：P1=用户点名/验收失败修复，P2=本迭代主线，P3=后续打磨，P4=MVP 之后。
 - 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
 - 跨设备 / 多 agent：先 `git pull` 再用 bd；认领或关闭后尽快 `bd dolt push`（并随代码提交同步 `.beads/`），否则其他会话看不到认领状态，仍可能撞单。
+- **分支合并工单（强制）**：若两个分支都提交了完整且最新的 `.beads/issues.jsonl`，合并时以两份 JSONL 为迁移输入即可，不需要再读取两个分支的 Dolt；按工单 ID 做并集，并逐项比较 `updated_at`、状态、优先级、负责人、标签、依赖和评论。`.beads/issues.jsonl` 不是 Dolt 数据库本身，不能默认它一定完整。
+- **Dolt 只用于补齐快照**：合并前必须在每个分支/工作区记录 `git rev-parse HEAD`、`bd stats`，并运行 `bd export --all -o <branch>-<commit>.jsonl` 生成快照。若发现 JSONL 与 `bd list --all --json` 不一致，或某分支有未导出的本地工单，必须从该分支原工作区的 Dolt 导出后再合并；在同一工作区切换 Git 分支不会切换 `.beads/embeddeddolt`，不能把这种切换当作读取另一分支 Dolt。
+- **工单迁移安全**：已有 Dolt 禁止使用 `bd init --from-jsonl`、`--reinit-local` 或覆盖式重建；使用 `bd import <snapshot> --json` 做增量 upsert。迁移后核对实际 ID 集合、重复 ID、状态/优先级冲突和依赖，再运行 `bd export -o .beads/issues.jsonl` 生成完整镜像。`bd import --dry-run` 的批次计数不能作为逐项迁移证据。
+- **合并后的提交门禁**：`.beads/issues.jsonl` 与 `.beads/interactions.jsonl` 的变更必须和代码一起提交，并在开发日志中记录来源快照、迁移结果和未解决冲突。若原分支只有本地 Dolt、没有可读快照，只能恢复可靠的 ID/标题/优先级/状态；不能凭标题臆造描述、依赖或验收条件。
 - 可运行 `bd prime` 获取完整命令参考。
 
 ## 当前开发状态
