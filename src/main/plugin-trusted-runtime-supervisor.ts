@@ -4,6 +4,7 @@ import {
   type PluginTrustedParentMessage,
 } from '../shared/plugin-trusted-runtime-protocol';
 import type { PluginRuntimeDeactivateReason } from '../shared/plugin-runtime-utility-protocol';
+import { toPluginHostCommandFailure } from '../shared/plugin-host-command-error';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import type { PluginPermission } from '../plugins/plugin-manifest';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
@@ -1082,12 +1083,13 @@ export class PluginTrustedRuntimeSupervisor {
         instanceId: message.instanceId,
         commandId: message.commandId,
       });
+      const failure = toPluginHostCommandFailure(error);
       this.#post(tracked, {
         type: 'plugin-trusted.host-result',
         instanceId: message.instanceId,
         requestId: message.requestId,
         ok: false,
-        error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+        error: failure,
       });
     }
   }

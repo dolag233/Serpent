@@ -614,6 +614,13 @@ describe('LibraryService lifecycle', () => {
       expect(new Set(coordinationTriggers.map((trigger) => trigger.name)).size)
         .toBe(coordinationTriggers.length);
       expect(coordinationTriggers.length).toBeGreaterThan(1);
+      expect(coordinationTriggers.map((trigger) => trigger.name)).toEqual(
+        expect.arrayContaining([
+          'library_change_on_jobs_insert',
+          'library_change_on_jobs_update',
+          'library_change_on_jobs_delete',
+        ]),
+      );
       verification.close();
     } finally {
       writeFileSync(releasePath, 'release');

@@ -302,7 +302,7 @@ export function MediaJobsDialog({
                   {t("dialog.mediaJobs.pluginSection")}
                 </h3>
                 <p className="field-help">
-                  {t("dialog.mediaJobs.summary", {
+                  {t("dialog.mediaJobs.pluginSummary", {
                     queued: pluginJobs.queued,
                     running: pluginJobs.running,
                     paused: pluginJobs.paused,

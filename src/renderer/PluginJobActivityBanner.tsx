@@ -46,13 +46,15 @@ export function PluginJobActivityBanner({
           </span>
         </div>
         <div className="plugin-job-activity-actions">
-          <button
-            className="secondary-button"
-            onClick={onRunInBackground}
-            type="button"
-          >
-            {t("dialog.mediaJobs.runInBackground")}
-          </button>
+          {job.status !== "interrupted" && (
+            <button
+              className="secondary-button"
+              onClick={onRunInBackground}
+              type="button"
+            >
+              {t("dialog.mediaJobs.runInBackground")}
+            </button>
+          )}
           <button
             aria-label={t("dialog.mediaJobs.closePluginJobActivity")}
             className="plugin-job-activity-dismiss"
@@ -64,18 +66,20 @@ export function PluginJobActivityBanner({
         </div>
       </div>
       <div className="plugin-job-activity-progress-row">
-        <div
-          aria-valuemax={100}
-          aria-valuemin={0}
-          aria-valuenow={Math.round(progress * 100)}
-          className="plugin-job-activity-track"
-          role="progressbar"
-        >
+        {job.status !== "interrupted" && (
           <div
-            className="plugin-job-activity-fill"
-            style={{ width: progressWidth }}
-          />
-        </div>
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={Math.round(progress * 100)}
+            className="plugin-job-activity-track"
+            role="progressbar"
+          >
+            <div
+              className="plugin-job-activity-fill"
+              style={{ width: progressWidth }}
+            />
+          </div>
+        )}
         <strong className="plugin-job-activity-progress-summary">
           {progressSummary}
         </strong>

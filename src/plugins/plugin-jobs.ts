@@ -215,6 +215,24 @@ export function pluginJobOwnerMatches(
     && job.libraryId === owner.libraryId;
 }
 
+/**
+ * An interrupted job can be explicitly retried by a newly created instance of
+ * the same plugin package. Runtime instance IDs are process-local, so they
+ * must not make a Host-owned interrupted record permanently unretryable.
+ */
+export function pluginJobOwnerCanRetry(
+  job: Pick<PluginJobRecord, 'status' | 'ownerPluginId' | 'ownerPackageHash' | 'ownerPluginInstanceId' | 'ownerScope' | 'ownerLibraryId' | 'libraryId'>,
+  owner: PluginJobOwnerFields,
+): boolean {
+  if (pluginJobOwnerMatches(job, owner)) return true;
+  return job.status === 'interrupted'
+    && job.ownerPluginId === owner.pluginId
+    && job.ownerPackageHash === owner.packageHash
+    && job.ownerScope === owner.scope
+    && job.ownerLibraryId === owner.libraryId
+    && job.libraryId === owner.libraryId;
+}
+
 export function throwIfPluginJobAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new DOMException('The plugin job was cancelled.', 'AbortError');

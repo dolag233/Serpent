@@ -1974,6 +1974,15 @@ const PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS jobs_plugin_owner_status
     ON jobs(library_id, owner_plugin_id, owner_package_hash, status)
     WHERE kind = 'plugin.background';
+  CREATE TRIGGER library_change_on_jobs_insert AFTER INSERT ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_update AFTER UPDATE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_jobs_delete AFTER DELETE ON jobs BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
 `;
 const PLUGIN_JOB_INTERRUPTED_SCHEMA_CHECKSUM = createHash('sha256')
   .update(PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL)
@@ -3277,11 +3286,11 @@ function hasLegacyPluginMigrationHistory(
 }
 
 /**
- * Normalize the old plugin-first history into the merged v31 history. The
- * plugin tables already exist under their old migrations, so only the three
- * ingestion schemas need to be applied. The history rows are then rewritten
- * to the canonical checksums in one transaction (the caller already owns the
- * migration transaction for v23+ databases).
+ * Normalize the old plugin-first history into the current canonical history.
+ * The plugin tables already exist under their old migrations, so apply the
+ * three ingestion schemas and the v32 Plugin Job schema before rewriting the
+ * history rows to canonical checksums in one transaction (the caller already
+ * owns the migration transaction for v23+ databases).
  */
 function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): void {
   connection.exec(EXPLICIT_IGNORES_SCHEMA_SQL);
@@ -3920,6 +3929,8 @@ function closeIgnoringFailure(connection: DatabaseConnection | undefined): void 
 }
 
 export class LibraryService {
+  /** Stable for this Worker process; a new app process gets a new session. */
+  private readonly applicationSessionId = randomUUID();
   private readonly openById = new Map<string, OpenLibrary>();
   private readonly openIdByPath = new Map<string, string>();
   private readonly pendingImports = new Map<string, PendingImport>();
@@ -11337,6 +11348,7 @@ export class LibraryService {
       ownerPluginInstanceId: input.ownerPluginInstanceId,
       ownerScope: input.ownerScope,
       ownerLibraryId: input.ownerLibraryId,
+      applicationSessionId: this.applicationSessionId,
       pluginHandlerId: input.pluginHandlerId,
       payload: input.payload,
       recoveryStrategy: input.recoveryStrategy,
@@ -11471,6 +11483,7 @@ export class LibraryService {
           jobId: input.jobId,
           owner,
           retryInput: input.retryInput,
+          applicationSessionId: this.applicationSessionId,
         });
     }
   }
@@ -23061,7 +23074,11 @@ export class LibraryService {
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
-      interruptUnfinishedPluginJobs(openLibrary.connection, openLibrary.summary.libraryId);
+      interruptUnfinishedPluginJobs(
+        openLibrary.connection,
+        openLibrary.summary.libraryId,
+        this.applicationSessionId,
+      );
       this.reconcileDefaultIgnoredAssets(openLibrary);
       // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
       // leave ready rows pointing at missing files → broken <img>. Invalidate so

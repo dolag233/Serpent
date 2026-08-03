@@ -410,7 +410,7 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 - UI iframe、受限 Host 和非受限进程有心跳；失联后按实例撤销全部注册。
 - Hook、Provider、Predicate、事件和输入队列均有取消、上限、deadline 与背压。
 - 更新使用 staging、健康窗口和上一版本回滚；插件自有持久数据迁移必须可恢复。
-- 应用退出、崩溃或插件运行时会话结束时，未完成的 Plugin Job 统一标记为 `interrupted`；Host 不在下一次会话自动 claim，显式 retry 才允许重新执行并重新绑定插件实例。
+- 应用进程退出或崩溃后，下一次 Worker 会话会把上一会话遗留的未完成 Plugin Job 标记为 `interrupted`；同一进程内关闭并重新打开资源库不会误触发该边界。插件运行时崩溃/停用仍按实例失活语义暂停，显式 retry 才允许重新执行并重新绑定插件实例。
 - Serpent 不上传插件遥测；用户可主动导出诊断。
 
 ## 15. API 版本策略（发布前）

@@ -5,6 +5,7 @@ import {
   applyPluginJobProgress,
   assertPluginJobControlAllowed,
   parsePluginJobPayload,
+  pluginJobOwnerCanRetry,
   pluginJobOwnerMatches,
   serializePluginJobPayload,
   type PluginJobCheckpoint,
@@ -45,6 +46,7 @@ type JobRow = {
 const PLUGIN_JOB_STATE_KEY = '__serpent_plugin_job_state_v1';
 
 type PersistedPluginJobState = {
+  applicationSessionId?: string;
   ownerPluginInstanceId?: string;
   ownerScope?: 'library' | 'global';
   ownerLibraryId?: string | null;
@@ -185,6 +187,7 @@ export function enqueuePluginJobRecord(
     ownerPluginInstanceId?: string;
     ownerScope?: 'library' | 'global';
     ownerLibraryId?: string | null;
+    applicationSessionId?: string;
     pluginHandlerId: string;
     payload?: Record<string, unknown>;
     recoveryStrategy: PluginJobRecoveryStrategy;
@@ -194,6 +197,7 @@ export function enqueuePluginJobRecord(
   const now = new Date().toISOString();
   const jobId = randomUUID();
   const state: PersistedPluginJobState = {
+    ...(input.applicationSessionId === undefined ? {} : { applicationSessionId: input.applicationSessionId }),
     ownerPluginInstanceId: input.ownerPluginInstanceId ?? input.ownerPluginId,
     ownerScope: input.ownerScope ?? 'library',
     ownerLibraryId: input.ownerLibraryId === undefined ? input.libraryId : input.ownerLibraryId,
@@ -526,11 +530,22 @@ export function resumePluginJobRecord(
 
 export function retryPluginJobRecord(
   connection: SqlConnection,
-  input: { jobId: string; owner: PluginJobOwnerFields; retryInput?: Record<string, unknown> },
+  input: {
+    jobId: string;
+    owner: PluginJobOwnerFields;
+    retryInput?: Record<string, unknown>;
+    applicationSessionId?: string;
+  },
 ): PluginJobRecord | null {
   const current = readPluginJob(connection, input.jobId);
-  if (current === null || !pluginJobOwnerMatches(current, input.owner)
+  if (current === null || !pluginJobOwnerCanRetry(current, input.owner)
     || !['failed', 'cancelled', 'paused', 'interrupted'].includes(current.status)) return null;
+  const currentRow = connection.prepare(`${SELECT_PLUGIN_JOB} WHERE job_id = ? AND kind = ?`).get(
+    input.jobId,
+    PLUGIN_BACKGROUND_JOB_KIND,
+  ) as JobRow | undefined;
+  if (currentRow === undefined) return null;
+  const currentState = parseStoredJobPayload(currentRow.payload_json).state;
   const now = new Date().toISOString();
   const updated = connection.prepare(
     `UPDATE jobs SET status = 'queued', progress = 0, error_code = NULL, error_detail = NULL, updated_at = ?
@@ -539,8 +554,11 @@ export function retryPluginJobRecord(
   ).run(now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND, input.owner.pluginId, input.owner.packageHash);
   if (updated.changes !== 1) return null;
   const retryState = current.status === 'interrupted'
-    ? resetPluginJobExecutionState(stateFromRecord(current))
-    : stateFromRecord(current);
+    ? {
+      ...resetPluginJobExecutionState(currentState),
+      ...(input.applicationSessionId === undefined ? {} : { applicationSessionId: input.applicationSessionId }),
+    }
+    : currentState;
   connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
     serializeStoredJobPayload(current.payload, {
       ...retryState,
@@ -636,6 +654,7 @@ export function pausePluginJobsForOwners(
 export function interruptUnfinishedPluginJobs(
   connection: SqlConnection,
   libraryId: string,
+  applicationSessionId?: string,
 ): number {
   const unfinished = connection.prepare(
     `${SELECT_PLUGIN_JOB}
@@ -667,6 +686,7 @@ export function interruptUnfinishedPluginJobs(
   let marked = 0;
   for (const row of unfinished) {
     const stored = parseStoredJobPayload(row.payload_json);
+    if (applicationSessionId !== undefined && stored.state.applicationSessionId === applicationSessionId) continue;
     const result = update.run(
       'The plugin job was interrupted when the previous application session ended. Retry it explicitly to run it again.',
       now,

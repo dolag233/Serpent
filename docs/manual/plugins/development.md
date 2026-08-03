@@ -270,8 +270,8 @@ Job 先在 Manifest 声明：
 `recovery` 只能是 `idempotent` 或 `checkpoint`。运行时注册 handler，随后 enqueue；可报告进度、取消、暂停、恢复和重试。
 只有 checkpoint Job 支持暂停/恢复；插件缺失、停用或版本不兼容时 Job 进入 blocked/paused，不由其他版本接管。
 `recovery` 描述的是插件自己的幂等/检查点能力，不代表 Host 会在应用重启后自动恢复 Job。应用退出、崩溃或插件运行时会话结束时，仍处于
-`queued`/`running` 状态的 Job（以及因插件实例失活而暂停的 Job）会被标记为 `interrupted`，不会被下一次会话静默执行；插件或用户必须显式调用
-重试来重新入队。重试后的 Job 可以绑定当前新的插件实例。`interrupted` 是 Host 状态，插件的完成回调不能伪造这个状态。
+`queued`/`running` 状态的 Job（以及因插件实例失活而暂停的 Job）会在下一次应用 Worker 会话打开资源库时被标记为 `interrupted`，不会被静默执行；同一进程内关闭并重新打开资源库不会伪造应用重启。插件或用户必须显式调用
+重试来重新入队，且中断 Job 可以由当前相同插件包的新实例接管。`interrupted` 是 Host 状态，插件的完成回调不能伪造这个状态。
 大文件、模型和缓存不要塞进 storage。
 
 `serpent.storage` 是插件命名空间 KV，小配置使用 `scope: "user" | "library"`；按权限 `storage.read`/`storage.write` 控制。
@@ -295,6 +295,10 @@ secrets、net、clipboard 等。实际可调用能力由权限决定；结果不
 内容读取使用 `assets.readContent(assetId, { maxBytes })`，得到受限 base64、revision、大小、MIME 和 `truncated`。内容写回使用
 `replaceContent` 或 `stageContent`/`replaceContentBatch`，须使用 managed asset、权限和 expected revision；写入经过 Execution Plan/确认，
 大文件不放在单一 IPC payload。批量替换先统一校验 revision，再提交 staging；不能宣称文件系统原子性。
+
+Gateway 拒绝、计划过期、用户取消或权限不足时，Promise 会 reject 一个带有 `error.code` 和公开 `error.message` 的错误；例如
+`AUTOMATION_CAPABILITY_DENIED`、`AUTOMATION_EXECUTION_CANCELLED`。插件应按错误码分支处理并把需要排查的信息写入自己的诊断状态，不能依赖通用的
+`HOST_COMMAND_FAILED` 作为业务判断。宿主仍会隐藏未标记的内部错误细节。
 
 global 插件跨库必须显式：
 

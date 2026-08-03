@@ -991,7 +991,13 @@ export function createPluginTrustedHostHandler(options: {
         if (pending === undefined) return;
         current.pendingHostRequests.delete(message.requestId);
         if (message.ok) pending.resolve(message.type === 'plugin-trusted.job-control-result' ? message.job ?? null : message.result);
-        else pending.reject(new Error(message.error?.message ?? 'The host request failed.'));
+        else {
+          const error = new Error(message.error?.message ?? 'The host request failed.');
+          if (message.error?.code !== undefined) {
+            Object.defineProperty(error, 'code', { value: message.error.code, enumerable: true });
+          }
+          pending.reject(error);
+        }
       }
     },
     dispose(): void {

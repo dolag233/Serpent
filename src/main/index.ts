@@ -99,6 +99,7 @@ import {
   type AutomationCommandGateway,
 } from '../automation/command-gateway';
 import { sanitizeShellNotifyTitle } from '../shared/shell-notify';
+import { PluginHostCommandError } from '../shared/plugin-host-command-error';
 import { AutomationLibraryWorkerAdapter } from './automation-worker-adapter';
 import {
   createDesktopAutomationFilePlanApprovalHandler,
@@ -153,6 +154,7 @@ import { PluginMcpToolProvider } from './plugin-mcp-tool-provider';
 import { automationCapabilitiesFromPluginPermissions } from '../plugins/plugin-permission-capabilities';
 import { createContributionRegistry } from '../plugins/plugin-contributions';
 import { createPluginProviderRegistry } from '../plugins/plugin-providers';
+import { pluginJobOwnerCanRetry, pluginJobOwnerMatches } from '../plugins/plugin-jobs';
 import { loadOrCreatePluginDeviceId } from './plugin-device-identity';
 import { createPluginPackageRequestHandler } from './plugin-package-ipc';
 import { PluginPackageManager } from './plugin-package-manager';
@@ -1327,8 +1329,8 @@ async function notifyLibraryOpenedSideEffects(input: {
     });
   }
   // Global plugin activation uses an internal pseudo-library. Once the real
-  // library is open, drain its persisted jobs against the concrete library so
-  // recovered global and library-scoped jobs can actually resume.
+  // library is open, tick only jobs explicitly enqueued or retried in this
+  // application session; interrupted rows are never auto-recovered.
   pluginJobScheduler?.tick(input.libraryId);
 }
 
@@ -4348,7 +4350,7 @@ async function startApplication(): Promise<void> {
         commandId,
         errorCode: result.error.code,
       });
-      throw new Error(result.error.message ?? result.error.code);
+      throw new PluginHostCommandError(result.error.code, result.error.message ?? result.error.code);
     }
     return result.result;
   };
@@ -4517,13 +4519,17 @@ async function startApplication(): Promise<void> {
       throw Object.assign(new Error('The plugin job list could not be read.'), { code: 'JOB_LIST_FAILED' });
     }
     const job = listed.jobs.find((candidate) => candidate.jobId === input.jobId);
-    if (job === undefined
-      || job.ownerPluginId !== record.pluginId
-      || job.ownerPackageHash !== record.packageHash
-      || job.ownerPluginInstanceId !== record.instanceId
-      || job.ownerScope !== record.instanceScope
-      || job.ownerLibraryId !== libraryId
-      || job.libraryId !== libraryId) {
+    const owner = {
+      pluginId: record.pluginId,
+      packageHash: record.packageHash,
+      pluginInstanceId: record.instanceId,
+      scope: record.instanceScope,
+      libraryId,
+    } as const;
+    const ownsJob = job !== undefined && (input.action === 'retry'
+      ? pluginJobOwnerCanRetry(job, owner)
+      : pluginJobOwnerMatches(job, owner));
+    if (!ownsJob) {
       throw Object.assign(new Error('The plugin does not own this job.'), { code: 'JOB_OWNERSHIP_MISMATCH' });
     }
     const capabilities = {
@@ -4531,7 +4537,7 @@ async function startApplication(): Promise<void> {
       resumable: job.recoveryStrategy === 'checkpoint',
       ...(job.checkpoint?.version === undefined ? { checkpointVersion: 'v1' } : { checkpointVersion: job.checkpoint.version }),
     } as const;
-    const owner = {
+    const requestOwner = {
       ownerPluginId: record.pluginId,
       ownerPackageHash: record.packageHash,
       ownerPluginInstanceId: record.instanceId,
@@ -4541,23 +4547,23 @@ async function startApplication(): Promise<void> {
     let result: Awaited<ReturnType<typeof client.request>>;
     switch (input.action) {
       case 'cancel':
-        result = await client.request({ type: 'plugin.jobs.cancel', libraryId, jobId: input.jobId, ...owner, reason: input.reason });
+        result = await client.request({ type: 'plugin.jobs.cancel', libraryId, jobId: input.jobId, ...requestOwner, reason: input.reason });
         break;
       case 'pause':
         if (input.checkpoint === undefined) {
           throw Object.assign(new Error('Pausing a plugin job requires a checkpoint.'), { code: 'CHECKPOINT_REQUIRED' });
         }
         result = await client.request({
-          type: 'plugin.jobs.pause', libraryId, jobId: input.jobId, ...owner,
+          type: 'plugin.jobs.pause', libraryId, jobId: input.jobId, ...requestOwner,
           capabilities,
           checkpoint: input.checkpoint,
         });
         break;
       case 'resume':
-        result = await client.request({ type: 'plugin.jobs.resume', libraryId, jobId: input.jobId, ...owner, capabilities });
+        result = await client.request({ type: 'plugin.jobs.resume', libraryId, jobId: input.jobId, ...requestOwner, capabilities });
         break;
       case 'retry':
-        result = await client.request({ type: 'plugin.jobs.retry', libraryId, jobId: input.jobId, ...owner, retryInput: input.retryInput });
+        result = await client.request({ type: 'plugin.jobs.retry', libraryId, jobId: input.jobId, ...requestOwner, retryInput: input.retryInput });
         break;
     }
     if (!result.ok || !('job' in result)) {

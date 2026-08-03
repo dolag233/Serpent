@@ -6,6 +6,7 @@ import {
   type PluginRuntimeJobProgressInput,
 } from '../shared/plugin-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
+import { toPluginHostCommandFailure } from '../shared/plugin-host-command-error';
 import type { PluginPermission } from '../plugins/plugin-manifest';
 import type { PluginDomainEvent } from '../plugins/plugin-domain-events';
 import type { PluginHookDecision, PluginHookInvoke } from '../plugins/plugin-hooks';
@@ -1144,12 +1145,13 @@ export class PluginRuntimeSupervisor {
         instanceId: message.instanceId,
         commandId: message.commandId,
       });
+      const failure = toPluginHostCommandFailure(error);
       this.#post({
         type: 'plugin-runtime.host-result',
         instanceId: message.instanceId,
         requestId: message.requestId,
         ok: false,
-        error: { code: 'HOST_COMMAND_FAILED', message: 'The automation command could not complete.' },
+        error: failure,
       });
     }
   }

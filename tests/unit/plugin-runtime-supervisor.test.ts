@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginRuntimeSupervisor } from '../../src/main/plugin-runtime-supervisor';
+import { PluginHostCommandError } from '../../src/shared/plugin-host-command-error';
 import type { PluginRuntimeChildMessage } from '../../src/shared/plugin-runtime-utility-protocol';
 import type { PluginJobRecord } from '../../src/plugins/plugin-jobs';
 
@@ -150,6 +151,42 @@ describe('PluginRuntimeSupervisor', () => {
     expect(crashed).toEqual([]);
     supervisor.shutdown();
     expect(child.killCount).toBe(1);
+  });
+
+  it('returns a marked Gateway failure instead of hiding it as HOST_COMMAND_FAILED', async () => {
+    const child = new FakeRuntimeChild();
+    const supervisor = new PluginRuntimeSupervisor({
+      modulePath: '/safe/plugin_standard_host.js',
+      fork: () => child,
+      executeHostCommand: async () => {
+        throw new PluginHostCommandError(
+          'AUTOMATION_CAPABILITY_DENIED',
+          'The automation execution has not been granted the required capability.',
+        );
+      },
+    });
+    const instanceId = '11111111-1111-4111-8111-111111111111';
+    await activateStandardInstance(supervisor, child, instanceId);
+    const hostCommand: Extract<PluginRuntimeChildMessage, { type: 'plugin-runtime.host-command' }> = {
+      type: 'plugin-runtime.host-command',
+      instanceId,
+      requestId: '22222222-2222-4222-8222-222222222222',
+      commandId: 'asset.content.replace-batch',
+      input: { items: [] },
+    };
+    child.emit('message', hostCommand as never);
+    await flush();
+    expect(child.posted).toContainEqual({
+      type: 'plugin-runtime.host-result',
+      instanceId,
+      requestId: hostCommand.requestId,
+      ok: false,
+      error: {
+        code: 'AUTOMATION_CAPABILITY_DENIED',
+        message: 'The automation execution has not been granted the required capability.',
+      },
+    });
+    supervisor.shutdown();
   });
 
   it('kills the host and records HEARTBEAT_TIMEOUT when heartbeats stop', async () => {

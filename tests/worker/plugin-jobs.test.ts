@@ -347,6 +347,7 @@ describe('plugin job repository via LibraryService', () => {
       jobId: job.jobId,
       action: 'retry',
       ...owner,
+      ownerPluginInstanceId: 'instance-after-restart',
     });
     expect(retried).toMatchObject({ status: 'queued' });
     expect(retried?.ownerPluginInstanceId).toBeUndefined();
@@ -430,6 +431,7 @@ describe('plugin job repository via LibraryService', () => {
       jobId: idempotentJob.jobId,
       action: 'retry',
       ...owner,
+      ownerPluginInstanceId: 'instance-recovery-after-restart',
     });
     expect(retried).toMatchObject({ status: 'queued' });
     expect(retried?.ownerPluginInstanceId).toBeUndefined();
@@ -445,5 +447,30 @@ describe('plugin job repository via LibraryService', () => {
 
     recovered.closeLibrary(library.libraryId);
     crashed.closeLibrary(library.libraryId);
+  });
+
+  it('does not interrupt plugin jobs when a library is reopened in the same worker session', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-same-session-'));
+    roots.push(root);
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Plugin Job Same Session', selectedParentPath: root });
+    const packageHash = 'e'.repeat(64);
+    const job = service.enqueuePluginJob({
+      libraryId: library.libraryId,
+      ownerPluginId: 'com.serpent.job-same-session',
+      ownerPackageHash: packageHash,
+      ownerPluginInstanceId: 'instance-same-session',
+      ownerScope: 'library',
+      ownerLibraryId: library.libraryId,
+      pluginHandlerId: 'tick',
+      recoveryStrategy: 'idempotent',
+    });
+
+    service.closeLibrary(library.libraryId);
+    service.openLibrary(library.libraryPath);
+
+    expect(service.listPluginJobs(library.libraryId).find((item) => item.jobId === job.jobId))
+      .toMatchObject({ status: 'queued', errorCode: null });
+    service.closeLibrary(library.libraryId);
   });
 });
