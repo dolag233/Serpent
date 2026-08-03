@@ -55,6 +55,12 @@
 - 多选路径实际展开 `Probe processing`，验证 `selection.assetCount == 2` 的 `Write nested selection` child 出现；这覆盖了 Host 不应把 `menus.asset` 误判成单选专用，以及 child 条件改变时父级菜单树同步更新。
 - `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-unrestricted-settings-pages.test.ts`：1 passed（7.5s）。无选择、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
 
+### 2026-08-04 扩展/MIME 条件、置灰和 checked 回归
+
+- 探测插件新增 `selection.extensions intersects ['png']`、`enablement` 和 `checked` 条件；真实单选菜单验证 PNG 项出现且 `aria-checked=true`。
+- 同一资产集合切换到多选后，PNG 项仍可见但 `aria-disabled=true`、`aria-checked=false`，同时二级菜单 child 按 `selection.assetCount == 2` 出现。
+- 这补齐了开发态菜单的扩展过滤、禁用和选中态证据；无选择、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
+
 - `npm run typecheck`：通过（主 TypeScript 与 extension TypeScript）。
 - 变更相关文件定向 ESLint：通过；`git diff --check`：通过。
 - `node scripts/run-vitest-with-electron.mjs run` 定向插件集合：21 files，271 passed。

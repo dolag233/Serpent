@@ -30,6 +30,10 @@
       {
         "id": "probe.nested-selection",
         "title": "Write nested selection"
+      },
+      {
+        "id": "probe.write-png",
+        "title": "Write PNG selection"
       }
     ],
     "menus": {
@@ -38,6 +42,13 @@
           "command": "probe.write-selection",
           "group": "probe",
           "when": "selection.assetCount == 1"
+        },
+        {
+          "command": "probe.write-png",
+          "group": "probe",
+          "when": "selection.extensions intersects ['png']",
+          "enablement": "selection.assetCount == 1",
+          "checked": "selection.assetCount == 1"
         },
         {
           "id": "processing",

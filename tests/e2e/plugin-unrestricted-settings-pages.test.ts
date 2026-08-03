@@ -250,6 +250,9 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
     await expect(window.locator('.asset-card.is-selected')).toHaveCount(1);
     await probeCard.click({ button: 'right' });
     await expect(window.getByRole('menuitem', { name: 'Write unrestricted selection' })).toBeVisible();
+    const pngMenuItem = window.getByRole('menuitemcheckbox', { name: 'Write PNG selection' });
+    await expect(pngMenuItem).toBeVisible();
+    await expect(pngMenuItem).toHaveAttribute('aria-checked', 'true');
     // The only child is false for a single selection; the parent must not
     // remain as an empty submenu after the child is filtered out.
     await expect(window.getByRole('menuitem', { name: 'Probe processing' })).toHaveCount(0);
@@ -263,6 +266,9 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
     await expect(processingMenu).toBeVisible();
     await processingMenu.hover();
     await expect(window.getByRole('menuitem', { name: 'Write nested selection' })).toBeVisible();
+    const disabledPngMenuItem = window.getByRole('menuitemcheckbox', { name: 'Write PNG selection' });
+    await expect(disabledPngMenuItem).toHaveAttribute('aria-disabled', 'true');
+    await expect(disabledPngMenuItem).toHaveAttribute('aria-checked', 'false');
     await window.keyboard.press('Escape');
 
     const storage = JSON.parse(readFileSync(storagePath, 'utf8')) as {
