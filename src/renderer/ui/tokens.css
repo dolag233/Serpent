@@ -1,0 +1,216 @@
+/*
+ * Serpent UI foundation tokens
+ *
+ * This file is intentionally independent from styles.css. It is the semantic
+ * contract for the UI library that will be built in later phases. Existing
+ * surfaces may keep using the legacy tokens during migration; new UI must use
+ * these --ui-* variables and the layer contract below.
+ *
+ * Theme rule: tokens are defined on the document root and inherited by every
+ * descendant. A nested surface may override tokens for a deliberate theme
+ * boundary, but components must not introduce page-local colors or z-indexes.
+ */
+
+:root,
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surface */
+  --ui-surface-canvas: #252729;
+  --ui-surface-pane: #2c2e31;
+  --ui-surface-raised: #35383b;
+  --ui-surface-raised-subtle: #3a3d40;
+  --ui-surface-overlay: color-mix(in srgb, var(--ui-surface-raised) 96%, transparent);
+  --ui-surface-scrim: rgb(0 0 0 / 46%);
+  --ui-surface-hover: rgb(255 255 255 / 4.5%);
+  --ui-surface-pressed: rgb(255 255 255 / 8%);
+  --ui-surface-selected: color-mix(in srgb, var(--ui-action-accent) 14%, transparent);
+  --ui-surface-disabled: color-mix(in srgb, var(--ui-surface-raised) 58%, var(--ui-surface-canvas));
+
+  /* Content / icon ink */
+  --ui-content-primary: #f1f2ef;
+  --ui-content-secondary: #a9ada9;
+  --ui-content-tertiary: #777c79;
+  --ui-content-disabled: color-mix(in srgb, var(--ui-content-tertiary) 62%, transparent);
+  --ui-content-inverse: #111314;
+  --ui-content-on-accent: #ffffff;
+  --ui-content-accent: color-mix(in srgb, var(--ui-action-accent) 55%, white);
+
+  /* Border / focus */
+  --ui-border-divider: #44474a;
+  --ui-border-subtle: #393c3f;
+  --ui-border-control: color-mix(in srgb, var(--ui-border-divider) 92%, transparent);
+  --ui-border-focus: color-mix(in srgb, var(--ui-action-accent) 72%, transparent);
+  --ui-border-selection: var(--ui-action-accent);
+  --ui-border-danger: color-mix(in srgb, var(--ui-status-danger) 58%, var(--ui-border-divider));
+
+  /* Action */
+  --ui-action-accent: #3b82f6;
+  --ui-action-accent-hover: color-mix(in srgb, var(--ui-action-accent) 86%, white);
+  --ui-action-accent-pressed: color-mix(in srgb, var(--ui-action-accent) 78%, black);
+  --ui-action-accent-soft: color-mix(in srgb, var(--ui-action-accent) 14%, transparent);
+  --ui-action-hover: var(--ui-surface-hover);
+  --ui-action-pressed: var(--ui-surface-pressed);
+  --ui-action-selected: var(--ui-surface-selected);
+  --ui-action-disabled: color-mix(in srgb, var(--ui-content-tertiary) 40%, transparent);
+  --ui-action-danger: var(--ui-status-danger);
+  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 14%, var(--ui-surface-hover));
+
+  /* Status */
+  --ui-status-info: #6aa7d9;
+  --ui-status-info-surface: color-mix(in srgb, var(--ui-status-info) 14%, var(--ui-surface-raised));
+  --ui-status-info-content: color-mix(in srgb, var(--ui-status-info) 74%, white);
+  --ui-status-success: #6db85d;
+  --ui-status-success-surface: color-mix(in srgb, var(--ui-status-success) 14%, var(--ui-surface-raised));
+  --ui-status-success-content: color-mix(in srgb, var(--ui-status-success) 74%, white);
+  --ui-status-warning: #d99a3e;
+  --ui-status-warning-surface: #76533a;
+  --ui-status-warning-content: #f1c87d;
+  --ui-status-danger: #e76b7a;
+  --ui-status-danger-surface: #4a3f3f;
+  --ui-status-danger-content: #efb3ad;
+
+  /* Geometry: 4px base rhythm, compact Studio Contact Sheet controls. */
+  --ui-space-0: 0;
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-7: 32px;
+  --ui-size-control-sm: 28px;
+  --ui-size-control-md: 32px;
+  --ui-size-control-lg: 36px;
+  --ui-size-toolbar: 44px;
+  --ui-size-chip: 22px;
+  --ui-size-icon-sm: 16px;
+  --ui-size-icon-md: 20px;
+  --ui-size-icon-lg: 24px;
+  --ui-gutter-pane: 12px;
+  --ui-gutter-grid: 12px;
+  --ui-radius-control: 4px;
+  --ui-radius-surface: 6px;
+  --ui-radius-dialog: 8px;
+  --ui-radius-overlay: 10px;
+  --ui-radius-pill: 999px;
+  --ui-border-width-hairline: 1px;
+  --ui-border-width-focus: 2px;
+
+  /* Typography */
+  --ui-font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial,
+    "Noto Sans SC Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ui-font-family-mono: "IBM Plex Mono", "SFMono-Regular", Consolas,
+    "Liberation Mono", monospace;
+  --ui-font-size-micro: 11px;
+  --ui-font-size-caption: 12px;
+  --ui-font-size-body: 13px;
+  --ui-font-size-label: 12px;
+  --ui-font-size-title: 16px;
+  --ui-font-size-heading: 18px;
+  --ui-line-height-tight: 1.2;
+  --ui-line-height-normal: 1.4;
+  --ui-line-height-relaxed: 1.55;
+  --ui-font-weight-regular: 400;
+  --ui-font-weight-medium: 500;
+  --ui-font-weight-semibold: 600;
+
+  /* Elevation: use semantic level names, never page-local shadow values. */
+  --ui-shadow-none: none;
+  --ui-shadow-surface: 0 2px 10px rgb(0 0 0 / 24%);
+  --ui-shadow-popover: 0 8px 24px rgb(0 0 0 / 28%);
+  --ui-shadow-modal: 0 24px 70px rgb(0 0 0 / 42%);
+  --ui-shadow-notice: 0 12px 32px rgb(0 0 0 / 28%);
+
+  /*
+   * Layer contract. These are the only public UI z-indexes. Keep gaps between
+   * layers so internal stacking contexts can use local ordering without
+   * competing with another page. A component chooses one named layer; it does
+   * not invent a number. Modal backdrop is below modal content but above all
+   * application activity. Tooltip is the final interaction layer.
+   */
+  --ui-layer-base: 0;
+  --ui-layer-shell: 100;
+  --ui-layer-sticky: 200;
+  --ui-layer-menu: 300;
+  --ui-layer-popover: 400;
+  --ui-layer-activity: 500;
+  --ui-layer-notice: 600;
+  --ui-layer-modal-backdrop: 700;
+  --ui-layer-modal: 800;
+  --ui-layer-tooltip: 900;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surface */
+  --ui-surface-canvas: #ebeceb;
+  --ui-surface-pane: #f4f5f3;
+  --ui-surface-raised: #f2f4f0;
+  --ui-surface-raised-subtle: #f8f9f7;
+  --ui-surface-overlay: color-mix(in srgb, var(--ui-surface-raised) 96%, transparent);
+  --ui-surface-scrim: rgb(0 0 0 / 28%);
+  --ui-surface-hover: rgb(0 0 0 / 4.5%);
+  --ui-surface-pressed: rgb(0 0 0 / 8%);
+  --ui-surface-selected: color-mix(in srgb, var(--ui-action-accent) 18%, #ffffff);
+  --ui-surface-disabled: color-mix(in srgb, var(--ui-surface-raised) 58%, var(--ui-surface-canvas));
+
+  /* Content / icon ink */
+  --ui-content-primary: #1c1e1c;
+  --ui-content-secondary: #5a5f5a;
+  --ui-content-tertiary: #8a8f8a;
+  --ui-content-disabled: color-mix(in srgb, var(--ui-content-tertiary) 64%, transparent);
+  --ui-content-inverse: #ffffff;
+  --ui-content-on-accent: #ffffff;
+  --ui-content-accent: color-mix(in srgb, var(--ui-action-accent) 68%, black);
+
+  /* Border / focus */
+  --ui-border-divider: #c9cdc8;
+  --ui-border-subtle: #d8dcd6;
+  --ui-border-control: color-mix(in srgb, var(--ui-border-divider) 92%, transparent);
+  --ui-border-focus: color-mix(in srgb, var(--ui-action-accent) 58%, transparent);
+  --ui-border-selection: var(--ui-action-accent);
+  --ui-border-danger: color-mix(in srgb, var(--ui-status-danger) 50%, var(--ui-border-divider));
+
+  /* Action */
+  --ui-action-accent: #3b82f6;
+  --ui-action-accent-hover: color-mix(in srgb, var(--ui-action-accent) 86%, black);
+  --ui-action-accent-pressed: color-mix(in srgb, var(--ui-action-accent) 78%, black);
+  --ui-action-accent-soft: color-mix(in srgb, var(--ui-action-accent) 18%, #ffffff);
+  --ui-action-hover: var(--ui-surface-hover);
+  --ui-action-pressed: var(--ui-surface-pressed);
+  --ui-action-selected: var(--ui-surface-selected);
+  --ui-action-disabled: color-mix(in srgb, var(--ui-content-tertiary) 46%, transparent);
+  --ui-action-danger: var(--ui-status-danger);
+  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 12%, var(--ui-surface-hover));
+
+  /* Status */
+  --ui-status-info: #3c7aa8;
+  --ui-status-info-surface: color-mix(in srgb, var(--ui-status-info) 10%, var(--ui-surface-raised));
+  --ui-status-info-content: #245a82;
+  --ui-status-success: #16a34a;
+  --ui-status-success-surface: color-mix(in srgb, var(--ui-status-success) 10%, var(--ui-surface-raised));
+  --ui-status-success-content: #167238;
+  --ui-status-warning: #c2410c;
+  --ui-status-warning-surface: #ffedd5;
+  --ui-status-warning-content: #9a3412;
+  --ui-status-danger: #dc2626;
+  --ui-status-danger-surface: #fde8e8;
+  --ui-status-danger-content: #b42318;
+
+  /* Elevation */
+  --ui-shadow-surface: 0 1px 8px rgb(0 0 0 / 10%);
+  --ui-shadow-popover: 0 6px 18px rgb(0 0 0 / 12%), 0 1px 3px rgb(0 0 0 / 8%);
+  --ui-shadow-modal: 0 18px 48px rgb(0 0 0 / 16%);
+  --ui-shadow-notice: 0 8px 20px rgb(0 0 0 / 10%);
+}
+
+/* Windows keeps the platform-specific font choice while inheriting every
+   semantic size, color, geometry and layer token from the active theme. */
+:root[data-platform="windows"] {
+  --ui-font-family: "HarmonyOS Sans SC", "Segoe UI Variable", "Segoe UI",
+    "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC Variable", Arial,
+    sans-serif;
+}
