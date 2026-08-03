@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 export const HOVER_TIP_SHOW_DELAY_MS = 420;
 
 type TipState = {
+  readonly id?: string;
   readonly text: string;
   readonly left: number;
   readonly top: number;
@@ -67,6 +68,7 @@ export function HoverTipHost() {
       clearTimer();
       activeElRef.current = el;
       setTip(null);
+      const id = el.getAttribute('data-hover-tip-id') ?? undefined;
       showTimerRef.current = window.setTimeout(() => {
         if (activeElRef.current !== el) return;
         const rect = el.getBoundingClientRect();
@@ -90,6 +92,7 @@ export function HoverTipHost() {
         );
         const top = Math.min(window.innerHeight - 8, rect.bottom + 6);
         setTip({
+          id,
           text,
           left,
           top,
@@ -130,6 +133,29 @@ export function HoverTipHost() {
     };
 
     const onPointerDown = () => hide();
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const el = target.closest('[data-hover-tip]');
+      if (el instanceof Element) scheduleShow(el);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      const related = event.relatedTarget;
+      if (
+        related instanceof Element &&
+        activeElRef.current?.contains(related)
+      ) {
+        return;
+      }
+      const leaving = event.target;
+      if (
+        leaving instanceof Element &&
+        activeElRef.current &&
+        (leaving === activeElRef.current || activeElRef.current.contains(leaving))
+      ) {
+        hide();
+      }
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') hide();
     };
@@ -138,6 +164,8 @@ export function HoverTipHost() {
     document.addEventListener('pointerover', onPointerOver, true);
     document.addEventListener('pointerout', onPointerOut, true);
     document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('focusin', onFocusIn, true);
+    document.addEventListener('focusout', onFocusOut, true);
     document.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('blur', hide);
@@ -147,6 +175,8 @@ export function HoverTipHost() {
       document.removeEventListener('pointerover', onPointerOver, true);
       document.removeEventListener('pointerout', onPointerOut, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('focusin', onFocusIn, true);
+      document.removeEventListener('focusout', onFocusOut, true);
       document.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('blur', hide);
@@ -164,6 +194,7 @@ export function HoverTipHost() {
   return createPortal(
     <div
       className={`hover-tip${tip.variant === 'search-syntax' ? ' is-search-syntax' : ''}`}
+      id={tip.id}
       role="tooltip"
       style={style}
     >

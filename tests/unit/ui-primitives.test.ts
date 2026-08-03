@@ -1,6 +1,9 @@
 import { expect, test } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
+  Button,
   getFieldAriaProps,
   getFieldIds,
   getProgressPercentage,
@@ -9,6 +12,11 @@ import {
   isSelectValueAvailable,
   mergeAriaDescribedBy,
   normalizeProgressValue,
+  Progress,
+  Select,
+  Switch,
+  TextField,
+  Tooltip,
 } from '../../src/renderer/ui/primitives';
 
 test('cx/ARIA helpers omit empty values and preserve description order', () => {
@@ -52,4 +60,62 @@ test('select availability excludes disabled options', () => {
   expect(isSelectValueAvailable('light', options)).toBe(true);
   expect(isSelectValueAvailable('dark', options)).toBe(false);
   expect(isSelectValueAvailable('system', options)).toBe(false);
+});
+
+test('primitives emit semantic control roles and accessible relationships', () => {
+  const html = renderToStaticMarkup(createElement(
+    'div',
+    null,
+    createElement(Button, { variant: 'primary' }, 'Save'),
+    createElement(TextField, {
+      id: 'asset-name',
+      label: 'Asset name',
+      description: 'Shown below the preview.',
+      error: 'Name is required.',
+      value: '',
+      readOnly: true,
+    }),
+    createElement(Switch, {
+      id: 'enabled',
+      label: 'Enabled',
+      checked: true,
+      readOnly: true,
+    }),
+    createElement(Switch, {
+      defaultChecked: true,
+      id: 'uncontrolled-enabled',
+      readOnly: true,
+    }),
+    createElement(Tooltip, {
+      children: createElement(TextField, {
+        id: 'tooltip-field',
+        label: 'Tooltip field',
+        value: '',
+        readOnly: true,
+      }),
+      label: 'Helpful field description',
+    }),
+    createElement(Select, {
+      id: 'mode',
+      label: 'Mode',
+      value: 'fast',
+      options: [{ value: 'fast', label: 'Fast' }],
+      onChange: () => undefined,
+    }),
+    createElement(Progress, {
+      label: 'Import',
+      value: 1,
+      max: 2,
+      showValue: true,
+    }),
+  ));
+
+  expect(html).toContain('type="button"');
+  expect(html).toContain('aria-invalid="true"');
+  expect(html).toContain('role="switch"');
+  expect(html).toContain('aria-checked="true"');
+  expect(html).toContain('id="uncontrolled-enabled"');
+  expect(html).toContain('data-hover-tip="Helpful field description"');
+  expect(html).toContain('role="progressbar"');
+  expect(html).toContain('aria-valuenow="1"');
 });

@@ -4,7 +4,27 @@ import { cx } from './cx';
 
 export type ProgressStatus = 'active' | 'success' | 'warning' | 'error' | 'paused';
 
-export type ProgressProps = Omit<HTMLAttributes<HTMLDivElement>, 'children'> & {
+type ProgressAccessibleName =
+  | {
+      readonly label: NonNullable<ReactNode>;
+      readonly 'aria-label'?: string;
+      readonly 'aria-labelledby'?: string;
+    }
+  | {
+      readonly label?: ReactNode;
+      readonly 'aria-label': string;
+      readonly 'aria-labelledby'?: string;
+    }
+  | {
+      readonly label?: ReactNode;
+      readonly 'aria-label'?: string;
+      readonly 'aria-labelledby': string;
+    };
+
+export type ProgressProps = Omit<
+  HTMLAttributes<HTMLDivElement>,
+  'children' | 'aria-label' | 'aria-labelledby'
+> & {
   readonly value?: number;
   readonly max?: number;
   readonly label?: ReactNode;
@@ -13,7 +33,7 @@ export type ProgressProps = Omit<HTMLAttributes<HTMLDivElement>, 'children'> & {
   readonly status?: ProgressStatus;
   readonly indeterminate?: boolean;
   readonly showValue?: boolean;
-};
+} & ProgressAccessibleName;
 
 export function normalizeProgressValue(value: number | undefined, max: number): number | undefined {
   if (value === undefined || !Number.isFinite(value) || !Number.isFinite(max) || max <= 0) return undefined;

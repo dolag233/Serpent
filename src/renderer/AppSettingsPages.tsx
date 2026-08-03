@@ -31,6 +31,7 @@ import {
   clampMenuAcrylicLevel,
 } from "./menu-acrylic-preferences";
 import { useTheme } from "./theme";
+import { Button, Switch, TextField } from "./ui/primitives";
 import {
   ACCENT_PRESET_HEX,
   DEFAULT_ACCENT_HEX,
@@ -65,10 +66,11 @@ function SettingsToggleRow({
         <strong>{label}</strong>
         <span>{hint}</span>
       </span>
-      <span className="app-settings-toggle-control">
-        <input checked={checked} onChange={onChange} type="checkbox" />
-        <span aria-hidden="true" className="app-settings-toggle-track" />
-      </span>
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onChange}
+      />
     </label>
   );
 }
@@ -201,7 +203,7 @@ export function AppearanceSettingsPage(): ReactNode {
         ))}
       </div>
       <div className="app-settings-accent-custom">
-        <input
+        <TextField
           aria-label={t("settings.accentCustom")}
           className="text-field"
           onBlur={() => {
@@ -213,14 +215,13 @@ export function AppearanceSettingsPage(): ReactNode {
           placeholder="#3b82f6"
           type="text"
           value={accentDraft}
+          wrapperClassName="ui-field--inline"
         />
-        <button
-          className="secondary-button"
+        <Button
           onClick={() => selectAccent(DEFAULT_ACCENT_HEX)}
-          type="button"
         >
           {t("settings.accentReset")}
-        </button>
+        </Button>
       </div>
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">

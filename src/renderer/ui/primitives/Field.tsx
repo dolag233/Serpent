@@ -1,8 +1,8 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type HTMLAttributes, type ReactNode } from 'react';
 
 import { cx, mergeAriaDescribedBy, type ClassName } from './cx';
 
-export type FieldProps = {
+export type FieldProps = Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'className'> & {
   readonly children: ReactNode;
   readonly label?: ReactNode;
   readonly htmlFor?: string;
@@ -52,9 +52,10 @@ export function Field({
   error,
   required = false,
   className,
+  ...rest
 }: FieldProps): ReactNode {
   return (
-    <div className={cx('ui-field', className)}>
+    <div {...rest} className={cx('ui-field', className)}>
       {label === undefined ? null : (
         <label className="ui-field__label" htmlFor={htmlFor}>
           <span className="ui-field__label-text">{label}</span>

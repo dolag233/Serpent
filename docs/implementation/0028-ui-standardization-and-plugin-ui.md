@@ -1,6 +1,6 @@
 # 0028：UI 标准化与插件结构化 UI 设计分析
 
-状态：设计分析，暂不实施
+状态：阶段 1（内部 UI library 基础层）实施中
 
 日期：2026-08-04
 
@@ -307,7 +307,7 @@ type ControlDescriptor =
 - 菜单贡献已经支持 submenu/when/enablement/checked，但 toolbar、Inspector、Viewer 和快捷键的统一条件与最终 resolved tree 证据还不完整；
 - 现有 `ResolvedMenuItem` 和核心菜单 JSX 对 icon、danger、separator、submenu、checked、close 行为的表达不完全一致，需要由统一模型补齐。
 
-## 6. 实施顺序（本次不执行）
+## 6. 实施顺序
 
 ### 阶段 0：冻结设计与契约
 
@@ -396,4 +396,6 @@ type ControlDescriptor =
 
 ## 9. 当前状态
 
-本文件是分析和设计基线，未修改任何 Renderer 实现。现有 `docs/development/2026-08-02-ui-reuse-audit.md` 继续作为已完成菜单 token 审计和历史缺口记录；后续实现工单应引用本文件，并在四列证据齐全后分别关闭，不能因为本设计文档存在就将 `Serpent-nzxh` 标记为完成。
+阶段 1 已开始实施，当前落地内容包括 `src/renderer/ui/` 的语义 tokens/layer contract、Button/IconButton、Field/TextField、Switch、Select、Progress、Tooltip、DialogShell、ModalStack、MenuSurface，以及设置页和插件 Host settings 的小范围接入。实现保留旧 `styles.css` 作为迁移适配层，尚未声称全量 UI 统一；Slider、完整 Settings patterns、业务菜单/Popover、插件管理页 toggle 和 Host-rendered UI DSL 仍属于后续阶段。
+
+本阶段的自动化证据记录在 `docs/development/2026-08-04-ui-standardization-development-log.md`：定向单测、typecheck、lint 和插件设置/Shell Electron E2E 已执行；全量核心 E2E、Computer Use 视觉验收和其余业务 surface 迁移仍未完成。现有 `docs/development/2026-08-02-ui-reuse-audit.md` 继续作为菜单 token 审计和历史缺口记录；实现工单必须在四列证据齐全后分别关闭，不能因为本设计文档存在就将 `Serpent-nzxh` 标记为完成。

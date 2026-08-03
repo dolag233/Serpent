@@ -18,6 +18,7 @@ import {
   Select,
   Switch,
   TextField,
+  Tooltip,
 } from './ui/primitives';
 
 type PluginHostSettingsFieldsProps = {
@@ -129,6 +130,12 @@ export function PluginHostSettingsFields({
   }
   if (sections.length === 0) return null;
 
+  const withDescriptionTooltip = (section: PluginManagerPluginSettingSection, node: ReactNode): ReactNode => (
+    section.description === undefined ? node : (
+      <Tooltip label={section.description}>{node}</Tooltip>
+    )
+  );
+
   return (
     <div className="plugin-host-settings-fields">
       {error === undefined ? null : (
@@ -154,15 +161,17 @@ export function PluginHostSettingsFields({
               key={section.id}
               label={section.title}
             >
-              <Switch
-                {...fieldAria}
-                checked={checked}
-                disabled={fieldDisabled}
-                id={controlId}
-                loading={fieldLoading}
-                onChange={(event) => void save(section, event.target.checked)}
-                title={section.description}
-              />
+              {withDescriptionTooltip(section, (
+                <Switch
+                  {...fieldAria}
+                  checked={checked}
+                  disabled={fieldDisabled}
+                  id={controlId}
+                  loading={fieldLoading}
+                  onChange={(event) => void save(section, event.target.checked)}
+                  title={section.description}
+                />
+              ))}
             </Field>
           );
         }
@@ -177,16 +186,18 @@ export function PluginHostSettingsFields({
               key={section.id}
               label={section.title}
             >
-              <Select
-                {...fieldAria}
-                disabled={fieldDisabled}
-                id={controlId}
-                loading={fieldLoading}
-                onValueChange={(value) => void save(section, value)}
-                options={options}
-                title={section.description}
-                value={selectValue}
-              />
+              {withDescriptionTooltip(section, (
+                <Select
+                  {...fieldAria}
+                  disabled={fieldDisabled}
+                  id={controlId}
+                  loading={fieldLoading}
+                  onValueChange={(value) => void save(section, value)}
+                  options={options}
+                  title={section.description}
+                  value={selectValue}
+                />
+              ))}
             </Field>
           );
         }
@@ -200,24 +211,26 @@ export function PluginHostSettingsFields({
               key={section.id}
               label={section.title}
             >
-              <TextField
-                {...fieldAria}
-                disabled={fieldDisabled}
-                id={controlId}
-                loading={fieldLoading}
-                max={section.maximum}
-                min={section.minimum}
-                onChange={(event) => {
-                  const next = event.target.value.trim();
-                  if (next === '') return;
-                  const parsed = Number(next);
-                  if (!Number.isFinite(parsed)) return;
-                  void save(section, parsed);
-                }}
-                title={section.description}
-                type="number"
-                value={numericValue}
-              />
+              {withDescriptionTooltip(section, (
+                <TextField
+                  {...fieldAria}
+                  disabled={fieldDisabled}
+                  id={controlId}
+                  loading={fieldLoading}
+                  max={section.maximum}
+                  min={section.minimum}
+                  onChange={(event) => {
+                    const next = event.target.value.trim();
+                    if (next === '') return;
+                    const parsed = Number(next);
+                    if (!Number.isFinite(parsed)) return;
+                    void save(section, parsed);
+                  }}
+                  title={section.description}
+                  type="number"
+                  value={numericValue}
+                />
+              ))}
             </Field>
           );
         }
@@ -230,26 +243,28 @@ export function PluginHostSettingsFields({
             key={section.id}
             label={section.title}
           >
-            <TextField
-              {...fieldAria}
-              disabled={fieldDisabled}
-              id={controlId}
-              loading={fieldLoading}
-              onBlur={(event) => void save(section, event.target.value)}
-              onChange={(event) => {
-                const next = event.target.value;
-                setSections((current) => current.map((item) => (
-                  item.id === section.id ? { ...item, value: next } : item
-                )));
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Enter') return;
-                event.currentTarget.blur();
-              }}
-              title={section.description}
-              type="text"
-              value={textValue}
-            />
+            {withDescriptionTooltip(section, (
+              <TextField
+                {...fieldAria}
+                disabled={fieldDisabled}
+                id={controlId}
+                loading={fieldLoading}
+                onBlur={(event) => void save(section, event.target.value)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setSections((current) => current.map((item) => (
+                    item.id === section.id ? { ...item, value: next } : item
+                  )));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  event.currentTarget.blur();
+                }}
+                title={section.description}
+                type="text"
+                value={textValue}
+              />
+            ))}
           </Field>
         );
       })}

@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from "vitest";
+import type { ReactElement } from "react";
 
 import {
+  DialogShell,
   getDialogFocusBoundary,
   getTopmostDialog,
   type DialogStackEntry,
@@ -13,6 +15,38 @@ import {
 } from "../../src/renderer/ui/patterns/menu";
 
 describe("UI patterns: modal focus boundary", () => {
+  it("only the topmost dialog consumes Escape", () => {
+    let closeCount = 0;
+    let prevented = false;
+    let stopped = false;
+    const topmost = DialogShell({
+      children: null,
+      dialogId: "topmost",
+      onRequestClose: () => { closeCount += 1; },
+    }) as ReactElement<{ onKeyDown?: (event: unknown) => void }>;
+    topmost.props.onKeyDown?.({
+      key: "Escape",
+      preventDefault: () => { prevented = true; },
+      stopPropagation: () => { stopped = true; },
+    });
+    expect(closeCount).toBe(1);
+    expect(prevented).toBe(true);
+    expect(stopped).toBe(true);
+
+    const background = DialogShell({
+      children: null,
+      dialogId: "background",
+      isTopmost: false,
+      onRequestClose: () => { closeCount += 1; },
+    }) as ReactElement<{ onKeyDown?: (event: unknown) => void }>;
+    background.props.onKeyDown?.({
+      key: "Escape",
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    });
+    expect(closeCount).toBe(1);
+  });
+
   it("selects the last open dialog in stack order", () => {
     const entries: readonly DialogStackEntry[] = [
       { id: "base", open: true },

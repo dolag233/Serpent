@@ -23,6 +23,8 @@ import {
 } from './shadow-preferences';
 import { ThemeProvider } from './theme';
 import './styles.css';
+import './ui/tokens.css';
+import './ui/ui.css';
 
 applyRendererPlatform(document.documentElement, navigator.userAgent);
 // Apply elev level before first paint so level 0 never flashes shell shadows.

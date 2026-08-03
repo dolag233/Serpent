@@ -23,6 +23,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import { DialogShell } from "./ui/patterns";
 
 export interface AppSettingsDialogProps {
   open: boolean;
@@ -104,14 +105,11 @@ export function AppSettingsDialog({
       }}
       role="presentation"
     >
-      <div
-        aria-labelledby="app-settings-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog app-settings-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading app-settings-heading">
-          <h2 id="app-settings-dialog-title">{t("settings.title")}</h2>
+        contentClassName="ui-dialog-shell__content--flush"
+        dialogId="app-settings-dialog"
+        headerActions={(
           <button
             className="dialog-close"
             onClick={handleClose}
@@ -120,7 +118,10 @@ export function AppSettingsDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        )}
+        onRequestClose={handleClose}
+        title={t("settings.title")}
+      >
         <div className="app-settings-frame">
           <AppSettingsNavigation
             activeCategory={showingPluginSettings ? null : activeCategory}
@@ -184,7 +185,7 @@ export function AppSettingsDialog({
             {!showingPluginSettings && activeCategory === "safety" ? <SafetySettingsPage /> : null}
           </main>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

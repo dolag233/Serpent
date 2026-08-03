@@ -153,6 +153,8 @@ export const UI_CSS_VAR = {
     popover: '--ui-shadow-popover',
     modal: '--ui-shadow-modal',
     notice: '--ui-shadow-notice',
+    controlInset: '--ui-shadow-control-inset',
+    controlThumb: '--ui-shadow-control-thumb',
   },
   layer: {
     base: '--ui-layer-base',
@@ -168,8 +170,14 @@ export const UI_CSS_VAR = {
   },
 } as const;
 
-export type UiCssVariable =
-  (typeof UI_CSS_VAR)[keyof typeof UI_CSS_VAR][keyof (typeof UI_CSS_VAR)[keyof typeof UI_CSS_VAR]];
+type UiCssVariableGroup = (typeof UI_CSS_VAR)[keyof typeof UI_CSS_VAR];
+
+/** Union of every semantic CSS variable value in UI_CSS_VAR. */
+export type UiCssVariable = UiCssVariableGroup extends infer Group
+  ? Group extends Record<string, infer Value>
+    ? Value
+    : never
+  : never;
 
 export function cssVar(variable: UiCssVariable, fallback?: string): string {
   return fallback === undefined ? `var(${variable})` : `var(${variable}, ${fallback})`;

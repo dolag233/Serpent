@@ -132,9 +132,11 @@ async function expectContributionsAndSettingsIframe(window: Page, libraryId: str
     hasText: 'Unrestricted Settings Probe',
   }).click();
   const hostSettings = dialog.locator('.plugin-host-settings-fields');
-  const enabledSetting = hostSettings.getByRole('checkbox', { name: 'Probe enabled' });
+  const enabledSetting = hostSettings.getByRole('switch', { name: 'Probe enabled' });
   await expect(enabledSetting).toBeVisible();
-  await hostSettings.locator('label').filter({ hasText: 'Probe enabled' }).click({ force: true });
+  if (!(await enabledSetting.isChecked())) {
+    await hostSettings.locator('label').filter({ hasText: 'Probe enabled' }).click({ force: true });
+  }
   await expect(enabledSetting).toBeChecked();
   const quality = hostSettings.getByRole('combobox', { name: 'Probe quality' });
   await quality.selectOption('high');

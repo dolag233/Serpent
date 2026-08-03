@@ -46,7 +46,7 @@
   --ui-border-danger: color-mix(in srgb, var(--ui-status-danger) 58%, var(--ui-border-divider));
 
   /* Action */
-  --ui-action-accent: #3b82f6;
+  --ui-action-accent: var(--accent, #3b82f6);
   --ui-action-accent-hover: color-mix(in srgb, var(--ui-action-accent) 86%, white);
   --ui-action-accent-pressed: color-mix(in srgb, var(--ui-action-accent) 78%, black);
   --ui-action-accent-soft: color-mix(in srgb, var(--ui-action-accent) 14%, transparent);
@@ -55,7 +55,7 @@
   --ui-action-selected: var(--ui-surface-selected);
   --ui-action-disabled: color-mix(in srgb, var(--ui-content-tertiary) 40%, transparent);
   --ui-action-danger: var(--ui-status-danger);
-  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 14%, var(--ui-surface-hover));
+  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 82%, white);
 
   /* Status */
   --ui-status-info: #6aa7d9;
@@ -122,6 +122,8 @@
   --ui-shadow-popover: 0 8px 24px rgb(0 0 0 / 28%);
   --ui-shadow-modal: 0 24px 70px rgb(0 0 0 / 42%);
   --ui-shadow-notice: 0 12px 32px rgb(0 0 0 / 28%);
+  --ui-shadow-control-inset: inset 0 0 0 1px rgb(0 0 0 / 12%);
+  --ui-shadow-control-thumb: 0 1px 2px rgb(0 0 0 / 22%);
 
   /*
    * Layer contract. These are the only public UI z-indexes. Keep gaps between
@@ -175,7 +177,7 @@
   --ui-border-danger: color-mix(in srgb, var(--ui-status-danger) 50%, var(--ui-border-divider));
 
   /* Action */
-  --ui-action-accent: #3b82f6;
+  --ui-action-accent: var(--accent, #3b82f6);
   --ui-action-accent-hover: color-mix(in srgb, var(--ui-action-accent) 86%, black);
   --ui-action-accent-pressed: color-mix(in srgb, var(--ui-action-accent) 78%, black);
   --ui-action-accent-soft: color-mix(in srgb, var(--ui-action-accent) 18%, #ffffff);
@@ -184,7 +186,7 @@
   --ui-action-selected: var(--ui-surface-selected);
   --ui-action-disabled: color-mix(in srgb, var(--ui-content-tertiary) 46%, transparent);
   --ui-action-danger: var(--ui-status-danger);
-  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 12%, var(--ui-surface-hover));
+  --ui-action-danger-hover: color-mix(in srgb, var(--ui-status-danger) 82%, black);
 
   /* Status */
   --ui-status-info: #3c7aa8;
@@ -205,6 +207,8 @@
   --ui-shadow-popover: 0 6px 18px rgb(0 0 0 / 12%), 0 1px 3px rgb(0 0 0 / 8%);
   --ui-shadow-modal: 0 18px 48px rgb(0 0 0 / 16%);
   --ui-shadow-notice: 0 8px 20px rgb(0 0 0 / 10%);
+  --ui-shadow-control-inset: inset 0 0 0 1px rgb(0 0 0 / 10%);
+  --ui-shadow-control-thumb: 0 1px 2px rgb(0 0 0 / 16%);
 }
 
 /* Windows keeps the platform-specific font choice while inheriting every

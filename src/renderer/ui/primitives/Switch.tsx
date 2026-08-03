@@ -3,6 +3,7 @@ import {
   type ChangeEvent,
   type InputHTMLAttributes,
   type ReactNode,
+  useState,
 } from 'react';
 
 import {
@@ -44,6 +45,9 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
   wrapperClassName,
   ...props
 }, ref) {
+  const [uncontrolledChecked, setUncontrolledChecked] = useState(defaultChecked ?? false);
+  const isControlled = checked !== undefined;
+  const currentChecked = isControlled ? checked : uncontrolledChecked;
   const controlId = useFieldId(id, 'ui-switch');
   const ids = getFieldIds(controlId);
   const hasError = error !== undefined || invalid;
@@ -58,7 +62,7 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
         {...props}
         {...aria}
         aria-busy={loading || undefined}
-        aria-checked={checked}
+        aria-checked={currentChecked}
         aria-required={required || undefined}
         className={cx('ui-switch__input', className)}
         checked={checked}
@@ -66,6 +70,7 @@ export const Switch = forwardRef<HTMLInputElement, SwitchProps>(function Switch(
         disabled={isDisabled}
         id={controlId}
         onChange={(event) => {
+          if (!isControlled) setUncontrolledChecked(event.target.checked);
           onChange?.(event);
           onCheckedChange?.(event.target.checked);
         }}

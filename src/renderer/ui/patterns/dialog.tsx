@@ -123,8 +123,13 @@ export interface DialogShellProps
   readonly title?: ReactNode;
   readonly description?: ReactNode;
   readonly footer?: ReactNode;
+  readonly headerActions?: ReactNode;
+  readonly contentClassName?: string;
   readonly open?: boolean;
   readonly modal?: boolean;
+  /** Only the topmost dialog may consume Escape. ModalStack owners can set this explicitly. */
+  readonly isTopmost?: boolean;
+  readonly onRequestClose?: () => void;
 }
 
 /**
@@ -137,8 +142,12 @@ export function DialogShell({
   title,
   description,
   footer,
+  headerActions,
+  contentClassName,
   open = true,
   modal = true,
+  isTopmost = true,
+  onRequestClose,
   className,
   id,
   ...rest
@@ -154,19 +163,33 @@ export function DialogShell({
       data-ui-pattern="dialog-shell"
       data-dialog-id={dialogId}
       data-dialog-open={open ? "true" : "false"}
+      data-dialog-topmost={isTopmost ? "true" : "false"}
       hidden={!open}
       role="dialog"
       aria-modal={modal || undefined}
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape" && isTopmost && onRequestClose) {
+          event.preventDefault();
+          event.stopPropagation();
+          onRequestClose();
+        }
+        rest.onKeyDown?.(event);
+      }}
     >
-      {(title || description) && (
+      {(title || description || headerActions) && (
         <header data-dialog-header="true">
-          {title && <h2 id={titleId}>{title}</h2>}
+          <div className="ui-dialog-shell__heading">
+            {title && <h2 id={titleId}>{title}</h2>}
+            {headerActions}
+          </div>
           {description && <p id={descriptionId}>{description}</p>}
         </header>
       )}
-      <div data-dialog-content="true">{children}</div>
+      <div className={contentClassName} data-dialog-content="true">
+        {children}
+      </div>
       {footer && <footer data-dialog-footer="true">{footer}</footer>}
     </div>
   );
