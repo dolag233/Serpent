@@ -36,6 +36,7 @@ describe('summarizePluginJobs', () => {
       }),
       job({ jobId: '55555555-5555-4555-8555-555555555555', status: 'succeeded' }),
       job({ jobId: '66666666-6666-4666-8666-666666666666', status: 'cancelled' }),
+      job({ jobId: '77777777-7777-4777-8777-777777777777', status: 'interrupted' }),
     ]);
 
     expect(summary).toMatchObject({
@@ -45,6 +46,7 @@ describe('summarizePluginJobs', () => {
       failed: 1,
       succeeded: 1,
       cancelled: 1,
+      interrupted: 1,
     });
     expect(summary.jobs[0]?.ownerPluginId).toBe('com.serpent.job-probe');
     expect(summary.jobs[0]?.pluginHandlerId).toBe('tick');

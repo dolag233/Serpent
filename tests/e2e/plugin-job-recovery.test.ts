@@ -19,6 +19,7 @@ type PluginStorageDocument = {
 };
 
 type PluginJobSnapshot = {
+  jobId: string;
   status: string;
   errorCode: string | null;
   attemptCount: number;
@@ -67,7 +68,7 @@ async function killApplication(application: ElectronApplication): Promise<void> 
   await exited;
 }
 
-test('recovers an idempotent plugin job after the whole Electron process restarts', async () => {
+test('does not resume a plugin job after the whole Electron process restarts', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-recovery-e2e-'));
   const libraryName = '插件任务重启恢复';
   const userDataPath = path.join(temporaryRoot, 'user-data');
@@ -96,16 +97,18 @@ test('recovers an idempotent plugin job after the whole Electron process restart
     PLUGIN_LIBRARY_DATA_DIRECTORY,
     `${PLUGIN_ID}.json`,
   );
-  const readJobSnapshot = async (page: Page, id: string): Promise<PluginJobSnapshot | null> => page.evaluate(async (libraryId) => {
+  const readJobSnapshots = async (page: Page, id: string): Promise<PluginJobSnapshot[]> => page.evaluate(async (libraryId) => {
     const result = await (window as unknown as {
       serpent?: { library?: { listPluginJobs: (input: { libraryId: string }) => Promise<{
         ok: boolean;
         value?: { jobs: Array<PluginJobSnapshot> };
       }> } };
     }).serpent?.library?.listPluginJobs({ libraryId });
-    if (result?.ok !== true) return null;
-    return result.value?.jobs[0] ?? null;
+    if (result?.ok !== true) return [];
+    return result.value?.jobs ?? [];
   }, id);
+  const readJobSnapshot = async (page: Page, id: string): Promise<PluginJobSnapshot | null> =>
+    (await readJobSnapshots(page, id))[0] ?? null;
 
   try {
     const window = await application.firstWindow();
@@ -132,7 +135,7 @@ test('recovers an idempotent plugin job after the whole Electron process restart
       return result?.ok === true ? result.value?.[0]?.libraryId ?? null : null;
     });
     expect(libraryId).toEqual(expect.any(String));
-    const runStartCommand = async (): Promise<{ ok: boolean; executed?: boolean; code?: string }> => window.evaluate(async ({ id, pluginId }) => {
+    const runStartCommand = async (page: Page): Promise<{ ok: boolean; executed?: boolean; code?: string }> => page.evaluate(async ({ id, pluginId }) => {
       return (window as unknown as {
         serpent?: { plugins?: { runPluginCommand: (input: {
           type: 'plugin-manager.run-command';
@@ -149,7 +152,7 @@ test('recovers an idempotent plugin job after the whole Electron process restart
     }, { id: libraryId as string, pluginId: PLUGIN_ID });
     let commandResult: { ok: boolean; executed?: boolean; code?: string } = { ok: false };
     await expect.poll(async () => {
-      commandResult = await runStartCommand();
+      commandResult = await runStartCommand(window);
       return commandResult.ok;
     }, { timeout: 15_000, intervals: [250, 500, 1_000] }).toBe(true);
     expect(commandResult).toMatchObject({ ok: true, executed: true });
@@ -173,12 +176,27 @@ test('recovers an idempotent plugin job after the whole Electron process restart
       restartedWindow.getByRole('button', { name: `当前资源库 ${libraryName}` }),
     ).toBeVisible({ timeout: 30_000 });
 
-    // A second process must reopen the same library, reactivate the plugin,
-    // drain the recovered queued row, and let the handler finish.
+    // A second process must reopen the same library without re-running the
+    // previous row. The old row remains visible as an explicit terminal state.
     await expect.poll(
-      async () => (await readJobSnapshot(restartedWindow, libraryId as string))?.attemptCount ?? null,
+      async () => (await readJobSnapshot(restartedWindow, libraryId as string))?.status ?? null,
       { timeout: 30_000, intervals: [250, 500, 1_000] },
-    ).toBe(2);
+    ).toBe('interrupted');
+    expect(await readJobSnapshot(restartedWindow, libraryId as string)).toMatchObject({
+      status: 'interrupted',
+      errorCode: 'PLUGIN_JOB_INTERRUPTED',
+      attemptCount: 1,
+    });
+    expect(readPluginStorage(storagePath)?.values['job-attempts']).toBe(1);
+    expect(readPluginStorage(storagePath)?.values['job-tick']).toBeUndefined();
+
+    // A new command in the new session still creates and runs a new Job.
+    commandResult = { ok: false };
+    await expect.poll(async () => {
+      commandResult = await runStartCommand(restartedWindow);
+      return commandResult.ok;
+    }, { timeout: 15_000, intervals: [250, 500, 1_000] }).toBe(true);
+    expect(commandResult).toMatchObject({ ok: true, executed: true });
     await expect.poll(
       () => readPluginStorage(storagePath)?.values['job-tick'] ?? null,
       { timeout: 30_000, intervals: [250, 500, 1_000] },
@@ -192,6 +210,11 @@ test('recovers an idempotent plugin job after the whole Electron process restart
       status: 'succeeded',
       errorCode: null,
       progress: 1,
+    });
+    const jobsAfterExplicitStart = await readJobSnapshots(restartedWindow, libraryId as string);
+    expect(jobsAfterExplicitStart.find((item) => item.jobId === firstJobSnapshot?.jobId)).toMatchObject({
+      status: 'interrupted',
+      attemptCount: 1,
     });
     expect((await readJobSnapshot(restartedWindow, libraryId as string))?.ownerPluginInstanceId)
       .not.toBe(firstInstanceId);

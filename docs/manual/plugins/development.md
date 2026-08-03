@@ -269,6 +269,9 @@ Job 先在 Manifest 声明：
 
 `recovery` 只能是 `idempotent` 或 `checkpoint`。运行时注册 handler，随后 enqueue；可报告进度、取消、暂停、恢复和重试。
 只有 checkpoint Job 支持暂停/恢复；插件缺失、停用或版本不兼容时 Job 进入 blocked/paused，不由其他版本接管。
+`recovery` 描述的是插件自己的幂等/检查点能力，不代表 Host 会在应用重启后自动恢复 Job。应用退出、崩溃或插件运行时会话结束时，仍处于
+`queued`/`running` 状态的 Job（以及因插件实例失活而暂停的 Job）会被标记为 `interrupted`，不会被下一次会话静默执行；插件或用户必须显式调用
+重试来重新入队。重试后的 Job 可以绑定当前新的插件实例。`interrupted` 是 Host 状态，插件的完成回调不能伪造这个状态。
 大文件、模型和缓存不要塞进 storage。
 
 `serpent.storage` 是插件命名空间 KV，小配置使用 `scope: "user" | "library"`；按权限 `storage.read`/`storage.write` 控制。
@@ -360,7 +363,7 @@ quarantine。`dispose` 应可重复调用且不依赖当前 UI。
 2. 包内入口、UI、README、LICENSE 和依赖均已编译并可脱机运行；没有 install/build/postinstall 依赖。
 3. restricted/unrestricted 风险、需要的文件/网络/原生能力在 README 和发布说明中清楚披露。
 4. 本地文件夹、ZIP、GitHub Release ZIP 均安装、信任、激活、停用、升级、卸载过。
-5. 已测试升级 staging、失败恢复、Job 恢复、完整重启以及 user/library 两种安装范围。
+5. 已测试升级 staging、失败恢复、Job 中断后的显式重试、完整重启以及 user/library 两种安装范围。
 6. 发布版本保持稳定 `id`，并记录支持的 Serpent SemVer 与 Plugin API 版本。
 
 ## 13. 明确不应写入插件的能力

@@ -150,6 +150,7 @@ export interface PluginJobStatus {
   failed: number;
   paused: number;
   cancelled: number;
+  interrupted: number;
   jobs: PluginJobRecord[];
 }
 

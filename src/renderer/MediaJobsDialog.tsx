@@ -307,6 +307,7 @@ export function MediaJobsDialog({
                     running: pluginJobs.running,
                     paused: pluginJobs.paused,
                     failed: pluginJobs.failed,
+                    interrupted: pluginJobs.interrupted,
                     completed: pluginJobs.succeeded,
                   })}
                 </p>
@@ -336,7 +337,9 @@ export function MediaJobsDialog({
                             <span title={job.pluginHandlerId}>
                               {job.pluginHandlerId}
                             </span>
-                            <strong>{job.status}</strong>
+                            <strong>
+                              {t(`dialog.mediaJobs.pluginJobStatus.${job.status}`)}
+                            </strong>
                             <span title={job.errorCode ?? undefined}>
                               {formatPluginJobError(job.errorDetail, job.errorCode) ||
                                 progressSummary}

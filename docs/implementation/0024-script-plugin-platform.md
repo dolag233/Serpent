@@ -378,7 +378,7 @@ Plugin Job API 至少支持：
 - `signal` 取消和明确 cancelled 结果
 - 逐项成功/失败结果与可重试输入
 - handler 声明 `resumable` 和 checkpoint Schema 后的暂停/恢复；未声明者只支持取消/重试
-- 插件缺失、停用或版本不兼容时进入 blocked/paused，不由其他版本静默接管
+- 插件缺失、停用或版本不兼容时进入 blocked/paused，不由其他版本静默接管；应用会话结束后未完成的 Job 进入 Host-owned `interrupted`，不会自动执行，只有显式重试才重新入队
 
 推荐阶段包括 `preparing`、`loading-model`、`reading`、`processing`、`staging`、`committing`；`awaiting-confirmation` 属于 Execution Plan/UI 状态，不应伪装成插件仍在计算。
 
@@ -410,6 +410,7 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 - UI iframe、受限 Host 和非受限进程有心跳；失联后按实例撤销全部注册。
 - Hook、Provider、Predicate、事件和输入队列均有取消、上限、deadline 与背压。
 - 更新使用 staging、健康窗口和上一版本回滚；插件自有持久数据迁移必须可恢复。
+- 应用退出、崩溃或插件运行时会话结束时，未完成的 Plugin Job 统一标记为 `interrupted`；Host 不在下一次会话自动 claim，显式 retry 才允许重新执行并重新绑定插件实例。
 - Serpent 不上传插件遥测；用户可主动导出诊断。
 
 ## 15. API 版本策略（发布前）

@@ -10,6 +10,7 @@ export function summarizePluginJobs(jobs: readonly PluginJobRecord[]): PluginJob
     failed: 0,
     paused: 0,
     cancelled: 0,
+    interrupted: 0,
     jobs: [...jobs],
   };
   for (const job of jobs) {
@@ -31,6 +32,9 @@ export function summarizePluginJobs(jobs: readonly PluginJobRecord[]): PluginJob
         break;
       case 'cancelled':
         summary.cancelled += 1;
+        break;
+      case 'interrupted':
+        summary.interrupted += 1;
         break;
       default: {
         const _exhaustive: never = job.status;

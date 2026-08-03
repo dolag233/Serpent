@@ -149,12 +149,11 @@ function stateFromRecord(job: PluginJobRecord): PersistedPluginJobState {
   };
 }
 
-function resetIdempotentRecoveryState(state: PersistedPluginJobState): PersistedPluginJobState {
+function resetPluginJobExecutionState(state: PersistedPluginJobState): PersistedPluginJobState {
   return {
     // Runtime instance IDs are process-local. Clearing the old value marks an
-    // idempotent job as eligible for one-time rebinding to the instance that
-    // claims it after the host restarts, while ordinary queued jobs remain
-    // isolated by their current instance ID.
+    // retried job as eligible for one-time rebinding to the instance that
+    // claims it after the host restarts.
     ...(state.ownerScope === undefined ? {} : { ownerScope: state.ownerScope }),
     ...(state.ownerLibraryId === undefined ? {} : { ownerLibraryId: state.ownerLibraryId }),
     executionAvailability: 'ready',
@@ -454,7 +453,7 @@ export function cancelPluginJobRecord(
 ): PluginJobRecord | null {
   const current = readPluginJob(connection, input.jobId);
   if (current === null || !pluginJobOwnerMatches(current, input.owner)
-    || ['succeeded', 'failed', 'cancelled'].includes(current.status)) return null;
+    || ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(current.status)) return null;
   const now = new Date().toISOString();
   const updated = connection.prepare(
     `UPDATE jobs SET status = 'cancelled', error_code = 'PLUGIN_JOB_CANCELLED',
@@ -531,17 +530,20 @@ export function retryPluginJobRecord(
 ): PluginJobRecord | null {
   const current = readPluginJob(connection, input.jobId);
   if (current === null || !pluginJobOwnerMatches(current, input.owner)
-    || !['failed', 'cancelled', 'paused'].includes(current.status)) return null;
+    || !['failed', 'cancelled', 'paused', 'interrupted'].includes(current.status)) return null;
   const now = new Date().toISOString();
   const updated = connection.prepare(
     `UPDATE jobs SET status = 'queued', progress = 0, error_code = NULL, error_detail = NULL, updated_at = ?
-       WHERE job_id = ? AND kind = ? AND status IN ('failed', 'cancelled', 'paused')
+       WHERE job_id = ? AND kind = ? AND status IN ('failed', 'cancelled', 'paused', 'interrupted')
          AND owner_plugin_id = ? AND owner_package_hash = ?`,
   ).run(now, input.jobId, PLUGIN_BACKGROUND_JOB_KIND, input.owner.pluginId, input.owner.packageHash);
   if (updated.changes !== 1) return null;
+  const retryState = current.status === 'interrupted'
+    ? resetPluginJobExecutionState(stateFromRecord(current))
+    : stateFromRecord(current);
   connection.prepare(`UPDATE jobs SET payload_json = ? WHERE job_id = ?`).run(
     serializeStoredJobPayload(current.payload, {
-      ...stateFromRecord(current),
+      ...retryState,
       executionAvailability: 'ready',
       completed: 0,
       phase: 'queued',
@@ -559,7 +561,7 @@ export function blockPluginJobRecord(
   input: { jobId: string; errorCode: string; errorDetail: string },
 ): PluginJobRecord | null {
   const current = readPluginJob(connection, input.jobId);
-  if (current === null || ['succeeded', 'failed', 'cancelled'].includes(current.status)) return null;
+  if (current === null || ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(current.status)) return null;
   const now = new Date().toISOString();
   const updated = connection.prepare(
     `UPDATE jobs SET status = 'paused', error_code = ?, error_detail = ?, updated_at = ?
@@ -624,32 +626,37 @@ export function pausePluginJobsForOwners(
   return paused;
 }
 
-export function recoverInterruptedPluginJobs(
+/**
+ * Mark plugin work left by a previous host session as terminally interrupted.
+ *
+ * This deliberately does not requeue idempotent jobs. A new application
+ * session must never execute work that the user did not explicitly start in
+ * that session; retry is an opt-in action handled by retryPluginJobRecord.
+ */
+export function interruptUnfinishedPluginJobs(
   connection: SqlConnection,
   libraryId: string,
 ): number {
-  const interrupted = connection.prepare(
+  const unfinished = connection.prepare(
     `${SELECT_PLUGIN_JOB}
       WHERE library_id = ?
         AND kind = ?
         AND (
-          status = 'running'
+          status IN ('queued', 'running')
           OR (
             status = 'paused'
-            AND recovery_strategy = 'idempotent'
             AND error_code = 'PLUGIN_INSTANCE_INACTIVE'
           )
         )`,
   ).all(libraryId, PLUGIN_BACKGROUND_JOB_KIND) as JobRow[];
-  if (interrupted.length === 0) return 0;
+  if (unfinished.length === 0) return 0;
 
   const now = new Date().toISOString();
   const update = connection.prepare(
     `UPDATE jobs
-        SET status = ?,
-            error_code = ?,
+        SET status = 'interrupted',
+            error_code = 'PLUGIN_JOB_INTERRUPTED',
             error_detail = ?,
-            progress = ?,
             updated_at = ?,
             payload_json = ?
       WHERE job_id = ?
@@ -657,26 +664,23 @@ export function recoverInterruptedPluginJobs(
         AND kind = ?
         AND status = ?`,
   );
-  let recovered = 0;
-  for (const row of interrupted) {
+  let marked = 0;
+  for (const row of unfinished) {
     const stored = parseStoredJobPayload(row.payload_json);
-    const idempotent = row.recovery_strategy === 'idempotent';
     const result = update.run(
-      idempotent ? 'queued' : 'paused',
-      idempotent ? null : 'PLUGIN_JOB_INTERRUPTED',
-      idempotent ? null : 'The plugin job was interrupted and needs an explicit retry.',
-      idempotent ? 0 : row.progress,
+      'The plugin job was interrupted when the previous application session ended. Retry it explicitly to run it again.',
       now,
-      idempotent
-        ? serializeStoredJobPayload(stored.payload, resetIdempotentRecoveryState(stored.state))
-        : row.payload_json,
+      serializeStoredJobPayload(stored.payload, {
+        ...stored.state,
+        executionAvailability: 'blocked',
+      }),
       row.job_id,
       libraryId,
       PLUGIN_BACKGROUND_JOB_KIND,
       row.status,
     );
-    recovered += result.changes;
+    marked += result.changes;
   }
 
-  return recovered;
+  return marked;
 }

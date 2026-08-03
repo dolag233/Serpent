@@ -92,9 +92,12 @@ export const pluginJobStatusSchema = z.enum([
   'succeeded',
   'failed',
   'cancelled',
+  'interrupted',
 ]);
 export type PluginJobStatus = z.infer<typeof pluginJobStatusSchema>;
 
+// `interrupted` is a Host-owned terminal state. A plugin handler may only
+// complete its own running invocation with a success, failure, or cancellation.
 export const pluginJobTerminalStatusSchema = z.enum(['succeeded', 'failed', 'cancelled']);
 export type PluginJobTerminalStatus = z.infer<typeof pluginJobTerminalStatusSchema>;
 

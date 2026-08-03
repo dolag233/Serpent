@@ -70,7 +70,7 @@ export function formatPluginJobProgressSummary(
 export function formatPluginJobProgressMessage(
   job: PluginJobDisplayRecord,
 ): string {
-  if (job.status === "queued") return "";
+  if (job.status === "queued" || job.status === "interrupted") return "";
   return [job.phase, job.message]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))

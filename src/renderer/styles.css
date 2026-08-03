@@ -2342,7 +2342,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 .workspace-plugin-job-progress.is-failed,
-.workspace-plugin-job-progress.is-cancelled {
+.workspace-plugin-job-progress.is-cancelled,
+.workspace-plugin-job-progress.is-interrupted {
   --plugin-job-status-color: var(--danger);
 }
 

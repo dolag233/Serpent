@@ -822,7 +822,7 @@ export const en = {
       loading: "Loading job status…",
       empty: "No media jobs right now.",
       readFailed: "Could not read job status. Close and try again.",
-      summary: "Queued {queued} · Running {running} · Paused {paused} · Failed {failed} · Done {completed}",
+      summary: "Queued {queued} · Running {running} · Paused {paused} · Failed {failed} · Interrupted {interrupted} · Done {completed}",
       pauseAll: "Pause all",
       resumePaused: "Resume paused",
       cancelIncomplete: "Cancel incomplete",
@@ -843,7 +843,8 @@ export const en = {
         paused: "Paused",
         succeeded: "Completed",
         failed: "Failed",
-        cancelled: "Cancelled"
+        cancelled: "Cancelled",
+        interrupted: "Interrupted — not resumed automatically"
       },
       revealLog: "Reveal app log",
       viewLog: "View diagnostics"

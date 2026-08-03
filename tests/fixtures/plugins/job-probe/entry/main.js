@@ -5,8 +5,8 @@ async function setup(serpent) {
     const attempts = Number(storedAttempts ?? 0);
     await serpent.storage.set('job-attempts', attempts + 1);
     // The first execution intentionally remains in flight. The E2E test kills
-    // the entire application, then verifies that an idempotent job is made
-    // runnable again and completes after the next process starts.
+    // the entire application, then verifies that the unfinished job remains
+    // interrupted and that a later explicit command can enqueue a new job.
     if (attempts === 0) {
       await new Promise(() => {});
     }
@@ -18,14 +18,10 @@ async function setup(serpent) {
 }
 
 async function enqueueJob(serpent) {
-  const enqueued = await serpent.storage.get('job-enqueued');
-  if (enqueued !== true) {
-    await serpent.storage.set('job-enqueued', true);
-    await serpent.jobs.enqueue({
-      handlerId: 'tick',
-      payload: { tick: 1 },
-    });
-  }
+  await serpent.jobs.enqueue({
+    handlerId: 'tick',
+    payload: { tick: 1 },
+  });
 }
 
 async function dispose() {}

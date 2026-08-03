@@ -36,6 +36,7 @@ describe("hasActivePluginJobs", () => {
         failed: 0,
         paused: 0,
         cancelled: 0,
+        interrupted: 0,
         jobs: [job("queued")],
       }),
     ).toBe(true);
@@ -47,6 +48,7 @@ describe("hasActivePluginJobs", () => {
         failed: 0,
         paused: 0,
         cancelled: 0,
+        interrupted: 0,
         jobs: [job("running")],
       }),
     ).toBe(true);
@@ -61,6 +63,7 @@ describe("hasActivePluginJobs", () => {
         failed: 0,
         paused: 0,
         cancelled: 0,
+        interrupted: 1,
         jobs: [job("succeeded")],
       }),
     ).toBe(false);
@@ -81,6 +84,7 @@ describe("hasActivePluginJobs", () => {
           failed: 1,
           paused: 0,
           cancelled: 0,
+          interrupted: 0,
           jobs: [recentJob],
         },
         Date.parse("2026-08-02T00:00:10.000Z"),
@@ -95,10 +99,42 @@ describe("hasActivePluginJobs", () => {
           failed: 1,
           paused: 0,
           cancelled: 0,
+          interrupted: 0,
           jobs: [recentJob],
         },
         Date.parse("2026-08-02T00:01:00.000Z"),
       ),
     ).toBeNull();
+  });
+
+  it("keeps interrupted jobs out of active toolbar state", () => {
+    const interrupted = job("interrupted");
+    expect(
+      hasActivePluginJobs({
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        paused: 0,
+        cancelled: 0,
+        interrupted: 1,
+        jobs: [interrupted],
+      }),
+    ).toBe(false);
+    expect(
+      selectPluginJobActivity(
+        {
+          queued: 0,
+          running: 0,
+          succeeded: 0,
+          failed: 0,
+          paused: 0,
+          cancelled: 0,
+          interrupted: 1,
+          jobs: [interrupted],
+        },
+        Date.parse("2026-08-02T00:00:10.000Z"),
+      ),
+    ).toBe(interrupted);
   });
 });

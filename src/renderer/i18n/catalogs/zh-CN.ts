@@ -811,7 +811,7 @@ export const zhCN = {
       loading: "正在读取任务状态…",
       empty: "当前没有媒体任务。",
       readFailed: "暂时无法读取任务状态，请关闭后重试。",
-      summary: "排队 {queued} · 运行 {running} · 暂停 {paused} · 失败 {failed} · 已完成 {completed}",
+      summary: "排队 {queued} · 运行 {running} · 暂停 {paused} · 失败 {failed} · 已中断 {interrupted} · 已完成 {completed}",
       pauseAll: "全部暂停",
       resumePaused: "继续暂停项",
       cancelIncomplete: "取消未完成项",
@@ -832,7 +832,8 @@ export const zhCN = {
         paused: "已暂停",
         succeeded: "已完成",
         failed: "处理失败",
-        cancelled: "已取消"
+        cancelled: "已取消",
+        interrupted: "已中断（不会自动继续）"
       },
       revealLog: "查看应用日志",
       viewLog: "查看诊断日志"

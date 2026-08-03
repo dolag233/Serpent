@@ -241,7 +241,7 @@ describe('plugin job repository via LibraryService', () => {
     service.closeLibrary(library.libraryId);
   });
 
-  it('resets stale progress when an idempotent job is recovered after a crash', () => {
+  it('marks unfinished jobs interrupted after an application restart', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-recovery-'));
     roots.push(root);
     const crashed = new LibraryService();
@@ -318,17 +318,18 @@ describe('plugin job repository via LibraryService', () => {
     recovered.openLibrary(library.libraryPath);
     const restored = recovered.listPluginJobs(library.libraryId).find((item) => item.jobId === job.jobId);
     expect(restored).toMatchObject({
-      status: 'queued',
+      status: 'interrupted',
       progress: 0,
       completed: 0,
-      phase: 'queued',
-      message: '',
-      cancellation: { requested: false },
+      total: 1,
+      phase: 'reading',
+      message: '读取资产 asset-1',
+      errorCode: 'PLUGIN_JOB_INTERRUPTED',
+      errorDetail: expect.stringContaining('previous application session'),
     });
-    expect(restored?.total).toBeUndefined();
     expect(recovered.listPluginJobs(library.libraryId).find((item) => item.jobId === checkpointJob.jobId))
       .toMatchObject({
-        status: 'paused',
+        status: 'interrupted',
         progress: 0.3333333333333333,
         phase: 'running',
         message: '处理 asset-2',
@@ -336,11 +337,34 @@ describe('plugin job repository via LibraryService', () => {
         errorCode: 'PLUGIN_JOB_INTERRUPTED',
       });
 
+    expect(recovered.claimNextPluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'instance-after-restart',
+    })).toBeNull();
+    const retried = recovered.controlPluginJob({
+      libraryId: library.libraryId,
+      jobId: job.jobId,
+      action: 'retry',
+      ...owner,
+    });
+    expect(retried).toMatchObject({ status: 'queued' });
+    expect(retried?.ownerPluginInstanceId).toBeUndefined();
+    expect(recovered.claimNextPluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'instance-after-restart',
+    })).toMatchObject({
+      jobId: job.jobId,
+      status: 'running',
+      ownerPluginInstanceId: 'instance-after-restart',
+    });
+
     recovered.closeLibrary(library.libraryId);
     crashed.closeLibrary(library.libraryId);
   });
 
-  it('requeues idempotent jobs paused by an inactive plugin instance on restart', () => {
+  it('marks jobs paused by an inactive plugin instance interrupted on restart', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-plugin-job-inactive-recovery-'));
     roots.push(root);
     const crashed = new LibraryService();
@@ -385,18 +409,30 @@ describe('plugin job repository via LibraryService', () => {
     recovered.openLibrary(library.libraryPath);
     expect(recovered.listPluginJobs(library.libraryId).find((job) => job.jobId === idempotentJob.jobId))
       .toMatchObject({
-        status: 'queued',
+        status: 'interrupted',
         progress: 0,
-        errorCode: null,
-        errorDetail: null,
-        phase: 'queued',
+        errorCode: 'PLUGIN_JOB_INTERRUPTED',
+        phase: 'running',
         message: '',
       });
     expect(recovered.listPluginJobs(library.libraryId).find((job) => job.jobId === checkpointJob.jobId))
       .toMatchObject({
-        status: 'paused',
-        errorCode: 'PLUGIN_INSTANCE_INACTIVE',
+        status: 'interrupted',
+        errorCode: 'PLUGIN_JOB_INTERRUPTED',
       });
+    expect(recovered.claimNextPluginJob({
+      libraryId: library.libraryId,
+      ...owner,
+      ownerPluginInstanceId: 'instance-recovery-after-restart',
+    })).toBeNull();
+    const retried = recovered.controlPluginJob({
+      libraryId: library.libraryId,
+      jobId: idempotentJob.jobId,
+      action: 'retry',
+      ...owner,
+    });
+    expect(retried).toMatchObject({ status: 'queued' });
+    expect(retried?.ownerPluginInstanceId).toBeUndefined();
     expect(recovered.claimNextPluginJob({
       libraryId: library.libraryId,
       ...owner,

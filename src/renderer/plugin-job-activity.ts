@@ -11,6 +11,7 @@ const attentionStatuses = new Set<PluginJobRecord["status"]>([
   "succeeded",
   "failed",
   "cancelled",
+  "interrupted",
 ]);
 
 const TERMINAL_ACTIVITY_RETENTION_MS = 30_000;

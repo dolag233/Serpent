@@ -59,7 +59,7 @@ import {
   pausePluginJobRecord,
   pausePluginJobsForOwners as pausePluginJobRowsForOwners,
   reportPluginJobProgress,
-  recoverInterruptedPluginJobs,
+  interruptUnfinishedPluginJobs,
   resumePluginJobRecord,
   retryPluginJobRecord,
 } from './plugin-job-repository';
@@ -1931,6 +1931,54 @@ const PLUGIN_BACKGROUND_JOBS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(PLUGIN_BACKGROUND_JOBS_SCHEMA_SQL)
   .digest('hex');
 
+/** Migration v32: interrupted plugin jobs are terminal and never auto-claimed. */
+const PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL = `
+  CREATE TABLE jobs_v32 (
+    job_id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+    revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('generate_thumbnail', 'generate_video_poster',
+               'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+               'extract_metadata', 'extract_palette',
+               'ai.image.analysis', 'ai.video.analysis',
+               'plugin.background')
+    ),
+    status TEXT NOT NULL CHECK (
+      status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled', 'interrupted')
+    ),
+    priority INTEGER NOT NULL DEFAULT 0,
+    progress REAL DEFAULT 0.0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_detail TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    owner_plugin_id TEXT,
+    owner_package_hash TEXT,
+    plugin_handler_id TEXT,
+    payload_json TEXT,
+    recovery_strategy TEXT CHECK (
+      recovery_strategy IS NULL
+      OR recovery_strategy IN ('idempotent', 'checkpoint')
+    )
+  );
+  INSERT INTO jobs_v32 SELECT * FROM jobs;
+  DROP TABLE jobs;
+  ALTER TABLE jobs_v32 RENAME TO jobs;
+  CREATE INDEX jobs_library_status_priority
+    ON jobs(library_id, status, priority DESC, created_at);
+  CREATE INDEX IF NOT EXISTS jobs_asset_kind_status
+    ON jobs(asset_id, kind, status);
+  CREATE INDEX IF NOT EXISTS jobs_plugin_owner_status
+    ON jobs(library_id, owner_plugin_id, owner_package_hash, status)
+    WHERE kind = 'plugin.background';
+`;
+const PLUGIN_JOB_INTERRUPTED_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL)
+  .digest('hex');
+
 /**
  * Migration v28: namespaced, package-versioned materialized Provider fields.
  * Queries only select the active package hash supplied by Main, so upgrading
@@ -2093,6 +2141,11 @@ const MIGRATIONS = [
     version: 31,
     sql: PLUGIN_DERIVED_FIELDS_SCHEMA_SQL,
     checksum: PLUGIN_DERIVED_FIELDS_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 32,
+    sql: PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL,
+    checksum: PLUGIN_JOB_INTERRUPTED_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -3234,6 +3287,7 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
   connection.exec(EXPLICIT_IGNORES_SCHEMA_SQL);
   connection.exec(EXTENSION_IGNORES_SCHEMA_SQL);
   connection.exec(GITIGNORE_SCHEMA_SQL);
+  connection.exec(PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL);
   connection.prepare('DELETE FROM schema_migrations WHERE version >= 24').run();
   const insert = connection.prepare(
     'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
@@ -3761,7 +3815,7 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
     // table references smart_collections via FK, the table itself has an
     // outgoing FK to library(library_id). Disabling FK prevents DROP TABLE
     // from blocking and guarantees the rebuild is clean.
-    const rebuildsTable = migration.version === 4 || migration.version === 6 || migration.version === 7 || migration.version === 14;
+    const rebuildsTable = migration.version === 4 || migration.version === 6 || migration.version === 7 || migration.version === 14 || migration.version === 32;
     if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
@@ -23007,7 +23061,7 @@ export class LibraryService {
       this.recoverFileOperations(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
-      recoverInterruptedPluginJobs(openLibrary.connection, openLibrary.summary.libraryId);
+      interruptUnfinishedPluginJobs(openLibrary.connection, openLibrary.summary.libraryId);
       this.reconcileDefaultIgnoredAssets(openLibrary);
       // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
       // leave ready rows pointing at missing files → broken <img>. Invalidate so
