@@ -816,6 +816,21 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await assertToggleStates("true", "false", "false", "true");
     await assertHiddenFieldPresentation(true);
 
+    // The favorite filter is a first-class, visible toggle rather than a
+    // setting hidden inside 更多. A fresh imported asset is not favorited, so
+    // enabling it removes the card and clicking again restores the scope.
+    const favoriteOnlyButton = window.getByRole("button", {
+      name: "仅喜欢",
+      exact: true,
+    });
+    await expect(favoriteOnlyButton).toHaveAttribute("aria-pressed", "false");
+    await favoriteOnlyButton.click();
+    await expect(favoriteOnlyButton).toHaveAttribute("aria-pressed", "true");
+    await expect(cardById).toHaveCount(0);
+    await favoriteOnlyButton.click();
+    await expect(favoriteOnlyButton).toHaveAttribute("aria-pressed", "false");
+    await expect(cardById).toBeVisible();
+
     // The current sidebar exposes the library-wide scope as 所有资产; the
     // managed root is an internal destination rather than a separate row.
     // Remain on the same scope before creating organization fixtures.

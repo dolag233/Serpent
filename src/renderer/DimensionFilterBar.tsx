@@ -148,7 +148,7 @@ function DimensionButton({
   return (
     <button
       aria-expanded={open || undefined}
-      aria-pressed={active || undefined}
+      aria-pressed={active === undefined ? undefined : active}
       className={`dimension-filter-btn${active ? " is-active" : ""}${open ? " is-open" : ""}${excluding ? " is-excluding" : ""}`}
       disabled={disabled}
       onClick={onClick}
@@ -385,6 +385,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     }
   };
   const ratingActive = selectedRatings.size > 0;
+  const favoriteActive = favoriteFilter === "yes";
   const formatActive = formatFilter.trim() !== "";
   const moreActive =
     favoriteFilter !== "any" ||
@@ -703,6 +704,16 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           )}
         </div>
 
+        <div className="dimension-filter-dim">
+          <DimensionButton
+            active={favoriteActive}
+            disabled={controlsDisabled}
+            icon="star"
+            label={t("filter.favoriteOnly")}
+            onClick={() => setFavoriteFilter(favoriteActive ? "any" : "yes")}
+          />
+        </div>
+
         <div className="dimension-filter-dim" data-dimension="format">
           <DimensionButton
             active={formatActive}
@@ -1002,4 +1013,3 @@ function labelForActiveChip(id: string, t: ReturnType<typeof useT>): string {
       return id;
   }
 }
-
