@@ -7,6 +7,9 @@
   `console-message` error、`render-process-gone`、`unresponsive`/`responsive` 以及
   App child-process 退出日志；定向单测、lint、typecheck 通过。真实崩溃、GPU、Windows
   packaged 与 Computer Use 仍待执行。
+- **2026-08-04 扩展导入契约**：`Serpent-u9yv` 已将扩展 URL 保存与浏览器上传统一接入
+  `prepareOrExecuteImport` 导入内核，URL 下载安全校验仍保留在扩展边界；定向 Worker
+  测试 55/55、lint、typecheck 通过，EXT-002 真实扩展和 packaged/Windows 复验仍待执行。
 
 ## 2026-07-27 画布精确锚点与序列图
 

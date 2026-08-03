@@ -806,4 +806,51 @@ describe('saveAssetFromUrl', () => {
 
     expect(result.asset.displayName).toBe('cdn-thumb.png');
   });
+
+  it('uses the common import conflict policy for browser uploads', async () => {
+    const firstBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x10, 0x11,
+    ]);
+    const firstPath = path.join(tempDir(), 'first.png');
+    writeFileSync(firstPath, firstBytes);
+
+    const first = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: firstPath,
+      contentType: 'image/png',
+      filename: 'photo.png',
+      sourcePageUrl: 'https://example.com/first',
+    });
+
+    const duplicatePath = path.join(tempDir(), 'duplicate.png');
+    writeFileSync(duplicatePath, firstBytes);
+    const duplicate = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: duplicatePath,
+      contentType: 'image/png',
+      filename: 'another-name.png',
+      sourcePageUrl: 'https://example.com/duplicate',
+    });
+
+    expect(duplicate.asset.assetId).toBe(first.asset.assetId);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
+
+    const secondPath = path.join(tempDir(), 'second.png');
+    writeFileSync(secondPath, Buffer.from([...firstBytes, 0x12]));
+    const second = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: secondPath,
+      contentType: 'image/png',
+      filename: 'photo.png',
+      sourcePageUrl: 'https://example.com/second',
+    });
+
+    expect(second.asset.assetId).not.toBe(first.asset.assetId);
+    expect(second.asset.displayName).not.toBe(first.asset.displayName);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(2);
+    expect(service.getAssetMetadata({ libraryId, assetId: first.asset.assetId }).sourcePageUrl)
+      .toBe('https://example.com/first');
+    expect(service.getAssetMetadata({ libraryId, assetId: second.asset.assetId }).sourcePageUrl)
+      .toBe('https://example.com/second');
+  });
 });

@@ -36,6 +36,7 @@ import {
 } from 'node:child_process';
 import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { tmpdir } from 'node:os';
 
 import BetterSqlite3 from 'better-sqlite3';
 
@@ -5990,6 +5991,7 @@ export class LibraryService {
     sourcePaths: string[];
     targetPrefix: string;
     expandImageSequences?: boolean;
+    sourcePageUrl?: string;
   }): { directories: string[]; entries: ImportSourceEntry[] } {
     const directories = new Set<string>();
     const pathsByIdentity = new Map<string, { kind: 'directory' | 'file'; path: string }>();
@@ -6049,6 +6051,7 @@ export class LibraryService {
       entries.push({
         byteSize,
         destinationRelativePath: normalized,
+        ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
         sourceSnapshot: sourceSnapshot(sourceStat),
         sourcePath,
       });
@@ -21754,6 +21757,7 @@ export class LibraryService {
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
     createImageSequence?: boolean;
+    sourcePageUrl?: string;
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
@@ -21769,6 +21773,7 @@ export class LibraryService {
       sourcePaths: input.sourcePaths,
       targetPrefix: targetFolder?.relative_path ?? '',
       expandImageSequences: input.expandImageSequences === true,
+      ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
     });
     const importId = randomUUID();
     const operationPath = path.join(
@@ -21945,6 +21950,7 @@ export class LibraryService {
     expandImageSequences?: boolean;
     imageSequenceFps?: number;
     createImageSequence?: boolean;
+    sourcePageUrl?: string;
     automationPlan?: {
       expectedChangeSequence: number;
       sourceStates: Array<{ sourcePath: string; stateToken: string }>;
@@ -23307,9 +23313,6 @@ export class LibraryService {
     mediaUrl: string;
     mediaType?: string;
   }): Promise<{ asset: AssetSummary }> {
-    const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
-
     // Validate HTTP scheme on mediaUrl (already Zod-validated but defense in depth).
     let parsedUrl: URL;
     try {
@@ -23324,37 +23327,16 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'PERMISSION_DENIED' });
     }
 
-    const operationId = randomUUID();
-    const operationPath = path.join(
-      openLibrary.summary.libraryPath,
-      '.serpent',
-      'operations',
-      operationId,
+    const downloadDirectory = path.join(
+      tmpdir(),
+      `serpent-extension-download-${randomUUID()}`,
     );
-    const stagePath = path.join(operationPath, 'stage');
-    const backupPath = path.join(operationPath, 'backup');
-
-    // Create file_operations row.
-    const now = new Date().toISOString();
-    try {
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO file_operations
-             (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
-           VALUES (?, 'import', 'preparing', ?, NULL, ?, ?)`,
-        )
-        .run(operationId, JSON.stringify({ version: 1, phase: 'staging', files: [], directories: [] }), now, now);
-    } catch (error) {
-      throw serviceError(error, 'IMPORT_APPLY_FAILED');
-    }
-
-    let downloaded = false;
+    const downloadedFilePath = path.join(downloadDirectory, 'download');
     let downloadTimer: ReturnType<typeof setTimeout> | undefined;
     let response: Awaited<ReturnType<PinnedHttpTransport>> | undefined;
+    let importDelegated = false;
     try {
-      mkdirSync(operationPath, { recursive: true });
-      mkdirSync(stagePath);
-      mkdirSync(backupPath);
+      mkdirSync(downloadDirectory, { recursive: true });
 
       // Download the media URL. The deadline covers DNS, redirects, headers,
       // and the complete response body rather than only the initial fetch.
@@ -23457,7 +23439,7 @@ export class LibraryService {
       }
 
       // Stream directly to the stage file with a running size limit.
-      const stageFilePath = path.join(stagePath, 'stage-file');
+      const stageFilePath = downloadedFilePath;
       if (!response.body) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'IO_ERROR' });
       }
@@ -23520,147 +23502,36 @@ export class LibraryService {
         if (downloadTimer) clearTimeout(downloadTimer);
         downloadTimer = undefined;
       }
-      downloaded = true;
-
-      // Build destination path.
-      const targetPrefix = targetFolder?.relative_path ?? '';
-      const destinationRelativePath = targetPrefix
-        ? path.posix.join(targetPrefix, filename)
-        : filename;
-      const normalizedDestination = normalizeRelativeAssetPath(destinationRelativePath);
-
-      // Stat the stage file.
-      const stageStat = statSync(stageFilePath);
-      const byteSize = stageStat.size;
-
-      // Build ImportSourceEntry for the staged file.
-      const entry: ImportSourceEntry = {
-        byteSize,
-        destinationRelativePath: normalizedDestination,
-        ...(input.sourcePageUrl ? { sourcePageUrl: input.sourcePageUrl } : {}),
-        sourcePath: stageFilePath,
-        sourceSnapshot: sourceSnapshot(
-          lstatSync(stageFilePath, { bigint: true }) as BigIntStats,
-        ),
-      };
-
-      const entrySha256 = sha256FileAtPath(stageFilePath);
-      const existingDestination = this.portableDiskDestination(
-        openLibrary,
-        normalizedDestination,
-      );
-      const existingSize = existingDestination?.size;
-      const existingAbsolutePath =
-        existingDestination && existingDestination.size !== -1
-          ? this.folderPath(openLibrary, existingDestination.actualRelativePath)
-          : undefined;
-      const contentHashCache = new Map<string, string>();
-      const conflictKind = this.classifyImportEntryConflict({
-        openLibrary,
-        entry,
-        entrySha256,
-        existingSize,
-        existingAbsolutePath,
-        contentHashCache,
-        seenContentHashes: new Set<string>(),
-      });
-      if (conflictKind === 'suspected-duplicate') {
-        const existingAssetId = this.findActiveManagedAssetIdByContent(
-          openLibrary,
-          byteSize,
-          entrySha256,
-          contentHashCache,
-        );
-        openLibrary.connection
-          .prepare(
-            "UPDATE file_operations SET status = 'rolled_back', error_code = NULL, updated_at = ? WHERE operation_id = ?",
-          )
-          .run(new Date().toISOString(), operationId);
-        this.removeOperation(operationPath);
-        if (existingAssetId) {
-          const existing = this.listAssets({
-            libraryId: input.libraryId,
-            recursive: true,
-          }).find((asset) => asset.assetId === existingAssetId);
-          if (existing) return { asset: existing };
-        }
-        throw new LibraryServiceError('IMPORT_APPLY_FAILED');
-      }
-
-      // Create PendingImport and register.
-      const pending: PendingImport = {
-        directories: [],
-        entries: [entry],
+      // The network-specific trust boundary ends here. The downloaded bytes
+      // now enter the exact same extension/import kernel as browser uploads and
+      // ordinary file imports, including staging, conflict planning, journaling,
+      // metadata, leases, rollback and recovery.
+      importDelegated = true;
+      return await this.saveAssetFromFile({
         libraryId: input.libraryId,
-        operationPath,
-      };
-
-      // Update manifest to include the file.
-      const manifest: OperationManifest = {
-        version: 1,
-        phase: 'prepared',
-        files: [{
-          backupName: '0',
-          destinationRelativePath: normalizedDestination,
-          hadDestination:
-            this.portableDiskDestination(openLibrary, normalizedDestination) !== undefined,
-          stageName: 'stage-file',
-        }],
-        directories: [],
-      };
-      openLibrary.connection
-        .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-        .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
-
-      this.pendingImports.set(operationId, pending);
-      this.scheduleImportExpiry(operationId, pending);
-
-      // Resolve import: skip library-level duplicates; keep-both for name conflicts.
-      const completion = this.resolveImport({
-        importId: operationId,
-        suspectedDuplicate: 'skip',
-        nameConflict: 'keep-both',
+        ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+        ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
+        mediaUrl: input.mediaUrl,
+        stagedFilePath: stageFilePath,
+        contentType,
+        filename,
       });
-      return { asset: completion.assets[0]! };
     } catch (error) {
       if (downloadTimer) clearTimeout(downloadTimer);
       try { response?.cancel(); } catch { /* Best effort socket cleanup. */ }
-      this.diagnose('extension-save.failed', sanitizedUrlDiagnosticError(error), {
-        libraryId: input.libraryId,
-        targetHost: parsedUrl.hostname,
-        ...(input.sourcePageUrl
-          ? { sourcePageUrl: sanitizedUrlForDiagnostic(input.sourcePageUrl) }
-          : {}),
-        mediaUrl: sanitizedUrlForDiagnostic(input.mediaUrl),
-      });
-      // Clean up on failure.
-      if (this.pendingImports.has(operationId)) {
-        this.pendingImports.delete(operationId);
-        this.cancelImportExpiry({ operationPath, libraryId: input.libraryId, directories: [], entries: [] } as PendingImport);
+      if (!importDelegated) {
+        this.diagnose('extension-save.failed', sanitizedUrlDiagnosticError(error), {
+          libraryId: input.libraryId,
+          targetHost: parsedUrl.hostname,
+          ...(input.sourcePageUrl
+            ? { sourcePageUrl: sanitizedUrlForDiagnostic(input.sourcePageUrl) }
+            : {}),
+          mediaUrl: sanitizedUrlForDiagnostic(input.mediaUrl),
+        });
       }
-      if (!downloaded) {
-        try {
-          openLibrary.connection
-            .prepare("UPDATE file_operations SET status = 'failed', error_code = ?, updated_at = ? WHERE operation_id = ?")
-            .run('PREPARE_FAILED', new Date().toISOString(), operationId);
-        } catch {
-          // Best effort.
-        }
-      }
-      let preserveOperationForRecovery: boolean;
-      try {
-        const operation = openLibrary.connection
-          .prepare('SELECT status FROM file_operations WHERE operation_id = ?')
-          .get(operationId) as { status: string } | undefined;
-        preserveOperationForRecovery = operation?.status === 'applying' ||
-          (downloaded && operation?.status === 'failed');
-      } catch {
-        // If the operation state cannot be read, keep the durable manifest. The
-        // next library open can then recover it instead of risking an orphan.
-        preserveOperationForRecovery = existsSync(operationPath);
-      }
-      if (!preserveOperationForRecovery) this.removeOperation(operationPath);
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    } finally {
+      rmSync(downloadDirectory, { recursive: true, force: true });
     }
   }
 
@@ -23679,7 +23550,6 @@ export class LibraryService {
     filename: string;
   }): Promise<{ asset: AssetSummary }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
-    const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
 
     let stagedAbsolute: string;
     try {
@@ -23750,134 +23620,50 @@ export class LibraryService {
       });
     }
 
-    const operationId = randomUUID();
-    const operationPath = path.join(
-      openLibrary.summary.libraryPath,
-      '.serpent',
-      'operations',
-      operationId,
-    );
-    const stagePath = path.join(operationPath, 'stage');
-    const backupPath = path.join(operationPath, 'backup');
-    const now = new Date().toISOString();
+    // The browser upload has already passed the extension-specific trust
+    // boundary above. From this point on, give it the same source shape as a
+    // normal file import so destination naming, duplicate decisions, the
+    // operation journal, leases, rollback and metadata all share one kernel.
+    const sourceDirectory = path.join(tmpdir(), `serpent-extension-import-${randomUUID()}`);
+    const sourcePath = path.join(sourceDirectory, filename);
     try {
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO file_operations
-             (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
-           VALUES (?, 'import', 'preparing', ?, NULL, ?, ?)`,
-        )
-        .run(
-          operationId,
-          JSON.stringify({ version: 1, phase: 'staging', files: [], directories: [] }),
-          now,
-          now,
-        );
-    } catch (error) {
-      throw serviceError(error, 'IMPORT_APPLY_FAILED');
-    }
+      mkdirSync(sourceDirectory, { recursive: true });
+      copyFileSync(stagedAbsolute, sourcePath);
 
-    let prepared = false;
-    try {
-      mkdirSync(operationPath, { recursive: true });
-      mkdirSync(stagePath);
-      mkdirSync(backupPath);
-      const stageFilePath = path.join(stagePath, 'stage-file');
-      copyFileSync(stagedAbsolute, stageFilePath);
-      prepared = true;
-
-      const targetPrefix = targetFolder?.relative_path ?? '';
-      const destinationRelativePath = targetPrefix
-        ? path.posix.join(targetPrefix, filename)
-        : filename;
-      const normalizedDestination = normalizeRelativeAssetPath(destinationRelativePath);
-      const stageStat = statSync(stageFilePath);
-      const byteSize = stageStat.size;
-
-      const entry: ImportSourceEntry = {
-        byteSize,
-        destinationRelativePath: normalizedDestination,
-        ...(input.sourcePageUrl ? { sourcePageUrl: input.sourcePageUrl } : {}),
-        sourcePath: stageFilePath,
-        sourceSnapshot: sourceSnapshot(
-          lstatSync(stageFilePath, { bigint: true }) as BigIntStats,
-        ),
-      };
-
-      const entrySha256 = sha256FileAtPath(stageFilePath);
-      const existingDestination = this.portableDiskDestination(
-        openLibrary,
-        normalizedDestination,
-      );
-      const existingSize = existingDestination?.size;
-      const existingAbsolutePath =
-        existingDestination && existingDestination.size !== -1
-          ? this.folderPath(openLibrary, existingDestination.actualRelativePath)
-          : undefined;
-      const contentHashCache = new Map<string, string>();
-      const conflictKind = this.classifyImportEntryConflict({
-        openLibrary,
-        entry,
-        entrySha256,
-        existingSize,
-        existingAbsolutePath,
-        contentHashCache,
-        seenContentHashes: new Set<string>(),
-      });
-      if (conflictKind === 'suspected-duplicate') {
-        const existingAssetId = this.findActiveManagedAssetIdByContent(
-          openLibrary,
-          byteSize,
-          entrySha256,
-          contentHashCache,
-        );
-        openLibrary.connection
-          .prepare(
-            "UPDATE file_operations SET status = 'rolled_back', error_code = NULL, updated_at = ? WHERE operation_id = ?",
-          )
-          .run(new Date().toISOString(), operationId);
-        this.removeOperation(operationPath);
-        if (existingAssetId) {
-          const existing = this.listAssets({
-            libraryId: input.libraryId,
-            recursive: true,
-          }).find((asset) => asset.assetId === existingAssetId);
-          if (existing) return { asset: existing };
-        }
-        throw new LibraryServiceError('IMPORT_APPLY_FAILED');
-      }
-
-      const pending: PendingImport = {
-        directories: [],
-        entries: [entry],
+      const prepared = this.prepareOrExecuteImport({
         libraryId: input.libraryId,
-        operationPath,
-      };
-      const manifest: OperationManifest = {
-        version: 1,
-        phase: 'prepared',
-        files: [{
-          backupName: '0',
-          destinationRelativePath: normalizedDestination,
-          hadDestination:
-            this.portableDiskDestination(openLibrary, normalizedDestination) !== undefined,
-          stageName: 'stage-file',
-        }],
-        directories: [],
-      };
-      openLibrary.connection
-        .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-        .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
-
-      this.pendingImports.set(operationId, pending);
-      this.scheduleImportExpiry(operationId, pending);
-
-      const completion = this.resolveImport({
-        importId: operationId,
-        suspectedDuplicate: 'skip',
-        nameConflict: 'keep-both',
+        ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+        sourceKind: 'files',
+        sourcePaths: [sourcePath],
+        ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
       });
-      return { asset: completion.assets[0]! };
+      const completion = 'importId' in prepared
+        ? this.resolveImport({
+          importId: prepared.importId,
+          suspectedDuplicate: 'skip',
+          nameConflict: 'keep-both',
+        })
+        : prepared;
+      const asset = completion.assets[0];
+      if (asset !== undefined) return { asset };
+
+      // A library-level duplicate is intentionally skipped by the extension,
+      // matching the ordinary import default. Return the retained asset just
+      // as the old extension path did, without creating a second record.
+      const existingAssetId = this.findActiveManagedAssetIdByContent(
+        openLibrary,
+        stagedStat.size,
+        sha256FileAtPath(sourcePath),
+        new Map(),
+      );
+      if (existingAssetId !== null) {
+        const existing = this.listAssets({
+          libraryId: input.libraryId,
+          recursive: true,
+        }).find((candidate) => candidate.assetId === existingAssetId);
+        if (existing !== undefined) return { asset: existing };
+      }
+      throw new LibraryServiceError('IMPORT_APPLY_FAILED');
     } catch (error) {
       this.diagnose('extension-save-file.failed', sanitizedUrlDiagnosticError(error), {
         libraryId: input.libraryId,
@@ -23887,39 +23673,9 @@ export class LibraryService {
         ...(input.mediaUrl ? { mediaUrl: sanitizedUrlForDiagnostic(input.mediaUrl) } : {}),
         contentType,
       });
-      if (this.pendingImports.has(operationId)) {
-        this.pendingImports.delete(operationId);
-        this.cancelImportExpiry({
-          operationPath,
-          libraryId: input.libraryId,
-          directories: [],
-          entries: [],
-        } as PendingImport);
-      }
-      if (!prepared) {
-        try {
-          openLibrary.connection
-            .prepare(
-              "UPDATE file_operations SET status = 'failed', error_code = ?, updated_at = ? WHERE operation_id = ?",
-            )
-            .run('PREPARE_FAILED', new Date().toISOString(), operationId);
-        } catch {
-          // Best effort.
-        }
-      }
-      let preserveOperationForRecovery: boolean;
-      try {
-        const operation = openLibrary.connection
-          .prepare('SELECT status FROM file_operations WHERE operation_id = ?')
-          .get(operationId) as { status: string } | undefined;
-        preserveOperationForRecovery =
-          operation?.status === 'applying' ||
-          (prepared && operation?.status === 'failed');
-      } catch {
-        preserveOperationForRecovery = existsSync(operationPath);
-      }
-      if (!preserveOperationForRecovery) this.removeOperation(operationPath);
       throw serviceError(error, 'INVALID_IMPORT_SOURCE');
+    } finally {
+      rmSync(sourceDirectory, { recursive: true, force: true });
     }
   }
 
