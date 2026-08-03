@@ -49,6 +49,12 @@
 - `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-unrestricted-settings-pages.test.ts`：1 passed（6.1s）。
 - 这只补齐了开发态单选右键路径；无选择、多选、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
 
+### 2026-08-04 多选资产的条件二级菜单回归
+
+- `tests/e2e/plugin-unrestricted-settings-pages.test.ts` 现在导入两张不同资产，先验证单选条件菜单和空父级隐藏，再用 macOS `Meta` / Windows `Control` 多选打开右键菜单。
+- 多选路径实际展开 `Probe processing`，验证 `selection.assetCount == 2` 的 `Write nested selection` child 出现；这覆盖了 Host 不应把 `menus.asset` 误判成单选专用，以及 child 条件改变时父级菜单树同步更新。
+- `node scripts/run-e2e-isolated.mjs tests/e2e/plugin-unrestricted-settings-pages.test.ts`：1 passed（7.5s）。无选择、混合媒体、Viewer、packaged、Windows 与 Computer Use 仍未执行。
+
 - `npm run typecheck`：通过（主 TypeScript 与 extension TypeScript）。
 - 变更相关文件定向 ESLint：通过；`git diff --check`：通过。
 - `node scripts/run-vitest-with-electron.mjs run` 定向插件集合：21 files，271 passed。

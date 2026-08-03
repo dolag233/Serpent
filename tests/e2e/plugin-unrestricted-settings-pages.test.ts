@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import sharp from 'sharp';
 
 import { electronLaunchEnv, resolveElectronExecutablePath } from './electron-test-helpers';
 import { PLUGIN_LIBRARY_DATA_DIRECTORY } from '../../src/plugins/plugin-package';
@@ -160,9 +161,18 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
   const packageDirectory = path.join(temporaryRoot, 'unrestricted-settings-probe');
   const sourceDirectory = path.join(temporaryRoot, 'sources');
   const sourcePath = path.join(sourceDirectory, 'probe.png');
+  const secondSourcePath = path.join(sourceDirectory, 'probe-two.png');
   cpSync(FIXTURE_ROOT, packageDirectory, { recursive: true });
   mkdirSync(sourceDirectory, { recursive: true });
   writeFileSync(sourcePath, PROBE_PNG);
+  await sharp({
+    create: {
+      width: 3,
+      height: 2,
+      channels: 4,
+      background: { r: 72, g: 150, b: 230, alpha: 1 },
+    },
+  }).png().toFile(secondSourcePath);
 
   const executablePath = resolveElectronExecutablePath();
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
@@ -176,7 +186,7 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
       SERPENT_E2E_RESTORE_RECENT: '1',
       SERPENT_E2E_USER_DATA_PATH: userDataPath,
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
-      SERPENT_E2E_IMPORT_FILES: sourcePath,
+      SERPENT_E2E_IMPORT_FILES: [sourcePath, secondSourcePath].join(path.delimiter),
       SERPENT_E2E_PLUGIN_PACKAGE: packageDirectory,
     }),
   });
@@ -232,12 +242,27 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
 
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
     const probeCard = window.locator('.asset-card[title="probe.png"]');
+    const secondProbeCard = window.locator('.asset-card[title="probe-two.png"]');
     await expect(probeCard).toBeVisible({ timeout: 30_000 });
+    await expect(secondProbeCard).toBeVisible({ timeout: 30_000 });
+    await expect(window.locator('.asset-card')).toHaveCount(2);
+    await probeCard.click();
+    await expect(window.locator('.asset-card.is-selected')).toHaveCount(1);
     await probeCard.click({ button: 'right' });
     await expect(window.getByRole('menuitem', { name: 'Write unrestricted selection' })).toBeVisible();
     // The only child is false for a single selection; the parent must not
     // remain as an empty submenu after the child is filtered out.
     await expect(window.getByRole('menuitem', { name: 'Probe processing' })).toHaveCount(0);
+    await window.keyboard.press('Escape');
+
+    const selectionModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await secondProbeCard.click({ modifiers: [selectionModifier] });
+    await expect(window.locator('.asset-card.is-selected')).toHaveCount(2);
+    await secondProbeCard.click({ button: 'right' });
+    const processingMenu = window.getByRole('menuitem', { name: 'Probe processing' });
+    await expect(processingMenu).toBeVisible();
+    await processingMenu.hover();
+    await expect(window.getByRole('menuitem', { name: 'Write nested selection' })).toBeVisible();
     await window.keyboard.press('Escape');
 
     const storage = JSON.parse(readFileSync(storagePath, 'utf8')) as {
