@@ -182,7 +182,8 @@ LICENSE
 - 归档限制大小、文件数、单文件大小和展开总量；拒绝路径穿越、绝对路径和符号链接逃逸。
 - 清单、文件列表和 SHA-256 写入 lock，运行前再次校验。
 - 受限插件依赖必须打包进 `dist`，安装时不运行 `npm install`、构建、postinstall 或 Shell。
-- 用户级包位于 `userData`；资源库级包位于 `.serpent/plugins/<id>/<version>/`，其信任、秘密和本机路径不随库复制。
+- 用户级包位于 `userData/plugins/<id>/`；资源库级包位于 `.serpent/plugins/<id>/`，每个安装范围的一个插件 ID 只有一个活动包目录。活动版本只记录在 manifest 与 lock 中，其信任、秘密和本机路径不随库复制。
+- 同一安装范围安装新版本时，Host 先 staging、校验，再原子替换 `<id>/` 并原子更新 lock；不会在安装根下保留 `<id>/<version>/` 多版本目录。替换后旧包不可由本地 rollback API 恢复，需重新安装旧版本；若已有 Resolution 指向旧 hash，下一次 resolve 必须显式选择新包，不能静默激活。
 - 同 ID 用户/资源库版本不设隐式优先级；用户选择并按设备+库+插件 ID 记忆。
 - 更新先进入 staging，校验和健康窗口通过后切换；权限增加、运行模式或来源变化必须重新确认。
 
@@ -409,7 +410,7 @@ Contribution Registry 每次 setup/dispose/reload 增加 revision 并通知 Rend
 - Safe Mode 本次启动不加载第三方插件，但保留管理、诊断和卸载入口。
 - UI iframe、受限 Host 和非受限进程有心跳；失联后按实例撤销全部注册。
 - Hook、Provider、Predicate、事件和输入队列均有取消、上限、deadline 与背压。
-- 更新使用 staging、健康窗口和上一版本回滚；插件自有持久数据迁移必须可恢复。
+- 更新使用 staging、健康窗口和显式重新选择；由于活动包目录按插件 ID 覆盖，Host 不承诺本地上一版本回滚，插件自有持久数据迁移必须可恢复。
 - 应用进程退出或崩溃后，下一次 Worker 会话会把上一会话遗留的未完成 Plugin Job 标记为 `interrupted`；同一进程内关闭并重新打开资源库不会误触发该边界。插件运行时崩溃/停用仍按实例失活语义暂停，显式 retry 才允许重新执行并重新绑定插件实例。
 - Serpent 不上传插件遥测；用户可主动导出诊断。
 

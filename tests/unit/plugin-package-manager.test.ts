@@ -134,6 +134,9 @@ describe('PluginPackageManager installation and integrity', () => {
 
     expect(installed.package.lock.pluginId).toBe('com.example.palette-tools');
     expect(installed.package.lock.version).toBe('1.2.0');
+    expect(installed.packageDirectory).toBe(
+      path.join(userData, 'plugins', 'com.example.palette-tools'),
+    );
     expect(readFileSync(path.join(installed.packageDirectory, 'dist', 'main.js'), 'utf8')).toContain('version');
     expect(readFileSync(path.join(userData, 'plugins', 'plugin-lock.json'), 'utf8')).toContain('com.example.palette-tools');
     await expect(manager.listInstalled({ scope: 'user' })).resolves.toMatchObject([
@@ -457,6 +460,20 @@ describe('PluginPackageManager installation and integrity', () => {
       libraryDirectory: library,
       pluginId: first.package.lock.pluginId,
     })).resolves.toMatchObject({
+      status: 'requires-confirmation',
+      reason: 'selected-package-unavailable',
+    });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: upgraded.package.lock.packageHash,
+    });
+    await expect(manager.resolve({
+      libraryId: 'library-a',
+      libraryDirectory: library,
+      pluginId: first.package.lock.pluginId,
+    })).resolves.toMatchObject({
       status: 'resolved',
       package: { lock: { packageHash: upgraded.package.lock.packageHash, version: '1.3.0' } },
     });
@@ -529,7 +546,17 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
     });
 
     await expect(manager.resolve({ libraryId: 'library-a', libraryDirectory: library, pluginId: first.package.lock.pluginId }))
-      .resolves.toMatchObject({ status: 'resolved', package: { lock: { packageHash: safeUpgrade.package.lock.packageHash } } });
+      .resolves.toMatchObject({
+        status: 'requires-confirmation',
+        reason: 'selected-package-unavailable',
+        current: { lock: { packageHash: safeUpgrade.package.lock.packageHash } },
+      });
+    await manager.chooseResolution({
+      libraryId: 'library-a',
+      pluginId: first.package.lock.pluginId,
+      selection: 'use-global',
+      packageHash: safeUpgrade.package.lock.packageHash,
+    });
 
     await manager.installFromDirectory({
       directory: sourceThree,
@@ -537,10 +564,10 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
       source: { kind: 'local-directory', fingerprint: 'source:stable' },
     });
     await expect(manager.resolve({ libraryId: 'library-a', libraryDirectory: library, pluginId: first.package.lock.pluginId }))
-      .resolves.toMatchObject({ status: 'requires-confirmation', reason: 'permissions-increased' });
+      .resolves.toMatchObject({ status: 'requires-confirmation', reason: 'selected-package-unavailable' });
   });
 
-  it('rolls back to the prior immutable package and pins it until the user chooses to follow updates again', async () => {
+  it('requires a fresh explicit install to roll back after in-place version replacement', async () => {
     const sourceOne = temporaryRoot('serpent-plugin-rollback-one-');
     const sourceTwo = temporaryRoot('serpent-plugin-rollback-two-');
     const library = temporaryRoot('serpent-plugin-rollback-library-');
@@ -568,32 +595,21 @@ describe('PluginPackageManager selection, updates and Safe Mode', () => {
       libraryId: 'library-a',
       libraryDirectory: library,
       pluginId: first.package.lock.pluginId,
-    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
-
-    const rolledBack = await manager.rollback({
-      libraryId: 'library-a',
-      libraryDirectory: library,
-      pluginId: first.package.lock.pluginId,
-    });
-    expect(rolledBack.lock.version).toBe('1.2.0');
-    await expect(manager.resolve({
-      libraryId: 'library-a',
-      libraryDirectory: library,
-      pluginId: first.package.lock.pluginId,
-    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.2.0' } } });
-
+    })).resolves.toMatchObject({ status: 'requires-confirmation', reason: 'selected-package-unavailable' });
+    const current = await manager.listInstalled({ scope: 'user' });
+    if (current[0]?.status !== 'valid') throw new Error('Expected the replacement package to be installed.');
     await manager.chooseResolution({
       libraryId: 'library-a',
       pluginId: first.package.lock.pluginId,
       selection: 'use-global',
-      packageHash: rolledBack.lock.packageHash,
-      updatePolicy: 'follow-latest',
+      packageHash: current[0].package.lock.packageHash,
     });
-    await expect(manager.resolve({
+
+    await expect(manager.rollback({
       libraryId: 'library-a',
       libraryDirectory: library,
       pluginId: first.package.lock.pluginId,
-    })).resolves.toMatchObject({ status: 'resolved', package: { lock: { version: '1.3.0' } } });
+    })).rejects.toMatchObject({ code: 'PLUGIN_RESOLUTION_INVALID' });
   });
 
   it('keeps unrestricted packages disabled until the user explicitly enables them', async () => {

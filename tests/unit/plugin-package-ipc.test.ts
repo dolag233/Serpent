@@ -507,7 +507,7 @@ describe('Plugin package IPC bridge', () => {
     expect(mutations.some((entry) => entry.requestType === 'plugin-manager.list')).toBe(false);
   });
 
-  it('rolls back through the typed bridge and keeps the previous verified package selected', async () => {
+  it('replaces the active package through the typed bridge and reports rollback unavailable', async () => {
     const firstSource = temporaryRoot('serpent-plugin-ipc-rollback-first-');
     const userData = temporaryRoot('serpent-plugin-ipc-rollback-user-');
     const library = temporaryRoot('serpent-plugin-ipc-rollback-library-');
@@ -532,18 +532,37 @@ describe('Plugin package IPC bridge', () => {
       packageHash: firstPackage.packageHash,
     })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.2.0' }] });
 
-    // An in-place edit is the same local source. A different picker location
-    // is deliberately a source change and therefore requires confirmation.
+    // An in-place edit keeps the same source identity but replaces the active
+    // package directory, so the stale resolution must be explicitly selected.
     writePlugin(firstSource, { version: '1.3.0' });
-    await expect(handler({ type: 'plugin-manager.install-local', scope: 'user' }))
-      .resolves.toMatchObject({ ok: true, packages: [{ version: '1.2.0' }, { version: '1.3.0' }] });
+    const upgradedInstall = await handler({ type: 'plugin-manager.install-local', scope: 'user' });
+    expect(upgradedInstall).toMatchObject({ ok: true, packages: [{ version: '1.3.0' }] });
+    if (!upgradedInstall.ok || !('packages' in upgradedInstall)) throw new Error('Expected the replacement package to be listed.');
+    const upgradedPackage = upgradedInstall.packages[0];
+    if (upgradedPackage === undefined) throw new Error('Expected an active replacement package.');
+    await expect(handler({ type: 'plugin-manager.list', libraryId: 'library-a' }))
+      .resolves.toMatchObject({
+        ok: true,
+        resolutions: [{ status: 'requires-confirmation', reason: 'selected-package-unavailable' }],
+      });
+    await expect(handler({
+      type: 'plugin-manager.resolve',
+      libraryId: 'library-a',
+      pluginId: firstPackage.pluginId,
+      selection: 'use-global',
+      packageHash: upgradedPackage.packageHash,
+    })).resolves.toMatchObject({ ok: true });
     await expect(handler({ type: 'plugin-manager.list', libraryId: 'library-a' }))
       .resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.3.0' }] });
     await expect(handler({
       type: 'plugin-manager.rollback',
       libraryId: 'library-a',
       pluginId: firstPackage.pluginId,
-    })).resolves.toMatchObject({ ok: true, resolutions: [{ status: 'resolved', version: '1.2.0' }] });
+    })).resolves.toMatchObject({
+      ok: false,
+      code: 'operation-failed',
+      failureCode: 'PLUGIN_RESOLUTION_INVALID',
+    });
   });
 
   it('exposes a quarantined package safely and lets the management bridge clear only its local quarantine', async () => {

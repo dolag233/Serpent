@@ -18,6 +18,21 @@
 
 本地「源码目录 + 现场 npm」**不做**：用户路径仅为成品包三通道。
 
+### 1.1 安装目录与版本替换
+
+每个安装范围内，一个插件 ID 只有一个活动目录：
+
+```text
+userData/plugins/<pluginId>/
+{library}/.serpent/plugins/<pluginId>/
+```
+
+当前版本、来源和包哈希只记录在插件清单与对应 lock 文件中，不再使用
+`<pluginId>/<version>/` 作为活动包路径。安装新版本时先完成 staging 与完整校验，再原子替换该插件 ID 的活动目录和 lock；失败时保留旧目录。
+
+这意味着同一安装范围不保留多个可切换的本地版本，插件管理器的本地
+`rollback` 在覆盖安装后会明确返回“没有上一份已安装包”。需要回退时，重新安装旧版本 ZIP/目录即可；如果当前设备的 Resolution 仍指向旧包哈希，Host 会要求用户显式选择新包，不会静默启用替换包。
+
 ## 2. 平台标识（判定与命名共用）
 
 与 Electron / Node `process.platform` + `process.arch` 对齐（清单 `nativeModules` 已用同一套）：

@@ -24,7 +24,7 @@
 npx vitest run tests/unit/plugin-release-asset.test.ts \
   tests/unit/plugin-package-manager.test.ts \
   tests/unit/plugin-package-ipc.test.ts
-# 28 passed
+# 36 passed
 npx tsc --noEmit -p tsconfig.json
 # exit 0
 ```
@@ -32,6 +32,8 @@ npx tsc --noEmit -p tsconfig.json
 ## 验收
 
 清单 `PLUGIN-037`（自动化口径）。packaged / Windows / Computer Use / 真实 GitHub 网络旅程未执行。
+
+2026-08-04：插件活动目录改为 `<pluginId>/`，同一安装范围的新版本以 staging + 原子目录替换安装；lock 只保留当前活动包。覆盖后旧 Resolution 会返回 `selected-package-unavailable`，必须显式选择新包；本地 rollback 不再伪装成可恢复上一版本。`plugin-release-asset` + `plugin-package-manager` + `plugin-package-ipc` 定向测试 36 passed，typecheck 与定向 ESLint 通过；插件安装与 trusted Host Electron E2E 2 passed（6.1s）。
 
 ## 非目标
 

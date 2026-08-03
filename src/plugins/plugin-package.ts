@@ -322,10 +322,10 @@ export function verifyPluginPackageLock(snapshot: unknown, lock: unknown): { ok:
   return { ok: true };
 }
 
-export function getLibraryPluginPackageDirectory(pluginId: string, version: string): string {
-  return `${PLUGIN_LIBRARY_DIRECTORY}/${pluginIdSchema.parse(pluginId)}/${semverSchema.parse(version)}`;
+export function getLibraryPluginPackageDirectory(pluginId: string): string {
+  return `${PLUGIN_LIBRARY_DIRECTORY}/${pluginIdSchema.parse(pluginId)}`;
 }
 
-export function getUserPluginPackageDirectory(pluginId: string, version: string): string {
-  return `plugins/${pluginIdSchema.parse(pluginId)}/${semverSchema.parse(version)}`;
+export function getUserPluginPackageDirectory(pluginId: string): string {
+  return `plugins/${pluginIdSchema.parse(pluginId)}`;
 }

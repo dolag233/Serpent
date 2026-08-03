@@ -132,7 +132,10 @@ function emptyDeviceState(): PluginDeviceState {
 }
 
 function directoryPathForPackage(root: string, lock: PluginPackageLock): string {
-  return path.join(root, lock.pluginId, lock.version);
+  // A scope contains one active package directory per plugin id. The active
+  // version is recorded in the lock and manifest; it must not become part of
+  // the path because upgrades replace this directory atomically.
+  return path.join(root, lock.pluginId);
 }
 
 function compareVersions(left: InstalledPluginPackage, right: InstalledPluginPackage): number {
@@ -179,15 +182,16 @@ export class PluginPackageManager {
 
     await mkdir(root, { recursive: true });
     const targetDirectory = directoryPathForPackage(root, inspectedSource.lock);
-    const existing = await this.#readInstalledAt(targetDirectory, input.scope, inspectedSource.lock);
-    if (existing !== undefined) {
-      if (existing.status === 'valid' && existing.package.lock.packageHash === inspectedSource.lock.packageHash) {
+    const existingLocks = await this.#readPackageLocks(input.scope, input.libraryDirectory);
+    const existingLock = existingLocks.find(
+      (candidate) => candidate.pluginId === inspectedSource.lock.pluginId,
+    );
+    if (existingLock !== undefined) {
+      const existing = await this.#readInstalledAt(targetDirectory, input.scope, existingLock);
+      if (existing?.status === 'valid'
+        && existing.package.lock.packageHash === inspectedSource.lock.packageHash) {
         return { package: existing.package, packageDirectory: targetDirectory, alreadyInstalled: true };
       }
-      throw new PluginPackageManagerError(
-        'PLUGIN_PACKAGE_ALREADY_EXISTS',
-        'A different package already exists for this plugin id and version. Install a new version instead of overwriting it.',
-      );
     }
 
     const stagingDirectory = path.join(root, `.staging-${randomUUID()}`);
@@ -203,11 +207,36 @@ export class PluginPackageManager {
         );
       }
       await mkdir(path.dirname(targetDirectory), { recursive: true });
-      await rename(stagingDirectory, targetDirectory);
+      const backupDirectory = path.join(root, `.replace-${randomUUID()}`);
+      let targetBackedUp = false;
+      let targetInstalled = false;
+      let lockCommitted = false;
       try {
-        await this.#upsertPackageLock(input.scope, input.libraryDirectory, staged.lock);
+        try {
+          await lstat(targetDirectory);
+          await rename(targetDirectory, backupDirectory);
+          targetBackedUp = true;
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        await rename(stagingDirectory, targetDirectory);
+        targetInstalled = true;
+        await this.#replacePackageLock(input.scope, input.libraryDirectory, staged.lock);
+        lockCommitted = true;
+        await rm(backupDirectory, { recursive: true, force: true });
       } catch (error) {
-        await rm(targetDirectory, { recursive: true, force: true });
+        // Keep the old package and lock usable if replacement or lock commit
+        // fails. The backup is deliberately retained until the new lock is
+        // durable, so a failed update never leaves a missing active package.
+        if (lockCommitted) {
+          await this.#writePackageLocks(input.scope, input.libraryDirectory, existingLocks);
+        }
+        if (targetInstalled) {
+          await rm(targetDirectory, { recursive: true, force: true });
+        }
+        if (targetBackedUp) {
+          await rename(backupDirectory, targetDirectory);
+        }
         throw error;
       }
       const installed: InstalledPluginPackage = {
@@ -872,9 +901,10 @@ export class PluginPackageManager {
   }
 
   /**
-   * Pins the current scope to its immediately preceding verified package.
-   * Package bytes remain immutable; rollback only changes this device's
-   * resolution and never edits the synchronized library lock.
+   * Pins the current scope to an older verified package when one is available
+   * in the active package store. With one `<pluginId>/` directory per scope,
+   * an overwrite removes that local history and this method returns a stable
+   * no-previous-package error; callers can reinstall the desired version.
    */
   async rollback(input: {
     libraryId: string;
@@ -1032,28 +1062,11 @@ export class PluginPackageManager {
       ? latest
       : candidates.find((candidate) => candidate.lock.packageHash === saved.packageHash);
     if (current === undefined) {
-      // Selected bytes are gone (typical after uninstall + reinstall). Do not
-      // surface a false "update confirmation"; re-apply defaults for the latest.
-      if (latest.manifest.runtime.mode === 'unrestricted') {
-        await this.chooseResolution({
-          libraryId: input.libraryId,
-          pluginId: input.pluginId,
-          selection: 'disabled',
-        });
-        return { status: 'disabled', reason: 'user-disabled' };
-      }
-      await this.chooseResolution({
-        libraryId: input.libraryId,
-        pluginId: input.pluginId,
-        selection,
-        packageHash: latest.lock.packageHash,
-      });
-      return this.#resolvedOrAwaitingTrust(
-        await this.#readDeviceState(),
-        input.libraryId,
-        selection,
-        latest,
-      );
+      // An in-place install intentionally removes the old version directory.
+      // Without the old manifest we cannot safely classify permission/runtime
+      // changes, so require an explicit package choice instead of silently
+      // activating the replacement.
+      return { status: 'requires-confirmation', reason: 'selected-package-unavailable', current: latest };
     }
     if (current.lock.packageHash !== latest.lock.packageHash) {
       if (saved?.updatePolicy === 'pinned') {
@@ -1103,14 +1116,17 @@ export class PluginPackageManager {
     }
   }
 
-  async #upsertPackageLock(
+  async #replacePackageLock(
     scope: PluginInstallationScope,
     libraryDirectory: string | undefined,
     lock: PluginPackageLock,
   ): Promise<void> {
     const existing = await this.#readPackageLocks(scope, libraryDirectory);
     const packages = [
-      ...existing.filter((candidate) => !(candidate.pluginId === lock.pluginId && candidate.version === lock.version)),
+      // The package store has one active directory per plugin id. Remove all
+      // historical lock entries for that id when the new bytes are committed;
+      // keeping an old version would point two locks at the same directory.
+      ...existing.filter((candidate) => candidate.pluginId !== lock.pluginId),
       lock,
     ].sort((left, right) => `${left.pluginId}@${left.version}`.localeCompare(`${right.pluginId}@${right.version}`));
     await this.#writePackageLocks(scope, libraryDirectory, packages);

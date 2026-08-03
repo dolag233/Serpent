@@ -13,7 +13,7 @@ Serpent 插件既需要安全地扩展菜单、工作区、搜索和资产领域
 
 - 受限插件（`restricted`）运行在可终止的受控 JS 环境中，只能通过声明并授权的 Plugin SDK 调用 Serpent；非受限插件（`unrestricted`）运行在独立 Node.js UtilityProcess 中，获得完整系统能力。非受限插件的权限清单用于风险披露和 Serpent API 管理，不承诺拦截其直接 Node 行为。
 - 脚本与受限插件可以复用 QuickJS、TypeScript 转换和 Automation Command Gateway。脚本是 Automation Execution（可 headless、完成即结束），通过领域 Action 操作软件；插件拥有安装、激活、UI Contribution、Hook、Provider、输入捕获和后台任务生命周期。不得用常驻脚本代替插件 Contribution；也不得把 `library.create` / `file.import` 等 Action 划成“仅插件”。Console 与 MCP 共享同一 Action 面（见 ADR-0025 2026-07-30 修订）。
-- 插件可以安装为用户级，也可以作为不可变成品放入资源库 `.serpent/plugins/` 并随库同步。资源库插件在每台设备首次出现时必须显式信任；信任、密钥和本机路径只保存在当前设备。
+- 插件可以安装为用户级，也可以作为不可变成品放入资源库 `.serpent/plugins/<pluginId>/` 并随库同步；每个安装范围的一个插件 ID 只有一个活动目录，版本只记录在 manifest/lock。更新在 staging 完成校验后原子替换活动目录。资源库插件在每台设备首次出现时必须显式信任；信任、密钥和本机路径只保存在当前设备。
 - 同一插件 ID 同时存在用户级和资源库级版本时，Serpent 不设置隐式优先级，而是提示用户选择使用哪个版本或禁用。选择在当前设备按资源库记忆；普通同源升级沿用，权限、模式或来源变化时重新确认。
 - 插件一等开发语言为 TypeScript/JavaScript。Serpent 不维护 Python 运行时；非受限插件如确有需要，可以自行调用用户环境中的外部程序。
 - GitHub 安装优先取符合命名规范的 **Release 平台 asset ZIP**（见 [插件分发与更新规范](../manual/plugins/distribution-and-updates.md)）；不执行远程仓库中的依赖安装、构建或生命周期脚本。过渡期可对无规范 asset 的成品 zipball 回退，并提示作者迁移。
