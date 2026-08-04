@@ -23,6 +23,8 @@ npx vitest run tests/unit/quickjs-sandbox-prototype.test.ts --reporter=dot
 
 结果：文件计划/导入/回收站相关 3 个测试文件 131 tests passed、1 skipped；QuickJS 22 tests passed；typecheck 通过。新增回归覆盖文件计划 hash 被篡改、导入 hash 被篡改、批量重命名目标透传和 Host 等待不消耗 QuickJS CPU 预算。
 
+最终合并回归：`npm run test` → 322 个测试文件通过、3 个跳过；2809 个测试通过、8 个跳过。当前提交仍未取得 packaged、Windows、Computer Use 及真实 MCP 写入旅程证据，因此相关 P1 工单继续保持 `in_progress`。
+
 ## 尚未验证
 
 当前变更尚未取得 packaged、Windows、真实 MCP 长流程和 Computer Use 证据，不能关闭 `Serpent-y51c.8` 或相关人类验收条目。现阶段只记录为开发态自动化证据。
