@@ -82,12 +82,14 @@ describe('plugin custom UI contract', () => {
     expect(invoke.type).toBe('plugin-ui.invoke-command');
     expect(() => parsePluginUiIframeMessage({ type: 'plugin-ui.ready' })).toThrow();
     expect(parsePluginUiHostMessage({
-      type: 'plugin-ui.theme',
+      type: 'plugin-ui.theme-changed',
       contributionId: 'com.example.iframe.probe-view',
       instanceId: 'instance-a',
       theme: 'dark',
-      tokens: { '--canvas': '#111417' },
-    }).type).toBe('plugin-ui.theme');
+      contrast: 'normal',
+      revision: 1,
+      tokens: { '--ui-surface-canvas': '#111417' },
+    }).type).toBe('plugin-ui.theme-changed');
 
     expect(isTrustedPluginUiMessage({
       origin: 'null',
@@ -109,25 +111,44 @@ describe('plugin custom UI contract', () => {
       expectedSource: 'iframe-window',
     })).toBe(false);
     expect(() => parsePluginUiHostMessage({
-      type: 'plugin-ui.theme',
+      type: 'plugin-ui.theme-changed',
       contributionId: 'com.example.iframe.probe-view',
       instanceId: 'instance-a',
       theme: 'dark',
-      tokens: { '--canvas': '#111417' },
+      contrast: 'normal',
+      revision: 1,
+      tokens: { '--ui-surface-canvas': '#111417' },
       unexpected: true,
+    })).toThrow();
+    expect(() => parsePluginUiHostMessage({
+      type: 'plugin-ui.theme-changed',
+      contributionId: 'com.example.iframe.probe-view',
+      instanceId: 'instance-a',
+      theme: 'dark',
+      contrast: 'normal',
+      revision: 1,
+      tokens: { '--canvas': '#111417' },
     })).toThrow();
 
     const themed = buildPluginUiThemeHostMessage({
       contributionId: 'com.example.iframe.probe-view',
       instanceId: 'instance-a',
       resolvedTheme: 'dark',
-      hostTokens: { '--canvas': '#111417' },
-      themePackage: { light: {}, dark: { '--accent': '#ff9a3c' } },
+      revision: 2,
+      hostTokens: { '--ui-surface-canvas': '#111417', '--ui-action-accent': '#3b82f6' },
+      themePackage: {
+        version: 1,
+        light: { references: {}, tokens: {} },
+        dark: {
+          references: { accent: 'action.accent' },
+          tokens: { badge: '#ff9a3c' },
+        },
+      },
     });
     const themedParsed = parsePluginUiHostMessage(themed);
-    expect(themedParsed.type).toBe('plugin-ui.theme');
-    if (themedParsed.type === 'plugin-ui.theme') {
-      expect(themedParsed.tokens['--accent']).toBe('#ff9a3c');
+    expect(themedParsed.type).toBe('plugin-ui.theme-changed');
+    if (themedParsed.type === 'plugin-ui.theme-changed') {
+      expect(themedParsed.tokens['--serpent-plugin-token-badge']).toBe('#ff9a3c');
     }
   });
 

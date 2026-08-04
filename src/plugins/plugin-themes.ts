@@ -1,12 +1,25 @@
-import type { PluginManifest, PluginPermission, PluginThemePackage } from './plugin-manifest';
-import { pluginThemePackageSchema } from './plugin-manifest';
+import type {
+  PluginManifest,
+  PluginPermission,
+  PluginThemeModePackage,
+  PluginThemePackage,
+  PluginUiThemeReference,
+} from './plugin-manifest';
+import {
+  PLUGIN_UI_THEME_REFERENCE_CSS_VARS,
+  pluginThemePackageSchema,
+} from './plugin-manifest';
 
 export {
+  PLUGIN_UI_THEME_REFERENCE_CSS_VARS,
+  PLUGIN_UI_THEME_REFERENCE_NAMES,
   PLUGIN_UI_THEME_TOKEN_NAMES,
   contributionThemeSchema,
   pluginThemePackageSchema,
   type PluginContributionTheme,
+  type PluginThemeModePackage,
   type PluginThemePackage,
+  type PluginUiThemeReference,
 } from './plugin-manifest';
 
 export const PLUGIN_TRUSTED_CSS_PERMISSION: PluginPermission = 'theme.trusted-css';
@@ -27,15 +40,22 @@ export function extractPluginThemePackage(
   const themes = manifest.contributes?.themes ?? [];
   if (themes.length === 0) return undefined;
 
-  const light: Record<string, string> = {};
-  const dark: Record<string, string> = {};
+  const light: PluginThemeModePackage = { references: {}, tokens: {} };
+  const dark: PluginThemeModePackage = { references: {}, tokens: {} };
   for (const theme of themes) {
-    Object.assign(light, theme.light ?? {});
-    Object.assign(dark, theme.dark ?? {});
+    Object.assign(light.references, theme.light?.references ?? {});
+    Object.assign(light.tokens, theme.light?.tokens ?? {});
+    Object.assign(dark.references, theme.dark?.references ?? {});
+    Object.assign(dark.tokens, theme.dark?.tokens ?? {});
   }
-  const parsed = pluginThemePackageSchema.safeParse({ light, dark });
+  const parsed = pluginThemePackageSchema.safeParse({ version: 1, light, dark });
   if (!parsed.success) return undefined;
-  if (Object.keys(parsed.data.light).length === 0 && Object.keys(parsed.data.dark).length === 0) {
+  if (
+    Object.keys(parsed.data.light.references).length === 0
+    && Object.keys(parsed.data.light.tokens).length === 0
+    && Object.keys(parsed.data.dark.references).length === 0
+    && Object.keys(parsed.data.dark.tokens).length === 0
+  ) {
     return undefined;
   }
   return parsed.data;
@@ -50,25 +70,39 @@ export function mergePluginIframeThemeTokens(input: {
   themePackage: PluginThemePackage | undefined;
   resolvedTheme: 'light' | 'dark';
 }): Record<string, string> {
-  const overrides = input.themePackage?.[input.resolvedTheme] ?? {};
-  return {
-    ...input.hostTokens,
-    ...overrides,
-  };
+  const mode = input.themePackage?.[input.resolvedTheme];
+  const tokens: Record<string, string> = { ...input.hostTokens };
+  if (mode === undefined) return tokens;
+
+  for (const [localName, reference] of Object.entries(mode.references)) {
+    const hostTokenName = PLUGIN_UI_THEME_REFERENCE_CSS_VARS[reference as PluginUiThemeReference];
+    const hostValue = input.hostTokens[hostTokenName];
+    if (hostValue !== undefined) {
+      tokens[`--serpent-plugin-ref-${localName}`] = hostValue;
+    }
+  }
+  for (const [localName, value] of Object.entries(mode.tokens)) {
+    tokens[`--serpent-plugin-token-${localName}`] = value;
+  }
+  return tokens;
 }
 
 export function buildPluginUiThemeHostMessage(input: {
   contributionId: string;
   instanceId: string;
   resolvedTheme: 'light' | 'dark';
+  revision: number;
+  contrast?: 'normal' | 'high';
   hostTokens: Readonly<Record<string, string>>;
   themePackage: PluginThemePackage | undefined;
 }) {
   return {
-    type: 'plugin-ui.theme' as const,
+    type: 'plugin-ui.theme-changed' as const,
     contributionId: input.contributionId,
     instanceId: input.instanceId,
     theme: input.resolvedTheme,
+    contrast: input.contrast ?? 'normal',
+    revision: input.revision,
     tokens: mergePluginIframeThemeTokens({
       hostTokens: input.hostTokens,
       themePackage: input.themePackage,

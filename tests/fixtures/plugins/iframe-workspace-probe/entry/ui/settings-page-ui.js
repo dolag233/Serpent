@@ -11,7 +11,7 @@ function request(message) {
 
 window.addEventListener('message', (event) => {
   if (event.source !== window.parent || event.origin !== 'null') return;
-  if (event.data?.type === 'plugin-ui.theme') {
+  if (event.data?.type === 'plugin-ui.theme-changed') {
     for (const [name, value] of Object.entries(event.data.tokens || {})) {
       document.documentElement.style.setProperty(`--serpent-${name.slice(2)}`, value);
     }

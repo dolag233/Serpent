@@ -12,16 +12,27 @@ import { parsePluginUiHostMessage } from '../../src/shared/plugin-ui-protocol';
 import iframeProbeManifest from '../fixtures/plugins/iframe-workspace-probe/serpent-plugin.json';
 
 describe('plugin theme token packages (PLUGIN-032)', () => {
-  it('accepts bounded contributes.themes token overrides', () => {
+  it('accepts semantic references and bounded plugin-owned color tokens', () => {
     const parsed = contributionThemeSchema.parse({
       id: 'brand',
-      light: { '--accent': '#c45a00', '--canvas': '#f5f5f4' },
-      dark: { '--accent': '#ff9a3c' },
+      version: 1,
+      light: {
+        references: { accent: 'action.accent' },
+        tokens: { badge: '#c45a00' },
+      },
+      dark: {
+        references: { accent: 'action.accent' },
+        tokens: { badge: '#ff9a3c' },
+      },
     });
     expect(parsed.id).toBe('brand');
     expect(() => contributionThemeSchema.parse({
       id: 'bad-token',
-      light: { '--host-dom': '#000000' },
+      light: { tokens: { '--host-dom': '#000000' } },
+    })).toThrow();
+    expect(() => contributionThemeSchema.parse({
+      id: 'bad-value',
+      light: { tokens: { badge: 'url(https://evil.invalid)' } },
     })).toThrow();
   });
 
@@ -29,36 +40,55 @@ describe('plugin theme token packages (PLUGIN-032)', () => {
     const manifest = pluginManifestSchema.parse(iframeProbeManifest);
     const themePackage = extractPluginThemePackage(manifest);
     expect(themePackage).toEqual({
-      light: { '--accent': '#c45a00' },
-      dark: { '--accent': '#ff9a3c' },
+      version: 1,
+      light: {
+        references: { accent: 'action.accent' },
+        tokens: { badge: '#c45a00' },
+      },
+      dark: {
+        references: { accent: 'action.accent' },
+        tokens: { badge: '#ff9a3c' },
+      },
     });
     expect(mergePluginIframeThemeTokens({
-      hostTokens: { '--canvas': '#111417', '--accent': '#3b82f6' },
+      hostTokens: { '--ui-surface-canvas': '#111417', '--ui-action-accent': '#3b82f6' },
       themePackage,
       resolvedTheme: 'dark',
     })).toEqual({
-      '--canvas': '#111417',
-      '--accent': '#ff9a3c',
+      '--ui-surface-canvas': '#111417',
+      '--ui-action-accent': '#3b82f6',
+      '--serpent-plugin-ref-accent': '#3b82f6',
+      '--serpent-plugin-token-badge': '#ff9a3c',
     });
   });
 
-  it('builds a schema-valid plugin-ui.theme host message with plugin overrides', () => {
+  it('builds a schema-valid plugin-ui.theme-changed message with plugin aliases', () => {
     const message = buildPluginUiThemeHostMessage({
       contributionId: 'com.serpent.iframe-workspace-probe.workspace-probe',
       instanceId: 'instance-a',
       resolvedTheme: 'light',
-      hostTokens: { '--canvas': '#f5f5f4', '--accent': '#2563eb' },
+      revision: 4,
+      hostTokens: { '--ui-surface-canvas': '#f5f5f4', '--ui-action-accent': '#2563eb' },
       themePackage: {
-        light: { '--accent': '#c45a00' },
-        dark: { '--accent': '#ff9a3c' },
+        version: 1,
+        light: {
+          references: { accent: 'action.accent' },
+          tokens: { badge: '#c45a00' },
+        },
+        dark: {
+          references: { accent: 'action.accent' },
+          tokens: { badge: '#ff9a3c' },
+        },
       },
     });
     const parsed = parsePluginUiHostMessage(message);
-    expect(parsed.type).toBe('plugin-ui.theme');
-    if (parsed.type === 'plugin-ui.theme') {
+    expect(parsed.type).toBe('plugin-ui.theme-changed');
+    if (parsed.type === 'plugin-ui.theme-changed') {
       expect(parsed.theme).toBe('light');
-      expect(parsed.tokens['--accent']).toBe('#c45a00');
-      expect(parsed.tokens['--canvas']).toBe('#f5f5f4');
+      expect(parsed.revision).toBe(4);
+      expect(parsed.contrast).toBe('normal');
+      expect(parsed.tokens['--serpent-plugin-ref-accent']).toBe('#2563eb');
+      expect(parsed.tokens['--serpent-plugin-token-badge']).toBe('#c45a00');
     }
   });
 

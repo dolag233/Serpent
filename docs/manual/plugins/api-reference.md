@@ -114,6 +114,26 @@ interface ViewContribution {
   location: 'sidebar' | 'workspace' | 'inspector' | 'viewer' | 'settings';
   entry?: string;
 }
+
+interface ThemeContribution {
+  id: string;
+  version: 1;
+  light?: ThemeMode;
+  dark?: ThemeMode;
+}
+
+interface ThemeMode {
+  references?: Record<string, ThemeReference>;
+  tokens?: Record<string, ThemeColor>;
+}
+
+type ThemeReference =
+  | 'surface.canvas' | 'surface.pane' | 'surface.raised' | 'surface.overlay'
+  | 'content.primary' | 'content.secondary' | 'content.tertiary'
+  | 'border.divider' | 'border.control' | 'border.focus'
+  | 'action.accent' | 'state.info' | 'state.success' | 'state.warning' | 'state.error';
+
+type ThemeColor = string; // Host schema accepts only bounded color literals.
 ```
 
 所有这些 Contribution 的 ID 在插件内共享同一命名空间，必须唯一。菜单中的 command 必须引用已声明命令。
@@ -150,6 +170,34 @@ interface MenuItem {
 
 `when=false` 不渲染，`enablement=false` 置灰，`checked` 控制选中态。`matches` 支持通配和受限正则。表达式不能执行 JS、RPC、I/O
 或 Domain API。当前没有公开的 Manifest Predicate Resolver 字段；不要自行添加。
+
+### Theme Contract v1
+
+`themes` 是版本化的语义主题契约，而不是任意 CSS 注入点。每个 mode 最多声明 32 个 `references` 和 32 个 `tokens`；名称必须是小写的
+插件本地名（例如 `accent`、`badge`），值只能是有限颜色值。Host 会将引用解析为 iframe 隔离变量：
+
+```text
+references.accent  -> --serpent-plugin-ref-accent
+tokens.badge       -> --serpent-plugin-token-badge
+```
+
+Host 自己的语义变量以 `--ui-*` 形式提供给 iframe，但它们属于只读公共输出；插件不得覆盖这些变量，也不得写入任意 `--xxx` 名称。
+主题变化通过下列 Host 消息发送：
+
+```ts
+interface PluginUiThemeChanged {
+  type: 'plugin-ui.theme-changed';
+  contributionId: string;
+  instanceId: string;
+  theme: 'light' | 'dark';
+  contrast: 'normal' | 'high';
+  revision: number;
+  tokens: Record<string, string>;
+}
+```
+
+插件 UI 应在 `revision` 变大时应用消息。`contrast` 当前由 Host 保留为契约字段，正常主题为 `normal`；不要根据旧的
+`plugin-ui.theme` 消息或 `--accent`/`--canvas` 变量编写新代码。
 
 ### Contribution Context
 

@@ -582,63 +582,127 @@ const contributionProviderSchema = z.strictObject({
   }
 });
 
-/** Host design tokens that sandboxed plugin iframes may override via theme packages. */
-export const PLUGIN_UI_THEME_TOKEN_NAMES = [
-  '--canvas',
-  '--pane',
-  '--raised',
-  '--divider',
-  '--text',
-  '--secondary',
-  '--tertiary',
-  '--accent',
-  '--warning',
-  '--danger',
-  '--success',
-  '--font-ui',
+/**
+ * Public semantic references for sandboxed plugin UI. These are intentionally
+ * not the implementation names of legacy styles.css variables. Host-rendered
+ * UI and plugin iframes can rely on this vocabulary while the internal CSS
+ * migration continues.
+ */
+export const PLUGIN_UI_THEME_REFERENCE_NAMES = [
+  'surface.canvas',
+  'surface.pane',
+  'surface.raised',
+  'surface.overlay',
+  'content.primary',
+  'content.secondary',
+  'content.tertiary',
+  'border.divider',
+  'border.control',
+  'border.focus',
+  'action.accent',
+  'state.info',
+  'state.success',
+  'state.warning',
+  'state.error',
 ] as const;
+export type PluginUiThemeReference = (typeof PLUGIN_UI_THEME_REFERENCE_NAMES)[number];
 
-const PLUGIN_UI_THEME_TOKEN_ALLOWLIST = new Set<string>(PLUGIN_UI_THEME_TOKEN_NAMES);
+/** CSS variables sent to plugin views for the public semantic references. */
+export const PLUGIN_UI_THEME_REFERENCE_CSS_VARS: Readonly<Record<PluginUiThemeReference, string>> = {
+  'surface.canvas': '--ui-surface-canvas',
+  'surface.pane': '--ui-surface-pane',
+  'surface.raised': '--ui-surface-raised',
+  'surface.overlay': '--ui-surface-overlay',
+  'content.primary': '--ui-content-primary',
+  'content.secondary': '--ui-content-secondary',
+  'content.tertiary': '--ui-content-tertiary',
+  'border.divider': '--ui-border-divider',
+  'border.control': '--ui-border-control',
+  'border.focus': '--ui-border-focus',
+  'action.accent': '--ui-action-accent',
+  'state.info': '--ui-status-info',
+  'state.success': '--ui-status-success',
+  'state.warning': '--ui-status-warning',
+  'state.error': '--ui-status-danger',
+};
 
-const pluginThemeTokenMapSchema = z.record(
-  z.string().regex(/^--[a-z0-9-]+$/u),
-  z.string().max(512),
+/** Host CSS variables that sandboxed plugin iframes may read. */
+export const PLUGIN_UI_THEME_TOKEN_NAMES = Object.values(PLUGIN_UI_THEME_REFERENCE_CSS_VARS);
+
+const pluginThemeLocalTokenNameSchema = z.string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z][a-z0-9.-]*$/u, 'Plugin theme token names must be lowercase local names.');
+
+/** Theme v1 is deliberately color-only; arbitrary CSS is not a theme API. */
+const pluginThemeColorValueSchema = z.string()
+  .max(128)
+  .regex(
+    /^(?:#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([^\n()]{1,96}\)|transparent|currentColor)$/iu,
+    'Theme values must be bounded color values.',
+  );
+
+const pluginThemeReferencesSchema = z.record(
+  pluginThemeLocalTokenNameSchema,
+  z.enum(PLUGIN_UI_THEME_REFERENCE_NAMES),
+).superRefine((references, context) => {
+  if (Object.keys(references).length > 32) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Theme references must stay within the bounded token map size.',
+    });
+  }
+});
+
+const pluginThemeOwnedTokensSchema = z.record(
+  pluginThemeLocalTokenNameSchema,
+  pluginThemeColorValueSchema,
 ).superRefine((tokens, context) => {
   if (Object.keys(tokens).length > 32) {
     context.addIssue({
       code: 'custom',
-      message: 'Theme token overrides must stay within the bounded token map size.',
+      message: 'Plugin-owned theme tokens must stay within the bounded token map size.',
     });
   }
-  for (const key of Object.keys(tokens)) {
-    if (!PLUGIN_UI_THEME_TOKEN_ALLOWLIST.has(key)) {
-      context.addIssue({
-        code: 'custom',
-        path: [key],
-        message: 'Theme token overrides must use supported Serpent design tokens.',
-      });
-    }
+});
+
+const pluginThemeModeSchema = z.strictObject({
+  references: pluginThemeReferencesSchema.default({}),
+  tokens: pluginThemeOwnedTokensSchema.default({}),
+}).superRefine((mode, context) => {
+  if (Object.keys(mode.references).length === 0 && Object.keys(mode.tokens).length === 0) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Theme modes must declare at least one reference or owned token.',
+    });
   }
 });
 
 export const contributionThemeSchema = z.strictObject({
   id: pluginLocalIdSchema,
-  light: pluginThemeTokenMapSchema.optional(),
-  dark: pluginThemeTokenMapSchema.optional(),
+  version: z.literal(1).default(1),
+  light: pluginThemeModeSchema.optional(),
+  dark: pluginThemeModeSchema.optional(),
 }).superRefine((theme, context) => {
-  if ((theme.light === undefined || Object.keys(theme.light).length === 0)
-    && (theme.dark === undefined || Object.keys(theme.dark).length === 0)) {
+  if (theme.light === undefined && theme.dark === undefined) {
     context.addIssue({
       code: 'custom',
-      message: 'Theme packages must declare at least one light or dark token override.',
+      message: 'Theme packages must declare at least one light or dark mode.',
     });
   }
 });
 export type PluginContributionTheme = z.infer<typeof contributionThemeSchema>;
 
+export const pluginThemeModePackageSchema = z.strictObject({
+  references: pluginThemeReferencesSchema.default({}),
+  tokens: pluginThemeOwnedTokensSchema.default({}),
+});
+export type PluginThemeModePackage = z.infer<typeof pluginThemeModePackageSchema>;
+
 export const pluginThemePackageSchema = z.strictObject({
-  light: pluginThemeTokenMapSchema.default({}),
-  dark: pluginThemeTokenMapSchema.default({}),
+  version: z.literal(1).default(1),
+  light: pluginThemeModePackageSchema.default({ references: {}, tokens: {} }),
+  dark: pluginThemeModePackageSchema.default({ references: {}, tokens: {} }),
 });
 export type PluginThemePackage = z.infer<typeof pluginThemePackageSchema>;
 

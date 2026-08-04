@@ -11,11 +11,11 @@ function request(message) {
 
 window.addEventListener('message', (event) => {
   if (event.source !== window.parent || event.origin !== 'null') return;
-  if (event.data?.type === 'plugin-ui.theme') {
+  if (event.data?.type === 'plugin-ui.theme-changed') {
     for (const [name, value] of Object.entries(event.data.tokens || {})) {
       document.documentElement.style.setProperty(`--serpent-${name.slice(2)}`, value);
     }
-    const accent = event.data.tokens?.['--accent'] ?? 'unset';
+    const accent = event.data.tokens?.['--serpent-plugin-ref-accent'] ?? 'unset';
     status.textContent = `Theme: ${event.data.theme} · accent ${accent}`;
   }
   if (event.data?.type === 'plugin-ui.command-result' || event.data?.type === 'plugin-ui.storage.result') {

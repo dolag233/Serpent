@@ -54,17 +54,22 @@ export const pluginUiIframeMessageSchema = z.discriminatedUnion('type', [
 ]);
 export type PluginUiIframeMessage = z.infer<typeof pluginUiIframeMessageSchema>;
 
+const pluginUiThemeTokenNameSchema = z.string().regex(
+  /^--(?:ui-[a-z0-9-]+|serpent-plugin-(?:ref|token)-[a-z][a-z0-9.-]*)$/u,
+);
 const pluginUiThemeTokensSchema = z.record(
-  z.string().regex(/^--[a-z0-9-]+$/u),
-  z.string().max(512),
+  pluginUiThemeTokenNameSchema,
+  z.string().max(128),
 ).refine((tokens) => Object.keys(tokens).length <= 128);
 
 export const pluginUiHostMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
-    type: z.literal('plugin-ui.theme'),
+    type: z.literal('plugin-ui.theme-changed'),
     contributionId: contributionIdSchema,
     instanceId: instanceIdSchema,
     theme: z.enum(['light', 'dark']),
+    contrast: z.enum(['normal', 'high']),
+    revision: z.number().int().nonnegative(),
     tokens: pluginUiThemeTokensSchema,
   }),
   z.strictObject({

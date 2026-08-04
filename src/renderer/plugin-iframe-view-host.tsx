@@ -51,12 +51,14 @@ function postPluginThemeToIframe(
   input: {
     view: Pick<PluginIframeViewDescriptor, 'id' | 'pluginInstanceId' | 'themePackage'>;
     resolvedTheme: 'light' | 'dark';
+    revision: number;
   },
 ): void {
   postToPluginIframe(frame, buildPluginUiThemeHostMessage({
     contributionId: input.view.id,
     instanceId: input.view.pluginInstanceId,
     resolvedTheme: input.resolvedTheme,
+    revision: input.revision,
     hostTokens: readThemeTokens(),
     themePackage: input.view.themePackage,
   }));
@@ -75,7 +77,7 @@ export function PluginIframeViewHost({
   className?: string;
   title?: string;
 }): React.ReactNode {
-  const { resolved } = useTheme();
+  const { resolved, themeRevision } = useTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
   // The contribution id is part of the iframe key, so changing a view creates
@@ -83,8 +85,8 @@ export function PluginIframeViewHost({
 
   useEffect(() => {
     if (!readyRef.current) return;
-    postPluginThemeToIframe(frameRef.current, { view, resolvedTheme: resolved });
-  }, [resolved, view]);
+    postPluginThemeToIframe(frameRef.current, { view, resolvedTheme: resolved, revision: themeRevision });
+  }, [resolved, themeRevision, view]);
 
   useEffect(() => {
     const pluginOrigin = `serpent-plugin://${view.pluginId}`;
@@ -115,7 +117,7 @@ export function PluginIframeViewHost({
           return;
         }
         readyRef.current = true;
-        postPluginThemeToIframe(frame, { view, resolvedTheme: resolved });
+        postPluginThemeToIframe(frame, { view, resolvedTheme: resolved, revision: themeRevision });
         return;
       }
       if (!readyRef.current || pluginApi === undefined || libraryId === undefined) return;
@@ -184,7 +186,7 @@ export function PluginIframeViewHost({
       window.removeEventListener('message', onMessage);
       readyRef.current = false;
     };
-  }, [libraryId, pluginApi, resolved, view]);
+  }, [libraryId, pluginApi, resolved, themeRevision, view]);
 
   return (
     <iframe

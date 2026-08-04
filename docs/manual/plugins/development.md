@@ -183,6 +183,47 @@ Context Key，不能执行 JavaScript、I/O 或 API 调用。表达式支持 `&&
 快捷键 Contribution 只是默认 accelerator；菜单展示中央 Keybinding Registry 当前有效快捷键。当前没有稳定的 UI primitives
 （toggle、dropdown、slider 等）API，也没有动态 Registrar；不要在插件中依赖这些未发布能力。
 
+### 5.1 Theme Contract v1
+
+插件主题只能通过语义引用和插件自有颜色 token 接入 Host 主题，不得覆盖 Host 的任意 CSS 变量。主题贡献的 `version` 当前为 `1`：
+
+```jsonc
+"themes": [{
+  "id": "brand",
+  "version": 1,
+  "light": {
+    "references": {
+      "accent": "action.accent",
+      "panel": "surface.pane"
+    },
+    "tokens": {
+      "badge": "#c45a00"
+    }
+  },
+  "dark": {
+    "references": {
+      "accent": "action.accent",
+      "panel": "surface.pane"
+    },
+    "tokens": {
+      "badge": "#ff9a3c"
+    }
+  }
+}]
+```
+
+`references` 的值必须是 Host 公共语义名：`surface.canvas`、`surface.pane`、`surface.raised`、`surface.overlay`、
+`content.primary`、`content.secondary`、`content.tertiary`、`border.divider`、`border.control`、`border.focus`、
+`action.accent`、`state.info`、`state.success`、`state.warning`、`state.error`。`tokens` 只能是颜色值（十六进制、rgb/rgba、
+hsl/hsla、`transparent` 或 `currentColor`），每个模式最多 32 个。
+
+在 iframe 中，Host 会保留只读的 `--ui-*` 语义变量，并把插件映射为隔离变量：`references.accent` 变成
+`--serpent-plugin-ref-accent`，`tokens.badge` 变成 `--serpent-plugin-token-badge`。插件不得依赖 Host 内部旧变量（如
+`--accent`、`--canvas`），也不能用主题贡献注入字体、布局、URL、`calc()` 或任意 CSS。
+
+iframe 收到的主题消息类型是 `plugin-ui.theme-changed`，带有 `theme`、`contrast`、单调 `revision` 和 token map；插件应按 revision
+更新自身样式，并忽略旧 revision。主题变化包括用户切换亮/暗/系统主题以及强调色变化。
+
 ## 6. Contribution Context 与 Invocation Context
 
 Contribution Context 是 Host 发布的有界 UI 快照，只用于菜单/命令的 `when`、`enablement`、`checked`。当前字段包括：

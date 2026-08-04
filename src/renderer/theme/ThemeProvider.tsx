@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -28,6 +29,7 @@ type ThemeContextValue = {
   readonly preference: ThemePreference;
   readonly resolved: ResolvedTheme;
   readonly accentHex: string;
+  readonly themeRevision: number;
   readonly setTheme: (theme: ThemePreference) => void;
   readonly setAccentHex: (hex: string) => void;
 };
@@ -54,6 +56,8 @@ export function ThemeProvider({
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     readSystemTheme(),
   );
+  const [themeRevision, setThemeRevision] = useState(0);
+  const themeSignatureRef = useRef('');
 
   const resolved = useMemo(
     () => resolveEffectiveTheme(preference, systemTheme),
@@ -67,6 +71,13 @@ export function ThemeProvider({
   useEffect(() => {
     applyAccentColor(accentHex);
   }, [accentHex]);
+
+  useEffect(() => {
+    const signature = `${resolved}:${accentHex}`;
+    if (themeSignatureRef.current === signature) return;
+    themeSignatureRef.current = signature;
+    setThemeRevision((revision) => revision + 1);
+  }, [accentHex, resolved]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -94,8 +105,8 @@ export function ThemeProvider({
   );
 
   const value = useMemo(
-    () => ({ preference, resolved, accentHex, setTheme, setAccentHex }),
-    [accentHex, preference, resolved, setAccentHex, setTheme],
+    () => ({ preference, resolved, accentHex, themeRevision, setTheme, setAccentHex }),
+    [accentHex, preference, resolved, setAccentHex, setTheme, themeRevision],
   );
 
   return (
