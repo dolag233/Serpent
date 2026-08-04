@@ -1,12 +1,11 @@
 import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { useT } from '../i18n';
-import { Button, Select, Slider, TextField } from '../ui/primitives';
+import { Select, Slider } from '../ui/primitives';
 import { BackgroundImagePanel } from './BackgroundImageControls';
 import {
   BACKGROUND_DISPLAY_MODES,
   isSafeBackgroundImageDataUrl,
-  normalizeBackgroundColor,
   type BackgroundDisplayMode,
 } from './background-preferences';
 import { compressBackgroundImage, formatBackgroundBytes } from './background-image-compression';
@@ -26,6 +25,7 @@ const PROFILE_LABELS = {
 
 const BACKGROUND_MODE_LABELS = {
   cover: 'settings.backgroundModeCover',
+  fill: 'settings.backgroundModeFill',
   tile: 'settings.backgroundModeTile',
 } as const;
 
@@ -38,16 +38,6 @@ function asPreviewStyle(profile: ThemeProfileId): CSSProperties {
     '--theme-preview-accent': tokens['--ui-action-accent'],
     '--theme-preview-text': tokens['--ui-content-primary'],
   } as CSSProperties;
-}
-
-function colorInputValue(value: string): string {
-  if (/^#[0-9a-f]{6}$/iu.test(value)) return value;
-  if (/^#[0-9a-f]{8}$/iu.test(value)) return value.slice(0, 7);
-  if (/^#[0-9a-f]{3,4}$/iu.test(value)) {
-    const digits = value.slice(1, 4);
-    return `#${digits.split('').map((digit) => `${digit}${digit}`).join('')}`;
-  }
-  return '#000000';
 }
 
 export function ThemeProfilePicker(): ReactNode {
@@ -119,7 +109,7 @@ export function ThemeProfilePicker(): ReactNode {
 
 export function BackgroundSettings(): ReactNode {
   const t = useT();
-  const { backgroundPreferences, setBackgroundPreferences, resetBackgroundPreferences } = useTheme();
+  const { backgroundPreferences, setBackgroundPreferences } = useTheme();
   const [error, setError] = useState<string | null>(null);
   const [notices, setNotices] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -180,14 +170,13 @@ export function BackgroundSettings(): ReactNode {
     }
   }
 
+  // Reference the real backdrop token set so the stage previews exactly what
+  // the app shell renders (single source of truth in tokens.css).
   const previewStyle = {
-    backgroundColor: backgroundPreferences.color,
-    backgroundImage: backgroundPreferences.imageDataUrl
-      ? `linear-gradient(color-mix(in srgb, var(--ui-surface-canvas) calc(var(--ui-background-overlay-opacity) * 100%), transparent), color-mix(in srgb, var(--ui-surface-canvas) calc(var(--ui-background-overlay-opacity) * 100%), transparent)), url(${backgroundPreferences.imageDataUrl})`
-      : undefined,
-    backgroundPosition: 'center',
-    backgroundRepeat: backgroundPreferences.mode === 'tile' ? 'repeat' : 'no-repeat',
-    backgroundSize: backgroundPreferences.mode === 'tile' ? 'auto' : backgroundPreferences.mode,
+    backgroundImage: 'var(--ui-backdrop-image, none)',
+    backgroundPosition: 'var(--ui-backdrop-position, center)',
+    backgroundRepeat: 'var(--ui-backdrop-repeat, no-repeat)',
+    backgroundSize: 'var(--ui-backdrop-size, cover)',
   } satisfies CSSProperties;
 
   return (
@@ -203,16 +192,6 @@ export function BackgroundSettings(): ReactNode {
         previewStyle={previewStyle}
       />
       <div className="app-settings-background-row">
-        <TextField
-          aria-label={t('settings.backgroundColor')}
-          label={t('settings.backgroundColor')}
-          onChange={(event) => {
-            const color = normalizeBackgroundColor(event.target.value);
-            if (color) update({ color });
-          }}
-          type="color"
-          value={colorInputValue(backgroundPreferences.color)}
-        />
         <Select
           aria-label={t('settings.backgroundMode')}
           label={t('settings.backgroundMode')}
@@ -225,29 +204,18 @@ export function BackgroundSettings(): ReactNode {
         />
       </div>
       <div className="app-settings-background-opacity">
-        <div className="app-settings-row-copy">
-          <strong>{t('settings.backgroundOverlay')}</strong>
-          <span>{t('settings.backgroundOverlayHint')}</span>
-        </div>
         <Slider
-          aria-label={t('settings.backgroundOverlay')}
+          aria-label={t('settings.backgroundOpacity')}
+          label={t('settings.backgroundOpacity')}
           max={1}
           min={0}
-          onValueChange={(value) => update({ overlayOpacity: value })}
+          onValueChange={(value) => update({ imageOpacity: value })}
           showValue
           step={0.05}
-          value={backgroundPreferences.overlayOpacity}
-          valueText={`${Math.round(backgroundPreferences.overlayOpacity * 100)}%`}
+          value={backgroundPreferences.imageOpacity}
+          valueText={`${Math.round(backgroundPreferences.imageOpacity * 100)}%`}
         />
       </div>
-      <Button onClick={() => {
-        resetBackgroundPreferences();
-        setError(null);
-        setNotices([]);
-      }} variant="quiet">
-        {t('settings.backgroundReset')}
-      </Button>
-      <p className="app-settings-help-note">{t('settings.backgroundStorageHint')}</p>
     </div>
   );
 }

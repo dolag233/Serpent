@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BACKGROUND_PREFERENCES_KEY,
-  BACKGROUND_PREFERENCES_LEGACY_KEY,
+  BACKGROUND_PREFERENCES_LEGACY_KEYS,
   DEFAULT_BACKGROUND_PREFERENCES,
   MAX_BACKGROUND_IMAGE_DATA_URL_BYTES,
   backgroundPreferencesSchema,
@@ -11,7 +11,6 @@ import {
   isSafeBackgroundImageDataUrl,
   loadBackgroundPreferences,
   normalizeBackgroundPreferences,
-  normalizeBackgroundColor,
   parseBackgroundPreferences,
   saveBackgroundPreferences,
   validateBackgroundPreferences,
@@ -43,82 +42,153 @@ const IMAGE_SOURCE = {
   encodedBytes: 1_200_000,
 };
 
-describe('background preferences contract v2', () => {
+describe('background preferences contract v3', () => {
   it('defines the versioned defaults and strict schema', () => {
     expect(DEFAULT_BACKGROUND_PREFERENCES).toEqual({
-      version: 2,
-      color: 'transparent',
+      version: 3,
       imageDataUrl: null,
       imageSource: null,
       mode: 'cover',
-      overlayOpacity: 0.2,
+      imageOpacity: 0.8,
     });
     expect(backgroundPreferencesSchema.parse(DEFAULT_BACKGROUND_PREFERENCES)).toEqual(
       DEFAULT_BACKGROUND_PREFERENCES,
     );
     expect(validateBackgroundPreferences(DEFAULT_BACKGROUND_PREFERENCES)).toBe(true);
     expect(BACKGROUND_PREFERENCES_KEY).toBe(
+      'serpent.background-preferences.v3',
+    );
+    expect(BACKGROUND_PREFERENCES_LEGACY_KEYS).toEqual([
       'serpent.background-preferences.v2',
-    );
-    expect(BACKGROUND_PREFERENCES_LEGACY_KEY).toBe(
       'serpent.background-preferences.v1',
-    );
+    ]);
   });
 
-  it('normalizes safe colors and clamps opacity while rejecting unsafe colors', () => {
-    expect(normalizeBackgroundColor('  #ABCDEF80 ')).toBe('#abcdef80');
-    expect(normalizeBackgroundColor('transparent')).toBe('transparent');
-    expect(normalizeBackgroundColor('url(https://evil.invalid)')).toBeUndefined();
-
+  it('normalizes opacity and rejects legacy color input (color is gone in v3)', () => {
     expect(
       normalizeBackgroundPreferences({
-        version: 2,
-        color: ' #FA0 ',
+        version: 3,
         imageDataUrl: null,
         imageSource: null,
         mode: 'tile',
-        overlayOpacity: 2,
+        imageOpacity: 2,
       }),
-    ).toMatchObject({ color: '#fa0', mode: 'tile', overlayOpacity: 1 });
+    ).toMatchObject({ mode: 'tile', imageOpacity: 1 });
+
+    // A v2 record carrying a color field still normalizes without the color —
+    // no background color can be configured in v3.
+    const migrated = normalizeBackgroundPreferences({
+      version: 2,
+      color: ' #FA0 ',
+      imageDataUrl: null,
+      imageSource: null,
+      mode: 'cover',
+      overlayOpacity: 0.2,
+    });
+    expect(migrated).not.toHaveProperty('color');
+    expect(migrated.mode).toBe('cover');
+    expect(migrated.imageOpacity).toBe(0.8);
   });
 
-  it('falls back to cover when a persisted mode is no longer supported', () => {
-    // `contain` was removed (it leaves color edges); old records normalize
-    // to the fill-and-crop default instead of being discarded.
+  it('inverts v2 overlay opacity to image opacity and keeps supported modes', () => {
+    // `overlayOpacity` 0.2 (veil) becomes `imageOpacity` 0.8 — the same
+    // rendered wallpaper, opposite semantics. `cover` stays cover.
     expect(
       normalizeBackgroundPreferences({
         version: 2,
         color: '#000',
+        imageDataUrl: null,
+        imageSource: null,
+        mode: 'cover',
+        overlayOpacity: 0.2,
+      }),
+    ).toMatchObject({ mode: 'cover', imageOpacity: 0.8 });
+
+    expect(
+      normalizeBackgroundPreferences({
+        version: 2,
+        color: '#000',
+        imageDataUrl: null,
+        imageSource: null,
+        mode: 'cover',
+        overlayOpacity: 0.75,
+      }),
+    ).toMatchObject({ mode: 'cover', imageOpacity: 0.25 });
+
+    expect(
+      normalizeBackgroundPreferences({
+        version: 2,
+        color: '#000',
+        imageDataUrl: null,
+        imageSource: null,
+        mode: 'tile',
+        overlayOpacity: 0.5,
+      }),
+    ).toMatchObject({ mode: 'tile', imageOpacity: 0.5 });
+  });
+
+  it('falls back to cover when a persisted mode is no longer supported', () => {
+    // `contain` (color edges) was removed; old records normalize to the
+    // proportional cover default instead of being discarded. `fill` (stretch)
+    // stays valid — it is a first-class mode.
+    expect(
+      normalizeBackgroundPreferences({
+        version: 2,
         imageDataUrl: null,
         imageSource: null,
         mode: 'contain',
         overlayOpacity: 0.5,
       }).mode,
     ).toBe('cover');
+
+    expect(
+      normalizeBackgroundPreferences({
+        version: 3,
+        imageDataUrl: null,
+        imageSource: null,
+        mode: 'fill',
+        imageOpacity: 0.8,
+      }).mode,
+    ).toBe('fill');
   });
 
   it('normalizes image provenance and rejects malformed records', () => {
     expect(
       normalizeBackgroundPreferences({
-        version: 2,
-        color: '#000',
+        version: 3,
         imageDataUrl: PNG_DATA_URL,
         imageSource: IMAGE_SOURCE,
-        mode: 'cover',
-        overlayOpacity: 0.2,
+        mode: 'fill',
+        imageOpacity: 0.8,
       }).imageSource,
     ).toEqual(IMAGE_SOURCE);
 
     const bad = normalizeBackgroundPreferences({
-      version: 2,
-      color: '#000',
+      version: 3,
       imageDataUrl: PNG_DATA_URL,
       imageSource: { ...IMAGE_SOURCE, width: 0, fileName: '' },
-      mode: 'cover',
-      overlayOpacity: 0.2,
+      mode: 'fill',
+      imageOpacity: 0.8,
     });
     expect(bad.imageSource).toBeNull();
     expect(bad.imageDataUrl).toBe(PNG_DATA_URL);
+  });
+
+  it('accepts high-resolution passthrough sources (no 16384 cap)', () => {
+    // Regression: passed-through files keep their natural pixel size, and a
+    // hard cap used to reject legitimate wallpapers during strict save — the
+    // inverted "normal file fails, oversized file succeeds" report.
+    const source = { ...IMAGE_SOURCE, width: 30_000, height: 20_000 };
+    const preferences = {
+      version: 3 as const,
+      imageDataUrl: PNG_DATA_URL,
+      imageSource: source,
+      mode: 'fill' as const,
+      imageOpacity: 0.8,
+    };
+    expect(backgroundPreferencesSchema.parse(preferences)).toEqual(preferences);
+    expect(validateBackgroundPreferences(preferences)).toBe(true);
+    expect(saveBackgroundPreferences(preferences, memoryStorage())).toBe(true);
   });
 
   it('accepts only bounded base64 raster image data URLs', () => {
@@ -133,34 +203,58 @@ describe('background preferences contract v2', () => {
     const oversized = `data:image/png;base64,${'A'.repeat(MAX_BACKGROUND_IMAGE_DATA_URL_BYTES)}`;
     expect(isSafeBackgroundImageDataUrl(oversized)).toBe(false);
     expect(normalizeBackgroundPreferences({ imageDataUrl: oversized }).imageDataUrl).toBeNull();
+    expect(MAX_BACKGROUND_IMAGE_DATA_URL_BYTES).toBe(4 * 1024 * 1024);
   });
 
   it('round-trips normalized preferences through storage', () => {
     const storage = memoryStorage();
     const preferences = {
-      version: 2 as const,
-      color: '#15202b',
+      version: 3 as const,
       imageDataUrl: PNG_DATA_URL,
       imageSource: IMAGE_SOURCE,
       mode: 'tile' as const,
-      overlayOpacity: 0.65,
+      imageOpacity: 0.65,
     };
 
     expect(saveBackgroundPreferences(preferences, storage)).toBe(true);
-    expect(storage.memory.get(BACKGROUND_PREFERENCES_KEY)).toContain('"version":2');
+    expect(storage.memory.get(BACKGROUND_PREFERENCES_KEY)).toContain('"version":3');
     expect(loadBackgroundPreferences(storage)).toEqual(preferences);
   });
 
-  it('migrates a v1 record to the v2 key and drops the legacy entry', () => {
+  it('migrates a v2 record to the v3 key and drops the legacy entry', () => {
     const storage = memoryStorage();
     storage.memory.set(
-      BACKGROUND_PREFERENCES_LEGACY_KEY,
+      BACKGROUND_PREFERENCES_LEGACY_KEYS[0]!,
+      JSON.stringify({
+        version: 2,
+        color: '#102030',
+        imageDataUrl: PNG_DATA_URL,
+        imageSource: IMAGE_SOURCE,
+        mode: 'cover',
+        overlayOpacity: 0.4,
+      }),
+    );
+
+    const loaded = loadBackgroundPreferences(storage);
+    expect(loaded).toMatchObject({
+      version: 3,
+      imageDataUrl: PNG_DATA_URL,
+      imageSource: IMAGE_SOURCE,
+      mode: 'cover',
+      imageOpacity: 0.6,
+    });
+    expect(storage.memory.has(BACKGROUND_PREFERENCES_KEY)).toBe(true);
+    expect(storage.memory.has(BACKGROUND_PREFERENCES_LEGACY_KEYS[0]!)).toBe(false);
+  });
+
+  it('migrates a v1 record (no provenance, contain mode) through v2 semantics', () => {
+    const storage = memoryStorage();
+    storage.memory.set(
+      BACKGROUND_PREFERENCES_LEGACY_KEYS[1]!,
       JSON.stringify({
         version: 1,
         color: '#102030',
         imageDataUrl: PNG_DATA_URL,
-        // v1 allowed `contain`, which no longer exists in v2: the migration
-        // normalizes it to the fill-and-crop default.
         mode: 'contain',
         overlayOpacity: 0.4,
       }),
@@ -168,15 +262,14 @@ describe('background preferences contract v2', () => {
 
     const loaded = loadBackgroundPreferences(storage);
     expect(loaded).toMatchObject({
-      version: 2,
-      color: '#102030',
+      version: 3,
       imageDataUrl: PNG_DATA_URL,
       mode: 'cover',
-      overlayOpacity: 0.4,
+      imageOpacity: 0.6,
       imageSource: null,
     });
     expect(storage.memory.has(BACKGROUND_PREFERENCES_KEY)).toBe(true);
-    expect(storage.memory.has(BACKGROUND_PREFERENCES_LEGACY_KEY)).toBe(false);
+    expect(storage.memory.has(BACKGROUND_PREFERENCES_LEGACY_KEYS[1]!)).toBe(false);
   });
 
   it('safely falls back for missing, malformed, invalid, or unreadable storage', () => {
@@ -188,10 +281,9 @@ describe('background preferences contract v2', () => {
 
     storage.memory.set(
       BACKGROUND_PREFERENCES_KEY,
-      JSON.stringify({ version: 2, color: 'var(--secret)', imageDataUrl: PNG_DATA_URL }),
+      JSON.stringify({ version: 3, imageDataUrl: PNG_DATA_URL }),
     );
     expect(loadBackgroundPreferences(storage)).toMatchObject({
-      color: 'transparent',
       imageDataUrl: PNG_DATA_URL,
     });
 
@@ -202,9 +294,10 @@ describe('background preferences contract v2', () => {
 
   it('reports strict validation failures without throwing', () => {
     expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, mode: 'stretch' })).toBe(false);
-    expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, overlayOpacity: 1.1 })).toBe(false);
+    expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, imageOpacity: 1.1 })).toBe(false);
     expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, imageDataUrl: 'data:image/png,raw' })).toBe(false);
     expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, imageSource: { ...IMAGE_SOURCE, width: -1 } })).toBe(false);
+    expect(validateBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, color: '#fff' })).toBe(false);
     expect(parseBackgroundPreferences({ ...DEFAULT_BACKGROUND_PREFERENCES, mode: 'stretch' }).success).toBe(false);
   });
 
@@ -218,32 +311,68 @@ describe('background preferences contract v2', () => {
     expect(storage.memory.has(BACKGROUND_PREFERENCES_KEY)).toBe(false);
   });
 
-  it('applies only validated CSS variables and maps tile mode to repeat', () => {
+  it('applies only validated CSS variables and maps cover/fill/tile to sizes', () => {
     const values = new Map<string, string>();
+    const removed = new Set<string>();
     const previous = (globalThis as { document?: Document }).document;
     (globalThis as { document?: Document }).document = {
       documentElement: {
         style: {
           setProperty: (name: string, value: string) => values.set(name, value),
+          removeProperty: (name: string) => removed.add(name),
         },
       },
     } as unknown as Document;
 
     try {
       applyBackgroundPreferences({
-        version: 2,
-        color: '#102030',
+        version: 3,
         imageDataUrl: PNG_DATA_URL,
         imageSource: null,
         mode: 'tile',
-        overlayOpacity: 0.75,
+        imageOpacity: 0.75,
       });
-      expect(values.get('--ui-background-color')).toBe('#102030');
+      expect(removed.has('--ui-background-color')).toBe(true);
       expect(values.get('--ui-background-image')).toBe(`url(${PNG_DATA_URL})`);
-    expect(values.get('--ui-background-overlay-opacity')).toBe('0.75');
-      expect(values.get('--ui-background-surface-opacity')).toBe('84%');
+      expect(values.get('--ui-background-image-opacity')).toBe('0.75');
+      // A configured wallpaper shows at the exact imageOpacity — the workspace
+      // paints no veil of its own (preview stage and app render identically).
+      expect(values.get('--ui-background-surface-opacity')).toBe('0%');
       expect(values.get('--ui-background-size')).toBe('auto');
       expect(values.get('--ui-background-repeat')).toBe('repeat');
+
+      values.clear();
+      applyBackgroundPreferences({
+        version: 3,
+        imageDataUrl: PNG_DATA_URL,
+        imageSource: null,
+        mode: 'fill',
+        imageOpacity: 1,
+      });
+      expect(values.get('--ui-background-size')).toBe('100% 100%');
+      expect(values.get('--ui-background-repeat')).toBe('no-repeat');
+
+      values.clear();
+      applyBackgroundPreferences({
+        version: 3,
+        imageDataUrl: PNG_DATA_URL,
+        imageSource: null,
+        mode: 'cover',
+        imageOpacity: 1,
+      });
+      expect(values.get('--ui-background-size')).toBe('cover');
+      expect(values.get('--ui-background-repeat')).toBe('no-repeat');
+
+      values.clear();
+      applyBackgroundPreferences({
+        version: 3,
+        imageDataUrl: null,
+        imageSource: null,
+        mode: 'cover',
+        imageOpacity: 0.8,
+      });
+      expect(values.get('--ui-background-image')).toBe('none');
+      expect(values.get('--ui-background-surface-opacity')).toBe('100%');
     } finally {
       if (previous === undefined) delete (globalThis as { document?: Document }).document;
       else (globalThis as { document?: Document }).document = previous;

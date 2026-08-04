@@ -55,19 +55,19 @@ describe('backgroundImageEncodeAttempts', () => {
     const attempts = [...backgroundImageEncodeAttempts(5120, 2880)];
     const firstStep = attempts.slice(0, BACKGROUND_IMAGE_ENCODE_QUALITIES.length);
     expect(firstStep.map((attempt) => attempt.quality)).toEqual([...BACKGROUND_IMAGE_ENCODE_QUALITIES]);
-    expect(firstStep.every((attempt) => attempt.width === 2560 && attempt.height === 1440)).toBe(true);
-    expect(attempts[BACKGROUND_IMAGE_ENCODE_QUALITIES.length]!.width).toBeLessThan(2560);
+    expect(firstStep.every((attempt) => attempt.width === 4096 && attempt.height === 2304)).toBe(true);
+    expect(attempts[BACKGROUND_IMAGE_ENCODE_QUALITIES.length]!.width).toBeLessThan(4096);
   });
 
   it('stops once the canvas hits the minimum dimension', () => {
     // Square input: width and height hit the floor in the same step, so the
-    // width sequence runs the full 9 downscale steps (2560 → … → 320).
+    // width sequence runs the full 10 downscale steps (4096 → … → 320).
     const attempts = [...backgroundImageEncodeAttempts(8000, 8000)];
     const widths = attempts.map((attempt) => attempt.width);
-    expect(widths[0]).toBe(2560);
+    expect(widths[0]).toBe(4096);
     expect(Math.min(...widths)).toBe(BACKGROUND_IMAGE_MIN_DIMENSION);
-    expect(new Set(widths).size).toBe(9);
-    expect(attempts.length).toBe(9 * BACKGROUND_IMAGE_ENCODE_QUALITIES.length);
+    expect(new Set(widths).size).toBe(10);
+    expect(attempts.length).toBe(10 * BACKGROUND_IMAGE_ENCODE_QUALITIES.length);
   });
 });
 
@@ -117,6 +117,24 @@ describe('compressBackgroundImage', () => {
 
     expect(encode.mock.calls.length).toBeGreaterThan(1);
     expect(result.width).toBe(320);
+  });
+
+  it('does not claim compression when every encode attempt failed', async () => {
+    // Regression: a fully-failing codec used to report `compressed: true`
+    // with the original payload ("compressed to 8 MB (was 8 MB)").
+    const encode = vi
+      .fn<BackgroundImageCodec['encode']>()
+      .mockRejectedValue(new Error('codec broken'));
+    const file = makeFile('x.png', 'image/png', 100_000);
+    const result = await compressBackgroundImage(file, 512, {
+      decode: passThroughCodec().decode,
+      encode,
+    });
+
+    expect(encode).toHaveBeenCalled();
+    expect(result.compressed).toBe(false);
+    expect(result.animationLost).toBe(false);
+    expect(result.width).toBe(1920); // original passthrough dimensions
   });
 
   it('flags animated GIFs that had to be re-encoded', async () => {
@@ -181,6 +199,6 @@ describe('formatBackgroundBytes', () => {
 describe('browser codec contract', () => {
   it('exposes the default codec referenced by compressBackgroundImage', () => {
     expect(BACKGROUND_IMAGE_DOWNSCALE_FACTOR).toBe(0.75);
-    expect(BACKGROUND_IMAGE_MAX_DIMENSION).toBe(2560);
+    expect(BACKGROUND_IMAGE_MAX_DIMENSION).toBe(4096);
   });
 });

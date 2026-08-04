@@ -74,3 +74,9 @@
 
 - 上一会话修复：`npm start` 卡在编译 = `node_modules` 与 lockfile 不同步（`quickjs-emscripten` 缺失导致 plugin host 构建失败，Forge 不退出继续扫 renderer 依赖）。已 `npm install` 补装。
 - 本机 Node 为 v26.0.0，项目要求 `>=24 <25`（`.nvmrc` 24.15.0）——构建可用但有 EBADENGINE 警告，建议切回 24.x。
+
+## 勘误（2026-08-04 修复轮追加，见 `2026-08-04-background-image-fixes-development-log.md`）
+
+1. **`.workspace:has` 让位规则在提交 `e68af8a` 中并未落地，且不需要**。上文「中间面板背景图实现说明」所称 `.workspace:has(.workspace-viewer, .plugin-sidebar-view-panel)` 让位为透明在该提交中不存在（树与历史均无此规则，`git log -S "workspace:has"` 为空）；实际机制是面板透明化（`.workspace-viewer`/`.plugin-sidebar-view-panel` 均为 `background: transparent`）+ 全屏自绘，背景图经 workspace **单层** 84% veil 显示，不存在双重遮罩叠乘。修复轮曾误按本段描述补上该规则，但会让位为不透明纯色导致面板打开时背景消失，已撤销（见 `2026-08-04-background-image-fixes-development-log.md`）。
+2. **「Windows 本机 typecheck」为笔误**：本会话在 macOS 上运行，Windows 属显式未验证项，不得写作「Windows 本机」。
+3. **4 MiB 上限与 16384 像素上限引发「正常大小替换失败、超大文件成功」**：`imageSource` schema 的 width/height 上限 16384 在直通保存时拒绝高分辨率正常文件；压缩路径输出 ≤ 2560 反而总能通过。上限已移除、预算已提至 5 MiB。

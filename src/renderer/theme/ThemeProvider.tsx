@@ -11,8 +11,6 @@ import {
 
 import {
   applyBackgroundPreferences,
-  clearBackgroundPreferences,
-  DEFAULT_BACKGROUND_PREFERENCES,
   loadBackgroundPreferences,
   saveBackgroundPreferences,
   type BackgroundPreferences,
@@ -64,7 +62,6 @@ type ThemeContextValue = {
   readonly resetCustomTheme: () => void;
   readonly setThemeProfile: (profile: ThemeProfileId) => void;
   readonly setBackgroundPreferences: (preferences: BackgroundPreferences) => boolean;
-  readonly resetBackgroundPreferences: () => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -188,12 +185,6 @@ export function ThemeProvider({
     return saved;
   }, [storage]);
 
-  const resetBackgroundPreferences = useCallback(() => {
-    clearBackgroundPreferences(storage);
-    const next = DEFAULT_BACKGROUND_PREFERENCES;
-    setBackgroundPreferencesState(next);
-  }, [storage]);
-
   const value = useMemo(
     () => ({
       preference,
@@ -209,9 +200,8 @@ export function ThemeProvider({
       resetCustomTheme,
       setThemeProfile,
       setBackgroundPreferences,
-      resetBackgroundPreferences,
     }),
-    [accentHex, backgroundPreferences, customTheme, preference, resetBackgroundPreferences, resetCustomTheme, resolved, setAccentHex, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
+    [accentHex, backgroundPreferences, customTheme, preference, resetCustomTheme, resolved, setAccentHex, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
   );
 
   return (

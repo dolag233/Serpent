@@ -53,7 +53,7 @@ export const UI_CSS_VAR = {
   background: {
     color: '--ui-background-color',
     image: '--ui-background-image',
-    overlayOpacity: '--ui-background-overlay-opacity',
+    imageOpacity: '--ui-background-image-opacity',
     surfaceOpacity: '--ui-background-surface-opacity',
     size: '--ui-background-size',
     position: '--ui-background-position',

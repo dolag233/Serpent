@@ -16,8 +16,13 @@ import {
   utf8ByteLength,
 } from './background-preferences';
 
-/** Longest edge a compressed wallpaper is allowed to keep. */
-export const BACKGROUND_IMAGE_MAX_DIMENSION = 2560;
+/**
+ * Longest edge a compressed wallpaper is allowed to keep. Fidelity-first:
+ * start at this size (well above typical viewports) and only shrink after the
+ * quality ladder is exhausted, so a large source compresses to near the
+ * target budget instead of being scaled to a tiny preview.
+ */
+export const BACKGROUND_IMAGE_MAX_DIMENSION = 4096;
 /** Quality ladder tried before the canvas is downscaled another step. */
 export const BACKGROUND_IMAGE_ENCODE_QUALITIES = [0.9, 0.8, 0.65, 0.5, 0.35] as const;
 /** Canvas dimensions shrink by this factor after the quality ladder is exhausted. */
@@ -33,7 +38,7 @@ export function formatBackgroundBytes(bytes: number): string {
 }
 
 export interface BackgroundImageCompressionResult {
-  /** Final data URL ready for storage; never exceeds the target budget. */
+  /** Final data URL ready for storage; within budget unless every encode attempt failed. */
   dataUrl: string;
   /** Pixel dimensions of the stored image. */
   width: number;
@@ -151,10 +156,12 @@ export async function compressBackgroundImage(
 
   const attempts = backgroundImageEncodeAttempts(decoded.width, decoded.height);
   let last: DecodedBackgroundImage = decoded;
+  let reencoded = false;
   for (const attempt of attempts) {
     const encoded = await tryEncode(codec, decoded.dataUrl, attempt);
     if (!encoded) continue;
     last = encoded;
+    reencoded = true;
     if (utf8ByteLength(encoded.dataUrl) <= maxBytes) {
       return {
         dataUrl: encoded.dataUrl,
@@ -168,14 +175,17 @@ export async function compressBackgroundImage(
     }
   }
 
+  // Safety net: return the best attempt even if it still exceeds the budget,
+  // but only claim compression when an encode actually succeeded — otherwise
+  // the UI would report "compressed to 8 MB (was 8 MB)" for a passthrough.
   return {
     dataUrl: last.dataUrl,
     width: last.width,
     height: last.height,
     originalBytes: file.size,
     encodedBytes: utf8ByteLength(last.dataUrl),
-    compressed: true,
-    animationLost: file.type === 'image/gif',
+    compressed: reencoded,
+    animationLost: reencoded && file.type === 'image/gif',
   };
 }
 
