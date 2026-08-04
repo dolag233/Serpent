@@ -8,6 +8,7 @@
 
 - 新增 `ShellSurface`、`PaneSurface`、`CardSurface`、`ViewerSurface`，只负责结构语义、隔离和 token 化基础边界，不吞并领域状态。
 - FolderCard、InspectorPanel、AssetPreviewModal 已通过 adapter 使用共享 surface；资产/文件夹/媒体的业务行为保持独立。
+- NavigationSidebar、CanvasToolbarControls、WorkspaceToolsOverflow 已迁移到共享 Pane/Shell/Menu surface；原有导航、命令和关闭行为保持独立。
 - 新增版本化 `contributes.ui` descriptor：settings group、menu/submenu、notice、activity、job；schema 拒绝函数、HTML、CSS、未知字段和超限节点。
 - descriptor 解析提供字段级诊断；Host renderer 复用 `Field`、`Switch`、`Select`、`Slider`、`SettingsCard`、`MenuSurface`、`Notice`、`Activity`、`StatusBadge`。
 - descriptor 已接入插件设置页的分组渲染和实际右键菜单：菜单命令解析到已注册 command contribution 后仍走现有 invocation/context/权限路径。

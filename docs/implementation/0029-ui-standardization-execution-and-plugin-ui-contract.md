@@ -535,14 +535,14 @@ UI 变化不能只跑 snapshot。涉及 Renderer/Preload/Main/Worker、自定义
 
 ## 12. 当前状态与下一步
 
-已有 `src/renderer/ui/` foundation、tokens、layers、Button/TextField/Select/Switch/Slider/Progress/Tooltip、Dialog/Menu/Popover/Settings/Notice/Activity patterns，以及版本化用户主题覆盖和 `contributes.themes` iframe token bridge。阶段 1 的 Theme Contract、阶段 2 的 primitive/feedback 基础、Shell/Pane/Card/Viewer domain surfaces 和 Plugin UI Contract v1 descriptor 基础已落地；descriptor 已接入设置分组和插件菜单的实际 Host 路径，但 Job/Notice 的运行时声明入口、全量领域迁移、E2E/Computer Use 仍未完成。
+已有 `src/renderer/ui/` foundation、tokens、layers、Button/TextField/Select/Switch/Slider/Progress/Tooltip、Dialog/Menu/Popover/Settings/Notice/Activity patterns，以及版本化用户主题覆盖和 `contributes.themes` iframe token bridge。阶段 1 的 Theme Contract、阶段 2 的 primitive/feedback 基础、Shell/Pane/Card/Viewer domain surfaces 和 Plugin UI Contract v1 descriptor 基础已落地；descriptor 已接入设置分组和插件菜单的实际 Host 路径，Navigation/Canvas/Workspace overflow 也已迁移到共享 surface/pattern，但 Job/Notice 的运行时声明入口、更多媒体 surface、E2E/Computer Use 仍未完成。
 
 实施顺序：
 
 1. 提交本设计文档并在 Beads 中创建阶段子工单；
 2. 完成 Token/Theme Contract 和 primitive 状态/ARIA 测试；（已完成基础增量，提交 `f46b2e0`、`a536f97`）
 3. 迁移 Menu/Dialog/Settings/Notice/Activity 等高复用 pattern；（已完成基础实现，仍需旧 CSS/class 审计）
-4. 迁移应用领域 surface；（已落地 Shell/Pane/Card/Viewer 基础迁移，Canvas/导航/媒体领域仍在推进）
+4. 迁移应用领域 surface；（已落地 FolderCard/Inspector/Viewer、Navigation/Canvas/Workspace overflow 基础迁移，更多媒体控制仍在推进，提交 `8cab211`、`0c87b2f`）
 5. 实现并发布 Plugin UI Contract v1；（descriptor、Host renderer、manifest/IPC、设置分组和菜单接入已落地；运行时 Job/Notice 入口仍在推进）
 6. 由独立审查和 Computer Use/packaged QA 完成最终验收。
 
