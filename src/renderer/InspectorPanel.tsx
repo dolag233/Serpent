@@ -46,6 +46,7 @@ import { PluginInspectorSections } from "./plugin-inspector-sections";
 import { PluginInspectorViews } from "./plugin-inspector-views";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { splitFilenameForDisplay } from "./filename-display";
+import { PaneSurface } from "./ui/surfaces";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -873,7 +874,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   }, [selectedAsset, selectedAssets]);
 
   return (
-    <aside
+    <PaneSurface
       className="inspector-pane"
       data-inspector-card-feel={inspectorCardFeelEnabled ? "on" : "off"}
     >
@@ -1437,6 +1438,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
           <p>{t("inspector.openLibraryHint")}</p>
         </div>
       )}
-    </aside>
+    </PaneSurface>
   );
 }

@@ -659,6 +659,39 @@ textarea.ui-field__control {
   z-index: var(--ui-layer-modal);
 }
 
+/* Structural surfaces. Domain classes may add layout and visual treatment;
+ * these rules only establish shared box semantics and tokenized boundaries. */
+.ui-surface-shell,
+.ui-surface-pane,
+.ui-surface-card,
+.ui-surface-viewer {
+  box-sizing: border-box;
+}
+
+.ui-surface-shell,
+.ui-surface-pane,
+.ui-surface-viewer {
+  min-width: 0;
+  min-height: 0;
+}
+
+.ui-surface-shell {
+  position: relative;
+}
+
+.ui-surface-pane {
+  isolation: isolate;
+}
+
+.ui-surface-card {
+  min-width: 0;
+}
+
+.ui-surface-viewer {
+  position: relative;
+  isolation: isolate;
+}
+
 .ui-menu-surface {
   display: flex;
   min-width: 180px;

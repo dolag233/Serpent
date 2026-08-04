@@ -55,6 +55,7 @@ import {
 } from "./viewer-display-transform";
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
+import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -700,7 +701,7 @@ export const AssetPreviewModal = forwardRef<
   }
 
   return (
-    <section
+    <ViewerSurface
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}`}
       onContextMenu={(event) => {
@@ -716,7 +717,7 @@ export const AssetPreviewModal = forwardRef<
       role="region"
       tabIndex={-1}
     >
-      <div className="preview-modal">
+      <ShellSurface className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
         <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}`}>
           {primarySurface === "loading" && !placeholderUrl ? (
@@ -986,7 +987,7 @@ export const AssetPreviewModal = forwardRef<
             position={viewerContextMenu}
           />
         ) : null}
-      </div>
-    </section>
+      </ShellSurface>
+    </ViewerSurface>
   );
 });

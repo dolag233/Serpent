@@ -2,6 +2,7 @@ import { Icon } from "./Icons";
 import { coverSrc } from "./asset-card-hover-preview";
 import { useT } from "./i18n";
 import type { FolderBrowseEntry } from "../shared/asset-types";
+import { CardSurface } from "./ui/surfaces";
 
 interface FolderCardProps {
   entry: FolderBrowseEntry;
@@ -51,7 +52,8 @@ export function FolderCard({
   const coverArtifactId = entry.coverArtifactIds[0] ?? null;
 
   return (
-    <button
+    <CardSurface
+      as="button"
       aria-pressed={selected}
       className={`folder-card${selected ? " is-selected" : ""}${dropActive ? " is-drop-target" : ""}${trashed ? " is-trashed-folder" : ""}`}
       data-folder-id={entry.folderId}
@@ -124,6 +126,6 @@ export function FolderCard({
           {t("common.itemCount", { count: entry.recursiveAssetCount })}
         </span>
       </div>
-    </button>
+    </CardSurface>
   );
 }
