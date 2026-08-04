@@ -14,6 +14,7 @@ import {
   normalizeProgressValue,
   Progress,
   Select,
+  Slider,
   Switch,
   TextField,
   Tooltip,
@@ -108,6 +109,15 @@ test('primitives emit semantic control roles and accessible relationships', () =
       max: 2,
       showValue: true,
     }),
+    createElement(Slider, {
+      id: 'opacity',
+      label: 'Opacity',
+      min: 0,
+      max: 100,
+      value: 50,
+      showValue: true,
+      valueText: '50%',
+    }),
   ));
 
   expect(html).toContain('type="button"');
@@ -118,4 +128,7 @@ test('primitives emit semantic control roles and accessible relationships', () =
   expect(html).toContain('data-hover-tip="Helpful field description"');
   expect(html).toContain('role="progressbar"');
   expect(html).toContain('aria-valuenow="1"');
+  expect(html).toContain('type="range"');
+  expect(html).toContain('aria-valuetext="50%"');
+  expect(html).toContain('<output');
 });

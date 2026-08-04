@@ -304,6 +304,40 @@ textarea.ui-field__control {
   appearance: none;
 }
 
+.ui-slider {
+  display: flex;
+  min-width: 140px;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.ui-slider__control {
+  width: 100%;
+  min-width: 0;
+  height: var(--ui-size-control-md);
+  margin: 0;
+  accent-color: var(--ui-action-accent);
+  cursor: pointer;
+}
+
+.ui-slider__control:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: 2px;
+}
+
+.ui-slider__control:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.ui-slider__value {
+  min-width: 3ch;
+  color: var(--ui-content-secondary);
+  font-size: var(--ui-font-size-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .ui-progress {
   display: flex;
   min-width: 0;
