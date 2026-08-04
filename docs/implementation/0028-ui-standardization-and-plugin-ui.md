@@ -1,10 +1,10 @@
 # 0028：UI 标准化与插件结构化 UI 设计分析
 
-状态：阶段 1（内部 UI library 基础层）实施中
+状态：设计基线；阶段 1 已有基础层实现，后续执行以 [0029 执行方案与插件原生 UI 契约](0029-ui-standardization-execution-and-plugin-ui-contract.md) 为准
 
 日期：2026-08-04
 
-关联工单：`Serpent-nzxh`、`Serpent-7nah`、`Serpent-wjm5`
+关联工单：`Serpent-nzxh`、`Serpent-7nah`、`Serpent-wjm5`、`Serpent-ex46`
 
 ## 1. 目的与结论
 
