@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 
 import type {
+  PluginManagerCommandContribution,
+  PluginManagerUiDescriptorContribution,
   PluginHostMenuTarget,
   SerpentPluginManagerApi,
 } from "../shared/plugin-manager-api";
+import type { PluginUiMenuItem } from "../shared/plugin-ui-descriptor";
 import {
   evaluatePluginContextExpression,
   createPluginInvocationContext,
@@ -20,6 +23,13 @@ const pluginMenuPlatform: CommandPlatform = typeof navigator !== "undefined"
   && /Mac/u.test(navigator.userAgent)
   ? "mac"
   : "windows";
+
+const DESCRIPTOR_MENU_KEY_BY_TARGET: Record<PluginHostMenuTarget, "asset" | "folder" | "collection" | "workspace"> = {
+  "menus.asset": "asset",
+  "menus.folder": "folder",
+  "menus.collection": "collection",
+  "menus.workspace": "workspace",
+};
 
 export type PluginMenuDescriptor = {
   id: string;
@@ -100,6 +110,63 @@ export type PluginMenuHostPlacement = {
 export type BuildPluginMenuDescriptorsOptions = {
   onPlacementDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void;
 };
+
+function buildDescriptorMenuItems(
+  contribution: PluginManagerUiDescriptorContribution,
+  items: readonly PluginUiMenuItem[],
+  commandIds: ReadonlyMap<string, PluginManagerCommandContribution>,
+  context: PluginContributionContext | undefined,
+  target: PluginHostMenuTarget,
+  path: readonly number[] = [],
+): PluginMenuDescriptor[] {
+  const descriptors: PluginMenuDescriptor[] = [];
+  for (const [index, item] of items.entries()) {
+    const conditions = resolvePluginContributionConditions(item, context);
+    if (!conditions.visible) continue;
+    const itemId = `${contribution.id}.${target}.${item.id ?? item.command ?? `item-${[...path, index].join("-")}`}`;
+    const commandContribution = item.command === undefined
+      ? undefined
+      : commandIds.get(`${contribution.pluginInstanceId}:${item.command}`);
+    const children = item.submenu === undefined
+      ? []
+      : buildDescriptorMenuItems(contribution, item.submenu, commandIds, context, target, [...path, index]);
+    if (commandContribution === undefined && children.length === 0) continue;
+    descriptors.push({
+      id: itemId,
+      label: item.title ?? item.command ?? item.id ?? itemId,
+      contributionId: commandContribution?.id ?? itemId,
+      ...(item.command === undefined ? {} : { commandId: item.command }),
+      pluginId: contribution.pluginId,
+      ...(item.group === undefined ? {} : { group: item.group }),
+      ...(item.before === undefined ? {} : { before: item.before }),
+      ...(item.after === undefined ? {} : { after: item.after }),
+      ...(item.first === undefined ? {} : { first: item.first }),
+      ...(item.last === undefined ? {} : { last: item.last }),
+      ...(item.shortcut === undefined ? {} : { shortcut: item.shortcut }),
+      disabled: conditions.disabled,
+      ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
+      children,
+    });
+  }
+  return descriptors;
+}
+
+/** Convert one semantic descriptor surface into the existing executable menu model. */
+export function buildPluginUiMenuDescriptors(
+  contribution: PluginManagerUiDescriptorContribution,
+  target: PluginHostMenuTarget,
+  commandContributions: readonly PluginManagerCommandContribution[],
+  context?: PluginContributionContext,
+): PluginMenuDescriptor[] {
+  const key = DESCRIPTOR_MENU_KEY_BY_TARGET[target];
+  const items = contribution.descriptor.menus?.[key];
+  if (items === undefined) return [];
+  const commandIds = new Map<string, PluginManagerCommandContribution>();
+  for (const command of commandContributions) {
+    commandIds.set(`${command.pluginInstanceId}:${command.commandId}`, command);
+  }
+  return buildDescriptorMenuItems(contribution, items, commandIds, context, target);
+}
 
 /** Host command ids that may be used as placement anchors by a plugin. */
 const KNOWN_HOST_MENU_ANCHORS = new Set([
@@ -636,26 +703,39 @@ export function usePluginMenuContributions(
       return;
     }
     let cancelled = false;
-    void pluginApi.listPluginContributions({
-      libraryId,
-      target,
-    }).then((result) => {
+    void Promise.all([
+      pluginApi.listPluginContributions({ libraryId, target }),
+      pluginApi.listPluginContributions({ libraryId }),
+    ]).then(([targetResult, allResult]) => {
       if (cancelled) return;
-      if (!("contributions" in result)) {
+      if (!("contributions" in targetResult) || !("contributions" in allResult)) {
         setItems([]);
         return;
       }
-      const menuContributions = result.contributions.filter(
+      const menuContributions = targetResult.contributions.filter(
         (contribution): contribution is Extract<typeof contribution, { kind: 'menu' }> => contribution.kind === 'menu',
       );
-      setItems(buildPluginMenuDescriptors(menuContributions, context, {
+      const diagnostics: BuildPluginMenuDescriptorsOptions = {
         onPlacementDiagnostic: (diagnostic) => {
           console.warn("plugin-menu-placement-diagnostic", {
             target,
             ...diagnostic,
           });
         },
-      }));
+      };
+      const descriptorMenuContributions = allResult.contributions.filter(
+        (contribution): contribution is PluginManagerUiDescriptorContribution => contribution.kind === "ui-descriptor",
+      );
+      const commandContributions = allResult.contributions.filter(
+        (contribution): contribution is PluginManagerCommandContribution => contribution.kind === "command",
+      );
+      const descriptorItems = descriptorMenuContributions.flatMap((contribution) => (
+        buildPluginUiMenuDescriptors(contribution, target, commandContributions, context)
+      ));
+      setItems([
+        ...buildPluginMenuDescriptors(menuContributions, context, diagnostics),
+        ...descriptorItems,
+      ]);
     }).catch((error: unknown) => {
       if (!cancelled) {
         setItems([]);

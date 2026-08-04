@@ -408,7 +408,7 @@ type Setting =
 `invalid-option`，只影响该字段。静态 schema 错误则安装/激活失败并指出 JSON path。
 
 iframe view 的 Host target 为 `sidebar.entries`、`workspace.views`、`inspector.views`、`viewer.overlays`、`settings.pages`；Manifest 对应
-`views[].location`。页面只能经 typed bridge 通信。当前不提供动态 UI Registrar、任意 React 组件、宿主 DOM 或稳定 UI primitives。
+`views[].location`。页面只能经 typed bridge 通信，不直接获得宿主 React、DOM 或 CSS；需要标准控件时使用下述 Host-rendered descriptor，而不是在 iframe 中猜测宿主样式。
 
 Host-rendered Plugin UI Contract v1 通过 `contributes.ui` 提供 settings group、menu/submenu、notice、activity 和 job descriptor。
 设置组引用同一 manifest 的 `contributes.settings`，菜单复用现有 command/condition/placement 语义；descriptor 只接受版本化 JSON 数据，不接受函数、HTML、CSS 或宿主 DOM 引用。

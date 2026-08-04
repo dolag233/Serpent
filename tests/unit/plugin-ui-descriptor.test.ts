@@ -16,6 +16,7 @@ import {
 } from '../../src/shared/plugin-ui-descriptor';
 import { pluginManagerContributionSchema } from '../../src/shared/plugin-manager-api';
 import { PluginUiDescriptorRenderer } from '../../src/renderer/plugin-ui-descriptor-renderer';
+import { buildPluginUiMenuDescriptors } from '../../src/renderer/plugin-menu-contributions';
 import manifestFixture from '../fixtures/plugin-manifests/plugin-ui-descriptor.serpent-plugin.json';
 
 describe('Plugin UI Contract v1', () => {
@@ -108,5 +109,35 @@ describe('Plugin UI Contract v1', () => {
     expect(html).toContain('data-ui-pattern="activity"');
     expect(html).toContain('reading');
     expect(html).toContain('data-ui-pattern="status-badge"');
+  });
+
+  it('maps descriptor menu commands to registered command contributions', () => {
+    const manifest = pluginManifestSchema.parse(manifestFixture);
+    const registry = createContributionRegistry();
+    registerManifestContributions(registry, {
+      pluginInstanceId: '99999999-9999-4999-8999-999999999999',
+      pluginId: manifest.id,
+      libraryId: 'library-a',
+      contributes: manifest.contributes,
+    });
+    const descriptor = listUiDescriptorContributions(registry)[0];
+    const commands = registry.list().filter((item) => item.kind === 'command').map((item) => ({
+      kind: 'command' as const,
+      id: item.id,
+      pluginId: item.pluginId,
+      pluginInstanceId: item.pluginInstanceId,
+      commandId: item.localId,
+      title: item.title,
+      target: 'commands' as const,
+    }));
+
+    const items = buildPluginUiMenuDescriptors(
+      descriptor as never,
+      'menus.asset',
+      commands as never,
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]?.children[0]?.commandId).toBe('run-action');
+    expect(items[0]?.children[0]?.contributionId).toContain('.run-action');
   });
 });

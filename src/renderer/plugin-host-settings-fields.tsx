@@ -10,7 +10,9 @@ import type {
   PluginManagerPluginSettingSection,
   SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
+import type { PluginUiDescriptor } from '../shared/plugin-ui-descriptor';
 import { useT } from './i18n';
+import { PluginUiDescriptorRenderer } from './plugin-ui-descriptor-renderer';
 import {
   Field,
   getFieldAriaProps,
@@ -28,6 +30,7 @@ type PluginHostSettingsFieldsProps = {
   readonly scope: 'user' | 'library';
   readonly libraryId: string | undefined;
   readonly disabled?: boolean;
+  readonly uiDescriptor?: PluginUiDescriptor;
 };
 
 export function resolvePluginSettingSelectValue(
@@ -48,6 +51,7 @@ export function PluginHostSettingsFields({
   scope,
   libraryId,
   disabled = false,
+  uiDescriptor,
 }: PluginHostSettingsFieldsProps): ReactNode {
   const t = useT();
   const [sections, setSections] = useState<PluginManagerPluginSettingSection[]>([]);
@@ -130,6 +134,28 @@ export function PluginHostSettingsFields({
     return <p className="app-settings-hint">{t('settings.pluginSettingsLoading')}</p>;
   }
   if (sections.length === 0) return null;
+
+  const descriptorGroups = uiDescriptor?.settings?.groups;
+  if (uiDescriptor !== undefined && descriptorGroups !== undefined && descriptorGroups.length > 0) {
+    return (
+      <div className="plugin-host-settings-fields">
+        {error === undefined ? null : (
+          <p className="plugin-settings-error" role="status">{error}</p>
+        )}
+        <PluginUiDescriptorRenderer
+          descriptor={uiDescriptor}
+          disabled={disabled || savingId !== undefined}
+          settingErrors={new Map(diagnostics.map((item) => [item.settingId, item.message]))}
+          settings={sections}
+          surfaces={{ settings: true, menus: false, notices: false, activities: false, jobs: false }}
+          onSettingChange={(settingId, value) => {
+            const section = sections.find((item) => item.id === settingId);
+            if (section !== undefined) void save(section, value);
+          }}
+        />
+      </div>
+    );
+  }
 
   const withDescriptionTooltip = (section: PluginManagerPluginSettingSection, node: ReactNode): ReactNode => (
     section.description === undefined ? node : (

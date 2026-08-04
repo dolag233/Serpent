@@ -42,6 +42,8 @@ export type PluginUiJobState = {
 
 export type PluginUiDescriptorRendererProps = {
   descriptor: PluginUiDescriptor;
+  /** Render only selected Host surfaces when embedding the descriptor in a domain page. */
+  surfaces?: Partial<Record<'settings' | 'menus' | 'notices' | 'activities' | 'jobs', boolean>>;
   settings?: readonly PluginManagerPluginSettingSection[];
   settingErrors?: ReadonlyMap<string, string>;
   disabled?: boolean;
@@ -329,12 +331,16 @@ export function PluginUiDescriptorRenderer({
   onSettingChange,
   settingErrors,
   settings = [],
+  surfaces,
 }: PluginUiDescriptorRendererProps): ReactNode {
+  const renderSurface = (surface: 'settings' | 'menus' | 'notices' | 'activities' | 'jobs'): boolean => (
+    surfaces?.[surface] ?? true
+  );
   const settingsById = new Map(settings.map((setting) => [setting.id, setting]));
   const menuSurfaces = Object.entries(descriptor.menus ?? {}) as Array<[string, readonly PluginUiMenuItem[] | undefined]>;
   return (
     <div data-plugin-ui-descriptor-version={descriptor.version} data-ui-pattern="plugin-ui-descriptor">
-      {descriptor.settings?.groups.map((group) => (
+      {renderSurface('settings') ? descriptor.settings?.groups.map((group) => (
         <SettingsCard description={group.description} key={group.id} title={group.title}>
           {group.items.map((item) => {
             const section = settingsById.get(item.settingId);
@@ -343,8 +349,8 @@ export function PluginUiDescriptorRenderer({
               : renderSetting(section, settingErrors?.get(section.id), disabled, onSettingChange);
           })}
         </SettingsCard>
-      ))}
-      {menuSurfaces.map(([surface, items]) => {
+      )) : null}
+      {renderSurface('menus') ? menuSurfaces.map(([surface, items]) => {
         if (items === undefined) return null;
         const nodes = resolveMenuTree(toMenuNodes(items, menuContext));
         if (nodes.length === 0) return null;
@@ -358,10 +364,10 @@ export function PluginUiDescriptorRenderer({
             renderNode={(node) => renderMenuNodes([node], shortcuts, onCommand)}
           />
         );
-      })}
-      {descriptor.notices?.map((notice) => renderNotice(notice, onCommand, onDismissNotice))}
-      {descriptor.activities?.map((activity) => renderActivity(activity, onCommand, onDismissActivity))}
-      {descriptor.jobs?.map((job) => renderJob(job, jobs?.get(job.id), onDismissJob))}
+      }) : null}
+      {renderSurface('notices') ? descriptor.notices?.map((notice) => renderNotice(notice, onCommand, onDismissNotice)) : null}
+      {renderSurface('activities') ? descriptor.activities?.map((activity) => renderActivity(activity, onCommand, onDismissActivity)) : null}
+      {renderSurface('jobs') ? descriptor.jobs?.map((job) => renderJob(job, jobs?.get(job.id), onDismissJob)) : null}
     </div>
   );
 }

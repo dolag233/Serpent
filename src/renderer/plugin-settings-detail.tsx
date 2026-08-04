@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import type {
+  PluginManagerUiDescriptorContribution,
   PluginManagerPackageSummary,
   SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
+import type { PluginUiDescriptor } from '../shared/plugin-ui-descriptor';
 import { PluginHostSettingsFields } from './plugin-host-settings-fields';
 import { usePluginSettingsPages } from './plugin-settings-pages';
 import { PluginIframeViewHost } from './plugin-iframe-view-host';
@@ -95,7 +97,30 @@ export function PluginSettingsDetailPage({
   const selectedPageId = pages.some((page) => page.id === activePageId) ? activePageId : null;
   const activePage = pages.find((page) => page.id === selectedPageId) ?? pages[0];
   const [scopes, setScopes] = useState<Array<'user' | 'library'>>([]);
+  const [uiDescriptor, setUiDescriptor] = useState<PluginUiDescriptor | undefined>();
   const hasPluginApi = pluginApi !== undefined;
+
+  useEffect(() => {
+    if (!hasPluginApi || pluginApi === undefined) return;
+    let cancelled = false;
+    void pluginApi.listPluginContributions({
+      ...(libraryId === undefined ? {} : { libraryId }),
+      target: 'ui.descriptor',
+    }).then((response) => {
+      if (cancelled || !('contributions' in response)) return;
+      const contribution = response.contributions.find(
+        (item): item is PluginManagerUiDescriptorContribution => (
+          item.kind === 'ui-descriptor' && item.pluginId === pluginId
+        ),
+      );
+      setUiDescriptor(contribution?.descriptor);
+    }).catch(() => {
+      if (!cancelled) setUiDescriptor(undefined);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasPluginApi, libraryId, pluginApi, pluginId, refreshKey]);
 
   useEffect(() => {
     if (!hasPluginApi || pluginApi === undefined) return;
@@ -130,6 +155,7 @@ export function PluginSettingsDetailPage({
           libraryId={libraryId}
           pluginId={pluginId}
           scope={scope}
+          uiDescriptor={uiDescriptor}
         />
       ))}
       {pages.length === 0 ? null : (
