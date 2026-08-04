@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildPluginMenuDescriptors } from '../../src/renderer/plugin-menu-contributions';
+import {
+  buildPluginMenuDescriptors,
+  runPluginMenuCommand,
+} from '../../src/renderer/plugin-menu-contributions';
 import { createPluginContributionContext } from '../../src/plugins/plugin-context';
 
 function createContext() {
@@ -510,5 +513,38 @@ describe('plugin menu contribution descriptors', () => {
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'cycle-broken' }),
     ]));
+  });
+
+  it('freezes the invocation snapshot when a menu command is dispatched', async () => {
+    const runPluginCommand = vi.fn().mockResolvedValue({
+      ok: true,
+      executed: true,
+    });
+    const pluginApi = { runPluginCommand } as never;
+    const context = createContext();
+
+    await runPluginMenuCommand(pluginApi, 'library-a', {
+      id: 'com.example.menu.menu.asset.run',
+      contributionId: 'com.example.menu.library-a.menu.asset.run',
+    }, {
+      assetIds: ['asset-1'],
+      contributionContext: context,
+    });
+
+    expect(runPluginCommand).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'plugin-manager.run-command',
+      libraryId: 'library-a',
+      contributionId: 'com.example.menu.library-a.menu.asset.run',
+      assetIds: ['asset-1'],
+      invocation: expect.objectContaining({
+        contextId: 'context-1',
+        revision: 1,
+        libraryId: 'library-a',
+        selection: expect.objectContaining({
+          refs: ['asset-1'],
+          assetIds: ['asset-1'],
+        }),
+      }),
+    }));
   });
 });

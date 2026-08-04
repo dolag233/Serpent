@@ -123,6 +123,8 @@ npx vitest run tests/unit/plugin-context.test.ts tests/unit/plugin-contract.test
 npm run typecheck -- --pretty false
 npx eslint <本次插件上下文、菜单、表面入口及协议文件>
 # 均通过
+npx vitest run tests/unit/plugin-menu-contributions.test.ts --reporter=dot
+# 13 tests passed；覆盖菜单命令触发时 Invocation Context 的冻结快照透传
 ```
 
 无选择/混合/Viewer 的真实右键旅程、packaged/Windows/Computer Use 仍未执行；`Serpent-gtih` 与 `Serpent-fkq3` 继续保持 `in_progress`。
