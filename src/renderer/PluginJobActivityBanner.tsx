@@ -6,6 +6,7 @@ import {
   getPluginJobDisplayProgress,
 } from "./plugin-job-display";
 import { useT } from "./i18n";
+import { Activity } from "./ui/patterns";
 
 export function PluginJobActivityBanner({
   job,
@@ -21,30 +22,18 @@ export function PluginJobActivityBanner({
   const progressSummary = formatPluginJobProgressSummary(job);
   const errorMessage = formatPluginJobError(job.errorDetail, job.errorCode);
   const progress = getPluginJobDisplayProgress(job);
-  const progressWidth = `${progress * 100}%`;
   const statusLabel = t(`dialog.mediaJobs.pluginJobStatus.${job.status}`);
+  const tone = job.status === "failed"
+    ? "error"
+    : job.status === "succeeded"
+      ? "success"
+      : job.status === "cancelled" || job.status === "interrupted"
+        ? "warning"
+        : "info";
 
   return (
-    <div
-      className={`workspace-plugin-job-progress is-${job.status}`}
-      role="status"
-      aria-live="polite"
-    >
-      <div className="plugin-job-activity-header">
-        <div
-          className="plugin-job-activity-title"
-          title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
-        >
-          <span aria-hidden="true" className="plugin-job-activity-status-mark" />
-          <strong className="plugin-job-activity-plugin">{job.ownerPluginId}</strong>
-          <span aria-hidden="true" className="plugin-job-activity-separator">
-            ·
-          </span>
-          <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
-          <span className="plugin-job-activity-stage">
-            {progressMessage || statusLabel}
-          </span>
-        </div>
+    <Activity
+      actions={(
         <div className="plugin-job-activity-actions">
           {job.status !== "interrupted" && (
             <button
@@ -55,40 +44,35 @@ export function PluginJobActivityBanner({
               {t("dialog.mediaJobs.runInBackground")}
             </button>
           )}
-          <button
-            aria-label={t("dialog.mediaJobs.closePluginJobActivity")}
-            className="plugin-job-activity-dismiss"
-            onClick={onDismiss}
-            type="button"
-          >
-            <span aria-hidden="true">×</span>
-          </button>
         </div>
-      </div>
-      <div className="plugin-job-activity-progress-row">
-        {job.status !== "interrupted" && (
-          <div
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={Math.round(progress * 100)}
-            className="plugin-job-activity-track"
-            role="progressbar"
-          >
-            <div
-              className="plugin-job-activity-fill"
-              style={{ width: progressWidth }}
-            />
-          </div>
-        )}
-        <strong className="plugin-job-activity-progress-summary">
-          {progressSummary}
-        </strong>
-      </div>
-      {errorMessage && (
+      )}
+      className={`workspace-plugin-job-progress is-${job.status}`}
+      dismissLabel={t("dialog.mediaJobs.closePluginJobActivity")}
+      dismissible
+      message={progressMessage || statusLabel}
+      onDismiss={onDismiss}
+      max={1}
+      progress={job.status === "interrupted" ? undefined : progress}
+      progressAriaLabel={statusLabel}
+      progressLabel={progressSummary}
+      tone={tone}
+      title={(
+        <span
+          className="plugin-job-activity-title"
+          title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
+        >
+          <span className="plugin-job-activity-plugin">{job.ownerPluginId}</span>
+          <span aria-hidden="true" className="plugin-job-activity-separator"> · </span>
+          <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
+        </span>
+      )}
+      valueText={progressSummary}
+    >
+      {errorMessage ? (
         <div className="plugin-job-activity-error" title={errorMessage}>
           {errorMessage}
         </div>
-      )}
-    </div>
+      ) : null}
+    </Activity>
   );
 }

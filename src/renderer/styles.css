@@ -2314,7 +2314,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
    quantitative progress track on its own full-width row. Protocol states such
    as "running" are not exposed as raw UI copy. */
 .workspace-plugin-job-progress {
-  --plugin-job-status-color: var(--accent);
+  --plugin-job-status-color: var(--ui-action-accent);
 
   display: flex;
   flex: 0 0 auto;
@@ -2323,28 +2323,42 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   gap: 8px;
   min-width: 0;
   padding: 11px 14px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 22%, var(--divider));
+  border-bottom: 1px solid color-mix(in srgb, var(--plugin-job-status-color) 22%, var(--ui-border-divider));
   border-left: 3px solid var(--plugin-job-status-color);
-  background: color-mix(in srgb, var(--plugin-job-status-color) 5%, var(--raised));
-  color: var(--text);
+  background: color-mix(in srgb, var(--plugin-job-status-color) 5%, var(--ui-surface-raised));
+  color: var(--ui-content-primary);
 }
 
 .workspace-plugin-job-progress.is-queued {
-  --plugin-job-status-color: var(--secondary);
+  --plugin-job-status-color: var(--ui-content-secondary);
 }
 
 .workspace-plugin-job-progress.is-paused {
-  --plugin-job-status-color: var(--warning);
+  --plugin-job-status-color: var(--ui-status-warning);
 }
 
-.workspace-plugin-job-progress.is-succeeded {
-  --plugin-job-status-color: var(--success);
+.workspace-plugin-job-progress.is-succeeded,
+.workspace-plugin-job-progress.is-completed {
+  --plugin-job-status-color: var(--ui-status-success);
 }
 
 .workspace-plugin-job-progress.is-failed,
 .workspace-plugin-job-progress.is-cancelled,
 .workspace-plugin-job-progress.is-interrupted {
-  --plugin-job-status-color: var(--danger);
+  --plugin-job-status-color: var(--ui-status-danger);
+}
+
+.workspace-plugin-job-progress .ui-feedback__body {
+  min-width: 0;
+}
+
+.workspace-plugin-job-progress .ui-progress {
+  flex: 1 1 auto;
+}
+
+.workspace-plugin-job-progress .ui-progress__label,
+.workspace-plugin-job-progress .ui-progress__value {
+  color: var(--ui-content-primary);
 }
 
 .plugin-job-activity-header {
@@ -4832,6 +4846,9 @@ body.serpent-modal-open .app-shell {
   width: min(220px, 30vw);
   accent-color: var(--accent);
 }
+.preview-sequence-controls .ui-slider {
+  min-width: 0;
+}
 .preview-nav {
   position: absolute;
   z-index: 2;
@@ -6806,6 +6823,19 @@ select.ai-config-input.ai-config-languages {
   margin-top: 10px;
 }
 
+.app-settings-custom-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--ui-space-3);
+  margin: var(--ui-space-3) 0;
+}
+
+.app-settings-custom-theme-grid input[type="color"] {
+  min-height: var(--ui-size-control-lg);
+  padding: 2px;
+  cursor: pointer;
+}
+
 .app-settings-accent-custom .text-field {
   flex: 1 1 140px;
   min-width: 0;
@@ -7133,7 +7163,7 @@ select.ai-config-input.ai-config-languages {
      overlays. A toast is a global application status surface, not canvas
      content, and must not inherit the canvas stacking context. */
   position: fixed;
-  z-index: 1000;
+  z-index: var(--ui-layer-notice);
   /* Keep global feedback below the app chrome, in the empty workspace
      toolbar band. It remains viewport-level (above dialogs) without sitting
      against the window edge. */
@@ -7146,18 +7176,45 @@ select.ai-config-input.ai-config-languages {
   max-width: min(520px, calc(100% - 32px));
   /* Serpent-fvto: tighter trailing pad — X sat in a wide empty gutter. */
   padding: 7px 6px 7px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--divider));
+  border: var(--ui-border-width-hairline) solid var(--ui-border-divider);
   border-radius: 8px;
-  background: var(--raised);
-  box-shadow: var(--shadow-toast);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.25;
+  background: var(--ui-surface-raised);
+  box-shadow: var(--ui-shadow-notice);
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-body);
+  line-height: var(--ui-line-height-normal);
   transform: translateX(-50%);
   transition:
     opacity 180ms ease,
     transform 180ms ease;
   pointer-events: auto;
+}
+
+.workspace-notice .ui-feedback__body {
+  display: contents;
+}
+
+.workspace-notice .ui-feedback__message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.workspace-notice .ui-feedback__actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.workspace-notice .ui-feedback__dismiss {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-radius: 0;
+  font-size: 14px;
 }
 
 .workspace-notice.is-closing {
@@ -7189,22 +7246,21 @@ select.ai-config-input.ai-config-languages {
   gap: 6px;
 }
 
-.workspace-notice.is-error,
-.workspace-notice.is-warning {
-  /* Serpent-nlji: migrate amber toast tokens to top notice. */
-  background: var(--warning-muted);
-  color: var(--warning-fg);
-  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
-  box-shadow: var(--shadow-toast);
+.workspace-notice.ui-feedback--error {
+  background: var(--ui-status-danger-surface);
+  color: var(--ui-status-danger-content);
+  border-color: var(--ui-status-danger);
 }
 
-.workspace-notice.is-error .workspace-notice-icon,
-.workspace-notice.is-error .workspace-notice-undo,
-.workspace-notice.is-error .workspace-notice-dismiss,
-.workspace-notice.is-warning .workspace-notice-icon,
-.workspace-notice.is-warning .workspace-notice-undo,
-.workspace-notice.is-warning .workspace-notice-dismiss {
-  color: var(--warning-fg);
+.workspace-notice.ui-feedback--warning {
+  background: var(--ui-status-warning-surface);
+  color: var(--ui-status-warning-content);
+  border-color: var(--ui-status-warning);
+}
+
+.workspace-notice.ui-feedback--error .workspace-notice-icon,
+.workspace-notice.ui-feedback--warning .workspace-notice-icon {
+  color: inherit;
 }
 
 .ignored-paths-dialog {
@@ -7955,6 +8011,9 @@ select.ai-config-input.ai-config-languages {
   background: transparent;
   appearance: none;
   cursor: pointer;
+}
+.asset-size-control .ui-slider {
+  min-width: 0;
 }
 .asset-size-control input[type="range"]::-webkit-slider-runnable-track {
   height: 3px;

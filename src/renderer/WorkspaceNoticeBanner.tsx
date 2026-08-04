@@ -2,6 +2,7 @@ import { Icon } from "./Icons";
 import { IconActionButton } from "./icon-action-button";
 import { useT } from "./i18n";
 import type { ToastMessage } from './toast-notifications';
+import { Notice } from './ui/patterns';
 
 export interface WorkspaceNoticeBannerProps {
   readonly message: ToastMessage;
@@ -24,42 +25,36 @@ export function WorkspaceNoticeBanner({
   onTransitionEnd,
 }: WorkspaceNoticeBannerProps) {
   const t = useT();
-  const kindClass =
-    message.kind === "error"
-      ? " is-error"
-      : message.kind === "warning"
-        ? " is-warning"
-        : "";
   const iconName =
     message.kind === "error" || message.kind === "warning" ? "warning" : "info";
   return (
-    <div
-      className={`workspace-notice${kindClass}${closing ? ' is-closing' : ''}`}
+    <Notice
+      actions={(
+        <span className="workspace-notice-actions">
+          {undoLabel && onUndo ? (
+            <IconActionButton
+              className="workspace-notice-undo"
+              icon="undo"
+              label={undoLabel}
+              onClick={onUndo}
+              size={14}
+            />
+          ) : null}
+        </span>
+      )}
+      className={`workspace-notice${closing ? ' is-closing' : ''}`}
+      dismissLabel={t('common.closeHint')}
+      dismissible
+      leading={(
+        <span className="workspace-notice-icon" aria-hidden>
+          <Icon name={iconName} size={15} />
+        </span>
+      )}
+      message={message.text}
       onTransitionEnd={onTransitionEnd}
-      role={message.kind === "error" ? "alert" : "status"}
+      onDismiss={onDismiss}
+      tone={message.kind === "notice" ? "info" : message.kind}
     >
-      <span className="workspace-notice-icon" aria-hidden>
-        <Icon name={iconName} size={15} />
-      </span>
-      <span className="workspace-notice-text">{message.text}</span>
-      <span className="workspace-notice-actions">
-        {undoLabel && onUndo ? (
-          <IconActionButton
-            className="workspace-notice-undo"
-            icon="undo"
-            label={undoLabel}
-            onClick={onUndo}
-            size={14}
-          />
-        ) : null}
-        <IconActionButton
-          className="workspace-notice-dismiss"
-          icon="close"
-          label={t('common.closeHint')}
-          onClick={onDismiss}
-          size={12}
-        />
-      </span>
-    </div>
+    </Notice>
   );
 }

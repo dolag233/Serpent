@@ -29,3 +29,19 @@ export {
   type ResolvedMenuSeparatorNode,
   type ResolvedMenuSubmenuNode,
 } from "./menu";
+export {
+  PopoverSurface,
+  SettingsCard,
+  type PopoverSurfaceProps,
+  type SettingsCardProps,
+} from './surfaces';
+export {
+  Activity,
+  Notice,
+  StatusBadge,
+  type ActivityProps,
+  type FeedbackRole,
+  type FeedbackTone,
+  type NoticeProps,
+  type StatusBadgeProps,
+} from "./feedback";

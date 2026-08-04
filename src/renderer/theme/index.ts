@@ -32,3 +32,19 @@ export {
   useTheme,
   type ThemeProviderProps,
 } from './ThemeProvider';
+export {
+  CUSTOM_THEME_COLOR_TOKENS,
+  CUSTOM_THEME_PREF_KEY,
+  CUSTOM_THEME_VERSION,
+  DEFAULT_CUSTOM_THEME,
+  applyCustomTheme,
+  clearCustomTheme,
+  customThemeOverridesSchema,
+  customThemeSchema,
+  loadCustomTheme,
+  saveCustomTheme,
+  type CustomTheme,
+  type CustomThemeColorToken,
+  type CustomThemeMode,
+  type CustomThemeOverrides,
+} from './custom-theme';

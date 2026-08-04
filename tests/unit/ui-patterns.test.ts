@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it } from "vitest";
-import type { ReactElement } from "react";
+import { createElement, type ReactElement } from "react";
 
 import {
   DialogShell,
@@ -15,6 +15,8 @@ import {
   resolveMenuNodes,
   type MenuNode,
 } from "../../src/renderer/ui/patterns/menu";
+import { renderToStaticMarkup } from 'react-dom/server';
+import { PopoverSurface, SettingsCard } from '../../src/renderer/ui/patterns';
 
 describe("UI patterns: modal focus boundary", () => {
   it("only the topmost dialog consumes Escape", () => {
@@ -171,5 +173,22 @@ describe("UI patterns: resolved menu tree", () => {
     mutableItem.enablement = true;
     mutableItem.checked = false;
     expect(resolved[0]).toMatchObject({ enabled: false, checked: true });
+  });
+});
+
+describe('UI patterns: shared surfaces', () => {
+  it('exposes semantic popover layer and role', () => {
+    const html = renderToStaticMarkup(createElement(PopoverSurface, { role: 'listbox', title: 'Choose' }, 'Items'));
+    expect(html).toContain('data-ui-pattern="popover-surface"');
+    expect(html).toContain('data-ui-layer="400"');
+    expect(html).toContain('role="listbox"');
+    expect(html).toContain('Choose');
+  });
+
+  it('keeps settings cards on one shared surface contract', () => {
+    const html = renderToStaticMarkup(createElement(SettingsCard, { title: 'Appearance' }, 'Fields'));
+    expect(html).toContain('data-ui-pattern="settings-card"');
+    expect(html).toContain('ui-settings-card');
+    expect(html).toContain('Appearance');
   });
 });

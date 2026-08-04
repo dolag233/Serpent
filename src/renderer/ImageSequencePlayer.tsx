@@ -7,6 +7,7 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
+import { Slider } from "./ui/primitives";
 import type { ViewerDisplayTransform } from "./viewer-display-transform";
 import { ZoomableImage } from "./zoomable-preview-image";
 
@@ -165,17 +166,17 @@ export function ImageSequencePlayer({
         >
           <span aria-hidden="true">{playing ? "❚❚" : "▶"}</span>
         </button>
-        <input
+        <Slider
           aria-label={t("preview.sequenceFrame")}
           max={sequence.frames.length - 1}
           min={0}
-          onChange={(event) => {
+          onValueChange={(nextFrame) => {
             setPlaying(false);
-            setFrameIndex(Number(event.currentTarget.value));
+            setFrameIndex(nextFrame);
           }}
           step={1}
-          type="range"
           value={frameIndex}
+          wrapperClassName="preview-sequence-slider"
         />
         <span>
           {frameIndex + 1} / {sequence.frames.length} · {sequence.fps} FPS

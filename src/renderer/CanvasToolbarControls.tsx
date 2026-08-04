@@ -14,6 +14,7 @@ import type { CommandLocale, CommandPlatform } from "./commands/command-types";
 import { Icon, type IconName } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { translateForLocale } from "./i18n";
+import { Slider } from "./ui/primitives";
 
 const FIELD_BUTTONS: readonly {
   readonly id: "canvas.field.name" | "canvas.field.size" | "canvas.field.date";
@@ -141,19 +142,18 @@ export function CanvasToolbarControls({
           pressed={canvasPrefs.viewMode === "masonry"}
         />
         <label className="asset-size-control">
-          <input
+          <Slider
             aria-label={translateCardSizeLabel(locale)}
             data-hover-tip={translateCardSizeLabel(locale)}
             max={Math.max(0, cardSizeStops.length - 1)}
             min={0}
-            onChange={(event) => {
-              const index = Number(event.target.value);
+            onValueChange={(index) => {
               const next = cardSizeStops[index];
               if (typeof next === "number") onCardSizeChange(next);
             }}
             step={1}
-            type="range"
             value={indexOfDiscreteCardSize(cardSize, cardSizeStops)}
+            wrapperClassName="asset-size-slider"
           />
         </label>
         <span className="tool-separator" />

@@ -413,6 +413,122 @@ textarea.ui-field__control {
   animation: ui-progress-indeterminate 1.1s ease-in-out infinite;
 }
 
+.ui-feedback {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: var(--ui-border-width-hairline) solid var(--ui-border-divider);
+  border-radius: var(--ui-radius-surface);
+  background: var(--ui-surface-raised);
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-body);
+  line-height: var(--ui-line-height-normal);
+}
+
+.ui-feedback--info {
+  border-color: var(--ui-status-info);
+  background: var(--ui-status-info-surface);
+  color: var(--ui-status-info-content);
+}
+
+.ui-feedback--success {
+  border-color: var(--ui-status-success);
+  background: var(--ui-status-success-surface);
+  color: var(--ui-status-success-content);
+}
+
+.ui-feedback--warning {
+  border-color: var(--ui-status-warning);
+  background: var(--ui-status-warning-surface);
+  color: var(--ui-status-warning-content);
+}
+
+.ui-feedback--error {
+  border-color: var(--ui-status-danger);
+  background: var(--ui-status-danger-surface);
+  color: var(--ui-status-danger-content);
+}
+
+.ui-feedback__body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--ui-space-1);
+}
+
+.ui-feedback__title {
+  color: inherit;
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.ui-feedback__message {
+  color: inherit;
+}
+
+.ui-feedback__dismiss {
+  display: inline-flex;
+  width: var(--ui-size-control-sm);
+  height: var(--ui-size-control-sm);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: calc(var(--ui-space-1) * -1);
+  border: 0;
+  border-radius: var(--ui-radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--ui-font-size-title);
+  line-height: var(--ui-line-height-tight);
+  cursor: pointer;
+}
+
+.ui-feedback__dismiss:hover,
+.ui-feedback__dismiss:focus-visible {
+  background: var(--ui-action-hover);
+}
+
+.ui-feedback__dismiss:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+}
+
+.ui-feedback__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--ui-space-2);
+}
+
+.ui-notice {
+  z-index: var(--ui-layer-notice);
+  box-shadow: var(--ui-shadow-notice);
+}
+
+.ui-activity {
+  z-index: var(--ui-layer-activity);
+}
+
+.ui-activity > .ui-progress {
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.ui-status-badge {
+  display: inline-flex;
+  min-height: var(--ui-size-chip);
+  align-items: center;
+  justify-content: center;
+  padding-inline: var(--ui-space-2);
+  border-radius: var(--ui-radius-pill);
+  font-size: var(--ui-font-size-micro);
+  font-weight: var(--ui-font-weight-medium);
+  line-height: var(--ui-line-height-tight);
+  white-space: nowrap;
+}
+
 .ui-tooltip-target {
   display: inline-flex;
 }
@@ -485,6 +601,57 @@ textarea.ui-field__control {
   gap: var(--ui-space-2);
   padding: var(--ui-space-3) var(--ui-space-5) var(--ui-space-4);
   border-top: 1px solid var(--ui-border-subtle);
+}
+
+.ui-popover-surface {
+  min-width: 180px;
+  max-width: min(420px, calc(100vw - var(--ui-space-6)));
+  padding: var(--ui-space-2);
+  border: var(--ui-border-width-hairline) solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-overlay);
+  background: var(--ui-surface-overlay);
+  box-shadow: var(--ui-shadow-popover);
+  color: var(--ui-content-primary);
+}
+
+.ui-popover-surface__title {
+  padding: var(--ui-space-1) var(--ui-space-2) var(--ui-space-2);
+  color: var(--ui-content-secondary);
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.ui-settings-card {
+  color: var(--ui-content-primary);
+}
+
+.ui-settings-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+  margin-bottom: var(--ui-space-3);
+}
+
+.ui-settings-card__heading {
+  min-width: 0;
+}
+
+.ui-settings-card__heading h3,
+.ui-settings-card__heading p {
+  margin: 0;
+}
+
+.ui-settings-card__heading h3 {
+  font-size: var(--ui-font-size-title);
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.ui-settings-card__heading p {
+  margin-top: var(--ui-space-1);
+  color: var(--ui-content-secondary);
+  font-size: var(--ui-font-size-caption);
+  line-height: var(--ui-line-height-relaxed);
 }
 
 .ui-modal-stack {

@@ -31,6 +31,7 @@ import {
   clampMenuAcrylicLevel,
 } from "./menu-acrylic-preferences";
 import { useTheme } from "./theme";
+import { SettingsCard } from "./ui/patterns";
 import { Button, Slider, Switch, TextField } from "./ui/primitives";
 import {
   ACCENT_PRESET_HEX,
@@ -40,12 +41,15 @@ import {
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
-
-type SettingsCardProps = { children: ReactNode };
-
-function SettingsCard({ children }: SettingsCardProps): ReactNode {
-  return <section className="app-settings-card">{children}</section>;
-}
+const CUSTOM_THEME_EDITOR_FIELDS = [
+  { token: "--ui-surface-canvas", labelKey: "settings.customThemeCanvas", light: "#ebeceb", dark: "#252729" },
+  { token: "--ui-surface-pane", labelKey: "settings.customThemePane", light: "#f4f5f3", dark: "#2c2e31" },
+  { token: "--ui-surface-raised", labelKey: "settings.customThemeRaised", light: "#f2f4f0", dark: "#35383b" },
+  { token: "--ui-content-primary", labelKey: "settings.customThemePrimary", light: "#1c1e1c", dark: "#f1f2ef" },
+  { token: "--ui-content-secondary", labelKey: "settings.customThemeSecondary", light: "#5a5f5a", dark: "#a9ada9" },
+  { token: "--ui-action-accent", labelKey: "settings.customThemeAccent", light: "#3b82f6", dark: "#3b82f6" },
+  { token: "--ui-status-danger", labelKey: "settings.customThemeDanger", light: "#dc2626", dark: "#e76b7a" },
+] as const;
 
 type SettingsToggleRowProps = {
   checked: boolean;
@@ -143,6 +147,10 @@ export function AppearanceSettingsPage(): ReactNode {
   const {
     preference: themePreference,
     setTheme,
+    customTheme,
+    resetCustomTheme,
+    resolved,
+    setCustomTheme,
     accentHex,
     setAccentHex,
   } = useTheme();
@@ -156,6 +164,18 @@ export function AppearanceSettingsPage(): ReactNode {
   function selectAccent(hex: string) {
     setAccentHex(hex);
     setAccentDraft(hex);
+  }
+
+  function setCustomColor(token: (typeof CUSTOM_THEME_EDITOR_FIELDS)[number]["token"], value: string) {
+    const normalized = normalizeAccentHex(value);
+    if (!normalized) return;
+    setCustomTheme({
+      ...customTheme,
+      [resolved]: {
+        ...customTheme[resolved],
+        [token]: normalized,
+      },
+    });
   }
 
   return (
@@ -184,6 +204,27 @@ export function AppearanceSettingsPage(): ReactNode {
           ))}
         </div>
       </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.customTheme")}</strong>
+        <span>{t("settings.customThemeHint")}</span>
+      </div>
+      <div className="app-settings-custom-theme-grid">
+        {CUSTOM_THEME_EDITOR_FIELDS.map((field) => {
+          const current = customTheme[resolved][field.token] ?? field[resolved];
+          return (
+            <TextField
+              aria-label={t(field.labelKey)}
+              key={field.token}
+              label={t(field.labelKey)}
+              onChange={(event) => setCustomColor(field.token, event.target.value)}
+              type="color"
+              value={current}
+            />
+          );
+        })}
+      </div>
+      <Button onClick={resetCustomTheme}>{t("settings.customThemeReset")}</Button>
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">
         <strong>{t("settings.accentColor")}</strong>

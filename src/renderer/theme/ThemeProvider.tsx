@@ -15,6 +15,13 @@ import {
   setStoredAccentHex,
 } from './accent-preferences';
 import {
+  applyCustomTheme,
+  clearCustomTheme,
+  loadCustomTheme,
+  saveCustomTheme,
+  type CustomTheme,
+} from './custom-theme';
+import {
   applyResolvedTheme,
   loadThemePreferences,
   readSystemTheme,
@@ -29,9 +36,12 @@ type ThemeContextValue = {
   readonly preference: ThemePreference;
   readonly resolved: ResolvedTheme;
   readonly accentHex: string;
+  readonly customTheme: CustomTheme;
   readonly themeRevision: number;
   readonly setTheme: (theme: ThemePreference) => void;
   readonly setAccentHex: (hex: string) => void;
+  readonly setCustomTheme: (theme: CustomTheme) => void;
+  readonly resetCustomTheme: () => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -53,6 +63,7 @@ export function ThemeProvider({
   const [accentHex, setAccentHexState] = useState(
     () => loadAccentPreferences(storage).accentHex,
   );
+  const [customTheme, setCustomThemeState] = useState<CustomTheme>(() => loadCustomTheme(storage));
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     readSystemTheme(),
   );
@@ -69,15 +80,19 @@ export function ThemeProvider({
   }, [resolved]);
 
   useEffect(() => {
+    applyCustomTheme(customTheme, resolved);
+  }, [customTheme, resolved]);
+
+  useEffect(() => {
     applyAccentColor(accentHex);
   }, [accentHex]);
 
   useEffect(() => {
-    const signature = `${resolved}:${accentHex}`;
+    const signature = `${resolved}:${accentHex}:${JSON.stringify(customTheme)}`;
     if (themeSignatureRef.current === signature) return;
     themeSignatureRef.current = signature;
     setThemeRevision((revision) => revision + 1);
-  }, [accentHex, resolved]);
+  }, [accentHex, customTheme, resolved]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -104,9 +119,29 @@ export function ThemeProvider({
     [storage],
   );
 
+  const setCustomTheme = useCallback((next: CustomTheme) => {
+    saveCustomTheme(next, storage);
+    setCustomThemeState(next);
+  }, [storage]);
+
+  const resetCustomTheme = useCallback(() => {
+    clearCustomTheme(storage);
+    setCustomThemeState(loadCustomTheme(storage));
+  }, [storage]);
+
   const value = useMemo(
-    () => ({ preference, resolved, accentHex, themeRevision, setTheme, setAccentHex }),
-    [accentHex, preference, resolved, setAccentHex, setTheme, themeRevision],
+    () => ({
+      preference,
+      resolved,
+      accentHex,
+      customTheme,
+      themeRevision,
+      setTheme,
+      setAccentHex,
+      setCustomTheme,
+      resetCustomTheme,
+    }),
+    [accentHex, customTheme, preference, resetCustomTheme, resolved, setAccentHex, setCustomTheme, setTheme, themeRevision],
   );
 
   return (

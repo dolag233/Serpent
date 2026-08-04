@@ -1,6 +1,6 @@
 # 0029：UI 标准化执行方案与插件原生 UI 契约
 
-> 状态：设计完成，等待按阶段实施
+> 状态：设计完成，阶段实施中（Primitive、主题 profile 与高复用 feedback pattern 已落地）
 > 日期：2026-08-04
 > 关联工单：`Serpent-ex46`、`Serpent-ex46.1`、`Serpent-nzxh`、`Serpent-7nah`、`Serpent-fkq3`、`Serpent-gtih`
 > 前置研究：[Obsidian UI 与插件机制调研](../research/2026-08-04-obsidian-ui-plugin-research.md)
@@ -535,13 +535,13 @@ UI 变化不能只跑 snapshot。涉及 Renderer/Preload/Main/Worker、自定义
 
 ## 12. 当前状态与下一步
 
-已有 `src/renderer/ui/` foundation、tokens、layers、部分 primitives/patterns 和 `contributes.themes` 的 iframe token bridge，但这只代表基础层，不代表全量 UI 已统一，也不代表 Plugin UI Contract 已成为发布 API。
+已有 `src/renderer/ui/` foundation、tokens、layers、Button/TextField/Select/Switch/Slider/Progress/Tooltip、Dialog/Menu/Popover/Settings/Notice/Activity patterns，以及版本化用户主题覆盖和 `contributes.themes` iframe token bridge。阶段 1 的 Theme Contract 和阶段 2 的 primitive/feedback 基础已落地，但这只代表标准化正在推进，不代表全量 UI 已统一，也不代表完整 Plugin UI Contract 已成为发布 API。
 
 实施顺序：
 
 1. 提交本设计文档并在 Beads 中创建阶段子工单；
-2. 完成 Token/Theme Contract 和 primitive 状态/ARIA 测试；
-3. 迁移 Menu/Dialog/Settings/Notice/Activity 等高复用 pattern；
+2. 完成 Token/Theme Contract 和 primitive 状态/ARIA 测试；（已完成基础增量，提交 `f46b2e0`、`a536f97`）
+3. 迁移 Menu/Dialog/Settings/Notice/Activity 等高复用 pattern；（进行中，已补齐 Slider/Popover/SettingsCard/Notice/Activity 基础契约）
 4. 迁移应用领域 surface；
 5. 实现并发布 Plugin UI Contract v1；
 6. 由独立审查和 Computer Use/packaged QA 完成最终验收。
