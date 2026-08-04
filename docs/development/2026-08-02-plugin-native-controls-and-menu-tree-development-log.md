@@ -128,3 +128,43 @@ npx vitest run tests/unit/plugin-menu-contributions.test.ts --reporter=dot
 ```
 
 无选择/混合/Viewer 的真实右键旅程、packaged/Windows/Computer Use 仍未执行；`Serpent-gtih` 与 `Serpent-fkq3` 继续保持 `in_progress`。
+
+## 2026-08-04：宿主分组与插件相对定位合并
+
+补齐一个实际的菜单渲染缺口：Asset/Folder 右键菜单由多个 JSX slot 组成，原先逐 slot 过滤贡献。插件 A 声明 `after: B`、B 声明 `group: organize` 时，B 会进入“组织”组而 A 会落到通用插件区，插件间的相对顺序因此丢失；同样的问题也会出现在 `asset.rename` 这类内联宿主锚点的插件链上。
+
+新增 `placePluginMenuItemsAroundHost`，先在完整插件贡献图中按插件 `before`/`after` 边构造连通分支，再把分支统一归并到宿主 group 或 inline anchor，最后对每个 slot 调用同一 `solvePluginMenuPlacement`。实际渲染的非内联宿主锚点会落入对应 group 的 before/after slot，避免“已识别但没有 JSX 插槽”而丢失；宿主锚点优先于插件 group，跨宿主 group 的显式冲突也不会被静默拆散。`AssetContextMenu` 的宿主分组、内联锚点和通用插件区全部复用同一次 placement 结果，隐藏贡献不会因此重新出现。
+
+自动化证据：
+
+```text
+npx vitest run tests/unit/plugin-menu-contributions.test.ts --reporter=dot
+# 1 file / 18 tests passed
+
+npx vitest run tests/unit/plugin-menu-contributions.test.ts \
+  tests/unit/plugin-surface-conditions.test.ts \
+  tests/unit/plugin-contribution-context.test.ts \
+  tests/unit/plugin-context.test.ts \
+  tests/unit/plugin-contract.test.ts \
+  tests/unit/plugin-manager-response-parse.test.ts \
+  tests/unit/plugin-themes.test.ts \
+  tests/unit/plugin-job-display.test.ts --reporter=dot
+# 8 files / 80 tests passed
+
+npx tsc --noEmit
+npx eslint src/renderer/plugin-menu-contributions.ts \
+  src/renderer/AssetContextMenu.tsx \
+  tests/unit/plugin-menu-contributions.test.ts
+git diff --check
+# 均通过
+```
+
+`Serpent-fkq3` 仍保持 `in_progress`：当前增量尚未替代完整 native/plugin `ResolvedMenuTree`，真实右键多种菜单面、packaged/Windows 和 Computer Use 仍未执行。
+
+补充验证：
+
+```text
+npm run test -- --reporter=dot
+# Test Files 322 passed | 3 skipped (325)
+# Tests 2814 passed | 8 skipped (2822)
+```

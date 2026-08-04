@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildPluginMenuDescriptors,
+  placePluginMenuItemsAroundHost,
   runPluginMenuCommand,
 } from '../../src/renderer/plugin-menu-contributions';
 import { createPluginContributionContext } from '../../src/plugins/plugin-context';
@@ -42,6 +43,154 @@ function createContext() {
 }
 
 describe('plugin menu contribution descriptors', () => {
+  it('keeps plugin-to-plugin placement inside the host group', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-a',
+        pluginId: 'com.example.menu',
+        title: 'A',
+        target: 'menus.asset',
+        group: 'organize',
+      },
+      {
+        kind: 'menu',
+        id: 'plugin-b',
+        pluginId: 'com.example.menu',
+        title: 'B',
+        target: 'menus.asset',
+        after: 'plugin-a',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { organize: ['asset.rename'] },
+      new Set(['asset.rename']),
+    );
+
+    expect(placement.groups.get('organize')?.after.map((item) => item.id))
+      .toEqual(['plugin-a', 'plugin-b']);
+    expect(placement.outside).toEqual([]);
+  });
+
+  it('keeps a plugin chain adjacent to an inline host anchor', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-a',
+        pluginId: 'com.example.menu',
+        title: 'A',
+        target: 'menus.asset',
+        after: 'asset.rename',
+      },
+      {
+        kind: 'menu',
+        id: 'plugin-b',
+        pluginId: 'com.example.menu',
+        title: 'B',
+        target: 'menus.asset',
+        after: 'plugin-a',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { organize: ['asset.rename'] },
+      new Set(['asset.rename']),
+    );
+
+    expect(placement.anchors.get('asset.rename')?.after.map((item) => item.id))
+      .toEqual(['plugin-a', 'plugin-b']);
+    expect(placement.outside).toEqual([]);
+  });
+
+  it('maps non-inline host anchors into their rendered host group', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-a',
+        pluginId: 'com.example.menu',
+        title: 'A',
+        target: 'menus.asset',
+        before: 'asset.copy',
+      },
+      {
+        kind: 'menu',
+        id: 'plugin-b',
+        pluginId: 'com.example.menu',
+        title: 'B',
+        target: 'menus.asset',
+        after: 'plugin-a',
+        group: 'metadata',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { organize: ['asset.copy'], metadata: ['asset.ai-analyze'] },
+      new Set(),
+    );
+
+    expect(placement.groups.get('organize')?.before.map((item) => item.id))
+      .toEqual(['plugin-a', 'plugin-b']);
+    expect(placement.groups.get('metadata')?.after).toEqual([]);
+    expect(placement.outside).toEqual([]);
+  });
+
+  it('keeps an unavailable host anchor visible in the plugin section', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-a',
+        pluginId: 'com.example.menu',
+        title: 'A',
+        target: 'menus.asset',
+        after: 'asset.open-with',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { open: ['asset.view'], organize: ['asset.copy'] },
+      new Set(),
+    );
+
+    expect(placement.outside.map((item) => item.id)).toEqual(['plugin-a']);
+  });
+
+  it('keeps an explicit cross-group plugin edge in one rendered group', () => {
+    const items = buildPluginMenuDescriptors([
+      {
+        kind: 'menu',
+        id: 'plugin-a',
+        pluginId: 'com.example.menu',
+        title: 'A',
+        target: 'menus.asset',
+        group: 'metadata',
+      },
+      {
+        kind: 'menu',
+        id: 'plugin-b',
+        pluginId: 'com.example.menu',
+        title: 'B',
+        target: 'menus.asset',
+        group: 'organize',
+        after: 'plugin-a',
+      },
+    ] as never);
+
+    const placement = placePluginMenuItemsAroundHost(
+      items,
+      { organize: ['asset.copy'], metadata: ['asset.ai-analyze'] },
+      new Set(),
+    );
+
+    expect(placement.groups.get('organize')?.after.map((item) => item.id))
+      .toEqual(['plugin-a', 'plugin-b']);
+    expect(placement.groups.get('metadata')?.after).toEqual([]);
+  });
+
   it('formats portable accelerators for the active menu platform', () => {
     const [descriptor] = buildPluginMenuDescriptors([{
       kind: 'menu',

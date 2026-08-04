@@ -86,6 +86,17 @@ export type PluginMenuPlacementResult = {
   diagnostics: PluginMenuPlacementDiagnostic[];
 };
 
+export type PluginHostMenuPlacement = {
+  before: PluginMenuDescriptor[];
+  after: PluginMenuDescriptor[];
+};
+
+export type PluginMenuHostPlacement = {
+  groups: Map<string, PluginHostMenuPlacement>;
+  anchors: Map<string, PluginHostMenuPlacement>;
+  outside: PluginMenuDescriptor[];
+};
+
 export type BuildPluginMenuDescriptorsOptions = {
   onPlacementDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void;
 };
@@ -281,6 +292,147 @@ export function solvePluginMenuPlacement(
     nodes: sortMenuLevel(nodes, (diagnostic) => diagnostics.push(diagnostic)),
     diagnostics,
   };
+}
+
+function orderPluginMenuDescriptors(
+  items: readonly PluginMenuDescriptor[],
+): PluginMenuDescriptor[] {
+  const nodes = items.map((descriptor, sourceIndex) => ({
+    descriptor,
+    sourceIndex,
+    pluginId: descriptor.pluginId,
+  }));
+  return solvePluginMenuPlacement(nodes).nodes.map((node) => node.descriptor);
+}
+
+/**
+ * Merges plugin-only placement edges with the host menu's fixed anchors.
+ *
+ * AssetContextMenu renders host sections in several JSX slots (for example
+ * `organize` before/after the native commands). Filtering each slot in
+ * isolation loses a plugin item that is only related to a sibling plugin:
+ * `a after b`, where `b group=organize`, used to put `b` in Organize and `a`
+ * in the generic plugin section. Build the slots from the full contribution
+ * graph first so plugin-to-plugin before/after relations stay adjacent to
+ * their host section or anchor.
+ */
+export function placePluginMenuItemsAroundHost(
+  items: readonly PluginMenuDescriptor[],
+  hostGroups: Readonly<Record<string, readonly string[]>>,
+  inlineAnchors: ReadonlySet<string>,
+): PluginMenuHostPlacement {
+  const groupNames = Object.keys(hostGroups);
+  const groupSlots = new Map<string, PluginHostMenuPlacement>();
+  for (const group of groupNames) {
+    groupSlots.set(group, { before: [], after: [] });
+  }
+  const anchorSlots = new Map<string, PluginHostMenuPlacement>();
+  const hostAnchorIds = new Set<string>();
+  const hostAnchorGroup = new Map<string, string>();
+  for (const group of groupNames) {
+    for (const anchor of hostGroups[group] ?? []) {
+      hostAnchorIds.add(anchor);
+      hostAnchorGroup.set(anchor, group);
+    }
+  }
+  for (const anchor of inlineAnchors) {
+    hostAnchorIds.add(anchor);
+    anchorSlots.set(anchor, { before: [], after: [] });
+  }
+
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const adjacency = new Map<string, Set<string>>(
+    items.map((item) => [item.id, new Set<string>()]),
+  );
+  for (const item of items) {
+    for (const relatedId of [item.before, item.after]) {
+      if (relatedId === undefined || !byId.has(relatedId)) continue;
+      adjacency.get(item.id)?.add(relatedId);
+      adjacency.get(relatedId)?.add(item.id);
+    }
+  }
+
+  // Placement edges form one unit for the purpose of embedding into the
+  // host. This is important when a chain crosses plugin group labels: the
+  // explicit edge must not be split between two independently rendered host
+  // sections.
+  const components: PluginMenuDescriptor[][] = [];
+  const visited = new Set<string>();
+  for (const item of items) {
+    if (visited.has(item.id)) continue;
+    const component: PluginMenuDescriptor[] = [];
+    const pending = [item.id];
+    visited.add(item.id);
+    while (pending.length > 0) {
+      const id = pending.shift();
+      if (id === undefined) continue;
+      const current = byId.get(id);
+      if (current === undefined) continue;
+      component.push(current);
+      for (const relatedId of adjacency.get(id) ?? []) {
+        if (visited.has(relatedId)) continue;
+        visited.add(relatedId);
+        pending.push(relatedId);
+      }
+    }
+    components.push(component);
+  }
+
+  const slotItems = new Map<string, PluginMenuDescriptor[]>();
+  const outsideItems: PluginMenuDescriptor[] = [];
+  for (const component of components) {
+    const anchorItem = component.find((item) =>
+      item.before !== undefined && hostAnchorIds.has(item.before)
+      || item.after !== undefined && hostAnchorIds.has(item.after));
+    let slotId: string | undefined;
+    if (anchorItem !== undefined) {
+      const anchor = anchorItem.before !== undefined && hostAnchorIds.has(anchorItem.before)
+        ? anchorItem.before
+        : anchorItem.after;
+      if (anchor !== undefined) {
+        const edge = anchorItem.before === anchor ? "before" : "after";
+        const group = inlineAnchors.has(anchor) ? undefined : hostAnchorGroup.get(anchor);
+        slotId = group === undefined
+          ? `anchor:${edge}:${anchor}`
+          : `group:${group}:${edge}`;
+      }
+    } else {
+      // Explicit plugin edges outrank default groups. If a connected branch
+      // carries conflicting host groups, use the first host group in the
+      // declared order as a deterministic single host slot.
+      const group = groupNames.find((name) => component.some((item) => item.group === name));
+      if (group !== undefined) slotId = `group:${group}:after`;
+    }
+    if (slotId === undefined) {
+      outsideItems.push(...component);
+      continue;
+    }
+    const slot = slotItems.get(slotId) ?? [];
+    slot.push(...component);
+    slotItems.set(slotId, slot);
+  }
+
+  for (const [slotId, placed] of slotItems) {
+    const ordered = orderPluginMenuDescriptors(placed);
+    if (slotId.startsWith("group:")) {
+      const [, groupName, edge] = slotId.split(":");
+      const group = groupName === undefined ? undefined : groupSlots.get(groupName);
+      if (group !== undefined) {
+        if (edge === "before") group.before = ordered;
+        else group.after = ordered;
+      }
+      continue;
+    }
+    const [, edge, anchor] = slotId.split(":");
+    const slot = anchor === undefined ? undefined : anchorSlots.get(anchor);
+    if (slot !== undefined) {
+      if (edge === "before") slot.before = ordered;
+      else slot.after = ordered;
+    }
+  }
+
+  const outside = orderPluginMenuDescriptors(outsideItems);
+  return { groups: groupSlots, anchors: anchorSlots, outside };
 }
 
 export function buildPluginMenuDescriptors(
