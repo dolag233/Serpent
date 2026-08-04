@@ -15,6 +15,7 @@ import { Icon, type IconName } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { translateForLocale } from "./i18n";
 import { Slider } from "./ui/primitives";
+import { ShellSurface } from "./ui/surfaces";
 
 const FIELD_BUTTONS: readonly {
   readonly id: "canvas.field.name" | "canvas.field.size" | "canvas.field.date";
@@ -120,7 +121,10 @@ export function CanvasToolbarControls({
   const masonry = resolveItem(ctx, "canvas.view.masonry");
 
   return (
-    <span className="tool-group-view">
+    <ShellSurface
+      className="tool-group-view"
+      data-ui-surface-variant="toolbar"
+    >
       <div className="canvas-controls">
         <ToolButton
           disabled={refresh.disabled}
@@ -170,6 +174,6 @@ export function CanvasToolbarControls({
           );
         })}
       </div>
-    </span>
+    </ShellSurface>
   );
 }

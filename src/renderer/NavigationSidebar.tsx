@@ -61,6 +61,7 @@ import {
   withCollapsedFolderIds,
   type NavTreePreferences,
 } from "./nav-tree-preferences";
+import { PaneSurface } from "./ui/surfaces";
 
 // ---------------------------------------------------------------------------
 // NavRow — local presentational row
@@ -1168,7 +1169,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   }
 
   return (
-    <aside className="navigation-pane">
+    <PaneSurface
+      className="navigation-pane"
+      data-ui-surface-variant="navigation"
+    >
       <nav className="navigation-scroll">
         <NavRow
           active={library ? isAllAssetsNavActive(browseNavFlags) : true}
@@ -1336,6 +1340,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           )}
         </Section>
       </nav>
-    </aside>
+    </PaneSurface>
   );
 }

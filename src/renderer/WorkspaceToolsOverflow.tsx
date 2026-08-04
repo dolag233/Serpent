@@ -1,6 +1,11 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import {
+  MenuSurface,
+  resolveMenuNodes,
+  type ResolvedMenuNode,
+} from "./ui/patterns";
 
 export type WorkspaceOverflowItem = {
   id: string;
@@ -24,6 +29,15 @@ export function WorkspaceToolsOverflow({
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const hasActiveItem = items.some((item) => item.active);
+  const menuNodes = resolveMenuNodes(
+    items.map((item) => ({
+      command: item.id,
+      enablement: !item.disabled,
+      id: item.id,
+      kind: "item" as const,
+      label: item.label,
+    })),
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -62,24 +76,37 @@ export function WorkspaceToolsOverflow({
         ) : null}
       </button>
       {open && (
-        <div className="workspace-tools-overflow-menu" id={menuId} role="menu">
-          {items.map((item) => (
-            <button
-              className="library-switcher-item"
-              disabled={item.disabled}
-              key={item.id}
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-              role="menuitem"
-              type="button"
-            >
-              {item.active ? <span aria-hidden="true" className="workspace-tools-overflow-item-indicator" /> : null}
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <MenuSurface
+          className="workspace-tools-overflow-menu"
+          id={menuId}
+          nodes={menuNodes}
+          renderNode={(node: ResolvedMenuNode) => {
+            if (node.kind !== "item") return null;
+            const item = items.find((candidate) => candidate.id === node.id);
+            if (item === undefined) return null;
+            return (
+              <button
+                className="library-switcher-item"
+                disabled={!node.enabled}
+                key={node.id}
+                onClick={() => {
+                  setOpen(false);
+                  item.onSelect();
+                }}
+                role="menuitem"
+                type="button"
+              >
+                {item.active ? (
+                  <span
+                    aria-hidden="true"
+                    className="workspace-tools-overflow-item-indicator"
+                  />
+                ) : null}
+                {item.label}
+              </button>
+            );
+          }}
+        />
       )}
     </div>
   );
