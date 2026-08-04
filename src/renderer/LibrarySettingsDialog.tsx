@@ -3,6 +3,7 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 type LibrarySettingsCategory = "general" | "ignore";
 
@@ -56,13 +57,18 @@ export function LibrarySettingsDialog({
     <div className="dialog-backdrop" onClick={(event) => {
       if (event.target === event.currentTarget) onClose();
     }} role="presentation">
-      <div className="create-dialog app-settings-dialog library-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="library-settings-title">
-        <div className="dialog-heading app-settings-heading">
-          <h2 id="library-settings-title">{t("settings.librarySettings")}</h2>
+      <DialogShell
+        className="create-dialog app-settings-dialog library-settings-dialog"
+        contentClassName="ui-dialog-shell__content--flush"
+        dialogId="library-settings-dialog"
+        headerActions={
           <button className="dialog-close" onClick={onClose} type="button" {...iconActionAttrs(t("common.close"))}>
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        style={{ padding: 0 }}
+        title={t("settings.librarySettings")}
+      >
         <div className="app-settings-frame library-settings-frame">
           <nav aria-label={t("settings.librarySettingsCategories")} className="app-settings-nav">
             <div className="app-settings-nav-list" role="tablist">
@@ -165,7 +171,7 @@ export function LibrarySettingsDialog({
             )}
           </main>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

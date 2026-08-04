@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface CollectionEditorDialogProps {
   open: boolean;
@@ -28,18 +29,10 @@ export function CollectionEditorDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="collection-editor-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="collection-editor-title">
-              {t("dialog.collectionEditor.title")}
-            </h2>
-          </div>
+        dialogId="collection-editor"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -48,7 +41,10 @@ export function CollectionEditorDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        title={t("dialog.collectionEditor.title")}
+        style={{ padding: 0 }}
+      >
         <label className="field-label" htmlFor="collection-description">
           {t("dialog.collectionEditor.description")}
         </label>
@@ -102,7 +98,7 @@ export function CollectionEditorDialog({
             {t("dialog.collectionEditor.save")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

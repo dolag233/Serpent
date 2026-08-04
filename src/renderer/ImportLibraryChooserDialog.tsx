@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface ImportLibraryChooserDialogProps {
   open: boolean;
@@ -26,18 +27,10 @@ export function ImportLibraryChooserDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="import-library-chooser-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="import-library-chooser-title">
-              {t("dialog.importLibraryChooser.title")}
-            </h2>
-          </div>
+        dialogId="import-library-chooser"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -46,7 +39,10 @@ export function ImportLibraryChooserDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onCancel}
+        title={t("dialog.importLibraryChooser.title")}
+      >
         <p className="field-help">{t("dialog.importLibraryChooser.help")}</p>
         <div className="dialog-actions is-stacked">
           <button
@@ -73,7 +69,7 @@ export function ImportLibraryChooserDialog({
             {t("common.cancel")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

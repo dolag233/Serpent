@@ -4,6 +4,7 @@ import type { AppLogEntry, ReadAppLogResult, SerializedLogError } from "../share
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type AppLogDialogProps = {
   open: boolean;
@@ -62,17 +63,11 @@ export function AppLogDialog({
       }}
       role="presentation"
     >
-      <div
-        aria-labelledby="app-log-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog app-log-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="app-log-dialog-title">{t("dialog.appLog.title")}</h2>
-            <p className="app-log-subtitle">{t("dialog.appLog.subtitle")}</p>
-          </div>
+        dialogId="app-log-dialog"
+        description={<span className="app-log-subtitle">{t("dialog.appLog.subtitle")}</span>}
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -81,7 +76,10 @@ export function AppLogDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        title={t("dialog.appLog.title")}
+        style={{ padding: 0 }}
+      >
         <div className="dialog-actions dialog-actions-start app-log-actions">
           <form
             className="app-log-filter"
@@ -143,7 +141,7 @@ export function AppLogDialog({
             })}
           </div>
         )}
-      </div>
+      </DialogShell>
     </div>
   );
 }

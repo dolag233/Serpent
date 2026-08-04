@@ -53,15 +53,18 @@ describe('accent CSS derivation (Serpent-gnus)', () => {
     resolve(__dirname, '../../src/renderer/styles.css'),
     'utf8',
   );
+  const foundationCss = readFileSync(
+    resolve(__dirname, '../../src/renderer/ui/tokens.css'),
+    'utf8',
+  );
 
   it('derives accent-dark and soft-fg from --accent (no frozen blues)', () => {
     expect(css).toMatch(
       /--accent-dark:\s*color-mix\(in srgb,\s*var\(--accent\)/,
     );
     expect(css).not.toMatch(/--accent-soft-fg:\s*#1d4ed8/);
-    expect(css).toMatch(
-      /--accent-soft-fg:\s*color-mix\(in srgb,\s*var\(--accent\)/,
-    );
+    expect(css).toMatch(/--accent-soft-fg:\s*var\(--ui-content-accent/);
+    expect(foundationCss).toContain('--ui-content-accent: color-mix(in srgb, var(--ui-action-accent)');
     // Default leaf may still declare --accent: #3b82f6 in :root / light.
     expect(css).toContain('--accent: #3b82f6');
   });

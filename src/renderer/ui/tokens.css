@@ -16,6 +16,16 @@
 [data-theme="dark"] {
   color-scheme: dark;
 
+  /* App wallpaper contract. The image is optional; the overlay is a readable
+     theme-colored veil and is intentionally independent from panel opacity. */
+  --ui-background-color: var(--ui-surface-canvas);
+  --ui-background-image: none;
+  --ui-background-overlay-opacity: 0;
+  --ui-background-surface-opacity: 100%;
+  --ui-background-size: cover;
+  --ui-background-position: center;
+  --ui-background-repeat: no-repeat;
+
   /* Surface */
   --ui-surface-canvas: #252729;
   --ui-surface-pane: #2c2e31;
@@ -146,6 +156,8 @@
 
 [data-theme="light"] {
   color-scheme: light;
+
+  --ui-background-color: var(--ui-surface-canvas);
 
   /* Surface */
   --ui-surface-canvas: #ebeceb;

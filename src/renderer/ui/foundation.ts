@@ -10,6 +10,7 @@ export type UiTheme = 'dark' | 'light';
 
 export type UiTokenCategory =
   | 'surface'
+  | 'background'
   | 'content'
   | 'border'
   | 'action'
@@ -49,6 +50,15 @@ export type UiLayerValue = (typeof UI_LAYER)[UiLayerName];
 
 /** CSS custom properties shared by future primitives and semantic adapters. */
 export const UI_CSS_VAR = {
+  background: {
+    color: '--ui-background-color',
+    image: '--ui-background-image',
+    overlayOpacity: '--ui-background-overlay-opacity',
+    surfaceOpacity: '--ui-background-surface-opacity',
+    size: '--ui-background-size',
+    position: '--ui-background-position',
+    repeat: '--ui-background-repeat',
+  },
   surface: {
     canvas: '--ui-surface-canvas',
     pane: '--ui-surface-pane',

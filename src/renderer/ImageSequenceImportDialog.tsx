@@ -8,6 +8,7 @@ import type {
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface ImageSequenceImportDialogProps {
   error?: string | null;
@@ -100,47 +101,10 @@ function ImageSequenceImportDialogForm({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form
-        aria-labelledby="image-sequence-import-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog image-sequence-dialog"
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          if (valid && !submitting) {
-            onConfirm({
-              action: "import-sequence",
-              firstFrame,
-              fps,
-              lastFrame,
-              sequenceIndex,
-              applyToRest,
-            });
-          }
-        }}
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="image-sequence-import-dialog-title">
-              {t("dialog.imageSequenceImport.title")}
-            </h2>
-            <p className="field-help">
-              {offer.sequences.length > 1 ? (
-                <>
-                  {t("dialog.imageSequenceImport.progress", {
-                    current: sequenceIndex + 1,
-                    total: offer.sequences.length,
-                  })}{" "}
-                </>
-              ) : null}
-              {t("dialog.imageSequenceImport.summary", {
-                name: sequence.displayName,
-                count: sequence.frameCount,
-                width: sequence.width ?? "—",
-                height: sequence.height ?? "—",
-              })}
-            </p>
-          </div>
+        dialogId="image-sequence-import-dialog"
+        headerActions={
           <button
             className="dialog-close"
             disabled={submitting}
@@ -150,9 +114,44 @@ function ImageSequenceImportDialogForm({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-
-        <div className="image-sequence-dialog-section">
+        }
+        style={{ padding: 0 }}
+        title={t("dialog.imageSequenceImport.title")}
+        description={
+          <span className="field-help">
+            {offer.sequences.length > 1 ? (
+              <>
+                {t("dialog.imageSequenceImport.progress", {
+                  current: sequenceIndex + 1,
+                  total: offer.sequences.length,
+                })}{" "}
+              </>
+            ) : null}
+            {t("dialog.imageSequenceImport.summary", {
+              name: sequence.displayName,
+              count: sequence.frameCount,
+              width: sequence.width ?? "—",
+              height: sequence.height ?? "—",
+            })}
+          </span>
+        }
+      >
+        <form
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault();
+            if (valid && !submitting) {
+              onConfirm({
+                action: "import-sequence",
+                firstFrame,
+                fps,
+                lastFrame,
+                sequenceIndex,
+                applyToRest,
+              });
+            }
+          }}
+        >
+          <div className="image-sequence-dialog-section">
           <label className="field-label" htmlFor="image-sequence-import-first">
             {t("dialog.imageSequenceImport.range")}
           </label>
@@ -231,9 +230,9 @@ function ImageSequenceImportDialogForm({
               count: frameCount,
             })}
           </p>
-        </div>
+          </div>
 
-        <div className="image-sequence-dialog-section">
+          <div className="image-sequence-dialog-section">
           <label className="field-label" htmlFor="image-sequence-import-fps">
             {t("dialog.imageSequenceImport.fps")}
           </label>
@@ -259,10 +258,10 @@ function ImageSequenceImportDialogForm({
             />
             <span>{t("dialog.imageSequenceImport.applyToRest")}</span>
           </label>
-        </div>
+          </div>
 
-        {error ? <p className="field-error" role="alert">{error}</p> : null}
-        <div className="dialog-actions">
+          {error ? <p className="field-error" role="alert">{error}</p> : null}
+          <div className="dialog-actions">
           <button
             className="secondary-button"
             disabled={submitting}
@@ -291,8 +290,9 @@ function ImageSequenceImportDialogForm({
                   count: frameCount,
                 })}
           </button>
-        </div>
-      </form>
+          </div>
+        </form>
+      </DialogShell>
     </div>
   );
 }

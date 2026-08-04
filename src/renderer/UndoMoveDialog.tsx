@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface UndoMoveDialogProps {
   open: boolean;
@@ -24,16 +25,10 @@ export function UndoMoveDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="undo-move-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="undo-move-dialog-title">{t("dialog.undoMove.title")}</h2>
-          </div>
+        dialogId="undo-move-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -42,7 +37,10 @@ export function UndoMoveDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onCancel}
+        title={t("dialog.undoMove.title")}
+      >
         <p className="field-help">{t("dialog.undoMove.help")}</p>
         <label className="field-label" htmlFor="undo-move-conflict">
           {t("dialog.undoMove.conflictLabel")}
@@ -77,7 +75,7 @@ export function UndoMoveDialog({
             {t("dialog.undoMove.submit")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

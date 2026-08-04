@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "./i18n";
+import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,6 +100,9 @@ const ContextMenuContext = createContext<ContextMenuContextValue | null>(null);
 // new hover must close the previous submenu synchronously instead of waiting
 // for that timer and briefly rendering two panels.
 let activeSubmenuClose: (() => void) | null = null;
+const CONTEXT_MENU_SURFACE_NODES = resolveMenuNodes([
+  { id: "context-menu-content", kind: "separator" as const },
+]);
 
 export function useContextMenu() {
   const ctx = useContext(ContextMenuContext);
@@ -228,7 +233,7 @@ export function ContextMenu({
   position: { x: number; y: number };
 }) {
   const { close } = useContextMenu();
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
 
   // Start hidden + off-screen so we can measure before painting
@@ -240,8 +245,8 @@ export function ContextMenu({
   });
 
   useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = document.getElementById(menuId);
+    if (!(menu instanceof HTMLDivElement)) return;
 
     const rect = menu.getBoundingClientRect();
     const vw = window.innerWidth;
@@ -269,14 +274,17 @@ export function ContextMenu({
     // Ensure not above viewport
     if (top < gap) top = gap;
 
-    setStyle({ position: "fixed", left, top });
-  }, [position]);
+    const frame = requestAnimationFrame(() => {
+      setStyle({ position: "fixed", left, top });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [menuId, position]);
 
   // Keep the single focused highlight aligned with the pointer from the
   // first rendered frame; fall back to the first enabled item for keyboard use.
   useEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = document.getElementById(menuId);
+    if (!(menu instanceof HTMLDivElement)) return;
     // Small delay to ensure DOM is settled after layout adjustment
     const raf = requestAnimationFrame(() => {
       const items = Array.from(
@@ -293,12 +301,11 @@ export function ContextMenu({
       (pointedItem && menu.contains(pointedItem) ? pointedItem : first).focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, [position]);
+  }, [menuId, position]);
 
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = e.currentTarget;
 
     const items = Array.from(
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -332,17 +339,16 @@ export function ContextMenu({
   };
 
   return (
-    <div
-      ref={menuRef}
+    <MenuSurface
       className={`context-menu${keyboardNavigationActive ? " is-keyboard-navigation" : ""}`}
-      role="menu"
       aria-label={ariaLabel}
+      id={menuId}
+      nodes={CONTEXT_MENU_SURFACE_NODES}
+      renderNode={() => <>{children}</>}
       style={style}
       onKeyDown={handleMenuKeyDown}
       onPointerMove={() => setKeyboardNavigationActive(false)}
-    >
-      {children}
-    </div>
+    />
   );
 }
 

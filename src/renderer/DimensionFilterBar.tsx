@@ -45,6 +45,7 @@ import { SortModeControl, type SortFieldOption } from "./SortModeControl";
 import { useT } from "./i18n";
 import type { TagSummary } from "../shared/asset-types";
 import type { SortDefinition } from "../shared/asset-types";
+import { PopoverSurface } from "./ui/patterns";
 
 export type DimensionId =
   | "color"
@@ -541,7 +542,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "color"}
           />
           {openDimension === "color" && (
-            <div className="dimension-filter-popover">
+            <PopoverSurface className="dimension-filter-popover" role="dialog">
               <div className="dimension-color-row" role="listbox" aria-label={t("filter.dimColor")}>
                 {COLOR_PRESETS.map((preset) => (
                   <button
@@ -569,7 +570,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </div>
+            </PopoverSurface>
           )}
         </div>
 
@@ -584,7 +585,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "tags"}
           />
           {openDimension === "tags" && (
-            <div className="dimension-filter-popover">
+            <PopoverSurface className="dimension-filter-popover" role="dialog">
               <FilterTagPicker
                 disabled={controlsDisabled}
                 onChange={handleTagNamesChange}
@@ -604,7 +605,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </div>
+            </PopoverSurface>
           )}
         </div>
 
@@ -618,7 +619,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "shape"}
           />
           {openDimension === "shape" && (
-            <div className="dimension-filter-popover">
+            <PopoverSurface className="dimension-filter-popover" role="dialog">
               <FilterPresetChips
                 disabled={controlsDisabled}
                 label={t("filter.orientation")}
@@ -658,7 +659,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 step="0.01"
               />
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </div>
+            </PopoverSurface>
           )}
         </div>
 
@@ -673,7 +674,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "rating"}
           />
           {openDimension === "rating" && (
-            <div className="dimension-filter-popover">
+            <PopoverSurface className="dimension-filter-popover" role="dialog">
               <div className="dimension-rating-row" role="group">
                 {[5, 4, 3, 2, 1, 0].map((star) => (
                   <button
@@ -700,7 +701,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </div>
+            </PopoverSurface>
           )}
         </div>
 
@@ -725,7 +726,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "format"}
           />
           {openDimension === "format" && (
-            <div className="dimension-filter-popover">
+            <PopoverSurface className="dimension-filter-popover" role="dialog">
               <input
                 aria-label={t("filter.format")}
                 className="text-field"
@@ -779,7 +780,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </div>
+            </PopoverSurface>
           )}
         </div>
 
@@ -794,7 +795,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "more"}
           />
           {openDimension === "more" && (
-            <div className="dimension-filter-popover is-wide">
+            <PopoverSurface className="dimension-filter-popover is-wide" role="dialog">
               <label>
                 {t("filter.favoriteField")}
                 <select
@@ -935,7 +936,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 setRange={setDurationRange}
                 step="0.1"
               />
-            </div>
+            </PopoverSurface>
           )}
         </div>
 

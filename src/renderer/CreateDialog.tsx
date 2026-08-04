@@ -3,6 +3,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { DialogShell } from "./ui/patterns";
 
 export type CreateLibraryPhase = "start" | "form";
 
@@ -62,24 +63,16 @@ export function CreateDialog({
   const t = useT();
   if (!open) return null;
 
-  const titleId = "create-dialog-title";
   const showRecents =
     required && phase === "start" && recentLibraries.length > 0;
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby={titleId}
-        aria-modal="true"
+      <DialogShell
         className="create-dialog create-library-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id={titleId}>{t("empty.noLibraryTitle")}</h2>
-            <p className="create-library-lead">{t("empty.noLibraryBody")}</p>
-          </div>
-          {!required ? (
+        dialogId="create-library-dialog"
+        headerActions={
+          !required ? (
             <button
               className="dialog-close"
               onClick={onCancel}
@@ -88,9 +81,16 @@ export function CreateDialog({
             >
               <Icon name="close" size={16} />
             </button>
-          ) : null}
-        </div>
-
+          ) : null
+        }
+        style={{ padding: 0 }}
+        title={t("empty.noLibraryTitle")}
+        description={
+          <span className="create-library-lead">
+            {t("empty.noLibraryBody")}
+          </span>
+        }
+      >
         {phase === "form" ? (
           <form
             className="create-library-form"
@@ -192,7 +192,7 @@ export function CreateDialog({
             </ul>
           </div>
         ) : null}
-      </div>
+      </DialogShell>
     </div>
   );
 }

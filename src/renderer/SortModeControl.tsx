@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -13,6 +14,7 @@ import {
   handleRovingListKeyDown,
   ROVING_OPTION_SELECTOR,
 } from "./roving-list-keyboard";
+import { PopoverSurface } from "./ui/patterns";
 
 /** Field options + in-panel order radios share one arrow-key roving set. */
 const SORT_PANEL_ROVING_SELECTOR = `${ROVING_OPTION_SELECTOR}, [role="radio"]`;
@@ -101,7 +103,7 @@ export function SortModeControl({
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
   const nonDefault =
     shuffleActive ||
     sortField !== DEFAULT_SORT_FIELD ||
@@ -127,8 +129,8 @@ export function SortModeControl({
     };
     document.addEventListener("mousedown", onMouseDown, true);
     const raf = requestAnimationFrame(() => {
-      const list = listRef.current;
-      if (!list) return;
+      const list = document.getElementById(listId);
+      if (!(list instanceof HTMLDivElement)) return;
       const selected = list.querySelector<HTMLElement>(
         '[role="option"][aria-selected="true"]',
       );
@@ -145,11 +147,10 @@ export function SortModeControl({
       document.removeEventListener("mousedown", onMouseDown, true);
       cancelAnimationFrame(raf);
     };
-  }, [open]);
+  }, [listId, open]);
 
   function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const list = listRef.current;
-    if (!list) return;
+    const list = event.currentTarget;
     const result = handleRovingListKeyDown({
       key: event.key,
       container: list,
@@ -209,11 +210,12 @@ export function SortModeControl({
           ) : null}
         </button>
         {open && (
-          <div
+          <PopoverSurface
             className={`dimension-filter-popover sort-mode-popover${keyboardNav ? " is-keyboard-navigation" : ""}`}
+            id={listId}
             onKeyDown={onListKeyDown}
             onPointerMove={() => setKeyboardNav(false)}
-            ref={listRef}
+            role="dialog"
           >
             <div
               aria-label={t("filter.sortDirection")}
@@ -287,7 +289,7 @@ export function SortModeControl({
                 </button>
               ))}
             </div>
-          </div>
+          </PopoverSurface>
         )}
       </div>
     </div>

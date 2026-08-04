@@ -211,6 +211,9 @@ interface PluginUiThemeChanged {
 插件 UI 应在 `revision` 变大时应用消息。`contrast` 当前由 Host 保留为契约字段，正常主题为 `normal`；不要根据旧的
 `plugin-ui.theme` 消息或 `--accent`/`--canvas` 变量编写新代码。
 
+Host 外观设置还支持 `vscode-dark`、`serpent-dark`、`serpent-light`、`soft-light` 四套 profile，以及应用背景颜色、
+本地图片和 overlay opacity。它们是 Host 设置，不属于插件 API；插件只能读取 theme bridge 提供的公开语义 token。
+
 ### Contribution Context
 
 Host 发布带 `contextId`、`revision` 的有界快照：

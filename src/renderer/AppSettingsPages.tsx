@@ -38,6 +38,7 @@ import {
   DEFAULT_ACCENT_HEX,
   normalizeAccentHex,
 } from "./theme/accent-preferences";
+import { BackgroundSettings, ThemeProfilePicker } from "./theme/ThemeAppearanceControls";
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
@@ -181,10 +182,10 @@ export function AppearanceSettingsPage(): ReactNode {
   return (
     <SettingsCard>
       <div className="app-settings-row app-settings-row-stack">
-        <div className="app-settings-row-copy">
-          <strong>{t("shell.theme")}</strong>
-          <span>{t("settings.themeHint")}</span>
-        </div>
+      <div className="app-settings-row-copy">
+        <strong>{t("shell.theme")}</strong>
+        <span>{t("settings.themeHint")}</span>
+      </div>
         <div
           aria-label={t("shell.theme")}
           className="app-settings-option-group"
@@ -204,6 +205,18 @@ export function AppearanceSettingsPage(): ReactNode {
           ))}
         </div>
       </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.themeProfiles")}</strong>
+        <span>{t("settings.themeProfilesHint")}</span>
+      </div>
+      <ThemeProfilePicker />
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row-copy">
+        <strong>{t("settings.backgroundSection")}</strong>
+        <span>{t("settings.backgroundSectionHint")}</span>
+      </div>
+      <BackgroundSettings />
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">
         <strong>{t("settings.customTheme")}</strong>

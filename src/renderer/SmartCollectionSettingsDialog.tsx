@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type SmartCollectionSettingsTarget = {
   collectionId: string;
@@ -60,16 +61,10 @@ export function SmartCollectionSettingsDialog({
       }}
       role="presentation"
     >
-      <div
-        aria-modal="true"
+      <DialogShell
         className="create-dialog smart-collection-settings-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("smartEdit.settingsTitle")}</h2>
-            <p className="app-settings-hint">{t("smartEdit.settingsHint")}</p>
-          </div>
+        dialogId="smart-collection-settings-dialog"
+        headerActions={
           <button
             className="dialog-close"
             disabled={busy}
@@ -79,8 +74,11 @@ export function SmartCollectionSettingsDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-
+        }
+        style={{ padding: 0 }}
+        title={t("smartEdit.settingsTitle")}
+        description={<span className="app-settings-hint">{t("smartEdit.settingsHint")}</span>}
+      >
         <label className="field">
           <span className="micro-label">{t("smartEdit.nameLabel")}</span>
           <input
@@ -124,7 +122,7 @@ export function SmartCollectionSettingsDialog({
             {t("smartEdit.saveCurrentQuery")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

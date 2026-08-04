@@ -2,6 +2,7 @@ import React from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface DeleteLinkedDialogProps {
   displayNames: string;
@@ -23,11 +24,10 @@ export function DeleteLinkedDialog({
   const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog" role="dialog">
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("dialog.deleteLinked.title")}</h2>
-          </div>
+      <DialogShell
+        className="create-dialog"
+        dialogId="delete-linked-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -36,7 +36,10 @@ export function DeleteLinkedDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        style={{ padding: 0 }}
+        title={t("dialog.deleteLinked.title")}
+      >
         <p className="dialog-body-copy">
           {t("dialog.deleteLinked.body", { name: displayNames })}
         </p>
@@ -80,7 +83,7 @@ export function DeleteLinkedDialog({
               : t("dialog.deleteLinked.submitRecordOnly")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

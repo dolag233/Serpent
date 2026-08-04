@@ -31,6 +31,7 @@ import {
   type TagSortKey,
 } from "./tag-management-model";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
+import { DialogShell } from "./ui/patterns";
 
 export type TagManagementWorkspaceProps = {
   tags: readonly TagSummary[];
@@ -495,12 +496,13 @@ export function TagManagementWorkspace({
           }}
           role="presentation"
         >
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <h2>{t("tagMgmt.delete")}</h2>
-              </div>
-            </div>
+          <DialogShell
+            className="create-dialog"
+            dialogId="tag-delete-dialog"
+            onRequestClose={() => setPendingDeleteIds(null)}
+            style={{ padding: 0 }}
+            title={t("tagMgmt.delete")}
+          >
             <p className="dialog-body-copy">
               {pendingDeleteIds.length === 1 && pendingDeleteTags[0]
                 ? t("tagMgmt.deleteConfirm", {
@@ -529,7 +531,7 @@ export function TagManagementWorkspace({
                 {t("tagMgmt.delete")}
               </button>
             </div>
-          </div>
+          </DialogShell>
         </div>
       )}
 
@@ -544,12 +546,16 @@ export function TagManagementWorkspace({
           }}
           role="presentation"
         >
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <h2>{t("tagMgmt.mergeTitle")}</h2>
-              </div>
-            </div>
+          <DialogShell
+            className="create-dialog"
+            dialogId="tag-merge-dialog"
+            onRequestClose={() => {
+              setPendingMergeIds(null);
+              setMergeName("");
+            }}
+            style={{ padding: 0 }}
+            title={t("tagMgmt.mergeTitle")}
+          >
             <p className="dialog-body-copy">
               {t("tagMgmt.mergeHint", {
                 count: pendingMergeIds.length,
@@ -594,7 +600,7 @@ export function TagManagementWorkspace({
                 </button>
               </div>
             </form>
-          </div>
+          </DialogShell>
         </div>
       )}
     </div>

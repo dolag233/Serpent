@@ -1,13 +1,14 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
-  useRef,
   useState,
   type CSSProperties,
 } from "react";
 
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { PopoverSurface } from "./ui/patterns";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
 export interface ViewerContextMenuPosition {
@@ -48,7 +49,7 @@ export function ViewerContextMenu({
   position,
 }: ViewerContextMenuProps) {
   const t = useT();
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
   const [style, setStyle] = useState<CSSProperties>({
     position: "fixed",
     left: -9999,
@@ -57,8 +58,8 @@ export function ViewerContextMenu({
   });
 
   useLayoutEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = document.getElementById(menuId);
+    if (!(menu instanceof HTMLDivElement)) return;
     const rect = menu.getBoundingClientRect();
     const gap = 4;
     let left = position.x;
@@ -69,12 +70,15 @@ export function ViewerContextMenu({
     if (top + rect.height > window.innerHeight - gap) {
       top = Math.max(gap, position.y - rect.height);
     }
-    setStyle({ position: "fixed", left, top });
-  }, [position]);
+    const frame = requestAnimationFrame(() => {
+      setStyle({ position: "fixed", left, top });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [menuId, position]);
 
   useEffect(() => {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = document.getElementById(menuId);
+    if (!(menu instanceof HTMLDivElement)) return;
     const raf = requestAnimationFrame(() => {
       const first = menu.querySelector<HTMLElement>(
         '[role="menuitem"]:not([aria-disabled="true"])',
@@ -82,14 +86,16 @@ export function ViewerContextMenu({
       first?.focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, [position]);
+  }, [menuId, position]);
 
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose();
+      const menu = document.getElementById(menuId);
+      if (!menu?.contains(event.target as Node)) onClose();
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose();
+      const menu = document.getElementById(menuId);
+      if (!menu?.contains(event.target as Node)) onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -109,7 +115,7 @@ export function ViewerContextMenu({
       window.removeEventListener("scroll", onClose, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [onClose]);
+  }, [menuId, onClose]);
 
   const action = (run: () => void) => () => {
     run();
@@ -117,12 +123,14 @@ export function ViewerContextMenu({
   };
 
   return (
-    <div
+    <PopoverSurface
       aria-label={t("preview.viewerMenu")}
       className="context-menu viewer-context-menu"
+      id={menuId}
       onKeyDown={(event) => {
+        const menu = event.currentTarget;
         const items = Array.from(
-          menuRef.current?.querySelectorAll<HTMLElement>(
+          menu.querySelectorAll<HTMLElement>(
             '[role="menuitem"]:not([aria-disabled="true"])',
           ) ?? [],
         );
@@ -133,7 +141,6 @@ export function ViewerContextMenu({
           items[(current + delta + items.length) % items.length]?.focus();
         }
       }}
-      ref={menuRef}
       role="menu"
       style={style}
     >
@@ -212,6 +219,6 @@ export function ViewerContextMenu({
           </span>
         </button>
       </div>
-    </div>
+    </PopoverSurface>
   );
 }

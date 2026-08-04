@@ -232,6 +232,10 @@ hsl/hsla、`transparent` 或 `currentColor`），每个模式最多 32 个。
 iframe 收到的主题消息类型是 `plugin-ui.theme-changed`，带有 `theme`、`contrast`、单调 `revision` 和 token map；插件应按 revision
 更新自身样式，并忽略旧 revision。主题变化包括用户切换亮/暗/系统主题以及强调色变化。
 
+Host 当前提供的外观预设包括 `vscode-dark`、`serpent-dark`、`serpent-light` 和 `soft-light`。插件不需要识别预设 ID，
+只需使用 iframe 收到的 `--ui-*` 只读语义 token 和 `plugin-ui.theme-changed` 消息即可。用户在 Host 中设置的背景颜色或背景图片
+不会暴露给插件，也不能通过插件主题贡献修改。
+
 ## 6. Contribution Context 与 Invocation Context
 
 Contribution Context 是 Host 发布的有界 UI 快照，只用于菜单/命令的 `when`、`enablement`、`checked`。当前字段包括：

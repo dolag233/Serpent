@@ -176,7 +176,16 @@ Surface 是应用可见的稳定表面，允许保留领域差异，但必须复
 
 迁移顺序遵守“先高复用、后高风险”：先 primitives/patterns，再菜单/设置/Dialog/Notice，再 Shell/Card/Inspector/Viewer，最后迁移插件 descriptor 和 Custom View bridge。
 
-## 5. Theme Contract v1
+## 5. Theme Contract v1 / Host Profile v2
+
+Host 另提供 Theme Profile v2：`vscode-dark`、`serpent-dark`、`serpent-light`、`soft-light` 四套预设。预设只能写入
+现有 `--ui-*` 语义颜色 token；用户 color override 叠加在预设之上，强调色仍由 Host 的 accent preference 统一派生。
+profile 不开放任意 CSS、字体、布局或 z-index。
+
+应用背景属于 Host appearance，而不是插件 theme contribution：用户可以配置安全十六进制背景色、有限大小的本地
+栅格图片（data URL，最大 4 MiB）、`cover`/`contain`/`tile` 和 0–1 的可读性 overlay opacity。图片只保存在 Renderer
+的版本化本地设置中，拒绝 SVG、远程 URL、脚本和超限数据；配置背景时 Host 核心 pane/workspace 表面使用受控透明度，
+确保背景真的可见且不改变布局；插件 iframe 只收到公开语义 token，不会读取背景图片。
 
 ### 5.1 主题层级
 
@@ -535,15 +544,15 @@ UI 变化不能只跑 snapshot。涉及 Renderer/Preload/Main/Worker、自定义
 
 ## 12. 当前状态与下一步
 
-已有 `src/renderer/ui/` foundation、tokens、layers、Button/TextField/Select/Switch/Slider/Progress/Tooltip、Dialog/Menu/Popover/Settings/Notice/Activity patterns，以及版本化用户主题覆盖和 `contributes.themes` iframe token bridge。阶段 1 的 Theme Contract、阶段 2 的 primitive/feedback 基础、Shell/Pane/Card/Viewer domain surfaces 和 Plugin UI Contract v1 descriptor 基础已落地；descriptor 已接入设置分组和插件菜单的实际 Host 路径，Navigation/Canvas/Workspace overflow 也已迁移到共享 surface/pattern，但 Job/Notice 的运行时声明入口、更多媒体 surface、E2E/Computer Use 仍未完成。
+已有 `src/renderer/ui/` foundation、tokens、layers、Button/TextField/Select/Switch/Slider/Progress/Tooltip、Dialog/Menu/Popover/Settings/Notice/Activity patterns，以及版本化用户主题覆盖、Host Theme Profile v2 和 `contributes.themes` iframe token bridge。阶段 1 的 Theme Contract、阶段 2 的 primitive/feedback 基础、Shell/Pane/Card/Viewer domain surfaces 和 Plugin UI Contract v1 descriptor 基础已落地；descriptor 已接入设置分组和插件菜单的实际 Host 路径，Navigation/Canvas/Workspace overflow、核心 Dialog、LibrarySwitcher/Sort/Filter/Viewer、MainMenu/ContextMenu 的共享 surface 壳也已迁移；应用背景配置和主题组合测试已落地。Job/Notice 的运行时声明入口、更多媒体 surface、菜单节点渲染树全量统一、旧 class 全量清理、E2E/Computer Use 仍未完成。
 
 实施顺序：
 
 1. 提交本设计文档并在 Beads 中创建阶段子工单；
 2. 完成 Token/Theme Contract 和 primitive 状态/ARIA 测试；（已完成基础增量，提交 `f46b2e0`、`a536f97`）
-3. 迁移 Menu/Dialog/Settings/Notice/Activity 等高复用 pattern；（已完成基础实现，仍需旧 CSS/class 审计）
+3. 迁移 Menu/Dialog/Settings/Notice/Activity 等高复用 pattern；（基础 patterns 已完成，第一批功能 Dialog 已迁移，仍需旧 CSS/class 审计）
 4. 迁移应用领域 surface；（已落地 FolderCard/Inspector/Viewer、Navigation/Canvas/Workspace overflow 基础迁移，更多媒体控制仍在推进，提交 `8cab211`、`0c87b2f`）
 5. 实现并发布 Plugin UI Contract v1；（descriptor、Host renderer、manifest/IPC、设置分组和菜单接入已落地；运行时 Job/Notice 入口仍在推进）
-6. 由独立审查和 Computer Use/packaged QA 完成最终验收。
+6. 由独立审查和 Computer Use/packaged QA 完成最终验收；在此之前不把“主题可配置”或“有迁移文件”写成全量完成。
 
 本设计文档是执行版。若实施中需要改变主题优先级、插件 descriptor 范围或安全边界，必须先更新本文件和对应 Beads 工单，再改代码。

@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface ConvertLinkedDialogProps {
   folderName: string;
@@ -22,11 +23,10 @@ export function ConvertLinkedDialog({
   const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog" role="dialog">
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("dialog.convertLinked.title", { name: folderName })}</h2>
-          </div>
+      <DialogShell
+        className="create-dialog"
+        dialogId="convert-linked-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -35,7 +35,10 @@ export function ConvertLinkedDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        style={{ padding: 0 }}
+        title={t("dialog.convertLinked.title", { name: folderName })}
+      >
         <p className="field-help">{t("dialog.convertLinked.help")}</p>
         <select
           className="text-field"
@@ -65,7 +68,7 @@ export function ConvertLinkedDialog({
             {t("dialog.convertLinked.submit")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

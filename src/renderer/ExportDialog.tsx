@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface ExportDialogProps {
   open: boolean;
@@ -30,18 +31,10 @@ export function ExportDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="export-library-chooser-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="export-library-chooser-title">
-              {t("toolbar.exportLibrary")}
-            </h2>
-          </div>
+        dialogId="export-library-chooser"
+        headerActions={
           <button
             className="dialog-close"
             disabled={exporting}
@@ -51,7 +44,10 @@ export function ExportDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={exporting ? undefined : onClose}
+        title={t("toolbar.exportLibrary")}
+      >
         <p className="field-help">
           {t("dialog.export.help")}{" "}
           {t("dialog.export.zipLimitHint")}
@@ -95,7 +91,7 @@ export function ExportDialog({
             {t("common.cancel")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

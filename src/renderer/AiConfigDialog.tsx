@@ -23,6 +23,7 @@ import { Icon } from "./Icons";
 import { AiConfigNumberInput } from "./ai-config-number-input";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type AiConnectionState =
   | "idle"
@@ -322,16 +323,8 @@ export function AiConfigDialog({
   const showHeading =
     !embedded || connectionState !== "idle" || Boolean(connectionReason);
 
-  return (
-    <div
-      className={embedded ? "ai-config-embedded" : "dialog-backdrop"}
-      role={embedded ? undefined : "presentation"}
-    >
-      <div
-        aria-modal={embedded ? undefined : true}
-        className={embedded ? undefined : "create-dialog ai-config-dialog"}
-        role={embedded ? undefined : "dialog"}
-      >
+  const content = (
+    <>
         {showHeading ? (
           <div className="dialog-heading">
             <div className="ai-config-heading-main">
@@ -859,7 +852,27 @@ export function AiConfigDialog({
             {t("aiConfig.saveVerifyingHint")}
           </p>
         ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="ai-config-embedded">
+        <div>{content}</div>
       </div>
+    );
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <DialogShell
+        className="create-dialog ai-config-dialog"
+        contentClassName="ui-dialog-shell__content--flush"
+        dialogId="ai-config-dialog"
+        onRequestClose={onClose}
+      >
+        {content}
+      </DialogShell>
     </div>
   );
 }

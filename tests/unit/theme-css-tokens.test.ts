@@ -37,12 +37,12 @@ describe('theme CSS tokens (REQ-THEME-002)', () => {
     const darkRoot = css.match(
       /:root\s*\{[\s\S]*?--filter-exclude:\s*([^;]+);/,
     );
-    expect(darkRoot?.[1]?.trim()).toBe('#b35660');
+    expect(darkRoot?.[1]?.trim()).toBe('var(--ui-status-danger, #b35660)');
 
     const lightBlock = css.match(
       /\[data-theme="light"\][\s\S]*?--filter-exclude:\s*([^;]+);/,
     );
-    expect(lightBlock?.[1]?.trim()).toBe('#c24e4e');
+    expect(lightBlock?.[1]?.trim()).toBe('var(--ui-status-danger, #c24e4e)');
     expect(lightBlock?.[1]).not.toContain('var(--danger)');
   });
 

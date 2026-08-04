@@ -14,6 +14,7 @@ import type {
 import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
+import { DialogShell } from './ui/patterns';
 
 type PreviewResult =
   | { kind: 'completed'; value: unknown; output: string[]; logId: string }
@@ -338,16 +339,10 @@ export function ScriptSandboxPreviewDialog({
       }}
       role="presentation"
     >
-      <section
-        aria-labelledby="script-sandbox-preview-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog script-sandbox-preview-dialog"
+        dialogId="script-sandbox-preview"
         onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
-            close();
-          }
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
             event.preventDefault();
             void run();
@@ -364,13 +359,15 @@ export function ScriptSandboxPreviewDialog({
             }
           }
         }}
-        role="dialog"
-      >
-        <div className="dialog-heading script-sandbox-preview-heading">
-          <div>
-            <p className="micro-label">{t('automation.preview.badge')}</p>
-            <h2 id="script-sandbox-preview-title">{t('automation.preview.title')}</h2>
-          </div>
+        onRequestClose={close}
+        style={{ padding: 0 }}
+        title={
+          <>
+            <span className="micro-label">{t('automation.preview.badge')}</span>{' '}
+            {t('automation.preview.title')}
+          </>
+        }
+        headerActions={
           <button
             className="dialog-close"
             onClick={close}
@@ -379,8 +376,8 @@ export function ScriptSandboxPreviewDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-
+        }
+      >
         <label className="script-sandbox-preview-label" htmlFor="script-sandbox-preview-source">
           {t('automation.preview.sourceLabel')}
         </label>
@@ -529,7 +526,7 @@ export function ScriptSandboxPreviewDialog({
             {t('automation.preview.run')}
           </button>
         </div>
-      </section>
+      </DialogShell>
     </div>
   );
 }

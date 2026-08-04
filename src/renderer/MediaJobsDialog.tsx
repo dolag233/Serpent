@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 import {
   formatPluginJobError,
   formatPluginJobProgressMessage,
@@ -47,16 +48,10 @@ export function MediaJobsDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="media-jobs-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog create-dialog-wide"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="media-jobs-title">{t("dialog.mediaJobs.title")}</h2>
-          </div>
+        dialogId="media-jobs-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -65,7 +60,11 @@ export function MediaJobsDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onClose}
+        style={{ padding: 0 }}
+        title={t("dialog.mediaJobs.title")}
+      >
         {mediaJobsLoading && !mediaJobs ? (
           <p className="field-help">{t("dialog.mediaJobs.loading")}</p>
         ) : mediaJobs ? (
@@ -378,7 +377,7 @@ export function MediaJobsDialog({
         ) : (
           <p className="field-help">{t("dialog.mediaJobs.readFailed")}</p>
         )}
-      </div>
+      </DialogShell>
     </div>
   );
 }

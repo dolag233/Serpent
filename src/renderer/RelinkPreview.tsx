@@ -2,6 +2,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { RelinkBatchPreviewResult } from "../shared/library-api";
+import { DialogShell } from "./ui/patterns";
 
 export interface BatchRelinkPreviewSession {
   preview: RelinkBatchPreviewResult;
@@ -40,18 +41,10 @@ export function RelinkPreview({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="batch-relink-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="conflict-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="batch-relink-dialog-title">
-              {t("dialog.relinkPreview.title")}
-            </h2>
-          </div>
+        dialogId="batch-relink-dialog"
+        headerActions={(
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -60,7 +53,11 @@ export function RelinkPreview({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        )}
+        onRequestClose={onCancel}
+        style={{ padding: 0 }}
+        title={t("dialog.relinkPreview.title")}
+      >
         <div className="conflict-summary">
           <div>
             <strong>{totalCount}</strong>
@@ -116,7 +113,7 @@ export function RelinkPreview({
             {t("dialog.relinkPreview.apply")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

@@ -13,8 +13,12 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { MainMenuItem, MainMenuSection } from "./main-menu-items";
+import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"]:not([aria-disabled="true"])';
+const MAIN_MENU_SURFACE_NODES = resolveMenuNodes([
+  { id: "main-menu-content", kind: "separator" as const },
+]);
 
 function nextEnabledIndex(items: readonly HTMLElement[], current: number, step: number): number {
   if (items.length === 0) return -1;
@@ -71,7 +75,6 @@ export function MainMenu({
   const [submenuPosition, setSubmenuPosition] = useState({ left: 0, top: 5 });
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<number | null>(null);
   const menuId = useId();
 
@@ -122,7 +125,8 @@ export function MainMenu({
         closeMenu(true);
         return;
       }
-      const surface = surfaceRef.current;
+      const surface = document.getElementById(menuId);
+      if (!(surface instanceof HTMLDivElement)) return;
       if (!surface || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
         return;
       }
@@ -150,7 +154,7 @@ export function MainMenu({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [closeMenu, open]);
+  }, [closeMenu, menuId, open]);
 
   useEffect(
     () => () => {
@@ -163,7 +167,7 @@ export function MainMenu({
 
   useLayoutEffect(() => {
     if (!open || !activeSection?.items?.length) return;
-    const surface = surfaceRef.current;
+    const surface = document.getElementById(menuId);
     const root = rootRef.current;
     const trigger = surface?.querySelector<HTMLElement>(
       `[data-main-menu-section-id="${activeSection.id}"]`,
@@ -179,7 +183,7 @@ export function MainMenu({
       left: triggerRect.right - rootRect.left,
       top: triggerRect.top - rootRect.top,
     });
-  }, [activeSection, activeSectionId, open]);
+  }, [activeSection, activeSectionId, menuId, open]);
 
   function runSection(section: MainMenuSection) {
     if (!section.onSelect) return;
@@ -210,7 +214,7 @@ export function MainMenu({
             item.id === (document.activeElement as HTMLElement)?.dataset.menuItemId,
         ),
       );
-      const target = surfaceRef.current?.querySelector<HTMLElement>(
+      const target = document.getElementById(menuId)?.querySelector<HTMLElement>(
         `[data-main-menu-section-id="${section?.id ?? activeSectionId ?? ""}"]`,
       );
       if (target) {
@@ -241,54 +245,54 @@ export function MainMenu({
         <Icon name="menu" size={15} />
       </button>
       {open ? (
-        <div
+        <MenuSurface
           aria-label={t("shell.mainMenu")}
           className="main-menu-surface"
           id={menuId}
+          nodes={MAIN_MENU_SURFACE_NODES}
           onMouseEnter={cancelClose}
-          ref={surfaceRef}
-          role="menu"
-        >
-          <div className="main-menu-sections" role="group">
-            {sections.map((section) => {
-              const active = activeSection?.id === section.id;
-              const hasSubmenu = Boolean(section.items?.length);
-              return (
-                <button
-                  aria-expanded={hasSubmenu ? active : undefined}
-                  aria-haspopup={hasSubmenu ? "menu" : undefined}
-                  aria-disabled={section.disabled || undefined}
-                  className={`main-menu-section${active ? " is-active" : ""}`}
-                  data-main-menu-section="true"
-                  data-main-menu-section-id={section.id}
-                  disabled={section.disabled}
-                  onClick={() => {
-                    if (section.disabled) return;
-                    if (hasSubmenu) openMenu(section.id);
-                    else runSection(section);
-                  }}
-                  onFocus={() => {
-                    if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
-                  }}
-                  onMouseEnter={() => {
-                    if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
-                  }}
-                  role="menuitem"
-                  tabIndex={-1}
-                  type="button"
-                >
-                  <Icon name={section.icon} size={14} />
-                  <span>{section.label}</span>
-                  {hasSubmenu ? (
-                    <span aria-hidden="true" className="main-menu-chevron">
-                      ›
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+          renderNode={() => (
+            <div className="main-menu-sections" role="group">
+              {sections.map((section) => {
+                const active = activeSection?.id === section.id;
+                const hasSubmenu = Boolean(section.items?.length);
+                return (
+                  <button
+                    aria-expanded={hasSubmenu ? active : undefined}
+                    aria-haspopup={hasSubmenu ? "menu" : undefined}
+                    aria-disabled={section.disabled || undefined}
+                    className={`main-menu-section${active ? " is-active" : ""}`}
+                    data-main-menu-section="true"
+                    data-main-menu-section-id={section.id}
+                    disabled={section.disabled}
+                    onClick={() => {
+                      if (section.disabled) return;
+                      if (hasSubmenu) openMenu(section.id);
+                      else runSection(section);
+                    }}
+                    onFocus={() => {
+                      if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
+                    }}
+                    onMouseEnter={() => {
+                      if (!section.disabled) openMenu(hasSubmenu ? section.id : undefined);
+                    }}
+                    role="menuitem"
+                    tabIndex={-1}
+                    type="button"
+                  >
+                    <Icon name={section.icon} size={14} />
+                    <span>{section.label}</span>
+                    {hasSubmenu ? (
+                      <span aria-hidden="true" className="main-menu-chevron">
+                        ›
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        />
       ) : null}
       {open && activeSection?.items ? (
         <div

@@ -2,6 +2,7 @@ import React from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface AiConnectionFailureDialogProps {
   open: boolean;
@@ -25,19 +26,10 @@ export function AiConnectionFailureDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-describedby="ai-connection-failure-body"
-        aria-labelledby="ai-connection-failure-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="ai-connection-failure-title">
-              {t("dialog.aiConnectionFailure.title")}
-            </h2>
-          </div>
+        dialogId="ai-connection-failure"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onAbort}
@@ -46,12 +38,17 @@ export function AiConnectionFailureDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-        <p className="dialog-body-copy" id="ai-connection-failure-body">
-          {t("dialog.aiConnectionFailure.body", {
-            count: String(Math.max(1, failedCount)),
-          })}
-        </p>
+        }
+        title={t("dialog.aiConnectionFailure.title")}
+        description={
+          <span className="dialog-body-copy">
+            {t("dialog.aiConnectionFailure.body", {
+              count: String(Math.max(1, failedCount)),
+            })}
+          </span>
+        }
+        style={{ padding: 0 }}
+      >
         <div className="dialog-actions">
           <button className="secondary-button" onClick={onAbort} type="button">
             {t("dialog.aiConnectionFailure.abort")}
@@ -60,7 +57,7 @@ export function AiConnectionFailureDialog({
             {t("dialog.aiConnectionFailure.retry")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

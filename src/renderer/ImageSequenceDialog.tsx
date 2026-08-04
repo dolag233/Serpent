@@ -3,6 +3,7 @@ import { type FormEvent } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface ImageSequenceDialogProps {
   count: number;
@@ -34,34 +35,10 @@ export function ImageSequenceDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form
-        aria-labelledby="image-sequence-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog image-sequence-dialog"
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          if (valid && !submitting) onSubmit();
-        }}
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="image-sequence-dialog-title">
-              {t(
-                isUpdate
-                  ? "dialog.imageSequence.updateTitle"
-                  : "dialog.imageSequence.title",
-              )}
-            </h2>
-            <p className="field-help">
-              {t(
-                isUpdate
-                  ? "dialog.imageSequence.updateSummary"
-                  : "dialog.imageSequence.summary",
-                { count },
-              )}
-            </p>
-          </div>
+        dialogId="image-sequence-dialog"
+        headerActions={
           <button
             className="dialog-close"
             disabled={submitting}
@@ -71,52 +48,76 @@ export function ImageSequenceDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-        <label className="field-label" htmlFor="image-sequence-fps">
-          {t("dialog.imageSequence.fps")}
-        </label>
-        <input
-          autoFocus
-          className="text-field"
-          disabled={submitting}
-          id="image-sequence-fps"
-          max={240}
-          min={1}
-          onChange={(event) => onFpsChange(Number(event.currentTarget.value))}
-          step={1}
-          type="number"
-          value={fps}
-        />
-        <p className="field-help">{t("dialog.imageSequence.help")}</p>
-        {error ? <p className="field-error" role="alert">{error}</p> : null}
-        <div className="dialog-actions">
-          <button
-            className="secondary-button"
+        }
+        style={{ padding: 0 }}
+        title={t(
+          isUpdate
+            ? "dialog.imageSequence.updateTitle"
+            : "dialog.imageSequence.title",
+        )}
+        description={
+          <span className="field-help">
+            {t(
+              isUpdate
+                ? "dialog.imageSequence.updateSummary"
+                : "dialog.imageSequence.summary",
+              { count },
+            )}
+          </span>
+        }
+      >
+        <form
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault();
+            if (valid && !submitting) onSubmit();
+          }}
+        >
+          <label className="field-label" htmlFor="image-sequence-fps">
+            {t("dialog.imageSequence.fps")}
+          </label>
+          <input
+            autoFocus
+            className="text-field"
             disabled={submitting}
-            onClick={onCancel}
-            type="button"
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            className="primary-button"
-            disabled={!valid || submitting}
-            type="submit"
-          >
-            {submitting
-              ? t(
-                  isUpdate
-                    ? "dialog.imageSequence.updating"
-                    : "dialog.imageSequence.creating",
-                )
-              : t(
-                  isUpdate
-                    ? "dialog.imageSequence.update"
-                    : "dialog.imageSequence.create",
-                )}
-          </button>
-        </div>
-      </form>
+            id="image-sequence-fps"
+            max={240}
+            min={1}
+            onChange={(event) => onFpsChange(Number(event.currentTarget.value))}
+            step={1}
+            type="number"
+            value={fps}
+          />
+          <p className="field-help">{t("dialog.imageSequence.help")}</p>
+          {error ? <p className="field-error" role="alert">{error}</p> : null}
+          <div className="dialog-actions">
+            <button
+              className="secondary-button"
+              disabled={submitting}
+              onClick={onCancel}
+              type="button"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="primary-button"
+              disabled={!valid || submitting}
+              type="submit"
+            >
+              {submitting
+                ? t(
+                    isUpdate
+                      ? "dialog.imageSequence.updating"
+                      : "dialog.imageSequence.creating",
+                  )
+                : t(
+                    isUpdate
+                      ? "dialog.imageSequence.update"
+                      : "dialog.imageSequence.create",
+                  )}
+            </button>
+          </div>
+        </form>
+      </DialogShell>
     </div>
   );
 }

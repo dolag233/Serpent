@@ -17,6 +17,7 @@ import { Icon } from './Icons';
 import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
 import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
+import { DialogShell } from './ui/patterns';
 
 type PluginSettingsPageProps = {
   readonly api: SerpentPluginManagerApi | undefined;
@@ -724,16 +725,10 @@ export function PluginSettingsPage({
           }}
           role="presentation"
         >
-          <div
-            aria-labelledby="plugin-install-dialog-title"
-            aria-modal="true"
+          <DialogShell
             className="create-dialog plugin-install-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <h2 id="plugin-install-dialog-title">{t('settings.pluginInstall')}</h2>
-              </div>
+            dialogId="plugin-install-dialog"
+            headerActions={(
               <button
                 className="dialog-close"
                 disabled={busy}
@@ -743,8 +738,10 @@ export function PluginSettingsPage({
                 <Icon name="close" size={16} />
                 <span className="visually-hidden">{t('common.cancel')}</span>
               </button>
-            </div>
-
+            )}
+            style={{ padding: 0 }}
+            title={t('settings.pluginInstall')}
+          >
             <label className="plugin-install-scope-field">
               <span className="micro-label">{t('settings.pluginInstallScope')}</span>
               <select
@@ -826,7 +823,7 @@ export function PluginSettingsPage({
                 <Icon name="github" size={16} />
               </button>
             </div>
-          </div>
+          </DialogShell>
         </div>
       ) : null}
     </div>

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type DiskDeleteBodyKey =
   | "dialog.diskDelete.body"
@@ -41,11 +42,10 @@ export function DiskDeleteConfirmDialog({
       : { name: subjectName };
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog" role="dialog">
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("dialog.diskDelete.title")}</h2>
-          </div>
+      <DialogShell
+        className="create-dialog"
+        dialogId="disk-delete-confirm-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -54,7 +54,10 @@ export function DiskDeleteConfirmDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        style={{ padding: 0 }}
+        title={t("dialog.diskDelete.title")}
+      >
         <p className="dialog-body-copy">
           {t(bodyKey, bodyParams)}
         </p>
@@ -82,7 +85,7 @@ export function DiskDeleteConfirmDialog({
             {t("dialog.diskDelete.submit")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

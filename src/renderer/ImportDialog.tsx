@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 import type { ImportValidatedResult } from "../shared/library-api";
 
 export interface ImportDialogProps {
@@ -27,11 +28,10 @@ export function ImportDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div aria-modal="true" className="create-dialog" role="dialog">
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("dialog.importLibrary.title")}</h2>
-          </div>
+      <DialogShell
+        className="create-dialog"
+        dialogId="import-library-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -40,7 +40,10 @@ export function ImportDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onClose}
+        title={t("dialog.importLibrary.title")}
+      >
         <p className="dialog-body-copy">
           {t("dialog.importLibrary.validated", {
             name: validated.displayName,
@@ -80,7 +83,7 @@ export function ImportDialog({
             {t("dialog.importLibrary.copyToNew")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

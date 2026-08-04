@@ -10,17 +10,35 @@ import {
 } from 'react';
 
 import {
+  applyBackgroundPreferences,
+  clearBackgroundPreferences,
+  DEFAULT_BACKGROUND_PREFERENCES,
+  loadBackgroundPreferences,
+  saveBackgroundPreferences,
+  type BackgroundPreferences,
+} from './background-preferences';
+import {
   applyAccentColor,
+  DEFAULT_ACCENT_HEX,
   loadAccentPreferences,
   setStoredAccentHex,
 } from './accent-preferences';
 import {
-  applyCustomTheme,
   clearCustomTheme,
   loadCustomTheme,
   saveCustomTheme,
   type CustomTheme,
 } from './custom-theme';
+import { CUSTOM_THEME_COLOR_TOKENS } from './custom-theme';
+import { resolveEffectiveThemeTokens } from './theme-composition';
+import {
+  loadThemeProfile,
+  resolveThemeProfile,
+  saveThemeProfile,
+  THEME_PROFILE_VERSION,
+  type ThemeProfile,
+  type ThemeProfileId,
+} from './theme-profiles';
 import {
   applyResolvedTheme,
   loadThemePreferences,
@@ -37,11 +55,16 @@ type ThemeContextValue = {
   readonly resolved: ResolvedTheme;
   readonly accentHex: string;
   readonly customTheme: CustomTheme;
+  readonly themeProfile: ThemeProfile;
+  readonly backgroundPreferences: BackgroundPreferences;
   readonly themeRevision: number;
   readonly setTheme: (theme: ThemePreference) => void;
   readonly setAccentHex: (hex: string) => void;
   readonly setCustomTheme: (theme: CustomTheme) => void;
   readonly resetCustomTheme: () => void;
+  readonly setThemeProfile: (profile: ThemeProfileId) => void;
+  readonly setBackgroundPreferences: (preferences: BackgroundPreferences) => boolean;
+  readonly resetBackgroundPreferences: () => void;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -64,6 +87,8 @@ export function ThemeProvider({
     () => loadAccentPreferences(storage).accentHex,
   );
   const [customTheme, setCustomThemeState] = useState<CustomTheme>(() => loadCustomTheme(storage));
+  const [themeProfile, setThemeProfileState] = useState<ThemeProfile>(() => loadThemeProfile(storage));
+  const [backgroundPreferences, setBackgroundPreferencesState] = useState<BackgroundPreferences>(() => loadBackgroundPreferences(storage));
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
     readSystemTheme(),
   );
@@ -80,19 +105,38 @@ export function ThemeProvider({
   }, [resolved]);
 
   useEffect(() => {
-    applyCustomTheme(customTheme, resolved);
-  }, [customTheme, resolved]);
-
-  useEffect(() => {
     applyAccentColor(accentHex);
   }, [accentHex]);
 
   useEffect(() => {
-    const signature = `${resolved}:${accentHex}:${JSON.stringify(customTheme)}`;
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    for (const token of CUSTOM_THEME_COLOR_TOKENS) {
+      root.style.removeProperty(token);
+    }
+    const composition = resolveEffectiveThemeTokens({
+      themeProfile,
+      customTheme,
+      resolved,
+      accentHex,
+      defaultAccentHex: DEFAULT_ACCENT_HEX,
+    });
+    for (const [token, value] of Object.entries(composition.tokens)) {
+      root.style.setProperty(token, value);
+    }
+    root.style.setProperty('--accent', composition.accentHex);
+  }, [accentHex, customTheme, resolved, themeProfile]);
+
+  useEffect(() => {
+    applyBackgroundPreferences(backgroundPreferences);
+  }, [backgroundPreferences]);
+
+  useEffect(() => {
+    const signature = `${resolved}:${accentHex}:${JSON.stringify(customTheme)}:${JSON.stringify(themeProfile)}:${JSON.stringify(backgroundPreferences)}`;
     if (themeSignatureRef.current === signature) return;
     themeSignatureRef.current = signature;
     setThemeRevision((revision) => revision + 1);
-  }, [accentHex, customTheme, resolved]);
+  }, [accentHex, backgroundPreferences, customTheme, resolved, themeProfile]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -129,19 +173,45 @@ export function ThemeProvider({
     setCustomThemeState(loadCustomTheme(storage));
   }, [storage]);
 
+  const setThemeProfile = useCallback((preset: ThemeProfileId) => {
+    const next: ThemeProfile = { version: THEME_PROFILE_VERSION, preset, overrides: {} };
+    saveThemeProfile(next, storage);
+    setThemeProfileState(next);
+    const mode = resolveThemeProfile(next).mode;
+    setStoredTheme(mode, storage);
+    setPreferenceState(mode);
+  }, [storage]);
+
+  const setBackgroundPreferences = useCallback((next: BackgroundPreferences) => {
+    const saved = saveBackgroundPreferences(next, storage);
+    if (saved) setBackgroundPreferencesState(next);
+    return saved;
+  }, [storage]);
+
+  const resetBackgroundPreferences = useCallback(() => {
+    clearBackgroundPreferences(storage);
+    const next = DEFAULT_BACKGROUND_PREFERENCES;
+    setBackgroundPreferencesState(next);
+  }, [storage]);
+
   const value = useMemo(
     () => ({
       preference,
       resolved,
       accentHex,
       customTheme,
+      themeProfile,
+      backgroundPreferences,
       themeRevision,
       setTheme,
       setAccentHex,
       setCustomTheme,
       resetCustomTheme,
+      setThemeProfile,
+      setBackgroundPreferences,
+      resetBackgroundPreferences,
     }),
-    [accentHex, customTheme, preference, resetCustomTheme, resolved, setAccentHex, setCustomTheme, setTheme, themeRevision],
+    [accentHex, backgroundPreferences, customTheme, preference, resetBackgroundPreferences, resetCustomTheme, resolved, setAccentHex, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
   );
 
   return (

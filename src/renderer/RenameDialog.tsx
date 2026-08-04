@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface RenameDialogProps {
   open: boolean;
@@ -73,20 +74,10 @@ export function RenameDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form
-        aria-labelledby={`${idPrefix}-title`}
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        onSubmit={(event: FormEvent) => {
-          event.preventDefault();
-          onSave();
-        }}
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id={`${idPrefix}-title`}>{title}</h2>
-          </div>
+        dialogId={`${idPrefix}-dialog`}
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -95,59 +86,69 @@ export function RenameDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-        <label className="field-label" htmlFor={`${idPrefix}-name`}>
-          {fieldLabel}
-        </label>
-        {isAsset ? (
-          <div className="rename-file-field">
+        }
+        style={{ padding: 0 }}
+        title={title}
+      >
+        <form
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault();
+            onSave();
+          }}
+        >
+          <label className="field-label" htmlFor={`${idPrefix}-name`}>
+            {fieldLabel}
+          </label>
+          {isAsset ? (
+            <div className="rename-file-field">
+              <input
+                autoFocus
+                className="text-field"
+                id={`${idPrefix}-name`}
+                onChange={(event) => onNameChange(event.target.value)}
+                ref={inputRef}
+                value={currentName}
+              />
+              {fileExtension ? (
+                <span className="rename-file-extension">{fileExtension}</span>
+              ) : null}
+            </div>
+          ) : (
             <input
               autoFocus
               className="text-field"
               id={`${idPrefix}-name`}
               onChange={(event) => onNameChange(event.target.value)}
-              ref={inputRef}
               value={currentName}
             />
-            {fileExtension ? (
-              <span className="rename-file-extension">{fileExtension}</span>
-            ) : null}
-          </div>
-        ) : (
-          <input
-            autoFocus
-            className="text-field"
-            id={`${idPrefix}-name`}
-            onChange={(event) => onNameChange(event.target.value)}
-            value={currentName}
-          />
-        )}
-        <p className="field-help">{fieldHelp}</p>
-        {isAsset && errorMessage ? (
-          <div className="inline-error" role="alert">
-            <Icon name="warning" size={14} />
-            <div>
-              <p>{errorMessage}</p>
+          )}
+          <p className="field-help">{fieldHelp}</p>
+          {isAsset && errorMessage ? (
+            <div className="inline-error" role="alert">
+              <Icon name="warning" size={14} />
+              <div>
+                <p>{errorMessage}</p>
+              </div>
             </div>
+          ) : null}
+          <div className="dialog-actions">
+            <button
+              className="secondary-button"
+              onClick={onCancel}
+              type="button"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              className="primary-button"
+              disabled={!currentName.trim() || submitting}
+              type="submit"
+            >
+              {submitLabel}
+            </button>
           </div>
-        ) : null}
-        <div className="dialog-actions">
-          <button
-            className="secondary-button"
-            onClick={onCancel}
-            type="button"
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            className="primary-button"
-            disabled={!currentName.trim() || submitting}
-            type="submit"
-          >
-            {submitLabel}
-          </button>
-        </div>
-      </form>
+        </form>
+      </DialogShell>
     </div>
   );
 }

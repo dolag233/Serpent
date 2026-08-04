@@ -1,6 +1,8 @@
 import type { IgnoredPath } from "../shared/asset-types";
 import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export function IgnoredPathsDialog({
   paths,
@@ -19,14 +21,24 @@ export function IgnoredPathsDialog({
     <div className="dialog-backdrop" onClick={(event) => {
       if (event.target === event.currentTarget) onClose();
     }} role="presentation">
-      <div className="create-dialog ignored-paths-dialog" role="dialog" aria-modal="true" aria-labelledby="ignored-paths-title">
-        <div className="dialog-heading">
-          <h2 id="ignored-paths-title">{t("settings.ignoredPathsTitle")}</h2>
-          <button className="dialog-close" onClick={onClose} type="button" aria-label={t("common.close")}>
+      <DialogShell
+        className="create-dialog ignored-paths-dialog"
+        dialogId="ignored-paths-dialog"
+        description={t("settings.ignoredPathsHint")}
+        headerActions={
+          <button
+            className="dialog-close"
+            onClick={onClose}
+            type="button"
+            {...iconActionAttrs(t("common.close"))}
+          >
             <Icon name="close" size={16} />
           </button>
-        </div>
-        <p className="dialog-description">{t("settings.ignoredPathsHint")}</p>
+        }
+        onRequestClose={onClose}
+        style={{ padding: 0 }}
+        title={t("settings.ignoredPathsTitle")}
+      >
         {paths.length === 0 ? (
           <p className="empty-state">{t("settings.ignoredPathsEmpty")}</p>
         ) : (
@@ -45,9 +57,11 @@ export function IgnoredPathsDialog({
           </div>
         )}
         <div className="dialog-actions">
-          <button className="secondary-button" onClick={onClose} type="button">{t("common.close")}</button>
+          <button className="secondary-button" onClick={onClose} type="button">
+            {t("common.close")}
+          </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

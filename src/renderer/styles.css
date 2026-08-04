@@ -1,7 +1,7 @@
 :root {
   color-scheme: dark;
-  color: #f1f2ef;
-  background: #252729;
+  color: var(--ui-content-primary, #f1f2ef);
+  background: var(--ui-surface-canvas, #252729);
   /* Latin-first stack: U+2026 (the text-overflow ellipsis glyph) must resolve
      from a Latin font so the dots sit on the text baseline. CJK fonts such as
      Noto Sans SC render U+2026 as a full-width, vertically-centered glyph,
@@ -20,49 +20,51 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   font-optical-sizing: auto;
-  --canvas: #252729;
-  --pane: #2c2e31;
-  --raised: #35383b;
-  --raised-2: #3a3d40;
-  --divider: #44474a;
-  --divider-soft: #393c3f;
-  --text: #f1f2ef;
-  --secondary: #a9ada9;
-  --tertiary: #777c79;
+  /* Legacy aliases intentionally read the UI foundation tokens so migrated
+     profiles retheme old surfaces while they are being incrementally moved. */
+  --canvas: var(--ui-surface-canvas, #252729);
+  --pane: var(--ui-surface-pane, #2c2e31);
+  --raised: var(--ui-surface-raised, #35383b);
+  --raised-2: var(--ui-surface-raised-subtle, #3a3d40);
+  --divider: var(--ui-border-divider, #44474a);
+  --divider-soft: var(--ui-border-subtle, #393c3f);
+  --text: var(--ui-content-primary, #f1f2ef);
+  --secondary: var(--ui-content-secondary, #a9ada9);
+  --tertiary: var(--ui-content-tertiary, #777c79);
   /* REQ-THEME-004 / Serpent-gnus: only --accent is a leaf color. soft / ring /
      dark / soft-fg must derive via color-mix so user accent prefs retheme every
      accent surface. Continuous controls (sliders) stay on --secondary. */
   --accent: #3b82f6;
   --accent-dark: color-mix(in srgb, var(--accent) 78%, black);
-  --warning: #d99a3e;
+  --warning: var(--ui-status-warning, #d99a3e);
   /* Surface state tokens: quiet, content-first hover/active shades shared by
      nav rows, tool buttons, cards and menus. */
-  --hover: rgb(255 255 255 / 4.5%);
-  --active: rgb(255 255 255 / 8%);
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-  --accent-soft-fg: color-mix(in srgb, var(--accent) 55%, white);
-  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  --hover: var(--ui-surface-hover, rgb(255 255 255 / 4.5%));
+  --active: var(--ui-surface-pressed, rgb(255 255 255 / 8%));
+  --accent-soft: var(--ui-action-accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  --accent-soft-fg: var(--ui-content-accent, color-mix(in srgb, var(--accent) 55%, white));
+  --accent-ring: color-mix(in srgb, var(--ui-action-accent, var(--accent)) 42%, transparent);
   --rating-star: #d9b54b;
   /* Semantic status / ink tokens for themeable surfaces (REQ-THEME-002). */
-  --success: #6db85d;
-  --danger: #e76b7a;
-  --danger-muted: #4a3f3f;
-  --danger-soft: #efb3ad;
+  --success: var(--ui-status-success, #6db85d);
+  --danger: var(--ui-status-danger, #e76b7a);
+  --danger-muted: var(--ui-status-danger-surface, #4a3f3f);
+  --danger-soft: var(--ui-status-danger-content, #efb3ad);
   /* Serpent-znex: Win11-like caption close hover (kept as tokens for REQ-THEME-002). */
   --windows-caption-close-hover: #e81123;
   --windows-caption-close-hover-fg: #ffffff;
   /* Serpent-jfi: exclude-filter chips use a muted red in dark theme — clearly
      red but softer than --danger; avoid washed-out pink (#c48990 was too pale). */
-  --filter-exclude: #b35660;
+  --filter-exclude: var(--ui-status-danger, #b35660);
   --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 22%, var(--canvas));
   --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 55%, var(--divider));
   --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 78%, var(--text));
   --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 28%, var(--canvas));
-  --warning-fg: #f1c87d;
-  --warning-muted: #76533a;
-  --ink: #111314;
+  --warning-fg: var(--ui-status-warning-content, #f1c87d);
+  --warning-muted: var(--ui-status-warning-surface, #76533a);
+  --ink: var(--ui-content-inverse, #111314);
   /* Viewer stage follows theme (not always near-black --ink). */
-  --viewer-stage: #1e2022;
+  --viewer-stage: var(--ui-surface-canvas, #1e2022);
   /* Serpent-627: viewer bottom chrome (zoom bar / video transport /
      fullscreen chip) is semi-transparent rather than near-opaque —
      moderate enough to still read clearly over any media, in both themes. */
@@ -138,44 +140,44 @@
    here over duplicating light-only hardcoded colors in selectors. */
 [data-theme="light"] {
   color-scheme: light;
-  color: #1c1e1c;
+  color: var(--ui-content-primary, #1c1e1c);
   /* Serpent-28h7: ~1% brighter canvas after elevation shadows read dark. */
-  background: #ebeceb;
-  --canvas: #ebeceb;
-  --pane: #f4f5f3;
-  --raised: #f2f4f0;
-  --raised-2: #f8f9f7;
-  --divider: #c9cdc8;
-  --divider-soft: #d8dcd6;
-  --text: #1c1e1c;
-  --secondary: #5a5f5a;
-  --tertiary: #8a8f8a;
+  background: var(--ui-surface-canvas, #ebeceb);
+  --canvas: var(--ui-surface-canvas, #ebeceb);
+  --pane: var(--ui-surface-pane, #f4f5f3);
+  --raised: var(--ui-surface-raised, #f2f4f0);
+  --raised-2: var(--ui-surface-raised-subtle, #f8f9f7);
+  --divider: var(--ui-border-divider, #c9cdc8);
+  --divider-soft: var(--ui-border-subtle, #d8dcd6);
+  --text: var(--ui-content-primary, #1c1e1c);
+  --secondary: var(--ui-content-secondary, #5a5f5a);
+  --tertiary: var(--ui-content-tertiary, #8a8f8a);
   --accent: #3b82f6;
   --accent-dark: color-mix(in srgb, var(--accent) 78%, black);
-  --warning: #b45309;
-  --hover: rgb(0 0 0 / 4.5%);
-  --active: rgb(0 0 0 / 8%);
-  --accent-soft: color-mix(in srgb, var(--accent) 18%, #ffffff);
+  --warning: var(--ui-status-warning, #b45309);
+  --hover: var(--ui-surface-hover, rgb(0 0 0 / 4.5%));
+  --active: var(--ui-surface-pressed, rgb(0 0 0 / 8%));
+  --accent-soft: var(--ui-action-accent-soft, color-mix(in srgb, var(--accent) 18%, #ffffff));
   /* Was hardcoded #1d4ed8 — that froze soft labels to blue after accent change. */
-  --accent-soft-fg: color-mix(in srgb, var(--accent) 68%, black);
-  --accent-ring: color-mix(in srgb, var(--accent) 38%, transparent);
+  --accent-soft-fg: var(--ui-content-accent, color-mix(in srgb, var(--accent) 68%, black));
+  --accent-ring: color-mix(in srgb, var(--ui-action-accent, var(--accent)) 38%, transparent);
   --rating-star: #ecc83a;
-  --success: #16a34a;
-  --danger: #dc2626;
-  --danger-muted: #fde8e8;
-  --danger-soft: #f87171;
+  --success: var(--ui-status-success, #16a34a);
+  --danger: var(--ui-status-danger, #dc2626);
+  --danger-muted: var(--ui-status-danger-surface, #fde8e8);
+  --danger-soft: var(--ui-status-danger-content, #f87171);
   /* Light: exclude red softer than --danger on destructive buttons (FILTER-022). */
-  --filter-exclude: #c24e4e;
+  --filter-exclude: var(--ui-status-danger, #c24e4e);
   --filter-exclude-soft: color-mix(in srgb, var(--filter-exclude) 14%, var(--canvas));
   --filter-exclude-border: color-mix(in srgb, var(--filter-exclude) 50%, var(--divider));
   --filter-exclude-fg: color-mix(in srgb, var(--filter-exclude) 75%, var(--text));
   --filter-exclude-active-bg: color-mix(in srgb, var(--filter-exclude) 20%, var(--canvas));
   /* Serpent-k9g: soft amber warning family (one hue for icon+text). */
-  --warning: #c2410c;
-  --warning-fg: #9a3412;
-  --warning-muted: #ffedd5;
-  --ink: #0f1010;
-  --viewer-stage: #ebeceb;
+  --warning: var(--ui-status-warning, #c2410c);
+  --warning-fg: var(--ui-status-warning-content, #9a3412);
+  --warning-muted: var(--ui-status-warning-surface, #ffedd5);
+  --ink: var(--ui-content-inverse, #0f1010);
+  --viewer-stage: var(--ui-surface-canvas, #ebeceb);
   --border: var(--divider);
   /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg).
      Toolbar softer/shorter than panes/cards (casts onto browse header too). */
@@ -376,7 +378,29 @@ summary:focus-visible {
   width: 100%;
   height: 100%;
   min-width: 760px;
-  background: var(--canvas);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-color: var(--ui-background-color, var(--canvas));
+  background-image:
+    linear-gradient(
+      color-mix(
+        in srgb,
+        var(--ui-surface-canvas, var(--canvas))
+          calc(var(--ui-background-overlay-opacity, 0) * 100%),
+        transparent
+      ),
+      color-mix(
+        in srgb,
+        var(--ui-surface-canvas, var(--canvas))
+          calc(var(--ui-background-overlay-opacity, 0) * 100%),
+        transparent
+      )
+    ),
+    var(--ui-background-image, none);
+  background-position: center, var(--ui-background-position, center);
+  background-repeat: no-repeat, var(--ui-background-repeat, no-repeat);
+  background-size: 100% 100%, var(--ui-background-size, cover);
   transition: grid-template-columns 160ms ease;
 }
 
@@ -419,7 +443,7 @@ summary:focus-visible {
   position: fixed;
   top: var(--shell-toolbar-height);
   bottom: 0;
-  z-index: 6;
+  z-index: var(--ui-layer-shell);
   width: 6px;
   cursor: col-resize;
   touch-action: none;
@@ -445,13 +469,13 @@ summary:focus-visible {
 /* Collapsed edge hit target (REQ-SHELL-011): slightly wider, flush to screen edge. */
 .panel-resizer-edge {
   width: 8px;
-  z-index: 7;
+  z-index: calc(var(--ui-layer-shell) + 1);
 }
 
 .app-toolbar {
   /* Above workspace content so library/settings menus are never covered by
      the asset viewer (REQ-VIEW-004 stacking isolation). */
-  z-index: 30;
+  z-index: var(--ui-layer-shell);
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
@@ -597,7 +621,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   position: absolute;
   top: 0;
   right: 0;
-  z-index: 40;
+  z-index: var(--ui-layer-shell);
   display: flex;
   height: 100%;
   -webkit-app-region: no-drag;
@@ -692,7 +716,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 .discovery-filter-panel {
   position: absolute;
-  z-index: 15;
+  z-index: var(--ui-layer-popover);
   top: calc(100% + 8px);
   right: 0;
   display: grid;
@@ -802,7 +826,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .dimension-filter-popover {
   position: absolute;
-  z-index: 40;
+  z-index: var(--ui-layer-popover);
   top: calc(100% + 6px);
   left: 0;
   display: flex;
@@ -1034,7 +1058,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 /* REQ-SHELL-013: portal hover tip — quiet, delayed; above dialogs/backdrops. */
 .hover-tip {
   position: fixed;
-  z-index: 130;
+  z-index: var(--ui-layer-tooltip);
   max-width: min(280px, calc(100vw - 24px));
   padding: 3px 7px;
   border: 1px solid var(--divider-soft);
@@ -1215,7 +1239,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 40;
+  z-index: var(--ui-layer-menu);
   display: grid;
   min-width: 180px;
   padding: 5px;
@@ -1662,7 +1686,11 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   min-height: 0;
   flex-direction: column;
   overflow: visible;
-  background: var(--pane);
+  background: color-mix(
+    in srgb,
+    var(--pane) var(--ui-background-surface-opacity, 100%),
+    transparent
+  );
 }
 
 .navigation-pane {
@@ -2047,7 +2075,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  z-index: 42;
+  z-index: var(--ui-layer-menu);
   display: block;
   min-width: 148px;
   width: 148px;
@@ -2124,7 +2152,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .main-menu-submenu {
   position: absolute;
-  z-index: 43;
+  z-index: calc(var(--ui-layer-menu) + 1);
   display: grid;
   width: max-content;
   min-width: 180px;
@@ -2201,7 +2229,11 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  background: var(--canvas);
+  background: color-mix(
+    in srgb,
+    var(--canvas) var(--ui-background-surface-opacity, 100%),
+    transparent
+  );
   isolation: isolate;
 }
 
@@ -2663,7 +2695,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 40;
+  z-index: var(--ui-layer-menu);
   min-width: 180px;
   padding: 4px;
   border: 1px solid var(--border);
@@ -3434,7 +3466,7 @@ input[type="range"] {
 
 .pane-reveal {
   position: fixed;
-  z-index: 8;
+  z-index: var(--ui-layer-shell);
   bottom: 10px;
   display: grid;
   width: var(--shell-control-height);
@@ -3456,9 +3488,9 @@ input[type="range"] {
 }
 
 .dialog-backdrop {
-  /* Serpent-0rk: cover the full window above shell chrome (toolbar is z-30). */
+  /* Cover the full window above shell chrome using the shared modal layer. */
   position: fixed;
-  z-index: 50;
+  z-index: var(--ui-layer-modal-backdrop);
   display: flex;
   /* Theme-aware scrim (follow-up from Serpent-5vex audit). */
   background: color-mix(in srgb, var(--ink) 45%, transparent);
@@ -3484,7 +3516,7 @@ body.serpent-modal-open .app-shell {
 
 .context-menu-backdrop {
   position: fixed;
-  z-index: 40;
+  z-index: var(--ui-layer-menu);
   inset: 0;
   pointer-events: none;
   /* invisible, does not block clicks — outside-click detection is handled
@@ -3493,7 +3525,7 @@ body.serpent-modal-open .app-shell {
 
 .context-menu {
   position: fixed;
-  z-index: 41;
+  z-index: var(--ui-layer-menu);
   pointer-events: auto;
   /* Default to the current low acrylic treatment so menus remain polished
      even before the preference provider has mounted. */
@@ -3652,7 +3684,7 @@ body.serpent-modal-open .app-shell {
 }
 
 .context-menu-submenu {
-  z-index: 42;
+  z-index: calc(var(--ui-layer-menu) + 1);
   min-width: 230px;
   max-height: calc(100vh - 12px);
 }
@@ -5683,7 +5715,7 @@ body.serpent-modal-open .app-shell {
   top: calc(100% + 4px);
   right: 0;
   left: 0;
-  z-index: 40;
+  z-index: var(--ui-layer-popover);
   display: grid;
   max-height: min(240px, 40vh);
   margin: 0;
@@ -5699,7 +5731,7 @@ body.serpent-modal-open .app-shell {
 .ai-config-model-picker-menu.is-portaled {
   position: fixed;
   right: auto;
-  z-index: 120;
+  z-index: var(--ui-layer-popover);
 }
 
 .ai-config-model-picker-option {
@@ -6402,7 +6434,7 @@ select.ai-config-input.ai-config-languages {
 }
 
 .plugin-install-dialog-backdrop {
-  z-index: 60;
+  z-index: var(--ui-layer-modal-backdrop);
 }
 
 .plugin-install-dialog {
@@ -6834,6 +6866,174 @@ select.ai-config-input.ai-config-languages {
   min-height: var(--ui-size-control-lg);
   padding: 2px;
   cursor: pointer;
+}
+
+.app-settings-theme-profiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ui-space-2);
+  width: 100%;
+}
+
+.app-settings-theme-profile {
+  display: grid;
+  min-width: 0;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-surface);
+  background: transparent;
+  color: var(--ui-content-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease,
+    color 120ms ease, transform 120ms ease;
+}
+
+.app-settings-theme-profile:hover {
+  border-color: var(--ui-border-focus);
+  background: var(--ui-action-hover);
+  color: var(--ui-content-primary);
+  transform: translateY(-1px);
+}
+
+.app-settings-theme-profile.is-active {
+  border-color: var(--ui-action-accent);
+  background: var(--ui-action-accent-soft);
+  color: var(--ui-content-primary);
+  box-shadow: 0 0 0 1px var(--ui-action-accent-soft);
+}
+
+.app-settings-theme-profile:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: 2px;
+}
+
+.app-settings-theme-profile-preview {
+  display: grid;
+  grid-template-columns: 28% 1fr;
+  overflow: hidden;
+  height: 70px;
+  border: 1px solid color-mix(in srgb, var(--theme-preview-text) 22%, transparent);
+  border-radius: var(--ui-radius-control);
+  background: var(--theme-preview-canvas);
+}
+
+.app-settings-theme-profile-preview-sidebar {
+  background: var(--theme-preview-pane);
+  border-right: 1px solid color-mix(in srgb, var(--theme-preview-text) 18%, transparent);
+}
+
+.app-settings-theme-profile-preview-content {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  padding: 9px;
+  background: var(--theme-preview-canvas);
+}
+
+.app-settings-theme-profile-preview-line {
+  display: block;
+  width: 62%;
+  height: 4px;
+  border-radius: var(--ui-radius-pill);
+  background: color-mix(in srgb, var(--theme-preview-text) 40%, transparent);
+}
+
+.app-settings-theme-profile-preview-line.is-long {
+  width: 86%;
+  background: var(--theme-preview-accent);
+}
+
+.app-settings-theme-profile-preview-card {
+  display: block;
+  width: 72%;
+  height: 26px;
+  margin-top: 3px;
+  border-radius: 3px;
+  background: var(--theme-preview-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--theme-preview-text) 14%, transparent);
+}
+
+.app-settings-theme-profile-label {
+  overflow: hidden;
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-medium);
+  line-height: var(--ui-line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-settings-background-settings {
+  display: grid;
+  gap: var(--ui-space-3);
+  width: 100%;
+}
+
+.app-settings-background-preview {
+  display: grid;
+  min-height: 96px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-surface);
+  background-color: var(--ui-surface-canvas);
+  background-repeat: no-repeat;
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-semibold);
+  isolation: isolate;
+  position: relative;
+}
+
+.app-settings-background-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--ui-space-3);
+}
+
+.app-settings-background-row > .ui-field,
+.app-settings-background-row > .ui-select {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.app-settings-background-upload {
+  align-items: center;
+}
+
+.app-settings-background-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.app-settings-background-opacity {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.5fr);
+  align-items: center;
+  gap: var(--ui-space-4);
+}
+
+.app-settings-background-error {
+  margin: 0;
+  color: var(--ui-status-danger-content);
+  font-size: var(--ui-font-size-caption);
+}
+
+@media (max-width: 900px) {
+  .app-settings-theme-profiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-settings-background-opacity {
+    grid-template-columns: 1fr;
+  }
 }
 
 .app-settings-accent-custom .text-field {
@@ -7595,7 +7795,7 @@ select.ai-config-input.ai-config-languages {
 
 .activity-strip {
   position: absolute;
-  z-index: 20;
+  z-index: var(--ui-layer-activity);
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
@@ -8661,7 +8861,7 @@ select.ai-config-input.ai-config-languages {
   /* Viewport-fixed (Serpent-qpy8): must not live inside .workspace-canvas
      scrollport or use absolute against that scrolling ancestor. */
   position: fixed;
-  z-index: 40;
+  z-index: var(--ui-layer-notice);
   right: 14px;
   bottom: 14px;
   display: grid;
@@ -9542,7 +9742,7 @@ select.ai-config-input.ai-config-languages {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 10;
+  z-index: var(--ui-layer-popover);
   max-height: 184px;
   padding: 4px;
   overflow-y: auto;
@@ -9755,7 +9955,7 @@ select.ai-config-input.ai-config-languages {
   .navigation-pane,
   .inspector-pane {
     position: fixed;
-    z-index: 7;
+    z-index: var(--ui-layer-shell);
     top: var(--shell-toolbar-height);
     bottom: 0;
     width: 224px;

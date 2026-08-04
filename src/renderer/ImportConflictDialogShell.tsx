@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type ImportConflictDialogShellProps = {
   titleId: string;
@@ -49,18 +50,18 @@ export function ImportConflictDialogShell({
             name: examples[0]!,
             count: examples.length - 1,
           });
+  const dialogId = titleId.endsWith("-title")
+    ? titleId.slice(0, -"-title".length)
+    : titleId;
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby={titleId}
-        aria-modal="true"
+      <DialogShell
         className="conflict-dialog conflict-dialog-compact"
-        role="dialog"
+        dialogId={dialogId}
+        style={{ padding: 0 }}
+        title={title}
       >
-        <div className="dialog-heading">
-          <h2 id={titleId}>{title}</h2>
-        </div>
         <p className="conflict-summary-line">{summary}</p>
         <label className="decision-field" htmlFor={decisionControlId}>
           <span>{decisionLabel}</span>
@@ -88,7 +89,7 @@ export function ImportConflictDialogShell({
             {confirmLabel}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

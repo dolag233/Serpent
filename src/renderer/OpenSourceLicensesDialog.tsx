@@ -3,6 +3,7 @@ import { type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export type OpenSourceLicensesDialogProps = {
   readonly open: boolean;
@@ -24,17 +25,15 @@ export function OpenSourceLicensesDialog({
       }}
       role="presentation"
     >
-      <div
-        aria-labelledby="open-source-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog open-source-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="open-source-dialog-title">{t("dialog.openSource.title")}</h2>
-            <p className="app-log-subtitle">{t("dialog.openSource.subtitle")}</p>
-          </div>
+        dialogId="open-source-licenses"
+        description={
+          <span className="app-log-subtitle">
+            {t("dialog.openSource.subtitle")}
+          </span>
+        }
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -43,7 +42,11 @@ export function OpenSourceLicensesDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onClose}
+        style={{ padding: 0 }}
+        title={t("dialog.openSource.title")}
+      >
         <div className="open-source-dialog-content">
           <p className="field-help">{t("dialog.openSource.intro")}</p>
           <ul>
@@ -59,7 +62,7 @@ export function OpenSourceLicensesDialog({
             {t("dialog.openSource.close")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

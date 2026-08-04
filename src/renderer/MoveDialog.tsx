@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface MoveDialogProps {
   assetIds: string[];
@@ -51,18 +52,10 @@ export function MoveDialog({
   });
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="move-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="move-dialog-title">
-              {t("dialog.move.title", { count: itemCount })}
-            </h2>
-          </div>
+        dialogId="move-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -71,7 +64,10 @@ export function MoveDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onCancel}
+        title={t("dialog.move.title", { count: itemCount })}
+      >
         <label className="field-label" htmlFor="move-target">
           {t("dialog.move.targetFolder")}
         </label>
@@ -133,7 +129,7 @@ export function MoveDialog({
             {t("dialog.move.submit")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

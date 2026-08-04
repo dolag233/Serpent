@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
 
 export interface RestoreDialogProps {
   assetIds: string[];
@@ -29,18 +30,10 @@ export function RestoreDialog({
   const t = useT();
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="restore-dialog-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="restore-dialog-title">
-              {t("dialog.restore.title", { count: assetIds.length })}
-            </h2>
-          </div>
+        dialogId="restore-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onCancel}
@@ -49,7 +42,10 @@ export function RestoreDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={onCancel}
+        title={t("dialog.restore.title", { count: assetIds.length })}
+      >
         <label className="field-label" htmlFor="restore-target">
           {t("dialog.restore.location")}
         </label>
@@ -110,7 +106,7 @@ export function RestoreDialog({
             {t("dialog.restore.submit")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

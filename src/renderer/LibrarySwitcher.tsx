@@ -20,8 +20,12 @@ import {
   handleRovingListKeyDown,
 } from "./roving-list-keyboard";
 import { Icon } from "./Icons";
+import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]';
+const LIBRARY_MENU_SURFACE_NODES = resolveMenuNodes([
+  { id: "library-menu-content", kind: "separator" as const },
+]);
 
 export type RecentLibraryMenuEntry = {
   path: string;
@@ -100,7 +104,6 @@ export function LibrarySwitcher({
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
@@ -140,14 +143,16 @@ export function LibrarySwitcher({
     }
     document.addEventListener("pointerdown", onPointerDown);
     const raf = requestAnimationFrame(() => {
-      const menu = menuRef.current;
-      if (menu) focusFirstRovingItem(menu, MENU_ITEM_SELECTOR);
+      const menu = document.getElementById(menuId);
+      if (menu instanceof HTMLDivElement) {
+        focusFirstRovingItem(menu, MENU_ITEM_SELECTOR);
+      }
     });
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       cancelAnimationFrame(raf);
     };
-  }, [open]);
+  }, [menuId, open]);
 
   function runMenuAction(handler: () => void) {
     closeMenu(true);
@@ -155,8 +160,7 @@ export function LibrarySwitcher({
   }
 
   function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const menu = menuRef.current;
-    if (!menu) return;
+    const menu = event.currentTarget;
     const result = handleRovingListKeyDown({
       key: event.key,
       container: menu,
@@ -205,14 +209,14 @@ export function LibrarySwitcher({
         <Icon name="chevron" size={13} />
       </button>
       {open && (
-        <div
+        <MenuSurface
           className={`library-switcher-menu${keyboardNav ? " is-keyboard-navigation" : ""}`}
           id={menuId}
+          nodes={LIBRARY_MENU_SURFACE_NODES}
           onKeyDown={onMenuKeyDown}
           onPointerMove={() => setKeyboardNav(false)}
-          ref={menuRef}
-          role="menu"
-        >
+          renderNode={() => (
+            <>
           <button
             className="library-switcher-item"
             onClick={() => runMenuAction(onCreateLibrary)}
@@ -354,7 +358,9 @@ export function LibrarySwitcher({
               </div>
             </>
           )}
-        </div>
+            </>
+          )}
+        />
       )}
     </div>
   );

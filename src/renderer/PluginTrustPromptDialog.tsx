@@ -3,6 +3,7 @@ import { iconActionAttrs } from './icon-action-attrs';
 import { useT } from './i18n';
 import { pluginRequiresTrustedCssDisclosure } from '../plugins/plugin-themes';
 import type { PendingLibraryPluginTrust } from './plugin-trust-prompt';
+import { DialogShell } from './ui/patterns';
 
 export type PluginTrustPromptDialogProps = {
   plugins: readonly PendingLibraryPluginTrust[];
@@ -24,16 +25,10 @@ export function PluginTrustPromptDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-labelledby="plugin-trust-prompt-title"
-        aria-modal="true"
+      <DialogShell
         className="create-dialog plugin-trust-prompt-dialog"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2 id="plugin-trust-prompt-title">{t('dialog.pluginTrustPrompt.title')}</h2>
-          </div>
+        dialogId="plugin-trust-prompt"
+        headerActions={
           <button
             className="dialog-close"
             disabled={busy}
@@ -43,7 +38,11 @@ export function PluginTrustPromptDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
+        }
+        onRequestClose={busy ? undefined : onLater}
+        style={{ padding: 0 }}
+        title={t('dialog.pluginTrustPrompt.title')}
+      >
         <p className="dialog-body-copy">
           {t('dialog.pluginTrustPrompt.body', { count: plugins.length })}
         </p>
@@ -102,7 +101,7 @@ export function PluginTrustPromptDialog({
             {t('dialog.pluginTrustPrompt.trustAll')}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }

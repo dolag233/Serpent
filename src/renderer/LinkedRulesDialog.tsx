@@ -3,6 +3,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { LinkedFolderRule } from "../shared/asset-types";
+import { DialogShell } from "./ui/patterns";
 
 export interface LinkedRulesDialogProps {
   name: string;
@@ -22,15 +23,10 @@ export function LinkedRulesDialog({
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <div
-        aria-modal="true"
+      <DialogShell
         className="create-dialog create-dialog-wider"
-        role="dialog"
-      >
-        <div className="dialog-heading">
-          <div>
-            <h2>{t("dialog.linkedRules.title", { name })}</h2>
-          </div>
+        dialogId="linked-rules-dialog"
+        headerActions={
           <button
             className="dialog-close"
             onClick={onClose}
@@ -39,8 +35,11 @@ export function LinkedRulesDialog({
           >
             <Icon name="close" size={16} />
           </button>
-        </div>
-        <p className="field-help">{t("dialog.linkedRules.help")}</p>
+        }
+        style={{ padding: 0 }}
+        title={t("dialog.linkedRules.title", { name })}
+        description={<span className="field-help">{t("dialog.linkedRules.help")}</span>}
+      >
         {rules.map((rule, index) => (
           <div
             key={rule.ruleId}
@@ -174,7 +173,7 @@ export function LinkedRulesDialog({
             {t("dialog.linkedRules.save")}
           </button>
         </div>
-      </div>
+      </DialogShell>
     </div>
   );
 }
