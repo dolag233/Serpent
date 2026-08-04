@@ -1,8 +1,13 @@
 import { z } from 'zod';
 
 /** Versioned renderer-owned persistence key for the application backdrop. */
-export const BACKGROUND_PREFERENCES_VERSION = 1 as const;
-export const BACKGROUND_PREFERENCES_KEY = 'serpent.background-preferences.v1';
+export const BACKGROUND_PREFERENCES_VERSION = 2 as const;
+export const BACKGROUND_PREFERENCES_KEY = 'serpent.background-preferences.v2';
+/**
+ * v1 persisted key. Images were stored without any metadata and user files
+ * were rejected above ~3 MB; v2 auto-compresses and records image provenance.
+ */
+export const BACKGROUND_PREFERENCES_LEGACY_KEY = 'serpent.background-preferences.v1';
 
 /**
  * Keep image data below the practical localStorage quota. This is the size of
@@ -11,7 +16,12 @@ export const BACKGROUND_PREFERENCES_KEY = 'serpent.background-preferences.v1';
  */
 export const MAX_BACKGROUND_IMAGE_DATA_URL_BYTES = 4 * 1024 * 1024;
 
-export const BACKGROUND_DISPLAY_MODES = ['cover', 'contain', 'tile'] as const;
+/**
+ * Fit modes for the wallpaper. `cover` scales the longer edge to fill the
+ * viewport and crops the overflow (no letterbox bars); `tile` repeats the
+ * image. `contain` was removed because it leaves visible color edges.
+ */
+export const BACKGROUND_DISPLAY_MODES = ['cover', 'tile'] as const;
 export type BackgroundDisplayMode = (typeof BACKGROUND_DISPLAY_MODES)[number];
 
 export interface BackgroundPreferencesStorage {
@@ -35,6 +45,7 @@ const defaultPreferences = (): BackgroundPreferences => ({
   version: BACKGROUND_PREFERENCES_VERSION,
   color: 'transparent',
   imageDataUrl: null,
+  imageSource: null,
   mode: 'cover',
   overlayOpacity: 0.2,
 });
@@ -51,7 +62,7 @@ export const backgroundColorSchema = z
     'Background colors must be bounded hex colors or transparent.',
   );
 
-function utf8ByteLength(value: string): number {
+export function utf8ByteLength(value: string): number {
   if (typeof TextEncoder !== 'undefined') {
     return new TextEncoder().encode(value).byteLength;
   }
@@ -84,12 +95,28 @@ export const backgroundImageDataUrlSchema = z
       'Background images must be bounded base64 raster image data URLs.',
   });
 
+const IMAGE_SOURCE_FILE_NAME_MAX = 255;
+
+/** Provenance of the stored wallpaper; purely informational for the UI. */
+export const backgroundImageSourceSchema = z.strictObject({
+  fileName: z.string().min(1).max(IMAGE_SOURCE_FILE_NAME_MAX),
+  width: z.number().int().min(1).max(16384),
+  height: z.number().int().min(1).max(16384),
+  originalBytes: z.number().int().min(0),
+  encodedBytes: z.number().int().min(0),
+});
+
+export type BackgroundImageSource = z.infer<
+  typeof backgroundImageSourceSchema
+>;
+
 export const backgroundDisplayModeSchema = z.enum(BACKGROUND_DISPLAY_MODES);
 
 export const backgroundPreferencesSchema = z.strictObject({
   version: z.literal(BACKGROUND_PREFERENCES_VERSION),
   color: backgroundColorSchema,
   imageDataUrl: backgroundImageDataUrlSchema.nullable(),
+  imageSource: backgroundImageSourceSchema.nullable(),
   mode: backgroundDisplayModeSchema,
   overlayOpacity: z.number().finite().min(0).max(1),
 });
@@ -132,6 +159,16 @@ export function normalizeBackgroundOverlayOpacity(value: unknown): number {
   return Math.min(1, Math.max(0, value));
 }
 
+/** Normalize image provenance; legacy records have none. */
+export function normalizeBackgroundImageSource(
+  value: unknown,
+): BackgroundImageSource | null {
+  if (value === null || value === undefined) return null;
+  const parsed = backgroundImageSourceSchema.safeParse(value);
+  if (!parsed.success) return null;
+  return parsed.data;
+}
+
 /**
  * Convert untrusted persisted/input data to a safe, schema-valid preference.
  * Invalid individual fields fall back independently so a bad image does not
@@ -147,6 +184,7 @@ export function normalizeBackgroundPreferences(
       normalizeBackgroundColor(record.color) ??
       DEFAULT_BACKGROUND_PREFERENCES.color,
     imageDataUrl: normalizeBackgroundImageDataUrl(record.imageDataUrl),
+    imageSource: normalizeBackgroundImageSource(record.imageSource),
     mode: normalizeBackgroundDisplayMode(record.mode),
     overlayOpacity: normalizeBackgroundOverlayOpacity(record.overlayOpacity),
   };
@@ -179,15 +217,32 @@ function resolveStorage(
   return localStorage;
 }
 
-/** Read safely; storage failures and malformed JSON never escape to the UI. */
+/**
+ * Read safely; storage failures and malformed JSON never escape to the UI.
+ * v1 records (no image provenance) are migrated in place to the v2 key so a
+ * user's existing wallpaper survives the schema bump.
+ */
 export function loadBackgroundPreferences(
   storage?: BackgroundPreferencesStorage,
 ): BackgroundPreferences {
   try {
     const store = resolveStorage(storage);
     const raw = store.getItem(BACKGROUND_PREFERENCES_KEY);
-    if (!raw) return defaultPreferences();
-    return normalizeBackgroundPreferences(JSON.parse(raw));
+    if (raw) return normalizeBackgroundPreferences(JSON.parse(raw));
+
+    const legacyRaw = store.getItem(BACKGROUND_PREFERENCES_LEGACY_KEY);
+    if (legacyRaw) {
+      const migrated = normalizeBackgroundPreferences(JSON.parse(legacyRaw));
+      try {
+        store.setItem(BACKGROUND_PREFERENCES_KEY, JSON.stringify(migrated));
+        store.removeItem(BACKGROUND_PREFERENCES_LEGACY_KEY);
+      } catch {
+        // Migration copy is best-effort; the in-memory value is still valid.
+      }
+      return migrated;
+    }
+
+    return defaultPreferences();
   } catch {
     return defaultPreferences();
   }

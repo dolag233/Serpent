@@ -12,6 +12,10 @@ export {
   type ModalStackProps,
 } from "./dialog";
 export {
+  SettingsDisclosure,
+  type SettingsDisclosureProps,
+} from "./disclosure";
+export {
   MenuSurface,
   resolveMenuTree,
   resolveMenuNodes,

@@ -31,7 +31,7 @@ import {
   clampMenuAcrylicLevel,
 } from "./menu-acrylic-preferences";
 import { useTheme } from "./theme";
-import { SettingsCard } from "./ui/patterns";
+import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
 import { Button, Slider, Switch, TextField } from "./ui/primitives";
 import {
   ACCENT_PRESET_HEX,
@@ -212,32 +212,34 @@ export function AppearanceSettingsPage(): ReactNode {
       </div>
       <ThemeProfilePicker />
       <div className="app-settings-card-divider" />
-      <div className="app-settings-row-copy">
-        <strong>{t("settings.backgroundSection")}</strong>
-        <span>{t("settings.backgroundSectionHint")}</span>
-      </div>
-      <BackgroundSettings />
+      <SettingsDisclosure
+        hint={t("settings.backgroundSectionHint")}
+        title={t("settings.backgroundSection")}
+      >
+        <BackgroundSettings />
+      </SettingsDisclosure>
       <div className="app-settings-card-divider" />
-      <div className="app-settings-row-copy">
-        <strong>{t("settings.customTheme")}</strong>
-        <span>{t("settings.customThemeHint")}</span>
-      </div>
-      <div className="app-settings-custom-theme-grid">
-        {CUSTOM_THEME_EDITOR_FIELDS.map((field) => {
-          const current = customTheme[resolved][field.token] ?? field[resolved];
-          return (
-            <TextField
-              aria-label={t(field.labelKey)}
-              key={field.token}
-              label={t(field.labelKey)}
-              onChange={(event) => setCustomColor(field.token, event.target.value)}
-              type="color"
-              value={current}
-            />
-          );
-        })}
-      </div>
-      <Button onClick={resetCustomTheme}>{t("settings.customThemeReset")}</Button>
+      <SettingsDisclosure
+        hint={t("settings.customThemeHint")}
+        title={t("settings.customTheme")}
+      >
+        <div className="app-settings-custom-theme-grid">
+          {CUSTOM_THEME_EDITOR_FIELDS.map((field) => {
+            const current = customTheme[resolved][field.token] ?? field[resolved];
+            return (
+              <TextField
+                aria-label={t(field.labelKey)}
+                key={field.token}
+                label={t(field.labelKey)}
+                onChange={(event) => setCustomColor(field.token, event.target.value)}
+                type="color"
+                value={current}
+              />
+            );
+          })}
+        </div>
+        <Button onClick={resetCustomTheme}>{t("settings.customThemeReset")}</Button>
+      </SettingsDisclosure>
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">
         <strong>{t("settings.accentColor")}</strong>

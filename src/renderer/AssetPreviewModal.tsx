@@ -29,7 +29,6 @@ import {
   shouldContinuePreviewPolling,
 } from "./preview-poll";
 import { Icon } from "./Icons";
-import { iconActionAttrs } from "./icon-action-attrs";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
 import {
@@ -875,56 +874,6 @@ export const AssetPreviewModal = forwardRef<
                 ))}
               </select>
             </label>
-          ) : null}
-          {(asset.sequence ||
-            asset.mediaType === "image" ||
-            asset.mediaType === "video") ? (
-            <div
-              aria-label={t("preview.rotateClockwise")}
-              className="preview-transform-controls preview-chrome-fade"
-            >
-              <button
-                onClick={() =>
-                  setDisplayTransform((current) => ({
-                    ...current,
-                    quarterTurns: current.quarterTurns + 1,
-                  }))
-                }
-                tabIndex={VIEWER_CHROME_TAB_INDEX}
-                type="button"
-                {...iconActionAttrs(t("preview.rotateClockwise"))}
-              >
-                <Icon name="rotate-cw" size={15} />
-              </button>
-              <button
-                className={displayTransform.flipHorizontal ? "is-active" : ""}
-                onClick={() =>
-                  setDisplayTransform((current) => ({
-                    ...current,
-                    flipHorizontal: !current.flipHorizontal,
-                  }))
-                }
-                tabIndex={VIEWER_CHROME_TAB_INDEX}
-                type="button"
-                {...iconActionAttrs(t("preview.flipHorizontal"))}
-              >
-                <Icon name="flip-horizontal" size={15} />
-              </button>
-              <button
-                className={displayTransform.flipVertical ? "is-active" : ""}
-                onClick={() =>
-                  setDisplayTransform((current) => ({
-                    ...current,
-                    flipVertical: !current.flipVertical,
-                  }))
-                }
-                tabIndex={VIEWER_CHROME_TAB_INDEX}
-                type="button"
-                {...iconActionAttrs(t("preview.flipVertical"))}
-              >
-                <Icon name="flip-vertical" size={15} />
-              </button>
-            </div>
           ) : null}
           <PluginViewerActionButtons
             assetId={asset.assetId}

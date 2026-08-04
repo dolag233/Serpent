@@ -1,14 +1,15 @@
-import { useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
 import { useT } from '../i18n';
 import { Button, Select, Slider, TextField } from '../ui/primitives';
+import { BackgroundImagePanel } from './BackgroundImageControls';
 import {
   BACKGROUND_DISPLAY_MODES,
-  MAX_BACKGROUND_IMAGE_DATA_URL_BYTES,
   isSafeBackgroundImageDataUrl,
   normalizeBackgroundColor,
   type BackgroundDisplayMode,
 } from './background-preferences';
+import { compressBackgroundImage, formatBackgroundBytes } from './background-image-compression';
 import { useTheme } from './ThemeProvider';
 import {
   THEME_PROFILE_IDS,
@@ -25,7 +26,6 @@ const PROFILE_LABELS = {
 
 const BACKGROUND_MODE_LABELS = {
   cover: 'settings.backgroundModeCover',
-  contain: 'settings.backgroundModeContain',
   tile: 'settings.backgroundModeTile',
 } as const;
 
@@ -38,21 +38,6 @@ function asPreviewStyle(profile: ThemeProfileId): CSSProperties {
     '--theme-preview-accent': tokens['--ui-action-accent'],
     '--theme-preview-text': tokens['--ui-content-primary'],
   } as CSSProperties;
-}
-
-function readImageAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      if (typeof reader.result !== 'string') {
-        reject(new Error('background-image-read-failed'));
-        return;
-      }
-      resolve(reader.result);
-    });
-    reader.addEventListener('error', () => reject(reader.error ?? new Error('background-image-read-failed')));
-    reader.readAsDataURL(file);
-  });
 }
 
 function colorInputValue(value: string): string {
@@ -136,6 +121,8 @@ export function BackgroundSettings(): ReactNode {
   const t = useT();
   const { backgroundPreferences, setBackgroundPreferences, resetBackgroundPreferences } = useTheme();
   const [error, setError] = useState<string | null>(null);
+  const [notices, setNotices] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
 
   function update(next: Partial<typeof backgroundPreferences>) {
     setError(null);
@@ -143,27 +130,53 @@ export function BackgroundSettings(): ReactNode {
     if (!saved) setError(t('settings.backgroundSaveError'));
   }
 
-  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  /**
+   * Any raster file is accepted; oversized payloads are re-encoded in the
+   * browser (downscale + WebP/JPEG ladder) instead of rejecting the file.
+   */
+  async function handleSelectFile(file: File) {
+    setError(null);
+    setNotices([]);
     if (!file.type.startsWith('image/')) {
       setError(t('settings.backgroundImageUnsupported'));
       return;
     }
-    if (file.size > MAX_BACKGROUND_IMAGE_DATA_URL_BYTES * 0.72) {
-      setError(t('settings.backgroundImageTooLarge'));
-      return;
-    }
+    setBusy(true);
     try {
-      const dataUrl = await readImageAsDataUrl(file);
-      if (!isSafeBackgroundImageDataUrl(dataUrl)) {
+      const result = await compressBackgroundImage(file);
+      if (!isSafeBackgroundImageDataUrl(result.dataUrl)) {
         setError(t('settings.backgroundImageUnsupported'));
         return;
       }
-      update({ imageDataUrl: dataUrl });
+      const saved = setBackgroundPreferences({
+        ...backgroundPreferences,
+        imageDataUrl: result.dataUrl,
+        imageSource: {
+          fileName: file.name,
+          width: result.width,
+          height: result.height,
+          originalBytes: result.originalBytes,
+          encodedBytes: result.encodedBytes,
+        },
+      });
+      if (!saved) {
+        setError(t('settings.backgroundSaveError'));
+        return;
+      }
+      if (result.compressed) {
+        const notes = [
+          t('settings.backgroundCompressedNote', {
+            size: formatBackgroundBytes(result.encodedBytes),
+            original: formatBackgroundBytes(result.originalBytes),
+          }),
+        ];
+        if (result.animationLost) notes.push(t('settings.backgroundAnimatedNote'));
+        setNotices(notes);
+      }
     } catch {
       setError(t('settings.backgroundImageUnsupported'));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -179,9 +192,16 @@ export function BackgroundSettings(): ReactNode {
 
   return (
     <div className="app-settings-background-settings">
-      <div className="app-settings-background-preview" style={previewStyle}>
-        <span>{t('settings.backgroundPreview')}</span>
-      </div>
+      <BackgroundImagePanel
+        busy={busy}
+        error={error}
+        imageDataUrl={backgroundPreferences.imageDataUrl}
+        imageSource={backgroundPreferences.imageSource}
+        notices={notices}
+        onRemove={() => update({ imageDataUrl: null, imageSource: null })}
+        onSelectFile={(file) => void handleSelectFile(file)}
+        previewStyle={previewStyle}
+      />
       <div className="app-settings-background-row">
         <TextField
           aria-label={t('settings.backgroundColor')}
@@ -204,23 +224,6 @@ export function BackgroundSettings(): ReactNode {
           value={backgroundPreferences.mode}
         />
       </div>
-      <div className="app-settings-background-row app-settings-background-upload">
-        <label className="ui-button ui-button--quiet" htmlFor="app-background-image">
-          {backgroundPreferences.imageDataUrl ? t('settings.backgroundReplaceImage') : t('settings.backgroundChooseImage')}
-        </label>
-        <input
-          accept="image/avif,image/bmp,image/gif,image/jpeg,image/png,image/webp"
-          className="app-settings-background-file-input"
-          id="app-background-image"
-          onChange={(event) => void handleImageChange(event)}
-          type="file"
-        />
-        {backgroundPreferences.imageDataUrl ? (
-          <Button onClick={() => update({ imageDataUrl: null })} variant="quiet">
-            {t('settings.backgroundRemoveImage')}
-          </Button>
-        ) : null}
-      </div>
       <div className="app-settings-background-opacity">
         <div className="app-settings-row-copy">
           <strong>{t('settings.backgroundOverlay')}</strong>
@@ -237,16 +240,14 @@ export function BackgroundSettings(): ReactNode {
           valueText={`${Math.round(backgroundPreferences.overlayOpacity * 100)}%`}
         />
       </div>
-      {error ? <p className="app-settings-background-error" role="alert">{error}</p> : null}
       <Button onClick={() => {
         resetBackgroundPreferences();
         setError(null);
+        setNotices([]);
       }} variant="quiet">
         {t('settings.backgroundReset')}
       </Button>
-      <p className="app-settings-help-note">{t('settings.backgroundStorageHint', {
-        size: String(Math.round(MAX_BACKGROUND_IMAGE_DATA_URL_BYTES / 1024 / 1024)),
-      })}</p>
+      <p className="app-settings-help-note">{t('settings.backgroundStorageHint')}</p>
     </div>
   );
 }

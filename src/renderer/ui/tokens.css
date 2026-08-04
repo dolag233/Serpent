@@ -26,6 +26,31 @@
   --ui-background-position: center;
   --ui-background-repeat: no-repeat;
 
+  /* Derived backdrop layers: every center panel (viewer, plugin panels, …)
+     paints the same wallpaper + readability overlay as the app shell, so a
+     configured background stays visible on all center surfaces. Panels use
+     `background-image: var(--ui-backdrop-image)` and keep their own base
+     color through a semi-transparent overlay via --ui-background-surface-opacity. */
+  --ui-backdrop-image:
+    linear-gradient(
+      color-mix(
+        in srgb,
+        var(--ui-surface-canvas)
+          calc(var(--ui-background-overlay-opacity, 0) * 100%),
+        transparent
+      ),
+      color-mix(
+        in srgb,
+        var(--ui-surface-canvas)
+          calc(var(--ui-background-overlay-opacity, 0) * 100%),
+        transparent
+      )
+    ),
+    var(--ui-background-image, none);
+  --ui-backdrop-position: center, var(--ui-background-position, center);
+  --ui-backdrop-repeat: no-repeat, var(--ui-background-repeat, no-repeat);
+  --ui-backdrop-size: 100% 100%, var(--ui-background-size, cover);
+
   /* Surface */
   --ui-surface-canvas: #252729;
   --ui-surface-pane: #2c2e31;

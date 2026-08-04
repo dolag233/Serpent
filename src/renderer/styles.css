@@ -382,25 +382,10 @@ summary:focus-visible {
   isolation: isolate;
   overflow: hidden;
   background-color: var(--ui-background-color, var(--canvas));
-  background-image:
-    linear-gradient(
-      color-mix(
-        in srgb,
-        var(--ui-surface-canvas, var(--canvas))
-          calc(var(--ui-background-overlay-opacity, 0) * 100%),
-        transparent
-      ),
-      color-mix(
-        in srgb,
-        var(--ui-surface-canvas, var(--canvas))
-          calc(var(--ui-background-overlay-opacity, 0) * 100%),
-        transparent
-      )
-    ),
-    var(--ui-background-image, none);
-  background-position: center, var(--ui-background-position, center);
-  background-repeat: no-repeat, var(--ui-background-repeat, no-repeat);
-  background-size: 100% 100%, var(--ui-background-size, cover);
+  background-image: var(--ui-backdrop-image, none);
+  background-position: var(--ui-backdrop-position, center);
+  background-repeat: var(--ui-backdrop-repeat, no-repeat);
+  background-size: var(--ui-backdrop-size, cover);
   transition: grid-template-columns 160ms ease;
 }
 
@@ -3908,7 +3893,11 @@ body.serpent-modal-open .app-shell {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: var(--viewer-stage);
+  /* The wallpaper shows through the workspace veil (same look as the canvas
+     area); this column stays transparent so it is not painted twice. Only
+     in fullscreen, where the workspace is off-screen, does .preview-content
+     paint the --ui-backdrop layer itself. */
+  background: transparent;
   outline: none;
 }
 .workspace-viewer:focus,
@@ -3924,7 +3913,7 @@ body.serpent-modal-open .app-shell {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  background: var(--viewer-stage);
+  background: transparent;
 }
 
 .workspace-viewer:fullscreen .preview-modal {
@@ -3958,7 +3947,28 @@ body.serpent-modal-open .app-shell {
   flex: 1;
   place-items: center;
   overflow: hidden;
-  background: var(--viewer-stage);
+  /* Non-fullscreen: transparent, so the wallpaper shows through the
+     workspace veil exactly like the canvas area (same opacity, same look).
+     The old approach of painting --ui-backdrop directly here stacked the
+     image layer above the veil and rendered the wallpaper at full opacity —
+     inconsistent with the canvas. Fullscreen paints the backdrop below. */
+  background: transparent;
+}
+
+/* Fullscreen: the workspace is off-screen, so the stage paints the wallpaper
+   itself — a semi-transparent viewer-stage veil keeps the media readable
+   (--ui-background-surface-opacity is 100% when no background is configured,
+   restoring the solid dark stage). */
+.workspace-viewer:fullscreen .preview-content {
+  background-color: color-mix(
+    in srgb,
+    var(--viewer-stage) var(--ui-background-surface-opacity, 100%),
+    transparent
+  );
+  background-image: var(--ui-backdrop-image, none);
+  background-position: var(--ui-backdrop-position, center);
+  background-repeat: var(--ui-backdrop-repeat, no-repeat);
+  background-size: var(--ui-backdrop-size, cover);
 }
 .preview-video-stage {
   position: relative;
@@ -4638,7 +4648,9 @@ body.serpent-modal-open .app-shell {
   flex: 1 1 280px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: var(--canvas);
+  /* Transparent: the rounded corners show the workspace veil (same backdrop
+     opacity as the canvas); the iframe document covers it once loaded. */
+  background: transparent;
 }
 /* Sidebar plugin pages should fill the canvas like .tag-management, not sit as a
    centered content-sized card (place-items: center otherwise shrink-wraps the
@@ -4659,6 +4671,9 @@ body.serpent-modal-open .app-shell {
   height: 100%;
   min-width: 0;
   min-height: 0;
+  /* Transparent: the workspace veil behind paints the wallpaper at the same
+     opacity as the canvas area. The sandboxed iframe covers the panel once
+     its document loads; this backdrop only shows around/behind it. */
   padding: 0;
   box-sizing: border-box;
 }
@@ -4672,7 +4687,7 @@ body.serpent-modal-open .app-shell {
   flex: 1 1 auto;
   border: 0;
   border-radius: 0;
-  background: var(--canvas);
+  background: transparent;
 }
 .plugin-inspector-views {
   display: flex;
@@ -4792,24 +4807,6 @@ body.serpent-modal-open .app-shell {
 .preview-plugin-actions button:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
-.preview-transform-controls {
-  position: absolute;
-  z-index: 3;
-  /* The workspace notice also occupies top-center. Keep viewer transforms on
-     their own row so an import/status notice can never cover the controls. */
-  top: 52px;
-  left: 50%;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--viewer-chrome-bg);
-  box-shadow: 0 1px 6px rgb(0 0 0 / 10%);
-  backdrop-filter: blur(10px);
-  transform: translateX(-50%);
-}
-.preview-transform-controls button,
 .preview-sequence-controls button {
   display: grid;
   width: 28px;
@@ -6246,6 +6243,54 @@ select.ai-config-input.ai-config-languages {
   background: var(--divider);
 }
 
+.app-settings-disclosure-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-settings-disclosure-header .app-settings-row-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-settings-disclosure-chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--ui-content-tertiary);
+  transition: transform 120ms ease, color 120ms ease;
+}
+
+.app-settings-disclosure-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.app-settings-disclosure-header:hover .app-settings-disclosure-chevron,
+.app-settings-disclosure-header:focus-visible .app-settings-disclosure-chevron {
+  color: var(--ui-content-primary);
+}
+
+.app-settings-disclosure-header:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--ui-radius-control);
+}
+
+.app-settings-disclosure-content {
+  display: grid;
+  gap: var(--ui-space-3);
+  margin-top: var(--ui-space-3);
+}
+
 .plugin-settings-page {
   display: grid;
   gap: 12px;
@@ -6970,20 +7015,136 @@ select.ai-config-input.ai-config-languages {
   width: 100%;
 }
 
-.app-settings-background-preview {
+.app-settings-background-image {
   display: grid;
-  min-height: 96px;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--ui-border-control);
-  border-radius: var(--ui-radius-surface);
-  background-color: var(--ui-surface-canvas);
-  background-repeat: no-repeat;
-  color: var(--ui-content-primary);
-  font-size: var(--ui-font-size-caption);
-  font-weight: var(--ui-font-weight-semibold);
-  isolation: isolate;
+  gap: var(--ui-space-2);
+}
+
+.app-settings-background-stage {
   position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px dashed var(--ui-border-control);
+  border-radius: var(--ui-radius-surface);
+  background-color: var(--ui-surface-pane);
+  isolation: isolate;
+}
+
+.app-settings-background-stage.has-image {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--ui-border-control) 55%, transparent);
+}
+
+.app-settings-background-stage.is-dragging {
+  border-color: var(--ui-action-accent);
+  box-shadow: inset 0 0 0 1px var(--ui-action-accent);
+}
+
+.app-settings-background-stage.is-busy {
+  cursor: progress;
+}
+
+.app-settings-background-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  width: 100%;
+  height: 100%;
+  padding: var(--ui-space-4);
+  border: 0;
+  background: transparent;
+  color: var(--ui-content-secondary);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.app-settings-background-dropzone svg {
+  color: var(--ui-content-tertiary);
+  transition: color 120ms ease;
+}
+
+.app-settings-background-dropzone:hover,
+.app-settings-background-dropzone:focus-visible {
+  color: var(--ui-content-primary);
+}
+
+.app-settings-background-dropzone:hover svg,
+.app-settings-background-dropzone:focus-visible svg {
+  color: var(--ui-action-accent);
+}
+
+.app-settings-background-dropzone strong {
+  font-size: var(--ui-font-size-body);
+  font-weight: var(--ui-font-weight-semibold);
+}
+
+.app-settings-background-dropzone span {
+  font-size: var(--ui-font-size-caption);
+}
+
+.app-settings-background-dropzone:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: -3px;
+}
+
+.app-settings-background-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: var(--ui-space-4);
+  background: color-mix(in srgb, var(--ui-surface-pane) 72%, transparent);
+}
+
+.app-settings-background-busy .ui-progress {
+  width: min(100%, 260px);
+}
+
+.app-settings-background-stage-actions {
+  position: absolute;
+  right: var(--ui-space-3);
+  bottom: var(--ui-space-3);
+  z-index: 1;
+  display: flex;
+  gap: var(--ui-space-2);
+}
+
+.app-settings-background-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.app-settings-background-meta {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ui-content-secondary);
+  font-size: var(--ui-font-size-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-settings-background-notice {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  color: var(--ui-status-success-content);
+  font-size: var(--ui-font-size-caption);
+}
+
+.app-settings-background-error {
+  margin: 0;
+  color: var(--ui-status-danger-content);
+  font-size: var(--ui-font-size-caption);
 }
 
 .app-settings-background-row {
@@ -6999,31 +7160,11 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
 }
 
-.app-settings-background-upload {
-  align-items: center;
-}
-
-.app-settings-background-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  clip-path: inset(50%);
-}
-
 .app-settings-background-opacity {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(180px, 1.5fr);
   align-items: center;
   gap: var(--ui-space-4);
-}
-
-.app-settings-background-error {
-  margin: 0;
-  color: var(--ui-status-danger-content);
-  font-size: var(--ui-font-size-caption);
 }
 
 @media (max-width: 900px) {
