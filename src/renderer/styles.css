@@ -2688,7 +2688,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 /* REQ-CANVAS-007: continuous controls use neutral gray, never the accent. */
 input[type="range"] {
-  accent-color: var(--secondary);
+  accent-color: var(--ui-action-accent);
 }
 
 .workspace-canvas {
@@ -6651,7 +6651,7 @@ select.ai-config-input.ai-config-languages {
   margin-top: -4.5px;
   border: 0;
   border-radius: 50%;
-  background: var(--secondary);
+  background: var(--ui-action-accent);
   appearance: none;
 }
 
@@ -6671,7 +6671,7 @@ select.ai-config-input.ai-config-languages {
   height: var(--elev-thumb);
   border: 0;
   border-radius: 50%;
-  background: var(--secondary);
+  background: var(--ui-action-accent);
 }
 
 .app-settings-elevation-ticks {

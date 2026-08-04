@@ -115,6 +115,18 @@ interface ViewContribution {
   entry?: string;
 }
 
+interface SettingContribution {
+  id: string;
+  title: string;
+  description?: string;
+  type: 'boolean' | 'string' | 'number' | 'slider' | 'select';
+  default?: boolean | number | string;
+  minimum?: number;
+  maximum?: number;
+  step?: number;                       // slider/number, > 0
+  options?: Array<{ value: string; label: string }>; // select only
+}
+
 interface ThemeContribution {
   id: string;
   version: 1;

@@ -180,8 +180,16 @@ Provider 和 Job。
 Context Key，不能执行 JavaScript、I/O 或 API 调用。表达式支持 `&&`、`||`、`!`、`==`、`!=`、`in`、`intersects`、`matches`、
 括号和数组字面量；单个表达式最多 4096 字符。
 
-快捷键 Contribution 只是默认 accelerator；菜单展示中央 Keybinding Registry 当前有效快捷键。当前没有稳定的 UI primitives
-（toggle、dropdown、slider 等）API，也没有动态 Registrar；不要在插件中依赖这些未发布能力。
+快捷键 Contribution 只是默认 accelerator；菜单展示中央 Keybinding Registry 当前有效快捷键。插件设置的 `boolean`、`select`、
+`number` 和 `slider` 均由 Host 使用统一的原生样式、ARIA、加载和错误状态渲染；插件不需要自己实现 toggle、dropdown 或 slider。
+当前仍没有动态 Registrar；不要在插件中依赖运行时注册新的 Host surface。
+
+`slider` 示例：
+
+```jsonc
+{ "id": "scale", "title": "Scale", "type": "slider", "default": 0.5,
+  "minimum": 0, "maximum": 1, "step": 0.1 }
+```
 
 ### 5.1 Theme Contract v1
 
@@ -291,14 +299,14 @@ Host-rendered 设置声明在 `contributes.settings`：
 ]
 ```
 
-支持的 type 只有 `boolean`、`number`、`string`、`select`。select 的 option value 必须唯一，default 必须是已声明值；number 的
-default 必须在 minimum/maximum 内。静态设置 schema 非法会拒绝插件；已保存的单个值非法时只该字段回退默认值并产生诊断，
+支持的 type 是 `boolean`、`number`、`slider`、`string`、`select`。select 的 option value 必须唯一，default 必须是已声明值；number/slider 的
+default 必须在 minimum/maximum 内，slider 的 step 必须大于 0。静态设置 schema 非法会拒绝插件；已保存的单个值非法时只该字段回退默认值并产生诊断，
 不会清空整页。
 
 自定义页面是 sandboxed iframe，声明在 `contributes.views`，location 为 `sidebar`、`workspace`、`inspector`、`viewer` 或 `settings`，
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
-当前页面与视觉 token 仍是开发态；不要依赖未来的 `@serpent/ui` 或 UI primitives。全量 UI 标准化及插件结构化 UI descriptor 的设计基线见
-[`0028 UI 标准化与插件结构化 UI 设计分析`](../../implementation/0028-ui-standardization-and-plugin-ui.md)。在该设计完成实现和发布前，插件只能使用本节已经列出的 settings schema 与 sandboxed iframe，不得把宿主 CSS class 当作 API。
+插件设置字段已经使用 Host 内部 UI library 的统一 primitives；插件仍不能把宿主 CSS class 当作 API。更复杂的 Host-rendered
+结构化 UI descriptor 仍在实现中，设计基线见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
 
 ## 9. Jobs、storage 与 data
 
@@ -413,6 +421,6 @@ quarantine。`dispose` 应可重复调用且不依赖当前 UI。
 
 ## 13. 明确不应写入插件的能力
 
-当前不要依赖动态 Contribution Registrar、UI primitives、`openLibrary`、通用 Host GPU/VRAM/CPU/内存 API、Host 共享模型 Worker、
+当前不要依赖动态 Contribution Registrar、尚未发布的通用 descriptor Registrar、`openLibrary`、通用 Host GPU/VRAM/CPU/内存 API、Host 共享模型 Worker、
 宿主 React/DOM 注入、通用 Python 运行时、任意 SQL、系统全局键鼠 Hook 或由权限拦截 unrestricted Node 行为。它们不是当前可发布的
 插件契约；不确定的行为按开发态限制处理，并在插件 README 中说明。

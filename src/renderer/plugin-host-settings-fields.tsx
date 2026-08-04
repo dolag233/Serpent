@@ -16,6 +16,7 @@ import {
   getFieldAriaProps,
   getFieldIds,
   Select,
+  Slider,
   Switch,
   TextField,
   Tooltip,
@@ -229,6 +230,37 @@ export function PluginHostSettingsFields({
                   title={section.description}
                   type="number"
                   value={numericValue}
+                />
+              ))}
+            </Field>
+          );
+        }
+        if (section.type === 'slider') {
+          const numericValue = typeof section.value === 'number'
+            ? section.value
+            : typeof section.default === 'number' ? section.default : section.minimum ?? 0;
+          return (
+            <Field
+              description={section.description}
+              error={fieldError}
+              htmlFor={controlId}
+              key={section.id}
+              label={section.title}
+            >
+              {withDescriptionTooltip(section, (
+                <Slider
+                  {...fieldAria}
+                  disabled={fieldDisabled}
+                  id={controlId}
+                  loading={fieldLoading}
+                  max={section.maximum}
+                  min={section.minimum}
+                  onValueChange={(next) => void save(section, next)}
+                  step={section.step}
+                  value={numericValue}
+                  valueText={String(numericValue)}
+                  showValue
+                  title={section.description}
                 />
               ))}
             </Field>

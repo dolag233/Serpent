@@ -31,7 +31,7 @@ import {
   clampMenuAcrylicLevel,
 } from "./menu-acrylic-preferences";
 import { useTheme } from "./theme";
-import { Button, Switch, TextField } from "./ui/primitives";
+import { Button, Slider, Switch, TextField } from "./ui/primitives";
 import {
   ACCENT_PRESET_HEX,
   DEFAULT_ACCENT_HEX,
@@ -230,22 +230,13 @@ export function AppearanceSettingsPage(): ReactNode {
       </div>
       <div className="app-settings-elevation-scale">
         <div className="app-settings-elevation-rail">
-          <input
+          <Slider
             aria-label={t("settings.elevationSection")}
-            aria-valuemax={SHADOW_LEVEL_MAX}
-            aria-valuemin={SHADOW_LEVEL_MIN}
-            aria-valuenow={shadowPrefs.level}
-            aria-valuetext={t("settings.elevationLevelValue", {
-              level: shadowPrefs.level,
-            })}
             className="app-settings-elevation-slider"
             max={SHADOW_LEVEL_MAX}
             min={SHADOW_LEVEL_MIN}
-            onChange={(event) =>
-              setShadowLevel(clampShadowLevel(Number(event.target.value)))
-            }
+            onValueChange={(value) => setShadowLevel(clampShadowLevel(value))}
             step={1}
-            type="range"
             value={shadowPrefs.level}
           />
           <div aria-hidden="true" className="app-settings-elevation-ticks">
@@ -280,24 +271,13 @@ export function AppearanceSettingsPage(): ReactNode {
       </div>
       <div className="app-settings-elevation-scale">
         <div className="app-settings-elevation-rail">
-          <input
+          <Slider
             aria-label={t("settings.menuAcrylicSection")}
-            aria-valuemax={MENU_ACRYLIC_LEVEL_MAX}
-            aria-valuemin={MENU_ACRYLIC_LEVEL_MIN}
-            aria-valuenow={menuAcrylicPrefs.level}
-            aria-valuetext={t("settings.menuAcrylicLevelValue", {
-              level: menuAcrylicPrefs.level,
-            })}
             className="app-settings-elevation-slider"
             max={MENU_ACRYLIC_LEVEL_MAX}
             min={MENU_ACRYLIC_LEVEL_MIN}
-            onChange={(event) =>
-              setMenuAcrylicLevel(
-                clampMenuAcrylicLevel(Number(event.target.value)),
-              )
-            }
+            onValueChange={(value) => setMenuAcrylicLevel(clampMenuAcrylicLevel(value))}
             step={1}
-            type="range"
             value={menuAcrylicPrefs.level}
           />
           <div aria-hidden="true" className="app-settings-elevation-ticks">

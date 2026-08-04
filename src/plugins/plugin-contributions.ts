@@ -79,6 +79,7 @@ const pluginContributionRegistrationSchema = z.strictObject({
   settingDefault: pluginSettingValueSchema.optional(),
   settingMinimum: z.number().finite().optional(),
   settingMaximum: z.number().finite().optional(),
+  settingStep: z.number().finite().positive().optional(),
   uiEntryPath: z.string().min(1).max(1_024).optional(),
   accelerator: z.string().min(1).max(64).optional(),
 });
@@ -379,8 +380,15 @@ export function registerManifestContributions(
       ...(setting.description === undefined ? {} : { settingDescription: setting.description }),
       ...(setting.type === 'select' ? { settingOptions: setting.options } : {}),
       ...(setting.default === undefined ? {} : { settingDefault: setting.default }),
-      ...(setting.type === 'number' && setting.minimum !== undefined ? { settingMinimum: setting.minimum } : {}),
-      ...(setting.type === 'number' && setting.maximum !== undefined ? { settingMaximum: setting.maximum } : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.minimum !== undefined
+        ? { settingMinimum: setting.minimum }
+        : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.maximum !== undefined
+        ? { settingMaximum: setting.maximum }
+        : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.step !== undefined
+        ? { settingStep: setting.step }
+        : {}),
     });
     registered += 1;
   }
@@ -731,6 +739,7 @@ export type PluginSettingsContribution = {
   default?: z.infer<typeof pluginSettingValueSchema>;
   minimum?: number;
   maximum?: number;
+  step?: number;
 };
 
 export function listSettingsContributions(
@@ -762,6 +771,9 @@ export function listSettingsContributions(
       ...(contribution.settingMaximum === undefined
         ? {}
         : { maximum: contribution.settingMaximum }),
+      ...(contribution.settingStep === undefined
+        ? {}
+        : { step: contribution.settingStep }),
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

@@ -67,6 +67,41 @@ describe('Plugin v1 manifest contract', () => {
     expect(getPluginSettingDefault(setting)).toBe(-10);
   });
 
+  it('accepts slider settings with bounded numeric controls', () => {
+    const setting = pluginManifestSchema.parse({
+      ...validManifest,
+      contributes: {
+        ...validManifest.contributes,
+        settings: [{
+          id: 'preview-scale',
+          title: 'Preview scale',
+          type: 'slider',
+          default: 0.5,
+          minimum: 0,
+          maximum: 1,
+          step: 0.1,
+        }],
+      },
+    }).contributes.settings[0]!;
+
+    expect(setting.type).toBe('slider');
+    expect(getPluginSettingDefault(setting)).toBe(0.5);
+    expect(() => pluginManifestSchema.parse({
+      ...validManifest,
+      contributes: {
+        ...validManifest.contributes,
+        settings: [{
+          id: 'preview-scale',
+          title: 'Preview scale',
+          type: 'slider',
+          minimum: 0,
+          maximum: 1,
+          step: 0,
+        }],
+      },
+    })).toThrow();
+  });
+
   it('exports a JSON schema and accepts the documented restricted-plugin manifest', () => {
     const parsed = pluginManifestSchema.parse(validManifest);
 

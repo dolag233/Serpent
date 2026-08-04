@@ -367,8 +367,15 @@ async function getPluginSettingsSections(
       ...(setting.description === undefined ? {} : { description: setting.description }),
       ...(setting.type === 'select' ? { options: setting.options } : {}),
       default: getPluginSettingDefault(setting),
-      ...(setting.type === 'number' && setting.minimum !== undefined ? { minimum: setting.minimum } : {}),
-      ...(setting.type === 'number' && setting.maximum !== undefined ? { maximum: setting.maximum } : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.minimum !== undefined
+        ? { minimum: setting.minimum }
+        : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.maximum !== undefined
+        ? { maximum: setting.maximum }
+        : {}),
+      ...((setting.type === 'number' || setting.type === 'slider') && setting.step !== undefined
+        ? { step: setting.step }
+        : {}),
       value: snapshot.values[setting.id] ?? getPluginSettingDefault(setting),
     })),
     diagnostics: snapshot.diagnostics,

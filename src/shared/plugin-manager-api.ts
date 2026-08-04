@@ -380,6 +380,7 @@ export const pluginManagerSettingsContributionSchema = z.strictObject({
   default: pluginSettingValueSchema.optional(),
   minimum: z.number().finite().optional(),
   maximum: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
   target: z.literal('settings.sections'),
 });
 export type PluginManagerSettingsContribution = z.infer<typeof pluginManagerSettingsContributionSchema>;
@@ -483,6 +484,7 @@ export const pluginManagerPluginSettingSectionSchema = z.strictObject({
   default: pluginSettingValueSchema,
   minimum: z.number().finite().optional(),
   maximum: z.number().finite().optional(),
+  step: z.number().finite().positive().optional(),
   value: pluginSettingValueSchema,
 });
 export type PluginManagerPluginSettingSection = z.infer<typeof pluginManagerPluginSettingSectionSchema>;

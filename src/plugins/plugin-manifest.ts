@@ -364,7 +364,7 @@ const contributionViewSchema = z.strictObject({
   /** Relative HTML entry for a sandboxed custom UI view. */
   entry: pluginPackagePathSchema.optional(),
 });
-export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'string', 'select']);
+export const pluginSettingTypeSchema = z.enum(['boolean', 'number', 'slider', 'string', 'select']);
 export const pluginSettingValueSchema = z.union([
   z.boolean(),
   z.number().finite(),
@@ -382,6 +382,43 @@ const contributionSettingBase = {
   description: z.string().min(1).max(2_000).optional(),
 };
 
+function validateNumericSettingBounds(
+  setting: { default?: number; minimum?: number; maximum?: number; step?: number },
+  context: z.RefinementCtx,
+): void {
+  if (setting.minimum !== undefined && setting.maximum !== undefined
+    && setting.minimum > setting.maximum) {
+    context.addIssue({
+      code: 'custom',
+      path: ['maximum'],
+      message: 'Setting maximum must be greater than or equal to minimum.',
+    });
+  }
+  if (setting.default !== undefined && setting.minimum !== undefined
+    && setting.default < setting.minimum) {
+    context.addIssue({
+      code: 'custom',
+      path: ['default'],
+      message: 'Setting default must be greater than or equal to minimum.',
+    });
+  }
+  if (setting.default !== undefined && setting.maximum !== undefined
+    && setting.default > setting.maximum) {
+    context.addIssue({
+      code: 'custom',
+      path: ['default'],
+      message: 'Setting default must be less than or equal to maximum.',
+    });
+  }
+  if (setting.step !== undefined && setting.step <= 0) {
+    context.addIssue({
+      code: 'custom',
+      path: ['step'],
+      message: 'Setting step must be greater than zero.',
+    });
+  }
+}
+
 const contributionSettingSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ...contributionSettingBase,
@@ -394,32 +431,16 @@ const contributionSettingSchema = z.discriminatedUnion('type', [
     default: z.number().finite().optional(),
     minimum: z.number().finite().optional(),
     maximum: z.number().finite().optional(),
-  }).superRefine((setting, context) => {
-    if (setting.minimum !== undefined && setting.maximum !== undefined
-      && setting.minimum > setting.maximum) {
-      context.addIssue({
-        code: 'custom',
-        path: ['maximum'],
-        message: 'Setting maximum must be greater than or equal to minimum.',
-      });
-    }
-    if (setting.default !== undefined && setting.minimum !== undefined
-      && setting.default < setting.minimum) {
-      context.addIssue({
-        code: 'custom',
-        path: ['default'],
-        message: 'Setting default must be greater than or equal to minimum.',
-      });
-    }
-    if (setting.default !== undefined && setting.maximum !== undefined
-      && setting.default > setting.maximum) {
-      context.addIssue({
-        code: 'custom',
-        path: ['default'],
-        message: 'Setting default must be less than or equal to maximum.',
-      });
-    }
-  }),
+    step: z.number().finite().positive().optional(),
+  }).superRefine(validateNumericSettingBounds),
+  z.strictObject({
+    ...contributionSettingBase,
+    type: z.literal('slider'),
+    default: z.number().finite().optional(),
+    minimum: z.number().finite().optional(),
+    maximum: z.number().finite().optional(),
+    step: z.number().finite().positive().optional(),
+  }).superRefine(validateNumericSettingBounds),
   z.strictObject({
     ...contributionSettingBase,
     type: z.literal('string'),
@@ -457,7 +478,8 @@ export function getPluginSettingDefault(setting: PluginSettingDefinition): Plugi
     case 'boolean': return false;
     case 'string': return '';
     case 'select': return setting.options[0]?.value ?? '';
-    case 'number': {
+    case 'number':
+    case 'slider': {
       const candidate = setting.minimum ?? 0;
       return setting.maximum !== undefined && candidate > setting.maximum ? setting.maximum : candidate;
     }
@@ -480,7 +502,7 @@ export function validatePluginSettingValue(
 ): PluginSettingValidationResult {
   const expectedType = setting.type === 'boolean'
     ? typeof value === 'boolean'
-    : setting.type === 'number'
+    : setting.type === 'number' || setting.type === 'slider'
       ? typeof value === 'number' && Number.isFinite(value)
       : typeof value === 'string';
   if (!expectedType) {
@@ -490,7 +512,7 @@ export function validatePluginSettingValue(
       message: `The setting value must be a ${setting.type === 'select' ? 'string' : setting.type}.`,
     };
   }
-  if (setting.type === 'number'
+  if ((setting.type === 'number' || setting.type === 'slider')
     && ((setting.minimum !== undefined && (value as number) < setting.minimum)
       || (setting.maximum !== undefined && (value as number) > setting.maximum))) {
     return {

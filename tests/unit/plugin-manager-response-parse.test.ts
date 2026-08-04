@@ -56,6 +56,16 @@ describe('plugin manager response parse', () => {
           value: 8,
         },
         {
+          id: 'preview-scale',
+          title: 'Preview scale',
+          type: 'slider',
+          default: 0.5,
+          minimum: 0,
+          maximum: 1,
+          step: 0.1,
+          value: 0.8,
+        },
+        {
           id: 'label',
           title: 'Label',
           type: 'string',
@@ -82,6 +92,7 @@ describe('plugin manager response parse', () => {
       sections: expect.arrayContaining([
         expect.objectContaining({ id: 'enabled', type: 'boolean', value: false }),
         expect.objectContaining({ id: 'batch-size', type: 'number', minimum: 1, maximum: 8, value: 8 }),
+        expect.objectContaining({ id: 'preview-scale', type: 'slider', step: 0.1, value: 0.8 }),
         expect.objectContaining({ id: 'label', type: 'string', value: 'Updated' }),
         expect.objectContaining({ id: 'quality', type: 'select', options: expect.any(Array), value: 'high' }),
       ]),
@@ -90,6 +101,7 @@ describe('plugin manager response parse', () => {
     expect(parsed.sections.map((section) => section.id)).toEqual([
       'enabled',
       'batch-size',
+      'preview-scale',
       'label',
       'quality',
     ]);
