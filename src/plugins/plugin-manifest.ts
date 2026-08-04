@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { isValidPluginAccelerator } from '../shared/plugin-accelerator';
+import { pluginUiDescriptorSchema, type PluginUiDescriptor } from '../shared/plugin-ui-descriptor';
 import {
   normalizePluginRuntimeMode,
   pluginRuntimeModeSchema,
@@ -741,7 +742,10 @@ export const pluginContributesSchema = z.strictObject({
   jobs: z.array(contributionJobSchema).max(128).default([]),
   providers: z.array(contributionProviderSchema).max(128).default([]),
   themes: z.array(contributionThemeSchema).max(8).default([]),
+  /** Host-rendered semantic UI. Settings/menu entries reference the existing contributions above. */
+  ui: pluginUiDescriptorSchema.optional(),
 });
+export type PluginUiContribution = PluginUiDescriptor;
 
 const repositorySchema = z.url().refine((value) => {
   const url = new URL(value);

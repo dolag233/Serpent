@@ -306,7 +306,38 @@ default 必须在 minimum/maximum 内，slider 的 step 必须大于 0。静态�
 自定义页面是 sandboxed iframe，声明在 `contributes.views`，location 为 `sidebar`、`workspace`、`inspector`、`viewer` 或 `settings`，
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
 插件设置字段已经使用 Host 内部 UI library 的统一 primitives；插件仍不能把宿主 CSS class 当作 API。更复杂的 Host-rendered
-结构化 UI descriptor 仍在实现中，设计基线见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+
+### 8.1 Plugin UI Contract v1
+
+`contributes.ui` 是 JSON/TypeScript descriptor，不是 HTML、CSS 或 React 配置：
+
+```jsonc
+"ui": {
+  "version": 1,
+  "settings": {
+    "groups": [{
+      "id": "general",
+      "title": "General",
+      "items": [{ "settingId": "enabled" }, { "settingId": "quality" }, { "settingId": "scale" }]
+    }]
+  },
+  "menus": {
+    "asset": [{
+      "id": "tools", "title": "Tools",
+      "submenu": [{ "command": "run-action", "shortcut": "⌘R" }]
+    }]
+  },
+  "notices": [{ "id": "ready", "message": "Ready", "tone": "success" }],
+  "activities": [{ "id": "scan", "title": "Scanning", "message": "Reading assets.", "indeterminate": true }],
+  "jobs": [{ "id": "index", "title": "Index assets" }]
+}
+```
+
+设置组中的 `settingId` 必须引用同一 manifest 的 `contributes.settings`；因此 boolean/select/slider 的值、范围、选项和持久化仍由现有设置协议负责。
+菜单沿用现有 command、`when`、`enablement`、`checked`、`before`/`after`、快捷键和 submenu 语义。`notices`、`activities` 和 `jobs` 只能描述数据；Host 负责使用原生组件、可访问性和主题渲染，插件通过 `onCommand`/设置桥接获得结果。
+
+Host 会逐字段诊断并跳过非法条目，保留同一 descriptor 中其他合法部分；不支持的版本、未知字段、函数、HTML、CSS 和宿主 DOM 引用都会被拒绝。复杂、动态或需要自定义布局的界面继续使用 sandboxed iframe Custom View。
 
 ## 9. Jobs、storage 与 data
 

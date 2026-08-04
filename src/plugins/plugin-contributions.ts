@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 import { findReservedAcceleratorConflict } from '../shared/plugin-accelerator';
 import {
+  pluginUiDescriptorSchema,
+  type PluginUiDescriptor,
+} from '../shared/plugin-ui-descriptor';
+import {
   pluginIdSchema,
   pluginLocalIdSchema,
   pluginContextExpressionSchema,
@@ -22,6 +26,7 @@ export const pluginContributionKindSchema = z.enum([
   'hook',
   'job',
   'provider',
+  'ui-descriptor',
 ]);
 export type PluginContributionKind = z.infer<typeof pluginContributionKindSchema>;
 
@@ -44,6 +49,7 @@ export const pluginContributionTargetSchema = z.enum([
   'hooks',
   'jobs',
   'providers',
+  'ui.descriptor',
 ]);
 export type PluginContributionTarget = z.infer<typeof pluginContributionTargetSchema>;
 
@@ -82,6 +88,7 @@ const pluginContributionRegistrationSchema = z.strictObject({
   settingStep: z.number().finite().positive().optional(),
   uiEntryPath: z.string().min(1).max(1_024).optional(),
   accelerator: z.string().min(1).max(64).optional(),
+  uiDescriptor: pluginUiDescriptorSchema.optional(),
 });
 export type PluginContributionRegistration = z.infer<typeof pluginContributionRegistrationSchema>;
 
@@ -389,6 +396,19 @@ export function registerManifestContributions(
       ...((setting.type === 'number' || setting.type === 'slider') && setting.step !== undefined
         ? { settingStep: setting.step }
         : {}),
+    });
+    registered += 1;
+  }
+  if (contributes.ui !== undefined) {
+    registry.register({
+      pluginInstanceId: input.pluginInstanceId,
+      pluginId: input.pluginId,
+      libraryId: input.libraryId,
+      localId: 'ui.descriptor',
+      kind: 'ui-descriptor',
+      target: 'ui.descriptor',
+      title: 'Plugin UI',
+      uiDescriptor: contributes.ui,
     });
     registered += 1;
   }
@@ -774,6 +794,30 @@ export function listSettingsContributions(
       ...(contribution.settingStep === undefined
         ? {}
         : { step: contribution.settingStep }),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export type PluginUiDescriptorContribution = {
+  id: string;
+  pluginId: string;
+  pluginInstanceId: string;
+  descriptor: PluginUiDescriptor;
+};
+
+export function listUiDescriptorContributions(
+  registry: PluginContributionRegistry,
+): PluginUiDescriptorContribution[] {
+  return registry.list()
+    .filter((contribution): contribution is RegisteredPluginContribution & {
+      target: 'ui.descriptor';
+      uiDescriptor: PluginUiDescriptor;
+    } => contribution.target === 'ui.descriptor' && contribution.uiDescriptor !== undefined)
+    .map((contribution) => ({
+      id: contribution.id,
+      pluginId: contribution.pluginId,
+      pluginInstanceId: contribution.pluginInstanceId,
+      descriptor: contribution.uiDescriptor,
     }))
     .sort((left, right) => left.id.localeCompare(right.id));
 }

@@ -21,6 +21,7 @@ import {
   listShortcutContributions,
   listViewerOverlayContributions,
   listWorkspaceViewContributions,
+  listUiDescriptorContributions,
   registerManifestContributions,
   type PluginContributionRegistry,
 } from '../plugins/plugin-contributions';
@@ -1079,6 +1080,18 @@ export class PluginActivationCoordinator {
           title: contribution.title,
           target: 'settings.pages' as const,
           ...this.#viewContributionAttachment(contribution, input.libraryId),
+        }));
+    }
+    if (input.target === 'ui.descriptor') {
+      return listUiDescriptorContributions(this.options.contributions)
+        .filter((contribution) => activeInstanceIds.has(contribution.pluginInstanceId))
+        .map((contribution) => ({
+          kind: 'ui-descriptor' as const,
+          id: contribution.id,
+          pluginId: contribution.pluginId,
+          pluginInstanceId: contribution.pluginInstanceId,
+          descriptor: contribution.descriptor,
+          target: 'ui.descriptor' as const,
         }));
     }
     const targets = input.target === undefined

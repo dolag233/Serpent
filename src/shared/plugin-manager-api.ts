@@ -12,6 +12,7 @@ import { pluginProviderMediaSchema, pluginProviderMetadataSchema, pluginProvider
 import { pluginThemePackageSchema } from '../plugins/plugin-themes';
 import { pluginRuntimeModeSchema } from '../plugins/plugin-runtime-mode';
 import { pluginInvocationContextSchema } from '../plugins/plugin-context';
+import { pluginUiDescriptorSchema } from './plugin-ui-descriptor';
 import {
   pluginContextExpressionSchema,
   pluginSettingTypeSchema,
@@ -75,6 +76,7 @@ const pluginHostContributionTargetSchema = z.enum([
   'viewer.overlays',
   'settings.pages',
   'shortcuts',
+  'ui.descriptor',
 ]);
 export type PluginHostContributionTarget = z.infer<typeof pluginHostContributionTargetSchema>;
 
@@ -385,6 +387,16 @@ export const pluginManagerSettingsContributionSchema = z.strictObject({
 });
 export type PluginManagerSettingsContribution = z.infer<typeof pluginManagerSettingsContributionSchema>;
 
+export const pluginManagerUiDescriptorContributionSchema = z.strictObject({
+  kind: z.literal('ui-descriptor'),
+  id: z.string().min(1).max(255),
+  pluginId: pluginIdSchema,
+  pluginInstanceId: z.string().min(1).max(255),
+  descriptor: pluginUiDescriptorSchema,
+  target: z.literal('ui.descriptor'),
+});
+export type PluginManagerUiDescriptorContribution = z.infer<typeof pluginManagerUiDescriptorContributionSchema>;
+
 export const pluginManagerToolbarContributionSchema = z.strictObject({
   kind: z.literal('toolbar'),
   id: z.string().min(1).max(255),
@@ -451,6 +463,7 @@ export const pluginManagerContributionSchema = z.discriminatedUnion('kind', [
   pluginManagerViewerActionContributionSchema,
   pluginManagerShortcutContributionSchema,
   pluginManagerSettingsContributionSchema,
+  pluginManagerUiDescriptorContributionSchema,
   pluginManagerViewContributionSchema,
 ]);
 export type PluginManagerContribution = z.infer<typeof pluginManagerContributionSchema>;
