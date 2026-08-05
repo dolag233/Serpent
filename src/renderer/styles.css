@@ -1976,6 +1976,18 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 /* REQ-FILTER-009/010: dimension preset chips beside the custom range inputs. */
+.filter-preset-group + .filter-preset-group {
+  margin-top: 8px;
+}
+
+.filter-preset-group-label {
+  display: block;
+  margin: 2px 0 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 .filter-presets {
   display: flex;
   flex-wrap: wrap;

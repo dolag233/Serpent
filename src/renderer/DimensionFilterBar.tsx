@@ -23,6 +23,10 @@ import {
   formatTokensHas,
   toggleFormatToken,
 } from "./dimension-filter-selection";
+import {
+  FORMAT_FILTER_GROUPS,
+  FORMAT_TEXT_TOKEN,
+} from "./format-filter-presets";
 import { DimensionEnableToggle } from "./dimension-enable-toggle";
 import {
   loadTagFilterRecency,
@@ -735,38 +739,61 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 placeholder="png, jpg, mp4"
                 value={formatFilter}
               />
-              <div className="filter-presets" role="group">
-                {(
-                  [
-                    "png",
-                    "jpg",
-                    "webp",
-                    "gif",
-                    "mp4",
-                    "mov",
-                    "text",
-                  ] as const
-                ).map((ext) => {
-                  const active = formatTokensHas(formatFilter, ext);
-                  const label =
-                    ext === "text" ? t("filter.formatText") : ext;
-                  return (
-                    <button
-                      aria-pressed={active}
-                      className={`filter-preset-chip${active ? " is-active" : ""}`}
-                      disabled={controlsDisabled}
-                      key={ext}
-                      onClick={(event) =>
-                        setFormatFilter(
-                          toggleFormatToken(formatFilter, ext, event.shiftKey),
-                        )
-                      }
-                      type="button"
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              {FORMAT_FILTER_GROUPS.map((group) => (
+                <div className="filter-preset-group" key={group.labelKey}>
+                  <span className="filter-preset-group-label">
+                    {t(group.labelKey)}
+                  </span>
+                  <div className="filter-presets" role="group">
+                    {group.extensions.map((ext) => {
+                      const active = formatTokensHas(formatFilter, ext);
+                      return (
+                        <button
+                          aria-pressed={active}
+                          className={`filter-preset-chip${active ? " is-active" : ""}`}
+                          disabled={controlsDisabled}
+                          key={ext}
+                          onClick={(event) =>
+                            setFormatFilter(
+                              toggleFormatToken(formatFilter, ext, event.shiftKey),
+                            )
+                          }
+                          type="button"
+                        >
+                          {ext}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div className="filter-preset-group">
+                <span className="filter-preset-group-label">
+                  {t("filter.formatGroupOther")}
+                </span>
+                <div className="filter-presets" role="group">
+                  <button
+                    aria-pressed={formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)}
+                    className={`filter-preset-chip${
+                      formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)
+                        ? " is-active"
+                        : ""
+                    }`}
+                    disabled={controlsDisabled}
+                    onClick={(event) =>
+                      setFormatFilter(
+                        toggleFormatToken(
+                          formatFilter,
+                          FORMAT_TEXT_TOKEN,
+                          event.shiftKey,
+                        ),
+                      )
+                    }
+                    type="button"
+                  >
+                    {t("filter.formatText")}
+                  </button>
+                </div>
               </div>
               <label className="dimension-filter-check">
                 <input
