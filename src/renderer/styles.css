@@ -8843,7 +8843,11 @@ select.ai-config-input.ai-config-languages {
 }
 .asset-filename-prefix {
   min-width: 0;
-  flex: 1 1 auto;
+  /* Serpent-kmgw: flex-grow stretched the prefix on short names, pushing the
+     tail/extension to the far right ("ZKH09734" rendered as "ZKH09 734").
+     grow 0 keeps the name tightly packed when it fits; shrink 1 still lets
+     the prefix collapse with an ellipsis when the name overflows. */
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
