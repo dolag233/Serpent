@@ -5,7 +5,9 @@ import {
   imageDecoderForExtension,
   imageMimeForExtension,
   isSupportedImageExtension,
+  isSupportedModelExtension,
   isSupportedVideoExtension,
+  modelMimeForExtension,
   videoMimeForExtension,
 } from '../../src/shared/media-formats';
 
@@ -41,5 +43,27 @@ describe('media format registry', () => {
   it('serves SVG viewers from the original vector source', () => {
     expect(directImageMimeForExtension('.svg')).toBe('image/svg+xml');
     expect(directImageMimeForExtension('icon.SVG')).toBe('image/svg+xml');
+  });
+
+  it('registers the T1 3D set case-insensitively (slice A)', () => {
+    for (const extension of ['.fbx', '.obj', '.gltf', '.glb', '.stl']) {
+      expect(isSupportedModelExtension(`model${extension}`)).toBe(true);
+      expect(isSupportedModelExtension(`model${extension.toUpperCase()}`)).toBe(true);
+      expect(modelMimeForExtension(extension)).toMatch(/^model\//);
+    }
+    expect(isSupportedModelExtension('scene.3ds')).toBe(false);
+    expect(isSupportedModelExtension('texture.png')).toBe(false);
+    expect(isSupportedModelExtension('model')).toBe(false);
+    // Multi-dot names resolve by final extension only, like images/videos.
+    expect(isSupportedModelExtension('character.rig.fbx')).toBe(true);
+  });
+
+  it('maps each T1 model extension to its product MIME label', () => {
+    expect(modelMimeForExtension('.glb')).toBe('model/gltf-binary');
+    expect(modelMimeForExtension('.gltf')).toBe('model/gltf+json');
+    expect(modelMimeForExtension('.obj')).toBe('model/obj');
+    expect(modelMimeForExtension('.fbx')).toBe('model/fbx');
+    expect(modelMimeForExtension('.stl')).toBe('model/stl');
+    expect(modelMimeForExtension('.zip')).toBeNull();
   });
 });

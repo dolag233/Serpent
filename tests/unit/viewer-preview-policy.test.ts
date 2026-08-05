@@ -102,6 +102,35 @@ describe('viewer preview policy (REQ-VIEW-002)', () => {
     ).toBe('unsupported');
   });
 
+  it('opens model assets into the media surface, never unsupported (slice A)', () => {
+    // Model resolution is a ready source URL (serpent://source with revision);
+    // it must not classify as `other` even when an artifact is absent.
+    expect(
+      resolveViewerPrimarySurface({
+        loading: false,
+        resolution: {
+          status: 'ready',
+          mediaType: 'model',
+          playbackMode: 'source',
+          url: 'serpent://source/lib/asset?revision=r1',
+          kind: 'thumbnail',
+        },
+        directApproved: false,
+      }),
+    ).toBe('media');
+    expect(
+      resolveViewerPrimarySurface({
+        loading: false,
+        resolution: {
+          status: 'pending',
+          mediaType: 'model',
+          kind: 'thumbnail',
+        },
+        directApproved: false,
+      }),
+    ).toBe('waiting');
+  });
+
   it('presents mip placeholder while full preview is still loading (Serpent-eh07)', () => {
     expect(
       resolveViewerPrimarySurface({

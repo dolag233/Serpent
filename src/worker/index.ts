@@ -6,8 +6,24 @@ import {
   type WorkerResult,
 } from '../shared/protocol/responses';
 import type { ParentPort } from 'electron';
+import {
+  BUNDLED_HDRI_PRESET_IDS,
+} from '../shared/hdri-presets';
+import {
+  MODEL_THUMBNAIL_DEFAULT_EDGE,
+  MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
+  MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
+  modelThumbnailFormatForFileName,
+  parseModelThumbnailRenderResponse,
+  type ModelThumbnailRenderRequest,
+  type ModelThumbnailRenderResult,
+} from '../shared/model-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
-import { LibraryService, LibraryServiceError } from './library-service';
+import {
+  LibraryService,
+  LibraryServiceError,
+  type ModelThumbnailRenderOutcome,
+} from './library-service';
 import { publicErrorForWorkerFailure } from './public-error';
 import { OpenAIVendorAdapter } from './ai/openai-adapter';
 import { GeminiVendorAdapter } from './ai/gemini-adapter';
@@ -52,6 +68,7 @@ import {
   type PluginMediaProviderRequest,
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
+import { handleFbxConvertCommand } from './fbx/convert-command';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -119,6 +136,175 @@ function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'typ
       ...input,
     });
   });
+}
+
+// ── Slice E: offscreen model-thumbnail render client (Serpent-hnmg) ────
+
+const pendingModelThumbnailRenders = new Map<string, {
+  resolve: (result: ModelThumbnailRenderResult) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+/**
+ * Ask Main to render one model thumbnail in the shared offscreen window.
+ * Resolves with the typed result (never rejects except on abort); a missing
+ * Main response degrades to MODEL_RENDER_TIMEOUT after
+ * MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS.
+ */
+function requestModelThumbnailRender(
+  input: Omit<ModelThumbnailRenderRequest, 'type' | 'requestId'>,
+  signal?: AbortSignal,
+): Promise<ModelThumbnailRenderResult> {
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingModelThumbnailRenders.delete(requestId);
+      resolve({
+        status: 'failed',
+        errorCode: 'MODEL_RENDER_TIMEOUT',
+        reason: 'no render response from Main within the worker deadline',
+      });
+    }, MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS);
+    timer.unref?.();
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      pendingModelThumbnailRenders.delete(requestId);
+      reject(new DOMException('Model thumbnail render request aborted.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    pendingModelThumbnailRenders.set(requestId, { resolve, timer });
+    parentPort?.postMessage({
+      type: 'model-thumbnail.render-request',
+      requestId,
+      ...input,
+    });
+  });
+}
+
+/**
+ * Process-wide single-flight gate: at most ONE model render is in flight at
+ * any time (the shared offscreen window renders serially in Main; a second
+ * concurrent request would only queue there and fight the worker deadline).
+ * The acquire waits for the previous render and honors cancellation.
+ */
+let modelRenderTail: Promise<void> = Promise.resolve();
+async function withModelRenderGate<T>(
+  signal: AbortSignal | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = modelRenderTail;
+  let release!: () => void;
+  modelRenderTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  if (signal?.aborted) {
+    release();
+    throw new DOMException('Model render cancelled before acquiring the render gate.', 'AbortError');
+  }
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+/** URL builders mirror 3d-viewer/url-remap (kept local to avoid a renderer import). */
+function modelSourceUrl(libraryId: string, assetId: string, revisionId: string): string {
+  return `serpent://source/${libraryId}/${assetId}?revision=${encodeURIComponent(revisionId)}`;
+}
+function modelPreviewUrl(libraryId: string, artifactId: string): string {
+  return `serpent://preview/${libraryId}/${artifactId}`;
+}
+
+/**
+ * Offscreen render orchestration for one queued model job: format dispatch,
+ * FBX→GLB conversion first (a conversion failure fails the job with the typed
+ * FBX_* code — the renderer never sees the raw FBX), companion index, then
+ * the Main render request.
+ */
+async function renderModelThumbnailViaMain(input: {
+  libraryId: string;
+  assetId: string;
+  revisionId: string;
+  relativeFilePath: string;
+  byteSize: number | null;
+  signal: AbortSignal;
+}): Promise<ModelThumbnailRenderOutcome> {
+  // The gate is a global one-render-at-a-time policy, not a per-job failure.
+  return withModelRenderGate(input.signal, async () => {
+    try {
+      return await orchestrateRender(input);
+    } catch (error) {
+      // Cancellation must propagate so the queue's cancelled path runs;
+      // anything else becomes a benign typed failure (card keeps the generic
+      // 3D icon, no badge).
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      libraryService.reportDiagnostic('model-thumbnail.orchestrate', error, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+      });
+      return { status: 'failed', errorCode: 'MODEL_LOAD_FAILED' };
+    }
+  });
+}
+
+async function orchestrateRender(input: {
+  libraryId: string;
+  assetId: string;
+  revisionId: string;
+  relativeFilePath: string;
+  byteSize: number | null;
+  signal: AbortSignal;
+}): Promise<ModelThumbnailRenderOutcome> {
+    const format = modelThumbnailFormatForFileName(input.relativeFilePath);
+    if (!format) {
+      return { status: 'failed', errorCode: 'MODEL_LOAD_FAILED' };
+    }
+    let effectiveFormat: ModelThumbnailRenderRequest['format'] = format;
+    let renderUrl: string;
+    if (format === 'fbx') {
+      // Slice B single-flight conversion; only the cached GLB is rendered.
+      const conversion = await handleFbxConvertCommand(libraryService, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+      });
+      if (conversion.status !== 'ready') {
+        return {
+          status: 'failed',
+          errorCode: conversion.errorCode,
+          ...(conversion.reason === undefined ? {} : { reason: conversion.reason }),
+        };
+      }
+      effectiveFormat = 'glb';
+      renderUrl = modelPreviewUrl(input.libraryId, conversion.glbArtifactId);
+    } else {
+      renderUrl = modelSourceUrl(input.libraryId, input.assetId, input.revisionId);
+    }
+    const companions = libraryService.resolveModelCompanions({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+    });
+    return requestModelThumbnailRender(
+      {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+        revisionId: input.revisionId,
+        format: effectiveFormat,
+        renderUrl,
+        companionMap: companions.map((companion) => ({
+          relativeFilePath: companion.relativeFilePath,
+          assetId: companion.assetId,
+          revisionId: companion.revisionId,
+          extension: companion.extension,
+        })),
+        hdriPresetId: BUNDLED_HDRI_PRESET_IDS[0]!,
+        width: MODEL_THUMBNAIL_DEFAULT_EDGE,
+        height: MODEL_THUMBNAIL_DEFAULT_EDGE,
+        timeoutMs: MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
+      },
+      input.signal,
+    );
 }
 
 async function writePluginMediaArtifact(input: {
@@ -215,6 +401,10 @@ function scheduleThumbnailQueue(
               ...(asset === undefined ? {} : { asset }),
             }))?.artifactId ?? null;
           },
+          // Slice E (Serpent-hnmg): model jobs render offscreen in Main; the
+          // shared-window gate inside renderModelThumbnailViaMain keeps at
+          // most one render in flight process-wide.
+          modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         })))).reduce((total, count) => total + count, 0);
       continueImmediately = processed === 4;
     } catch (error) {
@@ -1498,18 +1688,38 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         assetId: request.command.assetId,
         kind: 'thumbnail',
       });
-      const { artifactId } = pluginArtifact
+      const generated = pluginArtifact
         ?? await libraryService.generateThumbnail(request.command);
-      // Publish the thumbnail-ready event to the renderer
-      if (parentPort) {
-        parentPort.postMessage({
-          type: 'asset.thumbnail.ready',
-          libraryId: request.command.libraryId,
-          assetId: request.command.assetId,
-          artifactId,
-        });
+      if (!generated && libraryService.isModelAsset(
+        request.command.libraryId,
+        request.command.assetId,
+      )) {
+        // Model thumbnails render offscreen in Main (slice E): the explicit
+        // request enqueues through the queue, and the thumbnail.ready event
+        // arrives asynchronously once the offscreen frame lands.
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'mutation',
+          [request.command.assetId],
+        );
       }
-      return { ok: true, type: 'media.thumbnail.generated', assetId: request.command.assetId, artifactId };
+      if (generated) {
+        // Publish the thumbnail-ready event to the renderer
+        if (parentPort) {
+          parentPort.postMessage({
+            type: 'asset.thumbnail.ready',
+            libraryId: request.command.libraryId,
+            assetId: request.command.assetId,
+            artifactId: generated.artifactId,
+          });
+        }
+      }
+      return {
+        ok: true,
+        type: 'media.thumbnail.generated',
+        assetId: request.command.assetId,
+        ...(generated ? { artifactId: generated.artifactId } : {}),
+      };
     }
     case 'media.retry-artifact': {
       const { libraryId, assetId, kind } = request.command;
@@ -1522,6 +1732,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'media.retry-artifact.queued',
         assetId,
         kind,
+      };
+    }
+    case 'model.convert-fbx': {
+      // Slice-0030-B: ufbx WASM → GLB cache. Single-flight + typed error codes
+      // live in src/worker/fbx/convert-command.ts; slice C routes failures to
+      // the FBXLoader fallback.
+      const result = await handleFbxConvertCommand(libraryService, request.command);
+      return {
+        ok: true,
+        type: 'model.convert-fbx.done' as const,
+        assetId: request.command.assetId,
+        ...result,
       };
     }
     case 'media.get-artifact-path': {
@@ -1596,6 +1818,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.assetId,
       );
       return { ok: true, type: 'media.asset-path', assetId: request.command.assetId, absolutePath };
+    }
+    case 'model.resolve-companions': {
+      // Slice A pipeline: the renderer 3D loader (slice C) rewrites OBJ+MTL /
+      // FBX external texture references using this relative-path → assetId
+      // index. Read-only; absolute paths never leave the Worker.
+      const companions = libraryService.resolveModelCompanions(request.command);
+      return {
+        ok: true,
+        type: 'model.companions',
+        assetId: request.command.assetId,
+        companions,
+      };
     }
     case 'media.get-asset-paths': {
       // Main-only consumer (OS clipboard); paths never reach the Renderer.
@@ -2156,6 +2390,20 @@ parentPort.on('message', async (event) => {
       clearTimeout(pending.timer);
       pendingPluginMediaProviderRequests.delete(providerResponse.requestId);
       pending.resolve(providerResponse.result);
+    }
+    return;
+  } catch {
+    // A normal Worker request or control message; validate it below.
+  }
+
+  try {
+    // Slice E: Main's offscreen render result (PNG bytes or typed failure).
+    const renderResponse = parseModelThumbnailRenderResponse(input);
+    const pending = pendingModelThumbnailRenders.get(renderResponse.requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingModelThumbnailRenders.delete(renderResponse.requestId);
+      pending.resolve(renderResponse.result);
     }
     return;
   } catch {

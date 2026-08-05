@@ -850,6 +850,19 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
+  // Slice C (Serpent-qvc6): renderer request surface for the 3D viewer. The
+  // Worker commands (model.resolve-companions / model.convert-fbx) already
+  // exist; these entries let the preload bridge reach them.
+  z.strictObject({
+    type: z.literal('model.resolve-companions.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('model.convert-fbx.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
   z.strictObject({
     type: z.literal('asset.preview-error.report'),
     libraryId: identifierSchema,
@@ -1591,6 +1604,15 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     expectedRevisionId: identifierSchema.optional(),
     createRevision: z.boolean().optional(),
   }),
+  // Slice A (Serpent-fu2i): companion-texture index for model assets. The
+  // Worker returns relative paths + asset ids for the model's directory
+  // (recursive); only the renderer 3D loader consumes it. Read-only, no
+  // absolute paths cross this boundary.
+  z.strictObject({
+    type: z.literal('model.resolve-companions'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
   z.strictObject({
     type: z.literal('asset.delete-permanent'),
     libraryId: identifierSchema,
@@ -1706,6 +1728,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.generate-thumbnail'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('model.convert-fbx'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),

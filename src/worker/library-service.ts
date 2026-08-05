@@ -294,6 +294,11 @@ import type {
 } from '../shared/protocol/requests';
 import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import { extractAuthorFromExif } from './author-from-exif';
+import {
+  queryModelCompanionAssets,
+  resolveModelPreviewResolution,
+} from './model-resolution';
+import type { ModelCompanionAsset } from '../shared/model-companions';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -342,13 +347,21 @@ import {
 } from '../shared/audio-media';
 import {
   IMAGE_EXTENSIONS,
+  MODEL_EXTENSIONS,
   directImageMimeForExtension,
   imageDecoderForExtension,
   imageMimeForExtension,
   isSupportedImageExtension,
+  isSupportedModelExtension,
   isSupportedVideoExtension,
+  modelMimeForExtension,
   videoMimeForExtension,
 } from '../shared/media-formats';
+import {
+  MODEL_THUMBNAIL_GENERATOR_VERSION,
+  MODEL_THUMBNAIL_MAX_PNG_BYTES,
+} from '../shared/model-thumbnail-protocol';
+import { MODEL_MAX_SOURCE_BYTES } from '../renderer/3d-viewer/limits';
 import {
   COMMON_IMAGE_COLOR_SPACE_OPTIONS,
   colorSpaceInfoFromName,
@@ -1994,6 +2007,71 @@ const PLUGIN_JOB_INTERRUPTED_SCHEMA_CHECKSUM = createHash('sha256')
   .update(PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v33 (Serpent-5ygi, slice 0030-B): FBX conversion stores its GLB
+// as a derived artifact (`kind = 'model_glb'`). The v21 rebuild of
+// revision_artifacts pinned the kind CHECK to the media-artifact set, so the
+// table is rebuilt again with the new kind. The rebuild must also recreate the
+// change-sequence triggers (v27) and the thumbnail-queue index (v29), which
+// DROP TABLE would otherwise remove.
+const MODEL_ARTIFACT_KIND_SCHEMA_SQL = `
+  CREATE TABLE revision_artifacts_v33 (
+    artifact_id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('thumbnail', 'video_poster', 'contact_sheet', 'webm_proxy', 'audio_proxy',
+               'extracted_metadata', 'extracted_palette', 'model_glb')
+    ),
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    file_path TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    generator_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'generating', 'ready', 'failed')
+    ),
+    error_code TEXT,
+    generated_at TEXT,
+    invalidated_at TEXT,
+    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    dominant_hue REAL CHECK (dominant_hue IS NULL OR (dominant_hue >= 0 AND dominant_hue < 360)),
+    dominant_lightness REAL CHECK (dominant_lightness IS NULL OR (dominant_lightness >= 0 AND dominant_lightness <= 1))
+  );
+  INSERT INTO revision_artifacts_v33
+    (artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+     generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+     dominant_hue, dominant_lightness)
+    SELECT artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+           generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+           dominant_hue, dominant_lightness
+      FROM revision_artifacts;
+  DROP TABLE revision_artifacts;
+  ALTER TABLE revision_artifacts_v33 RENAME TO revision_artifacts;
+  CREATE UNIQUE INDEX revision_artifacts_current
+    ON revision_artifacts(revision_id, kind)
+    WHERE invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_duration_idx
+    ON revision_artifacts(duration_ms)
+    WHERE kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_palette_sort_idx
+    ON revision_artifacts(dominant_hue, dominant_lightness)
+    WHERE kind = 'extracted_palette' AND status = 'ready' AND invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_revision_kind_status
+    ON revision_artifacts(revision_id, kind, status, invalidated_at);
+  CREATE TRIGGER library_change_on_revision_artifacts_insert AFTER INSERT ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_update AFTER UPDATE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_delete AFTER DELETE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+`;
+const MODEL_ARTIFACT_KIND_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(MODEL_ARTIFACT_KIND_SCHEMA_SQL)
+  .digest('hex');
+
 /**
  * Migration v28: namespaced, package-versioned materialized Provider fields.
  * Queries only select the active package hash supplied by Main, so upgrading
@@ -2161,6 +2239,11 @@ const MIGRATIONS = [
     version: 32,
     sql: PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL,
     checksum: PLUGIN_JOB_INTERRUPTED_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 33,
+    sql: MODEL_ARTIFACT_KIND_SCHEMA_SQL,
+    checksum: MODEL_ARTIFACT_KIND_SCHEMA_CHECKSUM,
   },
 ] as const;
 const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2677,6 +2760,39 @@ const oiioDecoderSemaphore = new AsyncSemaphore(1);
 interface MediaExecutionContext {
   signal?: AbortSignal;
 }
+
+/**
+ * Slice E (Serpent-hnmg): offscreen model-thumbnail renderer contract. The
+ * Worker stays the queue/artifact owner; Main (via worker/index.ts) performs
+ * the GPU render. `errorCode` may carry a MODEL_* code (render failure) or an
+ * FBX_* code (conversion failure that preceded the render) — both are
+ * benign-suppressed for the card (thumbnail-support.ts).
+ */
+export type ModelThumbnailRenderOutcome =
+  | {
+      status: 'ok';
+      pngBytes: Uint8Array;
+      width: number;
+      height: number;
+    }
+  | {
+      status: 'failed';
+      errorCode: string;
+      reason?: string;
+    };
+
+export interface ModelThumbnailRendererInput {
+  libraryId: string;
+  assetId: string;
+  revisionId: string;
+  relativeFilePath: string;
+  byteSize: number | null;
+  signal: AbortSignal;
+}
+
+export type ModelThumbnailRenderer = (
+  input: ModelThumbnailRendererInput,
+) => Promise<ModelThumbnailRenderOutcome>;
 
 export interface LibraryServiceOptions {
   afterSourceSnapshotCopy?: (sourcePath: string) => void;
@@ -12120,14 +12236,19 @@ export class LibraryService {
    * Returns a product media category, not a Chromium capability. Images whose
    * source cannot be safely mounted in Chromium (RAW, EXR, PSD, etc.) still
    * classify as `image` because the Worker owns an OIIO-derived preview path.
+   * `model` covers the T1 3D set (fbx/obj/gltf/glb/stl); its preview and
+   * thumbnails are renderer-side (slices C/E), never Worker raster jobs.
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (isSupportedImageExtension(lower)) {
       return 'image';
     }
     if (isSupportedVideoExtension(lower)) {
       return 'video';
+    }
+    if (isSupportedModelExtension(lower)) {
+      return 'model';
     }
     if (isAudioFileName(lower)) {
       return 'audio';
@@ -12142,14 +12263,16 @@ export class LibraryService {
    * Map detector output onto AssetSummary.mediaType.
    * searchAssets / trash listing previously collapsed audio+text to `other`
    * (Serpent-671), which hid duration badges and Inspector audio tech lines.
+   * `model` passes through unchanged since slice A.
    */
   static toSummaryMediaType(
     detected: ReturnType<typeof LibraryService.detectMediaType>,
-  ): 'image' | 'video' | 'audio' | 'text' | 'other' {
+  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' {
     return detected === 'image' ||
       detected === 'video' ||
       detected === 'audio' ||
-      detected === 'text'
+      detected === 'text' ||
+      detected === 'model'
       ? detected
       : 'other';
   }
@@ -12165,11 +12288,16 @@ export class LibraryService {
 
   // ── Thumbnail Generation Dispatch ─────────────────────────────────
 
-  /** Generate thumbnails/artifacts for an asset, dispatching by media type. */
+  /**
+   * Generate thumbnails/artifacts for an asset, dispatching by media type.
+   * Returns null for `model`: no raster generator exists in the Worker (the
+   * offscreen GPU thumbnail renderer of slice E owns model cards), and a no-op
+   * keeps the asset out of the failed path entirely.
+   */
   async generateThumbnail(input: {
     libraryId: string;
     assetId: string;
-  }, execution: MediaExecutionContext = {}): Promise<{ artifactId: string }> {
+  }, execution: MediaExecutionContext = {}): Promise<{ artifactId: string } | null> {
     if (execution.signal?.aborted) {
       throw new DOMException('Media job cancelled before thumbnail generation.', 'AbortError');
     }
@@ -12190,6 +12318,16 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
         reason: 'UNSUPPORTED_FORMAT',
       });
+    }
+
+    // Model assets have no sharp/OIIO/FFmpeg generator in the Worker; their
+    // thumbnails render offscreen in Main (slice E, Serpent-hnmg) and the
+    // queue routes model jobs to `options.modelThumbnailRenderer` before this
+    // function is reached. The explicit command path stays a benign no-op:
+    // nothing is written, thumbnailStatus stays null → the card shows the
+    // generic 3D icon (never `failed`).
+    if (mediaType === 'model') {
+      return null;
     }
 
     const isGifAsset = assetPath.toLowerCase().endsWith('.gif');
@@ -12254,6 +12392,162 @@ export class LibraryService {
     }
 
     throw new LibraryServiceError('INTERNAL_ERROR');
+  }
+
+  /**
+   * Slice E (Serpent-hnmg): offscreen model thumbnail generation for a queue
+   * job. The actual GPU render happens in Main (shared offscreen window); the
+   * Worker performs the size guard (spec 3D-14), stores the returned PNG as
+   * the standard `thumbnail` artifact, and records typed failures so the
+   * queue dedupes and the card keeps the generic 3D icon (never a badge —
+   * MODEL_* and FBX_* codes are benign-suppressed in thumbnail-support.ts).
+   */
+  private async processModelThumbnailJob(
+    openLibrary: OpenLibrary,
+    input: {
+      libraryId: string;
+      assetId: string;
+      revisionId: string;
+      relativeFilePath: string;
+      byteSize: number | null;
+    },
+    options: { renderer?: ModelThumbnailRenderer; signal: AbortSignal },
+  ): Promise<{ artifactId: string } | null> {
+    // No renderer wired (direct unit harness / legacy): keep the benign
+    // no-op so thumbnailStatus stays null and nothing is written.
+    if (!options.renderer) return null;
+
+    if (input.byteSize != null && input.byteSize > MODEL_MAX_SOURCE_BYTES) {
+      this.writeModelThumbnailFailure(openLibrary, input.revisionId, 'MODEL_TOO_LARGE');
+      // The typed code lives on the failed artifact (the job's error_code);
+      // the throw only routes into the queue's failure path.
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+      });
+    }
+
+    const outcome = await options.renderer({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      revisionId: input.revisionId,
+      relativeFilePath: input.relativeFilePath,
+      byteSize: input.byteSize,
+      signal: options.signal,
+    });
+    if (options.signal.aborted) {
+      throw new DOMException('Model thumbnail cancelled during render.', 'AbortError');
+    }
+    if (outcome.status === 'failed') {
+      this.writeModelThumbnailFailure(openLibrary, input.revisionId, outcome.errorCode);
+      // The typed code lives on the failed artifact (the job's error_code);
+      // the throw only routes into the queue's failure path.
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+        ...(outcome.reason === undefined ? {} : { cause: new Error(outcome.reason) }),
+      });
+    }
+    return this.writeModelThumbnailArtifact(openLibrary, input, outcome);
+  }
+
+  /** Persist an offscreen-rendered model thumbnail as the standard artifact. */
+  private writeModelThumbnailArtifact(
+    openLibrary: OpenLibrary,
+    input: { libraryId: string; assetId: string; revisionId: string },
+    frame: { pngBytes: Uint8Array; width: number; height: number },
+  ): { artifactId: string } {
+    const bytes = frame.pngBytes;
+    if (
+      bytes.byteLength < 8
+      || bytes.byteLength > MODEL_THUMBNAIL_MAX_PNG_BYTES
+      || !Number.isInteger(frame.width)
+      || !Number.isInteger(frame.height)
+    ) {
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+      });
+    }
+    const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    for (let index = 0; index < signature.length; index += 1) {
+      if (bytes[index] !== signature[index]) {
+        throw new LibraryServiceError('INTERNAL_ERROR', {
+          reason: 'MEDIA_PROCESSING_FAILED',
+        });
+      }
+    }
+
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.png`;
+    const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+    mkdirSync(this.artifactsDir(openLibrary), { recursive: true });
+    writeFileSync(artifactAbsPath, bytes, { flag: 'wx' });
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ? AND kind = 'thumbnail' AND invalidated_at IS NULL`,
+        )
+        .run(now, input.revisionId);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          input.revisionId,
+          bytes.byteLength,
+          artifactRelPath,
+          frame.width,
+          frame.height,
+          MODEL_THUMBNAIL_GENERATOR_VERSION,
+          now,
+        );
+    })();
+    return { artifactId };
+  }
+
+  /**
+   * Terminal failed-artifact row for a model (dedupes re-enqueue and feeds
+   * the thumbnailStatus map). No file is written; failed artifacts are never
+   * served.
+   */
+  private writeModelThumbnailFailure(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    errorCode: string,
+  ): void {
+    const artifactId = randomUUID();
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            generator_version, status, error_code, generated_at)
+         VALUES (?, ?, 'thumbnail', 'image/png', 0, ?, ?, 'failed', ?, ?)`,
+      )
+      .run(
+        artifactId,
+        revisionId,
+        `${artifactId}.png`,
+        MODEL_THUMBNAIL_GENERATOR_VERSION,
+        errorCode,
+        new Date().toISOString(),
+      );
+  }
+
+  /** Media-type lookup for a single asset (used by the direct thumbnail path). */
+  isModelAsset(libraryId: string, assetId: string): boolean {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+      .get(assetId) as { relative_file_path: string } | undefined;
+    return (
+      row !== undefined
+      && LibraryService.detectMediaType(row.relative_file_path) === 'model'
+    );
   }
 
   // ── Image thumbnail (sharp) ────────────────────────────────────────
@@ -13584,6 +13878,75 @@ export class LibraryService {
   }
 
   /**
+   * Write a derived binary artifact for an asset's current revision.
+   *
+   * Slice-0030 addition (FBX→GLB pipeline): like writePluginMediaArtifact but
+   * the artifact kind and generator version are caller supplied and the size
+   * cap is raised for model payloads. Cache semantics stay the same as the
+   * other derived pipelines: the artifact is keyed by (revision_id, kind) —
+   * a new source revision invalidates the previous artifact — and the
+   * `generator_version` column lets consumers detect a stale converter
+   * (resolveConvertedGlb in src/worker/fbx/converter.ts).
+   */
+  writeDerivedArtifact(input: {
+    libraryId: string;
+    assetId: string;
+    kind: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    generatorVersion: string;
+    maxBytes: number;
+  }): { artifactId: string; filePath: string } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ? AND deleted_at IS NULL')
+      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (input.bytes.length === 0 || input.bytes.length > input.maxBytes) {
+      throw new LibraryServiceError('INTERNAL_ERROR');
+    }
+
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}.${input.kind}`;
+    const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+    mkdirSync(this.artifactsDir(openLibrary), { recursive: true });
+    try {
+      writeFileSync(artifactAbsPath, input.bytes, { flag: 'wx' });
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL`,
+          )
+          .run(now, asset.current_revision_id, input.kind);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                generator_version, status, generated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            asset.current_revision_id,
+            input.kind,
+            input.mimeType,
+            input.bytes.length,
+            artifactRelPath,
+            input.generatorVersion,
+            now,
+          );
+      })();
+      return { artifactId, filePath: artifactRelPath };
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      throw error;
+    }
+  }
+
+  /**
    * Return the current (invalidated_at IS NULL) artifact of a given kind
    * for an asset's current revision. Returns null if none exists.
    * Unlike getThumbnailArtifact, this also returns the raw status so
@@ -13841,7 +14204,7 @@ export class LibraryService {
     libraryId: string,
     assetId: string,
   ): {
-    mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
     artifactId?: string;
@@ -13914,6 +14277,20 @@ export class LibraryService {
         sourceRevisionId: asset.current_revision_id,
         sourceMimeType: textMime,
       };
+    }
+
+    // Models resolve to their original source (serpent://source via
+    // playbackMode/sourceRevisionId, same route as direct-play video). The
+    // renderer's 3D surface (slice C) loads it with three.js; thumbnail/poster
+    // artifacts are not needed for the viewer. Resolution logic lives in
+    // model-resolution.ts so slices B/E can extend it without touching this
+    // dispatch.
+    const modelPreview = resolveModelPreviewResolution(
+      asset.relative_file_path,
+      asset.current_revision_id,
+    );
+    if (modelPreview) {
+      return modelPreview;
     }
 
     const extension = path.extname(asset.relative_file_path).toLowerCase();
@@ -14091,6 +14468,42 @@ export class LibraryService {
     };
   }
 
+  /**
+   * Companion-texture mapping for a model asset (model.resolve-companions).
+   *
+   * Returns every library asset inside the model's own directory (recursive),
+   * excluding the model itself — the index slice C uses to rewrite OBJ+MTL /
+   * FBX external texture references by relative path. Read-only; only
+   * relative paths and ids cross the boundary, never absolute paths.
+   */
+  resolveModelCompanions(input: {
+    libraryId: string;
+    assetId: string;
+  }): ModelCompanionAsset[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, current_revision_id, availability
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(input.assetId) as {
+        relative_file_path: string;
+        current_revision_id: string | null;
+        availability: 'available' | 'missing';
+      } | undefined;
+    if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.availability === 'missing') {
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (!isSupportedModelExtension(asset.relative_file_path)) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
+        reason: 'UNSUPPORTED_FORMAT',
+      });
+    }
+    return queryModelCompanionAssets(openLibrary.connection, asset.relative_file_path);
+  }
+
   /** Queue an artifact retry and return before any decoder subprocess starts. */
   enqueueArtifactRetry(input: {
     libraryId: string;
@@ -14193,7 +14606,7 @@ export class LibraryService {
     if (usage) {
       const allowedKinds = usage === 'proxy'
         ? new Set(['webm_proxy', 'audio_proxy'])
-        : new Set(['thumbnail', 'video_poster']);
+        : new Set(['thumbnail', 'video_poster', 'model_glb']);
       if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
 
@@ -14275,8 +14688,11 @@ export class LibraryService {
       ?? videoMimeForExtension(extension)
       ?? mimeTypes[extension]
       ?? audioMimeForExtension(extension)
-      ?? undefined;
-    if (!mimeType) throw new LibraryServiceError('INVALID_IMPORT_DECISION', { reason: 'UNSUPPORTED_FORMAT' });
+      ?? modelMimeForExtension(extension)
+      // Companion files (MTL, TGA textures, …) have no registered media
+      // MIME; serving them as octet-stream through the source route (which
+      // still requires a valid revision token) lets 3D loaders fetch them.
+      ?? 'application/octet-stream';
     return { absolutePath: this.resolveAssetPath(libraryId, assetId), mimeType };
   }
 
@@ -14653,10 +15069,15 @@ export class LibraryService {
       this.autoRepairAttemptedByLibrary.set(libraryId, attempted);
     }
     let enqueued = repairEnqueued;
+    // Model extensions join the queue (slice E, Serpent-hnmg): the offscreen
+    // GPU renderer in Main produces model thumbnails, stored as the standard
+    // `thumbnail` artifact. The dedupe below (terminal artifact / active job)
+    // applies to models exactly like images, so no duplicate renders occur.
     const supportedExtensions = [
       ...IMAGE_EXTENSIONS.map((extension) => extension.slice(1)),
       'mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v',
       ...AUDIO_EXTENSION_NAMES,
+      ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
     const nowInvalidate = new Date().toISOString();
@@ -14925,6 +15346,8 @@ export class LibraryService {
           currentRevisionId: string;
         };
       }) => Promise<string | null>;
+      /** Slice E: offscreen renderer for model assets (null keeps the legacy no-op). */
+      modelThumbnailRenderer?: ModelThumbnailRenderer;
     } = {},
   ): Promise<number> {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -14975,8 +15398,13 @@ export class LibraryService {
       const controller = new AbortController();
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
       const providerAssetRow = openLibrary.connection
-        .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
-        .get(job.asset_id) as { relative_file_path: string } | undefined;
+        .prepare(
+          `SELECT a.relative_file_path, r.byte_size
+             FROM assets a
+             JOIN revisions r ON r.revision_id = a.current_revision_id
+            WHERE a.asset_id = ?`,
+        )
+        .get(job.asset_id) as { relative_file_path: string; byte_size: number | null } | undefined;
       let settleActiveJob!: () => void;
       const settled = new Promise<void>((resolve) => {
         settleActiveJob = resolve;
@@ -15006,10 +15434,26 @@ export class LibraryService {
             : null;
           const generated = pluginArtifactId
             ? { artifactId: pluginArtifactId }
-            : await this.generateThumbnail(
-              { libraryId, assetId: job.asset_id },
-              { signal: controller.signal },
-            );
+            : providerAssetRow !== undefined
+                && LibraryService.detectMediaType(providerAssetRow.relative_file_path) === 'model'
+              ? await this.processModelThumbnailJob(
+                  openLibrary,
+                  {
+                    libraryId,
+                    assetId: job.asset_id,
+                    revisionId: job.revision_id,
+                    relativeFilePath: providerAssetRow.relative_file_path,
+                    byteSize: providerAssetRow.byte_size,
+                  },
+                  {
+                    renderer: options.modelThumbnailRenderer,
+                    signal: controller.signal,
+                  },
+                )
+              : await this.generateThumbnail(
+                { libraryId, assetId: job.asset_id },
+                { signal: controller.signal },
+              );
           if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
             this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
               libraryId,
@@ -15033,7 +15477,13 @@ export class LibraryService {
             this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
           }
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
-          options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
+          // generated stays null when the offscreen renderer failed with a
+          // benign outcome (the failed artifact was already written and the
+          // job was marked failed by the catch path) or when no renderer is
+          // wired (legacy no-op); nothing is published either way.
+          if (generated) {
+            options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
+          }
         } else if (job.kind === 'extract_palette') {
           const current = await this.generateQueuedPaletteArtifact(
             libraryId,
@@ -16582,7 +17032,7 @@ export class LibraryService {
       trashed_from_tombstone_id?: string | null;
       thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
       thumbnail_artifact_id?: string | null;
-      media_type?: 'image' | 'video' | 'audio' | 'text' | 'other' | null;
+      media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' | null;
       artifact_width?: number | null;
       artifact_height?: number | null;
       artifact_duration_ms?: number | null;

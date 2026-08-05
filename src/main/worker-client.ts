@@ -30,6 +30,11 @@ import {
   type PluginMediaProviderRequest,
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
+import {
+  parseModelThumbnailRenderRequest,
+  type ModelThumbnailRenderRequest,
+  type ModelThumbnailRenderResult,
+} from '../shared/model-thumbnail-protocol';
 
 interface PendingRequest {
   resolve(result: WorkerResult): void;
@@ -112,6 +117,8 @@ export class LibraryWorkerClient {
   #aiClearedListeners = new Set<(event: AiContentClearedEvent) => void>();
   #pluginMediaProviderListener:
     ((request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>) | undefined;
+  #modelThumbnailRenderListener:
+    ((request: ModelThumbnailRenderRequest) => Promise<ModelThumbnailRenderResult>) | undefined;
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -254,6 +261,60 @@ export class LibraryWorkerClient {
     };
   }
 
+  /** Slice E: worker asks Main to render one model thumbnail offscreen. */
+  onModelThumbnailRenderRequest(
+    listener: (request: ModelThumbnailRenderRequest) => Promise<ModelThumbnailRenderResult>,
+  ): () => void {
+    this.#modelThumbnailRenderListener = listener;
+    return () => {
+      if (this.#modelThumbnailRenderListener === listener) {
+        this.#modelThumbnailRenderListener = undefined;
+      }
+    };
+  }
+
+  /**
+   * Handle a worker `model-thumbnail.render-request` (slice E): hand it to the
+   * offscreen renderer listener and post the typed result back to the Worker.
+   * Returns true when the message was a render request (consumed).
+   */
+  #dispatchModelThumbnailRenderRequest(message: unknown): boolean {
+    let renderRequest: ModelThumbnailRenderRequest;
+    try {
+      renderRequest = parseModelThumbnailRenderRequest(message);
+    } catch {
+      return false;
+    }
+    const child = this.#child;
+    if (!child) {
+      this.logger.error(
+        'worker.model-thumbnail.render-request',
+        new Error('Received a model render request without a live worker.'),
+      );
+      return true;
+    }
+    void (this.#modelThumbnailRenderListener
+      ? this.#modelThumbnailRenderListener(renderRequest)
+      : Promise.resolve({
+          status: 'failed' as const,
+          errorCode: 'MODEL_WINDOW_FAILED',
+          reason: 'offscreen thumbnail renderer unavailable',
+        }))
+      .catch(() => ({
+        status: 'failed' as const,
+        errorCode: 'MODEL_WINDOW_FAILED',
+        reason: 'offscreen thumbnail renderer failed',
+      }))
+      .then((result) => {
+        child.postMessage({
+          type: 'model-thumbnail.render-response',
+          requestId: renderRequest.requestId,
+          result,
+        });
+      });
+    return true;
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -277,6 +338,10 @@ export class LibraryWorkerClient {
   }
 
   readonly #onMessage = (message: unknown) => {
+    // Slice E render requests must be handled before the generic event
+    // parsers: the request is answered with a typed response, not forwarded.
+    if (this.#dispatchModelThumbnailRenderRequest(message)) return;
+
     try {
       const providerRequest = parsePluginMediaProviderRequest(message);
       const child = this.#child;

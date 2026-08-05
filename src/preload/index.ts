@@ -7,6 +7,8 @@ import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
 import type { ViewerVideoShortcutAction } from '../shared/viewer-video-shortcuts';
 import { searchQuerySchema } from '../shared/asset-types';
+import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
+import type { ModelCompanionAsset } from '../shared/model-companions';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
@@ -153,6 +155,19 @@ import { createPublicError } from '../shared/protocol/errors';
 import { isImageSequenceImportOffer } from '../shared/import-outcome';
 import { resolveDroppedFilePaths } from './dropped-files';
 import { extractWebMediaDrop } from './web-media-drop';
+
+const EMPTY_FBX_CONVERSION_STATS: FbxConversionStats = {
+  triangles: 0,
+  vertices: 0,
+  meshes: 0,
+  instances: 0,
+  materials: 0,
+  textures: 0,
+  missingTextures: 0,
+  sourceBytes: 0,
+  glbBytes: 0,
+  sourceUnitMeters: 1,
+};
 
 const e2eEnabled = process.env.SERPENT_E2E === '1';
 if (e2eEnabled) {
@@ -1445,11 +1460,56 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>> {
+  async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>> {
     const result = await request({ type: 'asset.thumbnail.request', libraryId, assetId });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.thumbnail.generated') throw new Error('Unexpected thumbnail response.');
-    return { ok: true, value: { assetId: result.assetId, artifactId: result.artifactId } };
+    return {
+      ok: true,
+      value: {
+        assetId: result.assetId,
+        ...(result.artifactId ? { artifactId: result.artifactId } : {}),
+      },
+    };
+  },
+
+  // Slice C (Serpent-qvc6): 3D viewer renderer request surface. Both requests
+  // bridge straight to Worker commands (slices A/B); errors come back as
+  // typed protocol error codes.
+  async resolveModelCompanions({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ModelCompanionAsset[]>> {
+    const result = await request({ type: 'model.resolve-companions.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'model.companions') throw new Error('Unexpected companions response.');
+    return { ok: true, value: result.companions };
+  },
+
+  async convertModelFbx({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<FbxConversionResult>> {
+    const result = await request({ type: 'model.convert-fbx.request', libraryId, assetId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'model.convert-fbx.done') throw new Error('Unexpected convert-fbx response.');
+    if (result.status === 'ready' && result.glbArtifactId) {
+      return {
+        ok: true,
+        value: {
+          status: 'ready',
+          glbArtifactId: result.glbArtifactId,
+          glbRelativePath: result.glbRelativePath ?? '',
+          stats: result.stats ?? EMPTY_FBX_CONVERSION_STATS,
+          missingTextures: result.missingTextures ?? [],
+          warnings: result.warnings ?? [],
+        },
+      };
+    }
+    // A `ready` status without its artifact is a worker-contract violation;
+    // route it to the same fallback path as an explicit conversion failure.
+    return {
+      ok: true,
+      value: {
+        status: 'failed',
+        errorCode: result.errorCode ?? 'FBX_CONVERSION_FAILED',
+        ...(result.reason ? { reason: result.reason } : {}),
+      },
+    };
   },
 
   async requestPreview({ libraryId, assetId, mode, exrPlane, colorSpace }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>> {

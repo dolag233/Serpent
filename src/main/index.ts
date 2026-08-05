@@ -93,6 +93,7 @@ import {
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
+  OFFSCREEN_THUMBNAIL_FRAME_CHANNEL,
 } from "../shared/protocol/channels";
 import {
   createAutomationCommandGateway,
@@ -100,6 +101,10 @@ import {
 } from '../automation/command-gateway';
 import { sanitizeShellNotifyTitle } from '../shared/shell-notify';
 import { PluginHostCommandError } from '../shared/plugin-host-command-error';
+import {
+  APP_ASSET_HOST,
+  createAppAssetResponse,
+} from './app-assets';
 import { AutomationLibraryWorkerAdapter } from './automation-worker-adapter';
 import {
   createDesktopAutomationFilePlanApprovalHandler,
@@ -255,6 +260,12 @@ import {
 } from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
 import {
+  createOffscreenThumbnailRenderer,
+  packagedRendererOutDir,
+  resolveOffscreenPageUrl,
+  type OffscreenThumbnailRenderer,
+} from "./offscreen-thumbnail-renderer";
+import {
   createExtensionServer,
   type ExtensionServer,
   type SaveIntent,
@@ -338,6 +349,8 @@ let mainWindow: BrowserWindow | undefined;
 /** Effective UI locale for native dialogs; synced from Renderer (Serpent-bwb). */
 let appLocale: AppLocale = "en";
 let workerClient: LibraryWorkerClient | undefined;
+/** Slice E: shared offscreen window that renders model thumbnails (Serpent-hnmg). */
+let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
@@ -2434,6 +2447,22 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "model.resolve-companions.request":
+      // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker
+      // command already exists (slice A); this is the renderer request bridge.
+      return {
+        type: "model.resolve-companions",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
+    case "model.convert-fbx.request":
+      // Slice C: FBX→GLB conversion (worker command from slice B). The
+      // renderer routes `failed` results to the FBXLoader fallback.
+      return {
+        type: "model.convert-fbx",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
     case "asset.preview.request":
       // Handled directly in handleLibraryRequest because it requires constructing
       // a serpent:// URL after the Worker lookup.
@@ -4154,6 +4183,37 @@ async function startApplication(): Promise<void> {
   );
   await workerClient.start();
   const activeWorkerClient = workerClient;
+  // Slice E (Serpent-hnmg): Main owns the shared offscreen window that renders
+  // model thumbnails. The worker enqueues model jobs and asks Main to render;
+  // Main replies with PNG bytes (or a typed failure) that the worker persists
+  // as the standard `thumbnail` artifact.
+  offscreenThumbnailRenderer = createOffscreenThumbnailRenderer({
+    createWindow: (options) => new BrowserWindow(options),
+    onFrameMessage: (listener) => {
+      ipcMain.on(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, listener);
+      return () => ipcMain.removeListener(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, listener);
+    },
+    logger: {
+      error: (scope, error, context) => logger?.error(scope, error, context),
+      info: (scope, message, context) => logger?.info(scope, message, context),
+    },
+    pageUrl: resolveOffscreenPageUrl({
+      devServerUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL ?? null,
+      rendererOutDir: packagedRendererOutDir(),
+    }),
+    preloadPath: path.join(__dirname, "offscreen.js"),
+  });
+  workerClient.onModelThumbnailRenderRequest((request) => {
+    const renderer = offscreenThumbnailRenderer;
+    if (!renderer) {
+      return Promise.resolve({
+        status: "failed" as const,
+        errorCode: "MODEL_WINDOW_FAILED",
+        reason: "offscreen thumbnail renderer unavailable",
+      });
+    }
+    return renderer.renderModelThumbnail(request);
+  });
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(
       path.join(app.getPath('userData'), 'automation-executions.json'),
@@ -4898,6 +4958,25 @@ async function startApplication(): Promise<void> {
   protocol.handle("serpent", async (request) => {
     try {
       const url = new URL(request.url);
+      if (url.hostname === APP_ASSET_HOST) {
+        // Bundled app assets (e.g. .hdr environment maps) that the packaged
+        // renderer cannot fetch via file:// (three r185 loaders use fetch).
+        // Whitelist + receipt verification live in src/main/app-assets.ts.
+        const response = createAppAssetResponse({
+          route: url.pathname,
+          appPath: app.getAppPath(),
+          isPackaged: app.isPackaged,
+        });
+        if (!response) {
+          logger?.info(
+            "serpent-protocol.app-asset-missing",
+            "Rejected unknown or unverified app-asset route.",
+            { route: url.pathname },
+          );
+          return new Response("App asset not found", { status: 404 });
+        }
+        return response;
+      }
       if (
         url.hostname !== "preview" &&
         url.hostname !== "proxy" &&
@@ -5625,6 +5704,10 @@ if (!hasSingleInstanceLock) {
     aiQueueScheduler.clearAll();
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
+
+    // Slice E: fail in-flight model thumbnail renders and destroy the window.
+    offscreenThumbnailRenderer?.dispose();
+    offscreenThumbnailRenderer = undefined;
 
     pluginActivationCoordinator?.dispose('supervisor-shutdown');
 

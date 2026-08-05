@@ -30,6 +30,15 @@ export const VIDEO_EXTENSIONS = [
   '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
 ] as const;
 
+/**
+ * T1 3D formats (slice 0030, decision #3): FBX / OBJ(MTL) / glTF / GLB / STL.
+ * Registration means Serpent owns a preview path for these; actual rendering
+ * (viewer + offscreen thumbnails) lands in later slices (C / E).
+ */
+export const MODEL_EXTENSIONS = [
+  '.fbx', '.obj', '.gltf', '.glb', '.stl',
+] as const;
+
 export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
@@ -39,6 +48,7 @@ const oiioExtensions = new Set<string>([
 ]);
 const imageExtensions = new Set<string>(IMAGE_EXTENSIONS);
 const videoExtensions = new Set<string>(VIDEO_EXTENSIONS);
+const modelExtensions = new Set<string>(MODEL_EXTENSIONS);
 
 function normalizedExtension(extensionOrFilename: string): string {
   const lower = extensionOrFilename.toLowerCase();
@@ -52,6 +62,10 @@ export function isSupportedImageExtension(extensionOrFilename: string): boolean 
 
 export function isSupportedVideoExtension(extensionOrFilename: string): boolean {
   return videoExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+export function isSupportedModelExtension(extensionOrFilename: string): boolean {
+  return modelExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
 export function imageDecoderForExtension(
@@ -116,6 +130,22 @@ export function videoMimeForExtension(extensionOrFilename: string): string | nul
     case '.webm': return 'video/webm';
     case '.mkv': return 'video/x-matroska';
     case '.m4v': return 'video/x-m4v';
+    default: return null;
+  }
+}
+
+/**
+ * Product MIME labels for the T1 3D set. These are informational (the viewer
+ * loads models through three.js loaders, not <object>/Chromium media); they
+ * surface in resolutions/Inspector so the renderer can branch on kind.
+ */
+export function modelMimeForExtension(extensionOrFilename: string): string | null {
+  switch (normalizedExtension(extensionOrFilename)) {
+    case '.glb': return 'model/gltf-binary';
+    case '.gltf': return 'model/gltf+json';
+    case '.obj': return 'model/obj';
+    case '.fbx': return 'model/fbx';
+    case '.stl': return 'model/stl';
     default: return null;
   }
 }

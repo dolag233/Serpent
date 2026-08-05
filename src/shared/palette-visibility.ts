@@ -3,7 +3,7 @@
  * Extraction may still run for cover-like artifacts; product chrome is image/video only.
  */
 
-export type AssetMediaType = "image" | "video" | "audio" | "text" | "other";
+export type AssetMediaType = "image" | "video" | "audio" | "text" | "model" | "other";
 
 /** True when a single asset media kind may show auto-palette chrome. */
 export function mediaTypeSupportsAutoPalette(

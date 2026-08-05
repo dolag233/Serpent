@@ -848,8 +848,8 @@ describe('video (ffprobe + ffmpeg)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    const first = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
-    const second = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    const first = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    const second = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
 
     expect(second.artifactId).not.toBe(first.artifactId);
     const db = assertDb(created.libraryPath);
@@ -1115,10 +1115,10 @@ describe('EXR/TGA (oiiotool)', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     expect(result.artifactId).toBeTruthy();
     expect(result.artifactId).not.toBe('');
 
@@ -1250,10 +1250,10 @@ describe('EXR/TGA (oiiotool)', () => {
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(assets).toHaveLength(extensions.length);
     for (const asset of assets) {
-      const result = await service.generateThumbnail({
+      const result = (await service.generateThumbnail({
         libraryId: created.libraryId,
         assetId: asset.assetId,
-      });
+      }))!;
       expect(result.artifactId).toBeTruthy();
       expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
         .toMatchObject({ status: 'ready', mimeType: 'image/png' });
@@ -1328,10 +1328,10 @@ describe('EXR/TGA (oiiotool)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: asset.assetId,
-    });
+    }))!;
 
     expect(invocations.some(({ command }) => command === '/fake/oiiotool')).toBe(true);
     expect(diagnostics.some(({ scope }) => scope === 'thumbnail.tiff-sharp-fallback')).toBe(true);
@@ -1465,10 +1465,10 @@ describe('generateThumbnail dispatch by media type', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     expect(result.artifactId).toBeTruthy();
 
     // Verify sharp-generated WebP thumbnail
@@ -1510,10 +1510,10 @@ describe('generateThumbnail dispatch by media type', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     expect(result.artifactId).toBeTruthy();
 
     // Verify artifacts were created (extracted_metadata + video_poster at minimum)
@@ -1580,10 +1580,10 @@ describe('generateThumbnail dispatch by media type', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     expect(result.artifactId).toBeTruthy();
     expect(result.artifactId).not.toBe('');
 
@@ -1811,10 +1811,10 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     expect(result.artifactId).toBeTruthy();
 
     const db = assertDb(created.libraryPath);

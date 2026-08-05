@@ -75,6 +75,16 @@ export const PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL =
 export const PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL =
   'serpent:plugin:input-capture-system-modal' as const;
 
+/**
+ * Offscreen model-thumbnail renderer channels (slice E, Serpent-hnmg).
+ * Main → offscreen window: a render job (payload = model-thumbnail.render-request).
+ * Offscreen window → Main: the rendered frame (payload = model-thumbnail.render-response).
+ */
+export const OFFSCREEN_THUMBNAIL_RENDER_CHANNEL =
+  'serpent:offscreen-thumbnail:render' as const;
+export const OFFSCREEN_THUMBNAIL_FRAME_CHANNEL =
+  'serpent:offscreen-thumbnail:frame' as const;
+
 export const WORKER_READY_MESSAGE_TYPE = 'worker.ready' as const;
 export const WORKER_SHUTDOWN_MESSAGE_TYPE = 'worker.shutdown' as const;
 export const WORKER_SHUTDOWN_ACK_MESSAGE_TYPE = 'worker.shutdown.ack' as const;

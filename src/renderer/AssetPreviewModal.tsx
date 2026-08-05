@@ -55,6 +55,7 @@ import {
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
+import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -770,6 +771,19 @@ export const AssetPreviewModal = forwardRef<
               src={resolution.url}
               volume={viewerVolume}
               waveformUrl={resolution.posterUrl}
+            />
+          ) : ready && resolution?.mediaType === "model" && resolution.url ? (
+            // Slice C (Serpent-qvc6): the 3D viewport surface. Keyed so a
+            // navigation to another asset remounts the WebGL session cleanly
+            // (the modal itself is already keyed by assetId in App.tsx).
+            <ModelViewerSurface
+              api={api}
+              asset={asset}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              onFullscreen={() => void toggleFullscreen()}
+              sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls

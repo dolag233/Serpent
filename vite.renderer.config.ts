@@ -143,6 +143,24 @@ export default defineConfig({
     harmonyosWindowsOnlyPlugin(),
     harmonyosFontFacePatchPlugin(),
   ],
+  // Bundled HDRI environment maps (src/renderer/assets/hdri/*.hdr, ~1.5 MB
+  // each) are consumed by src/renderer/3d-viewer via import.meta.glob with
+  // `as: 'url'`. Without this entry Vite 8/rolldown treats .hdr as a module
+  // to parse and the build fails; with it, files flow through the asset
+  // pipeline and are emitted (or inlined) like any other static asset.
+  assetsInclude: ['**/*.hdr'],
+  build: {
+    rollupOptions: {
+      // Multi-page renderer build (slice E, Serpent-hnmg): the main window
+      // app plus the minimal offscreen thumbnail page. Both html files land
+      // in `.vite/renderer/main_window/`; Main loads the offscreen page by
+      // name in dev (Vite multi-page serve) and packaged (loadFile).
+      input: {
+        main_window: path.resolve(rendererDir, 'index.html'),
+        offscreen_thumbnail: path.resolve(rendererDir, 'offscreen-thumbnail.html'),
+      },
+    },
+  },
   resolve: {
     preserveSymlinks: true,
   },

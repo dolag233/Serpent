@@ -72,7 +72,7 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(32);
+    expect(db.pragma('user_version', { simple: true })).toBe(33);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');
@@ -233,7 +233,7 @@ describe('generateThumbnail (sharp)', () => {
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(assets).toHaveLength(1);
 
-    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId });
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
     expect(result.artifactId).toBeTruthy();
 
     // Verify artifact file exists
@@ -271,10 +271,10 @@ describe('generateThumbnail (sharp)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: asset.assetId,
-    });
+    }))!;
     const artifactPath = path.join(
       created.libraryPath,
       '.serpent',
@@ -302,7 +302,7 @@ describe('generateThumbnail (sharp)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId });
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
     expect(result.artifactId).toBeTruthy();
     expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.webp`))).toBe(true);
 
@@ -967,7 +967,7 @@ describe('getArtifactAbsolutePath', () => {
     importNoConflict(service, created.libraryId, png);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId });
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
 
     const absPath = service.getArtifactAbsolutePath(created.libraryId, result.artifactId);
     expect(absPath).toContain('.serpent');
@@ -991,7 +991,7 @@ describe('getArtifactAbsolutePath', () => {
     createTestImage(sourcePath);
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
-    const result = await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
     const artifactPath = service.getArtifactAbsolutePath(created.libraryId, result.artifactId, 'preview');
     const outsidePath = path.join(root, 'outside-secret.txt');
     writeFileSync(outsidePath, 'must-not-be-served');
@@ -1101,10 +1101,10 @@ describe('generateThumbnail (animated GIF still page)', () => {
       recursive: true,
     })[0]!;
 
-    const result = await service.generateThumbnail({
+    const result = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: asset.assetId,
-    });
+    }))!;
     const artifactPath = path.join(
       created.libraryPath,
       '.serpent',
