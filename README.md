@@ -119,6 +119,12 @@ Electron lifecycle tests use a production bundle and platform-local staging path
 
 User-facing manuals for plugin, automation script, Script API, and MCP authors are collected in [`docs/manual/`](docs/manual/README.md). These pages describe the current entry points and explicitly mark platform or packaged flows that are not yet verified.
 
+## Third-party assets
+
+- 3D 预览内置 HDRI 环境贴图（ferndale_studio_03 / dancing_hall / pergola_walkway /
+  scythian_tombs_2，1K RGBE）与预览缩略图来自 [Poly Haven](https://polyhaven.com)
+  （CC0 公共领域，可商用无需署名，随产品分发保留此致谢）。
+
 ## License
 
 MIT

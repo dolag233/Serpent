@@ -28,21 +28,25 @@
   cursor: grabbing;
 }
 
-/* Toolbar: floating chip row in the top-right corner. */
+/* Toolbar: floating chip row at the bottom center, matching the image
+   viewer's bottom chrome (.preview-zoom-controls). */
 .model-viewer-toolbar {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  bottom: 12px;
+  left: 50%;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
   border: 1px solid var(--ui-border-divider);
   border-radius: 10px;
   background: color-mix(in srgb, var(--ui-surface-raised) 92%, transparent);
   box-shadow: 0 2px 12px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(10px);
   color: var(--ui-content-primary);
   z-index: 2;
+  transform: translateX(-50%);
 }
 
 .model-viewer-toolbar-item {
@@ -223,4 +227,69 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* HDRI picker: trigger shows the active preset thumbnail; the popover lists
+   every preset with its preview image (1z07). */
+.model-viewer-hdri-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-raised);
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-body);
+  cursor: pointer;
+}
+.model-viewer-hdri-trigger:hover {
+  background: var(--ui-action-hover);
+}
+.model-viewer-hdri-trigger-thumb,
+.model-viewer-hdri-option-thumb {
+  width: 40px;
+  height: 24px;
+  border-radius: 3px;
+  object-fit: cover;
+  background: var(--ui-surface-canvas);
+}
+.model-viewer-hdri-picker {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--ui-border-divider);
+  border-radius: 8px;
+  background: var(--ui-surface-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+.model-viewer-hdri-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-body);
+  text-align: left;
+  cursor: pointer;
+}
+.model-viewer-hdri-option:hover {
+  background: var(--ui-action-hover);
+}
+.model-viewer-hdri-option.is-active {
+  background: var(--ui-action-accent-soft);
+}
+.model-viewer-hdri-custom-note {
+  padding: 4px 6px;
+  color: var(--ui-content-tertiary);
+  font-size: var(--ui-font-size-caption);
 }

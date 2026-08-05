@@ -31,10 +31,12 @@ function bundledAssetPath(preset: HdriPreset): string {
 }
 
 describe('hdri-presets (Serpent-v363 / 3D-09)', () => {
-  it('ships exactly the studio + natural 1K CC0 presets', () => {
+  it('ships exactly the four user-selected studio + natural 1K CC0 presets', () => {
     expect(HDRI_PRESETS.map((preset) => preset.id)).toEqual([
-      'studio-small-09',
-      'kloppenheim-02',
+      'ferndale-studio-03',
+      'dancing-hall',
+      'pergola-walkway',
+      'scythian-tombs-2',
     ]);
     expect(new Set(HDRI_PRESETS.map((preset) => preset.category))).toEqual(
       new Set(['studio', 'natural']),
@@ -56,12 +58,12 @@ describe('hdri-presets (Serpent-v363 / 3D-09)', () => {
   });
 
   it('defaults to the studio preset and resolves presets by id', () => {
-    expect(DEFAULT_HDRI_PRESET_ID).toBe('studio-small-09');
-    expect(getHdriPreset('studio-small-09')?.category).toBe('studio');
-    expect(getHdriPreset('kloppenheim-02')?.category).toBe('natural');
+    expect(DEFAULT_HDRI_PRESET_ID).toBe('ferndale-studio-03');
+    expect(getHdriPreset('ferndale-studio-03')?.category).toBe('studio');
+    expect(getHdriPreset('pergola-walkway')?.category).toBe('natural');
     expect(getHdriPreset('custom')).toBeNull();
     expect(isBundledHdriPresetId('custom')).toBe(false);
-    expect(isBundledHdriPresetId('kloppenheim-02')).toBe(true);
+    expect(isBundledHdriPresetId('scythian-tombs-2')).toBe(true);
   });
 
   it('resolves bundle URLs to the matching asset file', () => {
@@ -89,7 +91,9 @@ describe('hdri-presets (Serpent-v363 / 3D-09)', () => {
   });
 
   it('parses untrusted persisted preset ids with default fallback', () => {
-    expect(parseHdriPresetId('studio-small-09')).toBe('studio-small-09');
+    expect(parseHdriPresetId('dancing-hall')).toBe('dancing-hall');
+    // Legacy ids from before the preset swap fall back to the default.
+    expect(parseHdriPresetId('studio-small-09')).toBe(DEFAULT_HDRI_PRESET_ID);
     expect(parseHdriPresetId('custom')).toBe('custom');
     expect(parseHdriPresetId('not-a-preset')).toBe(DEFAULT_HDRI_PRESET_ID);
     expect(parseHdriPresetId(42)).toBe(DEFAULT_HDRI_PRESET_ID);

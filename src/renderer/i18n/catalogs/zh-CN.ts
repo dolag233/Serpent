@@ -1271,7 +1271,15 @@ export const zhCN = {
     retry: "重试",
     hdri: "环境光",
     hdriCustom: "自定义…（后续版本支持）",
-    exposure: "曝光",
+    lightIntensity: "光照强度",
+    displayMode: "显示模式",
+    displayModes: {
+      pbr: "PBR",
+      "pbr-wireframe": "网格 PBR",
+      shaded: "灰模",
+      "shaded-wireframe": "网格灰模",
+      wireframe: "纯网格"
+    },
     resetView: "重置视角",
     toggleStats: "显示或隐藏统计",
     statsAria: "模型统计",

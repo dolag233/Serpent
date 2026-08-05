@@ -14,7 +14,7 @@ import {
   type SceneTreeObjectLike,
 } from '../../src/renderer/3d-viewer/scene-composer';
 import { HDRI_TONE_MAPPING } from '../../src/renderer/3d-viewer/environment';
-import { DEFAULT_EXPOSURE } from '../../src/renderer/3d-viewer/exposure';
+import { DEFAULT_LIGHT_INTENSITY } from '../../src/renderer/3d-viewer/light-intensity';
 
 function fakeRenderer() {
   const render = vi.fn();
@@ -28,11 +28,11 @@ function fakeRenderer() {
 }
 
 describe('scene-composer (Serpent-qvc6 / shared render core)', () => {
-  it('applies neutral tone mapping and the default exposure on creation', () => {
+  it('applies neutral tone mapping with tone-mapping exposure pinned neutral', () => {
     const renderer = fakeRenderer();
     createSceneComposer({ renderer });
     expect(renderer.toneMapping).toBe(HDRI_TONE_MAPPING);
-    expect(renderer.toneMappingExposure).toBe(DEFAULT_EXPOSURE);
+    expect(renderer.toneMappingExposure).toBe(DEFAULT_LIGHT_INTENSITY);
   });
 
   it('owns a camera with the default FOV and scene wiring', () => {
@@ -43,7 +43,7 @@ describe('scene-composer (Serpent-qvc6 / shared render core)', () => {
     expect(composer.scene.environment).toBeNull();
   });
 
-  it('applies background/environment/exposure through the composer', () => {
+  it('applies background/environment/light intensity through the composer', () => {
     const renderer = fakeRenderer();
     const composer = createSceneComposer({ renderer });
     const background = { isColor: true } as unknown as Parameters<
@@ -54,13 +54,35 @@ describe('scene-composer (Serpent-qvc6 / shared render core)', () => {
     >[0];
     composer.setBackground(background);
     composer.setEnvironment(environment);
-    composer.setExposure(3.5);
     expect(composer.scene.background).toBe(background);
     expect(composer.scene.environment).toBe(environment);
-    expect(renderer.toneMappingExposure).toBe(3.5);
-    // Out-of-range exposure is clamped.
-    composer.setExposure(99);
-    expect(renderer.toneMappingExposure).toBe(4);
+    // Light intensity scales the environment (scene.environmentIntensity),
+    // not the tone-mapping exposure.
+    composer.setLightIntensity(3.5);
+    expect(composer.scene.environmentIntensity).toBe(3.5);
+    expect(renderer.toneMappingExposure).toBe(DEFAULT_LIGHT_INTENSITY);
+    // Out-of-range intensity is clamped.
+    composer.setLightIntensity(99);
+    expect(composer.scene.environmentIntensity).toBe(4);
+    // Setting a new environment re-applies the current intensity.
+    composer.setEnvironment({ isTexture: true } as unknown as Parameters<
+      typeof composer.setEnvironment
+    >[0]);
+    expect(composer.scene.environmentIntensity).toBe(4);
+  });
+
+  it('rotates the environment light around Y without touching the model', () => {
+    const renderer = fakeRenderer();
+    const composer = createSceneComposer({ renderer });
+    composer.setEnvironment({ isTexture: true } as unknown as Parameters<
+      typeof composer.setEnvironment
+    >[0]);
+    composer.setEnvironmentRotation(1.7);
+    expect(composer.scene.environmentRotation.y).toBe(1.7);
+    // Rotation works even with no environment mounted (no throw).
+    composer.setEnvironment(null);
+    expect(() => composer.setEnvironmentRotation(0.5)).not.toThrow();
+    expect(composer.scene.environmentRotation.y).toBe(0.5);
   });
 
   it('renders exactly one frame per renderOnce call', () => {

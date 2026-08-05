@@ -25,6 +25,7 @@ import {
 import {
   Box3,
   Color,
+  MOUSE,
   PCFSoftShadowMap,
   WebGLRenderer,
 } from 'three';
@@ -47,7 +48,8 @@ import {
   type ModelViewerErrorCode,
 } from './error-messages';
 import { loadHdrEnvironment, type EnvironmentHandle } from './environment';
-import { clampExposure } from './exposure';
+import { clampLightIntensity } from './light-intensity';
+import { DEFAULT_DISPLAY_MODE, type ModelDisplayMode } from './model-display-mode';
 import { setupGroundShadow } from './ground-shadow';
 import { getHdriPreset, type HdriPresetId } from './hdri-presets';
 import {
@@ -107,18 +109,23 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const composerRef = useRef<SceneComposer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const environmentRef = useRef<EnvironmentHandle | null>(null);
+  const environmentDragRef = useRef<{ pointerId: number; startX: number } | null>(null);
 
   const presetId = preferences.presetId;
-  const exposure = preferences.exposure;
+  const lightIntensity = preferences.lightIntensity;
+  const [environmentYaw, setEnvironmentYaw] = useState(0);
+  const [displayMode, setDisplayMode] = useState<ModelDisplayMode>(
+    preferences.displayMode ?? DEFAULT_DISPLAY_MODE,
+  );
 
   const persistPreferences = useCallback((next: typeof preferences) => {
     setPreferences(next);
     saveViewer3dPreferences(next, window.localStorage);
   }, []);
 
-  const handleExposureChange = useCallback(
+  const handleLightIntensityChange = useCallback(
     (value: number) => {
-      persistPreferences({ ...preferences, exposure: clampExposure(value) });
+      persistPreferences({ ...preferences, lightIntensity: clampLightIntensity(value) });
     },
     [persistPreferences, preferences],
   );
@@ -126,6 +133,14 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const handlePresetChange = useCallback(
     (next: HdriPresetId) => {
       persistPreferences({ ...preferences, presetId: next });
+    },
+    [persistPreferences, preferences],
+  );
+
+  const handleDisplayModeChange = useCallback(
+    (mode: ModelDisplayMode) => {
+      setDisplayMode(mode);
+      persistPreferences({ ...preferences, displayMode: mode });
     },
     [persistPreferences, preferences],
   );
@@ -199,7 +214,40 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     controls.screenSpacePanning = true;
     // 3D-01: wheel zoom keeps the cursor's world point under the cursor.
     controls.zoomToCursor = true;
+    // Right-drag rotates the HDRI light source (Serpent-v4jt), so the right
+    // mouse button is not a camera control.
+    controls.mouseButtons = {
+      LEFT: MOUSE.ROTATE,
+      MIDDLE: MOUSE.DOLLY,
+      RIGHT: null,
+    };
     controlsRef.current = controls;
+
+    const onContextMenu = (event: Event) => event.preventDefault();
+    renderer.domElement.addEventListener('contextmenu', onContextMenu);
+    const onEnvironmentPointerDown = (event: PointerEvent) => {
+      if (event.button !== 2) return;
+      environmentDragRef.current = { pointerId: event.pointerId, startX: event.clientX };
+      renderer.domElement.setPointerCapture(event.pointerId);
+    };
+    const onEnvironmentPointerMove = (event: PointerEvent) => {
+      const drag = environmentDragRef.current;
+      if (drag === null || event.pointerId !== drag.pointerId) return;
+      const deltaX = event.clientX - drag.startX;
+      drag.startX = event.clientX;
+      // ~0.005 rad per pixel; a full-width drag is roughly half a turn.
+      setEnvironmentYaw((current) => current - deltaX * 0.005);
+    };
+    const onEnvironmentPointerUp = (event: PointerEvent) => {
+      const drag = environmentDragRef.current;
+      if (drag === null || event.pointerId !== drag.pointerId) return;
+      environmentDragRef.current = null;
+      renderer.domElement.releasePointerCapture(event.pointerId);
+    };
+    renderer.domElement.addEventListener('pointerdown', onEnvironmentPointerDown);
+    renderer.domElement.addEventListener('pointermove', onEnvironmentPointerMove);
+    renderer.domElement.addEventListener('pointerup', onEnvironmentPointerUp);
+    renderer.domElement.addEventListener('pointercancel', onEnvironmentPointerUp);
 
     const onDoubleClick = () => controls.reset();
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
@@ -340,6 +388,11 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
+      renderer.domElement.removeEventListener('pointerdown', onEnvironmentPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onEnvironmentPointerMove);
+      renderer.domElement.removeEventListener('pointerup', onEnvironmentPointerUp);
+      renderer.domElement.removeEventListener('pointercancel', onEnvironmentPointerUp);
       controls.dispose();
       controlsRef.current = null;
       environmentRef.current?.dispose();
@@ -362,8 +415,20 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   // Exposure is applied through the composer (and persisted). `loadEpoch`
   // re-applies it after a retry creates a fresh composer.
   useEffect(() => {
-    composerRef.current?.setExposure(exposure);
-  }, [exposure, loadEpoch]);
+    composerRef.current?.setLightIntensity(lightIntensity);
+  }, [lightIntensity, loadEpoch]);
+
+  // Right-drag environment rotation (Serpent-v4jt): rotates the light source
+  // around the model; re-applied after a retry rebuilds the composer.
+  useEffect(() => {
+    composerRef.current?.setEnvironmentRotation(environmentYaw);
+  }, [environmentYaw, loadEpoch]);
+
+  // Display mode (Serpent-fkhe): applied to the live scene; re-applied after
+  // a retry rebuilds the composer.
+  useEffect(() => {
+    composerRef.current?.setDisplayMode(displayMode);
+  }, [displayMode, loadEpoch]);
 
   // HDRI environment swap (3D-09). The old handle is disposed only after the
   // new one is ready so the view never goes dark between presets. `loadEpoch`
@@ -447,9 +512,11 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       {effectivePhase === 'ready' ? (
         <>
           <ModelViewerToolbar
-            exposure={exposure}
+            displayMode={displayMode}
+            lightIntensity={lightIntensity}
             isFullscreen={props.isFullscreen}
-            onExposureChange={handleExposureChange}
+            onDisplayModeChange={handleDisplayModeChange}
+            onLightIntensityChange={handleLightIntensityChange}
             onFullscreen={props.onFullscreen}
             onPresetChange={handlePresetChange}
             onResetView={resetView}

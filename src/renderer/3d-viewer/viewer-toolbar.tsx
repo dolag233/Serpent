@@ -1,25 +1,33 @@
 /**
  * 3D viewer toolbar (spec 3.5 minimal toolbar: 重置视角 / HDRI 环境切换 /
- * 统计开关 / 全屏；3D-09 HDRI 切换, 3D-10 曝光可调).
+ * 统计开关 / 全屏；3D-09 HDRI 切换带缩略图, 光照强度可调).
  *
- * Rendered as a floating chrome chip row (same `preview-chrome-fade`
- * behavior as the other viewer chrome). All state lives in the surface; this
- * component is pure presentation.
+ * Rendered as a floating chrome chip row at the bottom of the viewport (same
+ * `preview-chrome-fade` behavior as the other viewer chrome). All state lives
+ * in the surface; this component is pure presentation.
  */
 
+import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '../i18n';
 import { Icon } from '../Icons';
-import { EXPOSURE_MAX, EXPOSURE_MIN } from './exposure';
-import { HDRI_PRESETS, type HdriPresetId } from './hdri-presets';
+import { LIGHT_INTENSITY_MAX, LIGHT_INTENSITY_MIN } from './light-intensity';
+import {
+  HDRI_PRESETS,
+  resolveHdriPreviewUrl,
+  type HdriPresetId,
+} from './hdri-presets';
+import { MODEL_DISPLAY_MODES, type ModelDisplayMode } from './model-display-mode';
 import { formatByteSize, formatCount, type ModelStats } from './model-stats';
 
 export interface ModelViewerToolbarProps {
   readonly presetId: HdriPresetId;
-  readonly exposure: number;
+  readonly lightIntensity: number;
+  readonly displayMode: ModelDisplayMode;
   readonly statsVisible: boolean;
   readonly isFullscreen: boolean;
   onPresetChange(presetId: HdriPresetId): void;
-  onExposureChange(exposure: number): void;
+  onLightIntensityChange(intensity: number): void;
+  onDisplayModeChange(mode: ModelDisplayMode): void;
   onToggleStats(): void;
   onResetView(): void;
   onFullscreen(): void;
@@ -27,46 +35,117 @@ export interface ModelViewerToolbarProps {
 
 export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
   const { locale, t } = useLocale();
+  const [hdriOpen, setHdriOpen] = useState(false);
+  const hdriPickerRef = useRef<HTMLDivElement>(null);
+
+  // Close the HDRI picker on outside pointer-down / Escape.
+  useEffect(() => {
+    if (!hdriOpen) return;
+    function onPointerDown(event: PointerEvent) {
+      if (hdriPickerRef.current?.contains(event.target as Node)) return;
+      setHdriOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setHdriOpen(false);
+    }
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [hdriOpen]);
+
+  const activePreset =
+    HDRI_PRESETS.find((preset) => preset.id === props.presetId) ?? null;
+  const activePreview =
+    activePreset === null ? null : resolveHdriPreviewUrl(activePreset);
+
   return (
     <div className="model-viewer-toolbar preview-chrome-fade">
-      <label className="model-viewer-toolbar-item is-hdri">
+      <div className="model-viewer-toolbar-item is-hdri" ref={hdriPickerRef}>
         <span className="model-viewer-toolbar-label">{t('viewer3d.hdri')}</span>
-        <select
+        <button
+          aria-expanded={hdriOpen}
+          aria-haspopup="listbox"
           aria-label={t('viewer3d.hdri')}
-          value={props.presetId}
+          className="model-viewer-hdri-trigger"
+          onClick={() => setHdriOpen((open) => !open)}
+          tabIndex={0}
+          type="button"
+        >
+          {activePreview !== null ? (
+            <img alt="" className="model-viewer-hdri-trigger-thumb" src={activePreview} />
+          ) : null}
+          <span>{activePreset?.displayName[locale] ?? t('viewer3d.hdri')}</span>
+          <Icon name="chevron" size={12} />
+        </button>
+        {hdriOpen ? (
+          <div className="model-viewer-hdri-picker" role="listbox">
+            {HDRI_PRESETS.map((preset) => {
+              const preview = resolveHdriPreviewUrl(preset);
+              const selected = preset.id === props.presetId;
+              return (
+                <button
+                  aria-selected={selected}
+                  className={`model-viewer-hdri-option${selected ? ' is-active' : ''}`}
+                  key={preset.id}
+                  onClick={() => {
+                    props.onPresetChange(preset.id);
+                    setHdriOpen(false);
+                  }}
+                  role="option"
+                  tabIndex={0}
+                  type="button"
+                >
+                  {preview !== null ? (
+                    <img alt="" className="model-viewer-hdri-option-thumb" src={preview} />
+                  ) : null}
+                  <span className="model-viewer-hdri-option-name">
+                    {preset.displayName[locale]}
+                  </span>
+                </button>
+              );
+            })}
+            <div className="model-viewer-hdri-custom-note">{t('viewer3d.hdriCustom')}</div>
+          </div>
+        ) : null}
+      </div>
+      <label className="model-viewer-toolbar-item is-display-mode">
+        <span className="model-viewer-toolbar-label">{t('viewer3d.displayMode')}</span>
+        <select
+          aria-label={t('viewer3d.displayMode')}
+          value={props.displayMode}
           onChange={(event) => {
-            const value = event.currentTarget.value as HdriPresetId;
-            if (value !== props.presetId) props.onPresetChange(value);
+            const value = event.currentTarget.value as ModelDisplayMode;
+            if (value !== props.displayMode) props.onDisplayModeChange(value);
           }}
           tabIndex={0}
         >
-          {HDRI_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.id}>
-              {preset.displayName[locale]}
+          {MODEL_DISPLAY_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {t(`viewer3d.displayModes.${mode}`)}
             </option>
           ))}
-          <option value="custom" disabled>
-            {t('viewer3d.hdriCustom')}
-          </option>
         </select>
       </label>
-      <label className="model-viewer-toolbar-item is-exposure">
-        <span className="model-viewer-toolbar-label">{t('viewer3d.exposure')}</span>
+      <label className="model-viewer-toolbar-item is-light-intensity">
+        <span className="model-viewer-toolbar-label">{t('viewer3d.lightIntensity')}</span>
         <input
-          aria-label={t('viewer3d.exposure')}
-          max={EXPOSURE_MAX}
-          min={EXPOSURE_MIN}
+          aria-label={t('viewer3d.lightIntensity')}
+          max={LIGHT_INTENSITY_MAX}
+          min={LIGHT_INTENSITY_MIN}
           onChange={(event) => {
             const value = Number(event.currentTarget.value);
-            if (Number.isFinite(value)) props.onExposureChange(value);
+            if (Number.isFinite(value)) props.onLightIntensityChange(value);
           }}
           step={0.05}
           tabIndex={0}
           type="range"
-          value={props.exposure}
+          value={props.lightIntensity}
         />
         <span className="model-viewer-toolbar-value">
-          {props.exposure.toFixed(2)}
+          {props.lightIntensity.toFixed(2)}
         </span>
       </label>
       <button

@@ -8,7 +8,7 @@ import {
   saveViewer3dPreferences,
   type Viewer3dPreferencesStorage,
 } from '../../src/renderer/3d-viewer/viewer-preferences';
-import { DEFAULT_EXPOSURE, EXPOSURE_MAX } from '../../src/renderer/3d-viewer/exposure';
+import { DEFAULT_LIGHT_INTENSITY, LIGHT_INTENSITY_MAX } from '../../src/renderer/3d-viewer/light-intensity';
 import { DEFAULT_HDRI_PRESET_ID } from '../../src/renderer/3d-viewer/hdri-presets';
 
 function memoryStorage(initial: Record<string, string> = {}): Viewer3dPreferencesStorage {
@@ -22,10 +22,11 @@ function memoryStorage(initial: Record<string, string> = {}): Viewer3dPreference
 }
 
 describe('viewer3d preferences (Serpent-qvc6 / 3D-09/3D-10 persistence)', () => {
-  it('defaults to the studio preset with exposure 1.0', () => {
+  it('defaults to the studio preset with light intensity 1.0', () => {
     expect(DEFAULT_VIEWER3D_PREFERENCES).toEqual({
       presetId: DEFAULT_HDRI_PRESET_ID,
-      exposure: DEFAULT_EXPOSURE,
+      lightIntensity: DEFAULT_LIGHT_INTENSITY,
+      displayMode: 'pbr',
     });
     expect(loadViewer3dPreferences()).toEqual(DEFAULT_VIEWER3D_PREFERENCES);
   });
@@ -33,13 +34,14 @@ describe('viewer3d preferences (Serpent-qvc6 / 3D-09/3D-10 persistence)', () => 
   it('round-trips saved preferences', () => {
     const storage = memoryStorage();
     saveViewer3dPreferences(
-      { presetId: 'kloppenheim-02', exposure: 1.7 },
+      { presetId: 'dancing-hall', lightIntensity: 1.7, displayMode: 'wireframe' },
       storage,
     );
-    expect(storage.getItem(VIEWER3D_PREFERENCES_KEY)).toContain('kloppenheim-02');
+    expect(storage.getItem(VIEWER3D_PREFERENCES_KEY)).toContain('dancing-hall');
     expect(loadViewer3dPreferences(storage)).toEqual({
-      presetId: 'kloppenheim-02',
-      exposure: 1.7,
+      presetId: 'dancing-hall',
+      lightIntensity: 1.7,
+      displayMode: 'wireframe',
     });
   });
 
@@ -57,25 +59,43 @@ describe('viewer3d preferences (Serpent-qvc6 / 3D-09/3D-10 persistence)', () => 
 
   it('validates untrusted persisted values through the slice-D parsers', () => {
     expect(
-      parseViewer3dPreferences({ presetId: 'unknown-preset', exposure: 99 }),
+      parseViewer3dPreferences({ presetId: 'unknown-preset', lightIntensity: 99 }),
     ).toEqual({
       presetId: DEFAULT_HDRI_PRESET_ID,
-      exposure: EXPOSURE_MAX,
+      lightIntensity: LIGHT_INTENSITY_MAX,
+      displayMode: 'pbr',
     });
     expect(
-      parseViewer3dPreferences({ presetId: 'custom', exposure: Number.NaN }),
+      parseViewer3dPreferences({ presetId: 'custom', lightIntensity: Number.NaN }),
     ).toEqual({
       presetId: 'custom',
-      exposure: DEFAULT_EXPOSURE,
+      lightIntensity: DEFAULT_LIGHT_INTENSITY,
+      displayMode: 'pbr',
     });
   });
 
-  it('clamps exposure on save', () => {
+  it('clamps light intensity on save', () => {
     const storage = memoryStorage();
     saveViewer3dPreferences(
-      { presetId: 'studio-small-09', exposure: 1000 },
+      { presetId: 'ferndale-studio-03', lightIntensity: 1000, displayMode: 'pbr' },
       storage,
     );
-    expect(loadViewer3dPreferences(storage).exposure).toBe(EXPOSURE_MAX);
+    expect(loadViewer3dPreferences(storage).lightIntensity).toBe(LIGHT_INTENSITY_MAX);
+  });
+
+  it('migrates the legacy exposure field as light intensity', () => {
+    // Records written before the rename stored the same numeric range under
+    // `exposure`; the parse must carry them across unchanged.
+    const storage = memoryStorage({
+      [VIEWER3D_PREFERENCES_KEY]: JSON.stringify({
+        presetId: 'dancing-hall',
+        exposure: 2.5,
+      }),
+    });
+    expect(loadViewer3dPreferences(storage)).toEqual({
+      presetId: 'dancing-hall',
+      lightIntensity: 2.5,
+      displayMode: 'pbr',
+    });
   });
 });

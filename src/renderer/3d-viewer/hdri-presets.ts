@@ -37,7 +37,7 @@ export const HDRI_PRESET_IDS: readonly [
 export type HdriPresetId = (typeof HDRI_PRESET_IDS)[number];
 
 /** Preset the viewer opens with (studio softbox matches DAM preview norms). */
-export const DEFAULT_HDRI_PRESET_ID: BundledHdriPresetId = 'studio-small-09';
+export const DEFAULT_HDRI_PRESET_ID: BundledHdriPresetId = 'ferndale-studio-03';
 
 export function isBundledHdriPresetId(id: HdriPresetId): id is BundledHdriPresetId {
   return id !== 'custom';
@@ -51,12 +51,13 @@ export function getHdriPreset(id: HdriPresetId): HdriPreset | null {
 
 /**
  * Bundled asset URLs, keyed by `../assets/hdri/<fileName>` relative to this
- * module. Vite statically discovers the glob and emits each `.hdr` as a
- * build asset; in vitest (node) the values resolve to source file paths,
- * which the unit tests read to verify size/hash against disk.
+ * module. Vite statically discovers the glob and emits each `.hdr` (and
+ * `_preview.png` thumbnail) as a build asset; in vitest (node) the values
+ * resolve to source file paths, which the unit tests read to verify size/hash
+ * against disk.
  */
 const hdriBundleUrls: Readonly<Record<string, string>> = import.meta.glob(
-  '../assets/hdri/*.hdr',
+  '../assets/hdri/*',
   { eager: true, query: '?url', import: 'default' },
 );
 
@@ -70,6 +71,12 @@ export function resolveHdriBundleUrl(preset: HdriPreset): string {
     );
   }
   return url;
+}
+
+/** Resolve the runtime URL of a preset's preview thumbnail, or null when none. */
+export function resolveHdriPreviewUrl(preset: HdriPreset): string | null {
+  if (preset.previewFileName === undefined) return null;
+  return hdriBundleUrls[`../assets/hdri/${preset.previewFileName}`] ?? null;
 }
 
 /** Zod schema for persisting the selected preset id (viewer toolbar, slice C). */

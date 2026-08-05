@@ -25,7 +25,14 @@ import {
 } from 'three';
 import type { Color, Texture, WebGLRenderer } from 'three';
 
-import { DEFAULT_EXPOSURE, clampExposure } from './exposure';
+import {
+  DEFAULT_LIGHT_INTENSITY,
+  clampLightIntensity,
+} from './light-intensity';
+import {
+  applyDisplayMode,
+  type ModelDisplayMode,
+} from './model-display-mode';
 import { HDRI_TONE_MAPPING } from './environment';
 import { CAMERA_FOV_DEGREES } from './camera-policy';
 import { MATERIAL_TEXTURE_SLOTS } from './model-stats';
@@ -46,8 +53,18 @@ export interface SceneComposer {
   setBackground(background: Color | null): void;
   /** IBL environment (3D-09); the caller keeps ownership of the texture. */
   setEnvironment(environment: Texture | null): void;
-  /** Clamped exposure; also applied on composer creation (default 1.0). */
-  setExposure(exposure: number): void;
+  /**
+   * Environment light intensity (replaces the old "exposure" semantics):
+   * scales `scene.environment.intensity`, tone mapping stays neutral.
+   */
+  setLightIntensity(intensity: number): void;
+  /**
+   * Horizontal environment rotation (radians, around Y): right-drag in the
+   * viewer rotates the light source without moving the model (Serpent-v4jt).
+   */
+  setEnvironmentRotation(yaw: number): void;
+  /** Display mode (PBR / wireframe / gray-shaded…, Serpent-fkhe). */
+  setDisplayMode(mode: ModelDisplayMode): void;
   /** Update camera aspect + renderer size (drawing buffer only). */
   resize(width: number, height: number): void;
   /** Render exactly one frame — the offscreen thumbnail path's only call. */
@@ -62,11 +79,13 @@ export function createSceneComposer(options: SceneComposerOptions): SceneCompose
     options.camera ??
     new PerspectiveCamera(CAMERA_FOV_DEGREES, 1, 0.1, 5_000);
   const renderer = options.renderer;
+  let lightIntensity = DEFAULT_LIGHT_INTENSITY;
 
-  // Slice D policy: neutral tone mapping (color-faithful under IBL) with a
-  // clamped exposure, applied regardless of whether an HDRI is present.
+  // Slice D policy: neutral tone mapping (color-faithful under IBL) with the
+  // tone-mapping exposure pinned at its neutral default — the user-facing
+  // control is environment LIGHT INTENSITY, not exposure.
   renderer.toneMapping = HDRI_TONE_MAPPING;
-  renderer.toneMappingExposure = clampExposure(DEFAULT_EXPOSURE);
+  renderer.toneMappingExposure = DEFAULT_LIGHT_INTENSITY;
 
   return {
     renderer,
@@ -77,9 +96,19 @@ export function createSceneComposer(options: SceneComposerOptions): SceneCompose
     },
     setEnvironment(environment) {
       scene.environment = environment;
+      scene.environmentIntensity = lightIntensity;
     },
-    setExposure(exposure) {
-      renderer.toneMappingExposure = clampExposure(exposure);
+    setLightIntensity(intensity) {
+      lightIntensity = clampLightIntensity(intensity);
+      scene.environmentIntensity = lightIntensity;
+    },
+    setEnvironmentRotation(yaw) {
+      // scene.environmentRotation (Euler) is the three-native way to rotate
+      // the environment light without touching the model.
+      scene.environmentRotation.y = yaw;
+    },
+    setDisplayMode(mode) {
+      applyDisplayMode(scene, mode);
     },
     resize(width, height) {
       const safeWidth = Math.max(1, width);

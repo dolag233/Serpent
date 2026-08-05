@@ -1287,7 +1287,15 @@ export const en = {
     retry: "Retry",
     hdri: "Environment",
     hdriCustom: "Custom… (coming in a later version)",
-    exposure: "Exposure",
+    lightIntensity: "Light intensity",
+    displayMode: "Display mode",
+    displayModes: {
+      pbr: "PBR",
+      "pbr-wireframe": "PBR + wireframe",
+      shaded: "Gray shaded",
+      "shaded-wireframe": "Gray + wireframe",
+      wireframe: "Wireframe"
+    },
     resetView: "Reset view",
     toggleStats: "Show or hide stats",
     statsAria: "Model statistics",

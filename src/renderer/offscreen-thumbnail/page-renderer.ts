@@ -38,7 +38,7 @@ import {
   computeCameraPlacement,
   sphereFromBounds,
 } from '../3d-viewer/camera-policy';
-import { clampExposure } from '../3d-viewer/exposure';
+
 import {
   buildEnvironment,
   type EnvironmentHandle,
@@ -259,7 +259,6 @@ async function loadHdrEnvironmentForFrame(
     hdrTexture: texture,
     pmrem,
     renderer: deps.renderer,
-    exposure: clampExposure(1),
   });
 }
 
