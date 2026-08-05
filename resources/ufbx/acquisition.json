@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "artifact": "ufbx wasm module",
+  "ufbxVersion": "0.23.0",
+  "sourceUrl": "https://codeload.github.com/bqqbarbhg/ufbx/tar.gz/refs/tags/v0.23.0",
+  "sourceSha256": "efaed6c51f9c202e35255775775e3929d0c6978ddbb5cb888299f14d36c3c365",
+  "emsdkVersion": "6.0.5",
+  "emccFlags": [
+    "-O2",
+    "-sWASM=1",
+    "-sMODULARIZE=1",
+    "-sENVIRONMENT=node",
+    "-sEXPORTED_FUNCTIONS=_serpent_parse,_serpent_error,_serpent_out_ptr,_serpent_out_size,_serpent_free_out,_malloc,_free",
+    "-sEXPORTED_RUNTIME_METHODS=UTF8ToString,HEAPU8,HEAPU32,HEAPF32",
+    "-sALLOW_MEMORY_GROWTH=1",
+    "-sMAXIMUM_MEMORY=2147483648",
+    "-sINITIAL_MEMORY=67108864",
+    "-sSTACK_SIZE=524288",
+    "-sFILESYSTEM=0",
+    "-sASSERTIONS=0",
+    "-g0"
+  ],
+  "wasmSha256": "33033b209c2d0a65bfc1cc70c08eb7345f1fb4270e4fd6212688eec9d3f6471d",
+  "jsSha256": "82a9376d575be30e953691a866fe213a4ae385a0a1e372bf52a66afc0a28884e",
+  "builtAt": "2026-08-05T15:51:31.458Z"
+}

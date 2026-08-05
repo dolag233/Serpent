@@ -28,7 +28,8 @@
   ],
   "artifacts": {
     "ufbx.wasm": {
-      "sha256": "d490c5b0a5f5573d57b01f9c613e60703e0f3cd20d4f82d737af9beba0217e94"
+      "sha256": "33033b209c2d0a65bfc1cc70c08eb7345f1fb4270e4fd6212688eec9d3f6471d",
+      "note": "2026-08-05 rebuilt on Windows (E:\\MyRepositories\\Serpent) with Emscripten 6.0.5. The JS glue hash is identical to the original build; only the WASM binary differs (toolchain build-path nondeterminism, e.g. clang embeds the source tree path). Functionality is verified by tests/worker/fbx-conversion.test.ts."
     },
     "ufbx.js": {
       "sha256": "82a9376d575be30e953691a866fe213a4ae385a0a1e372bf52a66afc0a28884e"

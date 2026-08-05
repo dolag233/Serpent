@@ -14,6 +14,8 @@ Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产
 
 **不能从 SMB/NAS 路径跑 Electron**。在 SMB 挂载上跑 `npm start` 时 Electron 报 `icudtl.dat not found in bundle`，主进程 SIGTRAP 崩溃；打包后的 `.app` 也不能从 SMB 直接运行（code-sign/资源查找失败）。因此 `node_modules`、`.vite`、`out`、`test-results` 等环境目录必须装在本地磁盘，不要装在 NAS/网络挂载上。
 
+**ufbx WASM 组件（`resources/ufbx/`，随仓库分发，Serpent-g05n）**：FBX 转换与 FBX 模型缩略图依赖 ufbx WASM 产物（平台无关单二进制，已提交进 git；版本与产物 SHA 锁在 `scripts/ufbx-wasm-lock.json`，v0.23.0 + Emscripten 6.0.5）。git pull 即有产物，无需本机安装 Emscripten。**仅当重建/升级 ufbx 时**才需要 Emscripten 6.0.5 + `node scripts/build-ufbx-wasm.mjs --emsdk <emsdk目录>`（产物哈希校验失败时按 lock 注释核对）。`npm run package/make` 的 `prepackage`/`premake` 会校验产物存在与哈希（`scripts/verify-ufbx-wasm.mjs`），缺失/漂移即打包失败并给出构建指引——不要跳过或删除该校验。
+
 ### 首次搭建
 
 ```bash
