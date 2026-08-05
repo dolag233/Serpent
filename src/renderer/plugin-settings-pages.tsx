@@ -16,7 +16,7 @@ export type PluginSettingsPageDescriptor = PluginIframeViewDescriptor;
 export function buildPluginSettingsPageDescriptors(
   contributions: readonly PluginManagerSettingsPageContribution[],
 ): PluginSettingsPageDescriptor[] {
-  return buildPluginIframeViewDescriptors(contributions);
+  return buildPluginIframeViewDescriptors(contributions, 'settings-page', 'library');
 }
 
 export function usePluginSettingsPages(

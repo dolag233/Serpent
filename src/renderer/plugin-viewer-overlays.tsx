@@ -17,7 +17,7 @@ export type PluginViewerOverlayDescriptor = PluginIframeViewDescriptor;
 export function buildPluginViewerOverlayDescriptors(
   contributions: readonly PluginManagerViewerOverlayContribution[],
 ): PluginViewerOverlayDescriptor[] {
-  return buildPluginIframeViewDescriptors(contributions);
+  return buildPluginIframeViewDescriptors(contributions, 'viewer-overlay', 'library');
 }
 
 export function usePluginViewerOverlays(

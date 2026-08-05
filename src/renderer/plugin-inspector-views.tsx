@@ -16,7 +16,7 @@ export type PluginInspectorViewDescriptor = PluginIframeViewDescriptor;
 export function buildPluginInspectorViewDescriptors(
   contributions: readonly PluginManagerInspectorViewContribution[],
 ): PluginInspectorViewDescriptor[] {
-  return buildPluginIframeViewDescriptors(contributions);
+  return buildPluginIframeViewDescriptors(contributions, 'inspector', 'library');
 }
 
 export function usePluginInspectorViews(

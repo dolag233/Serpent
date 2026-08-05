@@ -4160,7 +4160,13 @@ function applyDesktopAutomationSelection(
 }
 
 async function startApplication(): Promise<void> {
-  app.setAppLogsPath();
+  // Isolated E2E runs must not write the log into the real user profile
+  // (~/Library/Logs/Serpent); pin it under the temp userData instead.
+  if (process.env.SERPENT_E2E === "1" && process.env.SERPENT_E2E_USER_DATA_PATH) {
+    app.setAppLogsPath(path.join(process.env.SERPENT_E2E_USER_DATA_PATH, "logs"));
+  } else {
+    app.setAppLogsPath();
+  }
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
   logger = new AppLogger(appLogPath);
   app.on("child-process-gone", (_event, details) => {

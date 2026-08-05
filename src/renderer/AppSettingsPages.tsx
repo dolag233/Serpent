@@ -4,7 +4,6 @@ import {
   APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
   APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
   APP_SETTINGS_LOCALE_OPTIONS,
-  APP_SETTINGS_THEME_OPTIONS,
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
 import type { CanvasPreferences } from "./canvas-preferences";
@@ -30,27 +29,17 @@ import {
   MENU_ACRYLIC_LEVEL_MIN,
   clampMenuAcrylicLevel,
 } from "./menu-acrylic-preferences";
-import { useTheme } from "./theme";
 import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
-import { Button, Slider, Switch, TextField } from "./ui/primitives";
+import { Slider, Switch } from "./ui/primitives";
 import {
-  ACCENT_PRESET_HEX,
-  DEFAULT_ACCENT_HEX,
-  normalizeAccentHex,
-} from "./theme/accent-preferences";
-import { BackgroundSettings, ThemeProfilePicker } from "./theme/ThemeAppearanceControls";
+  BackgroundSettings,
+  ThemeModePicker,
+  ThemeProfilePicker,
+} from "./theme/ThemeAppearanceControls";
+import { ThemeColorSettings } from "./theme/ThemeColorSettings";
 
 const SHADOW_LEVEL_TICKS = [0, 1, 2, 3] as const;
 const MENU_ACRYLIC_LEVEL_TICKS = [0, 1, 2, 3] as const;
-const CUSTOM_THEME_EDITOR_FIELDS = [
-  { token: "--ui-surface-canvas", labelKey: "settings.customThemeCanvas", light: "#ebeceb", dark: "#252729" },
-  { token: "--ui-surface-pane", labelKey: "settings.customThemePane", light: "#f4f5f3", dark: "#2c2e31" },
-  { token: "--ui-surface-raised", labelKey: "settings.customThemeRaised", light: "#f2f4f0", dark: "#35383b" },
-  { token: "--ui-content-primary", labelKey: "settings.customThemePrimary", light: "#1c1e1c", dark: "#f1f2ef" },
-  { token: "--ui-content-secondary", labelKey: "settings.customThemeSecondary", light: "#5a5f5a", dark: "#a9ada9" },
-  { token: "--ui-action-accent", labelKey: "settings.customThemeAccent", light: "#3b82f6", dark: "#3b82f6" },
-  { token: "--ui-status-danger", labelKey: "settings.customThemeDanger", light: "#dc2626", dark: "#e76b7a" },
-] as const;
 
 type SettingsToggleRowProps = {
   checked: boolean;
@@ -145,72 +134,26 @@ export function GeneralSettingsPage({ onOpenAppLog }: { onOpenAppLog?: () => voi
 
 export function AppearanceSettingsPage(): ReactNode {
   const t = useT();
-  const {
-    preference: themePreference,
-    setTheme,
-    customTheme,
-    resetCustomTheme,
-    resolved,
-    setCustomTheme,
-    accentHex,
-    setAccentHex,
-  } = useTheme();
   const { preferences: shadowPrefs, setLevel: setShadowLevel } = useElevation();
   const { preferences: menuAcrylicPrefs, setLevel: setMenuAcrylicLevel } =
     useMenuAcrylic();
   const { enabled: inspectorCardFeelEnabled, toggle: toggleInspectorCardFeel } =
     useInspectorCardFeel();
-  const [accentDraft, setAccentDraft] = useState(accentHex);
-
-  function selectAccent(hex: string) {
-    setAccentHex(hex);
-    setAccentDraft(hex);
-  }
-
-  function setCustomColor(token: (typeof CUSTOM_THEME_EDITOR_FIELDS)[number]["token"], value: string) {
-    const normalized = normalizeAccentHex(value);
-    if (!normalized) return;
-    setCustomTheme({
-      ...customTheme,
-      [resolved]: {
-        ...customTheme[resolved],
-        [token]: normalized,
-      },
-    });
-  }
 
   return (
-    <SettingsCard>
-      <div className="app-settings-row app-settings-row-stack">
-      <div className="app-settings-row-copy">
-        <strong>{t("shell.theme")}</strong>
-        <span>{t("settings.themeHint")}</span>
-      </div>
-        <div
-          aria-label={t("shell.theme")}
-          className="app-settings-option-group"
-          role="radiogroup"
-        >
-          {APP_SETTINGS_THEME_OPTIONS.map((option) => (
-            <button
-              aria-checked={themePreference === option.value}
-              className="app-settings-option"
-              key={option.value}
-              onClick={() => setTheme(option.value)}
-              role="radio"
-              type="button"
-            >
-              {t(option.labelKey)}
-            </button>
-          ))}
+    <SettingsCard className="app-settings-appearance-card">
+      <div className="app-settings-theme-section">
+        <div className="app-settings-theme-summary">
+          <div className="app-settings-row-copy">
+            <strong>{t("shell.theme")}</strong>
+            <span>{t("settings.themeHint")}</span>
+          </div>
+          <ThemeModePicker />
         </div>
+        <ThemeProfilePicker />
       </div>
       <div className="app-settings-card-divider" />
-      <div className="app-settings-row-copy">
-        <strong>{t("settings.themeProfiles")}</strong>
-        <span>{t("settings.themeProfilesHint")}</span>
-      </div>
-      <ThemeProfilePicker />
+      <ThemeColorSettings />
       <div className="app-settings-card-divider" />
       <SettingsDisclosure
         hint={t("settings.backgroundSectionHint")}
@@ -218,67 +161,6 @@ export function AppearanceSettingsPage(): ReactNode {
       >
         <BackgroundSettings />
       </SettingsDisclosure>
-      <div className="app-settings-card-divider" />
-      <SettingsDisclosure
-        hint={t("settings.customThemeHint")}
-        title={t("settings.customTheme")}
-      >
-        <div className="app-settings-custom-theme-grid">
-          {CUSTOM_THEME_EDITOR_FIELDS.map((field) => {
-            const current = customTheme[resolved][field.token] ?? field[resolved];
-            return (
-              <TextField
-                aria-label={t(field.labelKey)}
-                key={field.token}
-                label={t(field.labelKey)}
-                onChange={(event) => setCustomColor(field.token, event.target.value)}
-                type="color"
-                value={current}
-              />
-            );
-          })}
-        </div>
-        <Button onClick={resetCustomTheme}>{t("settings.customThemeReset")}</Button>
-      </SettingsDisclosure>
-      <div className="app-settings-card-divider" />
-      <div className="app-settings-row-copy">
-        <strong>{t("settings.accentColor")}</strong>
-        <span>{t("settings.accentHint")}</span>
-      </div>
-      <div className="app-settings-accent-presets" role="list">
-        {ACCENT_PRESET_HEX.map((hex) => (
-          <button
-            aria-label={hex}
-            aria-pressed={accentHex === hex}
-            className={`app-settings-accent-swatch${accentHex === hex ? " is-active" : ""}`}
-            key={hex}
-            onClick={() => selectAccent(hex)}
-            style={{ backgroundColor: hex }}
-            type="button"
-          />
-        ))}
-      </div>
-      <div className="app-settings-accent-custom">
-        <TextField
-          aria-label={t("settings.accentCustom")}
-          className="text-field"
-          onBlur={() => {
-            const normalized = normalizeAccentHex(accentDraft);
-            if (normalized) selectAccent(normalized);
-            else setAccentDraft(accentHex);
-          }}
-          onChange={(event) => setAccentDraft(event.target.value)}
-          placeholder="#3b82f6"
-          type="text"
-          value={accentDraft}
-          wrapperClassName="ui-field--inline"
-        />
-        <Button
-          onClick={() => selectAccent(DEFAULT_ACCENT_HEX)}
-        >
-          {t("settings.accentReset")}
-        </Button>
-      </div>
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">
         <strong>{t("settings.elevationSection")}</strong>

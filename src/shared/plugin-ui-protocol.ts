@@ -28,11 +28,46 @@ export const pluginUiStorageValueSchema = z.unknown().refine((value) => {
   return serialized !== undefined && new TextEncoder().encode(serialized).length <= 64 * 1024;
 }, 'Plugin UI storage values must be bounded JSON data.');
 
+/**
+ * Host-managed plugin view contract (Serpent-ex46.7).
+ *
+ * A plugin view is a sandboxed iframe contribution that the Host mounts into
+ * one of several surfaces. The Host owns the lifecycle: it announces
+ * mount/unmount/resize/state via host→plugin messages, and the plugin
+ * confirms readiness with `plugin-ui.ready`. Light/dark changes travel over
+ * the existing theme-changed message without reloading the document.
+ */
+export const PLUGIN_UI_VIEW_TYPES = [
+  'sidebar',
+  'inspector',
+  'workspace',
+  'viewer-overlay',
+  'settings-page',
+  'settings-detail',
+] as const;
+export type PluginUiViewType = (typeof PLUGIN_UI_VIEW_TYPES)[number];
+
+export const PLUGIN_UI_VIEW_SCOPES = ['global', 'library'] as const;
+export type PluginUiViewScope = (typeof PLUGIN_UI_VIEW_SCOPES)[number];
+
+export const pluginUiViewTypeSchema = z.enum(PLUGIN_UI_VIEW_TYPES);
+export const pluginUiViewScopeSchema = z.enum(PLUGIN_UI_VIEW_SCOPES);
+
+/** Arbitrary bounded JSON carried by view state (selection, filters, …). */
+export const pluginUiViewStateSchema = z.unknown().refine((value) => {
+  if (!isJsonValue(value)) return false;
+  const serialized = JSON.stringify(value);
+  return serialized !== undefined && new TextEncoder().encode(serialized).length <= 16 * 1024;
+}, 'Plugin view state must be bounded JSON data.');
+
 export const pluginUiIframeMessageSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('plugin-ui.ready'),
     contributionId: contributionIdSchema,
     instanceId: instanceIdSchema,
+    /** Optional contract check: the Host verifies the frame is the expected view. */
+    viewType: pluginUiViewTypeSchema.optional(),
+    scope: pluginUiViewScopeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('plugin-ui.invoke-command'),
@@ -71,6 +106,37 @@ export const pluginUiHostMessageSchema = z.discriminatedUnion('type', [
     contrast: z.enum(['normal', 'high']),
     revision: z.number().int().nonnegative(),
     tokens: pluginUiThemeTokensSchema,
+  }),
+  /** The Host has mounted this view into a surface; the plugin should render. */
+  z.strictObject({
+    type: z.literal('plugin-ui.view-mounted'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+    viewType: pluginUiViewTypeSchema,
+    scope: pluginUiViewScopeSchema,
+    libraryId: z.string().min(1).max(255).optional(),
+    state: pluginUiViewStateSchema.optional(),
+  }),
+  /** Host-side view context changed (e.g. active library); no reload needed. */
+  z.strictObject({
+    type: z.literal('plugin-ui.view-state-changed'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+    state: pluginUiViewStateSchema,
+  }),
+  /** The Host resized the view (debounced); the plugin may relayout. */
+  z.strictObject({
+    type: z.literal('plugin-ui.view-resized'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
+    width: z.number().int().nonnegative(),
+    height: z.number().int().nonnegative(),
+  }),
+  /** The Host unmounted the view (surface closed, scope changed, app quit). */
+  z.strictObject({
+    type: z.literal('plugin-ui.view-unmounted'),
+    contributionId: contributionIdSchema,
+    instanceId: instanceIdSchema,
   }),
   z.strictObject({
     type: z.literal('plugin-ui.command-result'),

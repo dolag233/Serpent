@@ -17,10 +17,9 @@ import {
 } from './theme-profiles';
 
 const PROFILE_LABELS = {
-  'vscode-dark': 'settings.themeProfileVscodeDark',
-  'serpent-dark': 'settings.themeProfileSerpentDark',
-  'serpent-light': 'settings.themeProfileSerpentLight',
-  'soft-light': 'settings.themeProfileSoftLight',
+  serpent: 'settings.themeProfileSerpent',
+  vscode: 'settings.themeProfileVscode',
+  soft: 'settings.themeProfileSoft',
 } as const;
 
 const BACKGROUND_MODE_LABELS = {
@@ -29,8 +28,8 @@ const BACKGROUND_MODE_LABELS = {
   tile: 'settings.backgroundModeTile',
 } as const;
 
-function asPreviewStyle(profile: ThemeProfileId): CSSProperties {
-  const tokens = THEME_PROFILE_PRESETS[profile].tokens;
+function asPreviewStyle(profile: ThemeProfileId, resolved: 'light' | 'dark'): CSSProperties {
+  const tokens = THEME_PROFILE_PRESETS[profile].tokens[resolved];
   return {
     '--theme-preview-canvas': tokens['--ui-surface-canvas'],
     '--theme-preview-pane': tokens['--ui-surface-pane'],
@@ -42,7 +41,7 @@ function asPreviewStyle(profile: ThemeProfileId): CSSProperties {
 
 export function ThemeProfilePicker(): ReactNode {
   const t = useT();
-  const { themeProfile, setThemeProfile } = useTheme();
+  const { themeProfile, setThemeProfile, resolved } = useTheme();
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedIndex = Math.max(0, THEME_PROFILE_IDS.indexOf(themeProfile.preset));
 
@@ -54,7 +53,7 @@ export function ThemeProfilePicker(): ReactNode {
 
   return (
     <div
-      aria-label={t('settings.themeProfiles')}
+      aria-label={t('shell.theme')}
       className="app-settings-theme-profiles"
       role="radiogroup"
     >
@@ -82,7 +81,7 @@ export function ThemeProfilePicker(): ReactNode {
               }
             }}
             role="radio"
-            style={asPreviewStyle(profile)}
+            style={asPreviewStyle(profile, resolved)}
             tabIndex={THEME_PROFILE_IDS.indexOf(profile) === selectedIndex ? 0 : -1}
             type="button"
             ref={(element) => {
@@ -103,6 +102,44 @@ export function ThemeProfilePicker(): ReactNode {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Light/dark/follow-system mode picker rendered as three round swatches.
+ * The actual disc lives inside a larger hit target so the selected ring is
+ * never clipped by the button box. Hovering shows the mode name.
+ */
+export function ThemeModePicker(): ReactNode {
+  const t = useT();
+  const { preference, setTheme } = useTheme();
+  const MODES = [
+    { value: 'light', label: t('shell.themeLight'), disc: 'light' },
+    { value: 'dark', label: t('shell.themeDark'), disc: 'dark' },
+    { value: 'system', label: t('shell.themeSystem'), disc: 'system' },
+  ] as const;
+
+  return (
+    <div
+      aria-label={t('settings.themeMode')}
+      className="app-settings-theme-mode"
+      role="radiogroup"
+    >
+      {MODES.map((mode) => (
+        <button
+          aria-checked={preference === mode.value}
+          aria-label={mode.label}
+          className={`app-settings-theme-mode-disc is-${mode.disc}${preference === mode.value ? ' is-active' : ''}`}
+          key={mode.value}
+          onClick={() => setTheme(mode.value)}
+          role="radio"
+          title={mode.label}
+          type="button"
+        >
+          <span aria-hidden="true" className="app-settings-theme-mode-disc-surface" />
+        </button>
+      ))}
     </div>
   );
 }

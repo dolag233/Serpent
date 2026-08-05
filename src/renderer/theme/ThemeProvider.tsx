@@ -16,22 +16,18 @@ import {
   type BackgroundPreferences,
 } from './background-preferences';
 import {
-  applyAccentColor,
-  DEFAULT_ACCENT_HEX,
-  loadAccentPreferences,
-  setStoredAccentHex,
-} from './accent-preferences';
-import {
   clearCustomTheme,
   loadCustomTheme,
   saveCustomTheme,
   type CustomTheme,
 } from './custom-theme';
 import { CUSTOM_THEME_COLOR_TOKENS } from './custom-theme';
-import { resolveEffectiveThemeTokens } from './theme-composition';
+import {
+  migrateLegacyAccentIntoCustomTheme,
+  resolveEffectiveThemeTokens,
+} from './theme-composition';
 import {
   loadThemeProfile,
-  resolveThemeProfile,
   saveThemeProfile,
   THEME_PROFILE_VERSION,
   type ThemeProfile,
@@ -51,13 +47,11 @@ import {
 type ThemeContextValue = {
   readonly preference: ThemePreference;
   readonly resolved: ResolvedTheme;
-  readonly accentHex: string;
   readonly customTheme: CustomTheme;
   readonly themeProfile: ThemeProfile;
   readonly backgroundPreferences: BackgroundPreferences;
   readonly themeRevision: number;
   readonly setTheme: (theme: ThemePreference) => void;
-  readonly setAccentHex: (hex: string) => void;
   readonly setCustomTheme: (theme: CustomTheme) => void;
   readonly resetCustomTheme: () => void;
   readonly setThemeProfile: (profile: ThemeProfileId) => void;
@@ -80,10 +74,11 @@ export function ThemeProvider({
   const [preference, setPreferenceState] = useState<ThemePreference>(
     () => initialPreference ?? loadThemePreferences(storage).theme,
   );
-  const [accentHex, setAccentHexState] = useState(
-    () => loadAccentPreferences(storage).accentHex,
+  const [customTheme, setCustomThemeState] = useState<CustomTheme>(() =>
+    // The legacy standalone accent preference migrates into a custom-theme
+    // override here, once, before anything else reads the theme.
+    migrateLegacyAccentIntoCustomTheme(loadCustomTheme(storage), storage),
   );
-  const [customTheme, setCustomThemeState] = useState<CustomTheme>(() => loadCustomTheme(storage));
   const [themeProfile, setThemeProfileState] = useState<ThemeProfile>(() => loadThemeProfile(storage));
   const [backgroundPreferences, setBackgroundPreferencesState] = useState<BackgroundPreferences>(() => loadBackgroundPreferences(storage));
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() =>
@@ -102,10 +97,6 @@ export function ThemeProvider({
   }, [resolved]);
 
   useEffect(() => {
-    applyAccentColor(accentHex);
-  }, [accentHex]);
-
-  useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     for (const token of CUSTOM_THEME_COLOR_TOKENS) {
@@ -115,25 +106,23 @@ export function ThemeProvider({
       themeProfile,
       customTheme,
       resolved,
-      accentHex,
-      defaultAccentHex: DEFAULT_ACCENT_HEX,
     });
     for (const [token, value] of Object.entries(composition.tokens)) {
       root.style.setProperty(token, value);
     }
     root.style.setProperty('--accent', composition.accentHex);
-  }, [accentHex, customTheme, resolved, themeProfile]);
+  }, [customTheme, resolved, themeProfile]);
 
   useEffect(() => {
     applyBackgroundPreferences(backgroundPreferences);
   }, [backgroundPreferences]);
 
   useEffect(() => {
-    const signature = `${resolved}:${accentHex}:${JSON.stringify(customTheme)}:${JSON.stringify(themeProfile)}:${JSON.stringify(backgroundPreferences)}`;
+    const signature = `${resolved}:${JSON.stringify(customTheme)}:${JSON.stringify(themeProfile)}:${JSON.stringify(backgroundPreferences)}`;
     if (themeSignatureRef.current === signature) return;
     themeSignatureRef.current = signature;
     setThemeRevision((revision) => revision + 1);
-  }, [accentHex, backgroundPreferences, customTheme, resolved, themeProfile]);
+  }, [backgroundPreferences, customTheme, resolved, themeProfile]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return;
@@ -152,14 +141,6 @@ export function ThemeProvider({
     [storage],
   );
 
-  const setAccentHex = useCallback(
-    (hex: string) => {
-      const next = setStoredAccentHex(hex, storage);
-      setAccentHexState(next.accentHex);
-    },
-    [storage],
-  );
-
   const setCustomTheme = useCallback((next: CustomTheme) => {
     saveCustomTheme(next, storage);
     setCustomThemeState(next);
@@ -174,9 +155,8 @@ export function ThemeProvider({
     const next: ThemeProfile = { version: THEME_PROFILE_VERSION, preset, overrides: {} };
     saveThemeProfile(next, storage);
     setThemeProfileState(next);
-    const mode = resolveThemeProfile(next).mode;
-    setStoredTheme(mode, storage);
-    setPreferenceState(mode);
+    // Light/dark is orthogonal to the theme: picking a profile must not flip
+    // the global light/dark preference.
   }, [storage]);
 
   const setBackgroundPreferences = useCallback((next: BackgroundPreferences) => {
@@ -189,19 +169,17 @@ export function ThemeProvider({
     () => ({
       preference,
       resolved,
-      accentHex,
       customTheme,
       themeProfile,
       backgroundPreferences,
       themeRevision,
       setTheme,
-      setAccentHex,
       setCustomTheme,
       resetCustomTheme,
       setThemeProfile,
       setBackgroundPreferences,
     }),
-    [accentHex, backgroundPreferences, customTheme, preference, resetCustomTheme, resolved, setAccentHex, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
+    [backgroundPreferences, customTheme, preference, resetCustomTheme, resolved, setBackgroundPreferences, setCustomTheme, setTheme, setThemeProfile, themeProfile, themeRevision],
   );
 
   return (

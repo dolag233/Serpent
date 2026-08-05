@@ -3360,7 +3360,7 @@ input[type="range"] {
 }
 
 .metadata-list dt {
-  color: var(--tertiary);
+  color: var(--secondary);
 }
 
 .metadata-list dd {
@@ -6862,72 +6862,37 @@ select.ai-config-input.ai-config-languages {
   color: var(--accent-soft-fg);
 }
 
-.app-settings-accent-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-/* Serpent-vl8r: match .dimension-color-swatch shape, ring, and gap. */
-.app-settings-accent-swatch {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: none;
-  transition:
-    transform 100ms ease,
-    box-shadow 100ms ease,
-    outline-color 100ms ease;
-}
-
-.app-settings-accent-swatch.is-active {
-  border-color: transparent;
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  transform: none;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--canvas) 80%, transparent);
-}
-
-.app-settings-accent-custom {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.app-settings-custom-theme-grid {
+.app-settings-theme-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--ui-space-3);
-  margin: var(--ui-space-3) 0;
+  gap: var(--ui-space-4);
 }
 
-.app-settings-custom-theme-grid input[type="color"] {
-  min-height: var(--ui-size-control-lg);
-  padding: 2px;
-  cursor: pointer;
+.app-settings-theme-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-space-4);
 }
 
 .app-settings-theme-profiles {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--ui-space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   width: 100%;
+  max-height: 190px;
+  padding: 3px 2px 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-settings-theme-profile {
   display: grid;
   min-width: 0;
-  gap: var(--ui-space-2);
-  padding: var(--ui-space-2);
-  border: 1px solid var(--ui-border-control);
-  border-radius: var(--ui-radius-surface);
-  background: transparent;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-canvas);
   color: var(--ui-content-secondary);
   text-align: left;
   cursor: pointer;
@@ -6937,16 +6902,16 @@ select.ai-config-input.ai-config-languages {
 
 .app-settings-theme-profile:hover {
   border-color: var(--ui-border-focus);
-  background: var(--ui-action-hover);
+  background: var(--ui-surface-raised-subtle);
   color: var(--ui-content-primary);
   transform: translateY(-1px);
 }
 
 .app-settings-theme-profile.is-active {
   border-color: var(--ui-action-accent);
-  background: var(--ui-action-accent-soft);
+  background: var(--ui-surface-raised);
   color: var(--ui-content-primary);
-  box-shadow: 0 0 0 1px var(--ui-action-accent-soft);
+  box-shadow: 0 0 0 2px var(--ui-action-accent-soft);
 }
 
 .app-settings-theme-profile:focus-visible {
@@ -6958,8 +6923,8 @@ select.ai-config-input.ai-config-languages {
   display: grid;
   grid-template-columns: 28% 1fr;
   overflow: hidden;
-  height: 70px;
-  border: 1px solid color-mix(in srgb, var(--theme-preview-text) 22%, transparent);
+  height: 56px;
+  border: 1px solid color-mix(in srgb, var(--theme-preview-text) 20%, transparent);
   border-radius: var(--ui-radius-control);
   background: var(--theme-preview-canvas);
 }
@@ -6973,7 +6938,7 @@ select.ai-config-input.ai-config-languages {
   display: grid;
   align-content: start;
   gap: 5px;
-  padding: 9px;
+  padding: 7px;
   background: var(--theme-preview-canvas);
 }
 
@@ -6993,7 +6958,7 @@ select.ai-config-input.ai-config-languages {
 .app-settings-theme-profile-preview-card {
   display: block;
   width: 72%;
-  height: 26px;
+  height: 20px;
   margin-top: 3px;
   border-radius: 3px;
   background: var(--theme-preview-raised);
@@ -7175,11 +7140,6 @@ select.ai-config-input.ai-config-languages {
   .app-settings-background-opacity {
     grid-template-columns: 1fr;
   }
-}
-
-.app-settings-accent-custom .text-field {
-  flex: 1 1 140px;
-  min-width: 0;
 }
 
 .app-settings-check-row-group {
@@ -9605,9 +9565,9 @@ select.ai-config-input.ai-config-languages {
   margin-bottom: 5px;
 }
 
-/* Inspector 内的小标签保持安静的中性色；accent 留给真正可点的控件。 */
+/* Inspector 内的小标签统一使用次要色；accent 留给真正可点的控件。 */
 .inspector-content .micro-label {
-  color: var(--tertiary);
+  color: var(--secondary);
   font-size: 9.5px;
   letter-spacing: 0.1em;
 }
@@ -10345,4 +10305,470 @@ select.ai-config-input.ai-config-languages {
 @keyframes task-progress-slide {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(285%); }
+}
+
+
+/* Theme color settings: two columns of aligned label/swatch pairs. */
+.app-settings-custom-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 20px;
+  margin: 10px 0 8px;
+}
+
+.app-settings-custom-theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+  min-width: 0;
+  min-height: 32px;
+  padding: 2px 0;
+}
+
+.app-settings-custom-theme-label {
+  white-space: nowrap;
+  font-size: var(--ui-font-size-label, 12px);
+  color: var(--ui-content-primary);
+}
+
+.app-settings-custom-theme-swatch {
+  flex: 0 0 auto;
+  width: 104px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--ui-content-primary) 12%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+  appearance: none;
+  background: transparent;
+  overflow: hidden;
+}
+
+.app-settings-custom-theme-swatch::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.app-settings-custom-theme-swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 9px;
+}
+
+.app-settings-custom-theme-swatch:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: 2px;
+}
+
+.app-settings-theme-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--ui-space-3);
+}
+
+/* Theme mode picker. The button is a larger hit target than the disc so an
+   active ring can never be clipped by the native button box. */
+.app-settings-theme-mode {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--ui-space-2);
+  margin-top: -2px;
+  padding: 3px;
+}
+
+.app-settings-theme-mode-disc {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  appearance: none;
+  cursor: pointer;
+  background: transparent;
+  overflow: visible;
+  transition:
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+.app-settings-theme-mode-disc-surface {
+  position: relative;
+  display: block;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ui-border-control);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ui-content-primary) 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--ui-border-divider) 48%, transparent);
+  overflow: hidden;
+}
+
+.app-settings-theme-mode-disc.is-light {
+  --theme-mode-disc-light: rgb(255 255 255);
+  --theme-mode-disc-dark: rgb(0 0 0);
+}
+
+.app-settings-theme-mode-disc.is-dark {
+  --theme-mode-disc-light: rgb(255 255 255);
+  --theme-mode-disc-dark: rgb(0 0 0);
+}
+
+.app-settings-theme-mode-disc.is-light .app-settings-theme-mode-disc-surface {
+  background: var(--theme-mode-disc-light);
+}
+
+.app-settings-theme-mode-disc.is-dark .app-settings-theme-mode-disc-surface {
+  background: var(--theme-mode-disc-dark);
+}
+
+.app-settings-theme-mode-disc.is-system {
+  --theme-mode-disc-light: rgb(255 255 255);
+  --theme-mode-disc-dark: rgb(0 0 0);
+}
+
+.app-settings-theme-mode-disc.is-system .app-settings-theme-mode-disc-surface {
+  background: transparent;
+}
+
+.app-settings-theme-mode-disc.is-system .app-settings-theme-mode-disc-surface::before,
+.app-settings-theme-mode-disc.is-system .app-settings-theme-mode-disc-surface::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  content: "";
+}
+
+.app-settings-theme-mode-disc.is-system .app-settings-theme-mode-disc-surface::before {
+  left: 0;
+  background: var(--theme-mode-disc-light);
+}
+
+.app-settings-theme-mode-disc.is-system .app-settings-theme-mode-disc-surface::after {
+  right: 0;
+  background: var(--theme-mode-disc-dark);
+}
+
+.app-settings-theme-mode-disc.is-active {
+  box-shadow: 0 0 0 1px var(--ui-action-accent);
+}
+
+.app-settings-theme-mode-disc.is-active .app-settings-theme-mode-disc-surface {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ui-content-primary) 14%, transparent);
+}
+
+.app-settings-theme-mode-disc:focus-visible {
+  outline: var(--ui-border-width-focus) solid var(--ui-border-focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ *
+ * UI style preview of the configured theme colors
+ * ------------------------------------------------------------------ */
+.app-settings-theme-preview {
+  display: block;
+  margin-top: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-surface);
+  background: var(--ui-surface-canvas);
+}
+
+.app-settings-theme-preview-heading {
+  margin-bottom: var(--ui-space-3);
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-medium);
+  color: var(--ui-content-tertiary);
+}
+
+.theme-preview-inspector-shell {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-surface);
+  background: var(--ui-surface-pane);
+}
+
+.theme-preview-inspector-rail {
+  display: flex;
+  width: 30px;
+  flex: 0 0 30px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  border-right: 1px solid var(--ui-border-subtle);
+  background: var(--ui-surface-raised-subtle);
+}
+
+.theme-preview-rail-line {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ui-border-control);
+}
+
+.theme-preview-rail-line.is-active {
+  background: var(--ui-action-accent);
+}
+
+.theme-preview-inspector-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.8fr);
+  align-items: start;
+  gap: var(--ui-space-3);
+  min-width: 0;
+  width: 100%;
+  padding: var(--ui-space-3);
+}
+
+.theme-preview-asset-card {
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-surface);
+  background: var(--ui-surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.theme-preview-asset-placeholder {
+  aspect-ratio: 1.3;
+  width: 100%;
+  border-radius: calc(var(--ui-radius-surface) - 1px);
+  background: color-mix(
+    in srgb,
+    var(--ui-content-secondary) 28%,
+    var(--ui-surface-canvas)
+  );
+}
+
+.theme-preview-asset-caption {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 4px 3px;
+}
+
+.theme-preview-asset-caption strong,
+.theme-preview-asset-caption span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-preview-asset-caption strong {
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-medium);
+}
+
+.theme-preview-asset-caption span {
+  color: var(--ui-content-secondary);
+  font-size: 10px;
+}
+
+.theme-preview-inspector-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2);
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: var(--ui-radius-surface);
+  background: var(--ui-surface-raised);
+}
+
+.theme-preview-inspector-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-space-2);
+}
+
+.theme-preview-inspector-heading strong,
+.theme-preview-inspector-heading span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-preview-inspector-heading strong {
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-caption);
+  font-weight: var(--ui-font-weight-medium);
+}
+
+.theme-preview-inspector-heading span {
+  color: var(--ui-content-secondary);
+  font-size: 10px;
+}
+
+.theme-preview-inspector-selected {
+  padding: 6px 8px;
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-selected);
+  color: var(--ui-content-primary);
+  font-size: 11px;
+}
+
+.theme-preview-inspector-fields {
+  display: grid;
+  gap: 5px;
+}
+
+.theme-preview-inspector-field {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10px;
+}
+
+.theme-preview-inspector-field-label {
+  color: var(--ui-content-secondary);
+}
+
+.theme-preview-inspector-field-value {
+  overflow: hidden;
+  color: var(--ui-content-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-preview-inspector-tag {
+  justify-self: start;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--ui-content-secondary) 32%, var(--ui-border-subtle));
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-surface-pane);
+  color: var(--ui-content-secondary);
+  font-size: 10px;
+}
+
+.theme-preview-inspector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.theme-preview-input,
+.theme-preview-input .ui-field__control,
+.theme-preview-slider {
+  min-width: 0;
+}
+
+.theme-preview-input {
+  width: 100%;
+}
+
+.theme-preview-slider {
+  width: 100%;
+}
+
+@media (max-width: 680px) {
+  .app-settings-theme-summary {
+    flex-direction: column;
+  }
+
+  .app-settings-theme-mode {
+    margin-top: 0;
+  }
+
+  .app-settings-custom-theme-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-preview-inspector-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Plugin view host (Serpent-ex46.7): lifecycle placeholder + crash state
+ * ------------------------------------------------------------------ */
+.plugin-view-host {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.plugin-view-host > iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+}
+
+/* Placeholder covers the frame while it loads/reloads so the surface never
+   blinks blank; pointer-events let the frame keep scrolling underneath. */
+.plugin-view-host-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  color: var(--ui-content-tertiary);
+  font-size: var(--ui-font-size-caption);
+  pointer-events: none;
+  background: var(--ui-surface-canvas);
+}
+
+.plugin-view-host-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--ui-border-control);
+  border-top-color: var(--ui-action-accent);
+  border-radius: 50%;
+  animation: plugin-view-spin 800ms linear infinite;
+}
+
+@keyframes plugin-view-spin {
+  to { transform: rotate(360deg); }
+}
+
+.plugin-view-host-crashed {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-4);
+  color: var(--ui-content-secondary);
+  font-size: var(--ui-font-size-caption);
+  text-align: center;
+  background: var(--ui-surface-canvas);
+}
+
+.plugin-view-host-crashed button {
+  padding: 4px 12px;
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-raised);
+  color: var(--ui-content-primary);
+  font-size: var(--ui-font-size-body);
+  cursor: pointer;
+}
+.plugin-view-host-crashed button:hover {
+  background: var(--ui-action-hover);
 }

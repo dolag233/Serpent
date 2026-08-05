@@ -173,10 +173,20 @@ export function applyCustomTheme(
   }
 }
 
-/** Remove all managed inline overrides and, when supplied, the persisted theme. */
+/**
+ * Remove all managed inline overrides and the persisted theme.
+ *
+ * The persisted key is removed through resolveStorage (like load/save), not
+ * gated on the optional argument: callers that pass nothing (the default
+ * localStorage) used to skip the removeItem and only clear inline styles, so
+ * the overrides reappeared on the next load — the "clear button does nothing"
+ * report.
+ */
 export function clearCustomTheme(storage?: ThemePreferencesStorage): void {
-  if (storage) {
-    storage.removeItem(CUSTOM_THEME_PREF_KEY);
+  try {
+    resolveStorage(storage).removeItem(CUSTOM_THEME_PREF_KEY);
+  } catch {
+    // Storage failure is harmless; inline state is still cleared below.
   }
   if (typeof document === 'undefined') return;
 

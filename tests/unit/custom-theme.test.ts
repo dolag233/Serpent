@@ -164,4 +164,35 @@ describe('custom theme contract v1', () => {
       dom.restore();
     }
   });
+
+  it('clears persisted state even when no storage argument is passed', () => {
+    // Regression: ThemeProvider mounts without an explicit storage argument;
+    // clearCustomTheme used to skip removeItem then, so overrides reappeared
+    // on the next load ("clear button does nothing").
+    const dom = installDocumentStub();
+    const memory = new Map<string, string>();
+    const previous = (globalThis as { localStorage?: unknown }).localStorage;
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => memory.set(key, value),
+      removeItem: (key: string) => memory.delete(key),
+    };
+    try {
+      memory.set(CUSTOM_THEME_PREF_KEY, JSON.stringify({
+        version: 1,
+        light: { '--ui-surface-canvas': '#fff' },
+        dark: {},
+      }));
+      dom.values.set('--ui-surface-canvas', '#fff');
+
+      clearCustomTheme();
+
+      expect(memory.has(CUSTOM_THEME_PREF_KEY)).toBe(false);
+      expect(dom.values.has('--ui-surface-canvas')).toBe(false);
+    } finally {
+      if (previous === undefined) delete (globalThis as { localStorage?: unknown }).localStorage;
+      else (globalThis as { localStorage?: unknown }).localStorage = previous;
+      dom.restore();
+    }
+  });
 });

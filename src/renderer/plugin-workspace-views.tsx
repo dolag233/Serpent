@@ -15,7 +15,7 @@ export type PluginWorkspaceViewDescriptor = PluginIframeViewDescriptor;
 export function buildPluginWorkspaceViewDescriptors(
   contributions: readonly PluginManagerWorkspaceViewContribution[],
 ): PluginWorkspaceViewDescriptor[] {
-  return buildPluginIframeViewDescriptors(contributions);
+  return buildPluginIframeViewDescriptors(contributions, 'workspace', 'library');
 }
 
 export function usePluginWorkspaceViews(

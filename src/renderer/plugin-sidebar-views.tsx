@@ -15,7 +15,7 @@ export type PluginSidebarViewDescriptor = PluginIframeViewDescriptor;
 export function buildPluginSidebarViewDescriptors(
   contributions: readonly PluginManagerSidebarViewContribution[],
 ): PluginSidebarViewDescriptor[] {
-  return buildPluginIframeViewDescriptors(contributions);
+  return buildPluginIframeViewDescriptors(contributions, 'sidebar', 'library');
 }
 
 /**
