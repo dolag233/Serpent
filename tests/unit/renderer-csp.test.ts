@@ -22,4 +22,13 @@ describe('Renderer content security policy', () => {
     expect(directive('script-src')).not.toContain("'unsafe-eval'");
     expect(directive('script-src')).not.toContain('*');
   });
+
+  it('permits serpent:// fetches (3D viewer + model pipeline, slice C)', () => {
+    // three r185 loaders use fetch: GLB artifacts, companion textures, .hdr
+    // environment maps and .gltf/.obj/.mtl text all load over serpent:// in
+    // the packaged app (file:// fetch is blocked). The packaged build must
+    // keep this sink open.
+    expect(directive('connect-src')).toContain('serpent:');
+    expect(directive('connect-src')).not.toContain('*');
+  });
 });

@@ -186,10 +186,10 @@ describe('LibraryService export', () => {
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     expect(assets).toHaveLength(1);
-    const thumb = await service.generateThumbnail({
+    const thumb = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     const sourceArtifact = path.join(
       created.libraryPath,
       '.serpent',
@@ -244,10 +244,10 @@ describe('LibraryService export', () => {
       sourcePaths: [sourcePath],
     });
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const thumb = await service.generateThumbnail({
+    const thumb = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     const artifactPath = path.join(
       created.libraryPath,
       '.serpent',
@@ -263,10 +263,10 @@ describe('LibraryService export', () => {
     const reopened = service2.openLibrary(created.libraryPath);
     const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
     expect(listed[0]?.thumbnailStatus).not.toBe('ready');
-    const regenerated = await service2.generateThumbnail({
+    const regenerated = (await service2.generateThumbnail({
       libraryId: reopened.libraryId,
       assetId: listed[0]!.assetId,
-    });
+    }))!;
     expect(
       existsSync(
         path.join(

@@ -74,6 +74,9 @@ export function resolveViewerPrimarySurface(input: {
   // Image navigation: show thumbnail immediately while full source resolves.
   if (input.hasPlaceholder) return "media";
   if (loading && !resolution) return "loading";
+  // Model assets (slice A, Serpent-fu2i) resolve to a ready source URL, so
+  // they take the "media" branch above; they never classify as `other` and
+  // therefore never land in "unsupported". The 3D surface itself is slice C.
   if (
     resolution?.mediaType === "other" ||
     resolution?.errorCode === "UNSUPPORTED_FORMAT"

@@ -307,6 +307,7 @@ export const zhCN = {
     format: "格式过滤",
     formatField: "格式",
     formatText: "文本",
+    format3d: "3D 模型",
     excludeFormats: "排除这些格式",
     excludeTags: "排除这些标签",
     rating: "评分过滤",
@@ -1242,6 +1243,48 @@ export const zhCN = {
     retryFailedNoResponse: "重试失败：桌面服务没有响应，请重试或重新启动应用。",
     requestFailed: "{prefix}：{detail}",
     requestFailedWithReason: "{prefix}：{detail}（{reason}）"
+  },
+  viewer3d: {
+    ariaLabel: "3D 模型预览",
+    loading: "正在加载 3D 模型…",
+    errorTitle: "无法显示 3D 预览",
+    retry: "重试",
+    hdri: "环境光",
+    hdriCustom: "自定义…（后续版本支持）",
+    exposure: "曝光",
+    resetView: "重置视角",
+    toggleStats: "显示或隐藏统计",
+    statsAria: "模型统计",
+    stats: {
+      triangles: "三角面",
+      vertices: "顶点",
+      materials: "材质",
+      textures: "贴图",
+      fileSize: "文件大小"
+    },
+    error: {
+      modelTooLarge: "该文件超过 300 MB，超出了 3D 预览的文件大小上限。",
+      loadFailed: "无法加载该模型文件，源文件可能损坏或格式不受支持。",
+      webglUnavailable: "当前环境无法启动 3D 渲染，请确认图形加速已开启后重试。",
+      contextLost: "3D 渲染中断，可能是显卡驱动或资源占用导致，可重试恢复。",
+      fbx: {
+        sourceNotFound: "找不到 FBX 源文件，无法转换。",
+        notFbx: "该文件无法按 FBX 解析，可能格式不完整或版本过旧。",
+        fileTooLarge: "文件超过 300 MB 上限，无法转换。",
+        limitExceeded: "模型超出转换上限（三角面或输出体积过大）。",
+        timeout: "FBX 转换超时，已中止。",
+        wasmUnavailable: "转换组件不可用，请重新安装应用后重试。",
+        noMeshes: "FBX 中不包含可渲染的网格。",
+        conversionFailed: "FBX 转换失败。"
+      }
+    },
+    notice: {
+      hdriFailed: "环境光加载失败，已使用默认光照。",
+      fbxFallback: "FBX 转换失败（{reason}），已使用兼容模式加载。",
+      missingTextures: "有 {count} 张贴图未找到，相关材质已降级。",
+      trianglesHigh: "模型三角面数较多（{count}，上限建议 {threshold}），操作可能略有卡顿。",
+      textureHighRes: "存在超过 {limit} 像素的贴图（{edge} 像素），可能占用较多显存。"
+    }
   },
   empty: {
     folderTitle: "此文件夹为空",

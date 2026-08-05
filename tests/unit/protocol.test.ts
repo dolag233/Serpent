@@ -1903,3 +1903,205 @@ describe('batch content replacement protocol', () => {
     });
   });
 });
+
+describe('model companion protocol (slice A, Serpent-fu2i)', () => {
+  it('accepts model.resolve-companions as a read-only worker command', () => {
+    expect(parseWorkerRequest({
+      requestId: 'companions-01',
+      command: {
+        type: 'model.resolve-companions',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+      },
+    }).command).toEqual({
+      type: 'model.resolve-companions',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+    // Slice C (Serpent-qvc6) opened the renderer request surface for the 3D
+    // viewer; the request maps 1:1 onto the worker command with no extra
+    // fields (still no paths, no arbitrary input).
+    expect(parseRendererRequest({
+      type: 'model.resolve-companions.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toEqual({
+      type: 'model.resolve-companions.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+  });
+
+  it('validates the companions payload shape and path safety', () => {
+    expect(parseWorkerResponse({
+      requestId: 'companions-01',
+      result: {
+        ok: true,
+        type: 'model.companions',
+        assetId: 'asset-01',
+        companions: [
+          { relativeFilePath: 'props/robot/textures/albedo.png', assetId: 'asset-02', revisionId: 'rev-02', extension: '.png' },
+          { relativeFilePath: 'props/robot/robot.mtl', assetId: 'asset-03', revisionId: 'rev-03', extension: '.mtl' },
+        ],
+      },
+    })).toMatchObject({
+      result: { type: 'model.companions', assetId: 'asset-01' },
+    });
+
+    // No absolute paths, no backslash separators, no dot segments: the
+    // portable-relative-path schema rejects traversal before any consumer sees
+    // the payload.
+    for (const badPath of [
+      '/etc/passwd',
+      'C:\\models\\x.png',
+      '../outside.png',
+      'props//robot.png',
+      '',
+    ]) {
+      expect(() => parseWorkerResponse({
+        requestId: 'companions-bad',
+        result: {
+          ok: true,
+          type: 'model.companions',
+          assetId: 'asset-01',
+          companions: [{ relativeFilePath: badPath, assetId: 'asset-02', extension: '.png' }],
+        },
+      })).toThrow();
+    }
+  });
+
+  it('keeps model preview resolutions out of the other/unsupported branch', () => {
+    expect(parseWorkerResponse({
+      requestId: 'preview-01',
+      result: {
+        ok: true,
+        type: 'media.preview-artifact',
+        assetId: 'asset-01',
+        mediaType: 'model',
+        status: 'ready',
+        kind: 'thumbnail',
+        mimeType: 'model/fbx',
+        playbackMode: 'source',
+        sourceRevisionId: 'revision-01',
+        sourceMimeType: 'model/fbx',
+      },
+    })).toMatchObject({
+      result: { mediaType: 'model', status: 'ready' },
+    });
+    expect(() => parseWorkerResponse({
+      requestId: 'preview-bad',
+      result: {
+        ok: true,
+        type: 'media.preview-artifact',
+        assetId: 'asset-01',
+        mediaType: 'model',
+        status: 'ready',
+        kind: 'thumbnail',
+        mimeType: 'model/fbx',
+        playbackMode: 'source',
+        sourceRevisionId: 'revision-01',
+        sourceMimeType: 'model/fbx',
+        playbackToken: 'must-not-exist',
+      },
+    })).toThrow();
+  });
+
+  it('accepts a thumbnail no-op result without an artifact (model has no raster generator)', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.thumbnail.generated',
+      assetId: 'asset-01',
+    })).toMatchObject({ type: 'asset.thumbnail.generated' });
+    expect(parseWorkerResponse({
+      requestId: 'thumb-01',
+      result: {
+        ok: true,
+        type: 'media.thumbnail.generated',
+        assetId: 'asset-01',
+      },
+    })).toMatchObject({ result: { type: 'media.thumbnail.generated' } });
+  });
+});
+
+describe('model convert-fbx protocol (slice B, Serpent-5ygi)', () => {
+  it('accepts model.convert-fbx as a worker command (not forgeable by renderer)', () => {
+    expect(parseWorkerRequest({
+      requestId: 'convert-01',
+      command: {
+        type: 'model.convert-fbx',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+      },
+    }).command).toEqual({
+      type: 'model.convert-fbx',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+    // Slice C (Serpent-qvc6) drives the conversion from the 3D viewer; the
+    // renderer request surface is open but carries only library/asset ids.
+    expect(parseRendererRequest({
+      type: 'model.convert-fbx.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toEqual({
+      type: 'model.convert-fbx.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    });
+  });
+
+  it('validates ready and failed conversion results', () => {
+    expect(parseWorkerResponse({
+      requestId: 'convert-01',
+      result: {
+        ok: true,
+        type: 'model.convert-fbx.done',
+        assetId: 'asset-01',
+        status: 'ready',
+        glbArtifactId: 'artifact-01',
+        glbRelativePath: 'artifact-01.model_glb',
+        stats: {
+          triangles: 12,
+          vertices: 24,
+          meshes: 1,
+          instances: 1,
+          materials: 0,
+          textures: 0,
+          missingTextures: 0,
+          sourceBytes: 11020,
+          glbBytes: 1580,
+          sourceUnitMeters: 1,
+        },
+        missingTextures: [],
+        warnings: [],
+      },
+    })).toMatchObject({
+      result: { type: 'model.convert-fbx.done', status: 'ready', glbArtifactId: 'artifact-01' },
+    });
+
+    expect(parseWorkerResponse({
+      requestId: 'convert-02',
+      result: {
+        ok: true,
+        type: 'model.convert-fbx.done',
+        assetId: 'asset-01',
+        status: 'failed',
+        errorCode: 'FBX_NOT_FBX',
+      },
+    })).toMatchObject({
+      result: { type: 'model.convert-fbx.done', status: 'failed', errorCode: 'FBX_NOT_FBX' },
+    });
+
+    // Unknown error codes are rejected so the fallback router never sees typos.
+    expect(() => parseWorkerResponse({
+      requestId: 'convert-03',
+      result: {
+        ok: true,
+        type: 'model.convert-fbx.done',
+        assetId: 'asset-01',
+        status: 'failed',
+        errorCode: 'FBX_BROKE',
+      },
+    })).toThrow();
+  });
+});

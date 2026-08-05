@@ -144,7 +144,7 @@ export const assetSummarySchema = z.strictObject({
   remainingDays: z.number().int().nullable(),
   thumbnailStatus: z.enum(['ready', 'pending', 'failed']).nullable(),
   thumbnailArtifactId: nonBlankString.nullable(),
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'other']),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'other']),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   durationMs: z.number().int().nonnegative().nullable().optional().default(null),

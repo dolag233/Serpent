@@ -22,18 +22,21 @@ export function fileExtensionLabel(displayName: string): string {
 }
 
 /**
- * Bottom-right type chip when extension is not shown: GIF / VIDEO / TEXT.
+ * Bottom-right type chip when extension is not shown: GIF / VIDEO / TEXT / 3D.
  * Audio uses the extension chip (MP3) at bottom-right instead of "AUDIO".
  * Still images stay unmarked so the grid does not fill with JPG/PNG noise.
+ * Model cards carry the "3D" chip exactly like VIDEO/TEXT (Serpent-fu2i);
+ * when the extension chip (FBX…) is enabled the extension wins, same as video.
  */
 export function assetTypeBadgeLabel(
-  mediaType: "image" | "video" | "audio" | "text" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
   displayName: string,
 ): string | null {
   const ext = fileExtensionLabel(displayName);
   if (ext === "GIF") return "GIF";
   if (mediaType === "video") return "VIDEO";
   if (mediaType === "text") return "TEXT";
+  if (mediaType === "model") return "3D";
   return null;
 }
 
@@ -42,13 +45,13 @@ export function assetTypeBadgeLabel(
  * Images never show an extension corner badge.
  */
 export function shouldShowExtensionBadge(
-  mediaType: "image" | "video" | "audio" | "text" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
 ): boolean {
   return mediaType !== "image";
 }
 
 export function shouldShowDurationBadge(
-  mediaType: "image" | "video" | "audio" | "text" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
   displayName: string,
   durationMs: number | null | undefined,
 ): boolean {

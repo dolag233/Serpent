@@ -317,6 +317,7 @@ export const en = {
     format: "Format filter",
     formatField: "Format",
     formatText: "Text",
+    format3d: "3D MODEL",
     excludeFormats: "Exclude these formats",
     excludeTags: "Exclude these tags",
     rating: "Rating filter",
@@ -1259,6 +1260,48 @@ export const en = {
     retryFailedNoResponse: "Retry failed: desktop service did not respond. Retry or restart the app.",
     requestFailed: "{prefix}: {detail}",
     requestFailedWithReason: "{prefix}: {detail} ({reason})"
+  },
+  viewer3d: {
+    ariaLabel: "3D model preview",
+    loading: "Loading 3D model…",
+    errorTitle: "Could not show 3D preview",
+    retry: "Retry",
+    hdri: "Environment",
+    hdriCustom: "Custom… (coming in a later version)",
+    exposure: "Exposure",
+    resetView: "Reset view",
+    toggleStats: "Show or hide stats",
+    statsAria: "Model statistics",
+    stats: {
+      triangles: "Triangles",
+      vertices: "Vertices",
+      materials: "Materials",
+      textures: "Textures",
+      fileSize: "File size"
+    },
+    error: {
+      modelTooLarge: "This file exceeds the 300 MB limit for 3D previews.",
+      loadFailed: "Could not load this model file; the source may be damaged or the format unsupported.",
+      webglUnavailable: "3D rendering could not start in this environment. Enable hardware acceleration and retry.",
+      contextLost: "3D rendering was interrupted, likely by the graphics driver or resource pressure. Retry to recover.",
+      fbx: {
+        sourceNotFound: "The FBX source file could not be found for conversion.",
+        notFbx: "This file could not be parsed as FBX; it may be incomplete or from an unsupported version.",
+        fileTooLarge: "The file exceeds the 300 MB limit and cannot be converted.",
+        limitExceeded: "The model exceeds conversion limits (triangle count or output size).",
+        timeout: "FBX conversion timed out and was aborted.",
+        wasmUnavailable: "The conversion component is unavailable. Reinstall the app and retry.",
+        noMeshes: "This FBX contains no renderable meshes.",
+        conversionFailed: "FBX conversion failed."
+      }
+    },
+    notice: {
+      hdriFailed: "The environment map failed to load; default lighting is used.",
+      fbxFallback: "FBX conversion failed ({reason}); loading in compatibility mode.",
+      missingTextures: "{count} texture(s) were not found; affected materials were degraded.",
+      trianglesHigh: "This model has a high triangle count ({count}, recommended under {threshold}); interaction may be slower.",
+      textureHighRes: "Textures above {limit} pixels were found ({edge} pixels); they may use significant VRAM."
+    }
   },
   empty: {
     folderTitle: "This folder is empty",

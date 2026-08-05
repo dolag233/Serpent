@@ -11,11 +11,13 @@ import {
 } from "../../src/renderer/asset-card-badges";
 
 describe("asset-card-badges", () => {
-  it("labels gif, video, and text for type chips; audio uses extension instead", () => {
+  it("labels gif, video, text, and 3D for type chips; audio uses extension instead", () => {
     expect(assetTypeBadgeLabel("image", "loop.gif")).toBe("GIF");
     expect(assetTypeBadgeLabel("video", "clip.mp4")).toBe("VIDEO");
     expect(assetTypeBadgeLabel("audio", "tone.wav")).toBeNull();
     expect(assetTypeBadgeLabel("text", "notes.txt")).toBe("TEXT");
+    expect(assetTypeBadgeLabel("model", "character.fbx")).toBe("3D");
+    expect(assetTypeBadgeLabel("model", "scene.glb")).toBe("3D");
     expect(assetTypeBadgeLabel("image", "still.jpg")).toBeNull();
     expect(assetTypeBadgeLabel("other", "notes.bin")).toBeNull();
   });
@@ -25,6 +27,7 @@ describe("asset-card-badges", () => {
     expect(shouldShowExtensionBadge("audio")).toBe(true);
     expect(shouldShowExtensionBadge("video")).toBe(true);
     expect(shouldShowExtensionBadge("text")).toBe(true);
+    expect(shouldShowExtensionBadge("model")).toBe(true);
     expect(shouldShowExtensionBadge("other")).toBe(true);
   });
 

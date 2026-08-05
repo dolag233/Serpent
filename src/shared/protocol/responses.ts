@@ -5,6 +5,7 @@ import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
 import { CONTENT_REPLACE_MAX_BASE64_LENGTH } from '../content-replace';
+import { fbxConvertErrorCodeSchema, fbxConversionStatsSchema } from '../fbx-conversion';
 import {
   WORKER_READY_MESSAGE_TYPE,
   WORKER_SHUTDOWN_ACK_MESSAGE_TYPE,
@@ -1080,13 +1081,15 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.thumbnail.generated'),
     assetId: nonBlankString,
-    artifactId: nonBlankString,
+    // Mirrors media.thumbnail.generated: no artifact for model assets
+    // (no Worker raster generator; Serpent-fu2i).
+    artifactId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.preview.resolved'),
     assetId: nonBlankString,
-    mediaType: z.enum(['image', 'video', 'audio', 'text', 'other']),
+    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'other']),
     status: z.enum(['ready', 'pending', 'failed', 'missing']),
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
     url: nonBlankString.optional(),
@@ -1298,13 +1301,32 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('media.thumbnail.generated'),
     assetId: nonBlankString,
-    artifactId: nonBlankString,
+    // Absent for model assets: the Worker has no raster generator for them
+    // (slice E owns the offscreen renderer), so the no-op result carries no
+    // artifact (Serpent-fu2i).
+    artifactId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('media.retry-artifact.queued'),
     assetId: nonBlankString,
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('model.convert-fbx.done'),
+    assetId: nonBlankString,
+    // 'ready' carries the cached GLB artifact; 'failed' carries a typed
+    // error code so the Renderer can route to the FBXLoader fallback.
+    status: z.enum(['ready', 'failed']),
+    glbArtifactId: nonBlankString.optional(),
+    // Path of the GLB artifact relative to `.serpent/artifacts`.
+    glbRelativePath: nonBlankString.optional(),
+    errorCode: fbxConvertErrorCodeSchema.optional(),
+    reason: nonBlankString.optional(),
+    stats: fbxConversionStatsSchema.optional(),
+    missingTextures: z.array(nonBlankString).optional(),
+    warnings: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1332,7 +1354,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('media.preview-artifact'),
     assetId: nonBlankString,
-    mediaType: z.enum(['image', 'video', 'audio', 'text', 'other']),
+    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'other']),
     status: z.enum(['ready', 'pending', 'failed', 'missing']),
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
     artifactId: nonBlankString.optional(),
@@ -1367,6 +1389,19 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.asset-path'),
     assetId: nonBlankString,
     absolutePath: nonBlankString,
+  }),
+  // Slice A (Serpent-fu2i): companion-texture index for a model asset. Only
+  // library-relative POSIX paths and ids; no absolute paths (REQ-COMMAND-003).
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('model.companions'),
+    assetId: nonBlankString,
+    companions: z.array(z.strictObject({
+      relativeFilePath: portableRelativePathSchema,
+      assetId: nonBlankString,
+      revisionId: nonBlankString,
+      extension: nonBlankString,
+    })).max(1000),
   }),
   // Worker→Main only: absolute paths never enter the renderer result schema.
   z.strictObject({
@@ -1530,6 +1565,35 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     excludedPreviewCount: z.number().int().nonnegative(),
     includedLinkedContent: z.boolean(),
     durationMs: z.number().int().nonnegative(),
+  }),
+  // Slice C (Serpent-qvc6): renderer-side results for the 3D viewer requests.
+  // The Worker already emits these (workerSuccessResultSchema); Main passes
+  // them through untouched, so they must be parseable here too.
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('model.companions'),
+    assetId: nonBlankString,
+    companions: z.array(z.strictObject({
+      relativeFilePath: portableRelativePathSchema,
+      assetId: nonBlankString,
+      revisionId: nonBlankString,
+      extension: nonBlankString,
+    })).max(1000),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('model.convert-fbx.done'),
+    assetId: nonBlankString,
+    // 'ready' carries the cached GLB artifact; 'failed' carries a typed
+    // error code so the Renderer can route to the FBXLoader fallback.
+    status: z.enum(['ready', 'failed']),
+    glbArtifactId: nonBlankString.optional(),
+    glbRelativePath: nonBlankString.optional(),
+    errorCode: fbxConvertErrorCodeSchema.optional(),
+    reason: nonBlankString.optional(),
+    stats: fbxConversionStatsSchema.optional(),
+    missingTextures: z.array(nonBlankString).optional(),
+    warnings: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),

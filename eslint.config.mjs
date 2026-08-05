@@ -15,6 +15,8 @@ export default tseslint.config(
       'out/**',
       'coverage/**',
       'node_modules/**',
+      // Emscripten-generated glue (acquired by scripts/build-ufbx-wasm.mjs).
+      'resources/ufbx/**',
     ],
   },
   js.configs.recommended,

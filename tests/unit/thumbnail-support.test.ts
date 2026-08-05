@@ -19,6 +19,15 @@ describe("assetSupportsThumbnail", () => {
     ).toBe(true);
   });
 
+  it("treats model as thumbnail-capable (offscreen GPU renderer, slice E)", () => {
+    // The Worker raster queue never generates model thumbs, but the asset is
+    // eligible once the offscreen renderer lands — and it must never surface
+    // as a failed-thumbnail card in the meantime.
+    expect(
+      assetSupportsThumbnail({ mediaType: "model", displayName: "a.fbx" }),
+    ).toBe(true);
+  });
+
   it("rejects text and unknown formats", () => {
     expect(
       assetSupportsThumbnail({ mediaType: "text", displayName: "notes.md" }),

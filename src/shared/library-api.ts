@@ -40,6 +40,8 @@ import type {
 import type { RecentLibraryEntry } from './recent-libraries';
 import type { AiApiFormat } from './ai-endpoints';
 import type { AiReliabilitySettings } from './ai-reliability';
+import type { FbxConversionResult } from './fbx-conversion';
+import type { ModelCompanionAsset } from './model-companions';
 import type { PluginJobRecord } from '../plugins/plugin-jobs';
 
 export type LibraryApiResult<T> =
@@ -96,7 +98,7 @@ export interface ImportValidatedResult {
 
 export interface PreviewResolution {
   assetId: string;
-  mediaType: 'image' | 'video' | 'audio' | 'text' | 'other';
+  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other';
   status: 'ready' | 'pending' | 'failed' | 'missing';
   kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
   url?: string;
@@ -525,9 +527,16 @@ export interface SerpentLibraryApi {
     enqueued: number;
   }>>;
   // Thumbnail & Preview
-  requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId: string }>>;
+  // artifactId is absent for model assets: no Worker raster generator exists
+  // for them (Serpent-fu2i), so the no-op result carries no artifact.
+  requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
   requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
+  // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model
+  // previews. Only library-relative paths + ids; no absolute paths.
+  resolveModelCompanions(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ModelCompanionAsset[]>>;
+  /** FBX→GLB conversion; `failed` results carry a typed error code for fallback routing. */
+  convertModelFbx(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<FbxConversionResult>>;
   reportPreviewError(input: { libraryId: string; assetId: string; errorCode: string; detail?: string }): Promise<LibraryApiResult<void>>;
   openExternal(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   /** Open asset with a user-chosen application (macOS picker / Windows Open With). */

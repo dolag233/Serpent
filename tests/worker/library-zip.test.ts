@@ -312,10 +312,10 @@ describe('LibraryService ZIP export', () => {
       sourcePaths: [sourcePath],
     });
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
-    const thumb = await service.generateThumbnail({
+    const thumb = (await service.generateThumbnail({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
-    });
+    }))!;
     // Leftover temp name must not be packaged.
     writeFileSync(
       path.join(created.libraryPath, '.serpent', 'artifacts', `${thumb.artifactId}.wave-tmp.png`),

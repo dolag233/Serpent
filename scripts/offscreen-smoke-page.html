@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Serpent offscreen smoke page</title>
+    <style>
+      html, body { margin: 0; padding: 0; overflow: hidden; background: #1a1c1f; }
+      canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <script>
+      // Throwaway smoke page: renders ONE frame of a trivial scene with the
+      // same capture recipe as the production page (preserveDrawingBuffer +
+      // toDataURL) and reports pixel evidence to the smoke main.
+      const THREE = require('three');
+      const { ipcRenderer } = require('electron');
+
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        preserveDrawingBuffer: true,
+        alpha: false,
+      });
+      renderer.setPixelRatio(1);
+      renderer.setSize(512, 512, false);
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x1a1c1f);
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+      camera.position.set(2, 1.6, 2);
+      camera.lookAt(0, 0, 0);
+
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1, 1, 1),
+        new THREE.MeshStandardMaterial({ color: 0x4a90d9, metalness: 0.2, roughness: 0.4 }),
+      );
+      scene.add(mesh);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const key = new THREE.DirectionalLight(0xffffff, 1.2);
+      key.position.set(3, 5, 2);
+      scene.add(key);
+
+      renderer.render(scene, camera);
+
+      const dataUrl = renderer.domElement.toDataURL('image/png');
+      const gl = renderer.getContext();
+      const corner = new Uint8Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, corner);
+      const center = new Uint8Array(4);
+      gl.readPixels(256, 256, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, center);
+
+      ipcRenderer.send('smoke:rendered', {
+        status: 'ok',
+        dataUrlLength: dataUrl.length,
+        dataUrlPrefix: dataUrl.slice(0, 22),
+        corner: Array.from(corner),
+        center: Array.from(center),
+      });
+    </script>
+  </body>
+</html>
