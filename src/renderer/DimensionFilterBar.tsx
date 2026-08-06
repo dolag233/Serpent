@@ -20,7 +20,9 @@ import {
 } from "./filter-presets";
 import {
   applyDimensionSelectionClick,
+  formatGroupSelectionState,
   formatTokensHas,
+  toggleFormatGroup,
   toggleFormatToken,
 } from "./dimension-filter-selection";
 import {
@@ -131,6 +133,40 @@ export type DimensionFilterBarProps = {
   onShuffle?: () => void;
   onClearFilter: (id: ClearableFilterId) => void;
 };
+
+/** Category checkbox with native indeterminate for partial format selection. */
+function FormatGroupCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  disabled: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
+  return (
+    <label className="format-filter-group-check">
+      <input
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        ref={inputRef}
+        type="checkbox"
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
 
 function DimensionButton({
   icon,
@@ -730,7 +766,10 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "format"}
           />
           {openDimension === "format" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PopoverSurface
+              className="dimension-filter-popover is-wide format-filter-popover"
+              role="dialog"
+            >
               <input
                 aria-label={t("filter.format")}
                 className="text-field"
@@ -739,38 +778,64 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 placeholder="png, jpg, mp4"
                 value={formatFilter}
               />
-              {FORMAT_FILTER_GROUPS.map((group) => (
-                <div className="filter-preset-group" key={group.labelKey}>
-                  <span className="filter-preset-group-label">
-                    {t(group.labelKey)}
-                  </span>
-                  <div className="filter-presets" role="group">
-                    {group.extensions.map((ext) => {
-                      const active = formatTokensHas(formatFilter, ext);
-                      return (
-                        <button
-                          aria-pressed={active}
-                          className={`filter-preset-chip${active ? " is-active" : ""}`}
-                          disabled={controlsDisabled}
-                          key={ext}
-                          onClick={(event) =>
-                            setFormatFilter(
-                              toggleFormatToken(formatFilter, ext, event.shiftKey),
-                            )
-                          }
-                          type="button"
-                        >
-                          {ext}
-                        </button>
-                      );
-                    })}
+              {FORMAT_FILTER_GROUPS.map((group) => {
+                const groupState = formatGroupSelectionState(
+                  formatFilter,
+                  group.extensions,
+                );
+                return (
+                  <div className="format-filter-group" key={group.labelKey}>
+                    <FormatGroupCheckbox
+                      checked={groupState === "all"}
+                      disabled={controlsDisabled}
+                      indeterminate={groupState === "partial"}
+                      label={t(group.labelKey)}
+                      onToggle={() =>
+                        setFormatFilter(
+                          toggleFormatGroup(formatFilter, group.extensions),
+                        )
+                      }
+                    />
+                    <div className="filter-presets" role="group">
+                      {group.extensions.map((ext) => {
+                        const active = formatTokensHas(formatFilter, ext);
+                        return (
+                          <button
+                            aria-pressed={active}
+                            className={`filter-preset-chip${active ? " is-active" : ""}`}
+                            disabled={controlsDisabled}
+                            key={ext}
+                            onClick={(event) =>
+                              setFormatFilter(
+                                toggleFormatToken(
+                                  formatFilter,
+                                  ext,
+                                  event.shiftKey,
+                                ),
+                              )
+                            }
+                            type="button"
+                          >
+                            {ext}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-              <div className="filter-preset-group">
-                <span className="filter-preset-group-label">
-                  {t("filter.formatGroupOther")}
-                </span>
+                );
+              })}
+              <div className="format-filter-group">
+                <FormatGroupCheckbox
+                  checked={formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)}
+                  disabled={controlsDisabled}
+                  indeterminate={false}
+                  label={t("filter.formatGroupOther")}
+                  onToggle={() =>
+                    setFormatFilter(
+                      toggleFormatGroup(formatFilter, [FORMAT_TEXT_TOKEN]),
+                    )
+                  }
+                />
                 <div className="filter-presets" role="group">
                   <button
                     aria-pressed={formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)}

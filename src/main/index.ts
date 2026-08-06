@@ -266,6 +266,11 @@ import {
   type OffscreenThumbnailRenderer,
 } from "./offscreen-thumbnail-renderer";
 import {
+  clearModelThumbnailSourceAuthorizations,
+  registerModelThumbnailSourceAuthorizations,
+  resolveModelThumbnailSourceAuthorization,
+} from "./model-thumbnail-source-cache";
+import {
   createExtensionServer,
   type ExtensionServer,
   type SaveIntent,
@@ -4194,10 +4199,53 @@ async function startApplication(): Promise<void> {
   // Main replies with PNG bytes (or a typed failure) that the worker persists
   // as the standard `thumbnail` artifact.
   offscreenThumbnailRenderer = createOffscreenThumbnailRenderer({
-    createWindow: (options) => new BrowserWindow(options),
+    createWindow: (options) => {
+      const offscreenWindow = new BrowserWindow(options);
+      offscreenWindow.webContents.on(
+        "console-message",
+        (_event, level, message, line, sourceId) => {
+          logRendererConsoleMessage(logger, level, message, line, sourceId);
+        },
+      );
+      offscreenWindow.webContents.on(
+        "did-fail-load",
+        (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+          logger?.error(
+            "offscreen-thumbnail.page-load-failed",
+            new Error(`${errorCode}: ${errorDescription}`),
+            { errorCode, validatedURL, isMainFrame },
+          );
+        },
+      );
+      offscreenWindow.webContents.on("did-finish-load", () => {
+        logger?.info(
+          "offscreen-thumbnail.page-finished-load",
+          "Offscreen renderer page finished loading.",
+        );
+        void offscreenWindow.webContents
+          .executeJavaScript(
+            "({ readyState: document.readyState, body: document.body.innerHTML, hasBridge: Boolean(window.offscreenThumbnail), debug: window.__serpentOffscreenThumbnailDebug })",
+          )
+          .then((state) => {
+            logger?.info(
+              "offscreen-thumbnail.page-state",
+              "Inspected offscreen renderer page state.",
+              { state },
+            );
+          })
+          .catch((error: unknown) => {
+            logger?.error("offscreen-thumbnail.page-state", error);
+          });
+      });
+      return offscreenWindow;
+    },
     onFrameMessage: (listener) => {
-      ipcMain.on(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, listener);
-      return () => ipcMain.removeListener(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, listener);
+      const onFrameMessage = (_event: Electron.IpcMainEvent, payload: unknown): void => {
+        listener(payload);
+      };
+      ipcMain.on(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, onFrameMessage);
+      return () =>
+        ipcMain.removeListener(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, onFrameMessage);
     },
     logger: {
       error: (scope, error, context) => logger?.error(scope, error, context),
@@ -4209,7 +4257,7 @@ async function startApplication(): Promise<void> {
     }),
     preloadPath: path.join(__dirname, "offscreen.js"),
   });
-  workerClient.onModelThumbnailRenderRequest((request) => {
+  workerClient.onModelThumbnailRenderRequest((request, sourceAuthorizations) => {
     const renderer = offscreenThumbnailRenderer;
     if (!renderer) {
       return Promise.resolve({
@@ -4218,7 +4266,10 @@ async function startApplication(): Promise<void> {
         reason: "offscreen thumbnail renderer unavailable",
       });
     }
-    return renderer.renderModelThumbnail(request);
+    registerModelThumbnailSourceAuthorizations(sourceAuthorizations);
+    return renderer.renderModelThumbnail(request).finally(() => {
+      clearModelThumbnailSourceAuthorizations(sourceAuthorizations);
+    });
   });
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(
@@ -5026,6 +5077,11 @@ async function startApplication(): Promise<void> {
       }
 
       if (url.hostname === "source") {
+        logger?.info(
+          "serpent-protocol.source-request",
+          "Resolving a source asset request.",
+          { libraryId, assetId: artifactId },
+        );
         const revisionId = url.searchParams.get("revision");
         if (!revisionId || !/^[A-Za-z0-9_-]{1,255}$/.test(revisionId)) {
           logger?.info(
@@ -5033,6 +5089,34 @@ async function startApplication(): Promise<void> {
             "Rejected malformed source revision token.",
           );
           return new Response("Invalid revision", { status: 400 });
+        }
+        const authorizedSource = resolveModelThumbnailSourceAuthorization({
+          libraryId,
+          assetId: artifactId,
+          revisionId,
+        });
+        if (authorizedSource) {
+          try {
+            return createArtifactResponse(
+              authorizedSource.absolutePath,
+              authorizedSource.mimeType,
+              {
+                rangeHeader: request.headers.get("range"),
+                signal: request.signal,
+                onStreamError: (error) =>
+                  logger?.error("serpent-protocol.model-source-stream", error, {
+                    libraryId,
+                    assetId: artifactId,
+                  }),
+              },
+            );
+          } catch (error) {
+            logger?.error("serpent-protocol.model-source-read", error, {
+              libraryId,
+              assetId: artifactId,
+            });
+            return new Response("Source file missing", { status: 404 });
+          }
         }
         const sourceResult = await workerClient.request({
           type: "media.get-source-path",

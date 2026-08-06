@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyDimensionSelectionClick,
+  formatGroupSelectionState,
   formatTokensHas,
+  toggleFormatGroup,
   toggleFormatToken,
 } from "../../src/renderer/dimension-filter-selection";
 
@@ -84,5 +86,28 @@ describe("toggleFormatToken (REQ-FILTER-025)", () => {
     expect(formatTokensHas("text", "text")).toBe(true);
     expect(toggleFormatToken("png", "text", true)).toBe("png, text");
     expect(toggleFormatToken("text", "text", false)).toBe("");
+  });
+});
+
+describe("format group category toggle (FILTER-001 / Serpent-yc9n)", () => {
+  const imageExts = ["png", "jpg", "gif"] as const;
+
+  it("reports none / partial / all selection states", () => {
+    expect(formatGroupSelectionState("", imageExts)).toBe("none");
+    expect(formatGroupSelectionState("png", imageExts)).toBe("partial");
+    expect(formatGroupSelectionState("png, jpg, gif", imageExts)).toBe("all");
+  });
+
+  it("checking a category selects every extension in the group", () => {
+    expect(toggleFormatGroup("", imageExts)).toBe("png, jpg, gif");
+    expect(toggleFormatGroup("mp4", imageExts)).toBe("mp4, png, jpg, gif");
+  });
+
+  it("unchecking a fully-selected category clears only that group's tokens", () => {
+    expect(toggleFormatGroup("png, jpg, gif, mp4", imageExts)).toBe("mp4");
+  });
+
+  it("partial selection still expands to the full group", () => {
+    expect(toggleFormatGroup("png", imageExts)).toBe("png, jpg, gif");
   });
 });

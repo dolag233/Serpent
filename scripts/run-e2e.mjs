@@ -71,6 +71,26 @@ await build({
   },
 });
 
+// The hidden model-thumbnail BrowserWindow has its own preload bridge. Forge
+// builds it through the Vite plugin, but this production-like E2E entrypoint
+// assembles the build graph manually and must emit the same bundle.
+await build({
+  configFile: path.join(projectRoot, 'vite.offscreen-preload.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    lib: {
+      entry: path.join(projectRoot, 'src/preload/offscreen.ts'),
+      fileName: () => 'offscreen.js',
+      formats: ['cjs'],
+    },
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
 await build({
   configFile: path.join(projectRoot, 'vite.worker.config.ts'),
   resolve: nodeResolve,

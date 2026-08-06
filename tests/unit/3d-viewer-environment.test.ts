@@ -126,11 +126,6 @@ describe('scene environment/background separation (3D-06 / §5)', () => {
       background: 'theme',
       presetId: 'ferndale-studio-03',
     });
-    expect(resolveSceneEnvironmentPolicy({ presetId: 'custom' })).toEqual({
-      environment: 'hdri',
-      background: 'theme',
-      presetId: 'custom',
-    });
   });
 
   it('drops IBL but keeps the theme background without a preset', () => {

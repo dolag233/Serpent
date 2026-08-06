@@ -68,7 +68,7 @@ describe('viewer3d preferences (Serpent-qvc6 / 3D-09/3D-10 persistence)', () => 
     expect(
       parseViewer3dPreferences({ presetId: 'custom', lightIntensity: Number.NaN }),
     ).toEqual({
-      presetId: 'custom',
+      presetId: DEFAULT_HDRI_PRESET_ID,
       lightIntensity: DEFAULT_LIGHT_INTENSITY,
       displayMode: 'pbr',
     });

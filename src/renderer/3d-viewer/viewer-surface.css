@@ -58,6 +58,11 @@
   border-radius: 7px;
 }
 
+.model-viewer-toolbar-item.is-hdri {
+  position: relative;
+  min-width: 0;
+}
+
 .model-viewer-toolbar-label {
   font-size: 12px;
   color: var(--ui-content-secondary);
@@ -144,30 +149,24 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Non-blocking notices (limits warnings, FBX fallback, missing textures). */
-.model-viewer-notices {
+/* Non-blocking model feedback uses the shared info surface; this rule only
+   places it inside the viewport. */
+.model-viewer-info {
   position: absolute;
   left: 50%;
   bottom: 12px;
   transform: translateX(-50%);
   max-width: min(560px, 80%);
-  padding: 8px 12px;
-  border: 1px solid var(--ui-border-divider);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--ui-surface-overlay) 96%, transparent);
-  color: var(--ui-content-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-  text-align: center;
   z-index: 2;
 }
 
-.model-viewer-notices p {
-  margin: 0;
+.model-viewer-info-messages {
+  display: grid;
+  gap: 4px;
 }
 
-.model-viewer-notices p + p {
-  margin-top: 4px;
+.model-viewer-info-messages p {
+  margin: 0;
 }
 
 /* Loading / error overlays. */
@@ -229,41 +228,61 @@
   }
 }
 
-/* HDRI picker: trigger shows the active preset thumbnail; the popover lists
-   every preset with its preview image (1z07). */
+/* HDRI picker: the trigger stays compact and text-only; the popover gives
+   each bundled environment enough preview area to compare the presets. */
 .model-viewer-hdri-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
-  border: 1px solid var(--ui-border-control);
-  border-radius: var(--ui-radius-control);
-  background: var(--ui-surface-raised);
+  width: 150px;
+  max-width: 150px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--ui-border-subtle);
+  border-radius: 6px;
+  background: var(--ui-surface-pane);
   color: var(--ui-content-primary);
-  font-size: var(--ui-font-size-body);
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
+
+.model-viewer-hdri-trigger-name {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+  text-align: left;
+}
+
 .model-viewer-hdri-trigger:hover {
   background: var(--ui-action-hover);
 }
-.model-viewer-hdri-trigger-thumb,
+
 .model-viewer-hdri-option-thumb {
-  width: 40px;
-  height: 24px;
-  border-radius: 3px;
+  width: 144px;
+  height: 82px;
+  flex: 0 0 auto;
+  border-radius: 5px;
   object-fit: cover;
   background: var(--ui-surface-canvas);
 }
 .model-viewer-hdri-picker {
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 0;
+  right: 0;
+  left: auto;
   z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 220px;
-  padding: 6px;
+  width: 300px;
+  max-width: min(300px, calc(100vw - 48px));
+  padding: 8px;
   border: 1px solid var(--ui-border-divider);
   border-radius: 8px;
   background: var(--ui-surface-raised);
@@ -273,7 +292,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
+  padding: 6px;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -282,14 +301,18 @@
   text-align: left;
   cursor: pointer;
 }
+
+.model-viewer-hdri-option-name {
+  min-width: 0;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-font-size-caption);
+}
 .model-viewer-hdri-option:hover {
   background: var(--ui-action-hover);
 }
 .model-viewer-hdri-option.is-active {
   background: var(--ui-action-accent-soft);
-}
-.model-viewer-hdri-custom-note {
-  padding: 4px 6px;
-  color: var(--ui-content-tertiary);
-  font-size: var(--ui-font-size-caption);
 }

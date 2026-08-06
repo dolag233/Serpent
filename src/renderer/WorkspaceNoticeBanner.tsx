@@ -6,6 +6,7 @@ import { Notice } from './ui/patterns';
 
 export interface WorkspaceNoticeBannerProps {
   readonly message: ToastMessage;
+  readonly toastId: number;
   readonly closing: boolean;
   readonly undoLabel?: string;
   readonly onUndo?: () => void;
@@ -18,6 +19,7 @@ export interface WorkspaceNoticeBannerProps {
  */
 export function WorkspaceNoticeBanner({
   message,
+  toastId,
   closing,
   undoLabel,
   onUndo,
@@ -42,9 +44,11 @@ export function WorkspaceNoticeBanner({
           ) : null}
         </span>
       )}
-      className={`workspace-notice${closing ? ' is-closing' : ''}`}
+      className={`workspace-notice-item${closing ? ' is-closing' : ''}`}
+      data-toast-id={toastId}
       dismissLabel={t('common.closeHint')}
       dismissible
+      liveRegion={false}
       leading={(
         <span className="workspace-notice-icon" aria-hidden>
           <Icon name={iconName} size={15} />

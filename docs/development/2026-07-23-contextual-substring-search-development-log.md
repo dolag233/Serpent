@@ -72,6 +72,22 @@ as a search feature, or invoked by automatic searching.
 Additional typecheck, unit/worker suite, lint, real desktop exercise, review,
 and final QA evidence are recorded in the corresponding QA report as they run.
 
+## 2026-08-06 mainline follow-up
+
+The mainline gate exposed a regression in the one-character fallback path:
+queries that could not use trigram FTS still joined the `asset_search` virtual
+table in both count and data queries, even though the exact `instr()` predicate
+only needs `asset_search_index`. The join was made conditional on
+`useTrigramIndex`; the indexed row source remains available for exact matching.
+
+`npm run test:perf:search` passed after the query-plan correction:
+one performance test file, 5 tests passed. The full test suite still ran this
+benchmark concurrently with 350 other files and produced 1135.4ms, while the
+standalone benchmark passed. The regular `test` script now excludes this
+dedicated performance file; `verify:mainline` continues to run it separately
+through `test:perf:search`, so the performance gate remains active without
+measuring cross-file test contention.
+
 ## Known verification limits
 
 - The product desktop instance could not be driven through Computer Use because

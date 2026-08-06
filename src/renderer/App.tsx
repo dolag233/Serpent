@@ -446,7 +446,14 @@ type OrganizationRenameTarget = {
   name: string;
 };
 function renderFilenameHighlights(value: string, searchValue: string, keyPrefix: string): ReactNode {
-  return splitSearchHighlights(value, searchValue, "filename").map((segment, index) =>
+  const segments = splitSearchHighlights(value, searchValue, "filename");
+  // Keep the ordinary, non-search path as a text node. Wrapping every
+  // segment in an inline span prevents text-overflow from producing the
+  // intended middle ellipsis inside the flex prefix.
+  if (segments.length === 1 && !segments[0]!.matched) {
+    return segments[0]!.text;
+  }
+  return segments.map((segment, index) =>
     segment.matched ? (
       <mark className="search-text-highlight" key={`${keyPrefix}-match-${index}`}>
         {segment.text}
@@ -529,6 +536,7 @@ function MasonryColumns({
   const availableWidthRef = useRef(0);
   const restoreFrameRef = useRef<number | null>(null);
   const scrollSnapshotRef = useRef<number | null>(null);
+  const rawRestoreTargetRef = useRef<number | null>(null);
   const suspendScrollRestorationRef = useRef(suspendScrollRestoration);
 
   useLayoutEffect(() => {
@@ -539,6 +547,7 @@ function MasonryColumns({
       restoreFrameRef.current = null;
     }
     scrollSnapshotRef.current = null;
+    rawRestoreTargetRef.current = null;
   }, [suspendScrollRestoration]);
 
   useLayoutEffect(() => {
@@ -559,8 +568,10 @@ function MasonryColumns({
           Math.max(0, snapshot),
           Math.max(0, root.scrollHeight - root.clientHeight),
         );
+        rawRestoreTargetRef.current = root.scrollTop;
         if (remaining <= 0) {
           scrollSnapshotRef.current = null;
+          rawRestoreTargetRef.current = null;
           restoreFrameRef.current = null;
           return;
         }
@@ -578,6 +589,7 @@ function MasonryColumns({
         // replay a competing raw scrollTop here.
         availableWidthRef.current = width;
         scrollSnapshotRef.current = null;
+        rawRestoreTargetRef.current = null;
         if (restoreFrameRef.current !== null) {
           cancelAnimationFrame(restoreFrameRef.current);
           restoreFrameRef.current = null;
@@ -588,6 +600,7 @@ function MasonryColumns({
       if (suspendScrollRestorationRef.current) {
         availableWidthRef.current = width;
         scrollSnapshotRef.current = null;
+        rawRestoreTargetRef.current = null;
         if (restoreFrameRef.current !== null) {
           cancelAnimationFrame(restoreFrameRef.current);
           restoreFrameRef.current = null;
@@ -599,6 +612,7 @@ function MasonryColumns({
       if (widthChanged) {
         availableWidthRef.current = width;
         if (root) scrollSnapshotRef.current = root.scrollTop;
+        rawRestoreTargetRef.current = null;
         setAvailableWidth(width);
       }
       if (scrollSnapshotRef.current !== null) {
@@ -609,11 +623,30 @@ function MasonryColumns({
         scheduleRawRestore();
       }
     };
+    const root = canvas();
+    const cancelRawRestoreOnUserScroll = () => {
+      const expected = rawRestoreTargetRef.current;
+      if (
+        expected !== null &&
+        Math.abs((root?.scrollTop ?? 0) - expected) < 0.5
+      ) {
+        rawRestoreTargetRef.current = null;
+        return;
+      }
+      scrollSnapshotRef.current = null;
+      rawRestoreTargetRef.current = null;
+      if (restoreFrameRef.current !== null) {
+        cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = null;
+      }
+    };
     updateWidth();
     const observer = new ResizeObserver(updateWidth);
     observer.observe(element);
+    root?.addEventListener("scroll", cancelRawRestoreOnUserScroll, { passive: true });
     return () => {
       observer.disconnect();
+      root?.removeEventListener("scroll", cancelRawRestoreOnUserScroll);
       if (restoreFrameRef.current !== null) {
         cancelAnimationFrame(restoreFrameRef.current);
       }
@@ -722,18 +755,20 @@ function AppInner() {
     "importing",
   ].includes(uiState);
   // Toast + fatal alert (REQ-SHELL-010 / Serpent-99lv): controller owns
-  // auto-dismiss, severity priority, and the toast closing lifecycle.
+  // auto-dismiss, stack ordering, and the toast closing lifecycle.
   const {
-    rendered: renderedToast,
-    closing: toastClosing,
+    renderedStack: renderedToastStack,
     fatal: fatalAlertMessage,
     setError,
     setWarning,
     setNotice,
     setFatal,
-    dismissVisible,
+    dismissToast,
     handleToastTransitionEnd,
   } = useToastNotifications();
+  const topVisibleToastId = renderedToastStack.find(
+    (entry) => !entry.closing,
+  )?.id;
   const dismissFatalAlert = useCallback(() => {
     setFatalDialogTitle(null);
     setFatal(null);
@@ -6869,22 +6904,11 @@ function AppInner() {
         scheduleSilentReload();
         return;
       }
-      void Promise.resolve().then(async () => {
-        try {
-          await reloadCurrentContentRef.current();
-          if (selectedAssetId) {
-            const metadata = await api.getAssetMetadata({
-              libraryId: library.libraryId,
-              assetId: selectedAssetId,
-            });
-            if (metadata.ok) {
-              applyLoadedMetadata(selectedAssetId, metadata.value);
-            }
-          }
-        } catch (caught) {
-          setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
-        }
-      });
+      // Library changes can arrive immediately before a user navigation (for
+      // example, a trash operation followed by opening the Trash scope).
+      // Debounce the passive refresh so it observes the destination scope
+      // instead of racing the explicit navigation load.
+      scheduleSilentReload();
     });
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
@@ -8864,28 +8888,47 @@ function AppInner() {
         <div
           className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
-          {renderedToast
+          {renderedToastStack.length > 0
             ? createPortal(
-                <WorkspaceNoticeBanner
-                  closing={toastClosing}
-                  message={renderedToast}
-                  onDismiss={() => dismissVisible()}
-                  onTransitionEnd={handleToastTransitionEnd}
-                  onUndo={
-                    lastUndoableOp && renderedToast.kind === "notice"
-                      ? () => void undoLastFileOp()
-                      : undefined
-                  }
-                  undoLabel={
-                    lastUndoableOp && renderedToast.kind === "notice"
-                      ? lastUndoableOp.kind === "copy"
-                        ? t("action.undoCopy")
-                        : lastUndoableOp.kind === "move"
-                          ? t("action.undoMove")
-                          : t("action.undoTrash")
-                      : undefined
-                  }
-                />,
+                <div
+                  aria-atomic="false"
+                  aria-live="polite"
+                  className="workspace-notice-stack workspace-notice"
+                >
+                  {renderedToastStack.map((message) => {
+                    const isUndoTarget =
+                      !message.closing &&
+                      message.id === topVisibleToastId;
+                    return (
+                      <WorkspaceNoticeBanner
+                        key={message.id}
+                        closing={message.closing}
+                        message={message}
+                        onDismiss={() => dismissToast(message.id)}
+                        onTransitionEnd={handleToastTransitionEnd}
+                        onUndo={
+                          lastUndoableOp &&
+                          message.kind === "notice" &&
+                          isUndoTarget
+                            ? () => void undoLastFileOp()
+                            : undefined
+                        }
+                        toastId={message.id}
+                        undoLabel={
+                          lastUndoableOp &&
+                          message.kind === "notice" &&
+                          isUndoTarget
+                            ? lastUndoableOp.kind === "copy"
+                              ? t("action.undoCopy")
+                              : lastUndoableOp.kind === "move"
+                                ? t("action.undoMove")
+                                : t("action.undoTrash")
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </div>,
                 document.body,
               )
             : null}
@@ -8986,17 +9029,6 @@ function AppInner() {
           }}
           ref={workspaceCanvasRef}
         >
-          {externalDropActive && (
-            <div className="external-drop-overlay" role="status">
-              <Icon name="upload" size={28} />
-              <strong>{t("toolbar.dropToImport")}</strong>
-              <span>
-                {activeCollectionId
-                  ? t("toolbar.dropHintWithCollection")
-                  : t("toolbar.dropHint")}
-              </span>
-            </div>
-          )}
           {marqueeBox && (
             <div
               className="marquee-selection-box"
@@ -9705,6 +9737,19 @@ function AppInner() {
             )
           ) : null}
         </div>
+        {/* Drop overlay lives outside the scrollable canvas so it stays put
+            while the browse grid scrolls (Serpent-ns3r). */}
+        {externalDropActive && (
+          <div className="external-drop-overlay" role="status">
+            <Icon name="upload" size={28} />
+            <strong>{t("toolbar.dropToImport")}</strong>
+            <span>
+              {activeCollectionId
+                ? t("toolbar.dropHintWithCollection")
+                : t("toolbar.dropHint")}
+            </span>
+          </div>
+        )}
         </div>
         {previewAsset && library && api && (
           <AssetPreviewModal
@@ -9719,6 +9764,7 @@ function AppInner() {
               void persistAssetColorSpace(assetId, colorSpace);
             }}
             onClose={() => void closeAssetPreview()}
+            onInfoNotice={setNotice}
             onNext={
               previewIndex >= 0 && previewIndex < visibleAssets.length - 1
                 ? () => navigateAssetPreview(visibleAssets[previewIndex + 1]!)

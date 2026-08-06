@@ -40,6 +40,7 @@ import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
+import { detectPbrTextureChannel } from "./pbr-texture-channel";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
@@ -68,6 +69,8 @@ interface AssetPreviewModalProps {
   onClose(): void;
   onNext?: () => void;
   onPrevious?: () => void;
+  /** Shell Info stack for 3D non-blocking notices (MODEL-004). */
+  onInfoNotice?: (message: string) => void;
   pluginApi?: SerpentPluginManagerApi;
   pluginContributionRefreshKey?: string | null;
 }
@@ -190,6 +193,7 @@ export const AssetPreviewModal = forwardRef<
     onClose,
     onNext,
     onPrevious,
+    onInfoNotice,
     pluginApi,
     pluginContributionRefreshKey = null,
   },
@@ -622,6 +626,10 @@ export const AssetPreviewModal = forwardRef<
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
   const imageSrc = resolution?.url ?? placeholderUrl;
+  const pbrChannel =
+    asset.mediaType === "image"
+      ? detectPbrTextureChannel(asset.displayName)
+      : null;
   const showImage =
     asset.mediaType === "image" &&
     Boolean(imageSrc) &&
@@ -783,6 +791,7 @@ export const AssetPreviewModal = forwardRef<
               key={`${libraryId}:${asset.assetId}`}
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
+              onInfoNotice={onInfoNotice}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "text" ? (
@@ -811,6 +820,7 @@ export const AssetPreviewModal = forwardRef<
               onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
+              pbrChannel={pbrChannel}
               placeholderSrc={placeholderUrl ?? undefined}
               src={imageSrc}
             />

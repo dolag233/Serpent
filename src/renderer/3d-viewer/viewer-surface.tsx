@@ -48,6 +48,10 @@ import {
   type ModelViewerErrorCode,
 } from './error-messages';
 import { loadHdrEnvironment, type EnvironmentHandle } from './environment';
+import {
+  environmentYawDelta,
+  startsEnvironmentRotation,
+} from './environment-rotation-gesture';
 import { clampLightIntensity } from './light-intensity';
 import { DEFAULT_DISPLAY_MODE, type ModelDisplayMode } from './model-display-mode';
 import { setupGroundShadow } from './ground-shadow';
@@ -80,6 +84,8 @@ export interface ModelViewerSurfaceProps {
   readonly sourceUrl: string;
   readonly isFullscreen: boolean;
   onFullscreen(): void;
+  /** Emit non-blocking load notices into the shell Info stack (MODEL-004). */
+  onInfoNotice?(message: string): void;
 }
 
 type ViewPhase = 'loading' | 'ready' | 'error';
@@ -91,6 +97,7 @@ interface ViewError {
 export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const { locale, t } = useLocale();
   const { resolved: themeMode, themeRevision } = useTheme();
+  const onInfoNotice = props.onInfoNotice;
   const containerRef = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<ViewPhase>('loading');
   const [viewError, setViewError] = useState<ViewError | null>(null);
@@ -109,7 +116,7 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
   const composerRef = useRef<SceneComposer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const environmentRef = useRef<EnvironmentHandle | null>(null);
-  const environmentDragRef = useRef<{ pointerId: number; startX: number } | null>(null);
+  const environmentDragRef = useRef<{ pointerId: number; lastX: number } | null>(null);
 
   const presetId = preferences.presetId;
   const lightIntensity = preferences.lightIntensity;
@@ -214,8 +221,9 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     controls.screenSpacePanning = true;
     // 3D-01: wheel zoom keeps the cursor's world point under the cursor.
     controls.zoomToCursor = true;
-    // Right-drag rotates the HDRI light source (Serpent-v4jt), so the right
-    // mouse button is not a camera control.
+    // Right-drag and Ctrl+left-drag rotate the HDRI light source
+    // (Serpent-v4jt / Serpent-xjcy), so the right mouse button is not a camera
+    // control and Ctrl+left is reserved for the trackpad gesture.
     controls.mouseButtons = {
       LEFT: MOUSE.ROTATE,
       MIDDLE: MOUSE.DOLLY,
@@ -226,28 +234,35 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
     const onContextMenu = (event: Event) => event.preventDefault();
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
     const onEnvironmentPointerDown = (event: PointerEvent) => {
-      if (event.button !== 2) return;
-      environmentDragRef.current = { pointerId: event.pointerId, startX: event.clientX };
+      if (!startsEnvironmentRotation(event)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      environmentDragRef.current = { pointerId: event.pointerId, lastX: event.clientX };
       renderer.domElement.setPointerCapture(event.pointerId);
     };
     const onEnvironmentPointerMove = (event: PointerEvent) => {
       const drag = environmentDragRef.current;
       if (drag === null || event.pointerId !== drag.pointerId) return;
-      const deltaX = event.clientX - drag.startX;
-      drag.startX = event.clientX;
-      // ~0.005 rad per pixel; a full-width drag is roughly half a turn.
-      setEnvironmentYaw((current) => current - deltaX * 0.005);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const deltaYaw = environmentYawDelta(drag.lastX, event.clientX);
+      drag.lastX = event.clientX;
+      setEnvironmentYaw((current) => current + deltaYaw);
     };
     const onEnvironmentPointerUp = (event: PointerEvent) => {
       const drag = environmentDragRef.current;
       if (drag === null || event.pointerId !== drag.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       environmentDragRef.current = null;
       renderer.domElement.releasePointerCapture(event.pointerId);
     };
-    renderer.domElement.addEventListener('pointerdown', onEnvironmentPointerDown);
-    renderer.domElement.addEventListener('pointermove', onEnvironmentPointerMove);
-    renderer.domElement.addEventListener('pointerup', onEnvironmentPointerUp);
-    renderer.domElement.addEventListener('pointercancel', onEnvironmentPointerUp);
+    // Capture-phase listeners run before OrbitControls' bubble listeners,
+    // preventing a Ctrl+left gesture from rotating the model at the same time.
+    renderer.domElement.addEventListener('pointerdown', onEnvironmentPointerDown, true);
+    renderer.domElement.addEventListener('pointermove', onEnvironmentPointerMove, true);
+    renderer.domElement.addEventListener('pointerup', onEnvironmentPointerUp, true);
+    renderer.domElement.addEventListener('pointercancel', onEnvironmentPointerUp, true);
 
     const onDoubleClick = () => controls.reset();
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
@@ -389,10 +404,10 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.domElement.removeEventListener('contextmenu', onContextMenu);
-      renderer.domElement.removeEventListener('pointerdown', onEnvironmentPointerDown);
-      renderer.domElement.removeEventListener('pointermove', onEnvironmentPointerMove);
-      renderer.domElement.removeEventListener('pointerup', onEnvironmentPointerUp);
-      renderer.domElement.removeEventListener('pointercancel', onEnvironmentPointerUp);
+      renderer.domElement.removeEventListener('pointerdown', onEnvironmentPointerDown, true);
+      renderer.domElement.removeEventListener('pointermove', onEnvironmentPointerMove, true);
+      renderer.domElement.removeEventListener('pointerup', onEnvironmentPointerUp, true);
+      renderer.domElement.removeEventListener('pointercancel', onEnvironmentPointerUp, true);
       controls.dispose();
       controlsRef.current = null;
       environmentRef.current?.dispose();
@@ -487,6 +502,35 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
       )
     : null;
 
+  // MODEL-004 / Serpent-osr0: route non-blocking notices to the shell Info
+  // stack once per message per load, instead of hanging under the viewport.
+  const emittedInfoRef = useRef(new Set<string>());
+  useEffect(() => {
+    emittedInfoRef.current.clear();
+  }, [loadEpoch]);
+  useEffect(() => {
+    if (effectivePhase !== 'ready' || !onInfoNotice) return;
+    const messages = [
+      ...warnings.map((warning) =>
+        warning.code === 'MODEL_TRIANGLES_HIGH'
+          ? t('viewer3d.notice.trianglesHigh', {
+              count: String(warning.triangles),
+              threshold: String(warning.threshold),
+            })
+          : t('viewer3d.notice.textureHighRes', {
+              edge: String(warning.maxEdge),
+              limit: String(warning.maxEdgeLimit),
+            }),
+      ),
+      ...notices,
+    ];
+    for (const message of messages) {
+      if (emittedInfoRef.current.has(message)) continue;
+      emittedInfoRef.current.add(message);
+      onInfoNotice(message);
+    }
+  }, [effectivePhase, warnings, notices, onInfoNotice, t]);
+
   return (
     <div
       className="model-viewer-surface"
@@ -530,26 +574,6 @@ export function ModelViewerSurface(props: ModelViewerSurfaceProps) {
               locale={locale}
               stats={stats}
             />
-          ) : null}
-          {warnings.length > 0 || notices.length > 0 ? (
-            <div className="model-viewer-notices" role="status">
-              {warnings.map((warning) => (
-                <p key={warning.code}>
-                  {warning.code === 'MODEL_TRIANGLES_HIGH'
-                    ? t('viewer3d.notice.trianglesHigh', {
-                        count: String(warning.triangles),
-                        threshold: String(warning.threshold),
-                      })
-                    : t('viewer3d.notice.textureHighRes', {
-                        edge: String(warning.maxEdge),
-                        limit: String(warning.maxEdgeLimit),
-                      })}
-                </p>
-              ))}
-              {notices.map((notice) => (
-                <p key={notice}>{notice}</p>
-              ))}
-            </div>
           ) : null}
         </>
       ) : null}

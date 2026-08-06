@@ -7,7 +7,13 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test, type Page } from "@playwright/test";
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Page,
+} from "@playwright/test";
 import sharp from "sharp";
 
 import {
@@ -233,6 +239,89 @@ test("restores canvas preferences after a full restart", async () => {
   }
 });
 
+test("uses a middle ellipsis for long filenames in cards and Inspector", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-filename-display-"),
+  );
+  const libraryName = "文件名省略";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const profilePath = path.join(temporaryRoot, "profile");
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  const longFilename =
+    "wertyuiasddfhgasfjagfhjbvhjbavasdad.png";
+  mkdirSync(profilePath);
+  mkdirSync(sourceRoot);
+  const sourcePath = path.join(sourceRoot, longFilename);
+  writeFileSync(sourcePath, VALID_PNG);
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  let application: ElectronApplication | undefined;
+  try {
+    application = await electron.launch({
+      args: [applicationDirectory],
+      cwd: applicationDirectory,
+      executablePath,
+      env: {
+        ...process.env,
+        SERPENT_E2E: "1",
+        SERPENT_E2E_USER_DATA_PATH: profilePath,
+        SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+        SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+        SERPENT_E2E_IMPORT_FILES: sourcePath,
+      },
+    });
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await expect(
+      window.getByText(libraryName, { exact: true }).first(),
+    ).toBeVisible();
+    await importFilesThroughBridge(window);
+
+    const card = window.locator(".asset-card").first();
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await expect(card.locator(".asset-filename-tail")).toHaveText("dad");
+    await expect(card.locator(".asset-filename-extension")).toHaveText(".png");
+    const cardPrefix = await card
+      .locator(".asset-filename-prefix")
+      .evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+          textOverflow: style.textOverflow,
+        };
+      });
+    expect(cardPrefix.textOverflow).toBe("ellipsis");
+    expect(cardPrefix.scrollWidth).toBeGreaterThan(cardPrefix.clientWidth);
+
+    await card.click();
+    const inspectorTitle = window.locator(".inspector-hero-title");
+    await expect(inspectorTitle).toBeVisible();
+    await expect(inspectorTitle.locator(".asset-filename-tail")).toHaveText("dad");
+    await expect(inspectorTitle.locator(".asset-filename-extension")).toHaveText(
+      ".png",
+    );
+    const inspectorPrefix = await inspectorTitle
+      .locator(".asset-filename-prefix")
+      .evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        textOverflow: getComputedStyle(element).textOverflow,
+      }));
+    expect(inspectorPrefix.textOverflow).toBe("ellipsis");
+    expect(inspectorPrefix.scrollWidth).toBeGreaterThan(
+      inspectorPrefix.clientWidth,
+    );
+  } finally {
+    await application?.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 test("lays out a sparse masonry folder from left to right", async () => {
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-prefs-sparse-masonry-"),
@@ -440,15 +529,18 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
     await window.keyboard.down("Control");
     await window.mouse.wheel(0, -600);
     await window.keyboard.up("Control");
+    await expect
+      .poll(async () => Number(await sizeSlider.inputValue()))
+      .toBeGreaterThan(startingZoomIndex);
     const afterZoomIn = await sizeSlider.inputValue();
-    expect(Number(afterZoomIn)).toBeGreaterThan(startingZoomIndex);
 
     // Ctrl+wheel UP (positive deltaY) → zoom OUT → cardSize DECREASES
     await window.keyboard.down("Control");
     await window.mouse.wheel(0, 600);
     await window.keyboard.up("Control");
-    const afterZoomOut = await sizeSlider.inputValue();
-    expect(Number(afterZoomOut)).toBeLessThan(Number(afterZoomIn));
+    await expect
+      .poll(async () => Number(await sizeSlider.inputValue()))
+      .toBeLessThan(Number(afterZoomIn));
 
     // Zoom out hard repeatedly → clamp at 96
     for (let i = 0; i < 10; i++) {

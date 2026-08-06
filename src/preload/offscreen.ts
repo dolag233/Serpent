@@ -29,3 +29,5 @@ contextBridge.exposeInMainWorld('offscreenThumbnail', {
     ipcRenderer.send(OFFSCREEN_THUMBNAIL_FRAME_CHANNEL, payload);
   },
 });
+
+console.log('offscreen-thumbnail.preload-ready');

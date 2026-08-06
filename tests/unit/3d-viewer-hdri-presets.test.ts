@@ -9,7 +9,6 @@ import {
   DEFAULT_HDRI_PRESET_ID,
   HDRI_PRESETS,
   getHdriPreset,
-  isBundledHdriPresetId,
   parseHdriPresetId,
   resolveHdriBundleUrl,
   type HdriPreset,
@@ -62,8 +61,6 @@ describe('hdri-presets (Serpent-v363 / 3D-09)', () => {
     expect(getHdriPreset('ferndale-studio-03')?.category).toBe('studio');
     expect(getHdriPreset('pergola-walkway')?.category).toBe('natural');
     expect(getHdriPreset('custom')).toBeNull();
-    expect(isBundledHdriPresetId('custom')).toBe(false);
-    expect(isBundledHdriPresetId('scythian-tombs-2')).toBe(true);
   });
 
   it('resolves bundle URLs to the matching asset file', () => {
@@ -94,7 +91,7 @@ describe('hdri-presets (Serpent-v363 / 3D-09)', () => {
     expect(parseHdriPresetId('dancing-hall')).toBe('dancing-hall');
     // Legacy ids from before the preset swap fall back to the default.
     expect(parseHdriPresetId('studio-small-09')).toBe(DEFAULT_HDRI_PRESET_ID);
-    expect(parseHdriPresetId('custom')).toBe('custom');
+    expect(parseHdriPresetId('custom')).toBe(DEFAULT_HDRI_PRESET_ID);
     expect(parseHdriPresetId('not-a-preset')).toBe(DEFAULT_HDRI_PRESET_ID);
     expect(parseHdriPresetId(42)).toBe(DEFAULT_HDRI_PRESET_ID);
     expect(parseHdriPresetId(null)).toBe(DEFAULT_HDRI_PRESET_ID);

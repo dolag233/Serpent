@@ -11,9 +11,8 @@ import {
  *
  * The preset receipt table (ids, display names, acquisition sha256/size)
  * lives in `src/shared/hdri-presets.ts` and is re-exported here unchanged;
- * this module adds the renderer-only pieces: the `custom` pseudo-id (user
- * picked `.hdr`, slice F), the persisted-value zod schema, and the runtime
- * bundle URL map built with `import.meta.glob` (`?url`).
+ * this module adds the renderer-only persisted-value zod schema and the
+ * runtime bundle URL map built with `import.meta.glob` (`?url`).
  *
  * Two 1K (1024×512) equirectangular `.hdr` files from Poly Haven, CC0
  * (public domain — no attribution, no registration), bundled with the app:
@@ -28,24 +27,17 @@ import {
 export { HDRI_PRESETS } from '../../shared/hdri-presets';
 export type { BundledHdriPresetId, HdriPreset, HdriPresetCategory } from '../../shared/hdri-presets';
 
-export const HDRI_PRESET_IDS: readonly [
-  BundledHdriPresetId,
-  BundledHdriPresetId,
-  'custom',
-] = [HDRI_PRESETS[0]!.id, HDRI_PRESETS[1]!.id, 'custom'];
+export const HDRI_PRESET_IDS = HDRI_PRESETS.map(
+  (preset) => preset.id,
+) as readonly BundledHdriPresetId[];
 
-export type HdriPresetId = (typeof HDRI_PRESET_IDS)[number];
+export type HdriPresetId = BundledHdriPresetId;
 
 /** Preset the viewer opens with (studio softbox matches DAM preview norms). */
 export const DEFAULT_HDRI_PRESET_ID: BundledHdriPresetId = 'ferndale-studio-03';
 
-export function isBundledHdriPresetId(id: HdriPresetId): id is BundledHdriPresetId {
-  return id !== 'custom';
-}
-
-/** Look up a bundled preset; `custom` (user-picked file, slice F) returns null. */
-export function getHdriPreset(id: HdriPresetId): HdriPreset | null {
-  if (!isBundledHdriPresetId(id)) return null;
+/** Look up a bundled preset. */
+export function getHdriPreset(id: string): HdriPreset | null {
   return HDRI_PRESETS.find((preset) => preset.id === id) ?? null;
 }
 
@@ -81,7 +73,7 @@ export function resolveHdriPreviewUrl(preset: HdriPreset): string | null {
 
 /** Zod schema for persisting the selected preset id (viewer toolbar, slice C). */
 export const hdriPresetIdSchema = z.enum(
-  [...HDRI_PRESET_IDS] as unknown as [HdriPresetId, ...HdriPresetId[]],
+  [...HDRI_PRESET_IDS] as [HdriPresetId, ...HdriPresetId[]],
 );
 
 /** Parse an untrusted persisted/input preset id, falling back to the default. */

@@ -19,8 +19,10 @@ export interface UseToastNotificationsReturn extends ToastSnapshot {
   setNotice: (text: string | null) => void;
   /** Blocking fatal modal body; null clears. */
   setFatal: (text: string | null) => void;
-  /** Clear only the currently visible toast channel (not fatal). */
+  /** Start closing the highest-severity visible toast. */
   dismissVisible: () => void;
+  /** Start closing one toast entry without affecting its siblings. */
+  dismissToast: (id: number) => void;
   /** Attach to the toast element's onTransitionEnd. */
   handleToastTransitionEnd: (event: TransitionEvent) => void;
 }
@@ -42,7 +44,11 @@ export function useToastNotifications(): UseToastNotificationsReturn {
   );
   const handleToastTransitionEnd = useCallback(
     (event: TransitionEvent) => {
-      if (event.propertyName === "opacity") controller.finishExit();
+      if (event.propertyName !== "opacity") return;
+      const id = Number(
+        (event.currentTarget as HTMLElement).dataset.toastId,
+      );
+      controller.finishExit(Number.isFinite(id) ? id : undefined);
     },
     [controller],
   );
@@ -53,6 +59,7 @@ export function useToastNotifications(): UseToastNotificationsReturn {
     setNotice: controller.setNotice,
     setFatal: controller.setFatal,
     dismissVisible: controller.dismissVisible,
+    dismissToast: controller.dismissToast,
     handleToastTransitionEnd,
   };
 }

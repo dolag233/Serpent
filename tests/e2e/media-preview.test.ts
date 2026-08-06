@@ -153,9 +153,13 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       '.inspector-hero-preview img[alt="automatic.png"]',
     );
     await expectImageDecoded(inspectorThumbnail);
-    expect(
-      await inspectorThumbnail.evaluate((image) => getComputedStyle(image).objectFit),
-    ).toBe("contain");
+    await expect
+      .poll(() =>
+        inspectorThumbnail.evaluate(
+          (image) => getComputedStyle(image).objectFit,
+        ),
+      )
+      .toBe("contain");
     const inspectorPreviewLayout = await inspectorThumbnail.evaluate((image) => {
       if (!(image instanceof HTMLImageElement)) {
         throw new Error("Inspector preview is not an image");

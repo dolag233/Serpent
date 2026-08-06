@@ -44,15 +44,19 @@ export function formatTokensHas(formatFilter: string, ext: string): boolean {
  * The special `text` token (Serpent-4l7) is stored as-is and expanded to
  * TEXT_EXTENSIONS only when building the worker query.
  */
+function parseFormatTokens(formatFilter: string): string[] {
+  return formatFilter
+    .split(",")
+    .map((token) => token.trim().replace(/^\./, ""))
+    .filter(Boolean);
+}
+
 export function toggleFormatToken(
   formatFilter: string,
   ext: string,
   shiftKey: boolean,
 ): string {
-  const tokens = formatFilter
-    .split(",")
-    .map((token) => token.trim().replace(/^\./, ""))
-    .filter(Boolean);
+  const tokens = parseFormatTokens(formatFilter);
   const lower = ext.toLowerCase();
   const exists = tokens.some((token) => token.toLowerCase() === lower);
 
@@ -64,4 +68,48 @@ export function toggleFormatToken(
   }
   const isSoleSelection = tokens.length === 1 && exists;
   return isSoleSelection ? "" : ext;
+}
+
+export type FormatGroupSelectionState = "none" | "partial" | "all";
+
+/** How many of a format group's extensions are currently selected. */
+export function formatGroupSelectionState(
+  formatFilter: string,
+  extensions: readonly string[],
+): FormatGroupSelectionState {
+  if (extensions.length === 0) return "none";
+  let selected = 0;
+  for (const extension of extensions) {
+    if (formatTokensHas(formatFilter, extension)) selected += 1;
+  }
+  if (selected === 0) return "none";
+  if (selected === extensions.length) return "all";
+  return "partial";
+}
+
+/**
+ * Category checkbox: when unchecked/partial → select every extension in the
+ * group (OR into existing tokens). When all selected → clear that group only.
+ */
+export function toggleFormatGroup(
+  formatFilter: string,
+  extensions: readonly string[],
+): string {
+  const tokens = parseFormatTokens(formatFilter);
+  const groupLower = new Set(
+    extensions.map((extension) => extension.toLowerCase()),
+  );
+  const state = formatGroupSelectionState(formatFilter, extensions);
+  if (state === "all") {
+    return tokens
+      .filter((token) => !groupLower.has(token.toLowerCase()))
+      .join(", ");
+  }
+  const next = [...tokens];
+  for (const extension of extensions) {
+    if (!tokens.some((token) => token.toLowerCase() === extension.toLowerCase())) {
+      next.push(extension);
+    }
+  }
+  return next.join(", ");
 }

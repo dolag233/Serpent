@@ -16032,7 +16032,7 @@ export class LibraryService {
             AND technical_thumbnail.status = 'ready'
             AND technical_thumbnail.invalidated_at IS NULL
            JOIN asset_search_index sc ON a.asset_id = sc.asset_id
-           JOIN asset_search s ON sc.rowid = s.rowid`
+           ${useTrigramIndex ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
       : `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -22191,30 +22191,20 @@ export class LibraryService {
       entry,
       entrySha256,
       existingSize,
-      existingAbsolutePath,
       contentHashCache,
       seenContentHashes,
       ignoreBatchContentHash = false,
     } = input;
 
-    if (!ignoreBatchContentHash && seenContentHashes.has(entrySha256)) {
-      return 'suspected-duplicate';
+    // Path collision always wins (IMPORT-007 / Serpent-12ae): same destination
+    // basename is a name conflict even when the bytes also match. Content
+    // duplicate is reserved for free destination names with matching content.
+    if (existingSize !== undefined) {
+      return 'name-conflict';
     }
 
-    if (existingSize !== undefined) {
-      if (existingSize === -1) return 'name-conflict';
-      if (existingSize !== entry.byteSize) return 'name-conflict';
-      if (!existingAbsolutePath) return 'name-conflict';
-      let destinationHash = contentHashCache.get(existingAbsolutePath);
-      if (destinationHash === undefined) {
-        try {
-          destinationHash = sha256FileAtPath(existingAbsolutePath);
-          contentHashCache.set(existingAbsolutePath, destinationHash);
-        } catch {
-          return 'name-conflict';
-        }
-      }
-      return destinationHash === entrySha256 ? 'suspected-duplicate' : 'name-conflict';
+    if (!ignoreBatchContentHash && seenContentHashes.has(entrySha256)) {
+      return 'suspected-duplicate';
     }
 
     if (

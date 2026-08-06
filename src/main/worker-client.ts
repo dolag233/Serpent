@@ -31,7 +31,8 @@ import {
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
 import {
-  parseModelThumbnailRenderRequest,
+  parseModelThumbnailMainRenderRequest,
+  type ModelThumbnailSourceAuthorization,
   type ModelThumbnailRenderRequest,
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
@@ -118,7 +119,10 @@ export class LibraryWorkerClient {
   #pluginMediaProviderListener:
     ((request: PluginMediaProviderRequest) => Promise<PluginMediaProviderResult>) | undefined;
   #modelThumbnailRenderListener:
-    ((request: ModelThumbnailRenderRequest) => Promise<ModelThumbnailRenderResult>) | undefined;
+    ((
+      request: ModelThumbnailRenderRequest,
+      sourceAuthorizations: readonly ModelThumbnailSourceAuthorization[],
+    ) => Promise<ModelThumbnailRenderResult>) | undefined;
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -263,7 +267,10 @@ export class LibraryWorkerClient {
 
   /** Slice E: worker asks Main to render one model thumbnail offscreen. */
   onModelThumbnailRenderRequest(
-    listener: (request: ModelThumbnailRenderRequest) => Promise<ModelThumbnailRenderResult>,
+    listener: (
+      request: ModelThumbnailRenderRequest,
+      sourceAuthorizations: readonly ModelThumbnailSourceAuthorization[],
+    ) => Promise<ModelThumbnailRenderResult>,
   ): () => void {
     this.#modelThumbnailRenderListener = listener;
     return () => {
@@ -279,12 +286,13 @@ export class LibraryWorkerClient {
    * Returns true when the message was a render request (consumed).
    */
   #dispatchModelThumbnailRenderRequest(message: unknown): boolean {
-    let renderRequest: ModelThumbnailRenderRequest;
+    let mainRenderRequest;
     try {
-      renderRequest = parseModelThumbnailRenderRequest(message);
+      mainRenderRequest = parseModelThumbnailMainRenderRequest(message);
     } catch {
       return false;
     }
+    const { sourceAuthorizations, ...renderRequest } = mainRenderRequest;
     const child = this.#child;
     if (!child) {
       this.logger.error(
@@ -294,7 +302,7 @@ export class LibraryWorkerClient {
       return true;
     }
     void (this.#modelThumbnailRenderListener
-      ? this.#modelThumbnailRenderListener(renderRequest)
+      ? this.#modelThumbnailRenderListener(renderRequest, sourceAuthorizations)
       : Promise.resolve({
           status: 'failed' as const,
           errorCode: 'MODEL_WINDOW_FAILED',

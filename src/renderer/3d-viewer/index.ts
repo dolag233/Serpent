@@ -22,7 +22,6 @@ export {
   HDRI_PRESETS,
   getHdriPreset,
   hdriPresetIdSchema,
-  isBundledHdriPresetId,
   parseHdriPresetId,
   resolveHdriBundleUrl,
   type BundledHdriPresetId,

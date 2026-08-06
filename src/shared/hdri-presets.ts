@@ -45,7 +45,7 @@ export type HdriPreset = {
 export const HDRI_PRESETS: readonly HdriPreset[] = [
   {
     id: 'ferndale-studio-03',
-    displayName: { 'zh-CN': '产品摄影棚', en: 'Ferndale Studio 03' },
+    displayName: { 'zh-CN': '产品', en: 'Product' },
     category: 'studio',
     fileName: 'ferndale_studio_03_1k.hdr',
     previewFileName: 'ferndale_studio_03_1k_preview.png',
@@ -58,7 +58,7 @@ export const HDRI_PRESETS: readonly HdriPreset[] = [
   },
   {
     id: 'dancing-hall',
-    displayName: { 'zh-CN': '室内舞厅', en: 'Dancing Hall' },
+    displayName: { 'zh-CN': '室内', en: 'Indoor' },
     category: 'studio',
     fileName: 'dancing_hall_1k.hdr',
     previewFileName: 'dancing_hall_1k_preview.png',
@@ -71,7 +71,7 @@ export const HDRI_PRESETS: readonly HdriPreset[] = [
   },
   {
     id: 'pergola-walkway',
-    displayName: { 'zh-CN': '室外走廊', en: 'Pergola Walkway' },
+    displayName: { 'zh-CN': '室外', en: 'Outdoor' },
     category: 'natural',
     fileName: 'pergola_walkway_1k.hdr',
     previewFileName: 'pergola_walkway_1k_preview.png',
@@ -84,7 +84,7 @@ export const HDRI_PRESETS: readonly HdriPreset[] = [
   },
   {
     id: 'scythian-tombs-2',
-    displayName: { 'zh-CN': '草原古迹', en: 'Scythian Tombs 2' },
+    displayName: { 'zh-CN': '自然', en: 'Nature' },
     category: 'natural',
     fileName: 'scythian_tombs_2_1k.hdr',
     previewFileName: 'scythian_tombs_2_1k_preview.png',

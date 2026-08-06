@@ -108,6 +108,37 @@ export const modelThumbnailRenderRequestSchema = z.object({
 });
 export type ModelThumbnailRenderRequest = z.infer<typeof modelThumbnailRenderRequestSchema>;
 
+/**
+ * Main-only authorization scope for source requests made during an offscreen
+ * render. The Worker resolves these paths before asking Main to render so the
+ * renderer never re-enters the Worker through `serpent://source` while the
+ * thumbnail job is awaiting the frame.
+ */
+export const modelThumbnailSourceAuthorizationSchema = z.object({
+  libraryId: z.string().min(1).max(255),
+  assetId: z.string().min(1).max(255),
+  revisionId: z.string().min(1).max(255),
+  absolutePath: z.string().min(1).max(4096),
+  mimeType: z.string().min(1).max(255),
+});
+export type ModelThumbnailSourceAuthorization = z.infer<
+  typeof modelThumbnailSourceAuthorizationSchema
+>;
+
+/** Worker → Main envelope; Main strips `sourceAuthorizations` before IPC to the page. */
+export const modelThumbnailMainRenderRequestSchema = modelThumbnailRenderRequestSchema.extend({
+  sourceAuthorizations: z.array(modelThumbnailSourceAuthorizationSchema).max(5000),
+});
+export type ModelThumbnailMainRenderRequest = z.infer<
+  typeof modelThumbnailMainRenderRequestSchema
+>;
+
+export function parseModelThumbnailMainRenderRequest(
+  input: unknown,
+): ModelThumbnailMainRenderRequest {
+  return modelThumbnailMainRenderRequestSchema.parse(input);
+}
+
 export function parseModelThumbnailRenderRequest(input: unknown): ModelThumbnailRenderRequest {
   return modelThumbnailRenderRequestSchema.parse(input);
 }

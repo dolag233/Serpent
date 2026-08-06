@@ -58,8 +58,6 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
 
   const activePreset =
     HDRI_PRESETS.find((preset) => preset.id === props.presetId) ?? null;
-  const activePreview =
-    activePreset === null ? null : resolveHdriPreviewUrl(activePreset);
 
   return (
     <div className="model-viewer-toolbar preview-chrome-fade">
@@ -74,10 +72,9 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
           tabIndex={0}
           type="button"
         >
-          {activePreview !== null ? (
-            <img alt="" className="model-viewer-hdri-trigger-thumb" src={activePreview} />
-          ) : null}
-          <span>{activePreset?.displayName[locale] ?? t('viewer3d.hdri')}</span>
+          <span className="model-viewer-hdri-trigger-name">
+            {activePreset?.displayName[locale] ?? t('viewer3d.hdri')}
+          </span>
           <Icon name="chevron" size={12} />
         </button>
         {hdriOpen ? (
@@ -107,7 +104,6 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
                 </button>
               );
             })}
-            <div className="model-viewer-hdri-custom-note">{t('viewer3d.hdriCustom')}</div>
           </div>
         ) : null}
       </div>

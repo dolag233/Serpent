@@ -2,12 +2,19 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
 import {
   assetCard as locateAssetCard,
   resolveElectronExecutablePath,
 } from './electron-test-helpers';
+
+function sidebarSmartCollectionRow(window: Page, name: string) {
+  return window
+    .locator('.navigation-pane button.nav-row')
+    .filter({ hasText: name })
+    .first();
+}
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -99,7 +106,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '角色' }).click();
-    await expect(window.locator('.workspace-notice')).toContainText('标签已添加');
+    const notice = window.locator('.workspace-notice-item').first();
+    await expect(notice).toContainText('标签已添加');
+    await expect
+      .poll(async () => (await notice.boundingBox())?.height ?? Number.POSITIVE_INFINITY)
+      .toBeLessThanOrEqual(56);
+    await expect
+      .poll(async () => (await notice.boundingBox())?.width ?? Number.POSITIVE_INFINITY)
+      .toBeLessThan(280);
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '临时' }).click();
@@ -244,13 +258,14 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     // dialog is intentionally not a form so the host keyboard path is tested.
     await smartSettings.getByLabel('名称').press('Enter');
     await expect(smartSettings).toBeHidden();
-    await expect(window.getByRole('button', { name: /英雄精选/ })).toBeVisible();
-    await window.getByRole('button', { name: /英雄精选/ }).click();
+    const smartCollectionRow = sidebarSmartCollectionRow(window, '英雄精选');
+    await expect(smartCollectionRow).toBeVisible();
+    await smartCollectionRow.click();
     await expect(locateAssetCard(window, 'hero.png')).toBeVisible({ timeout: 10_000 });
 
     // Rename through the sidebar context menu → the rename dialog (a focused
     // single-field dialog, distinct from the multi-button settings dialog).
-    await window.getByRole('button', { name: /英雄精选/ }).click({ button: 'right' });
+    await smartCollectionRow.click({ button: 'right' });
     // The menu is fixed-position but lives under the scrollable app shell.
     // Playwright's normal click may scroll that shell while resolving the
     // target; the menu intentionally dismisses on outside scroll, detaching
@@ -259,7 +274,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByRole('menuitem', { name: '重命名智能合集' }).click({ force: true });
     await window.getByRole('dialog').getByLabel('智能合集名称').fill('英雄筛选');
     await window.getByRole('dialog').getByRole('button', { name: '保存名称' }).click();
-    await expect(window.getByRole('button', { name: /英雄筛选/ })).toBeVisible();
+    await expect(sidebarSmartCollectionRow(window, '英雄筛选')).toBeVisible();
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await expect(locateAssetCard(window, 'hero.png')).toBeVisible();
@@ -272,7 +287,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
     await expect(window.locator('.workspace-notice')).toContainText('1 项资产已移入回收站');
-    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    await window.getByRole('button', { name: /回收站/ }).click();
     await locateAssetCard(window, 'hero.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '恢复' }).click();
     const restoreDialog = window.getByRole('dialog');
@@ -456,7 +471,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await locateAssetCard(window, 'first.txt').click({ button: 'right' });
     await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
     await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
-    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    await window.getByRole('button', { name: /回收站/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
@@ -479,7 +494,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await locateAssetCard(window, 'first.txt').click({ button: 'right' });
     await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
     await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
-    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    await window.getByRole('button', { name: /回收站/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
     await window.locator('.asset-card').first().click();
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
@@ -530,7 +545,7 @@ test('confirmation dialogs focus their primary action', async () => {
 
     await asset.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '移入回收站' }).click();
-    await window.getByRole('button', { name: '回收站', exact: true }).click();
+    await window.getByRole('button', { name: /回收站/ }).click();
     const trashedAsset = locateAssetCard(window, 'focus.txt');
     await expect(trashedAsset).toBeVisible();
     await trashedAsset.click({ button: 'right' });

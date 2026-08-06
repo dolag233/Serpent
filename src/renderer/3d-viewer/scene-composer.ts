@@ -59,8 +59,9 @@ export interface SceneComposer {
    */
   setLightIntensity(intensity: number): void;
   /**
-   * Horizontal environment rotation (radians, around Y): right-drag in the
-   * viewer rotates the light source without moving the model (Serpent-v4jt).
+   * Horizontal environment rotation (radians, around Y): right-drag or
+   * Ctrl+left-drag in the viewer rotates the light source without moving the
+   * model (Serpent-v4jt / Serpent-xjcy).
    */
   setEnvironmentRotation(yaw: number): void;
   /** Display mode (PBR / wireframe / gray-shaded…, Serpent-fkhe). */

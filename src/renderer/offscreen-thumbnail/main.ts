@@ -28,11 +28,16 @@ interface OffscreenThumbnailBridge {
 declare global {
   interface Window {
     offscreenThumbnail?: OffscreenThumbnailBridge;
+    __serpentOffscreenThumbnailDebug?: {
+      requestId: string | null;
+      stage: string;
+    };
   }
 }
 
 let renderer: WebGLRenderer | null = null;
 let activeJobId: string | null = null;
+window.__serpentOffscreenThumbnailDebug = { requestId: null, stage: 'booting' };
 
 function ensureRenderer(): WebGLRenderer {
   if (renderer && !renderer.domElement.isConnected) {
@@ -73,6 +78,8 @@ function ensureRenderer(): WebGLRenderer {
 }
 
 const bridge = window.offscreenThumbnail;
+window.__serpentOffscreenThumbnailDebug.stage = 'bridge-ready';
+console.log('offscreen-thumbnail.page-start', { hasBridge: Boolean(bridge) });
 if (!bridge) {
   // Loaded outside the offscreen host (e.g. someone opens the page in a
   // regular browser tab) — fail loudly instead of pretending to render.
@@ -80,18 +87,38 @@ if (!bridge) {
 }
 
 bridge.onRender((job) => {
+  window.__serpentOffscreenThumbnailDebug = {
+    requestId: job.requestId,
+    stage: 'render-received',
+  };
+  console.log('offscreen-thumbnail.render-received', { requestId: job.requestId });
   activeJobId = job.requestId;
   void renderModelThumbnailFrame(job, {
     renderer: ensureRenderer(),
+    // Keep thumbnail lighting aligned with the interactive viewer's default
+    // bundled environment. The frame pipeline still falls back to its key
+    // light if the environment asset cannot be loaded.
     log: (message, context) => {
+      window.__serpentOffscreenThumbnailDebug = {
+        requestId: job.requestId,
+        stage: message,
+      };
       console.log(message, context ?? {});
     },
   })
     .then((outcome) => {
+      window.__serpentOffscreenThumbnailDebug = {
+        requestId: job.requestId,
+        stage: `outcome:${outcome.status}`,
+      };
       if (activeJobId === job.requestId) activeJobId = null;
       bridge.sendFrame({ requestId: job.requestId, ...outcome });
     })
     .catch((error: unknown) => {
+      window.__serpentOffscreenThumbnailDebug = {
+        requestId: job.requestId,
+        stage: 'outcome:throw',
+      };
       if (activeJobId === job.requestId) activeJobId = null;
       console.error('offscreen-thumbnail.render-error', error);
       bridge.sendFrame({

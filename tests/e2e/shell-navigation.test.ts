@@ -145,6 +145,32 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await expect(window.getByRole("dialog", { name: "Serpent" })).toBeVisible();
       await expect(window.getByText("版本 0.1.0", { exact: true })).toBeVisible();
       await window.keyboard.press("Escape");
+    } else {
+      await settingsButton.click();
+      const settingsDialog = window.getByRole("dialog");
+      await expect(settingsDialog).toBeVisible();
+      await settingsDialog.getByRole("tab", { name: "外观", exact: true }).click();
+      const themeColorDisclosure = settingsDialog.getByRole("button", {
+        name: "主题色设置",
+        exact: true,
+      });
+      await expect(themeColorDisclosure).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await expect(
+        settingsDialog.locator(".app-settings-custom-theme-grid"),
+      ).toHaveCount(0);
+      await themeColorDisclosure.click();
+      await expect(themeColorDisclosure).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+      await expect(
+        settingsDialog.locator(".app-settings-custom-theme-grid"),
+      ).toBeVisible();
+      await window.keyboard.press("Escape");
+      await expect(settingsDialog).toHaveCount(0);
     }
     await expect(
       window.locator(".toolbar-workspace-cluster .scope-history"),

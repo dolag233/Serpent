@@ -1,10 +1,11 @@
 /**
- * Toast notification state machine for the bottom-right shell toast, plus a
+ * Toast notification state machine for the workspace notice stack, plus a
  * blocking fatal channel (Serpent-99lv).
  *
  * Severities: info(notice) < warning < error < fatal.
- * - Toast channels (`notice` / `warning` / `error`): `activeMessage` always
- *   picks the highest non-empty channel, so lower severity cannot cover higher.
+ * - Toast channels (`notice` / `warning` / `error`) retain each message until
+ *   it expires or is dismissed. The renderer presents the retained entries as
+ *   a vertical stack, so a new notice cannot cover an older one.
  * - Fatal is a blocking modal (not a dismissable toast). Lower toast setters
  *   never clear or hide an active fatal; only `setFatal(null)` dismisses it.
  *
@@ -35,14 +36,23 @@ export interface ToastMessage {
   text: string;
 }
 
+export interface ToastStackMessage extends ToastMessage {
+  id: number;
+  closing: boolean;
+}
+
 export interface ToastSnapshot {
   error: string | null;
   warning: string | null;
   notice: string | null;
   /** Blocking modal body; null when no fatal alert is open. */
   fatal: string | null;
+  /** Highest-severity non-closing message, kept for legacy controller callers. */
   rendered: ToastMessage | null;
+  /** All notice entries, including entries currently fading out. */
+  renderedStack: readonly ToastStackMessage[];
   closing: boolean;
+  closingIds: readonly number[];
 }
 
 export const TOAST_NOTICE_DURATION_MS = 5_000;
@@ -60,49 +70,87 @@ export interface ToastNotifications {
   setWarning(text: string | null): void;
   setNotice(text: string | null): void;
   setFatal(text: string | null): void;
-  /** Clear only the currently visible toast channel (not fatal). */
+  /** Start closing the highest-severity visible toast. */
   dismissVisible(): void;
-  finishExit(): void;
+  /** Start closing one stack entry without affecting its siblings. */
+  dismissToast(id: number): void;
+  finishExit(id?: number): void;
   dispose(): void;
 }
 
 export function createToastNotifications(): ToastNotifications {
-  let error: string | null = null;
-  let warning: string | null = null;
-  let notice: string | null = null;
   let fatal: string | null = null;
-  let rendered: ToastMessage | null = null;
-  let closing = false;
+  let entries: ToastStackMessage[] = [];
+  let nextId = 1;
   let snapshot: ToastSnapshot = {
-    error,
-    warning,
-    notice,
+    error: null,
+    warning: null,
+    notice: null,
     fatal,
-    rendered,
-    closing,
+    rendered: null,
+    renderedStack: entries,
+    closing: false,
+    closingIds: [],
   };
   const listeners = new Set<() => void>();
-  let errorTimer: TimerId | null = null;
-  let warningTimer: TimerId | null = null;
-  let noticeTimer: TimerId | null = null;
-  let exitTimer: TimerId | null = null;
+  const dismissTimers = new Map<number, TimerId>();
+  const exitTimers = new Map<number, TimerId>();
+
+  function highestMessage(
+    candidates: readonly ToastStackMessage[],
+  ): ToastStackMessage | null {
+    let result: ToastStackMessage | null = null;
+    for (const candidate of candidates) {
+      if (
+        result === null ||
+        TOAST_SEVERITY_RANK[
+          candidate.kind === "notice" ? "info" : candidate.kind
+        ] >
+          TOAST_SEVERITY_RANK[
+            result.kind === "notice" ? "info" : result.kind
+          ]
+      ) {
+        result = candidate;
+      }
+    }
+    return result;
+  }
+
+  function channelText(kind: ToastKind): string | null {
+    return entries.find((entry) => entry.kind === kind && !entry.closing)?.text ?? null;
+  }
+
+  function legacyRenderedMessage(): ToastMessage | null {
+    const visible = entries.filter((entry) => !entry.closing);
+    const candidate = highestMessage(visible.length > 0 ? visible : entries);
+    return candidate ? { kind: candidate.kind, text: candidate.text } : null;
+  }
 
   function commit(): void {
+    const closingIds = entries
+      .filter((entry) => entry.closing)
+      .map((entry) => entry.id);
     const next: ToastSnapshot = {
-      error,
-      warning,
-      notice,
+      error: channelText("error"),
+      warning: channelText("warning"),
+      notice: channelText("notice"),
       fatal,
-      rendered,
-      closing,
+      rendered: legacyRenderedMessage(),
+      renderedStack: entries,
+      closing: closingIds.length > 0,
+      closingIds,
     };
     if (
       next.error === snapshot.error &&
       next.warning === snapshot.warning &&
       next.notice === snapshot.notice &&
       next.fatal === snapshot.fatal &&
-      next.rendered === snapshot.rendered &&
-      next.closing === snapshot.closing
+      next.rendered?.kind === snapshot.rendered?.kind &&
+      next.rendered?.text === snapshot.rendered?.text &&
+      next.renderedStack === snapshot.renderedStack &&
+      next.closing === snapshot.closing &&
+      next.closingIds.length === snapshot.closingIds.length &&
+      next.closingIds.every((id, index) => id === snapshot.closingIds[index])
     ) {
       return;
     }
@@ -110,86 +158,57 @@ export function createToastNotifications(): ToastNotifications {
     for (const listener of listeners) listener();
   }
 
-  function clearExitTimer(): void {
-    if (exitTimer !== null) {
-      clearTimeout(exitTimer);
-      exitTimer = null;
+  function clearTimer(timerMap: Map<number, TimerId>, id: number): void {
+    const timer = timerMap.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timerMap.delete(id);
     }
   }
 
-  function activeMessage(): ToastMessage | null {
-    if (error) return { kind: "error", text: error };
-    if (warning) return { kind: "warning", text: warning };
-    if (notice) return { kind: "notice", text: notice };
-    return null;
+  function startClosing(id: number): void {
+    const entry = entries.find((candidate) => candidate.id === id);
+    if (!entry || entry.closing) return;
+    clearTimer(dismissTimers, id);
+    entries = entries.map((candidate) =>
+      candidate.id === id ? { ...candidate, closing: true } : candidate,
+    );
+    exitTimers.set(
+      id,
+      setTimeout(() => finishExit(id), TOAST_EXIT_DURATION_MS + EXIT_FALLBACK_MARGIN_MS),
+    );
+    commit();
   }
 
-  function reconcile(): void {
-    const active = activeMessage();
-    if (active) {
-      clearExitTimer();
-      if (
-        !rendered ||
-        rendered.kind !== active.kind ||
-        rendered.text !== active.text
-      ) {
-        rendered = active;
-      }
-      closing = false;
+  function startClosingKind(kind: ToastKind): void {
+    for (const entry of entries) {
+      if (entry.kind === kind) startClosing(entry.id);
+    }
+  }
+
+  function setToast(kind: ToastKind, text: string | null): void {
+    if (text === null) {
+      // Preserve the existing channel-reset contract: null closes every
+      // pending entry of this severity, while dismissToast(id) closes one.
+      startClosingKind(kind);
+      commit();
       return;
     }
-    if (rendered && !closing) {
-      closing = true;
-      exitTimer = setTimeout(
-        finishExit,
-        TOAST_EXIT_DURATION_MS + EXIT_FALLBACK_MARGIN_MS,
-      );
-    }
-  }
-
-  function setError(text: string | null): void {
-    if (errorTimer !== null) {
-      clearTimeout(errorTimer);
-      errorTimer = null;
-    }
-    error = text;
-    if (text) {
-      errorTimer = setTimeout(() => setError(null), TOAST_ERROR_DURATION_MS);
-    }
-    reconcile();
+    const id = nextId++;
+    const duration =
+      kind === "notice"
+        ? TOAST_NOTICE_DURATION_MS
+        : kind === "warning"
+          ? TOAST_WARNING_DURATION_MS
+          : TOAST_ERROR_DURATION_MS;
+    entries = [{ id, kind, text, closing: false }, ...entries];
+    dismissTimers.set(id, setTimeout(() => startClosing(id), duration));
     commit();
   }
 
-  function setWarning(text: string | null): void {
-    if (warningTimer !== null) {
-      clearTimeout(warningTimer);
-      warningTimer = null;
-    }
-    warning = text;
-    if (text) {
-      warningTimer = setTimeout(
-        () => setWarning(null),
-        TOAST_WARNING_DURATION_MS,
-      );
-    }
-    reconcile();
-    commit();
-  }
-
-  function setNotice(text: string | null): void {
-    if (noticeTimer !== null) {
-      clearTimeout(noticeTimer);
-      noticeTimer = null;
-    }
-    // Serpent-99lv: while warning/error is visible, still store the notice for
-    // later resurfacing, but do not let a fresh info toast reset higher severity.
-    notice = text;
-    if (text) {
-      noticeTimer = setTimeout(() => setNotice(null), TOAST_NOTICE_DURATION_MS);
-    }
-    reconcile();
-    commit();
-  }
+  const setError = (text: string | null) => setToast("error", text);
+  const setWarning = (text: string | null) => setToast("warning", text);
+  const setNotice = (text: string | null) => setToast("notice", text);
 
   function setFatal(text: string | null): void {
     // Fatal never auto-dismisses; lower toast channels cannot clear it.
@@ -198,24 +217,25 @@ export function createToastNotifications(): ToastNotifications {
   }
 
   function dismissVisible(): void {
-    if (error) {
-      setError(null);
-      return;
-    }
-    if (warning) {
-      setWarning(null);
-      return;
-    }
-    if (notice) {
-      setNotice(null);
-    }
+    const visible = entries.filter((entry) => !entry.closing);
+    const candidate = highestMessage(visible);
+    if (candidate) startClosing(candidate.id);
   }
 
-  function finishExit(): void {
-    if (!closing) return;
-    clearExitTimer();
-    rendered = null;
-    closing = false;
+  function dismissToast(id: number): void {
+    startClosing(id);
+  }
+
+  function finishExit(id?: number): void {
+    const ids = id === undefined
+      ? entries.filter((entry) => entry.closing).map((entry) => entry.id)
+      : [id];
+    if (ids.length === 0) return;
+    for (const entryId of ids) {
+      clearTimer(dismissTimers, entryId);
+      clearTimer(exitTimers, entryId);
+    }
+    entries = entries.filter((entry) => !ids.includes(entry.id));
     commit();
   }
 
@@ -232,12 +252,11 @@ export function createToastNotifications(): ToastNotifications {
     setNotice,
     setFatal,
     dismissVisible,
+    dismissToast,
     finishExit,
     dispose() {
-      if (errorTimer !== null) clearTimeout(errorTimer);
-      if (warningTimer !== null) clearTimeout(warningTimer);
-      if (noticeTimer !== null) clearTimeout(noticeTimer);
-      clearExitTimer();
+      for (const id of dismissTimers.keys()) clearTimer(dismissTimers, id);
+      for (const id of exitTimers.keys()) clearTimer(exitTimers, id);
       listeners.clear();
     },
   };

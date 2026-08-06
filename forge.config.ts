@@ -72,7 +72,13 @@ const config: ForgeConfig = {
     // spawn them. `npm run media:verify` is the release gate that validates the
     // platform bundle before packaging; `verify:package` repeats the same
     // checks against this copied directory.
-    extraResource: ['resources', 'assets/icons/app.png', 'assets/icons/app.ico'],
+    extraResource: [
+      'resources',
+      'assets/icons/app-dock.png',
+      'assets/icons/app.png',
+      'assets/icons/app.ico',
+      'assets/icons/app.icns',
+    ],
     // Forge's Vite plugin otherwise excludes all node_modules. Keep them in the
     // copy set so Packager can prune to production dependencies and the native
     // module plugin can unpack better-sqlite3.

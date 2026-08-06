@@ -1988,6 +1988,52 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--text-secondary);
 }
 
+/* FILTER-001 / Serpent-yc9n: category checkboxes + aligned chip rows. */
+.format-filter-popover {
+  width: min(480px, 90vw);
+  gap: 12px;
+}
+
+.format-filter-popover > .text-field {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-inline: 12px;
+}
+
+.format-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.format-filter-group-check {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.format-filter-group-check input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.format-filter-group .filter-presets {
+  margin: 0;
+  padding-left: 22px;
+}
+
 .filter-presets {
   display: flex;
   flex-wrap: wrap;
@@ -4515,6 +4561,18 @@ body.serpent-modal-open .app-shell {
   user-select: none;
   -webkit-user-drag: none;
   will-change: transform;
+}
+.preview-pbr-channel-notice {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 50%;
+  max-width: min(520px, calc(100% - 32px));
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+.preview-pbr-channel-notice .ui-feedback__message {
+  white-space: nowrap;
 }
 .preview-chrome-fade {
   opacity: 1;
@@ -7470,8 +7528,9 @@ select.ai-config-input.ai-config-languages {
   pointer-events: auto;
 }
 
-/* Serpent-ss1k: info/notice channel anchored to workspace top center. */
-.workspace-notice {
+/* Serpent-0k52: notices share one viewport-level stack so entries cannot
+   occupy the same fixed coordinates when several arrive together. */
+.workspace-notice-stack {
   /* Rendered in document.body so notices stay above dialogs and settings
      overlays. A toast is a global application status surface, not canvas
      content, and must not inherit the canvas stacking context. */
@@ -7482,11 +7541,35 @@ select.ai-config-input.ai-config-languages {
      against the window edge. */
   top: calc(var(--shell-toolbar-height) + 20px);
   left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  /* Short one-line messages should hug their content instead of reserving a
+     full 520px banner with an empty trailing half. Long messages still cap at
+     the same readable width and wrap/ellipsis through the item layout. */
+  width: fit-content;
+  min-width: 0;
+  max-width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - var(--shell-toolbar-height) - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.workspace-notice-item {
+  position: relative;
+  /* Do not let a width:100% grid child force the shrink-to-fit stack to its
+     viewport cap on narrow windows. The item should size to its content and
+     only expand when the message reaches the stack max-width. */
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
-  max-width: min(520px, calc(100% - 32px));
   /* Serpent-fvto: tighter trailing pad — X sat in a wide empty gutter. */
   padding: 7px 6px 7px 10px;
   border: var(--ui-border-width-hairline) solid var(--ui-border-divider);
@@ -7496,18 +7579,17 @@ select.ai-config-input.ai-config-languages {
   color: var(--ui-content-primary);
   font-size: var(--ui-font-size-body);
   line-height: var(--ui-line-height-normal);
-  transform: translateX(-50%);
   transition:
     opacity 180ms ease,
     transform 180ms ease;
   pointer-events: auto;
 }
 
-.workspace-notice .ui-feedback__body {
+.workspace-notice-item .ui-feedback__body {
   display: contents;
 }
 
-.workspace-notice .ui-feedback__message {
+.workspace-notice-item .ui-feedback__message {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7515,14 +7597,14 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.25;
 }
 
-.workspace-notice .ui-feedback__actions {
+.workspace-notice-item .ui-feedback__actions {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
 }
 
-.workspace-notice .ui-feedback__dismiss {
+.workspace-notice-item .ui-feedback__dismiss {
   width: 18px;
   height: 18px;
   margin: 0;
@@ -7530,12 +7612,12 @@ select.ai-config-input.ai-config-languages {
   font-size: 14px;
 }
 
-.workspace-notice.is-closing {
+.workspace-notice-item.is-closing {
   opacity: 0;
-  transform: translate(-50%, -6px);
+  transform: translateY(-6px);
 }
 
-.workspace-notice-icon {
+.workspace-notice-item .workspace-notice-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7545,7 +7627,7 @@ select.ai-config-input.ai-config-languages {
   color: inherit;
 }
 
-.workspace-notice-text {
+.workspace-notice-item .workspace-notice-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7553,26 +7635,26 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.25;
 }
 
-.workspace-notice-actions {
+.workspace-notice-item .workspace-notice-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.workspace-notice.ui-feedback--error {
+.workspace-notice-item.ui-feedback--error {
   background: var(--ui-status-danger-surface);
   color: var(--ui-status-danger-content);
   border-color: var(--ui-status-danger);
 }
 
-.workspace-notice.ui-feedback--warning {
+.workspace-notice-item.ui-feedback--warning {
   background: var(--ui-status-warning-surface);
   color: var(--ui-status-warning-content);
   border-color: var(--ui-status-warning);
 }
 
-.workspace-notice.ui-feedback--error .workspace-notice-icon,
-.workspace-notice.ui-feedback--warning .workspace-notice-icon {
+.workspace-notice-item.ui-feedback--error .workspace-notice-icon,
+.workspace-notice-item.ui-feedback--warning .workspace-notice-icon {
   color: inherit;
 }
 
@@ -8361,11 +8443,11 @@ select.ai-config-input.ai-config-languages {
   gap: 7px;
   border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
   border-radius: 12px;
-  /* Theme-aware wash: never hardcode dark rgb() (Serpent-5vex). */
-  background: color-mix(in srgb, var(--accent) 12%, var(--canvas));
+  /* Keep the drag affordance visible while letting the assets remain visible
+     through a 50% theme-surface wash. */
+  background: color-mix(in srgb, var(--canvas) 50%, transparent);
   color: var(--accent);
   pointer-events: none;
-  backdrop-filter: blur(4px);
 }
 .external-drop-overlay strong {
   color: var(--text);

@@ -26,11 +26,56 @@ describe('createToastNotifications', () => {
     expect(TOAST_SEVERITY_RANK.error).toBeLessThan(TOAST_SEVERITY_RANK.fatal);
   });
 
+  it('keeps multiple channels in a dismissible vertical-stack model', () => {
+    const toast = createToastNotifications();
+    toast.setNotice('第一条。');
+    toast.setWarning('第二条。');
+    toast.setError('第三条。');
+
+    const stack = toast.getSnapshot().renderedStack;
+    expect(stack.map(({ text }) => text)).toEqual([
+      '第三条。',
+      '第二条。',
+      '第一条。',
+    ]);
+    expect(new Set(stack.map(({ id }) => id)).size).toBe(3);
+
+    const warning = stack.find(({ kind }) => kind === 'warning');
+    expect(warning).toBeDefined();
+    toast.dismissToast(warning!.id);
+    expect(toast.getSnapshot().warning).toBeNull();
+    expect(
+      toast.getSnapshot().renderedStack.find(({ id }) => id === warning!.id)
+        ?.closing,
+    ).toBe(true);
+
+    toast.finishExit(warning!.id);
+    expect(toast.getSnapshot().renderedStack.map(({ text }) => text)).toEqual([
+      '第三条。',
+      '第一条。',
+    ]);
+    toast.dispose();
+  });
+
+  it('expires same-kind entries independently', () => {
+    const toast = createToastNotifications();
+    toast.setNotice('较早提示。');
+    vi.advanceTimersByTime(1_000);
+    toast.setNotice('较晚提示。');
+
+    vi.advanceTimersByTime(TOAST_NOTICE_DURATION_MS - 1_000);
+    const stack = toast.getSnapshot().renderedStack;
+    expect(stack.find(({ text }) => text === '较早提示。')?.closing).toBe(true);
+    expect(stack.find(({ text }) => text === '较晚提示。')?.closing).toBe(false);
+    expect(toast.getSnapshot().notice).toBe('较晚提示。');
+    toast.dispose();
+  });
+
   it('renders a notice immediately and starts closing after 5s', () => {
     const toast = createToastNotifications();
     toast.setNotice('已保存。');
 
-    expect(toast.getSnapshot()).toEqual({
+    expect(toast.getSnapshot()).toMatchObject({
       error: null,
       warning: null,
       notice: '已保存。',
@@ -42,7 +87,7 @@ describe('createToastNotifications', () => {
     vi.advanceTimersByTime(TOAST_NOTICE_DURATION_MS);
     // Exit transition started, but the toast is still mounted while fading.
     expect(toast.getSnapshot().closing).toBe(true);
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: '已保存。',
     });
@@ -98,22 +143,22 @@ describe('createToastNotifications', () => {
     toast.setNotice(null);
 
     expect(toast.getSnapshot().closing).toBe(true);
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: '标签已添加。',
     });
     toast.dispose();
   });
 
-  it('cancels the exit transition when a new message arrives mid-fade', () => {
+  it('keeps a new message visible while an older entry finishes fading', () => {
     const toast = createToastNotifications();
     toast.setNotice('第一条。');
     toast.setNotice(null);
     expect(toast.getSnapshot().closing).toBe(true);
 
     toast.setNotice('第二条。');
-    expect(toast.getSnapshot().closing).toBe(false);
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().closing).toBe(true);
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: '第二条。',
     });
@@ -128,17 +173,17 @@ describe('createToastNotifications', () => {
     const toast = createToastNotifications();
     toast.setNotice('后台提示。');
     toast.setError('严重问题。');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'error',
       text: '严重问题。',
     });
 
     toast.setError(null);
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: '后台提示。',
     });
-    expect(toast.getSnapshot().closing).toBe(false);
+    expect(toast.getSnapshot().closing).toBe(true);
     toast.dispose();
   });
 
@@ -146,7 +191,7 @@ describe('createToastNotifications', () => {
     const toast = createToastNotifications();
     toast.setError('AI 分析失败。');
     toast.setNotice('搜索完成：找到 12 项。');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'error',
       text: 'AI 分析失败。',
     });
@@ -158,7 +203,7 @@ describe('createToastNotifications', () => {
     const toast = createToastNotifications();
     toast.setWarning('链接源不可用。');
     toast.setNotice('搜索完成：找到 3 项。');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'warning',
       text: '链接源不可用。',
     });
@@ -170,12 +215,12 @@ describe('createToastNotifications', () => {
     const toast = createToastNotifications();
     toast.setNotice('info');
     toast.setWarning('warn');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'warning',
       text: 'warn',
     });
     toast.setError('err');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'error',
       text: 'err',
     });
@@ -189,7 +234,7 @@ describe('createToastNotifications', () => {
     toast.setWarning('警告。');
     toast.setNotice('提示。');
     expect(toast.getSnapshot().fatal).toBe('开库失败。');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'error',
       text: '普通错误。',
     });
@@ -221,31 +266,31 @@ describe('createToastNotifications', () => {
     expect(toast.getSnapshot().error).toBeNull();
     expect(toast.getSnapshot().warning).toBe('warn');
     expect(toast.getSnapshot().notice).toBe('info');
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'warning',
       text: 'warn',
     });
     toast.dismissVisible();
     expect(toast.getSnapshot().warning).toBeNull();
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: 'info',
     });
     toast.dispose();
   });
 
-  it('expires a hidden notice silently while an error stays visible', () => {
+  it('expires one notice while an error stays visible', () => {
     const toast = createToastNotifications();
     toast.setNotice('被覆盖的提示。');
     toast.setError('仍然显示。');
 
     vi.advanceTimersByTime(TOAST_NOTICE_DURATION_MS);
     expect(toast.getSnapshot().notice).toBeNull();
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'error',
       text: '仍然显示。',
     });
-    expect(toast.getSnapshot().closing).toBe(false);
+    expect(toast.getSnapshot().closing).toBe(true);
     toast.dispose();
   });
 
@@ -254,7 +299,7 @@ describe('createToastNotifications', () => {
     toast.setNotice('唯一提示。');
 
     toast.setError(null);
-    expect(toast.getSnapshot().rendered).toEqual({
+    expect(toast.getSnapshot().rendered).toMatchObject({
       kind: 'notice',
       text: '唯一提示。',
     });
