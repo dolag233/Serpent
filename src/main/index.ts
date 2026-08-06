@@ -3294,6 +3294,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           targetFolderId: request.folderId ?? undefined,
           sourceKind,
           sourcePaths,
+          // Paste must never auto-group into an image sequence. Users expect
+          // ordinary import + name/content conflict dialogs (PASTE-001).
+          expandImageSequences: false,
+          createImageSequence: false,
         };
       } catch (error) {
         logger?.error("desktop-ingestion.clipboard-files", error);
@@ -3319,6 +3323,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.expandImageSequences !== true &&
       request.type !== "asset.import-drop.request" &&
       request.type !== "asset.import-sequence.confirm" &&
+      // Clipboard paste into a folder must keep ordinary conflict flows
+      // (name-conflict / content-duplicate). Sequence probing here wrongly
+      // offered a sequence dialog when pasting a single copied image
+      // (PASTE-001 / Serpent-el2g).
+      request.type !== "folder.paste.request" &&
       !(
         !app.isPackaged &&
         process.env.SERPENT_E2E === "1"

@@ -276,7 +276,7 @@
   bottom: calc(100% + 8px);
   right: 0;
   left: auto;
-  z-index: 3;
+  z-index: var(--ui-layer-menu);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -287,6 +287,13 @@
   border-radius: 8px;
   background: var(--ui-surface-raised);
   box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+/* Portaled to document.body so it escapes `.workspace` isolation (Serpent-iihv). */
+.model-viewer-hdri-picker.is-ported {
+  position: fixed;
+  left: auto;
+  z-index: var(--ui-layer-menu);
 }
 .model-viewer-hdri-option {
   display: flex;

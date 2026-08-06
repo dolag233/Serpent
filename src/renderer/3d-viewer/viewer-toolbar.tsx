@@ -7,7 +7,8 @@
  * in the surface; this component is pure presentation.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocale } from '../i18n';
 import { Icon } from '../Icons';
 import { LIGHT_INTENSITY_MAX, LIGHT_INTENSITY_MIN } from './light-intensity';
@@ -36,13 +37,43 @@ export interface ModelViewerToolbarProps {
 export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
   const { locale, t } = useLocale();
   const [hdriOpen, setHdriOpen] = useState(false);
+  const [pickerRect, setPickerRect] = useState<{
+    bottom: number;
+    right: number;
+  } | null>(null);
   const hdriPickerRef = useRef<HTMLDivElement>(null);
+  const hdriTriggerRef = useRef<HTMLButtonElement>(null);
+  const hdriListRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!hdriOpen || !hdriTriggerRef.current) {
+      setPickerRect(null);
+      return;
+    }
+    const update = () => {
+      const rect = hdriTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPickerRect({
+        bottom: window.innerHeight - rect.top + 8,
+        right: window.innerWidth - rect.right,
+      });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [hdriOpen]);
 
   // Close the HDRI picker on outside pointer-down / Escape.
   useEffect(() => {
     if (!hdriOpen) return;
     function onPointerDown(event: PointerEvent) {
-      if (hdriPickerRef.current?.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (hdriPickerRef.current?.contains(target)) return;
+      if (hdriListRef.current?.contains(target)) return;
       setHdriOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
@@ -59,26 +90,18 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
   const activePreset =
     HDRI_PRESETS.find((preset) => preset.id === props.presetId) ?? null;
 
-  return (
-    <div className="model-viewer-toolbar preview-chrome-fade">
-      <div className="model-viewer-toolbar-item is-hdri" ref={hdriPickerRef}>
-        <span className="model-viewer-toolbar-label">{t('viewer3d.hdri')}</span>
-        <button
-          aria-expanded={hdriOpen}
-          aria-haspopup="listbox"
-          aria-label={t('viewer3d.hdri')}
-          className="model-viewer-hdri-trigger"
-          onClick={() => setHdriOpen((open) => !open)}
-          tabIndex={0}
-          type="button"
-        >
-          <span className="model-viewer-hdri-trigger-name">
-            {activePreset?.displayName[locale] ?? t('viewer3d.hdri')}
-          </span>
-          <Icon name="chevron" size={12} />
-        </button>
-        {hdriOpen ? (
-          <div className="model-viewer-hdri-picker" role="listbox">
+  const hdriPicker =
+    hdriOpen && pickerRect
+      ? createPortal(
+          <div
+            className="model-viewer-hdri-picker is-ported"
+            ref={hdriListRef}
+            role="listbox"
+            style={{
+              bottom: pickerRect.bottom,
+              right: pickerRect.right,
+            }}
+          >
             {HDRI_PRESETS.map((preset) => {
               const preview = resolveHdriPreviewUrl(preset);
               const selected = preset.id === props.presetId;
@@ -104,8 +127,31 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
                 </button>
               );
             })}
-          </div>
-        ) : null}
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <div className="model-viewer-toolbar preview-chrome-fade">
+      <div className="model-viewer-toolbar-item is-hdri" ref={hdriPickerRef}>
+        <span className="model-viewer-toolbar-label">{t('viewer3d.hdri')}</span>
+        <button
+          aria-expanded={hdriOpen}
+          aria-haspopup="listbox"
+          aria-label={t('viewer3d.hdri')}
+          className="model-viewer-hdri-trigger"
+          onClick={() => setHdriOpen((open) => !open)}
+          ref={hdriTriggerRef}
+          tabIndex={0}
+          type="button"
+        >
+          <span className="model-viewer-hdri-trigger-name">
+            {activePreset?.displayName[locale] ?? t('viewer3d.hdri')}
+          </span>
+          <Icon name="chevron" size={12} />
+        </button>
+        {hdriPicker}
       </div>
       <label className="model-viewer-toolbar-item is-display-mode">
         <span className="model-viewer-toolbar-label">{t('viewer3d.displayMode')}</span>

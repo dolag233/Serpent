@@ -189,7 +189,7 @@ export interface SerpentLibraryApi {
   pasteIntoFolder(input: {
     libraryId: string;
     folderId?: string | null;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   /** Duplicate managed folder subtree as a sibling. */
   cloneFolder(input: {
     libraryId: string;

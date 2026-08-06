@@ -307,15 +307,14 @@ const library: SerpentLibraryApi = Object.freeze({
   async pasteIntoFolder(input: {
     libraryId: string;
     folderId?: string | null;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
     const result = await importRequest({ type: 'folder.paste.request', ...input });
     if (!result.ok) return { ok: false, error: result.error };
-    if (isImageSequenceImportOffer(result.value)) {
-      throw new Error('Unexpected sequence-offer response for folder paste.');
-    }
+    // Sequence offers are a normal import branch (same as file import); surface
+    // them to the renderer instead of treating paste as a hard failure.
     return {
       ok: true,
-      value: result.value as ImportCompletion | ImportConflictPlan,
+      value: result.value as ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer,
     };
   },
 

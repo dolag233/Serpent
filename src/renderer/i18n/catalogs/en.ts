@@ -658,7 +658,10 @@ export const en = {
       title: "Duplicate content",
       summary: "Found {count} files that already exist in the library",
       actionLabel: "When content matches",
-      remember: "Remember my choice and don’t ask again"
+      remember: "Remember my choice and don’t ask again",
+      incoming: "Importing: {name}",
+      existing: "Already in library: {name}",
+      existingUnknown: "Matching content already in the library",
     },
     move: {
       cancelAria: "Cancel move",

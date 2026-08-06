@@ -133,6 +133,23 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
       }),
     ).toEqual({ type: "none" });
   });
+
+  it("rename falls back to the open browse folder when focus was stolen", () => {
+    expect(
+      resolveFolderShortcutAction({
+        commandId: "folder.rename",
+        focusedNav: null,
+        browseManagedFolderId: "folder-b",
+        selectedFolderCardIds: [],
+        selectedAssetCount: 0,
+        resolveManagedFolderName: resolveName,
+      }),
+    ).toEqual({
+      type: "rename",
+      folderId: "folder-b",
+      currentName: "Beta",
+    });
+  });
 });
 
 describe("readFocusedNavFolder", () => {

@@ -1,7 +1,15 @@
 import { useCallback } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
-import type { ImportConflictPlan, ImportCompletion } from "../shared/protocol/responses";
+import type {
+  ImportConflictPlan,
+  ImportCompletion,
+  ImageSequenceImportOffer,
+} from "../shared/protocol/responses";
+import {
+  isImageSequenceImportOffer,
+  isImportConflictPlan,
+} from "../shared/import-outcome";
 import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
 import { useT } from "./i18n";
 import type { AppLocale } from "./i18n/types";
@@ -20,6 +28,7 @@ export type UseFolderOrganizeActionsParams = {
    */
   onPasteConflict?: (plan: ImportConflictPlan) => void;
   onPasteCompleted?: (completion: ImportCompletion) => void | Promise<void>;
+  onPasteSequenceOffer?: (offer: ImageSequenceImportOffer) => void;
 };
 
 /**
@@ -37,6 +46,7 @@ export function useFolderOrganizeActions({
   reloadCurrentContent,
   onPasteConflict,
   onPasteCompleted,
+  onPasteSequenceOffer,
 }: UseFolderOrganizeActionsParams) {
   const t = useT();
 
@@ -50,7 +60,11 @@ export function useFolderOrganizeActions({
           folderId,
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
-        if ("importId" in result.value) {
+        if (isImageSequenceImportOffer(result.value)) {
+          onPasteSequenceOffer?.(result.value);
+          return;
+        }
+        if (isImportConflictPlan(result.value)) {
           onPasteConflict?.(result.value);
           return;
         }
@@ -73,6 +87,7 @@ export function useFolderOrganizeActions({
       locale,
       onPasteCompleted,
       onPasteConflict,
+      onPasteSequenceOffer,
       reloadCurrentContent,
       setError,
       setNotice,

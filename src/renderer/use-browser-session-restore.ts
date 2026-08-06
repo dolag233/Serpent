@@ -238,7 +238,7 @@ export function useBrowserSessionPersist(
   } = args;
 
   useEffect(() => {
-    if (!library || !selectedAsset) return;
+    if (!library) return;
     const session = buildBrowserSessionFromBrowseState({
       showTrash,
       activeTagId,
@@ -246,8 +246,10 @@ export function useBrowserSessionPersist(
       activeCollectionId,
       activeSmartCollectionId,
       assetScope,
-      selectedAssetId: selectedAsset.assetId,
-      selectedAssetName: selectedAsset.displayName,
+      // Persist scope even with an empty selection so relaunch restores the
+      // last folder/collection instead of falling back to "all assets".
+      selectedAssetId: selectedAsset?.assetId ?? "",
+      selectedAssetName: selectedAsset?.displayName ?? "",
     });
     writeBrowserSession(library.libraryId, session);
   }, [

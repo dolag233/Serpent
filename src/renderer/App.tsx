@@ -5005,6 +5005,9 @@ function AppInner() {
       onPasteConflict: (plan) => {
         presentImportConflicts(plan);
       },
+      onPasteSequenceOffer: (offer) => {
+        setImageSequenceImportOffer(offer);
+      },
       onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
     });
 
@@ -10232,9 +10235,10 @@ function AppInner() {
           onConfirm={() => confirmNameConflictDialog()}
         />
       )}
-      {conflicts && conflictPhase === "duplicate" && (
+      {conflicts && conflictPhase === "duplicate" && library && (
         <ContentDuplicateDialog
           conflicts={conflicts}
+          libraryId={library.libraryId}
           decision={duplicateDecision}
           remember={rememberDuplicate}
           onDecisionChange={setDuplicateDecision}

@@ -7543,7 +7543,9 @@ select.ai-config-input.ai-config-languages {
   left: 50%;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  /* Serpent-37y8: center each toast in the stack so mixed widths stay
+     horizontally aligned to the viewport midpoint (not left-packed). */
+  align-items: center;
   gap: 8px;
   /* Short one-line messages should hug their content instead of reserving a
      full 520px banner with an empty trailing half. Long messages still cap at
@@ -10045,6 +10047,68 @@ select.ai-config-input.ai-config-languages {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.conflict-examples-block {
+  margin: 10px 0 0;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.conflict-duplicate-list {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+}
+
+.conflict-duplicate-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.conflict-duplicate-thumb {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--canvas);
+}
+
+.conflict-duplicate-thumb.is-empty {
+  display: inline-block;
+}
+
+.conflict-duplicate-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conflict-duplicate-incoming,
+.conflict-duplicate-existing {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.conflict-duplicate-incoming {
+  color: var(--text);
+}
+
+.conflict-duplicate-existing {
+  color: var(--tertiary);
+}
+
 /* Dense summary/examples chrome: still used by RelinkPreview.
    Import name/content conflict dialogs use conflict-summary-line /
    conflict-examples-line instead (Serpent-79c7 / a22y). */

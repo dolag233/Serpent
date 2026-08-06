@@ -15,6 +15,8 @@ export type ImportConflictDialogShellProps = {
   rememberLabel: string;
   onRememberChange: (value: boolean) => void;
   examples: readonly string[];
+  /** Optional rich examples block (e.g. content-duplicate previews). */
+  examplesContent?: ReactNode;
   confirmLabel: string;
   onCancel: () => void;
   onConfirm: () => void;
@@ -36,20 +38,22 @@ export function ImportConflictDialogShell({
   rememberLabel,
   onRememberChange,
   examples,
+  examplesContent,
   confirmLabel,
   onCancel,
   onConfirm,
 }: ImportConflictDialogShellProps): ReactNode {
   const t = useT();
   const preview =
-    examples.length === 0
+    examplesContent ??
+    (examples.length === 0
       ? null
       : examples.length === 1
         ? examples[0]
         : t("dialog.conflicts.examplesMore", {
             name: examples[0]!,
             count: examples.length - 1,
-          });
+          }));
   const dialogId = titleId.endsWith("-title")
     ? titleId.slice(0, -"-title".length)
     : titleId;
@@ -77,9 +81,13 @@ export function ImportConflictDialogShell({
           <span>{rememberLabel}</span>
         </label>
         {preview ? (
-          <p className="conflict-examples-line" title={examples.join(", ")}>
-            {preview}
-          </p>
+          examplesContent ? (
+            <div className="conflict-examples-block">{examplesContent}</div>
+          ) : (
+            <p className="conflict-examples-line" title={examples.join(", ")}>
+              {preview}
+            </p>
+          )
         ) : null}
         <div className="dialog-actions">
           <button className="secondary-button" onClick={onCancel} type="button">

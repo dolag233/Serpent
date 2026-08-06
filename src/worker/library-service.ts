@@ -22143,22 +22143,37 @@ export class LibraryService {
     return row ?? null;
   }
 
-  private findActiveManagedAssetIdByContent(
+  private findActiveManagedAssetByContent(
     openLibrary: OpenLibrary,
     byteSize: number,
     sha256: string,
     contentHashCache: Map<string, string>,
-  ): string | null {
+  ): {
+    assetId: string;
+    displayName: string;
+    thumbnailArtifactId: string | null;
+  } | null {
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.relative_file_path
+        `SELECT a.asset_id, a.relative_file_path,
+                ra.artifact_id AS thumbnail_artifact_id,
+                ra.status AS thumbnail_status
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind = 'thumbnail'
+            AND ra.invalidated_at IS NULL
           WHERE a.deleted_at IS NULL
             AND a.location_kind = 'managed'
             AND r.byte_size = ?`,
       )
-      .all(byteSize) as Array<{ asset_id: string; relative_file_path: string }>;
+      .all(byteSize) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      thumbnail_artifact_id: string | null;
+      thumbnail_status: string | null;
+    }>;
 
     for (const row of rows) {
       const absolutePath = this.folderPath(openLibrary, row.relative_file_path);
@@ -22171,9 +22186,32 @@ export class LibraryService {
           continue;
         }
       }
-      if (fileHash === sha256) return row.asset_id;
+      if (fileHash === sha256) {
+        return {
+          assetId: row.asset_id,
+          displayName: path.posix.basename(row.relative_file_path),
+          thumbnailArtifactId:
+            row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
+        };
+      }
     }
     return null;
+  }
+
+  private findActiveManagedAssetIdByContent(
+    openLibrary: OpenLibrary,
+    byteSize: number,
+    sha256: string,
+    contentHashCache: Map<string, string>,
+  ): string | null {
+    return (
+      this.findActiveManagedAssetByContent(
+        openLibrary,
+        byteSize,
+        sha256,
+        contentHashCache,
+      )?.assetId ?? null
+    );
   }
 
   private classifyImportEntryConflict(input: {
@@ -22494,9 +22532,27 @@ export class LibraryService {
           const isLibraryScope = existingSize === undefined;
           if (isLibraryScope) libraryDuplicateCount += 1;
           if (examples.length < 8) {
+            const matched = this.findActiveManagedAssetByContent(
+              openLibrary,
+              entry.byteSize,
+              entrySha256,
+              contentHashCache,
+            );
             examples.push({
               displayName: path.posix.basename(entry.destinationRelativePath),
               kind: isLibraryScope ? 'library-duplicate' : 'suspected-duplicate',
+              ...(matched
+                ? {
+                    existingDisplayName: matched.displayName,
+                    existingAssetId: matched.assetId,
+                    ...(matched.thumbnailArtifactId
+                      ? {
+                          existingThumbnailArtifactId:
+                            matched.thumbnailArtifactId,
+                        }
+                      : {}),
+                  }
+                : {}),
             });
           }
           continue;

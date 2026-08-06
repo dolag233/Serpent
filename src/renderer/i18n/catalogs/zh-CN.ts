@@ -648,7 +648,10 @@ export const zhCN = {
       title: "内容重复",
       summary: "发现 {count} 个内容重复文件（库内已有相同内容）",
       actionLabel: "内容重复时",
-      remember: "记住我的选择，下次不再询问"
+      remember: "记住我的选择，下次不再询问",
+      incoming: "正在导入：{name}",
+      existing: "库内已有：{name}",
+      existingUnknown: "库内已有相同内容",
     },
     move: {
       cancelAria: "取消移动",
