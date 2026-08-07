@@ -174,3 +174,7 @@
 **彻查结论（793k）**：内容重复对话框（ContentDuplicateDialog）的缩略图功能**存在且调用链完整**（65a2b67 已合入、App.tsx 传 libraryId）——但 **name-conflict（重名）分支**：worker 只填导入文件名、**没填已有资产信息**（existingDisplayName/existingThumbnailArtifactId），重名窗口（NameConflictDialog）因此无名称/缩略图。**修复**：worker 新增 findActiveManagedAssetAtPath（按路径查库内资产），name-conflict example 填充 existing 信息；NameConflictDialog 复用 content-duplicate 的缩略图展示（libraryId + examplesContent）。测试：重名冲突 example 断言 existing 字段。
 
 **FBX 重复检查（vqg9）实测**：重复检测**格式无关**（byte_size + SHA-256，classifyImportEntryConflict/findActiveManagedAssetByContent 无格式过滤）——测试证明：FBX 改名后导入相同内容 → suspected-duplicate 触发 + existingDisplayName 填充。用户未触发的原因待场景确认（同名导入时 name-conflict 优先、或导入入口差异）。
+
+### 10. 数据兼容性保障设计（Serpent-verg，2026-08-07）
+
+设计产出：`docs/implementation/0031-schema-compatibility-guarantee.md`（v3）。产品负责人方向：**不依赖备份**——主防线 = 高版本完全兼容低版本数据（迁移无损 + 全版本链测试）+ **鲁棒错误恢复**；**鲁棒性 = 结构容错（宽容读取）**：表缺列/多列时忽略差异、读取剩余信息，不因结构差异直接失败。设计三块：① 宽容读取（列探测缓存 + 读路径白名单化 + 缺列默认值降级，版本门禁降为最后手段）；② 迁移原子性 + 失败诊断重试（migration-failed.json、3 次上限、只读降级兜底）；③ 全版本链兼容测试 + 结构变异测试 + 迁移纪律静态检查。实施拆 8 子任务（实施交接）。
