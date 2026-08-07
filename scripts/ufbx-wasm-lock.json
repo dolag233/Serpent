@@ -28,8 +28,8 @@
   ],
   "artifacts": {
     "ufbx.wasm": {
-      "sha256": "2f4031d20ad26e0ce717369e93328ecb79cddd9cc8d59fadc5697a6cf3d2765d",
-      "note": "2026-08-07 rebuilt on Windows with Emscripten 6.0.5 after the Serpent-a5ic bridge change (expose separate metalnessTexture/roughnessTexture scene indices for composite merging in glb-builder). Wasm hash changed by the bridge edit; JS glue unchanged. Functionality verified by tests/worker/fbx-conversion.test.ts."
+      "sha256": "7813534c8a92c2895b49e13904cfddda8da67ebad73f25d5f1a77297b8e5b86c",
+      "note": "2026-08-07 rebuilt on Windows with Emscripten 6.0.5 after the Serpent-a5ic bridge change #2: replace the hand-written fan triangulation with ufbx_triangulate_face (correct concave handling). The earlier 'wasm32 corrupted output' was a buffer-size bug (ufbx.h says (n-2)*3-1, implementation writes (n-2)*3). Wasm hash changed by the bridge edit; JS glue unchanged."
     },
     "ufbx.js": {
       "sha256": "82a9376d575be30e953691a866fe213a4ae385a0a1e372bf52a66afc0a28884e"

@@ -636,22 +636,28 @@ int serpent_parse(const uint8_t *fbx_data, size_t fbx_size, const char *opts_jso
 		for (size_t p = 0; p < num_parts; p++) {
 			const ufbx_mesh_part *part = &mesh->material_parts.data[p];
 			size_t emit = 0;
+			/* Serpent-a5ic: use ufbx's real triangulator instead of a hand
+			 * written fan. The fan is wrong for concave polygons (complex DCC
+			 * meshes inevitably contain them) which rendered textures
+			 * "fragmented". ufbx_triangulate_face splits quads along the
+			 * shortest diagonal with crossing detection and ear-clips ngons.
+			 *
+			 * NOTE: the ufbx.h comment says `(n-2)*3-1` indices are needed,
+			 * but the implementation actually writes `(n-2)*3` (the `-1` is a
+			 * legacy triangle-strip hint). Allocating the smaller size made
+			 * the wasm32 output appear "corrupted" (heap overwrite) — the
+			 * earlier fan workaround was a consequence of that. */
 			size_t capacity = part_tri[p] * 3;
 			for (size_t fi = 0; fi < part->face_indices.count; fi++) {
 				uint32_t face_ix = part->face_indices.data[fi];
 				if (face_ix >= mesh->faces.count) continue;
 				ufbx_face face = mesh->faces.data[face_ix];
 				if (face.num_indices < 3) continue;
-				uint32_t b = face.index_begin;
 				uint32_t n = face.num_indices;
-				if (capacity >= emit + (n - 2) * 3) {
-					for (uint32_t k = 1; k + 1 < n; k++) {
-						tri_buf[emit * 3 + 0] = b;
-						tri_buf[emit * 3 + 1] = b + k;
-						tri_buf[emit * 3 + 2] = b + k + 1;
-						emit += 1;
-					}
-				}
+				if (capacity < emit + (n - 2) * 3) continue;
+				uint32_t num_tris = ufbx_triangulate_face(
+					tri_buf + emit * 3, (n - 2) * 3, mesh, face);
+				emit += num_tris;
 			}
 			if (emit > 0 && tri_buf) blob_append(bin, tri_buf, emit * 3 * sizeof(uint32_t));
 		}

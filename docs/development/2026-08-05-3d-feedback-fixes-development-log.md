@@ -162,3 +162,5 @@
 - **未修**：fbx 转换管线本身（fan 凹面、多 UV 层）记入 Serpent-8pg6 后续处理
 - 配套：CSP connect-src 加 blob:（GLTFLoader 的 ImageBitmapLoader 用 fetch 加载 blob URL——**主窗口 + offscreen 两个 html + renderer-csp 单测**；这修复了 ufbx 路径下贴图完全无法加载的问题，但主路径已换 FBXLoader，CSP 修复仍有效（GLB/glTF 查看其他格式需要）
 - 已验证：typecheck/lint 0、model-viewer E2E（FBX 用例走 FBXLoader）通过
+
+**ufbx 修复跟进（Serpent-8pg6，2026-08-07 当晚）**：用户要求先修 ufbx 而非换 FBXLoader。**根因找到**：ufbx.h 注释称 `ufbx_triangulate_face` 需要 `(n-2)*3-1` 索引空间，但**实现实际写入 `(n-2)*3`**——B 切片按注释分配缓冲区导致写越界 → "wasm32 输出损坏"的误判 → 绕开写了 fan。**修复**：桥改用 `ufbx_triangulate_face`（四边形最短对角线+交叉检测、多边形 ear clipping，正确处理凹面），正确分配 `(n-2)*3`。**验证**：用户模型 498K 三角，三角形几何法线 vs per-corner 法线一致性——**flipped=0、badAngle>45° 仅 0.06%**（fan 版本必然大量翻转）；fbx-conversion 20/20；model-viewer E2E FBX 用例（ufbx 主路径）通过。**loader-registry 恢复 ufbx 转换主路径**（FBXLoader 为转换失败兜底）。WASM 重建 + lock 更新（glue 不变）。用户实机确认中。
