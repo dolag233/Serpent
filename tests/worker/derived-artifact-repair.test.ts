@@ -98,12 +98,16 @@ function insertFailedAsset(
   // artifact file must exist on disk too, otherwise reconcileMissingArtifactFiles
   // invalidates the ready thumbnail on open.
   if (input.kind === 'webm_proxy') {
-    const thumbPath = path.join(libraryPath, '.serpent', 'artifacts', 'thumb.png');
+    // file_path must be relative to the artifacts root (production writes
+    // `${artifactId}.png`), otherwise reconcileMissingArtifactFiles resolves
+    // the absolute path against the root, misses the file, and invalidates
+    // the ready thumbnail on open — which then blocks webm_proxy enqueue.
+    const thumbRelativePath = 'thumb.png';
     if (input.available !== false) {
-      writeFileSync(thumbPath, 'png');
+      writeFileSync(path.join(libraryPath, '.serpent', 'artifacts', thumbRelativePath), 'png');
     }
     insertArtifact.run(
-      randomUUID(), revisionId, 'thumbnail', thumbPath,
+      randomUUID(), revisionId, 'thumbnail', thumbRelativePath,
       'ready', null, now,
     );
   }

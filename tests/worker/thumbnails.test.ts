@@ -514,7 +514,10 @@ describe('preview availability while derivatives are generated', () => {
     );
     db.close();
 
-    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+    // REQ-VIEW-002 (8ab6ffb): the viewer plays the original source for
+    // natively playable containers; the proxy-first path lives on the
+    // 'hover' intent, which is what this test exercises.
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'video',
       status: 'pending',
       kind: 'webm_proxy',
@@ -550,7 +553,7 @@ describe('preview availability while derivatives are generated', () => {
     );
     db.close();
 
-    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'video',
       status: 'failed',
       kind: 'webm_proxy',
@@ -572,7 +575,7 @@ describe('preview availability while derivatives are generated', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'audio',
       status: 'pending',
       kind: 'audio_proxy',
