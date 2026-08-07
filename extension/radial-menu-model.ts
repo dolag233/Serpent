@@ -10,16 +10,25 @@ import type { ExtensionFolderOption } from './folder-menu';
 
 export const TREE_ITEM_HEIGHT = 36;
 export const TREE_ITEM_GAP = 6;
-export const TREE_DRILL_WIDTH = 30;
+export const TREE_DRILL_WIDTH = 32;
 export const TREE_BACK_WIDTH = 30;
-export const TREE_PARENT_MIN_WIDTH = 132;
-export const TREE_LIST_WIDTH = 220;
-export const TREE_LIST_MAX_HEIGHT = 300;
-export const TREE_PANEL_PAD = 12;
-export const TREE_BRIDGE_GAP = 14;
+export const TREE_PARENT_MIN_WIDTH = 148;
+export const TREE_LIST_WIDTH = 256;
+export const TREE_LIST_MAX_HEIGHT = 320;
+export const TREE_PANEL_PAD = 16;
+export const TREE_BRIDGE_GAP = 36;
+/** 仅列表最上/最下一小条触发边缘滚动（约不到一行高）。 */
 export const TREE_EDGE_SCROLL_ZONE = 28;
-export const TREE_EDGE_SCROLL_SPEED = 10;
-export const TREE_VIEWPORT_MARGIN = 16;
+/** 边缘滚动基础像素/帧；靠边缘略加速，整体偏慢。 */
+export const TREE_EDGE_SCROLL_SPEED = 3.75;
+export const TREE_VIEWPORT_MARGIN = 20;
+export const TREE_SEPARATOR_HEIGHT = 14;
+/** › / ‹ 悬停满此时长才进层/返回，避免误触。 */
+export const TREE_NAV_DWELL_MS = 500;
+/** 根级最近保存快捷项上限。 */
+export const TREE_MAX_RECENT_SAVED = 4;
+/** 根级最近打开/浏览快捷项上限（不含已计入保存最近的）。 */
+export const TREE_MAX_RECENT_BROWSED = 2;
 
 export interface TreeGeometry {
   readonly itemHeight: number;
@@ -128,7 +137,8 @@ export type RadialLevel = TreeLevel;
 
 export type TreeItemNav = 'save';
 
-export interface TreeItem {
+export type TreeFolderItem = {
+  readonly kind: 'folder';
   label: string;
   readonly nav: TreeItemNav;
   readonly path: string;
@@ -136,16 +146,26 @@ export interface TreeItem {
   /** 有子级时右侧显示 › 热区，悬停进入下一级 */
   readonly expandable: boolean;
   readonly target?: TreeLevel;
-}
+  /** 根级分区：最近项 / 一级文件夹 */
+  readonly section?: 'recent' | 'folders';
+};
+
+export type TreeSeparatorItem = {
+  readonly kind: 'separator';
+};
+
+export type TreeItem = TreeFolderItem | TreeSeparatorItem;
 
 /** @deprecated 兼容旧名 */
-export type RadialItem = TreeItem;
+export type RadialItem = TreeFolderItem;
 export type RadialItemNav = TreeItemNav;
 
 export interface TreeMenuContext {
   readonly roots: readonly FolderNode[];
-  /** 根级便捷文件夹（最近保存 / 最近浏览等，数量不限）。 */
-  readonly quickPickFolders: readonly FolderNode[];
+  /** 最近保存 / 最近浏览等快捷文件夹（根级上方区块）。 */
+  readonly recentFolders: readonly FolderNode[];
+  /** 当前打开的资源库显示名（根级左侧父节点）。 */
+  readonly libraryDisplayName: string;
 }
 
 /** @deprecated 兼容旧名 */
@@ -157,24 +177,35 @@ export interface TreeParentInfo {
   readonly folderId: string | null;
   /** 返回后的目标层级 */
   readonly backTarget: TreeLevel;
+  /** 根级库名父节点不显示 ‹ */
+  readonly showBack: boolean;
 }
 
 const ROOT_FOLDER_PATH = '根目录';
 
-function folderItem(node: FolderNode): TreeItem {
+export function isFolderItem(item: TreeItem): item is TreeFolderItem {
+  return item.kind === 'folder';
+}
+
+function folderItem(
+  node: FolderNode,
+  section?: 'recent' | 'folders',
+): TreeFolderItem {
   const expandable = node.children.length > 0;
   return {
+    kind: 'folder',
     label: node.name,
     nav: 'save',
     path: node.path,
     folderId: node.folderId,
     expandable,
     target: expandable ? { kind: 'folder', path: node.path } : undefined,
+    ...(section ? { section } : {}),
   };
 }
 
 /** 同级重名自动展开为完整路径消歧。 */
-export function disambiguateLabels(items: TreeItem[]): TreeItem[] {
+export function disambiguateLabels(items: TreeFolderItem[]): TreeFolderItem[] {
   const counts = new Map<string, number>();
   for (const item of items) {
     if (item.label) {
@@ -189,27 +220,45 @@ export function disambiguateLabels(items: TreeItem[]): TreeItem[] {
   return items;
 }
 
+export function rowHeight(item: TreeItem, geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY): number {
+  return item.kind === 'separator' ? TREE_SEPARATOR_HEIGHT : geometry.itemHeight;
+}
+
+export function listContentHeight(
+  items: readonly TreeItem[],
+  geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY,
+): number {
+  if (items.length === 0) return 0;
+  let height = 0;
+  for (let i = 0; i < items.length; i += 1) {
+    if (i > 0) height += geometry.itemGap;
+    height += rowHeight(items[i]!, geometry);
+  }
+  return height;
+}
+
 /**
- * 当前层右侧列表（无限纵向，无分页、无「返回」行——返回在左侧父级 pill）。
+ * 当前层右侧列表（无限纵向）。根级 = 最近项 + 分割线 + 一级文件夹。
  */
 export function itemsForLevel(level: TreeLevel, context: TreeMenuContext): TreeItem[] {
   if (level.kind === 'root') {
-    const items: TreeItem[] = [
-      ...context.quickPickFolders.map((node) => folderItem(node)),
-      {
-        label: ROOT_FOLDER_PATH,
-        nav: 'save',
-        path: ROOT_FOLDER_PATH,
-        folderId: null,
-        expandable: true,
-        target: { kind: 'all' },
-      },
-    ];
-    return disambiguateLabels(items);
+    const recentIds = new Set(context.recentFolders.map((node) => node.path));
+    const recent = disambiguateLabels(
+      context.recentFolders.map((node) => folderItem(node, 'recent')),
+    );
+    // 一级文件夹排除已出现在最近区块的项，避免重复
+    const tops = disambiguateLabels(
+      context.roots
+        .filter((node) => !recentIds.has(node.path))
+        .map((node) => folderItem(node, 'folders')),
+    );
+    if (recent.length === 0) return tops;
+    if (tops.length === 0) return recent;
+    return [...recent, { kind: 'separator' }, ...tops];
   }
 
   if (level.kind === 'all') {
-    return disambiguateLabels(context.roots.map((node) => folderItem(node)));
+    return disambiguateLabels(context.roots.map((node) => folderItem(node, 'folders')));
   }
 
   const node = findFolderNode(context.roots, level.path);
@@ -217,30 +266,40 @@ export function itemsForLevel(level: TreeLevel, context: TreeMenuContext): TreeI
   return disambiguateLabels(children.map((child) => folderItem(child)));
 }
 
-/** 非根级左侧父级 pill；根级返回 null。 */
+/** 左侧父级 pill；根级为资源库名（无返回）。 */
 export function parentInfoForLevel(
   level: TreeLevel,
   context: TreeMenuContext,
-): TreeParentInfo | null {
-  if (level.kind === 'root') return null;
-  if (level.kind === 'all') {
+): TreeParentInfo {
+  if (level.kind === 'root') {
     return {
-      label: ROOT_FOLDER_PATH,
+      label: context.libraryDisplayName || 'Serpent',
       path: ROOT_FOLDER_PATH,
       folderId: null,
       backTarget: { kind: 'root' },
+      showBack: false,
+    };
+  }
+  if (level.kind === 'all') {
+    return {
+      label: context.libraryDisplayName || 'Serpent',
+      path: ROOT_FOLDER_PATH,
+      folderId: null,
+      backTarget: { kind: 'root' },
+      showBack: true,
     };
   }
   const node = findFolderNode(context.roots, level.path);
   const segments = level.path.split('/');
   const parentPath = segments.slice(0, -1).join('/');
   const backTarget: TreeLevel =
-    parentPath.length === 0 ? { kind: 'all' } : { kind: 'folder', path: parentPath };
+    parentPath.length === 0 ? { kind: 'root' } : { kind: 'folder', path: parentPath };
   return {
     label: node?.name ?? segments[segments.length - 1] ?? level.path,
     path: level.path,
     folderId: node?.folderId ?? null,
     backTarget,
+    showBack: true,
   };
 }
 
@@ -252,22 +311,29 @@ export function armedHint(
   if (!hit || hit.zone === 'none' || hit.zone === 'cancel') return null;
   if (hit.zone === 'back') return '返回上一级';
   if (hit.zone === 'parent' && parent) {
+    if (parent.folderId === null && parent.path === ROOT_FOLDER_PATH) {
+      return `保存到：${parent.label}（根目录）`;
+    }
     return `保存到：${parent.path.split('/').join(' / ')}`;
   }
   if (hit.zone === 'drill' && hit.index >= 0) {
     const item = items[hit.index];
-    return item ? `进入：${item.label}` : null;
+    return item && isFolderItem(item) ? `进入：${item.label}` : null;
   }
-  if ((hit.zone === 'item') && hit.index >= 0) {
+  if (hit.zone === 'item' && hit.index >= 0) {
     const item = items[hit.index];
-    return item ? `保存到：${item.path.split('/').join(' / ')}` : null;
+    return item && isFolderItem(item)
+      ? `保存到：${item.path.split('/').join(' / ')}`
+      : null;
   }
   return null;
 }
 
-export function crumbForLevel(level: TreeLevel): string {
-  if (level.kind === 'root') return '保存到 Serpent';
-  if (level.kind === 'all') return '根目录';
+export function crumbForLevel(level: TreeLevel, libraryDisplayName?: string): string {
+  if (level.kind === 'root') {
+    return libraryDisplayName ? `保存到 ${libraryDisplayName}` : '保存到 Serpent';
+  }
+  if (level.kind === 'all') return libraryDisplayName ?? '根目录';
   return `根目录 / ${level.path.split('/').join(' / ')}`;
 }
 
@@ -297,26 +363,20 @@ export interface TreePanelLayout {
   readonly maxScroll: number;
 }
 
-function listContentHeight(itemCount: number, geometry: TreeGeometry): number {
-  if (itemCount <= 0) return 0;
-  return (
-    itemCount * geometry.itemHeight + Math.max(0, itemCount - 1) * geometry.itemGap
-  );
-}
-
 export function measureTreePanel(
   originX: number,
   originY: number,
-  itemCount: number,
-  hasParent: boolean,
+  items: readonly TreeItem[],
+  parent: TreeParentInfo | null,
   viewportWidth: number,
   viewportHeight: number,
   geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY,
 ): TreePanelLayout {
-  const contentHeight = listContentHeight(itemCount, geometry);
+  const hasParent = parent !== null;
+  const contentHeight = listContentHeight(items, geometry);
   const listHeight = Math.min(
     geometry.listMaxHeight,
-    Math.max(geometry.itemHeight, contentHeight),
+    Math.max(geometry.itemHeight, contentHeight || geometry.itemHeight),
   );
   const parentBlockWidth = hasParent
     ? geometry.parentMinWidth + geometry.bridgeGap
@@ -337,7 +397,7 @@ export function measureTreePanel(
   let parentBody: Rect | null = null;
   let listX = left + geometry.panelPad;
 
-  if (hasParent) {
+  if (hasParent && parent) {
     const pillY = top + geometry.panelPad + Math.max(0, (listHeight - geometry.itemHeight) / 2);
     parentPill = {
       x: left + geometry.panelPad,
@@ -345,18 +405,22 @@ export function measureTreePanel(
       w: geometry.parentMinWidth,
       h: geometry.itemHeight,
     };
-    backHot = {
-      x: parentPill.x,
-      y: parentPill.y,
-      w: geometry.backWidth,
-      h: parentPill.h,
-    };
-    parentBody = {
-      x: parentPill.x + geometry.backWidth,
-      y: parentPill.y,
-      w: parentPill.w - geometry.backWidth,
-      h: parentPill.h,
-    };
+    if (parent.showBack) {
+      backHot = {
+        x: parentPill.x,
+        y: parentPill.y,
+        w: geometry.backWidth,
+        h: parentPill.h,
+      };
+      parentBody = {
+        x: parentPill.x + geometry.backWidth,
+        y: parentPill.y,
+        w: parentPill.w - geometry.backWidth,
+        h: parentPill.h,
+      };
+    } else {
+      parentBody = { ...parentPill };
+    }
     listX = parentPill.x + parentPill.w + geometry.bridgeGap;
   }
 
@@ -390,7 +454,7 @@ export function hitTestTree(
   clientX: number,
   clientY: number,
   layout: TreePanelLayout,
-  itemCount: number,
+  items: readonly TreeItem[],
   scrollY: number,
   geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY,
 ): TreeHit {
@@ -408,44 +472,91 @@ export function hitTestTree(
   }
 
   const localY = clientY - layout.listViewport.y + scrollY;
-  const stride = geometry.itemHeight + geometry.itemGap;
-  const index = Math.floor(localY / stride);
-  if (index < 0 || index >= itemCount) {
-    return { zone: 'none', index: -1 };
+  let offset = 0;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    const height = rowHeight(item, geometry);
+    const rowTop = offset;
+    const rowBottom = offset + height;
+    if (localY >= rowTop && localY < rowBottom) {
+      if (item.kind === 'separator') {
+        return { zone: 'none', index };
+      }
+      const localX = clientX - layout.listViewport.x;
+      const drillLeft = layout.listViewport.w - geometry.drillWidth;
+      if (item.expandable && localX >= drillLeft) {
+        return { zone: 'drill', index };
+      }
+      return { zone: 'item', index };
+    }
+    offset = rowBottom + geometry.itemGap;
   }
-  const rowTop = index * stride;
-  const rowBottom = rowTop + geometry.itemHeight;
-  if (localY < rowTop || localY >= rowBottom) {
-    return { zone: 'none', index: -1 };
-  }
-
-  const localX = clientX - layout.listViewport.x;
-  const drillLeft = layout.listViewport.w - geometry.drillWidth;
-  if (localX >= drillLeft) {
-    return { zone: 'drill', index };
-  }
-  return { zone: 'item', index };
+  return { zone: 'none', index: -1 };
 }
 
-/** 列表边缘自动滚动：指针在视口上下边缘带内时返回建议的 scroll 增量。 */
+/** 边缘滚动带宽：固定小条；列表很矮时不超过半高。 */
+export function resolveEdgeScrollZone(
+  listHeight: number,
+  geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY,
+): number {
+  if (listHeight <= 0) return geometry.edgeScrollZone;
+  return Math.min(geometry.edgeScrollZone, Math.floor(listHeight / 2));
+}
+
+/**
+ * 列表边缘自动滚动。仅当指针落在列表视口最上/最下窄条内时返回增量；
+ * 列表中部项上不滚动。越靠边缘略快，整体偏慢。
+ */
 export function edgeScrollDelta(
+  clientX: number,
   clientY: number,
   layout: TreePanelLayout,
   geometry: TreeGeometry = DEFAULT_TREE_GEOMETRY,
 ): number {
   const { listViewport } = layout;
-  if (clientY < listViewport.y || clientY > listViewport.y + listViewport.h) {
+  // 必须在列表视口内（含窄边缘带），避免在中部命令上误滚
+  if (
+    clientX < listViewport.x
+    || clientX > listViewport.x + listViewport.w
+    || clientY < listViewport.y
+    || clientY > listViewport.y + listViewport.h
+  ) {
     return 0;
   }
-  const topDist = clientY - listViewport.y;
-  const bottomDist = listViewport.y + listViewport.h - clientY;
-  if (topDist < geometry.edgeScrollZone) {
-    return -TREE_EDGE_SCROLL_SPEED;
+
+  const top = listViewport.y;
+  const bottom = listViewport.y + listViewport.h;
+  const zone = resolveEdgeScrollZone(listViewport.h, geometry);
+  const topDist = clientY - top;
+  const bottomDist = bottom - clientY;
+
+  if (clientY <= top + zone) {
+    const depth = Math.min(1, Math.max(0, 1 - topDist / zone));
+    return -Math.max(1, Math.round(TREE_EDGE_SCROLL_SPEED * (0.65 + depth * 0.85)));
   }
-  if (bottomDist < geometry.edgeScrollZone) {
-    return TREE_EDGE_SCROLL_SPEED;
+  if (clientY >= bottom - zone) {
+    const depth = Math.min(1, Math.max(0, 1 - bottomDist / zone));
+    return Math.max(1, Math.round(TREE_EDGE_SCROLL_SPEED * (0.65 + depth * 0.85)));
   }
   return 0;
+}
+
+/**
+ * 根级快捷最近项：最多 4 个最近保存 + 2 个最近打开（打开侧去重保存已出现的）。
+ */
+export function pickTreeRecentFolderIds(
+  savedRecentIds: readonly string[],
+  browsedRecentIds: readonly string[],
+): string[] {
+  const saved = savedRecentIds.slice(0, TREE_MAX_RECENT_SAVED);
+  const savedSet = new Set(saved);
+  const browsed: string[] = [];
+  for (const folderId of browsedRecentIds) {
+    if (savedSet.has(folderId)) continue;
+    browsed.push(folderId);
+    if (browsed.length >= TREE_MAX_RECENT_BROWSED) break;
+  }
+  return [...saved, ...browsed];
 }
 
 export function clampScroll(scrollY: number, maxScroll: number): number {
@@ -516,7 +627,7 @@ export function pageCountForLevel(): number {
   return 1;
 }
 
-export function armedCrumb(item: TreeItem | null | undefined): string | null {
+export function armedCrumb(item: TreeFolderItem | null | undefined): string | null {
   if (!item) return null;
   return `保存到：${item.path.split('/').join(' / ')}`;
 }

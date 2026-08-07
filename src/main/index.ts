@@ -1034,8 +1034,18 @@ async function handleListFolders(): Promise<ListFoldersDisposition> {
     return { ok: false, status: 500, reason: "unexpected worker response" };
   }
 
+  let libraryDisplayName = "Serpent";
+  const librariesResult = await workerClient.request({ type: "library.list" });
+  if (librariesResult.ok && librariesResult.type === "library.list") {
+    const match = librariesResult.libraries.find(
+      (library) => library.libraryId === saveContext.libraryId,
+    );
+    if (match?.displayName) libraryDisplayName = match.displayName;
+  }
+
   return {
     ok: true,
+    libraryDisplayName,
     recentBrowsedFolderIds: (() => {
       let ids = extensionBrowseFoldersStorePath
         ? readExtensionBrowseFolderIds(

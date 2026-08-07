@@ -225,6 +225,22 @@ async function refreshConnectionState(): Promise<void> {
   await refreshFolderMenus();
 }
 
+/**
+ * Fast path for content-script probes: ping only, then reply.
+ * Folder contextMenus rebuild is deferred — awaiting it here made
+ * `serpent-connection-status` miss sendResponse on large libraries
+ * (message port closed → drag menu always showed 未连接 while the
+ * toolbar icon was already bright). Serpent-a8mm.
+ */
+async function probeAndReplyConnectionState(): Promise<'connected' | 'disconnected'> {
+  const outcome = await probeSerpentConnection();
+  const nextState = outcome.kind === 'connected' ? 'connected' : 'disconnected';
+  connectionState = nextState;
+  setToolbarIcon(nextState === 'connected');
+  void refreshFolderMenus();
+  return nextState;
+}
+
 function scheduleConnectionChecks(): void {
   chrome.alarms.create(CONNECTION_ALARM, { periodInMinutes: 0.5 });
   void refreshConnectionState();
@@ -329,11 +345,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const type = Reflect.get(message, 'type');
 
   if (type === 'serpent-connection-status') {
-    void refreshConnectionState().then(() => {
-      sendResponse({
-        kind: connectionState === 'connected' ? 'connected' : 'disconnected',
+    void probeAndReplyConnectionState()
+      .then((kind) => {
+        sendResponse({ kind });
+      })
+      .catch(() => {
+        sendResponse({
+          kind: connectionState === 'connected' ? 'connected' : 'disconnected',
+        });
       });
-    });
     return true;
   }
 
@@ -354,6 +374,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           firstLevelFolderIds: topLevel.map((folder) => folder.folderId),
           recentFolderIds: hints.savedRecentIds,
           recentBrowsedFolderIds: hints.browsedRecentIds,
+          libraryDisplayName: outcome.libraryDisplayName,
         });
         return;
       }

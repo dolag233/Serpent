@@ -36,7 +36,12 @@ export const extensionFolderSchema = z.strictObject({
 export type ExtensionFolderSummary = z.infer<typeof extensionFolderSchema>;
 
 export type ListFoldersDisposition =
-  | { ok: true; folders: ExtensionFolderSummary[]; recentBrowsedFolderIds: string[] }
+  | {
+      ok: true;
+      folders: ExtensionFolderSummary[];
+      recentBrowsedFolderIds: string[];
+      libraryDisplayName: string;
+    }
   | { ok: false; status: number; reason: string };
 
 /** Metadata for browser-fetched binary uploads (Serpent-1jyi). */
@@ -304,6 +309,7 @@ export async function createExtensionServer(
             status: 'ok',
             folders: disposition.folders,
             recentBrowsedFolderIds: disposition.recentBrowsedFolderIds,
+            libraryDisplayName: disposition.libraryDisplayName,
           });
         })
         .catch((error) => {

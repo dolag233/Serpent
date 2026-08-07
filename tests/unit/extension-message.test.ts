@@ -22,7 +22,12 @@ function startServer(overrides: Partial<ExtensionServerOptions> = {}): Promise<E
     uploadStagingRoot: os.tmpdir(),
     onSaveIntent: () => {},
     onSaveUpload: async () => ({ accepted: true }),
-    onListFolders: async () => ({ ok: true, folders: [], recentBrowsedFolderIds: [] }),
+    onListFolders: async () => ({
+      ok: true,
+      folders: [],
+      recentBrowsedFolderIds: [],
+      libraryDisplayName: 'Serpent',
+    }),
     ...overrides,
   });
 }
@@ -427,6 +432,7 @@ describe('createExtensionServer', () => {
           },
         ],
         recentBrowsedFolderIds: [],
+        libraryDisplayName: '演示库',
       }),
     });
 
@@ -442,6 +448,7 @@ describe('createExtensionServer', () => {
         },
       ],
       recentBrowsedFolderIds: [],
+      libraryDisplayName: '演示库',
     });
   });
 

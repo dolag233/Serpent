@@ -30,7 +30,12 @@ export type ConnectionOutcome =
   | { kind: 'offline' };
 
 export type FolderListOutcome =
-  | { kind: 'ok'; folders: ExtensionFolderOption[]; recentBrowsedFolderIds: string[] }
+  | {
+      kind: 'ok';
+      folders: ExtensionFolderOption[];
+      recentBrowsedFolderIds: string[];
+      libraryDisplayName: string;
+    }
   | { kind: 'rejected'; status: number; reason: string }
   | { kind: 'unreachable' };
 
@@ -134,13 +139,19 @@ export async function probeSerpentConnection(
 function parseFolderList(body: string): {
   folders: ExtensionFolderOption[];
   recentBrowsedFolderIds: string[];
+  libraryDisplayName: string;
 } {
   const parsed = JSON.parse(body) as unknown;
   if (!parsed || typeof parsed !== 'object') {
-    return { folders: [], recentBrowsedFolderIds: [] };
+    return { folders: [], recentBrowsedFolderIds: [], libraryDisplayName: 'Serpent' };
   }
   const folders = Reflect.get(parsed, 'folders');
   const recentBrowsedFolderIds = Reflect.get(parsed, 'recentBrowsedFolderIds');
+  const libraryDisplayNameValue = Reflect.get(parsed, 'libraryDisplayName');
+  const libraryDisplayName =
+    typeof libraryDisplayNameValue === 'string' && libraryDisplayNameValue.trim()
+      ? libraryDisplayNameValue.trim()
+      : 'Serpent';
   const folderList = !Array.isArray(folders) ? [] : folders.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const folderId = Reflect.get(entry, 'folderId');
@@ -166,7 +177,7 @@ function parseFolderList(body: string): {
   const browsed = Array.isArray(recentBrowsedFolderIds)
     ? recentBrowsedFolderIds.filter((entry): entry is string => typeof entry === 'string')
     : [];
-  return { folders: folderList, recentBrowsedFolderIds: browsed };
+  return { folders: folderList, recentBrowsedFolderIds: browsed, libraryDisplayName };
 }
 
 export async function fetchSerpentFolders(
@@ -188,6 +199,7 @@ export async function fetchSerpentFolders(
       kind: 'ok',
       folders: parsed.folders,
       recentBrowsedFolderIds: parsed.recentBrowsedFolderIds,
+      libraryDisplayName: parsed.libraryDisplayName,
     };
   }
 
