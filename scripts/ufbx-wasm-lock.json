@@ -28,8 +28,8 @@
   ],
   "artifacts": {
     "ufbx.wasm": {
-      "sha256": "33033b209c2d0a65bfc1cc70c08eb7345f1fb4270e4fd6212688eec9d3f6471d",
-      "note": "2026-08-05 rebuilt on Windows (E:\\MyRepositories\\Serpent) with Emscripten 6.0.5. The JS glue hash is identical to the original build; only the WASM binary differs (toolchain build-path nondeterminism, e.g. clang embeds the source tree path). Functionality is verified by tests/worker/fbx-conversion.test.ts."
+      "sha256": "2f4031d20ad26e0ce717369e93328ecb79cddd9cc8d59fadc5697a6cf3d2765d",
+      "note": "2026-08-07 rebuilt on Windows with Emscripten 6.0.5 after the Serpent-a5ic bridge change (expose separate metalnessTexture/roughnessTexture scene indices for composite merging in glb-builder). Wasm hash changed by the bridge edit; JS glue unchanged. Functionality verified by tests/worker/fbx-conversion.test.ts."
     },
     "ufbx.js": {
       "sha256": "82a9376d575be30e953691a866fe213a4ae385a0a1e372bf52a66afc0a28884e"

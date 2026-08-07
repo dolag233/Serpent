@@ -12,6 +12,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
 import { convertFbxBuffer } from '../../src/worker/fbx/converter';
+import { buildGlb } from '../../src/worker/fbx/glb-builder';
+import type { FbxDescriptor } from '../../src/worker/fbx/descriptor';
 import { handleFbxConvertCommand } from '../../src/worker/fbx/convert-command';
 import { resetSerpentUfbxModuleForTest } from '../../src/worker/fbx/wasm-loader';
 import {
@@ -96,6 +98,7 @@ interface GltfMaterialJson {
   pbrMetallicRoughness?: {
     baseColorFactor?: number[];
     baseColorTexture?: { index: number };
+    metallicRoughnessTexture?: { index: number };
   };
   alphaMode?: string;
   doubleSided?: boolean;
@@ -308,6 +311,96 @@ describe('fbx converter — hand-written ASCII fixture', () => {
     const view = parsed.json.bufferViews?.[image?.bufferView ?? -1];
     const embedded = parsed.bin.subarray(view?.byteOffset ?? 0, (view?.byteOffset ?? 0) + (view?.byteLength ?? 0));
     expect(embedded).toEqual(ONE_PX_RED_PNG);
+  });
+
+  it('composites separate metalness/roughness maps into metallicRoughnessTexture (Serpent-a5ic)', async () => {
+    const { default: sharp } = await import('sharp');
+    const metalPng = await sharp(Buffer.from([0]), {
+      raw: { width: 1, height: 1, channels: 1 },
+    }).png().toBuffer();
+    const roughPng = await sharp(Buffer.from([128]), {
+      raw: { width: 1, height: 1, channels: 1 },
+    }).png().toBuffer();
+    // Drive glb-builder directly with a bridge-shaped descriptor carrying
+    // separate-file metalness/roughness maps (what the ufbx bridge emits for
+    // localized Max/Maya exports). Geometry is omitted; the composite path is
+    // independent of mesh content.
+    const descriptor: FbxDescriptor = {
+      ok: true,
+      ufbxVersion: '0.23.0',
+      meta: {
+        sourceName: 'pbr.fbx',
+        unitMeters: 1,
+        originalAxisUp: 1,
+        axes: [1, 2, 0],
+        totalTriangles: 0,
+        meshCount: 0,
+        materialCount: 1,
+        instanceCount: 0,
+      },
+      meshes: [],
+      instances: [],
+      warnings: [],
+      missingTextures: [],
+      materials: [{
+        name: 'Mat',
+        shaderType: 0,
+        baseColor: [0.8, 0.2, 0.2, 1],
+        baseColorTexture: -1,
+        metallic: 0,
+        roughness: 1,
+        metallicRoughnessTexture: -1,
+        metalnessTexture: 0,
+        roughnessTexture: 1,
+        hasMetalnessTexture: true,
+        hasRoughnessTexture: true,
+        emissive: [0, 0, 0],
+        emissiveTexture: -1,
+        normalScale: 1,
+        normalTexture: -1,
+        occlusionTexture: -1,
+        opacityTexture: -1,
+        doubleSided: false,
+        alphaMode: 'opaque',
+        limitations: [
+          'metalness texture without matching roughness map',
+          'roughness texture without matching metalness map',
+        ],
+      }],
+      textures: [
+        { index: 0, name: 'metal.png', relativeFilename: 'metal.png', absoluteFilename: '', embedded: false, contentOffset: 0, contentSize: 0 },
+        { index: 1, name: 'rough.png', relativeFilename: 'rough.png', absoluteFilename: '', embedded: false, contentOffset: 0, contentSize: 0 },
+      ],
+    };
+    const packed = Buffer.from([1, 0, 0, 0, 0x7b]); // jsonLen=1 + '{'
+    const built = await buildGlb({
+      descriptor,
+      packed,
+      textures: new Map([
+        [0, { mimeType: 'image/png', bytes: metalPng }],
+        [1, { mimeType: 'image/png', bytes: roughPng }],
+      ]),
+      sourceBytes: 4,
+    });
+    // The matching warnings must be gone once the maps are composited.
+    expect(built.warnings.filter((w) => w.includes('matching'))).toEqual([]);
+
+    const parsed = parseGlb(built.glb);
+    const material = materialByName(parsed, 'Mat');
+    const mrIndex = material?.pbrMetallicRoughness?.metallicRoughnessTexture?.index;
+    expect(mrIndex).toBeDefined();
+    const image = parsed.json.images?.[mrIndex ?? -1];
+    const view = parsed.json.bufferViews?.[image?.bufferView ?? -1];
+    const png = parsed.bin.subarray(
+      view?.byteOffset ?? 0,
+      (view?.byteOffset ?? 0) + (view?.byteLength ?? 0),
+    );
+    const { data } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
+    // glTF metallicRoughness: R=255, G=roughness, B=metalness, A=255.
+    expect(data[0]).toBe(255);
+    expect(data[1]).toBe(128); // G = roughness source
+    expect(data[2]).toBe(0); // B = metalness source
+    expect(data[3]).toBe(255);
   });
 
   it('embeds an external PNG when it sits next to the FBX', async () => {

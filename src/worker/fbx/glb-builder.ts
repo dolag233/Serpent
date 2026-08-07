@@ -102,7 +102,40 @@ interface GltfJson {
   accessors?: GltfAccessor[];
 }
 
-export function buildGlb(input: GlbBuildInput): GlbBuildOutput {
+/**
+ * Serpent-a5ic: composite separate metalness/roughness maps into the single
+ * glTF metallicRoughness texture (B = metalness, G = roughness, R/A = 255).
+ * Both source maps are expected to be grayscale; they are resized to the
+ * metalness map's dimensions. Returns null on any decode/encode failure so the
+ * caller falls back to the legacy behavior (maps dropped + warning).
+ */
+async function compositeMetallicRoughness(
+  metalness: ResolvedTexture,
+  roughness: ResolvedTexture,
+): Promise<Buffer | null> {
+  try {
+    const { default: sharp } = await import('sharp');
+    const metadata = await sharp(metalness.bytes).metadata();
+    const width = metadata.width ?? 0;
+    const height = metadata.height ?? 0;
+    if (width <= 0 || height <= 0 || width * height > 128 * 1024 * 1024) return null;
+    const [metalRaw, roughRaw] = await Promise.all([
+      sharp(metalness.bytes).resize(width, height).greyscale().raw().toBuffer(),
+      sharp(roughness.bytes).resize(width, height).greyscale().raw().toBuffer(),
+    ]);
+    if (metalRaw.length !== width * height || roughRaw.length !== width * height) return null;
+    const rgba = Buffer.alloc(width * height * 4, 255);
+    for (let i = 0; i < width * height; i += 1) {
+      rgba[i * 4 + 1] = roughRaw[i]!; // G = roughness
+      rgba[i * 4 + 2] = metalRaw[i]!; // B = metalness
+    }
+    return await sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+export async function buildGlb(input: GlbBuildInput): Promise<GlbBuildOutput> {
   const { descriptor, packed, textures, sourceBytes } = input;
   const warnings: string[] = [...descriptor.warnings];
   const unresolvedTextures: string[] = [];
@@ -158,6 +191,60 @@ export function buildGlb(input: GlbBuildInput): GlbBuildOutput {
     accessors.push(a);
     return accessors.length - 1;
   };
+
+  // -- Serpent-a5ic: composite separate metalness/roughness maps ------------
+  // The bridge only fills metallicRoughnessTexture when both maps share one
+  // file; separate files (common in Max/Maya exports) arrive as
+  // metalnessTexture/roughnessTexture indices and are pixel-merged here into
+  // a new texture before the embedding pass below.
+  const resolveForComposite = (index: number): ResolvedTexture | undefined => {
+    const resolved = textures.get(index);
+    if (resolved) return resolved;
+    // Embedded maps (FBX-internal content, often mirrored in a .fbm folder)
+    // are read straight from the bridge blob region.
+    const tex = descriptor.textures[index];
+    if (!tex?.embedded || tex.contentSize <= 0) return undefined;
+    const start = blobBase + tex.contentOffset;
+    if (start + tex.contentSize > packed.length) return undefined;
+    const bytes = Buffer.from(packed.subarray(start, start + tex.contentSize));
+    const mime = detectImageMime(bytes);
+    return mime ? { mimeType: mime, bytes } : undefined;
+  };
+  /** Trust the file-name suffix convention when it disagrees with the bridge's
+   * slot assignment (localized DCC exporters can map PBR maps oddly). */
+  const looksLikeMetalness = (index: number): boolean =>
+    /(metal|metallic|metalness)/iu.test(descriptor.textures[index]?.relativeFilename ?? '');
+  const looksLikeRoughness = (index: number): boolean =>
+    /rough/iu.test(descriptor.textures[index]?.relativeFilename ?? '');
+  for (const mat of descriptor.materials) {
+    if (mat.metallicRoughnessTexture >= 0) continue;
+    let metalIndex = mat.metalnessTexture;
+    let roughIndex = mat.roughnessTexture;
+    if (metalIndex < 0 || roughIndex < 0 || metalIndex === roughIndex) continue;
+    if (looksLikeRoughness(metalIndex) && looksLikeMetalness(roughIndex)) {
+      [metalIndex, roughIndex] = [roughIndex, metalIndex];
+    }
+    const metalness = resolveForComposite(metalIndex);
+    const roughness = resolveForComposite(roughIndex);
+    if (!metalness || !roughness) continue;
+    const composite = await compositeMetallicRoughness(metalness, roughness);
+    if (!composite) continue;
+    const newIndex = descriptor.textures.length;
+    descriptor.textures.push({
+      index: newIndex,
+      name: 'metallicRoughness',
+      relativeFilename: '',
+      absoluteFilename: '',
+      embedded: false,
+      contentOffset: 0,
+      contentSize: 0,
+    });
+    textures.set(newIndex, { mimeType: 'image/png', bytes: composite });
+    mat.metallicRoughnessTexture = newIndex;
+    mat.limitations = mat.limitations.filter(
+      (limitation) => !limitation.includes('matching'),
+    );
+  }
 
   // -- Textures → glTF textures/images --------------------------------------
   // BIN layout: bridge geometry + embedded texture content stays in the bridge

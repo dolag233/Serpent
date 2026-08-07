@@ -367,6 +367,13 @@ static void emit_material(serpent_buf *j, const ufbx_material *mat, const ufbx_s
 	jappend_double(j, rough);
 	jappend(j, ",\"metallicRoughnessTexture\":");
 	jappend_int(j, mr_tex);
+	/* Serpent-a5ic: separate-file metalness/roughness maps cannot ride the
+	 * single glTF metallicRoughness slot; expose both scene indices so the
+	 * JS converter can composite them (B = metalness, G = roughness). */
+	jappend(j, ",\"metalnessTexture\":");
+	jappend_int(j, metal_tex);
+	jappend(j, ",\"roughnessTexture\":");
+	jappend_int(j, rough_tex);
 	jappend(j, ",\"hasMetalnessTexture\":");
 	jappend_int(j, (metal_tex >= 0 && mr_tex < 0) ? 1 : 0);
 	jappend(j, ",\"hasRoughnessTexture\":");

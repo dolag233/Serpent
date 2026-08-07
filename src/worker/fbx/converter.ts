@@ -125,7 +125,7 @@ export async function convertFbxBuffer(
   }
 
   const textures = resolveExternalTextures(descriptor, input.sourcePath);
-  const built = buildGlb({
+  const built = await buildGlb({
     descriptor,
     packed,
     textures,

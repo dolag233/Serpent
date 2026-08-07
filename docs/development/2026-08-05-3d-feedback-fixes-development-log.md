@@ -138,3 +138,16 @@
 - `enqueueThumbnailJobs` 新增 `retryFailed` 选项；openLibrary startup + scheduleThumbnailScene 全部场景带 `retryFailed: true`——**打开库/浏览到即自动补生成**
 - 测试：tests/worker/derived-artifact-repair.test.ts 5 用例（可重试重入队、持久失败不重试、节流、源缺失不重试、幂等）
 - 测试期间发现并验证了两个既有正确行为：资产刷新按 mtime+byte_size 旋转 revision、reconcileMissingArtifactFiles invalidate 缺失文件 artifact——fixture 需构造精确匹配
+
+### 7. FBX 分文件 metalness/roughness 贴图丢失（Serpent-a5ic，2026-08-07）
+
+**用户反馈**：带贴图 FBX（jk黑丝女主，56MB Max 导出，.fbm 4 张 4096 PNG）加载后贴图未正确显示；"之前可以，用了 ufbx 之后不行"。
+
+**根因**：ufbx-bridge.c 的 metallicRoughness 合并条件 `mr_tex = (metal_tex == rough_tex)`——**仅同一文件时合并**；分文件模型（`_metallic.png` + `_roughness.png`）两张都被丢弃 → GLB 材质无 metallicRoughnessTexture → metalness=0/roughness=1 无金属质感。之前 FBXLoader 兜底路径是 Blinn-Phong 近似，观感尚可。
+
+**修复**（提交 089a46d）：
+- C 桥输出独立 `metalnessTexture`/`roughnessTexture` scene 索引（WASM 重建 + lock 哈希更新，glue 不变）
+- glb-builder：不同文件时用 sharp **像素合成** metallicRoughness 纹理（R=255、G=roughness、B=metalness、A=255，尺寸取 metalness 图）；合成前按文件名后缀校验交换（本地化 DCC 导出器的槽位映射可能反——用户模型实测桥把 metalness 指到了 _roughness.png，文件名修正后通道正确）
+- embedded 纹理直接从桥 blob 区读取（resolveExternalTextures 跳过 embedded）
+- 测试：direct-descriptor 合成用例（1×1 灰度源 → 断言合成像素 B=0/G=128/R=255/A=255 + matching 警告消除）；用户模型验证：metallicRoughnessTexture 引用 ✓、B 通道均值=metalness 源（11.9=11.9）、G=roughness 源（113.8=113.8）
+- fixture 尝试（手写 ASCII FBX 模拟 ufbx PBR 属性识别）失败回退：ufbx 的材质属性表（blender/3dsMax/glTF 变体）与手写格式不匹配，测试改为直接构造 descriptor
