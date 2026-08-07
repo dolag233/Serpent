@@ -1,0 +1,17 @@
+fix(fbx): flip V texture coordinates in the ufbx conversion (Serpent-a5ic)
+
+The final cause of the "fragmented" texture rendering: FBX UVs have a
+bottom-left origin while glTF has top-left (GLTFLoader sets flipY=false),
+so without a V flip textures render upside-down and normal maps sample
+wrong. Every mainstream FBX->glTF converter flips V by default
+(Facebook FBX2glTF, ezhangle/FBX2glTF, cocos/FBX-glTF-conv) — the bridge
+now writes v' = 1-v into the UV blob.
+
+Excluded along the way: triangle geometry (ufbx_triangulate_face, kept —
+fan was wrong for concave faces), UV set (100% identical to FBXLoader),
+texture bytes (SHA-identical), normal maps (removal changed nothing).
+
+WASM rebuilt, lock hash updated (glue unchanged); fbx-conversion 20/20;
+user-verified on the reported model.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>

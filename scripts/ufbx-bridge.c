@@ -611,7 +611,12 @@ int serpent_parse(const uint8_t *fbx_data, size_t fbx_size, const char *opts_jso
 			for (size_t c = 0; c < corner_count; c++) {
 				ufbx_vec2 v = uv->values.data[uv->indices.data[c]];
 				attr[c * 2 + 0] = (float)v.x;
-				attr[c * 2 + 1] = (float)v.y;
+				/* Serpent-a5ic: FBX UV origin is bottom-left, glTF is
+				 * top-left (GLTFLoader sets flipY=false). Flip V (v -> 1-v)
+				 * or textures render upside-down and normal maps sample
+				 * wrong — the "fragmented" look. Matches the FBX2glTF
+				 * default behavior. */
+				attr[c * 2 + 1] = 1.0f - (float)v.y;
 			}
 			blob_append(bin, attr, corner_count * 2 * sizeof(float));
 		}
