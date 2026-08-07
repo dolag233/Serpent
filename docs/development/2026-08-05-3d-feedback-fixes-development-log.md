@@ -156,7 +156,7 @@
 
 **用户实测**：ufbx 转换的 FBX 颜色"完全错乱、支离破碎"（498K 三角角色模型）；FBXLoader 路径正常。结构诊断全部通过（UV 0-1 无越界、索引不越界、贴图字节与源文件 SHA 全匹配、三角形数正确）——**问题在几何与 UV 的对应**：桥的手写 fan 三角化对凹多边形必然错误（复杂角色网格无法保证全凸）。**产品决策：查看器 FBX 主路径换回 FBXLoader**（正确性优先）。
 
-**变更**（提交 3f1c9b2）：
+**变更**（提交 3f58d4d）：
 - `loadFbx`：直接 FBXLoader（embedded 贴图直读 + 伴生贴图映射 upgradeFallbackMaterials），不再调用 model.convert-fbx
 - ufbx 转换代码/命令/测试全部保留（未来修复 fan 三角化后可切回）；`serpentPreviewUrl` 等未用 import 清理
 - **未修**：fbx 转换管线本身（fan 凹面、多 UV 层）记入 Serpent-8pg6 后续处理
