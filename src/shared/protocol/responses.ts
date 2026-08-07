@@ -45,6 +45,12 @@ export const internalLibrarySummarySchema = z.strictObject({
   libraryId: nonBlankString,
   displayName: nonBlankString,
   libraryPath: nonBlankString,
+  // Serpent-033e: the library was written by a newer Serpent build than the
+  // running one. It opens read-only (browse/search/preview work; writes fail
+  // with LIBRARY_READ_ONLY) so a schema bump never locks a user out.
+  readOnly: z.boolean().optional(),
+  libraryVersion: z.number().int().positive().optional(),
+  supportedSchemaVersion: z.number().int().positive().optional(),
 });
 
 export type InternalLibrarySummary = z.infer<typeof internalLibrarySummarySchema>;
@@ -53,6 +59,9 @@ export const rendererLibrarySummarySchema = z.strictObject({
   libraryId: nonBlankString,
   displayName: nonBlankString,
   displayPath: nonBlankString,
+  readOnly: z.boolean().optional(),
+  libraryVersion: z.number().int().positive().optional(),
+  supportedSchemaVersion: z.number().int().positive().optional(),
 });
 
 export type RendererLibrarySummary = z.infer<typeof rendererLibrarySummarySchema>;

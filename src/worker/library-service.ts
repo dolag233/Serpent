@@ -3301,11 +3301,18 @@ function readGitignoreText(libraryPath: string): string {
 export function openConfiguredDatabase(
   filename: string,
   busyTimeoutMs = 5_000,
+  options: { readonly?: boolean } = {},
 ): DatabaseConnection {
   if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > 60_000) {
     throw new Error('SQLite busy timeout must be an integer between 0 and 60000 milliseconds.');
   }
-  const connection = new Database(filename);
+  // Serpent-033e: read-only degrade (library written by a newer build). SQLite
+  // enforces the read-only guarantee at the connection level, so every write
+  // attempt fails with SQLITE_READONLY — no command needs an explicit gate.
+  // journal_mode/synchronous are write PRAGMAs and must be skipped here.
+  const connection = options.readonly
+    ? new Database(filename, { readonly: true })
+    : new Database(filename);
   try {
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
@@ -3314,6 +3321,15 @@ export function openConfiguredDatabase(
     // that kernel-level lock instead of turning normal contention into an
     // opaque SQLITE_BUSY/INTERNAL_ERROR before our public LIBRARY_BUSY path.
     connection.pragma(`busy_timeout = ${busyTimeoutMs}`);
+    if (options.readonly) {
+      if (
+        connection.pragma('foreign_keys', { simple: true }) !== 1 ||
+        connection.pragma('busy_timeout', { simple: true }) !== busyTimeoutMs
+      ) {
+        throw new Error('Required SQLite safety pragmas could not be enabled.');
+      }
+      return connection;
+    }
     const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
     connection.pragma('synchronous = FULL');
     if (
@@ -3346,6 +3362,25 @@ function schemaVersion(connection: DatabaseConnection): number {
     throw new LibraryServiceError('LIBRARY_CORRUPT');
   }
   return version;
+}
+
+/**
+ * Serpent-033e: probe whether a library file was written by a newer build
+ * without running any migration or WAL pragma. Returns the library's schema
+ * version when it exceeds the supported one, otherwise null (the normal open
+ * path reports real errors itself).
+ */
+function schemaVersionProbe(filename: string): number | null {
+  let connection: DatabaseConnection | undefined;
+  try {
+    connection = openConfiguredDatabase(filename, 5_000, { readonly: true });
+    const version = schemaVersion(connection);
+    return version > SUPPORTED_SCHEMA_VERSION ? version : null;
+  } catch {
+    return null;
+  } finally {
+    if (connection) closeIgnoringFailure(connection);
+  }
 }
 
 function verifyMigrationHistory(connection: DatabaseConnection, version: number): void {
@@ -3897,6 +3932,16 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
  * v0.1 library is v23 before this change, which is the upgrade boundary that
  * needs cross-process protection now.
  */
+/**
+ * Serpent-033e: the library was written by a newer build than the running one.
+ * openLibrary degrades to read-only instead of refusing to open; other call
+ * sites (create/import validation) treat it as LIBRARY_VERSION_TOO_NEW.
+ */
+export interface SchemaTooNewSignal {
+  readonly readOnly: true;
+  readonly libraryVersion: number;
+}
+
 function migrateDatabase(
   connection: DatabaseConnection,
   allowFresh: boolean,
@@ -3904,17 +3949,21 @@ function migrateDatabase(
     LibraryServiceOptions,
     'afterSchemaMigrationTransactionBegin' | 'beforeSchemaMigrationTransaction'
   >,
-): void {
+): SchemaTooNewSignal | null {
   const versionBeforeMigration = schemaVersion(connection);
+  if (versionBeforeMigration > SUPPORTED_SCHEMA_VERSION) {
+    return { readOnly: true, libraryVersion: versionBeforeMigration };
+  }
   if (versionBeforeMigration >= 23 && versionBeforeMigration <= SUPPORTED_SCHEMA_VERSION) {
     options?.beforeSchemaMigrationTransaction?.();
     connection.transaction(() => {
       options?.afterSchemaMigrationTransactionBegin?.();
       migrateDatabaseUnserialized(connection, allowFresh);
     }).immediate();
-    return;
+    return null;
   }
   migrateDatabaseUnserialized(connection, allowFresh);
+  return null;
 }
 
 function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh: boolean): void {
@@ -23828,6 +23877,49 @@ export class LibraryService {
 
     let connection: DatabaseConnection | undefined;
     try {
+      // Serpent-033e: a library written by a newer build still opens — in
+      // read-only mode (browse/search/preview work; every write fails with
+      // LIBRARY_READ_ONLY at the SQLite level). Schema bumps must never lock
+      // a user out of their library.
+      const tooNew = schemaVersionProbe(databasePath(canonicalPath));
+      if (tooNew !== null) {
+        connection = openConfiguredDatabase(
+          databasePath(canonicalPath),
+          this.options.sqliteBusyTimeoutMsForTests,
+          { readonly: true },
+        );
+        const libraryRow = connection
+          .prepare('SELECT library_id, display_name FROM library LIMIT 1')
+          .get() as { library_id: string; display_name: string } | undefined;
+        if (!libraryRow) {
+          closeIgnoringFailure(connection);
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const existingIdentity = this.openById.get(libraryRow.library_id);
+        if (existingIdentity) {
+          closeIgnoringFailure(connection);
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const summary: InternalLibrarySummary = {
+          libraryId: libraryRow.library_id,
+          displayName: libraryRow.display_name,
+          libraryPath: canonicalPath,
+          readOnly: true,
+          libraryVersion: tooNew,
+          supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
+        };
+        const openLibrary: OpenLibrary = {
+          connection,
+          summary,
+          readOnly: true,
+          changeSubscription: { lastSequence: 0, stop: () => {} },
+          preservedRelinkPathIdentities: new Set(),
+          gitignoreText: '',
+        };
+        this.openById.set(summary.libraryId, openLibrary);
+        this.openIdByPath.set(canonicalPath, summary.libraryId);
+        return summary;
+      }
       connection = openConfiguredDatabase(
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
@@ -25688,6 +25780,19 @@ export class LibraryService {
   closeLibrary(libraryId: string): void {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+
+    if (openLibrary.readOnly) {
+      // Serpent-033e: a read-only (newer-schema) library never queued jobs,
+      // started watchers, or held pending imports — every close-time write
+      // below would fail with SQLITE_READONLY. Just release the handle.
+      openLibrary.changeSubscription.stop();
+      openLibrary.connection.close();
+      this.openById.delete(libraryId);
+      this.openIdByPath.delete(openLibrary.summary.libraryPath);
+      this.autoRepairAttemptedByLibrary.delete(libraryId);
+      this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
+      return;
+    }
 
     // A deliberate close is not a crash recovery boundary. Persist queued,
     // paused, and running AI work as cancelled before the connection closes so

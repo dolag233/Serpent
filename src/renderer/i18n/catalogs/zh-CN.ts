@@ -71,6 +71,9 @@ export const zhCN = {
     deleteLibraryFromDisk: "从硬盘删除资源库…",
     currentLibrary: "当前资源库 {name}",
     libraryNamed: "资源库：{name}",
+    readOnlyBanner: "该资源库由更新版本的 Serpent 创建，当前为只读模式。升级 Serpent 后可继续编辑。",
+    readOnlyBannerVersioned:
+      "该资源库由 Serpent v{libraryVersion} 创建（当前版本支持 v{supportedVersion}），当前为只读模式。升级 Serpent 后可继续编辑。",
     language: "语言",
     languageZh: "简体中文",
     languageEn: "English",
@@ -1698,6 +1701,7 @@ export const zhCN = {
       NOT_A_LIBRARY: "所选文件夹不是有效的 Serpent 资源库。",
       LIBRARY_CORRUPT: "资源库数据库或迁移记录已损坏。",
       LIBRARY_VERSION_TOO_NEW: "该资源库由更新版本的 Serpent 创建。",
+      LIBRARY_READ_ONLY: "该资源库由更新版本的 Serpent 创建，当前为只读模式。升级 Serpent 后可继续编辑。",
       LIBRARY_NOT_WRITABLE: "Serpent 无法写入所选位置。",
       LIBRARY_CLEANUP_FAILED: "创建失败，且临时文件无法自动清理。",
       LIBRARY_NOT_OPEN: "该资源库当前没有打开。",

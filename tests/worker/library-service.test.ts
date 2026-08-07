@@ -919,7 +919,7 @@ describe('LibraryService lifecycle', () => {
     expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
   });
 
-  it('rejects a database created by a newer schema version', () => {
+  it('opens a database created by a newer schema version read-only (Serpent-033e)', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Future', selectedParentPath: root });
@@ -928,10 +928,9 @@ describe('LibraryService lifecycle', () => {
     database.pragma('user_version = 999');
     database.close();
 
-    expectServiceError(
-      () => service.openLibrary(created.libraryPath),
-      'LIBRARY_VERSION_TOO_NEW',
-    );
+    const summary = service.openLibrary(created.libraryPath);
+    expect(summary.readOnly).toBe(true);
+    expect(summary.libraryVersion).toBe(999);
   });
 
   it('migrates a valid v1 library through v2 to v3 when opening', () => {

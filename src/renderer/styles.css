@@ -457,6 +457,20 @@ summary:focus-visible {
   z-index: calc(var(--ui-layer-shell) + 1);
 }
 
+/* Serpent-033e: read-only degrade banner (library written by a newer build). */
+.library-readonly-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--notice-info-bg, var(--pane-raised));
+  border-bottom: 1px solid var(--divider-soft);
+}
+
 .app-toolbar {
   /* Above workspace content so library/settings menus are never covered by
      the asset viewer (REQ-VIEW-004 stacking isolation). */

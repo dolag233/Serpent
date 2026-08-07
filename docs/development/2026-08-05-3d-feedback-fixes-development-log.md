@@ -110,3 +110,17 @@
 - kmgw 的 E2E 视觉复现（本机 E2E 手动流程被原生对话框阻塞，需 SERPENT_E2E_* hook；修复已提交，用户实机确认中）
 - 临时测试 `tests/e2e/tmp-*.test.ts` 验证后清理或转正
 - packaged 验证（.hdr 哈希发射、离屏窗口、GLB 产物）仍为 0030 未执行项
+
+### 5. schema 版本兼容性根治（Serpent-033e，2026-08-07）
+
+**事故**：本机资源库被未合入代码的 v34 迁移升级（应用时间 2026-08-05 23:24），v33 构建打开时抛 LIBRARY_VERSION_TOO_NEW 直接拒绝 → 用户打不开资源库。产品要求：公开后不允许因 schema 版本打不开库。
+
+**根因链**：① 版本门禁（migrateDatabaseUnserialized）对 `version > SUPPORTED` 直接 throw；② UI 只有模糊失败（"The recent library could not be reopened"）；③ 无迁移纪律约束。
+
+**修复**（ADR-0028，提交 9e10f1b）：
+- **只读降级**：openLibrary 先只读探测 user_version，高于支持版本 → SQLite readonly 连接打开（跳过迁移/校验/watcher/恢复等全部写路径），summary 带 readOnly/libraryVersion/supportedSchemaVersion 透传 renderer 显示全局提示条
+- **写拒绝**：SQLite 连接级只读保证写失败（SQLITE_READONLY），publicErrorForWorkerFailure 统一映射为 LIBRARY_READ_ONLY 可操作错误（含 i18n 中英）
+- **只读关闭**：closeLibrary readOnly 分支跳过 cancelJobs 等写清理
+- **迁移纪律**（ADR-0028）：只加不改（新表/新列可空或默认/新索引；禁删改现有结构），保证只读降级永远安全
+- 既有测试 `rejects a database created by a newer schema version` 更新为只读语义；新增 tests/worker/library-schema-readonly.test.ts 4 用例
+- 事故库恢复：`.serpent/library.db.bak-v34` 备份后 user_version 降回 33（v34 未增删表、核心查询全通），冒烟验证后用户可打开

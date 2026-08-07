@@ -1428,6 +1428,10 @@ function toRendererResult(
         libraryId: result.library.libraryId,
         displayName: result.library.displayName,
         displayPath: result.library.libraryPath,
+        // Serpent-033e: read-only degrade for newer-schema libraries.
+        readOnly: result.library.readOnly,
+        libraryVersion: result.library.libraryVersion,
+        supportedSchemaVersion: result.library.supportedSchemaVersion,
       },
     });
   }

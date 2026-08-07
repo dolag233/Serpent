@@ -8438,6 +8438,20 @@ function AppInner() {
           <WindowsWindowControls shell={shellApi} />
         ) : null}
       </header>
+      {library?.readOnly ? (
+        <div className="library-readonly-banner" role="status">
+          <Icon name="info" size={14} />
+          <span>
+            {library.libraryVersion !== undefined &&
+            library.supportedSchemaVersion !== undefined
+              ? t("library.readOnlyBannerVersioned", {
+                  libraryVersion: library.libraryVersion,
+                  supportedVersion: library.supportedSchemaVersion,
+                })
+              : t("library.readOnlyBanner")}
+          </span>
+        </div>
+      ) : null}
       <NavigationSidebar
         library={library}
         assetScope={assetScope}

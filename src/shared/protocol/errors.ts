@@ -26,6 +26,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   NOT_A_LIBRARY: 'The selected folder is not a Serpent library.',
   LIBRARY_CORRUPT: 'The library database or migration history is damaged.',
   LIBRARY_VERSION_TOO_NEW: 'This library was created by a newer version of Serpent.',
+  LIBRARY_READ_ONLY:
+    'This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.',
   LIBRARY_NOT_WRITABLE: 'Serpent cannot write to the selected location.',
   LIBRARY_BUSY: 'This library is being updated by another Serpent session. Try again in a moment.',
   LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',

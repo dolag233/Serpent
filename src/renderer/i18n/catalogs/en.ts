@@ -80,6 +80,10 @@ export const en = {
     deleteLibraryFromDisk: "Delete library from disk…",
     currentLibrary: "Current library {name}",
     libraryNamed: "Library: {name}",
+    readOnlyBanner:
+      "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
+    readOnlyBannerVersioned:
+      "This library was created by Serpent v{libraryVersion} (this build supports v{supportedVersion}). It is open in read-only mode. Upgrade Serpent to edit it.",
     language: "Language",
     languageZh: "简体中文",
     languageEn: "English",
@@ -1717,6 +1721,7 @@ export const en = {
       NOT_A_LIBRARY: "The selected folder is not a valid Serpent library.",
       LIBRARY_CORRUPT: "The library database or migration record is corrupt.",
       LIBRARY_VERSION_TOO_NEW: "This library was created by a newer version of Serpent.",
+      LIBRARY_READ_ONLY: "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
       LIBRARY_NOT_WRITABLE: "Serpent cannot write to the selected location.",
       LIBRARY_CLEANUP_FAILED: "Creation failed, and temporary files could not be cleaned up automatically.",
       LIBRARY_NOT_OPEN: "That library is not open.",
