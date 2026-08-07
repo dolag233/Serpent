@@ -14,10 +14,14 @@
 // enqueueThumbnailJobs SQL (which skips assets with a live terminal artifact)
 // picks the revision up again — no new queue condition needed.
 
+import { columnsFor } from './lenient-columns';
+
 /** Structural surface: the real OpenLibrary.connection satisfies this. */
 export interface RetryFailedConnection {
+  pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(sql: string): {
     all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
     run(...params: unknown[]): { changes: number };
   };
 }
@@ -65,6 +69,10 @@ export function requeueRetryableFailedArtifacts(
   connection: RetryFailedConnection,
   options: RetryFailedOptions = {},
 ): number {
+  // Serpent-verg.2 — lenient open (0031 §1): libraries predating the
+  // artifact status columns have no failed artifacts to repair; skip instead
+  // of failing to open.
+  if (!columnsFor(connection, 'revision_artifacts').has('status')) return 0;
   const now = (options.now ?? new Date()).toISOString();
   const backoffCutoff = new Date(
     (options.now ?? new Date()).getTime() - DERIVED_RETRY_BACKOFF_MS,

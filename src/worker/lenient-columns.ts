@@ -90,6 +90,22 @@ export function selectColumns(
   return wanted.filter((column) => existing.has(column));
 }
 
+/**
+ * Format alias-qualified column names for the subset of `columns` that
+ * exists, e.g. qualify('a', existing, ['byte_size']) → ['a.byte_size'].
+ * Query builders spread this into their SELECT lists so missing columns are
+ * never referenced.
+ */
+export function qualify(
+  alias: string,
+  existing: ReadonlySet<string>,
+  columns: readonly string[],
+): string[] {
+  return columns
+    .filter((column) => existing.has(column))
+    .map((column) => `${alias}.${column}`);
+}
+
 /** The subset of `wanted` that does NOT exist on `table`. */
 export function missingColumns(
   connection: ProbeConnection,
@@ -116,9 +132,11 @@ export const DEGRADED_COLUMN_DEFAULTS: Readonly<
     file_hash: null,
     width: null,
     height: null,
+    trashed_from_relative_path: null,
   },
   revisions: {
-    byte_size: null,
+    byte_size: 0,
+    modified_at: '',
     width: null,
     height: null,
     duration_ms: null,
@@ -127,6 +145,8 @@ export const DEGRADED_COLUMN_DEFAULTS: Readonly<
     kind: '',
     status: '',
     file_path: null,
+    artifact_id: null,
+    duration_ms: null,
   },
   tags: {
     color: null,
@@ -138,6 +158,8 @@ export const DEGRADED_COLUMN_DEFAULTS: Readonly<
     query_json: null,
   },
   asset_metadata: {
+    rating: 0,
+    favorite: 0,
     value: null,
   },
   ai_content: {

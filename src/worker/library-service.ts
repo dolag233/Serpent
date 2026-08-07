@@ -80,6 +80,7 @@ import {
   type LibraryWriteLeaseHeartbeat,
 } from './library-write-coordinator';
 
+import { columnsFor, hasTable, invalidateColumnProbe, qualify } from './lenient-columns';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
@@ -3495,6 +3496,17 @@ function ensureTrashTombstoneAssetBindSchema(
 function backfillTrashedFromTombstoneIds(
   connection: DatabaseConnection,
 ): void {
+  // Serpent-verg.2 — lenient open (0031 §1): libraries older than the
+  // trash-tombstone columns/table must still open; the backfill only applies
+  // when the structure it reads exists.
+  const assetColumns = columnsFor(connection, 'assets');
+  if (
+    !hasTable(connection, 'trashed_managed_folders') ||
+    !['deleted_at', 'trashed_from_folder_id', 'trashed_from_tombstone_id', 'trashed_from_relative_path']
+      .every((column) => assetColumns.has(column))
+  ) {
+    return;
+  }
   connection
     .prepare(
       `UPDATE assets
@@ -3972,6 +3984,9 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
   if (hasLegacyPluginMigrationHistory(connection, currentVersion)) {
     migrateLegacyPluginMigrationHistory(connection);
     verifyMigrationHistory(connection, SUPPORTED_SCHEMA_VERSION);
+    // Serpent-verg: the migration mutated the schema; the lenient-read
+    // column cache must be rebuilt from the new structure.
+    invalidateColumnProbe(connection);
     return;
   }
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
@@ -4049,6 +4064,9 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
   }
 
   verifyMigrationHistory(connection, SUPPORTED_SCHEMA_VERSION);
+  // Serpent-verg: migrations may have mutated the schema; the lenient-read
+  // column cache must be rebuilt from the new structure.
+  invalidateColumnProbe(connection);
 }
 
 function verifyDatabase(connection: DatabaseConnection): LibraryRow {
@@ -8739,17 +8757,47 @@ export class LibraryService {
     if (input.folderId && !managedFolder && !linkedFolderId) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
-    const rows = openLibrary.connection
+    // Serpent-verg.2 — lenient read (0031 §1): display/derived columns added
+    // after the earliest supported schema are whitelisted per table; columns
+    // missing on an older library are omitted from the query and filled with
+    // degraded defaults instead of failing. Core identity columns below are
+    // hard-required (every supported schema has them).
+    const connection = openLibrary.connection;
+    const assetColumns = columnsFor(connection, 'assets');
+    const revisionColumns = columnsFor(connection, 'revisions');
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    const metadataColumns = columnsFor(connection, 'asset_metadata');
+    const selectList = [
+      'a.asset_id',
+      'a.managed_folder_id',
+      'a.linked_folder_id',
+      'a.location_kind',
+      'a.relative_file_path',
+      'a.current_revision_id',
+      'a.availability',
+      'a.deleted_at',
+      ...qualify('a', assetColumns, ['trashed_from_relative_path']),
+      ...qualify('r', revisionColumns, ['byte_size', 'modified_at']),
+      // Rating/favorite fall back to 0 when the metadata row is absent;
+      // when the column itself is missing on an older library the row is
+      // filled with 0 below instead of failing.
+      ...(metadataColumns.has('rating') ? ['COALESCE(m.rating, 0) AS rating'] : []),
+      ...(metadataColumns.has('favorite') ? ['COALESCE(m.favorite, 0) AS favorite'] : []),
+      ...(artifactColumns.has('status') ? ['ra.status AS thumbnail_status'] : []),
+      ...(artifactColumns.has('artifact_id') ? ['ra.artifact_id AS thumbnail_artifact_id'] : []),
+      ...(artifactColumns.has('width')
+        ? ['COALESCE(ra.width, video_meta.width) AS artifact_width']
+        : []),
+      ...(artifactColumns.has('height')
+        ? ['COALESCE(ra.height, video_meta.height) AS artifact_height']
+        : []),
+      ...(artifactColumns.has('duration_ms')
+        ? ['video_meta.duration_ms AS artifact_duration_ms']
+        : []),
+    ].join(',\n');
+    const rows = connection
       .prepare(
-        `SELECT a.asset_id, a.managed_folder_id, a.linked_folder_id, a.location_kind, a.relative_file_path,
-                a.current_revision_id, a.availability, r.byte_size, r.modified_at,
-                COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-                a.deleted_at, a.trashed_from_relative_path,
-                ra.status AS thumbnail_status,
-                ra.artifact_id AS thumbnail_artifact_id,
-                COALESCE(ra.width, video_meta.width) AS artifact_width,
-                COALESCE(ra.height, video_meta.height) AS artifact_height,
-                video_meta.duration_ms AS artifact_duration_ms
+        `SELECT ${selectList}
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -8770,7 +8818,7 @@ export class LibraryService {
            LEFT JOIN revision_artifacts video_meta
              ON video_meta.revision_id = a.current_revision_id
             AND video_meta.kind = 'extracted_metadata'
-            AND video_meta.status = 'ready'
+            ${artifactColumns.has('status') ? "AND video_meta.status = 'ready'" : ''}
             AND video_meta.invalidated_at IS NULL
           WHERE NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
             AND ${this.explicitIgnoreSql('a', input.showIgnored === true)}
@@ -8786,7 +8834,25 @@ export class LibraryService {
         artifact_duration_ms: number | null;
       }>;
 
+    // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
+    // an older library does not have (0031 §1.1): the feature degrades
+    // (size/metadata/thumbnail not shown) instead of the query failing.
+    const degradedFill: Record<string, unknown> = {};
+    if (!assetColumns.has('trashed_from_relative_path')) {
+      degradedFill.trashed_from_relative_path = null;
+    }
+    if (!revisionColumns.has('byte_size')) degradedFill.byte_size = 0;
+    if (!revisionColumns.has('modified_at')) degradedFill.modified_at = '';
+    if (!metadataColumns.has('rating')) degradedFill.rating = 0;
+    if (!metadataColumns.has('favorite')) degradedFill.favorite = 0;
+    if (!artifactColumns.has('status')) degradedFill.thumbnail_status = null;
+    if (!artifactColumns.has('artifact_id')) degradedFill.thumbnail_artifact_id = null;
+    if (!artifactColumns.has('width')) degradedFill.artifact_width = null;
+    if (!artifactColumns.has('height')) degradedFill.artifact_height = null;
+    if (!artifactColumns.has('duration_ms')) degradedFill.artifact_duration_ms = null;
+
     const assets = rows
+      .map((row) => ({ ...degradedFill, ...row }))
       .filter((row) => {
         if (managedFolder) {
           if (!input.recursive) return row.managed_folder_id === managedFolder.folder_id;
@@ -14859,6 +14925,12 @@ export class LibraryService {
    * the DB still recorded status=ready (Serpent-pxd).
    */
   private reconcileMissingArtifactFiles(openLibrary: OpenLibrary): number {
+    // Serpent-verg.2 — lenient open (0031 §1): libraries predating
+    // revision_artifacts.status skip this recovery step instead of failing
+    // to open.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return 0;
+    }
     const artifactsDir = this.artifactsDir(openLibrary);
     let artifactsRoot: string;
     try {
@@ -14937,6 +15009,11 @@ export class LibraryService {
   private availableAutoRepairComponents(
     openLibrary: OpenLibrary,
   ): Set<MediaAutoRepairComponent> {
+    // Serpent-verg.2 — lenient open: libraries predating the artifact status
+    // columns have no component failures to repair.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return new Set();
+    }
     const rows = openLibrary.connection
       .prepare(
         `SELECT DISTINCT ra.error_code
@@ -15127,6 +15204,12 @@ export class LibraryService {
     } = {},
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-verg.2 — lenient open (0031 §1): libraries predating
+    // revision_artifacts.status have no artifact state to queue against;
+    // thumbnail generation degrades to off instead of failing to open.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return 0;
+    }
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     const limit = options.limit === undefined
       ? undefined
