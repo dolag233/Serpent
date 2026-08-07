@@ -10110,6 +10110,11 @@ export class LibraryService {
     assetId: string,
   ): Pick<AssetMetadataResult, 'automaticPalette' | 'effectivePalette' | 'paletteSource'> {
     let automaticPalette: RepresentativeColor[] = [];
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // artifact status column have no palette artifact to resolve.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return { automaticPalette: [], effectivePalette: [], paletteSource: null };
+    }
     const artifact = openLibrary.connection.prepare(
       `SELECT ra.artifact_id
          FROM assets a
@@ -16682,25 +16687,43 @@ export class LibraryService {
 
   listSmartCollections(libraryId: string): SmartCollectionSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const rows = openLibrary.connection
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // smart_collections table degrade to an empty list; whitelisted columns
+    // fill with defaults.
+    const connection = openLibrary.connection;
+    if (!hasTable(connection, 'smart_collections')) return [];
+    const smartColumns = columnsFor(connection, 'smart_collections');
+    const present = selectColumns(connection, 'smart_collections', [
+      'collection_id',
+      'name',
+      'query_definition_json',
+      'position',
+    ]);
+    if (present.length === 0) return [];
+    const orderBy = present.includes('position') && present.includes('name')
+      ? 'ORDER BY position, name'
+      : present.includes('name')
+        ? 'ORDER BY name'
+        : '';
+    const rows = connection
       .prepare(
-        `SELECT collection_id, name, query_definition_json, position
+        `SELECT ${present.join(', ')}
            FROM smart_collections
           WHERE library_id = ?
-          ORDER BY position, name`,
+          ${orderBy}`,
       )
       .all(openLibrary.summary.libraryId) as Array<{
-        collection_id: string;
-        name: string;
-        query_definition_json: string;
-        position: number;
+        collection_id?: string;
+        name?: string;
+        query_definition_json?: string;
+        position?: number;
       }>;
     // Batch counts inside one list call so the renderer avoids N+1 execute RPCs (CU-M6).
     return rows.map((row) => {
       let assetCount: number;
       try {
         const definition = this.parseSmartCollectionDefinition(
-          row.query_definition_json,
+          row.query_definition_json ?? '{}',
           'LIBRARY_CORRUPT',
         );
         assetCount = this.countSmartCollectionMatches(libraryId, definition);
@@ -16708,10 +16731,10 @@ export class LibraryService {
         assetCount = 0;
       }
       return {
-        collectionId: row.collection_id,
-        name: row.name,
-        queryDefinition: row.query_definition_json,
-        position: row.position,
+        collectionId: row.collection_id ?? '',
+        name: row.name ?? '',
+        queryDefinition: row.query_definition_json ?? '',
+        position: row.position ?? 0,
         assetCount,
       };
     });
