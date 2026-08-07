@@ -33,3 +33,10 @@
 ## 测试
 
 - `tests/worker/library-schema-readonly.test.ts`：v34 假迁移库 → 只读打开 + 版本信息；只读连接写拒绝；`SQLITE_READONLY → LIBRARY_READ_ONLY` 映射；正常库不受影响；只读库关闭无写路径。
+
+## 实施补充（Serpent-verg，2026-08-08）
+
+- 正向兼容为主目标的完整实施见 `docs/implementation/0031-schema-compatibility-guarantee.md`：宽容读取（缺列/多列/改列名不崩溃，0031 §1）是主防线，只读降级保持为最后手段。
+- 迁移失败路径（0031 §2.2）：失败回滚 + `.serpent/migration-failed.json` 诊断 + 3 次重试上限 + 粘滞后只读降级（`LIBRARY_MIGRATION_FAILED` / `LIBRARY_MIGRATION_STUCK`）。
+- 迁移纪律静态门禁：`tests/worker/migration-discipline.test.ts`（只加不改、重建例外清单与 worker FK 处理同步）。
+- 全版本链兼容测试：`tests/worker/schema-compatibility.test.ts`（原子性/失败注入）、`tests/worker/schema-downgrade-chain.test.ts`（升级/降级链 + 数据种子断言）。

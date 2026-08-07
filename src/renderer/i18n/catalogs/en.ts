@@ -82,6 +82,8 @@ export const en = {
     libraryNamed: "Library: {name}",
     readOnlyBanner:
       "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
+    readOnlyBannerMigrationStuck:
+      "This library could not be migrated after repeated attempts and is now read-only. Keep this version of Serpent installed and try upgrading once it is available.",
     readOnlyBannerVersioned:
       "This library was created by Serpent v{libraryVersion} (this build supports v{supportedVersion}). It is open in read-only mode. Upgrade Serpent to edit it.",
     language: "Language",

@@ -128,10 +128,12 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     }
 
     // Fourth open: no more retries — the library opens read-only (lenient
-    // read) instead of throwing.
+    // read) instead of throwing, and the summary carries the stuck marker so
+    // the renderer banner can distinguish it from a newer-schema library.
     const stuck = new LibraryService();
     const summary = stuck.openLibrary(libraryPath);
     expect(summary.readOnly).toBe(true);
+    expect(summary.migrationStuck).toBe(true);
     const browse = stuck.listAssets({ libraryId: summary.libraryId, recursive: true });
     expect(browse).toEqual([]);
     stuck.closeAll();

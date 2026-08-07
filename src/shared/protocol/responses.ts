@@ -51,6 +51,10 @@ export const internalLibrarySummarySchema = z.strictObject({
   readOnly: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
+  // Serpent-verg.5: read-only because the migration failed repeatedly
+  // (LIBRARY_MIGRATION_STUCK), not because the schema is newer. The banner
+  // distinguishes this from the newer-schema case.
+  migrationStuck: z.boolean().optional(),
 });
 
 export type InternalLibrarySummary = z.infer<typeof internalLibrarySummarySchema>;
@@ -62,6 +66,8 @@ export const rendererLibrarySummarySchema = z.strictObject({
   readOnly: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
+  // Serpent-verg.5: read-only because the migration failed repeatedly.
+  migrationStuck: z.boolean().optional(),
 });
 
 export type RendererLibrarySummary = z.infer<typeof rendererLibrarySummarySchema>;

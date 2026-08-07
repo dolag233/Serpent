@@ -16,12 +16,31 @@ function isSqliteReadonlyFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * Serpent-verg.8 (0031 §1.3): a write referencing a column the library
+ * structure does not have (lenient read tolerates it; writes stay strict)
+ * surfaces as an actionable structure error instead of an opaque failure.
+ */
+function isSqliteStructureFailure(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'SQLITE_ERROR' &&
+    error instanceof Error &&
+    /no such column/i.test(error.message)
+  );
+}
+
 export function publicErrorForWorkerFailure(error: unknown): PublicError {
   if (isSqliteReadonlyFailure(error)) {
     // A newer build wrote this library; the SQLite-level read-only connection
     // rejects the write. Surface the actionable code instead of an opaque
     // INTERNAL_ERROR so the renderer can show the upgrade banner.
     return createPublicError('LIBRARY_READ_ONLY');
+  }
+  if (isSqliteStructureFailure(error)) {
+    return createPublicError('LIBRARY_STRUCTURE_MISMATCH');
   }
   if (error instanceof LibraryWriteCoordinatorError) {
     return createPublicError(error.code);

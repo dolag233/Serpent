@@ -24366,6 +24366,9 @@ export class LibraryService {
           readOnly: true,
           libraryVersion: probedVersion,
           supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
+          // Serpent-verg.5: true when read-only is caused by a stuck
+          // migration rather than a newer schema.
+          migrationStuck: migrationStuck || undefined,
         };
         const openLibrary: OpenLibrary = {
           connection,

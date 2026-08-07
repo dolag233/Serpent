@@ -1432,6 +1432,8 @@ function toRendererResult(
         readOnly: result.library.readOnly,
         libraryVersion: result.library.libraryVersion,
         supportedSchemaVersion: result.library.supportedSchemaVersion,
+        // Serpent-verg.5: read-only because the migration is stuck.
+        migrationStuck: result.library.migrationStuck,
       },
     });
   }
