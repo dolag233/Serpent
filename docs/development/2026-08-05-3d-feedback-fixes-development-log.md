@@ -117,7 +117,7 @@
 
 **根因链**：① 版本门禁（migrateDatabaseUnserialized）对 `version > SUPPORTED` 直接 throw；② UI 只有模糊失败（"The recent library could not be reopened"）；③ 无迁移纪律约束。
 
-**修复**（ADR-0028，提交 9e10f1b）：
+**修复**（ADR-0028，提交 bdb63bd）：
 - **只读降级**：openLibrary 先只读探测 user_version，高于支持版本 → SQLite readonly 连接打开（跳过迁移/校验/watcher/恢复等全部写路径），summary 带 readOnly/libraryVersion/supportedSchemaVersion 透传 renderer 显示全局提示条
 - **写拒绝**：SQLite 连接级只读保证写失败（SQLITE_READONLY），publicErrorForWorkerFailure 统一映射为 LIBRARY_READ_ONLY 可操作错误（含 i18n 中英）
 - **只读关闭**：closeLibrary readOnly 分支跳过 cancelJobs 等写清理
