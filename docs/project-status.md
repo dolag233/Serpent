@@ -96,7 +96,7 @@
 - 产品负责人新增待办：**ignore**（`Serpent-v6m3`）已完成实现，支持托管/链接文件、文件夹和后缀的持久化忽略、扫描/浏览/搜索过滤、显示隐藏切换、资源库设置及恢复入口；资源库级规则已迁移为可编辑 `.serpentignore`（兼容常用 Git 忽略语法，迁移 v26），当前待人类验收；文件夹级删除回归反馈记录为 `Serpent-nplj`。
 - **常用媒体格式**（`Serpent-aav1`）正在实现；Windows 本地 bundle、真实 Worker 解码/代理矩阵和开发态 Electron 媒体预览证据已有，但 Windows/macOS 打包应用查看/播放与人工验收尚未执行，不能标记完成。
 - 2026-07-26 媒体验收补充：用户已明确验收通过 SVG、TIFF、TGA、EXR、ARAW（按用户原文）和 PSD；后续需求已拆为 `Serpent-aoj0`（EXR 多通道 + 色彩空间读取/选择，P2）与 `Serpent-oc6g`（RGBA 单通道/组合查看器，P3）。
-- **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
+- **浏览器扩展拖拽树状保存菜单**（`Serpent-c0ml` / REQ-EXT-005）：圆环 Hotbox 已替换为思维导图双栏（v7）；**EXT-010 待人类验收**。原 EXT-009（径向）已撤回。
 - 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
 - **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。

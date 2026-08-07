@@ -9,7 +9,7 @@ import { applyDragGhostThumbnail, startRadialSaveMenu } from './radial-menu';
 // 右键保存走 Chrome 扩展原生 contextMenus（background.ts），不拦截页面右键，
 // 避免浮层菜单替换整站原生菜单（Serpent-ak94 / 用户反馈 2026-07-26）。
 
-// Serpent-6llg / REQ-EXT-005：拖拽图片/视频时展开径向保存轮盘（全站点生效）。
+// Serpent-c0ml / REQ-EXT-005：拖拽图片/视频时展开树状保存菜单（全站点生效）。
 // 可在扩展设置中关闭；内容脚本侧缓存开关并监听变更，避免每次 dragstart 都读存储。
 let radialMenuEnabled = true;
 void readDragRadialMenuEnabled().then((enabled) => {
