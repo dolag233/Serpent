@@ -9203,19 +9203,37 @@ export class LibraryService {
 
   listTags(libraryId: string): TagSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const rows = openLibrary.connection
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the tag
+    // tables degrade to an empty tag list; missing asset-tag join tables
+    // just drop that side of the count; a missing created_at sorts by name.
+    const connection = openLibrary.connection;
+    if (!hasTable(connection, 'tags')) return [];
+    const tagColumns = columnsFor(connection, 'tags');
+    const hasCreatedAt = tagColumns.has('created_at');
+    const tagUseSubqueries = [
+      hasTable(connection, 'human_asset_tags')
+        ? 'SELECT asset_id, tag_id FROM human_asset_tags'
+        : null,
+      hasTable(connection, 'ai_asset_tags')
+        ? 'SELECT asset_id, tag_id FROM ai_asset_tags'
+        : null,
+    ].filter((sql): sql is string => sql !== null);
+    const usedJoin = tagUseSubqueries.length > 0
+      ? `LEFT JOIN (${tagUseSubqueries.join(' UNION ')}) used ON used.tag_id = t.tag_id`
+      : '';
+    const groupBy = hasCreatedAt
+      ? 'GROUP BY t.tag_id, t.name, t.created_at'
+      : 'GROUP BY t.tag_id, t.name';
+    const orderBy = hasCreatedAt ? 'ORDER BY t.created_at DESC, t.name' : 'ORDER BY t.name';
+    const rows = connection
       .prepare(
         `SELECT t.tag_id, t.name,
                 COUNT(used.asset_id) AS asset_count
            FROM tags t
-           LEFT JOIN (
-             SELECT asset_id, tag_id FROM human_asset_tags
-             UNION
-             SELECT asset_id, tag_id FROM ai_asset_tags
-           ) used ON used.tag_id = t.tag_id
+           ${usedJoin}
           WHERE t.library_id = ?
-          GROUP BY t.tag_id, t.name, t.created_at
-          ORDER BY t.created_at DESC, t.name`,
+          ${groupBy}
+          ${orderBy}`,
       )
       .all(openLibrary.summary.libraryId) as Array<{
         tag_id: string;
@@ -9688,12 +9706,24 @@ export class LibraryService {
 
   listCollections(libraryId: string): CollectionSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // collections table degrade to an empty list; missing display columns
+    // (description/cover_asset_id) fill with null.
+    const connection = openLibrary.connection;
+    if (!hasTable(connection, 'collections')) return [];
+    const collectionColumns = columnsFor(connection, 'collections');
+    const selectList = [
+      'c.collection_id',
+      'c.parent_id',
+      'c.name',
+      'c.position',
+      ...qualify('c', collectionColumns, ['description', 'cover_asset_id']),
+      `(SELECT COUNT(*) FROM collections ch WHERE ch.parent_id = c.collection_id) AS child_count`,
+    ].join(',\n');
     const recursiveAssetCounts = this.collectionRecursiveAssetCounts(openLibrary);
-    const rows = openLibrary.connection
+    const rows = connection
       .prepare(
-        `SELECT c.collection_id, c.parent_id, c.name, c.description,
-                c.cover_asset_id, c.position,
-                (SELECT COUNT(*) FROM collections ch WHERE ch.parent_id = c.collection_id) AS child_count
+        `SELECT ${selectList}
            FROM collections c
           WHERE c.library_id = ?
           ORDER BY c.position, c.name`,
@@ -9711,8 +9741,8 @@ export class LibraryService {
       collectionId: row.collection_id,
       parentId: row.parent_id,
       name: row.name,
-      description: row.description,
-      coverAssetId: row.cover_asset_id,
+      description: row.description ?? null,
+      coverAssetId: row.cover_asset_id ?? null,
       position: row.position,
       // Recursive collection scope is a set union, not a sum: an asset can
       // be directly assigned to both a parent and one of its descendants.
@@ -9729,6 +9759,14 @@ export class LibraryService {
   private collectionRecursiveAssetCounts(
     openLibrary: OpenLibrary,
   ): Map<string, number> {
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // collection tables have no recursive counts; callers show zero.
+    if (
+      !hasTable(openLibrary.connection, 'collections') ||
+      !hasTable(openLibrary.connection, 'collection_assets')
+    ) {
+      return new Map();
+    }
     const rows = openLibrary.connection
       .prepare(
         `WITH RECURSIVE collection_tree(root_collection_id, collection_id) AS (
@@ -10264,24 +10302,43 @@ export class LibraryService {
       .get(input.assetId) as { asset_id: string } | undefined;
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
 
-    const row = openLibrary.connection
-      .prepare(
-        `SELECT asset_id, description, rating, favorite, palette,
-                source_page_url, author, entity_version, updated_at
-           FROM asset_metadata
-          WHERE asset_id = ?`,
-      )
-      .get(input.assetId) as {
-        asset_id: string;
-        description: string | null;
-        rating: number;
-        favorite: number;
-        palette: string | null;
-        source_page_url: string | null;
-        author: string | null;
-        entity_version: number;
-        updated_at: string;
-      } | undefined;
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating
+    // asset_metadata (or missing individual metadata columns) degrade to the
+    // empty-metadata shape instead of failing.
+    const connection = openLibrary.connection;
+    const metadataColumns = columnsFor(connection, 'asset_metadata');
+    const present = hasTable(connection, 'asset_metadata')
+      ? selectColumns(connection, 'asset_metadata', [
+          'asset_id',
+          'description',
+          'rating',
+          'favorite',
+          'palette',
+          'source_page_url',
+          'author',
+          'entity_version',
+          'updated_at',
+        ])
+      : [];
+    const row = present.length === 0
+      ? undefined
+      : connection
+          .prepare(
+            `SELECT ${present.join(', ')}
+               FROM asset_metadata
+              WHERE asset_id = ?`,
+          )
+          .get(input.assetId) as {
+            asset_id?: string;
+            description?: string | null;
+            rating?: number;
+            favorite?: number;
+            palette?: string | null;
+            source_page_url?: string | null;
+            author?: string | null;
+            entity_version?: number;
+            updated_at?: string;
+          } | undefined;
 
     if (!row) {
       return {
@@ -10300,16 +10357,16 @@ export class LibraryService {
     }
 
     return {
-      assetId: row.asset_id,
-      description: row.description,
-      rating: row.rating,
-      favorite: row.favorite !== 0,
-      palette: row.palette,
+      assetId: row.asset_id ?? input.assetId,
+      description: row.description ?? null,
+      rating: row.rating ?? 0,
+      favorite: row.favorite !== undefined && row.favorite !== 0,
+      palette: row.palette ?? null,
       ...this.resolvedPaletteFields(openLibrary, input.assetId),
-      sourcePageUrl: row.source_page_url,
-      author: row.author,
-      entityVersion: row.entity_version,
-      updatedAt: row.updated_at,
+      sourcePageUrl: row.source_page_url ?? null,
+      author: row.author ?? null,
+      entityVersion: row.entity_version ?? 0,
+      updatedAt: row.updated_at ?? new Date(0).toISOString(),
       tags: this.fetchAssetTags(openLibrary.connection, input.assetId),
     };
   }
@@ -11148,26 +11205,40 @@ export class LibraryService {
     generatedAt: string;
   }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT field_name, value, model_id, model_version, generated_at
-           FROM ai_content
-          WHERE asset_id = ?
-          ORDER BY field_name`,
-      )
-      .all(assetId) as Array<{
-        field_name: string;
-        value: string;
-        model_id: string;
-        model_version: string;
-        generated_at: string;
-      }>;
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating ai_content
+    // have no AI content; the whitelisted columns fill with empty strings.
+    const connection = openLibrary.connection;
+    const present = hasTable(connection, 'ai_content')
+      ? selectColumns(connection, 'ai_content', [
+          'field_name',
+          'value',
+          'model_id',
+          'model_version',
+          'generated_at',
+        ])
+      : [];
+    const rows = present.length === 0
+      ? []
+      : connection
+          .prepare(
+            `SELECT ${present.join(', ')}
+               FROM ai_content
+              WHERE asset_id = ?
+              ORDER BY ${present.includes('field_name') ? 'field_name' : 'rowid'}`,
+          )
+          .all(assetId) as Array<{
+            field_name?: string;
+            value?: string;
+            model_id?: string;
+            model_version?: string;
+            generated_at?: string;
+          }>;
     return rows.map((r) => ({
-      fieldName: r.field_name,
-      value: r.value,
-      modelId: r.model_id,
-      modelVersion: r.model_version,
-      generatedAt: r.generated_at,
+      fieldName: r.field_name ?? '',
+      value: r.value ?? '',
+      modelId: r.model_id ?? '',
+      modelVersion: r.model_version ?? '',
+      generatedAt: r.generated_at ?? '',
     }));
   }
 
