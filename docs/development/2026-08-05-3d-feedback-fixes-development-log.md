@@ -145,7 +145,7 @@
 
 **根因**：ufbx-bridge.c 的 metallicRoughness 合并条件 `mr_tex = (metal_tex == rough_tex)`——**仅同一文件时合并**；分文件模型（`_metallic.png` + `_roughness.png`）两张都被丢弃 → GLB 材质无 metallicRoughnessTexture → metalness=0/roughness=1 无金属质感。之前 FBXLoader 兜底路径是 Blinn-Phong 近似，观感尚可。
 
-**修复**（提交 089a46d）：
+**修复**（提交 634f7a7）：
 - C 桥输出独立 `metalnessTexture`/`roughnessTexture` scene 索引（WASM 重建 + lock 哈希更新，glue 不变）
 - glb-builder：不同文件时用 sharp **像素合成** metallicRoughness 纹理（R=255、G=roughness、B=metalness、A=255，尺寸取 metalness 图）；合成前按文件名后缀校验交换（本地化 DCC 导出器的槽位映射可能反——用户模型实测桥把 metalness 指到了 _roughness.png，文件名修正后通道正确）
 - embedded 纹理直接从桥 blob 区读取（resolveExternalTextures 跳过 embedded）
