@@ -2169,7 +2169,9 @@ const GITIGNORE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(GITIGNORE_SCHEMA_SQL)
   .digest('hex');
 
-const MIGRATIONS = [
+// Exported for schema-compatibility tests that replay migrations
+// version-by-version (Serpent-verg.4/6).
+export const MIGRATIONS = [
   { version: 1, sql: INITIAL_SCHEMA_SQL, checksum: INITIAL_SCHEMA_CHECKSUM },
   { version: 2, sql: ASSET_SCHEMA_SQL, checksum: ASSET_SCHEMA_CHECKSUM },
   {
@@ -2248,7 +2250,7 @@ const MIGRATIONS = [
     checksum: MODEL_ARTIFACT_KIND_SCHEMA_CHECKSUM,
   },
 ] as const;
-const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
+export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
 interface LibraryRow {
   library_id: string;
