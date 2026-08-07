@@ -27,9 +27,12 @@ describe('Renderer content security policy', () => {
     // three r185 loaders use fetch: GLB artifacts, companion textures, .hdr
     // environment maps and .gltf/.obj/.mtl text all load over serpent:// in
     // the packaged app (file:// fetch is blocked). Embedded glTF buffers and
-    // images use data: URLs and need the same explicit, non-network allowance.
+    // images use data: URLs, and GLB bufferView textures are decoded through
+    // blob: URLs (ImageBitmapLoader) — all need the explicit, non-network
+    // allowance.
     expect(directive('connect-src')).toContain('serpent:');
     expect(directive('connect-src')).toContain('data:');
+    expect(directive('connect-src')).toContain('blob:');
     expect(directive('connect-src')).not.toContain('*');
   });
 });

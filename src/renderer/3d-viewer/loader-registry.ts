@@ -54,7 +54,6 @@ import {
   remapCompanionUrlByBasename,
   rewriteGltfUris,
   rewriteMtlTextureRefs,
-  serpentPreviewUrl,
   type GltfJsonLike,
 } from './url-remap';
 
@@ -165,53 +164,26 @@ async function loadGltfText(input: LoadModelSceneInput): Promise<LoadedModelScen
 }
 
 async function loadFbx(input: LoadModelSceneInput): Promise<LoadedModelScene> {
-  let conversion: FbxConversionResult | undefined;
-  if (input.convertFbx) {
-    try {
-      const result = await input.convertFbx();
-      conversion = result;
-      if (result.status === 'ready') {
-        // Main path (slice B): the cached GLB carries embedded textures; the
-        // renderer only needs to point GLTFLoader at the artifact URL.
-        const loader = input.deps?.gltf ?? new GLTFLoader();
-        const gltf = await loader.loadAsync(
-          serpentPreviewUrl(input.libraryId, result.glbArtifactId),
-        );
-        const scene = gltf.scene ?? new Group();
-        enableShadowCasting(scene);
-        return {
-          scene,
-          animations: gltf.animations ?? [],
-          missingTextures: result.missingTextures ?? [],
-        };
-      }
-    } catch {
-      // A transport failure of the conversion request behaves like a
-      // conversion failure: fall through to the FBXLoader fallback.
-      conversion = { status: 'failed', errorCode: 'FBX_CONVERSION_FAILED' };
-    }
-  }
-  // Fallback path: three's FBXLoader on the source file. Textures referenced
-  // by relative names fail to fetch against serpent://source; remap them
-  // through the companion index after load (3D-12 degradation).
+  // Serpent-a5ic: FBXLoader is the primary FBX path. The ufbx conversion
+  // pipeline (slice B) renders incorrectly on complex meshes (user-verified:
+  // "fragmented" texture mapping on a 498k-triangle character model, while
+  // FBXLoader is correct) — its hand-written fan triangulation is wrong for
+  // concave polygons and the UV path does not match DCC exports. The
+  // conversion code and tests remain for a future fix; the renderer no
+  // longer requests model.convert-fbx.
   const loader = input.deps?.fbx ?? new FBXLoader();
   const root = await loader.loadAsync(input.sourceUrl);
   const animations =
     (root as Group & { animations?: AnimationClip[] }).animations ?? [];
+  // Textures referenced by relative names fail to fetch against
+  // serpent://source; remap them through the companion index after load
+  // (3D-12 degradation). Embedded FBX textures load directly from the file.
   upgradeFallbackMaterials(root, input);
   enableShadowCasting(root);
   return {
     scene: root,
     animations,
     missingTextures: [],
-    ...(conversion?.status === 'failed'
-      ? {
-          fallback: {
-            errorCode: conversion.errorCode,
-            ...(conversion.reason ? { reason: conversion.reason } : {}),
-          },
-        }
-      : {}),
   };
 }
 

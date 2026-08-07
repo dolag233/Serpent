@@ -151,3 +151,14 @@
 - embedded 纹理直接从桥 blob 区读取（resolveExternalTextures 跳过 embedded）
 - 测试：direct-descriptor 合成用例（1×1 灰度源 → 断言合成像素 B=0/G=128/R=255/A=255 + matching 警告消除）；用户模型验证：metallicRoughnessTexture 引用 ✓、B 通道均值=metalness 源（11.9=11.9）、G=roughness 源（113.8=113.8）
 - fixture 尝试（手写 ASCII FBX 模拟 ufbx PBR 属性识别）失败回退：ufbx 的材质属性表（blender/3dsMax/glTF 变体）与手写格式不匹配，测试改为直接构造 descriptor
+
+### 8. FBX 主路径决策变更：换回 FBXLoader（Serpent-a5ic 续，2026-08-07）
+
+**用户实测**：ufbx 转换的 FBX 颜色"完全错乱、支离破碎"（498K 三角角色模型）；FBXLoader 路径正常。结构诊断全部通过（UV 0-1 无越界、索引不越界、贴图字节与源文件 SHA 全匹配、三角形数正确）——**问题在几何与 UV 的对应**：桥的手写 fan 三角化对凹多边形必然错误（复杂角色网格无法保证全凸）。**产品决策：查看器 FBX 主路径换回 FBXLoader**（正确性优先）。
+
+**变更**（提交 3f1c9b2）：
+- `loadFbx`：直接 FBXLoader（embedded 贴图直读 + 伴生贴图映射 upgradeFallbackMaterials），不再调用 model.convert-fbx
+- ufbx 转换代码/命令/测试全部保留（未来修复 fan 三角化后可切回）；`serpentPreviewUrl` 等未用 import 清理
+- **未修**：fbx 转换管线本身（fan 凹面、多 UV 层）记入 Serpent-8pg6 后续处理
+- 配套：CSP connect-src 加 blob:（GLTFLoader 的 ImageBitmapLoader 用 fetch 加载 blob URL——**主窗口 + offscreen 两个 html + renderer-csp 单测**；这修复了 ufbx 路径下贴图完全无法加载的问题，但主路径已换 FBXLoader，CSP 修复仍有效（GLB/glTF 查看其他格式需要）
+- 已验证：typecheck/lint 0、model-viewer E2E（FBX 用例走 FBXLoader）通过
