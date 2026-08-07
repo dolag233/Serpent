@@ -375,6 +375,7 @@ function scheduleThumbnailQueue(
     limit?: number;
     priority?: number;
     repairFailed?: boolean;
+    retryFailed?: boolean;
   } = {},
 ): number {
   let enqueued: number;
@@ -481,6 +482,10 @@ function scheduleThumbnailScene(
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
       repairFailed: true,
+      // Serpent-5xbg: every browse/refresh wave re-opens retryable failed
+      // artifacts (throttled) — generation failures are healed in the
+      // background whenever the asset surfaces, no periodic scan needed.
+      retryFailed: true,
     });
   } catch {
     // scheduleThumbnailQueue already wrote the complete diagnostic. Automatic

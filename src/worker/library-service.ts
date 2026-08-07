@@ -409,6 +409,7 @@ import {
   remoteMediaValidationFailure,
   RemoteMediaMagicProbe,
 } from './remote-media-validation';
+import { requeueRetryableFailedArtifacts } from './derived-artifact-repair';
 
 interface RunResult {
   changes: number;
@@ -15121,6 +15122,8 @@ export class LibraryService {
       limit?: number;
       priority?: number;
       repairFailed?: boolean;
+      /** Serpent-5xbg: also re-open retryable failed artifacts (throttled). */
+      retryFailed?: boolean;
     } = {},
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -15129,6 +15132,17 @@ export class LibraryService {
       ? undefined
       : Math.max(0, Math.min(500, Math.trunc(options.limit)));
     if (limit === 0 || (options.assetIds && selectedIds.length === 0)) return 0;
+    if (options.retryFailed) {
+      // Serpent-5xbg: failures (transient decode errors, killed processes,
+      // cancelled imports) must not permanently block regeneration. Invalidate
+      // retryable failed artifacts here so the queue SQL below re-enqueues them;
+      // permanent failures (missing source, unsupported format, over-limit…)
+      // stay marked failed and are never retried.
+      requeueRetryableFailedArtifacts(openLibrary.connection, {
+        priority: options.priority ?? 0,
+        ...(limit === undefined ? {} : { limit }),
+      });
+    }
     const repairComponents = options.repairFailed
       ? this.availableAutoRepairComponents(openLibrary)
       : new Set<MediaAutoRepairComponent>();
@@ -23992,6 +24006,9 @@ export class LibraryService {
         limit: 50,
         priority: 100,
         repairFailed: true,
+        // Serpent-5xbg: failed artifacts from a previous session (transient
+        // decode errors, killed processes) are retried on the next open.
+        retryFailed: true,
       });
       return summary;
     } catch (error) {

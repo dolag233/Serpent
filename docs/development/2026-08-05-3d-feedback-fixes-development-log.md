@@ -126,3 +126,15 @@
 - 事故库恢复：`.serpent/library.db.bak-v34` 备份后 user_version 降回 33（v34 未增删表、核心查询全通），冒烟验证后用户可打开
 
 **用户补充要求（2026-08-07）**：只读降级只是兜底，**完全兼容旧版本数据**才是正道——"如果以后也会出现不兼容旧版本数据的情况就麻烦了"。已将「数据兼容性纪律」写入 CLAUDE.md（系统提示词，强制）+ 强化 ADR-0028 原则：新代码打开旧库自动无损迁移、旧数据升级后全功能可用是硬目标；迁移只加不改；迁移验收必须证明旧库升级无损；违反不合并。
+
+### 6. 缺失衍生件自动补生成（Serpent-5xbg，2026-08-07）
+
+**需求**（用户）：检测到文件未完成处理（缩略图/代理/poster 生成失败）就自动后台处理，**不依赖导入时**——生成失败（ffmpeg 暂不可用、进程被杀、任务取消）后必须能自愈。产品决策：**不做定期扫描**，改为**资产加载时检测**（打开库 + 浏览可见即触发）。
+
+**根因**：enqueueThumbnailJobs 的入队条件 `NOT EXISTS (status IN ('ready','failed'))`——**failed artifact 永久挡住重新入队**，失败后无任何后续触发点（MEDIA-003 组件修复仅覆盖组件缺失且单会话一次）。
+
+**实现**（提交 63f5f0b）：
+- 新模块 `src/worker/derived-artifact-repair.ts`：`requeueRetryableFailedArtifacts`——单条 SQL 找出「可重试 failed 衍生件」（源 available + error_code 不在持久失败集 + 上次失败 ≥ 30 分钟节流 + 无 active job）→ invalidate（现有入队 SQL 自动重新匹配）。**持久失败**（SOURCE_NOT_FOUND/FILE_TOO_LARGE/UNSUPPORTED_FORMAT/FBX_NOT_FBX 等 10 码）保持 failed 标记永不重试
+- `enqueueThumbnailJobs` 新增 `retryFailed` 选项；openLibrary startup + scheduleThumbnailScene 全部场景带 `retryFailed: true`——**打开库/浏览到即自动补生成**
+- 测试：tests/worker/derived-artifact-repair.test.ts 5 用例（可重试重入队、持久失败不重试、节流、源缺失不重试、幂等）
+- 测试期间发现并验证了两个既有正确行为：资产刷新按 mtime+byte_size 旋转 revision、reconcileMissingArtifactFiles invalidate 缺失文件 artifact——fixture 需构造精确匹配
