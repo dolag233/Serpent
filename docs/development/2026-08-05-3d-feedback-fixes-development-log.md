@@ -1,7 +1,7 @@
 # 2026-08-05 用户反馈修复：3D 组件缺失 + 标题显示 + 格式过滤 — 开发日志
 
 > 关联切片：0030（3D 模型支持）；分支：`codex/slice-002-asset-ingestion`
-> 工单：`Serpent-g05n`（FBX WASM）、`Serpent-pjx2`（模型缩略图）、`Serpent-1d4w`（格式过滤）、`Serpent-kmgw`（标题显示）
+> 工单：`Serpent-g05n`（FBX WASM）、`Serpent-pjx2`（模型缩略图）、`Serpent-1d4w`（格式过滤）、`Serpent-kmgw`（标题显示）、`Serpent-61je.3`（HDRI 预览）、`Serpent-91pn`（Info 通知布局）
 > 会话：主 agent（Windows，E:\MyRepositories\Serpent）
 
 ## 用户反馈（2026-08-05）
@@ -28,15 +28,61 @@
 
 **验收**：`npm run test:worker tests/worker/fbx-conversion.test.ts` 19/19；model-viewer E2E FBX 转换旅程 2/2（无兼容模式提示、统计面板真实几何数据）。
 
-### 2. 模型缩略图（Serpent-pjx2，用户决定放弃，deferred）
+### 2. 模型缩略图（Serpent-pjx2，正式 P1，重新开启）
 
-**排查结论**（2026-08-06，主 agent + 真实应用日志）：
-- 代码链路（slice E）完整：worker 入队 → `processModelThumbnailJob` → Main 共享离屏窗口 → `thumbnail` artifact 落库；`enqueueThumbnailJobs` 入队 SQL 已含模型扩展名；`modelThumbnailRenderer` 已接线（worker/index.ts）。
-- 用户应用日志（`%APPDATA%/Serpent/logs/serpent.log`）实锤两条失败路径：
-  - `FBX_WASM_UNAVAILABLE`（WASM 缺失，g05n 已修）
-  - **`MODEL_RENDER_TIMEOUT`**：离屏窗口 `window-ready` 后 30s 无帧。根因：**offscreen 页面依赖 preload `offscreen.js`（`.vite/build/offscreen.js`），但 `scripts/run-e2e.mjs` 的 E2E 构建从未构建它**（仅 Forge dev/package 流程产出）；且 run-e2e.mjs 开头 `rm .vite` 会清掉正在运行的 dev 应用的 preload 产物 → dev 应用离屏渲染也失败（本次会话中用户应用 23:44 的 `MODEL_RENDER_TIMEOUT` 即由此引起）。
-- 尝试修复：run-e2e.mjs 补 `vite.offscreen-preload.config.ts` 构建 + 删除改为仅清 E2E 入口；重跑 E2E 仍失败（OBJ 用例 1.5m 超时，img 未出现），未找到进一步根因。
-- **用户决定：不继续此任务。** 相关未验证改动全部回退（run-e2e.mjs 还原、临时 E2E 删除）。后续接手者从「E2E 补 offscreen preload 构建后离屏渲染仍无帧」这一点继续排查（页面侧 WebGL/消息通道为优先嫌疑）。
+**排查结论**（2026-08-06，主 agent + 真实 Electron 日志）：
+- 代码链路（slice E）完整：Worker 入队 → `processModelThumbnailJob` → Main 共享离屏窗口 → `thumbnail` artifact 落库；`enqueueThumbnailJobs` 入队 SQL 已含模型扩展名。
+- 第一层阻断已修复：`scripts/run-e2e.mjs` 增加 `vite.offscreen-preload.config.ts` 构建，确保 `.vite/build/offscreen.js` 存在。随后通过 Main 预授权 `serpent://source` 源文件，避免离屏渲染期间再次请求 Worker 造成重入等待。
+- 稳定复现后的最终根因：`src/main/index.ts` 将 `ipcMain.on` 直接接到只接收 `payload` 的 `onFrameMessage` 回调。Electron 实际回调参数为 `(event, payload)`，导致 Main 把 `IpcMainEvent` 当成帧消息解析并丢弃；离屏页面虽然已经完成 `OBJ/MTL` 加载、渲染和 PNG 生成，Worker 仍等待到 `MODEL_RENDER_TIMEOUT`。
+- 修复：Main 增加事件参数解包适配器，并在取消监听时移除同一个包装函数；未改变 Worker/Renderer 的协议结构或路径权限边界。
+- 证据：`node scripts/run-e2e-isolated.mjs tests/e2e/model-thumbnail.test.ts` → `1 passed (2.7s)`；同次 `model-viewer` 对比旅程 → `2 passed (4.8s)`；E2E 使用隔离 `SERPENT_E2E_USER_DATA_PATH`，断言 `img.asset-thumbnail` 的 `complete`、`naturalWidth > 0` 与 `naturalHeight`。
+- 2026-08-06 补齐格式矩阵 E2E：OBJ/MTL、glTF + 外部 `.bin` companion、运行时生成 GLB、STL、FBX 共 `5 passed (10.7s)`；每项均断言卡片缩略图实际完成解码且 `naturalWidth > 0`。
+- 矩阵首次加入 glTF 时，真实日志复现 offscreen CSP 拦截内嵌 `data:` buffer（`Fetch API cannot load data:...`）并返回 `MODEL_LOAD_FAILED`。根因是 `index.html` 与 `offscreen-thumbnail.html` 的 `connect-src` 未允许 glTF 合法的内嵌 data URL；已在两个 Renderer CSP 中加入显式 `data:`，并同步 CSP 单测。外部 companion buffer 也保留在矩阵中覆盖路径重写。
+- 同次矩阵曾受遗留 `electron-forge start` 与 E2E 共用 `.vite` 的构建竞态影响，日志显示 preload/renderer 文件被清空导致页面关闭；停止遗留开发实例和旧循环后复跑稳定通过。
+- 当前状态：`Serpent-pjx2` 的导入后离屏缩略图自动生成与实际解码已具备自动化证据，已加入 `MODEL-001` 待人类验收。Computer Use、packaged 与 Windows 尚未执行；不能据此宣称 0030 切片整体完成。
+- 2026-08-06 当前工作树复测：`node scripts/run-e2e.mjs tests/e2e/model-thumbnail.test.ts tests/e2e/model-viewer.test.ts tests/e2e/import-conflict-flows.test.ts` → `9 passed (15.7s)`；其中模型缩略图矩阵 5 项、查看器 OBJ/FBX/HDRI 3 项、导入冲突流程 1 项均通过。定向 3D/CSP 单测 → `9 files / 78 tests passed`。日志中的字体 data URL 警告与 WebGL 弃用警告未导致测试失败，需后续独立处理。
+
+### 2a. HDRI 选择器 UI（Serpent-pd6k，正式 P1）
+
+2026-08-06 用户反馈：当前 HDRI 值控件布局异常，环境光名称被窄布局拆成竖排显示。当前值区域应只显示环境光照名称，不显示缩略图；打开选择器时才显示预设缩略图，且缩略图应明显大于当前版本。选择器中的「自定义」入口删除。正式规格已同步撤回 3D-18 自定义 HDR 能力，当前选择器仅保留内置 HDRI 预设。
+
+**实现**：
+- HDRI 当前值触发器移除缩略图，仅保留水平单行名称；长名称使用中间区域省略，不再被窄布局拆成竖排。
+- 选择器预设缩略图统一为 `144×82`，选择器宽度调整为 `300px`，名称使用 caption 字号并限制显示宽度，保留四个内置预设。
+- 移除「自定义」入口及对应中英文文案；旧版本持久化的 `custom` 值读取时回退到默认内置预设，避免继续暴露已撤回能力。
+- 新增 3D 查看器 E2E：验证当前值无缩略图、选择器四个预设均有较大缩略图、无「自定义」、切换预设后名称更新。
+
+**验证**：最终 `npm run typecheck`、`npm run lint` 通过；`npm run test:unit` 结果 `304 files / 2255 passed / 1 skipped`；`node scripts/run-e2e.mjs tests/e2e/model-viewer.test.ts` 结果 `3 passed (8.4s)`，包含实际图片解码断言；首次加入 UI 用例时，键盘 Space 激活路径的失败上下文显示误打开 `cube.mtl` 查看页，已改为直接双击模型卡片进入查看页并复跑通过。Computer Use、packaged 与 Windows 仍未执行。
+- 2026-08-06 当前工作树复测同一 `model-viewer.test.ts` → 3 项通过（OBJ、FBX、HDRI 名称/放大预览）；实际缩略图解码由同批次 `model-thumbnail.test.ts` 覆盖。Computer Use、packaged 与 Windows 仍未执行。
+
+### 2b. HDRI 右键拖拽旋转（Serpent-xjcy）
+
+当前工作树已具备该工单要求的交互链路：`OrbitControls` 释放右键相机操作，画布在 capture phase 处理右键或 Ctrl+左键 pointer 事件并累计横向拖拽量，`environmentYaw` 通过 `scene.environmentRotation.y` 改变环境光方向；中键仍保留给相机 dolly，系统 context menu 被阻止。新增手势策略单测覆盖右键、Ctrl+左键和普通左键排除，`MODEL-003` 验收步骤扩展为两种旋转方式；真实 Computer Use、packaged、Windows 尚未执行，工单保持进行中。
+
+### 2c. 2026-08-06 最新 3D 与 Info 反馈收口
+
+用户新增反馈覆盖离屏缩略图光照、查看器提示语义、HDRI 操作和选择器比例，以及顶部 Info 通知的空白区域。实现范围如下：
+
+- 离屏缩略图不再显式关闭 HDRI；`renderModelThumbnailFrame` 使用默认内置环境光，HDRI 请求失败时仍沿用接触阴影 key light 降级，避免模型变成黑帧。
+- 3D 查看器的高三角面、超大贴图、FBX 降级和缺失贴图提示统一通过 `Notice tone="info"` 渲染。自定义 `.model-viewer-notices` 的背景/边框样式已移除，仅保留查看器内定位样式。
+- HDRI 光源旋转抽出纯手势策略：保留右键拖拽，并新增 macOS 触控板及 Windows 通用的 Ctrl+左键拖拽。事件使用 capture phase 在 `OrbitControls` 前拦截，避免同一手势同时旋转模型和环境光。
+- 顶部 Info 通知改为内容自适应宽度，短消息不再固定占用 `520px` 的整段横向空间；长消息仍受最大宽度限制。
+
+**验证**：
+
+- `npm run typecheck` → 通过。
+- `node scripts/run-vitest-with-electron.mjs run tests/unit/environment-rotation-gesture.test.ts tests/unit/offscreen-page-renderer.test.ts tests/unit/3d-viewer-limits.test.ts tests/unit/ui-patterns.test.ts` → `4 files / 30 tests passed`。
+- `node scripts/run-e2e.mjs tests/e2e/model-thumbnail.test.ts tests/e2e/model-viewer.test.ts` → `8 passed (15.2s)`；模型缩略图 5 种格式均实际解码，HDRI 选择器 4 张预览均完成解码并满足新尺寸断言。
+- `node scripts/run-e2e.mjs tests/e2e/pbr-texture-preview.test.ts` 首次复跑暴露测试 fixture
+  生成相同像素内容，真实导入冲突对话框因此阻断卡片；改为每个 fixture 使用不同背景值并将
+  卡片等待提升到 15 秒后，当前 HEAD 定向 E2E `1 passed (4.4s)`。
+- 通知回归测试先以旧布局复现 `520px > 420px`，修复后宽度断言通过；同次测试随后在既有智能合集菜单定位处失败，未将该次运行记为完整通过。
+- `npm run verify:mainline` 中途复现上下文菜单 pointer/portal 竞态并修复；当前 HEAD 最终复跑通过：
+  单元/Worker `352 files passed / 3076 tests passed`、搜索性能 `5 passed`、主线 Electron E2E
+  `72 passed / 3 skipped`。
+- 当前 HEAD `npm run package` 在 `prepackage` 的 `media:verify` 被 macOS arm64 媒体 bundle
+  未晋升为不可变 HTTPS + SHA pin 阻断；未跳过 provenance，暂无 packaged 证据。
+- Computer Use、packaged、Windows 仍未执行；需由人类验收确认缩略图亮度、Ctrl+拖拽旋转和 Info 视觉密度。
 
 ### 3. 格式过滤预设 chip 扩展（Serpent-1d4w，已关闭）
 
@@ -59,7 +105,8 @@
 
 ## 未完成 / 待办
 
-- pjx2 缩略图 E2E 实测（进行中）
+- pjx2 及 pd6k 的人类验收、Computer Use、packaged 与 Windows 平台验证
+- pd6k HDRI 当前值/选择器 UI 的 Computer Use、packaged、Windows 与人工验收
 - kmgw 的 E2E 视觉复现（本机 E2E 手动流程被原生对话框阻塞，需 SERPENT_E2E_* hook；修复已提交，用户实机确认中）
 - 临时测试 `tests/e2e/tmp-*.test.ts` 验证后清理或转正
 - packaged 验证（.hdr 哈希发射、离屏窗口、GLB 产物）仍为 0030 未执行项

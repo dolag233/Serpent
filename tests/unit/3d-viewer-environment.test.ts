@@ -12,11 +12,7 @@ import {
   type PmremGeneratorLike,
   type PmremResultLike,
 } from '../../src/renderer/3d-viewer/environment';
-import {
-  DEFAULT_EXPOSURE,
-  EXPOSURE_MAX,
-  EXPOSURE_MIN,
-} from '../../src/renderer/3d-viewer/exposure';
+import { DEFAULT_LIGHT_INTENSITY } from '../../src/renderer/3d-viewer/light-intensity';
 
 function fakeTexture(): Texture {
   return { dispose: vi.fn() } as unknown as Texture;
@@ -27,7 +23,6 @@ function fakeRenderer() {
   // setToneMapping/setExposure methods do not exist on the r185 runtime).
   return {
     toneMapping: 0,
-    toneMappingExposure: 1,
   } satisfies EnvironmentRenderer;
 }
 
@@ -52,7 +47,7 @@ describe('environment pipeline (Serpent-v363 / 3D-09/3D-10)', () => {
     expect(HDRI_TONE_MAPPING).toBe(NeutralToneMapping);
   });
 
-  it('assembles the PMREM result and applies neutral tone mapping + default exposure', () => {
+  it('assembles the PMREM result and applies neutral tone mapping', () => {
     const renderer = fakeRenderer();
     const { pmrem, result } = fakePmrem();
     const hdrTexture = fakeTexture();
@@ -62,36 +57,8 @@ describe('environment pipeline (Serpent-v363 / 3D-09/3D-10)', () => {
     expect(pmrem.fromEquirectangular).toHaveBeenCalledWith(hdrTexture);
     expect(handle.environmentTexture).toBe(result.texture);
     expect(renderer.toneMapping).toBe(HDRI_TONE_MAPPING);
-    expect(renderer.toneMappingExposure).toBe(DEFAULT_EXPOSURE);
-  });
-
-  it('clamps the requested exposure before applying it', () => {
-    const renderer = fakeRenderer();
-    const { pmrem } = fakePmrem();
-
-    buildEnvironment({
-      hdrTexture: fakeTexture(),
-      pmrem,
-      renderer,
-      exposure: 99,
-    });
-    expect(renderer.toneMappingExposure).toBe(EXPOSURE_MAX);
-
-    buildEnvironment({
-      hdrTexture: fakeTexture(),
-      pmrem,
-      renderer,
-      exposure: -3,
-    });
-    expect(renderer.toneMappingExposure).toBe(EXPOSURE_MIN);
-
-    buildEnvironment({
-      hdrTexture: fakeTexture(),
-      pmrem,
-      renderer,
-      exposure: Number.NaN,
-    });
-    expect(renderer.toneMappingExposure).toBe(DEFAULT_EXPOSURE);
+    // Light intensity is owned by the scene composer, not the environment.
+    expect(DEFAULT_LIGHT_INTENSITY).toBe(1);
   });
 
   it('disposes the PMREM result and the source texture, but not the shared generator', () => {
@@ -153,16 +120,11 @@ describe('half-float NaN guard (research §4.3)', () => {
 describe('scene environment/background separation (3D-06 / §5)', () => {
   it('uses HDRI lighting with a theme background when a preset is active', () => {
     expect(
-      resolveSceneEnvironmentPolicy({ presetId: 'studio-small-09' }),
+      resolveSceneEnvironmentPolicy({ presetId: 'ferndale-studio-03' }),
     ).toEqual({
       environment: 'hdri',
       background: 'theme',
-      presetId: 'studio-small-09',
-    });
-    expect(resolveSceneEnvironmentPolicy({ presetId: 'custom' })).toEqual({
-      environment: 'hdri',
-      background: 'theme',
-      presetId: 'custom',
+      presetId: 'ferndale-studio-03',
     });
   });
 

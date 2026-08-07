@@ -2,11 +2,10 @@ import { NeutralToneMapping, PMREMGenerator } from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import type { Texture, WebGLRenderer } from 'three';
 
-import { DEFAULT_EXPOSURE, clampExposure } from './exposure';
 import type { HdriPresetId } from './hdri-presets';
 
 /**
- * HDRI environment pipeline (spec 3D-09 / 3D-10 / §5).
+ * HDRI environment pipeline (spec 3D-09 / §5).
  *
  * `HDRLoader` (renamed from `RGBELoader` in r180; `three/addons/loaders/
  * HDRLoader.js` in r185) decodes RGBE `.hdr` into a HalfFloat texture;
@@ -16,22 +15,20 @@ import type { HdriPresetId } from './hdri-presets';
  *
  * Functions here are pure and unit-testable: the renderer and PMREM
  * generator are injected structurally, nothing touches a real WebGL context.
+ * Light intensity is NOT owned here — the scene composer applies it to
+ * `scene.environment.intensity` (see light-intensity.ts).
  */
 
 /** NeutralToneMapping (Khronos PBR Neutral, three r155+; r185 constant value 7). */
 export const HDRI_TONE_MAPPING = NeutralToneMapping;
 
 /**
- * Smallest subset of WebGLRenderer the pipeline needs.
- *
- * three r185 stores tone mapping and exposure as plain properties
- * (`renderer.toneMapping` / `renderer.toneMappingExposure`); the legacy
- * `setToneMapping()` / `setExposure()` methods were removed before r185, so
- * callers must assign the properties directly.
+ * Smallest subset of WebGLRenderer the pipeline needs. Tone-mapping
+ * *exposure* is deliberately not part of the contract: the viewer controls
+ * light intensity instead and keeps tone mapping at its neutral default.
  */
 export interface EnvironmentRenderer {
   toneMapping: number;
-  toneMappingExposure: number;
 }
 
 /** Structural view of the PMREMGenerator surface used by the pipeline. */
@@ -64,18 +61,16 @@ export type EnvironmentHandle = {
  * Assemble an environment from an already-decoded HDR texture.
  *
  * Takes ownership of `hdrTexture` (disposed with the handle). Applies the
- * neutral tone mapping and clamped exposure to the renderer so materials
- * respond consistently under IBL.
+ * neutral tone mapping to the renderer so materials respond consistently
+ * under IBL; light intensity is applied by the scene composer.
  */
 export function buildEnvironment(input: {
   hdrTexture: Texture;
   pmrem: PmremGeneratorLike;
   renderer: EnvironmentRenderer;
-  exposure?: number;
 }): EnvironmentHandle {
   const { hdrTexture, pmrem, renderer } = input;
   renderer.toneMapping = HDRI_TONE_MAPPING;
-  renderer.toneMappingExposure = clampExposure(input.exposure ?? DEFAULT_EXPOSURE);
 
   const result = pmrem.fromEquirectangular(hdrTexture);
   let disposed = false;
@@ -104,7 +99,6 @@ export async function loadHdrEnvironment(
     renderer: WebGLRenderer;
     /** Defaults to a new PMREMGenerator for `renderer`. */
     pmrem?: PmremGeneratorLike;
-    exposure?: number;
   },
 ): Promise<EnvironmentHandle> {
   const texture = await new HDRLoader().loadAsync(url);
@@ -113,7 +107,6 @@ export async function loadHdrEnvironment(
     hdrTexture: texture,
     pmrem,
     renderer: deps.renderer,
-    exposure: deps.exposure,
   });
 }
 

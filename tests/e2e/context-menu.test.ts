@@ -501,6 +501,7 @@ test("pointer hover stays subtle while arrow navigation uses the keyboard focus 
     // Opening by pointer must not opt into the stronger keyboard treatment.
     await expect(menu).not.toHaveClass(/\bis-keyboard-navigation\b/);
     const pointerIndex = 2;
+    await window.mouse.move(0, 0);
     await items.nth(pointerIndex).hover();
     await expect
       .poll(() =>
@@ -525,11 +526,21 @@ test("pointer hover stays subtle while arrow navigation uses the keyboard focus 
     await window.keyboard.press("ArrowDown");
     await expect(menu).toHaveClass(/\bis-keyboard-navigation\b/);
     const keyboardIndex = (pointerIndex + 1) % itemCount;
-    expect(
-      await items
-        .nth(keyboardIndex)
-        .evaluate((item) => item === document.activeElement),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        items
+          .nth(keyboardIndex)
+          .evaluate((item) => item === document.activeElement),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        items.nth(keyboardIndex).evaluate((item) => {
+          const style = getComputedStyle(item);
+          return style.boxShadow;
+        }),
+      )
+      .toContain("inset");
     const keyboardStyle = await items.nth(keyboardIndex).evaluate((item) => {
       const style = getComputedStyle(item);
       return {
@@ -543,6 +554,7 @@ test("pointer hover stays subtle while arrow navigation uses the keyboard focus 
     // Moving the pointer exits keyboard modality, focuses the hovered item,
     // and restores the subtle pointer treatment with no inset marker.
     const resumedPointerIndex = (keyboardIndex + 1) % itemCount;
+    await window.mouse.move(0, 0);
     await items.nth(resumedPointerIndex).hover();
     await expect(menu).not.toHaveClass(/\bis-keyboard-navigation\b/);
     await expect
@@ -729,7 +741,7 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
     const tagTriggerBox = await tagTrigger.boundingBox();
     expect(tagTriggerBox).not.toBeNull();
     await tagTrigger.click();
-    const pickerMenu = window.getByRole("menu", { name: "添加标签" });
+    const pickerMenu = window.locator('.context-menu-submenu[role="menu"]');
     await expect(pickerMenu).toBeVisible({ timeout: 5_000 });
     const pickerMenuBox = await pickerMenu.boundingBox();
     expect(pickerMenuBox).not.toBeNull();
@@ -752,7 +764,15 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
     // The picker is rendered as a floating submenu. Moving the pointer from
     // the trigger into that portal must not let the trigger's mouseleave
     // timer close the menu before an option can be clicked.
-    await window.getByRole("option", { name: "甲标签" }).hover();
+    await window.getByRole("option", { name: "甲标签" }).evaluate((element) => {
+      element.scrollIntoView({ block: "nearest" });
+    });
+    const optionBox = await window.getByRole("option", { name: "甲标签" }).boundingBox();
+    expect(optionBox).not.toBeNull();
+    await window.mouse.move(
+      optionBox!.x + optionBox!.width / 2,
+      optionBox!.y + optionBox!.height / 2,
+    );
     await expect(pickerMenu).toBeVisible();
 
     // Scrolling inside the picker's own list must not dismiss the menu

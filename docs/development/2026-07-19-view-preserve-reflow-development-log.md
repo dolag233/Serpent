@@ -88,3 +88,11 @@
 - **修复**：新增 `isCanvasReflowRestorationPending` 状态判定。画布在 `is-reflow-frozen`（拖拽中）和 `is-reflow-restoring`（拖拽结束后的锚点收敛）两个阶段都禁止 Masonry 原始滚动快照/回放，只更新最终布局宽度；外层锚点调度器成为唯一滚动恢复者。锚点收敛完成后才解除该状态。
 - **自动化证据**：`tests/unit/canvas-reflow-restore.test.ts` 9/9 通过；`npm run typecheck` 通过；针对 `App.tsx`、重排模块和单测的 ESLint 通过。本轮仍未替代用户的人类验收，工单继续保持待人类验收。
 - `MoveDialog.tsx` 的既有 `directAssetCount` 类型错误与本工单无关，未做修复（避免与同时进行文件夹维度相关改动的并行 agent 冲突）；移交该改动的负责方处理。
+
+### 2026-08-06 CANVAS-021 regression follow-up
+
+- **根因补充**：`MasonryColumns` 的原始 `scrollTop` 回放会持续约 12 帧；用户在重排期间主动滚动时，旧回放仍会把视口写回旧位置。窗口缩放/面板重排后的内容虽保持，但用户滚动意图被覆盖。
+- **修复**：`App.tsx` 为原始回放记录预期写入位置，并监听画布滚动。与预期位置不同的滚动事件立即取消回放；回放自身产生的同位置事件只清除一次性标记，不触发取消。画布重排期间仍由外层锚点恢复逻辑独占滚动补偿。
+- **自动化证据**：`npm run typecheck && npm run lint` 通过；`node scripts/run-e2e.mjs tests/e2e/browsing-preferences.test.ts tests/e2e/organization-search-trash.test.ts` 通过（8 passed，macOS 开发态，临时 userData 隔离）。`folder-context-menu.test.ts` 与 `organization-metadata-persistence.test.ts` 定向回归另通过 7/8，后续修正定位器后纳入四文件复测。
+- **主线复核**：`npm run verify:mainline` 通过；当前工作树的主线 Electron E2E 为 `72 passed / 3 skipped`，包含浏览、上下文菜单、文件夹和回收站路径。
+- **状态**：仍待用户本人进行拖拽/滚动视觉验收；packaged 与 Windows 未执行。

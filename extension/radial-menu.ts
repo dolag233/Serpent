@@ -1,42 +1,40 @@
 import {
   buildSaveMenuFolderHints,
-  MAX_TOP_LEVEL_FOLDER_SLOTS,
   splitSaveMenuFolders,
   type ExtensionFolderOption,
 } from './folder-menu';
 import { findMediaElementAtPoint, type MediaTarget } from './media-target';
 import {
-  DEFAULT_RADIAL_GEOMETRY,
-  RADIAL_TAU,
-  RADIAL_TOP,
-  armedCrumb,
+  DEFAULT_TREE_GEOMETRY,
+  armedHint,
   buildFolderTree,
   clampCenter,
+  clampScroll,
   crumbForLevel,
-  expandRadius,
-  isReleaseInRing,
+  edgeScrollDelta,
+  hitTestTree,
   itemsForLevel,
-  midAngle,
-  pageCountForLevel,
-  radialCrossTriggerRadius,
-  rotationForEntry,
-  sectorAt,
+  measureTreePanel,
+  parentInfoForLevel,
   type FolderNode,
-  type RadialItem,
-  type RadialLevel,
-  type RadialMenuContext,
+  type TreeHit,
+  type TreeItem,
+  type TreeLevel,
+  type TreeMenuContext,
+  type TreePanelLayout,
+  type TreeParentInfo,
 } from './radial-menu-model';
 import type { SaveIntent } from './save-client';
 
 /**
- * Serpent-6llg / REQ-EXT-005 拖拽径向保存菜单（Hotbox）渲染与拖拽事件。
- * 规格：docs/ui/0002-extension-drag-radial-save-menu.md（v4）。
- * 命中判定全部走几何计算（radial-menu-model），轮盘自身 pointer-events:none，
- * 不拦截原生拖拽事件流；Shadow DOM 隔离页面样式。
+ * Serpent-c0ml / REQ-EXT-005 思维导图树状拖放保存菜单。
+ * 规格：docs/ui/0002-extension-drag-radial-save-menu.md（v7）。
+ * 命中走矩形几何（radial-menu-model）；面板 pointer-events:none，不拦截原生拖拽。
  */
 
-const GEOMETRY = DEFAULT_RADIAL_GEOMETRY;
+const GEOMETRY = DEFAULT_TREE_GEOMETRY;
 const ROOT_FOLDER_PATH = '根目录';
+const SLIDE_MS = 240;
 
 interface ConnectionStatusResponse {
   kind: 'connected' | 'disconnected';
@@ -73,73 +71,154 @@ function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T> {
   });
 }
 
-/* ================= Shadow host ================= */
-
 const STYLE_TEXT = `
   :host { all: initial; }
   .scrim {
     position: fixed; inset: 0; pointer-events: none;
-    background: rgba(0, 0, 0, 0.4); opacity: 0;
+    background: rgba(0, 0, 0, 0.42); opacity: 0;
     transition: opacity 150ms ease-out;
   }
   .scrim.show { opacity: 1; }
-  .wheel {
-    position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 2147483647;
+  .tree-host {
+    position: fixed; left: 0; top: 0; z-index: 2147483647;
     pointer-events: none;
-    font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    animation: serpent-wheel-in 130ms ease-out;
+    font: 13px/1.35 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #f3f4f6;
   }
-  @keyframes serpent-wheel-in {
-    from { transform: scale(0.82); opacity: 0; }
+  .panel {
+    position: absolute; left: 0; top: 0;
+    border-radius: 14px;
+    background: rgba(42, 44, 48, 0.78);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.34);
+    overflow: hidden;
+    animation: serpent-tree-in 140ms ease-out;
+  }
+  @keyframes serpent-tree-in {
+    from { transform: scale(0.94); opacity: 0; }
     to { transform: scale(1); opacity: 1; }
   }
-  .disc {
-    position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
-    border-radius: 50%;
-    background: rgba(48, 50, 54, 0.62);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  .stage {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
   }
-  svg.layer { position: absolute; overflow: visible; display: block; }
-  .armed-wedge { fill: rgba(59, 130, 246, 0.78); }
-  .back-tint { fill: rgba(255, 255, 255, 0.055); }
-  .divider { stroke: rgba(255, 255, 255, 0.13); stroke-width: 1; }
-  .band { fill: rgba(59, 130, 246, 0.30); }
-  .chev { fill: rgba(255, 255, 255, 0.65); font-size: 11px; }
-  .chev.armed { fill: #fff; }
-  .sector-label {
-    position: absolute; left: 0; top: 0; width: 116px;
-    text-align: center; color: #f5f5f5; pointer-events: none;
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  .slide {
+    position: absolute; inset: 0;
+    display: flex;
+    align-items: stretch;
+    padding: ${GEOMETRY.panelPad}px;
+    box-sizing: border-box;
+    will-change: transform, opacity;
+    transition: transform ${SLIDE_MS}ms cubic-bezier(0.22, 1, 0.36, 1),
+                opacity ${SLIDE_MS}ms ease;
   }
-  .sector-label .ico { position: relative; width: 17px; height: 17px; color: rgba(245,245,245,0.92); }
-  .sector-label .ico svg { width: 17px; height: 17px; display: block; }
-  .sector-label .ico .badge {
-    position: absolute; right: -5px; bottom: -3px; width: 9px; height: 9px; display: block;
+  .slide.is-enter-from-right { transform: translateX(28%); opacity: 0; }
+  .slide.is-enter-from-left { transform: translateX(-28%); opacity: 0; }
+  .slide.is-center { transform: translateX(0); opacity: 1; }
+  .slide.is-exit-to-left { transform: translateX(-28%); opacity: 0; }
+  .slide.is-exit-to-right { transform: translateX(28%); opacity: 0; }
+  .parent-col {
+    display: flex; align-items: center; flex: 0 0 auto;
+    margin-right: ${GEOMETRY.bridgeGap}px;
   }
-  .sector-label .txt {
-    font-size: 12px; font-weight: 500; line-height: 1.2;
-    display: block; max-width: 116px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .sector-label.armed .txt { font-weight: 700; }
-  .hub {
-    position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
-    border-radius: 50%;
-    background: rgba(30, 32, 36, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    color: #f5f5f5; pointer-events: none;
-  }
-  .hub .x { font-size: 17px; line-height: 1; }
-  .hub .sub { font-size: 9px; opacity: 0.7; margin-top: 2px; }
-  .crumb {
-    position: absolute; left: 0; transform: translateX(-50%);
-    color: rgba(245, 245, 245, 0.9); font-size: 12px; white-space: nowrap;
-    background: rgba(48, 50, 54, 0.72); padding: 3px 12px; border-radius: 999px;
+  .pill {
+    display: flex; align-items: stretch;
+    min-width: ${GEOMETRY.parentMinWidth}px;
+    height: ${GEOMETRY.itemHeight}px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
-    pointer-events: none;
+    overflow: hidden;
+  }
+  .pill.is-armed {
+    background: rgba(59, 130, 246, 0.78);
+    border-color: rgba(147, 197, 253, 0.55);
+  }
+  .pill .back, .pill .body, .cmd .body, .cmd .drill {
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pill .back {
+    width: ${GEOMETRY.backWidth}px;
+    flex: 0 0 ${GEOMETRY.backWidth}px;
+    border-right: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 14px;
+  }
+  .pill .back.is-hot, .cmd .drill.is-hot {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+  }
+  .pill .body {
+    flex: 1; padding: 0 10px;
+    justify-content: flex-start; gap: 6px;
+    min-width: 0;
+  }
+  .list-col {
+    position: relative;
+    flex: 1 1 auto;
+    width: ${GEOMETRY.listWidth}px;
+    min-width: ${GEOMETRY.listWidth}px;
+    overflow: hidden;
+  }
+  .list-scroll {
+    position: absolute; left: 0; right: 0; top: 0;
+    will-change: transform;
+  }
+  .cmd {
+    display: flex; align-items: stretch;
+    height: ${GEOMETRY.itemHeight}px;
+    margin-bottom: ${GEOMETRY.itemGap}px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+  }
+  .cmd:last-child { margin-bottom: 0; }
+  .cmd.is-armed {
+    background: rgba(59, 130, 246, 0.78);
+    border-color: rgba(147, 197, 253, 0.55);
+  }
+  .cmd .body {
+    flex: 1; padding: 0 10px;
+    justify-content: flex-start; gap: 7px;
+    min-width: 0;
+  }
+  .cmd .drill {
+    width: ${GEOMETRY.drillWidth}px;
+    flex: 0 0 ${GEOMETRY.drillWidth}px;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+  }
+  .cmd .drill.is-disabled {
+    opacity: 0.28;
+  }
+  .ico {
+    width: 16px; height: 16px; flex: 0 0 16px; color: rgba(245,245,245,0.92);
+  }
+  .ico svg { width: 16px; height: 16px; display: block; }
+  .txt {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12.5px; font-weight: 500;
+  }
+  .cmd.is-armed .txt, .pill.is-armed .txt { font-weight: 700; }
+  .hint {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: calc(100% + 8px);
+    color: rgba(245, 245, 245, 0.92); font-size: 12px; white-space: nowrap;
+    background: rgba(48, 50, 54, 0.82); padding: 3px 12px; border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+  .cancel-chip {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    top: calc(100% + 10px);
+    font-size: 11px; color: rgba(245,245,245,0.72);
+    background: rgba(30, 32, 36, 0.72);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 999px; padding: 4px 10px;
   }
   .bubble {
     position: fixed; z-index: 2147483647; pointer-events: none;
@@ -155,8 +234,6 @@ const STYLE_TEXT = `
   .bubble .msg { display: block; opacity: 0.72; font-size: 11px; }
 `;
 
-/* ================= SVG 图标（单色线性，非 emoji） ================= */
-
 function svgIcon(inner: string): string {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 }
@@ -164,45 +241,33 @@ function svgIcon(inner: string): string {
 const ICONS = {
   folder: svgIcon('<path d="M4 8a2 2 0 0 1 2-2h3.5l2 2H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>'),
   home: svgIcon('<path d="M4.5 11 12 4.5 19.5 11"/><path d="M6.5 9.5V19h11V9.5"/>'),
-  grid: svgIcon('<rect x="4.5" y="4.5" width="6.5" height="6.5" rx="1.2"/><rect x="13" y="4.5" width="6.5" height="6.5" rx="1.2"/><rect x="4.5" y="13" width="6.5" height="6.5" rx="1.2"/><rect x="13" y="13" width="6.5" height="6.5" rx="1.2"/>'),
-  back: svgIcon('<path d="M14.5 5.5 8 12l6.5 6.5"/>'),
-  more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg>',
 };
 
-function iconForItem(item: RadialItem): string {
-  if (item.nav === 'back') return ICONS.back;
-  if (item.nav === 'page') return ICONS.more;
-  if (item.nav === 'expand') return ICONS.grid;
+function iconForItem(item: TreeItem): string {
   if (item.folderId === null && item.path === ROOT_FOLDER_PATH) return ICONS.home;
   return ICONS.folder;
 }
 
-/* ================= 状态机 ================= */
-
-interface WheelEntry {
-  level: RadialLevel;
-  page: number;
-  cx: number;
-  cy: number;
-  rotation: number;
-}
-
-interface WheelState {
-  stack: WheelEntry[];
-  armed: number;
-  zone: 'hub' | 'ring' | 'none';
-  /** 穿越守卫：层级切换后光标须先回到展开半径以内一次才允许下次穿越 */
-  canCross: boolean;
+interface MenuState {
+  stack: TreeLevel[];
+  origin: { x: number; y: number };
+  scrollY: number;
+  hit: TreeHit;
+  /** 导航热区守卫：进入/返回后须先离开 drill/back 再允许下次触发 */
+  navArmed: boolean;
+  animating: boolean;
   pointer: { x: number; y: number };
   media: MediaTarget;
-  context: RadialMenuContext;
+  context: TreeMenuContext;
+  layout: TreePanelLayout | null;
 }
 
 let shadowRoot: ShadowRoot | null = null;
 let scrimEl: HTMLDivElement | null = null;
-let wheelEl: HTMLDivElement | null = null;
-let state: WheelState | null = null;
+let hostEl: HTMLDivElement | null = null;
+let state: MenuState | null = null;
 let bubbleTimer = 0;
+let scrollRaf = 0;
 
 function ensureShadowRoot(): ShadowRoot {
   if (shadowRoot) return shadowRoot;
@@ -221,7 +286,6 @@ function ensureShadowRoot(): ShadowRoot {
   const style = document.createElement('style');
   style.textContent = STYLE_TEXT;
   root.appendChild(style);
-  // 全屏压暗层：轮盘打开时凸显 UI；pointer-events:none 不干扰拖拽事件流
   scrimEl = document.createElement('div');
   scrimEl.className = 'scrim';
   root.appendChild(scrimEl);
@@ -230,150 +294,199 @@ function ensureShadowRoot(): ShadowRoot {
   return root;
 }
 
-function polar(radius: number, angle: number): [number, number] {
-  return [radius * Math.cos(angle), radius * Math.sin(angle)];
+function currentLevel(): TreeLevel {
+  const stack = state?.stack;
+  const level = stack?.[(stack.length ?? 1) - 1];
+  if (!level) throw new Error('tree menu: empty stack');
+  return level;
 }
 
-function wedgePath(r0: number, r1: number, a0: number, a1: number): string {
-  const [x0, y0] = polar(r0, a0);
-  const [x1, y1] = polar(r1, a0);
-  const [x2, y2] = polar(r1, a1);
-  const [x3, y3] = polar(r0, a1);
-  const large = a1 - a0 > Math.PI ? 1 : 0;
-  return `M ${x0.toFixed(1)} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} ` +
-    `A ${r1} ${r1} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} ` +
-    `L ${x3.toFixed(1)} ${y3.toFixed(1)} A ${r0} ${r0} 0 ${large} 0 ${x0.toFixed(1)} ${y0.toFixed(1)} Z`;
+function currentItems(): TreeItem[] {
+  if (!state) return [];
+  return itemsForLevel(currentLevel(), state.context);
 }
 
-function current(): WheelEntry {
-  const entry = state?.stack[(state?.stack.length ?? 1) - 1];
-  if (!entry) throw new Error('radial menu: empty wheel stack');
-  return entry;
+function currentParent(): TreeParentInfo | null {
+  if (!state) return null;
+  return parentInfoForLevel(currentLevel(), state.context);
 }
 
-function render(): void {
-  const s = state;
-  if (!s || !wheelEl) return;
-  const entry = current();
-  const items = itemsForLevel(entry.level, entry.page, s.context);
-  const armedItem = s.zone === 'ring' && s.armed >= 0 ? items[s.armed] : undefined;
-  const count = items.length;
-  const width = RADIAL_TAU / count;
-  const radius = expandRadius(GEOMETRY) + 10;
-
-  const disc = wheelEl.querySelector<HTMLDivElement>('.disc');
-  const layer = wheelEl.querySelector<SVGSVGElement>('svg.layer');
-  const labels = wheelEl.querySelector<HTMLDivElement>('.labels');
-  const hub = wheelEl.querySelector<HTMLDivElement>('.hub');
-  const crumb = wheelEl.querySelector<HTMLDivElement>('.crumb');
-  if (!disc || !layer || !labels || !hub || !crumb) return;
-
-  wheelEl.style.left = `${entry.cx}px`;
-  wheelEl.style.top = `${entry.cy}px`;
-  disc.style.width = disc.style.height = `${GEOMETRY.ringOut * 2}px`;
-  hub.style.width = hub.style.height = `${(GEOMETRY.hub - 2) * 2}px`;
-  crumb.style.top = `${-(GEOMETRY.ringOut + 30)}px`;
-  crumb.textContent = armedCrumb(armedItem) ?? crumbForLevel(entry.level, s.context);
-
-  layer.setAttribute('viewBox', `${-radius} ${-radius} ${radius * 2} ${radius * 2}`);
-  layer.setAttribute('width', String(radius * 2));
-  layer.setAttribute('height', String(radius * 2));
-  layer.style.left = `${-radius}px`;
-  layer.style.top = `${-radius}px`;
-
-  let svg = '';
-
-  // 展开引导弧（武装可穿越项时）
-  if (armedItem?.expandable) {
-    const mid = midAngle(s.armed, count, entry.rotation);
-    svg += `<path class="band" d="${wedgePath(GEOMETRY.ringOut + 3, expandRadius(GEOMETRY) - 4, mid - width / 2, mid + width / 2)}"/>`;
-  }
-
-  // 「返回」与「最近」扇区常驻底（未武装时）
-  items.forEach((item, i) => {
-    if (i === s.armed) return;
-    const mid = midAngle(i, count, entry.rotation);
-    if (item.nav === 'back') {
-      svg += `<path class="back-tint" d="${wedgePath(GEOMETRY.hub + 1.5, GEOMETRY.ringOut - 1.5, mid - width / 2, mid + width / 2)}"/>`;
-    }
-  });
-
-  // 武装扇区高亮
-  if (armedItem) {
-    const mid = midAngle(s.armed, count, entry.rotation);
-    svg += `<path class="armed-wedge" d="${wedgePath(GEOMETRY.hub + 1.5, GEOMETRY.ringOut - 1.5, mid - width / 2, mid + width / 2)}"/>`;
-  }
-
-  // 分格线
-  for (let i = 0; i < count; i += 1) {
-    const angle = RADIAL_TOP + i * width - width / 2 + entry.rotation;
-    const [x0, y0] = polar(GEOMETRY.hub + 2, angle);
-    const [x1, y1] = polar(GEOMETRY.ringOut - 2, angle);
-    svg += `<line class="divider" x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"/>`;
-  }
-
-  // 可穿越 chevron
-  items.forEach((item, i) => {
-    if (!item.expandable) return;
-    const [tx, ty] = polar(GEOMETRY.ringOut - 12, midAngle(i, count, entry.rotation));
-    svg += `<text class="chev${i === s.armed ? ' armed' : ''}" x="${tx.toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="middle">▸</text>`;
-  });
-
-  layer.innerHTML = svg;
-
-  // 标签（图标 + 文字）
-  const labelRadius = (GEOMETRY.hub + GEOMETRY.ringOut) / 2 + 6;
-  labels.innerHTML = items
-    .map((item, i) => {
-      const [lx, ly] = polar(labelRadius, midAngle(i, count, entry.rotation));
-      return `<div class="sector-label${i === s.armed ? ' armed' : ''}" style="transform: translate(${lx.toFixed(1)}px, ${ly.toFixed(1)}px) translate(-50%, -50%)">` +
-        `<span class="ico">${iconForItem(item)}</span>` +
-        `<span class="txt"></span></div>`;
-    })
-    .join('');
-  // 文本走 textContent，避免文件夹名注入 HTML
-  const textNodes = labels.querySelectorAll<HTMLSpanElement>('.txt');
-  items.forEach((item, i) => {
-    const textNode = textNodes[i];
-    if (textNode) textNode.textContent = item.label;
-  });
-}
-
-/* ================= 层级导航 ================= */
-
-function pushLevel(target: RadialLevel, entryAngle: number): void {
-  if (!state) return;
-  const { x, y } = clampCenter(
-    state.pointer.x,
-    state.pointer.y,
+function recomputeLayout(): TreePanelLayout | null {
+  if (!state) return null;
+  const items = currentItems();
+  const parent = currentParent();
+  const layout = measureTreePanel(
+    state.origin.x,
+    state.origin.y,
+    items.length,
+    parent !== null,
     window.innerWidth,
     window.innerHeight,
     GEOMETRY,
   );
-  state.stack.push({ level: target, page: 0, cx: x, cy: y, rotation: rotationForEntry(entryAngle) });
-  state.armed = -1;
-  state.canCross = false;
-  render();
+  state.layout = layout;
+  state.scrollY = clampScroll(state.scrollY, layout.maxScroll);
+  return layout;
 }
 
-function nextPage(): void {
-  if (!state) return;
-  const entry = current();
-  entry.page = (entry.page + 1) % pageCountForLevel(entry.level, state.context);
-  state.armed = -1;
-  state.canCross = false;
-  render();
+function buildSlideDom(
+  items: readonly TreeItem[],
+  parent: TreeParentInfo | null,
+  hit: TreeHit,
+  listHeight: number,
+  scrollY: number,
+): HTMLDivElement {
+  const slide = document.createElement('div');
+  slide.className = 'slide is-center';
+
+  if (parent) {
+    const col = document.createElement('div');
+    col.className = 'parent-col';
+    const pill = document.createElement('div');
+    pill.className = `pill${hit.zone === 'parent' || hit.zone === 'back' ? ' is-armed' : ''}`;
+    const back = document.createElement('div');
+    back.className = `back${hit.zone === 'back' ? ' is-hot' : ''}`;
+    back.textContent = '‹';
+    const body = document.createElement('div');
+    body.className = 'body';
+    const ico = document.createElement('span');
+    ico.className = 'ico';
+    ico.innerHTML = parent.path === ROOT_FOLDER_PATH ? ICONS.home : ICONS.folder;
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = parent.label;
+    body.append(ico, txt);
+    pill.append(back, body);
+    col.appendChild(pill);
+    slide.appendChild(col);
+  }
+
+  const listCol = document.createElement('div');
+  listCol.className = 'list-col';
+  listCol.style.height = `${listHeight}px`;
+  const scroll = document.createElement('div');
+  scroll.className = 'list-scroll';
+  scroll.style.transform = `translateY(${-scrollY}px)`;
+
+  items.forEach((item, index) => {
+    const cmd = document.createElement('div');
+    const armed =
+      (hit.zone === 'item' || hit.zone === 'drill') && hit.index === index;
+    cmd.className = `cmd${armed ? ' is-armed' : ''}`;
+    const body = document.createElement('div');
+    body.className = 'body';
+    const ico = document.createElement('span');
+    ico.className = 'ico';
+    ico.innerHTML = iconForItem(item);
+    const txt = document.createElement('span');
+    txt.className = 'txt';
+    txt.textContent = item.label;
+    body.append(ico, txt);
+    cmd.appendChild(body);
+    const drill = document.createElement('div');
+    drill.className = `drill${item.expandable ? '' : ' is-disabled'}${
+      hit.zone === 'drill' && hit.index === index ? ' is-hot' : ''
+    }`;
+    drill.textContent = '›';
+    cmd.appendChild(drill);
+    scroll.appendChild(cmd);
+  });
+
+  listCol.appendChild(scroll);
+  slide.appendChild(listCol);
+  return slide;
+}
+
+function renderStatic(): void {
+  const s = state;
+  if (!s || !hostEl) return;
+  const layout = recomputeLayout();
+  if (!layout) return;
+  const items = currentItems();
+  const parent = currentParent();
+  const panel = hostEl.querySelector<HTMLDivElement>('.panel');
+  const stage = hostEl.querySelector<HTMLDivElement>('.stage');
+  const hint = hostEl.querySelector<HTMLDivElement>('.hint');
+  if (!panel || !stage || !hint) return;
+
+  panel.style.width = `${layout.panel.w}px`;
+  panel.style.height = `${layout.panel.h}px`;
+  hostEl.style.left = `${layout.panel.x}px`;
+  hostEl.style.top = `${layout.panel.y}px`;
+  hostEl.style.width = `${layout.panel.w}px`;
+  hostEl.style.height = `${layout.panel.h}px`;
+
+  stage.replaceChildren(
+    buildSlideDom(items, parent, s.hit, layout.listViewport.h, s.scrollY),
+  );
+
+  const hintText = armedHint(s.hit, items, parent) ?? crumbForLevel(currentLevel());
+  hint.textContent = hintText;
+}
+
+function runSlideTransition(direction: 'forward' | 'back'): void {
+  const s = state;
+  if (!s || !hostEl) return;
+  const layout = recomputeLayout();
+  if (!layout) return;
+  const stage = hostEl.querySelector<HTMLDivElement>('.stage');
+  const panel = hostEl.querySelector<HTMLDivElement>('.panel');
+  const hint = hostEl.querySelector<HTMLDivElement>('.hint');
+  if (!stage || !panel || !hint) return;
+
+  const outgoing = stage.querySelector<HTMLDivElement>('.slide');
+  const items = currentItems();
+  const parent = currentParent();
+  panel.style.width = `${layout.panel.w}px`;
+  panel.style.height = `${layout.panel.h}px`;
+  hostEl.style.left = `${layout.panel.x}px`;
+  hostEl.style.top = `${layout.panel.y}px`;
+  hostEl.style.width = `${layout.panel.w}px`;
+  hostEl.style.height = `${layout.panel.h}px`;
+
+  const incoming = buildSlideDom(items, parent, s.hit, layout.listViewport.h, s.scrollY);
+  incoming.className =
+    direction === 'forward'
+      ? 'slide is-enter-from-right'
+      : 'slide is-enter-from-left';
+  stage.appendChild(incoming);
+
+  s.animating = true;
+  // Force layout before flipping classes so the transition runs.
+  void incoming.offsetWidth;
+  if (outgoing) {
+    outgoing.className =
+      direction === 'forward' ? 'slide is-exit-to-left' : 'slide is-exit-to-right';
+  }
+  incoming.className = 'slide is-center';
+
+  window.setTimeout(() => {
+    outgoing?.remove();
+    if (state) state.animating = false;
+    renderStatic();
+  }, SLIDE_MS + 20);
+
+  hint.textContent = armedHint(s.hit, items, parent) ?? crumbForLevel(currentLevel());
+}
+
+function pushLevel(target: TreeLevel): void {
+  if (!state || state.animating) return;
+  state.stack.push(target);
+  state.scrollY = 0;
+  state.hit = { zone: 'none', index: -1 };
+  state.navArmed = false;
+  runSlideTransition('forward');
 }
 
 function goBack(): void {
-  if (!state) return;
-  if (state.stack.length > 1) state.stack.pop();
-  state.armed = -1;
-  state.canCross = false;
-  render();
+  if (!state || state.animating) return;
+  if (state.stack.length <= 1) return;
+  state.stack.pop();
+  state.scrollY = 0;
+  state.hit = { zone: 'none', index: -1 };
+  state.navArmed = false;
+  runSlideTransition('back');
 }
-
-/* ================= 气泡（提示 / 保存反馈） ================= */
 
 function showBubble(x: number, y: number, title: string, message?: string): void {
   const root = ensureShadowRoot();
@@ -400,8 +513,6 @@ function showBubble(x: number, y: number, title: string, message?: string): void
   bubbleTimer = window.setTimeout(() => bubble?.classList.remove('show'), 2200);
 }
 
-/* ================= 保存 ================= */
-
 async function requestSave(
   media: MediaTarget,
   targetFolderId: string | null,
@@ -421,38 +532,93 @@ async function requestSave(
   showBubble(bubbleX, bubbleY, response.notification.title, response.notification.message);
 }
 
-/* ================= 拖拽事件 ================= */
-
-function onDragOver(event: DragEvent): void {
+function updateHitFromPointer(clientX: number, clientY: number): void {
   const s = state;
-  if (!s) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  s.pointer = { x: event.clientX, y: event.clientY };
-  const entry = current();
-  const dx = event.clientX - entry.cx;
-  const dy = event.clientY - entry.cy;
-  const distance = Math.hypot(dx, dy);
-  const crossTrigger = radialCrossTriggerRadius(GEOMETRY);
-  if (distance <= crossTrigger) s.canCross = true;
+  if (!s || s.animating) return;
+  s.pointer = { x: clientX, y: clientY };
+  const layout = s.layout ?? recomputeLayout();
+  if (!layout) return;
 
-  const items = itemsForLevel(entry.level, entry.page, s.context);
-  if (distance < GEOMETRY.hub) {
-    s.zone = 'hub';
-    s.armed = -1;
-  } else {
-    s.zone = 'ring';
-    const index = sectorAt(Math.atan2(dy, dx), items.length, entry.rotation);
-    s.armed = index;
-    const item = items[index];
-    if (item && item.expandable && distance > crossTrigger && s.canCross) {
-      if (item.nav === 'page') nextPage();
-      else if (item.nav === 'back') goBack();
-      else if (item.target) pushLevel(item.target, midAngle(index, items.length, entry.rotation));
+  const delta = edgeScrollDelta(clientY, layout, GEOMETRY);
+  if (delta !== 0 && layout.maxScroll > 0) {
+    s.scrollY = clampScroll(s.scrollY + delta, layout.maxScroll);
+  }
+
+  const items = currentItems();
+  const hit = hitTestTree(
+    clientX,
+    clientY,
+    layout,
+    items.length,
+    s.scrollY,
+    GEOMETRY,
+  );
+  s.hit = hit;
+
+  // 离开导航热区后重新武装导航
+  if (hit.zone !== 'drill' && hit.zone !== 'back') {
+    s.navArmed = true;
+  }
+
+  if (s.navArmed && hit.zone === 'back') {
+    goBack();
+    return;
+  }
+  if (s.navArmed && hit.zone === 'drill' && hit.index >= 0) {
+    const item = items[hit.index];
+    if (item?.expandable && item.target) {
+      pushLevel(item.target);
       return;
     }
   }
-  render();
+
+  // 轻量更新：只刷 class / scroll，避免整树重建过频
+  const slide = hostEl?.querySelector<HTMLDivElement>('.slide.is-center');
+  if (!slide) {
+    renderStatic();
+    return;
+  }
+  const scroll = slide.querySelector<HTMLDivElement>('.list-scroll');
+  if (scroll) scroll.style.transform = `translateY(${-s.scrollY}px)`;
+
+  const parent = currentParent();
+  const pill = slide.querySelector<HTMLDivElement>('.pill');
+  if (pill) {
+    pill.classList.toggle('is-armed', hit.zone === 'parent' || hit.zone === 'back');
+    const back = pill.querySelector('.back');
+    back?.classList.toggle('is-hot', hit.zone === 'back');
+  }
+  const cmds = slide.querySelectorAll<HTMLDivElement>('.cmd');
+  cmds.forEach((cmd, index) => {
+    const armed = (hit.zone === 'item' || hit.zone === 'drill') && hit.index === index;
+    cmd.classList.toggle('is-armed', armed);
+    const drill = cmd.querySelector('.drill');
+    drill?.classList.toggle('is-hot', hit.zone === 'drill' && hit.index === index);
+  });
+
+  const hint = hostEl?.querySelector<HTMLDivElement>('.hint');
+  if (hint) {
+    hint.textContent = armedHint(hit, items, parent) ?? crumbForLevel(currentLevel());
+  }
+}
+
+function onDragOver(event: DragEvent): void {
+  if (!state) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  updateHitFromPointer(event.clientX, event.clientY);
+  if (!scrollRaf && state) {
+    scrollRaf = window.requestAnimationFrame(() => {
+      scrollRaf = 0;
+      if (!state) return;
+      const { x, y } = state.pointer;
+      const layout = state.layout;
+      if (!layout) return;
+      const delta = edgeScrollDelta(y, layout, GEOMETRY);
+      if (delta === 0) return;
+      updateHitFromPointer(x, y);
+    });
+  }
 }
 
 function onDrop(event: DragEvent): void {
@@ -460,48 +626,52 @@ function onDrop(event: DragEvent): void {
   if (!s) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  const entry = current();
-  const dx = event.clientX - entry.cx;
-  const dy = event.clientY - entry.cy;
-  const distance = Math.hypot(dx, dy);
+  updateHitFromPointer(event.clientX, event.clientY);
+  const hit = s.hit;
+  const items = currentItems();
+  const parent = currentParent();
 
-  // 只有落在扇区环内的松开才执行动作；中心与环外松开一律退出不保存
-  if (s.zone === 'ring' && isReleaseInRing(distance, GEOMETRY) && s.armed >= 0) {
-    const items = itemsForLevel(entry.level, entry.page, s.context);
-    const item = items[s.armed];
-    if (item?.nav === 'save') {
-      const folderId = item.folderId ?? null;
-      const path = item.path ?? ROOT_FOLDER_PATH;
+  if (hit.zone === 'item' && hit.index >= 0) {
+    const item = items[hit.index];
+    if (item) {
       const media = s.media;
-      closeWheel();
-      showBubble(event.clientX, event.clientY, `保存到：${path.split('/').join(' / ')}`, '发送中…');
-      void requestSave(media, folderId, event.clientX, event.clientY);
-      return;
-    }
-    if (item?.nav === 'expand' && item.target) {
-      pushLevel(item.target, midAngle(s.armed, items.length, entry.rotation));
-      return;
-    }
-    if (item?.nav === 'page') {
-      nextPage();
-      return;
-    }
-    if (item?.nav === 'back') {
-      goBack();
+      closeMenu();
+      showBubble(
+        event.clientX,
+        event.clientY,
+        `保存到：${item.path.split('/').join(' / ')}`,
+        '发送中…',
+      );
+      void requestSave(media, item.folderId, event.clientX, event.clientY);
       return;
     }
   }
-  closeWheel();
+  if (hit.zone === 'parent' && parent) {
+    const media = s.media;
+    closeMenu();
+    showBubble(
+      event.clientX,
+      event.clientY,
+      `保存到：${parent.path.split('/').join(' / ')}`,
+      '发送中…',
+    );
+    void requestSave(media, parent.folderId, event.clientX, event.clientY);
+    return;
+  }
+  // drill/back 上松开不保存；非可展开 › 区松开视为取消
+  if (hit.zone === 'drill' || hit.zone === 'back') {
+    closeMenu();
+    return;
+  }
+  closeMenu();
 }
 
 function onDragEnd(): void {
-  closeWheel();
+  closeMenu();
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && state) {
-    closeWheel();
-  }
+  if (event.key === 'Escape' && state) closeMenu();
 }
 
 function attachDragListeners(): void {
@@ -518,41 +688,50 @@ function detachDragListeners(): void {
   document.removeEventListener('keydown', onKeyDown, true);
 }
 
-function closeWheel(): void {
+function closeMenu(): void {
   if (!state) return;
   state = null;
   detachDragListeners();
+  if (scrollRaf) {
+    window.cancelAnimationFrame(scrollRaf);
+    scrollRaf = 0;
+  }
   scrimEl?.classList.remove('show');
-  wheelEl?.remove();
-  wheelEl = null;
+  hostEl?.remove();
+  hostEl = null;
 }
 
-function openWheel(clientX: number, clientY: number, media: MediaTarget, context: RadialMenuContext): void {
+function openMenu(
+  clientX: number,
+  clientY: number,
+  media: MediaTarget,
+  context: TreeMenuContext,
+): void {
   const root = ensureShadowRoot();
-  wheelEl?.remove();
-  wheelEl = document.createElement('div');
-  wheelEl.className = 'wheel';
-  wheelEl.innerHTML =
-    '<div class="disc"></div>' +
-    '<svg class="layer" xmlns="http://www.w3.org/2000/svg"></svg>' +
-    '<div class="labels"></div>' +
-    '<div class="hub"><span class="x">✕</span><span class="sub">取消</span></div>' +
-    '<div class="crumb"></div>';
-  root.appendChild(wheelEl);
+  hostEl?.remove();
+  hostEl = document.createElement('div');
+  hostEl.className = 'tree-host';
+  hostEl.innerHTML =
+    '<div class="panel"><div class="hint"></div><div class="stage"></div></div>' +
+    '<div class="cancel-chip">移出菜单松开 · Esc 取消</div>';
+  root.appendChild(hostEl);
   scrimEl?.classList.add('show');
 
-  const { x, y } = clampCenter(clientX, clientY, window.innerWidth, window.innerHeight, GEOMETRY);
+  const origin = clampCenter(clientX, clientY, window.innerWidth, window.innerHeight);
   state = {
-    stack: [{ level: { kind: 'root' }, page: 0, cx: x, cy: y, rotation: 0 }],
-    armed: -1,
-    zone: 'none',
-    canCross: true,
+    stack: [{ kind: 'root' }],
+    origin,
+    scrollY: 0,
+    hit: { zone: 'none', index: -1 },
+    navArmed: true,
+    animating: false,
     pointer: { x: clientX, y: clientY },
     media,
     context,
+    layout: null,
   };
   attachDragListeners();
-  render();
+  renderStatic();
 }
 
 /* ================= 入口 ================= */
@@ -561,9 +740,7 @@ const DRAG_GHOST_MAX_SIZE = 96;
 
 /**
  * 自定义拖拽幽灵：把指针下的媒体元素画进 ≤96px 画布缩略图，锚点固定在光标
- * 左上角。原生幽灵是全尺寸快照且按抓取点锚定，会遮住轮盘中心与扇区
- * （2026-07-25 真实浏览器实测反馈）。必须在 dragstart 内同步调用；
- * 绘制或快照失败（跨源/DRM 视频、无内联尺寸 SVG 等）时保持原生幽灵。
+ * 左上角。必须在 dragstart 内同步调用。
  */
 export function applyDragGhostThumbnail(event: DragEvent): void {
   const { dataTransfer } = event;
@@ -591,10 +768,9 @@ export function applyDragGhostThumbnail(event: DragEvent): void {
   try {
     context.drawImage(source, 0, 0, canvas.width, canvas.height);
   } catch {
-    return; // 跨源/DRM 媒体无法绘制时保持原生幽灵
+    return;
   }
 
-  // Chrome 要求幽灵元素在文档内且可见——渲染到视口外，dragend 后移除
   Object.assign(canvas.style, {
     position: 'fixed',
     left: '-10000px',
@@ -609,13 +785,12 @@ export function applyDragGhostThumbnail(event: DragEvent): void {
   try {
     dataTransfer.setDragImage(canvas, 0, 0);
   } catch {
-    canvas.remove(); // 快照失败回退原生幽灵
+    canvas.remove();
   }
 }
 
 /**
- * dragstart 时调用：先校验连接、取文件夹树与最近列表，再展开轮盘。
- * 异步期间用户已松手（dragend 先于 open 触发）则放弃展开。
+ * dragstart 时调用：校验连接、取文件夹树，再展开树状菜单。
  */
 export async function startRadialSaveMenu(
   clientX: number,
@@ -647,7 +822,7 @@ export async function startRadialSaveMenu(
       return;
     }
 
-    let context: RadialMenuContext = { roots: [], quickPickFolders: [] };
+    let context: TreeMenuContext = { roots: [], quickPickFolders: [] };
     try {
       const response = await sendRuntimeMessage<FolderListResponse | FolderListErrorResponse>({
         type: 'serpent-list-folders',
@@ -659,9 +834,10 @@ export async function startRadialSaveMenu(
           Array.isArray(response.recentFolderIds) ? response.recentFolderIds : [],
           Array.isArray(response.recentBrowsedFolderIds) ? response.recentBrowsedFolderIds : [],
         );
+        // 树状菜单根级不限 8 槽：优先 firstLevel；否则用排序后的顶栏候选（可超过旧轮盘上限）。
         const firstLevelIds = Array.isArray(response.firstLevelFolderIds)
           && response.firstLevelFolderIds.length > 0
-          ? response.firstLevelFolderIds.slice(0, MAX_TOP_LEVEL_FOLDER_SLOTS)
+          ? response.firstLevelFolderIds
           : splitSaveMenuFolders(response.folders, hints).topLevel.map((folder) => folder.folderId);
         const quickPickFolders = firstLevelIds
           .map((folderId) => tree.byId.get(folderId))
@@ -669,11 +845,11 @@ export async function startRadialSaveMenu(
         context = { roots: tree.roots, quickPickFolders };
       }
     } catch {
-      // 文件夹列表失败时降级为仅根目录（与既有浮层策略一致）
+      // 文件夹列表失败时降级为仅根目录
     }
 
     if (dragEndedEarly) return;
-    openWheel(clientX, clientY, media, context);
+    openMenu(clientX, clientY, media, context);
   } finally {
     document.removeEventListener('dragend', earlyEnd, { capture: true });
   }

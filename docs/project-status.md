@@ -1,7 +1,77 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-02
+> 更新时间：2026-08-06
 > 事实来源：`docs/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-06 新增 UI 反馈修复**：拖拽导入提示使用主题画布色 50% 半透明背景，保留虚线边框、
+  图标和文字并让底下资产保持可见；3D 查看器 HDRI 当前值控件已统一为与「显示模式」相同的
+  下拉控件样式，并将选择器锚定到环境光控件右侧，避免左对齐导致与其他 toolbar 控件重叠。
+  `Serpent-h2uj` 已获用户确认通过；`Serpent-osbd` 待用户视觉验收。
+- **2026-08-06 3D 模型缩略图**：`Serpent-pjx2` 的离屏帧 IPC 载荷解析根因已修复；
+  隔离 userData 的真实 Electron 缩略图格式矩阵通过（OBJ/MTL、glTF + `.bin` companion、
+  GLB、STL、FBX 共 5/5），每项证明卡片图片实际解码。另修复 glTF 内嵌 `data:` buffer
+  被 Renderer/offscreen CSP 拦截的问题。`MODEL-001` 已加入待人类验收；Computer Use、
+  packaged 与 Windows 尚未执行。
+- **2026-08-06 3D 光照、Info 与 HDRI 手势收口**：离屏缩略图生产路径已恢复默认内置
+  HDRI 环境光，失败时保留 key-light 降级；查看器非阻塞提示统一为共享 `Notice tone="info"`；
+  HDRI 旋转支持右键拖拽和 Ctrl+左键拖拽（macOS 触控板/Windows 鼠标）；选择器预览扩大到
+  `144×82px`，名称改用较小 caption 并限制占宽。`MODEL-001`、`MODEL-003`、`MODEL-004`
+  已同步验收步骤；真实 Computer Use、packaged、Windows 尚未执行。
+- **2026-08-06 PBR 贴图通道预览**：认领 `Serpent-61je.2`，新增基于文件名的只读
+  PBR 通道识别与显示策略。Base Color/Normal 保持原始颜色语义，Roughness/Metallic/
+  Height 使用中性灰度，Smoothness 使用反转灰度，Metallic-Roughness 打包贴图保留
+  RGB，并在图像查看器显示 Info 说明。单测 `1 file / 9 passed`、typecheck 和 PBR
+  Electron E2E `1 passed (4.4s)` 已通过；测试 fixture 使用不同像素值避免真实内容重复
+  对话框阻断矩阵导入；Computer Use、packaged、Windows 尚未执行。
+- **2026-08-06 Info 通知布局**：新增 `Serpent-91pn`，定位为通知栈固定 `520px` 宽导致
+  短消息右侧保留大段空白；现改为内容自适应宽度并保留最大宽度上限。`NOTIFY-002` 已加入
+  待人类验收；既有 `organization-search-trash.test.ts` 完整回归 `4 passed`，本次窄窗
+  内容宽度断言定向回归 `1 passed`。窄窗口下通知条目改为按内容收缩，避免
+  `min-width: 280px` 与 `width: 100%` 子项将通知栈撑到 viewport 上限；用户视觉验收仍待执行。
+- **2026-08-06 上下文菜单 pointer/portal 回归**：修复菜单项仅依赖 `mouseenter` 时
+  pointer hover 后焦点未落地的问题；一级菜单改为布局阶段同步提交定位，避免首帧仍在
+  `-9999px`；二级菜单使用同步打开状态幂等化 focus/click/hover，避免标签选择器 portal
+  短暂隐藏并把点击落到资产网格。`context-menu.test.ts` 完整回归 `10 passed`，
+  `organization-search-trash.test.ts` `4 passed`，相关偏好/元数据路径定向通过。
+- **2026-08-06 最新主线复跑**：`npm run verify:mainline` 通过：单元/Worker
+  `352 files passed / 3076 tests passed`、搜索性能 `5 passed`、主线 Electron E2E
+  `72 passed / 3 skipped`；当前 HEAD 的 lint、typecheck、extension verify 均通过。
+- **2026-08-06 当前 HEAD 打包阻断**：`npm run package` 在 `prepackage` 的
+  `media:verify` 阶段停止；macOS arm64 媒体 bundle 尚未有可验证的不可变 HTTPS 来源和
+  SHA-256/manifest SHA-256 pin。该阻断属于发布制品供应链，未用旧包或跳过 provenance 伪造
+  packaged 证据；Computer Use、packaged 与 Windows 仍未执行。
+- **2026-08-06 HDRI 选择器**：`Serpent-pd6k` 已完成当前值仅显示环境光名称、选择器显示
+  更大内置预设缩略图并移除「自定义」入口；旧 `custom` 持久化值回退默认预设。
+  `model-viewer` 真实 Electron E2E 3/3 通过，包含四张预设缩略图实际解码与尺寸断言。
+  `MODEL-002` 已加入待人类验收；Computer Use、packaged 与 Windows 尚未执行。
+- **2026-08-06 HDRI 右键旋转**：`Serpent-xjcy` 的现有实现已核对，右键 pointer 横向拖拽通过
+  `environmentYaw` 更新 `scene.environmentRotation.y`，并保留中键相机操作；场景 composer
+  单测通过。`MODEL-003` 已加入待人类验收，Computer Use、packaged 与 Windows 尚未执行。
+- **2026-08-06 通知堆叠**：`Serpent-0k52` 已将通知控制器从单值优先级通道改为带独立
+  生命周期的通知栈；Renderer 在同一 portal 中垂直排列通知，并支持逐条关闭。
+  `NOTIFY-001` 已加入待人类验收；`npm run typecheck && npm run lint &&
+  npm run test:unit -- tests/unit/toast-notifications.test.ts` 通过（unit 304 文件、
+  2257 passed、1 skipped）；Computer Use、packaged 与 Windows 尚未执行。
+- **2026-08-06 文件名显示**：`Serpent-kmgw` 修复卡片普通文件名路径中内联 span
+  阻止中间省略的根因；长文件名卡片与 Inspector 的定向 Electron E2E `1 passed`，
+  `TITLE-001` 已加入待人类验收。Computer Use、packaged 与 Windows 尚未执行。
+- **2026-08-06 格式过滤预设**：`Serpent-1d4w` 已确认实现从图像、视频、音频和
+  3D 格式注册表派生 chip，并保留文本 token；注册表覆盖单测 `1 file, 4 passed`，
+  typecheck/lint 通过。`FILTER-001` 已从历史不通过转为待人类验收；Computer Use、
+  packaged 与 Windows 尚未执行。
+- **2026-08-06 主题色设置折叠**：`Serpent-siwm` 移除 `ThemeColorSettings` 的
+  `defaultOpen`，恢复通用设置折叠默认值；`SETTINGS-004` 已加入待人类验收，并补充
+  macOS 设置 E2E 的展开/收起断言。Computer Use、packaged 与 Windows 尚未执行。
+- **2026-08-06 macOS Dock 图标**：`Serpent-o71z` 已定位为 `app.dock.setIcon()`
+  直接读取贴边的 `app.png`；Electron runtime 无法将 `app.icns` 解码为
+  `nativeImage`。现生成带安全边距的 `app-dock.png`，macOS 运行态优先读取该 PNG，
+  `.icns` 仍供 packager 使用。路径单测、资源生成、typecheck/lint 已通过；
+  `PLATFORM-001` 已加入待人类验收。Computer Use、当前 HEAD packaged 构建与 Windows
+  尚未执行。
+- **2026-08-06 主线回归收口**：`Serpent-32p` 补齐 Masonry 原始滚动回放对用户主动滚动
+  的取消，并将回收站/元数据/文件夹定位回归纳入当前工作树复测。该修复已包含在当前
+  `npm run verify:mainline` 证据中；`CANVAS-021` 仍待用户拖拽与滚动验收，packaged
+  与 Windows 未执行。
 
 - **2026-08-04 Renderer 诊断**：`Serpent-lyf8` 已补齐开发态与 packaged 的 Renderer
   `console-message` error、`render-process-gone`、`unresponsive`/`responsive` 以及
@@ -26,7 +96,7 @@
 - 产品负责人新增待办：**ignore**（`Serpent-v6m3`）已完成实现，支持托管/链接文件、文件夹和后缀的持久化忽略、扫描/浏览/搜索过滤、显示隐藏切换、资源库设置及恢复入口；资源库级规则已迁移为可编辑 `.serpentignore`（兼容常用 Git 忽略语法，迁移 v26），当前待人类验收；文件夹级删除回归反馈记录为 `Serpent-nplj`。
 - **常用媒体格式**（`Serpent-aav1`）正在实现；Windows 本地 bundle、真实 Worker 解码/代理矩阵和开发态 Electron 媒体预览证据已有，但 Windows/macOS 打包应用查看/播放与人工验收尚未执行，不能标记完成。
 - 2026-07-26 媒体验收补充：用户已明确验收通过 SVG、TIFF、TGA、EXR、ARAW（按用户原文）和 PSD；后续需求已拆为 `Serpent-aoj0`（EXR 多通道 + 色彩空间读取/选择，P2）与 `Serpent-oc6g`（RGBA 单通道/组合查看器，P3）。
-- **浏览器扩展径向 Hotbox**（`Serpent-6llg` / REQ-EXT-005）：已实现且 **EXT-009 人类验收通过**（2026-07-25）；工单已关闭。
+- **浏览器扩展拖拽树状保存菜单**（`Serpent-c0ml` / REQ-EXT-005）：圆环 Hotbox 已替换为思维导图双栏（v7）；**EXT-010 待人类验收**。原 EXT-009（径向）已撤回。
 - 工单卫生：关闭 14 条僵尸 open（实现已完成、验收已通过或已被新工单取代）；重建 `Serpent-ak94`（EXT-003）、`Serpent-u9yv`（EXT-002）。agent 查队列见 `docs/agent-work-queue.md`。
 - **Inspector AI 刷新**（`Serpent-c9r3` / REQ-INSPECT-006）：清除或生成 AI 信息后右侧信息栏须立即更新，未实现。
 - **2026-07-25 晚**：工具栏后台任务直出（`9gt2`）、浏览总数量/全选全部+重数据懒加载（`6w7n` P1）、type-ahead 跳转（`lfo1` P3）、视频倍速样式（`gplm`）、全屏隐藏光标（`c3lf`）。见 backlog「2026-07-25 补充」。

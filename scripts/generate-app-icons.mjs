@@ -56,6 +56,22 @@ async function writeMasterPng() {
     .toFile(generatedAppIcons.png);
 }
 
+async function writeDockPng() {
+  const safeSize = 896;
+  const margin = (1024 - safeSize) / 2;
+  await sharp(iconSources.app)
+    .resize(safeSize, safeSize, { fit: 'cover' })
+    .extend({
+      top: margin,
+      bottom: margin,
+      left: margin,
+      right: margin,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toFile(generatedAppIcons.dockPng);
+}
+
 async function writeIco() {
   const buffers = await Promise.all(icoSizes.map((size) => resizePng(size)));
   await writeFile(generatedAppIcons.ico, await toIco(buffers));
@@ -112,11 +128,13 @@ async function writeIcns() {
 async function main() {
   await mkdir(iconAssetsDir, { recursive: true });
   await writeMasterPng();
+  await writeDockPng();
   await writeIco();
   await writeIcns();
 
   console.log('[icons] generated from assets/icons/source-app.png:');
   console.log(`  - assets/icons/app.png`);
+  console.log(`  - assets/icons/app-dock.png`);
   console.log(`  - assets/icons/app.ico`);
   console.log(`  - assets/icons/app.icns`);
 }

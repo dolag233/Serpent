@@ -34,6 +34,46 @@ describe('desktop ingestion through the existing import transaction', () => {
     service.closeAll();
   });
 
+  it('merges an existing destination folder while preserving file conflicts', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-desktop-folder-merge-'));
+    roots.push(root);
+    const source = path.join(root, 'Reference');
+    mkdirSync(path.join(source, 'Characters'), { recursive: true });
+    writeFileSync(path.join(source, 'root.txt'), 'incoming root');
+    writeFileSync(path.join(source, 'Characters', 'hero.txt'), 'incoming hero');
+
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Desktop Folder Merge', selectedParentPath: root });
+    const target = service.createManagedFolder({ libraryId: library.libraryId, name: 'Project' });
+    const existing = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: target.folderId,
+      name: 'Reference',
+    });
+    writeFileSync(
+      path.join(library.libraryPath, 'Assets', 'Project', 'Reference', 'existing.txt'),
+      'existing',
+    );
+
+    const prepared = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: target.folderId,
+      sourceKind: 'folder',
+      sourcePaths: [source],
+    });
+
+    expect(prepared).toMatchObject({ importedCount: 2 });
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Project', 'Reference', 'existing.txt'))).toBe(true);
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Project', 'Reference', 'root.txt'))).toBe(true);
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Project', 'Reference', 'Characters', 'hero.txt'))).toBe(true);
+    expect(
+      service.listManagedFolders(library.libraryId).filter(
+        (folder) => folder.relativePath === existing.relativePath,
+      ),
+    ).toHaveLength(1);
+    service.closeAll();
+  });
+
   it('keeps collection assignment explicit after a pasted image import', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-clipboard-worker-'));
     roots.push(root);

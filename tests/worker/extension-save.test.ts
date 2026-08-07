@@ -516,10 +516,12 @@ describe('saveAssetFromUrl', () => {
       mediaUrl: 'https://example.com/photo.png',
     });
 
+    // Free destination basename + identical bytes → content-duplicate skip
+    // (IMPORT-007: same basename would be name-conflict instead).
     const second = await service.saveAssetFromUrl({
       libraryId,
       sourcePageUrl: 'https://example.com/page-again',
-      mediaUrl: 'https://example.com/photo.png',
+      mediaUrl: 'https://example.com/photo-copy.png',
     });
 
     expect(second.asset.assetId).toBe(first.asset.assetId);

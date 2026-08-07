@@ -1,10 +1,10 @@
 export {
-  DEFAULT_EXPOSURE,
-  EXPOSURE_MAX,
-  EXPOSURE_MIN,
-  clampExposure,
-  parseExposure,
-} from './exposure';
+  DEFAULT_LIGHT_INTENSITY,
+  LIGHT_INTENSITY_MAX,
+  LIGHT_INTENSITY_MIN,
+  clampLightIntensity,
+  parseLightIntensity,
+} from './light-intensity';
 export {
   HALF_FLOAT_MAX,
   HDRI_TONE_MAPPING,
@@ -22,7 +22,6 @@ export {
   HDRI_PRESETS,
   getHdriPreset,
   hdriPresetIdSchema,
-  isBundledHdriPresetId,
   parseHdriPresetId,
   resolveHdriBundleUrl,
   type BundledHdriPresetId,

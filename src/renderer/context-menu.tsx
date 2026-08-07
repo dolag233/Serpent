@@ -10,6 +10,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -235,6 +236,7 @@ export function ContextMenu({
   const { close } = useContextMenu();
   const menuId = useId();
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
+  const initialFocusPendingRef = useRef(true);
 
   // Start hidden + off-screen so we can measure before painting
   const [style, setStyle] = useState<CSSProperties>({
@@ -274,10 +276,12 @@ export function ContextMenu({
     // Ensure not above viewport
     if (top < gap) top = gap;
 
-    const frame = requestAnimationFrame(() => {
-      setStyle({ position: "fixed", left, top });
-    });
-    return () => cancelAnimationFrame(frame);
+    // This is a layout effect, so commit the measured position before the
+    // browser can paint. Delaying visibility by one animation frame leaves a
+    // newly opened menu at -9999px long enough for a fast pointer action to
+    // miss it and hit the underlying canvas instead.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- layout measurement must commit before paint
+    setStyle({ position: "fixed", left, top });
   }, [menuId, position]);
 
   // Keep the single focused highlight aligned with the pointer from the
@@ -294,6 +298,8 @@ export function ContextMenu({
       );
       const first = items[0];
       if (!first) return;
+      if (!initialFocusPendingRef.current) return;
+      initialFocusPendingRef.current = false;
       const underPointer = document.elementFromPoint(position.x, position.y);
       const pointedItem = underPointer?.closest<HTMLElement>(
         '[role="menuitem"]:not([aria-disabled="true"])',
@@ -306,6 +312,7 @@ export function ContextMenu({
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const menu = e.currentTarget;
+    initialFocusPendingRef.current = false;
 
     const items = Array.from(
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -347,7 +354,10 @@ export function ContextMenu({
       renderNode={() => <>{children}</>}
       style={style}
       onKeyDown={handleMenuKeyDown}
-      onPointerMove={() => setKeyboardNavigationActive(false)}
+      onPointerMove={() => {
+        initialFocusPendingRef.current = false;
+        setKeyboardNavigationActive(false);
+      }}
     />
   );
 }
@@ -388,6 +398,11 @@ export function ContextMenuItem({
   const handleMouseEnter = () => {
     if (!disabled) buttonRef.current?.focus();
   };
+  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!disabled && event.currentTarget !== document.activeElement) {
+      event.currentTarget.focus();
+    }
+  };
 
   return (
     <button
@@ -406,6 +421,7 @@ export function ContextMenuItem({
       title={disabled && disabledReason ? disabledReason : undefined}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      onPointerMove={handlePointerMove}
     >
       {icon && <span className="context-menu-item-icon">{icon}</span>}
       <span className="context-menu-item-label">{label}</span>
@@ -436,6 +452,7 @@ export function ContextMenuSubmenu({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const openRef = useRef(false);
   const suppressFocusOpenRef = useRef(false);
 
   const cancelClose = useCallback(() => {
@@ -446,11 +463,15 @@ export function ContextMenuSubmenu({
   }, []);
   const closeImmediately = useCallback(() => {
     cancelClose();
+    openRef.current = false;
     setOpen(false);
   }, [cancelClose]);
   const scheduleClose = useCallback(() => {
     cancelClose();
-    closeTimer.current = window.setTimeout(() => setOpen(false), 140);
+    closeTimer.current = window.setTimeout(() => {
+      openRef.current = false;
+      setOpen(false);
+    }, 140);
   }, [cancelClose]);
   const scheduleCloseFromBoundary = useCallback(
     (relatedTarget: EventTarget | null) => {
@@ -476,10 +497,19 @@ export function ContextMenuSubmenu({
     suppressFocusOpenRef.current = true;
     window.setTimeout(() => triggerRef.current?.focus(), 0);
   }, [closeImmediately]);
-  const openSubmenu = useCallback(() => {
+  const openSubmenu = useCallback((focusInput = false) => {
     if (disabled) return;
     if (suppressFocusOpenRef.current) {
       suppressFocusOpenRef.current = false;
+      return;
+    }
+    if (openRef.current) {
+      cancelClose();
+      if (focusInput) {
+        window.setTimeout(() => {
+          submenuRef.current?.querySelector<HTMLElement>("input")?.focus();
+        }, 0);
+      }
       return;
     }
     if (activeSubmenuClose && activeSubmenuClose !== closeImmediately) {
@@ -487,6 +517,7 @@ export function ContextMenuSubmenu({
     }
     activeSubmenuClose = closeImmediately;
     cancelClose();
+    openRef.current = true;
     const rect = triggerRef.current?.getBoundingClientRect();
     if (rect) {
       const width = 248;
@@ -508,9 +539,11 @@ export function ContextMenuSubmenu({
     // Native click handling can restore focus to the trigger after React
     // commits the portal. Give searchable submenus one post-click focus pass
     // so their input remains the active control.
-    window.setTimeout(() => {
-      submenuRef.current?.querySelector<HTMLElement>("input")?.focus();
-    }, 0);
+    if (focusInput) {
+      window.setTimeout(() => {
+        submenuRef.current?.querySelector<HTMLElement>("input")?.focus();
+      }, 0);
+    }
   }, [cancelClose, closeImmediately, disabled]);
 
   useEffect(() => {
@@ -594,7 +627,15 @@ export function ContextMenuSubmenu({
   return (
     <div
       className="context-menu-submenu-trigger"
-      onMouseEnter={openSubmenu}
+      onMouseEnter={() => {
+        if (!disabled) triggerRef.current?.focus();
+        openSubmenu(false);
+      }}
+      onPointerMove={() => {
+        if (!disabled && triggerRef.current !== document.activeElement) {
+          triggerRef.current?.focus();
+        }
+      }}
       onMouseLeave={(event) => scheduleCloseFromBoundary(event.relatedTarget)}
     >
       <button
@@ -607,8 +648,8 @@ export function ContextMenuSubmenu({
         role="menuitem"
         tabIndex={-1}
         type="button"
-        onClick={openSubmenu}
-        onFocus={openSubmenu}
+        onClick={() => openSubmenu(true)}
+        onFocus={() => openSubmenu(false)}
       >
         {icon && <span className="context-menu-item-icon">{icon}</span>}
         <span className="context-menu-item-label">{label}</span>

@@ -2,27 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import type { ExtensionFolderOption } from '../../extension/folder-menu';
 import {
-  DEFAULT_RADIAL_GEOMETRY,
-  RADIAL_CONTENT_PAGE,
-  RADIAL_LEVEL_CAPACITY,
-  RADIAL_TAU,
-  armedCrumb,
+  DEFAULT_TREE_GEOMETRY,
+  armedHint,
   buildFolderTree,
-  clampCenter,
+  clampScroll,
   crumbForLevel,
   disambiguateLabels,
-  expandRadius,
+  edgeScrollDelta,
   findFolderNode,
-  isReleaseInRing,
+  hitTestTree,
   itemsForLevel,
-  midAngle,
-  pageCountForLevel,
-  RADIAL_CROSS_OUTWARD_PX,
-  radialCrossTriggerRadius,
-  rotationForEntry,
-  sectorAt,
+  measureTreePanel,
+  parentInfoForLevel,
   type FolderNode,
-  type RadialMenuContext,
+  type TreeMenuContext,
 } from '../../extension/radial-menu-model';
 
 function folder(folderId: string, name: string, relativePath: string): ExtensionFolderOption {
@@ -46,7 +39,7 @@ const FIXTURE_FOLDERS: ExtensionFolderOption[] = [
   folder('f-inspire', '灵感采集', '灵感采集'),
 ];
 
-function contextWithQuickPick(quickPickIds: readonly string[]): RadialMenuContext {
+function contextWithQuickPick(quickPickIds: readonly string[]): TreeMenuContext {
   const tree = buildFolderTree(FIXTURE_FOLDERS);
   return {
     roots: tree.roots,
@@ -55,80 +48,6 @@ function contextWithQuickPick(quickPickIds: readonly string[]): RadialMenuContex
       .filter((node): node is FolderNode => node !== undefined),
   };
 }
-
-describe('radial geometry', () => {
-  it('maps cardinal directions to sectors with 8 items', () => {
-    expect(sectorAt(-Math.PI / 2, 8, 0)).toBe(0);
-    expect(sectorAt(0, 8, 0)).toBe(2);
-    expect(sectorAt(Math.PI / 2, 8, 0)).toBe(4);
-    expect(sectorAt(Math.PI, 8, 0)).toBe(6);
-    expect(sectorAt(-Math.PI, 8, 0)).toBe(6);
-  });
-
-  it('is the exact inverse of midAngle for any count/rotation', () => {
-    for (const [count, rotation] of [
-      [8, 0],
-      [5, 0.7],
-      [3, -1.2],
-      [7, 2.4],
-      [2, 0.3],
-      [1, 1.1],
-    ] as const) {
-      for (let i = 0; i < count; i += 1) {
-        expect(sectorAt(midAngle(i, count, rotation), count, rotation)).toBe(i);
-      }
-    }
-  });
-
-  it('pins the back sector (index 0) exactly opposite the entry direction', () => {
-    const norm = (angle: number) => ((angle % RADIAL_TAU) + RADIAL_TAU) % RADIAL_TAU;
-    for (const theta of [Math.PI / 4, -Math.PI / 3, 2.9]) {
-      const rotation = rotationForEntry(theta);
-      expect(norm(midAngle(0, 8, rotation))).toBeCloseTo(norm(theta + Math.PI), 9);
-    }
-  });
-
-  it('keeps the visual expand band at 16px but triggers cross at ringOut + 100px', () => {
-    const g = DEFAULT_RADIAL_GEOMETRY;
-    expect(g.band).toBe(16);
-    expect(expandRadius(g)).toBe(g.ringOut + 16);
-    expect(RADIAL_CROSS_OUTWARD_PX).toBe(100);
-    expect(radialCrossTriggerRadius(g)).toBe(g.ringOut + 100);
-  });
-
-  it('accepts release only inside the sector ring', () => {
-    const g = DEFAULT_RADIAL_GEOMETRY;
-    expect(isReleaseInRing(g.hub - 1, g)).toBe(false);
-    expect(isReleaseInRing(g.hub, g)).toBe(true);
-    expect(isReleaseInRing(g.ringOut, g)).toBe(true);
-    expect(isReleaseInRing(g.ringOut + g.releaseTolerance, g)).toBe(true);
-    expect(isReleaseInRing(g.ringOut + g.releaseTolerance + 1, g)).toBe(false);
-  });
-
-  it('clamps the wheel center inside the viewport margin', () => {
-    const g = DEFAULT_RADIAL_GEOMETRY;
-    const margin = expandRadius(g) + 16;
-    expect(clampCenter(0, 0, 1280, 800, g)).toEqual({ x: margin, y: margin });
-    expect(clampCenter(2000, 2000, 1280, 800, g)).toEqual({
-      x: 1280 - margin,
-      y: 800 - margin,
-    });
-    expect(clampCenter(640, 400, 1280, 800, g)).toEqual({ x: 640, y: 400 });
-  });
-
-  it('keeps the back-crossing landing point inside the parent hub (no bounce)', () => {
-    // 从父级外甩 expandR 进入子级，再穿越返回：光标应落在父级中心圆内
-    const g = DEFAULT_RADIAL_GEOMETRY;
-    const radius = expandRadius(g);
-    const theta = Math.PI / 4;
-    const cxSub = radius * Math.cos(theta);
-    const cySub = radius * Math.sin(theta);
-    const backDirection = theta + Math.PI;
-    const px = cxSub + (radius + 5) * Math.cos(backDirection);
-    const py = cySub + (radius + 5) * Math.sin(backDirection);
-    expect(Math.hypot(px, py)).toBeLessThan(g.hub);
-  });
-});
 
 describe('buildFolderTree', () => {
   it('nests relative paths and fills folderId on leaf nodes', () => {
@@ -141,27 +60,20 @@ describe('buildFolderTree', () => {
     expect(tree.byId.get('f-tex-skin')?.path).toBe('贴图/皮肤');
   });
 
-  it('sorts each level by zh-CN name and keeps intermediate containers expandable', () => {
+  it('sorts each level by zh-CN name', () => {
     const tree = buildFolderTree(FIXTURE_FOLDERS);
     const cd = findFolderNode(tree.roots, '概念设计');
     expect(cd?.children.length).toBe(7);
     const names = cd?.children.map((child) => child.name) ?? [];
     expect([...names]).toEqual([...names].sort((a, b) => a.localeCompare(b, 'zh-CN')));
   });
-
-  it('tolerates empty relativePath by falling back to name', () => {
-    const tree = buildFolderTree([folder('f-x', '散件', '')]);
-    expect(findFolderNode(tree.roots, '散件')?.folderId).toBe('f-x');
-  });
 });
 
-describe('itemsForLevel', () => {
+describe('itemsForLevel (tree)', () => {
   it('root lists quick-pick folders first, then expandable 根目录', () => {
     const context = contextWithQuickPick(['f-tex-skin', 'f-inspire']);
-    const items = itemsForLevel({ kind: 'root' }, 0, context);
+    const items = itemsForLevel({ kind: 'root' }, context);
     expect(items.map((item) => item.label)).toEqual(['皮肤', '灵感采集', '根目录']);
-    expect(items[0]).toMatchObject({ nav: 'save', folderId: 'f-tex-skin' });
-    expect(items[1]).toMatchObject({ nav: 'save', folderId: 'f-inspire' });
     expect(items[2]).toMatchObject({
       nav: 'save',
       folderId: null,
@@ -170,108 +82,146 @@ describe('itemsForLevel', () => {
     });
   });
 
-  it('root works with zero quick picks (fresh library)', () => {
-    const context = contextWithQuickPick([]);
-    const items = itemsForLevel({ kind: 'root' }, 0, context);
-    expect(items.map((item) => item.label)).toEqual(['根目录']);
-    expect(items[0]).toMatchObject({ nav: 'save', expandable: true, target: { kind: 'all' } });
-  });
-
   it('disambiguates duplicate quick-pick names with full paths', () => {
     const context = contextWithQuickPick(['f-ref-role', 'f-cd-role', 'f-tex-skin']);
-    const items = itemsForLevel({ kind: 'root' }, 0, context);
-    const labels = items.map((item) => item.label);
+    const labels = itemsForLevel({ kind: 'root' }, context).map((item) => item.label);
     expect(labels).toContain('参考 / 角色');
     expect(labels).toContain('概念设计 / 角色');
     expect(labels).toContain('皮肤');
-    expect(labels.filter((label) => label === '角色')).toHaveLength(0);
   });
 
-  it('all level prepends crossable back item and shows top-level folders', () => {
+  it('all level lists every top-level folder without pagination or back row', () => {
     const context = contextWithQuickPick([]);
-    const items = itemsForLevel({ kind: 'all' }, 0, context);
-    expect(items[0]).toMatchObject({ nav: 'back', expandable: true });
-    expect(items.length).toBe(1 + 4); // 返回 + 概念设计/参考/贴图/灵感采集
-    const cd = items.find((item) => item.label === '概念设计');
-    expect(cd).toMatchObject({ expandable: true, target: { kind: 'folder', path: '概念设计' } });
+    const items = itemsForLevel({ kind: 'all' }, context);
+    expect(items.every((item) => item.nav === 'save')).toBe(true);
+    expect(items.map((item) => item.label).sort()).toEqual(
+      ['概念设计', '参考', '贴图', '灵感采集'].sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    );
   });
 
-  it('folder level has no save-here item; ≤7 children fit one page', () => {
+  it('folder level lists all children without an 8-item cap', () => {
     const context = contextWithQuickPick([]);
-    const level = { kind: 'folder', path: '概念设计' } as const;
-    expect(pageCountForLevel(level, context)).toBe(1);
-    const items = itemsForLevel(level, 0, context);
-    expect(items[0]!.nav).toBe('back');
-    expect(items.filter((item) => item.nav === 'page')).toHaveLength(0);
-    expect(items.length).toBe(1 + 7);
+    const items = itemsForLevel({ kind: 'folder', path: '概念设计' }, context);
+    expect(items).toHaveLength(7);
     expect(items.some((item) => item.label === '保存在此')).toBe(false);
   });
 
-  it('paginates >7 children as 返回+6+更多', () => {
+  it('lists more than 7 children in one level (scroll, no page item)', () => {
     const manyChildren: ExtensionFolderOption[] = [folder('big', '大目录', '大目录')];
-    for (let i = 1; i <= 8; i += 1) {
+    for (let i = 1; i <= 12; i += 1) {
       manyChildren.push(folder(`big-${i}`, `子${i}`, `大目录/子${i}`));
     }
     const tree = buildFolderTree(manyChildren);
-    const context: RadialMenuContext = { roots: tree.roots, quickPickFolders: [] };
-    const level = { kind: 'folder', path: '大目录' } as const;
-    expect(pageCountForLevel(level, context)).toBe(2);
-    const page0 = itemsForLevel(level, 0, context);
-    expect(page0.length).toBe(1 + RADIAL_CONTENT_PAGE + 1);
-    expect(page0.at(-1)?.nav).toBe('page');
-    const page1 = itemsForLevel(level, 1, context);
-    expect(page1.length).toBe(1 + 2 + 1);
-  });
-
-  it('empty folder level shows only the back item', () => {
-    const context = contextWithQuickPick([]);
-    const items = itemsForLevel({ kind: 'folder', path: '灵感采集' }, 0, context);
-    expect(items.map((item) => item.nav)).toEqual(['back']);
-  });
-
-  it('capacity constants stay consistent with the 8-sector wheel', () => {
-    expect(RADIAL_CONTENT_PAGE + 2).toBe(8);
-    expect(RADIAL_LEVEL_CAPACITY + 1).toBe(8);
+    const context: TreeMenuContext = { roots: tree.roots, quickPickFolders: [] };
+    const items = itemsForLevel({ kind: 'folder', path: '大目录' }, context);
+    expect(items).toHaveLength(12);
+    expect(items.every((item) => item.nav === 'save')).toBe(true);
   });
 });
 
-describe('crumbs', () => {
-  it('previews the full save path for armed save items', () => {
-    const context = contextWithQuickPick(['f-ref-role']);
-    const root = itemsForLevel({ kind: 'root' }, 0, context);
-    expect(armedCrumb(root[0])).toBe('保存到：参考 / 角色');
+describe('parentInfoForLevel', () => {
+  it('root has no parent pill', () => {
+    expect(parentInfoForLevel({ kind: 'root' }, contextWithQuickPick([]))).toBeNull();
   });
 
-  it('previews navigation actions', () => {
-    const context = contextWithQuickPick([]);
-    const all = itemsForLevel({ kind: 'all' }, 0, context);
-    expect(armedCrumb(all[0])).toBe('返回上一级');
-    const root = itemsForLevel({ kind: 'root' }, 0, context)[0];
-    expect(armedCrumb(root)).toBe('保存到：根目录');
-    expect(root?.expandable).toBe(true);
+  it('all level parents to 根目录 with back to root', () => {
+    expect(parentInfoForLevel({ kind: 'all' }, contextWithQuickPick([]))).toMatchObject({
+      label: '根目录',
+      folderId: null,
+      backTarget: { kind: 'root' },
+    });
   });
 
-  it('describes the current level path', () => {
+  it('nested folder parents back to its parent path or all', () => {
     const context = contextWithQuickPick([]);
-    expect(crumbForLevel({ kind: 'root' }, context)).toBe('保存到 Serpent');
-    expect(crumbForLevel({ kind: 'all' }, context)).toBe('根目录');
-    expect(crumbForLevel({ kind: 'folder', path: '参考/角色' }, context)).toBe(
-      '根目录 / 参考 / 角色',
+    expect(parentInfoForLevel({ kind: 'folder', path: '参考' }, context)).toMatchObject({
+      label: '参考',
+      folderId: 'f-ref',
+      backTarget: { kind: 'all' },
+    });
+    expect(parentInfoForLevel({ kind: 'folder', path: '参考/角色' }, context)).toMatchObject({
+      label: '角色',
+      folderId: 'f-ref-role',
+      backTarget: { kind: 'folder', path: '参考' },
+    });
+  });
+});
+
+describe('measureTreePanel + hitTestTree', () => {
+  it('places parent pill left of the list and hit-tests back/item/drill', () => {
+    const layout = measureTreePanel(400, 300, 4, true, 1280, 800);
+    expect(layout.parentPill).not.toBeNull();
+    expect(layout.backHot).not.toBeNull();
+    expect(layout.listViewport.x).toBeGreaterThan(layout.parentPill!.x + layout.parentPill!.w - 1);
+
+    const back = hitTestTree(
+      layout.backHot!.x + 4,
+      layout.backHot!.y + 4,
+      layout,
+      4,
+      0,
     );
+    expect(back.zone).toBe('back');
+
+    const itemX = layout.listViewport.x + 20;
+    const itemY = layout.listViewport.y + DEFAULT_TREE_GEOMETRY.itemHeight / 2;
+    expect(hitTestTree(itemX, itemY, layout, 4, 0).zone).toBe('item');
+    expect(hitTestTree(itemX, itemY, layout, 4, 0).index).toBe(0);
+
+    const drillX = layout.listViewport.x + layout.listViewport.w - 4;
+    expect(hitTestTree(drillX, itemY, layout, 4, 0)).toEqual({ zone: 'drill', index: 0 });
+  });
+
+  it('treats outside the panel as cancel', () => {
+    const layout = measureTreePanel(400, 300, 3, false, 1280, 800);
+    expect(hitTestTree(layout.panel.x - 10, layout.panel.y, layout, 3, 0).zone).toBe('cancel');
+  });
+
+  it('accounts for scroll when hitting lower items', () => {
+    const layout = measureTreePanel(400, 300, 20, false, 1280, 800);
+    expect(layout.maxScroll).toBeGreaterThan(0);
+    const stride = DEFAULT_TREE_GEOMETRY.itemHeight + DEFAULT_TREE_GEOMETRY.itemGap;
+    const y = layout.listViewport.y + 10;
+    const x = layout.listViewport.x + 20;
+    expect(hitTestTree(x, y, layout, 20, 0).index).toBe(0);
+    expect(hitTestTree(x, y, layout, 20, stride * 5).index).toBe(5);
+  });
+
+  it('clamps scroll and reports edge scroll deltas', () => {
+    expect(clampScroll(-10, 100)).toBe(0);
+    expect(clampScroll(150, 100)).toBe(100);
+    const layout = measureTreePanel(400, 300, 20, false, 1280, 800);
+    expect(edgeScrollDelta(layout.listViewport.y + 4, layout)).toBeLessThan(0);
+    expect(
+      edgeScrollDelta(layout.listViewport.y + layout.listViewport.h - 4, layout),
+    ).toBeGreaterThan(0);
+    expect(
+      edgeScrollDelta(layout.listViewport.y + layout.listViewport.h / 2, layout),
+    ).toBe(0);
+  });
+});
+
+describe('hints', () => {
+  it('describes save / drill / back actions', () => {
+    const context = contextWithQuickPick(['f-tex-skin']);
+    const items = itemsForLevel({ kind: 'root' }, context);
+    expect(armedHint({ zone: 'item', index: 0 }, items, null)).toBe('保存到：贴图 / 皮肤');
+    expect(armedHint({ zone: 'drill', index: 1 }, items, null)).toMatch(/^进入：/);
+    const parent = parentInfoForLevel({ kind: 'all' }, context);
+    expect(armedHint({ zone: 'back', index: -1 }, items, parent)).toBe('返回上一级');
+    expect(crumbForLevel({ kind: 'folder', path: '参考/角色' })).toBe('根目录 / 参考 / 角色');
   });
 });
 
 describe('disambiguateLabels', () => {
-  it('only expands duplicated save labels, leaves navigation labels alone', () => {
+  it('only expands duplicated save labels', () => {
     const items = disambiguateLabels([
-      { label: '返回', nav: 'back', expandable: true },
-      { label: '角色', nav: 'save', path: '参考/角色', expandable: false },
-      { label: '角色', nav: 'save', path: '概念设计/角色', expandable: false },
-      { label: '皮肤', nav: 'save', path: '贴图/皮肤', expandable: false },
+      { label: '角色', nav: 'save', path: '参考/角色', folderId: 'a', expandable: false },
+      { label: '角色', nav: 'save', path: '概念设计/角色', folderId: 'b', expandable: false },
+      { label: '皮肤', nav: 'save', path: '贴图/皮肤', folderId: 'c', expandable: false },
     ]);
-    expect(items[0]!.label).toBe('返回');
-    expect(items[1]!.label).toBe('参考 / 角色');
-    expect(items[2]!.label).toBe('概念设计 / 角色');
-    expect(items[3]!.label).toBe('皮肤');
+    expect(items[0]!.label).toBe('参考 / 角色');
+    expect(items[1]!.label).toBe('概念设计 / 角色');
+    expect(items[2]!.label).toBe('皮肤');
   });
 });

@@ -3,13 +3,15 @@ import path from "node:path";
 
 import { app, nativeImage, type NativeImage } from "electron";
 
+import { resolveAppIconCandidates } from "./app-icon-paths";
+
 export function appIconImage(): NativeImage | undefined {
-  const candidates = app.isPackaged
-    ? [
-        path.join(process.resourcesPath, "app.png"),
-        path.join(process.resourcesPath, "app.ico"),
-      ]
-    : [path.join(process.cwd(), "assets", "icons", "app.png")];
+  const candidates = resolveAppIconCandidates({
+    cwd: process.cwd(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    resourcesPath: process.resourcesPath,
+  }).map((candidate) => path.normalize(candidate));
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
     const image = nativeImage.createFromPath(candidate);

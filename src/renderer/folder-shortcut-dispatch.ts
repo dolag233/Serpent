@@ -139,15 +139,46 @@ export function resolveFolderShortcutAction(
     selectedFolderCardIds,
     resolveManagedFolderName,
   );
-  if (!card) return { type: "none" };
-  if (commandId === "folder.rename") {
-    return {
-      type: "rename",
-      folderId: card.folderId,
-      currentName: card.name,
-    };
+  if (card) {
+    if (commandId === "folder.rename") {
+      return {
+        type: "rename",
+        folderId: card.folderId,
+        currentName: card.name,
+      };
+    }
+    return commandId === "folder.delete-from-disk"
+      ? { type: "delete-from-disk", folderId: card.folderId, name: card.name }
+      : { type: "move-to-trash", folderId: card.folderId, name: card.name };
   }
-  return commandId === "folder.delete-from-disk"
-    ? { type: "delete-from-disk", folderId: card.folderId, name: card.name }
-    : { type: "move-to-trash", folderId: card.folderId, name: card.name };
+
+  // Fallback: rename/trash the folder currently open in browse (Serpent-l0ow).
+  // Context menus steal DOM focus, so F2 after a right-click often has no
+  // focused nav row — the open folder is still a clear rename target.
+  if (browseManagedFolderId) {
+    const name = resolveManagedFolderName(browseManagedFolderId);
+    if (name !== undefined) {
+      if (commandId === "folder.rename") {
+        return {
+          type: "rename",
+          folderId: browseManagedFolderId,
+          currentName: name,
+        };
+      }
+      if (commandId === "folder.delete-from-disk") {
+        return {
+          type: "delete-from-disk",
+          folderId: browseManagedFolderId,
+          name,
+        };
+      }
+      return {
+        type: "move-to-trash",
+        folderId: browseManagedFolderId,
+        name,
+      };
+    }
+  }
+
+  return { type: "none" };
 }

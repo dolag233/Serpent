@@ -15,6 +15,8 @@ export type FeedbackRole = 'status' | 'alert';
 interface FeedbackContentProps {
   readonly tone?: FeedbackTone;
   readonly role?: FeedbackRole;
+  /** Disable this surface's own live region when a parent announces a stack. */
+  readonly liveRegion?: boolean;
   readonly title?: ReactNode;
   readonly message?: ReactNode;
   readonly leading?: ReactNode;
@@ -68,7 +70,12 @@ function getLiveRegionRole(tone: FeedbackTone, role: FeedbackRole | undefined): 
   return role ?? (tone === 'warning' || tone === 'error' ? 'alert' : 'status');
 }
 
-function getLiveRegionProps(tone: FeedbackTone, role: FeedbackRole | undefined) {
+function getLiveRegionProps(
+  tone: FeedbackTone,
+  role: FeedbackRole | undefined,
+  liveRegion: boolean,
+) {
+  if (!liveRegion) return {};
   const resolvedRole = getLiveRegionRole(tone, role);
   return {
     role: resolvedRole,
@@ -118,6 +125,7 @@ export function Notice({
   className,
   dismissible = false,
   dismissLabel,
+  liveRegion = true,
   leading,
   message,
   onDismiss,
@@ -126,7 +134,7 @@ export function Notice({
   tone = 'info',
   ...rest
 }: NoticeProps): ReactNode {
-  const liveRegionProps = getLiveRegionProps(tone, role);
+  const liveRegionProps = getLiveRegionProps(tone, role, liveRegion);
 
   return (
     <div
@@ -162,6 +170,7 @@ export function Activity({
   dismissible = false,
   dismissLabel,
   indeterminate = false,
+  liveRegion = true,
   leading,
   max = 100,
   message,
@@ -175,7 +184,7 @@ export function Activity({
   valueText,
   ...rest
 }: ActivityProps): ReactNode {
-  const liveRegionProps = getLiveRegionProps(tone, role);
+  const liveRegionProps = getLiveRegionProps(tone, role, liveRegion);
   const progressMax = normalizeProgressMax(max);
   const normalizedProgress = indeterminate ? undefined : normalizeProgressValue(progress, progressMax);
   const hasProgress = indeterminate || progress !== undefined;
@@ -219,7 +228,7 @@ export function StatusBadge({
   tone = 'info',
   ...rest
 }: StatusBadgeProps): ReactNode {
-  const liveRegionProps = getLiveRegionProps(tone, role);
+  const liveRegionProps = getLiveRegionProps(tone, role, true);
 
   return (
     <span

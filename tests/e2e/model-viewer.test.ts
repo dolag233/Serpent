@@ -63,8 +63,13 @@ function fixtureModels(name: string): string {
   return path.join(process.cwd(), "tests", "fixtures", "models", name);
 }
 
-async function openModelViewer(window: Page) {
-  await window.keyboard.press("Space");
+async function openModelViewer(
+  window: Page,
+  options: { activate?: boolean } = {},
+) {
+  if (options.activate !== false) {
+    await window.keyboard.press("Space");
+  }
   const viewer = window.getByRole("region", { name: "3D 模型预览" });
   await expect(viewer).toBeVisible({ timeout: 45_000 });
   await expect(viewer.locator("canvas")).toBeVisible();
@@ -105,8 +110,8 @@ test("opens an OBJ model with its MTL companion in the 3D viewer", async () => {
       .locator(".asset-card")
       .filter({ hasText: "cube.obj" });
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
-    await assetCard.click();
-    const viewer = await openModelViewer(window);
+    await assetCard.dblclick();
+    const viewer = await openModelViewer(window, { activate: false });
 
     // Real decode proof: 12 triangles / 8 vertices for the cube fixture.
     const stats = await revealStats(window);
@@ -138,13 +143,93 @@ test("opens an FBX model through the conversion pipeline", async () => {
     await openModelViewer(window);
 
     // Conversion succeeded: no fallback notice and real geometry stats.
-    const fallbackNotice = window.locator(".model-viewer-notices p");
+    // Non-blocking 3D notices now go through the workspace Info stack
+    // (MODEL-004 / Serpent-osr0), not a viewer-bottom hang banner.
+    const fallbackNotice = window.locator(".workspace-notice-stack");
     if ((await fallbackNotice.count()) > 0) {
       console.log(`[fbx-notice] ${await fallbackNotice.allInnerTexts()}`);
     }
     await expect(window.getByText(/兼容模式/)).toHaveCount(0);
     const stats = await revealStats(window);
     await expect(stats).toContainText("三角面");
+  } finally {
+    await application.close();
+  }
+});
+
+test("shows HDRI names in the trigger and larger previews in the picker", async () => {
+  const { application, window } = await launchWithModels([
+    fixtureModels("cube.obj"),
+    fixtureModels("cube.mtl"),
+  ]);
+  try {
+    const assetCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "cube.obj" });
+    await expect(assetCard).toBeVisible({ timeout: 15_000 });
+    await assetCard.dblclick();
+    const viewer = await openModelViewer(window, { activate: false });
+    const trigger = viewer.getByRole("button", { name: "环境光" });
+    const displayMode = viewer.getByRole("combobox", { name: "显示模式" });
+
+    const [triggerStyle, displayModeStyle] = await Promise.all([
+      trigger.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          borderRadius: style.borderRadius,
+          borderColor: style.borderColor,
+          height: style.height,
+        };
+      }),
+      displayMode.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          borderRadius: style.borderRadius,
+          borderColor: style.borderColor,
+          height: style.height,
+        };
+      }),
+    ]);
+    expect(triggerStyle).toEqual(displayModeStyle);
+
+    await expect(trigger.locator(".model-viewer-hdri-trigger-thumb")).toHaveCount(0);
+    await trigger.click();
+
+    const picker = viewer.locator('[role="listbox"]');
+    await expect(picker).toBeVisible();
+    await expect(picker.getByRole("option")).toHaveCount(4);
+    const previews = picker.locator(".model-viewer-hdri-option-thumb");
+    await expect(previews).toHaveCount(4);
+    await expect(picker.getByText("自定义", { exact: false })).toHaveCount(0);
+    await expect
+      .poll(
+        async () =>
+          previews.evaluateAll((elements) =>
+            elements.every((element) => {
+              const image = element as HTMLImageElement;
+              return image.complete && image.naturalWidth > 0;
+            }),
+          ),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    const previewBox = await previews.first().boundingBox();
+    expect(previewBox?.width).toBeGreaterThanOrEqual(136);
+    expect(previewBox?.height).toBeGreaterThanOrEqual(76);
+    await expect
+      .poll(() =>
+        previews
+          .first()
+          .evaluate((element) => getComputedStyle(element.nextElementSibling!).fontSize),
+      )
+      .toBe("12px");
+
+    await picker.getByRole("option", { name: "室内" }).click();
+    await expect(trigger.locator(".model-viewer-hdri-trigger-name")).toHaveText("室内");
+    await expect(trigger.locator(".model-viewer-hdri-trigger-thumb")).toHaveCount(0);
   } finally {
     await application.close();
   }

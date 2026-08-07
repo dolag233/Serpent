@@ -16,6 +16,7 @@ export const iconSources = {
 /** Electron / dev-runtime icon outputs produced by `npm run icons:generate`. */
 export const generatedAppIcons = {
   png: path.join(iconAssetsDir, 'app.png'),
+  dockPng: path.join(iconAssetsDir, 'app-dock.png'),
   icns: path.join(iconAssetsDir, 'app.icns'),
   ico: path.join(iconAssetsDir, 'app.ico'),
   /** Path without extension for electron-packager (`app.icns` / `app.ico`). */

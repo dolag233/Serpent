@@ -15,6 +15,7 @@ import {
   MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
   modelThumbnailFormatForFileName,
   parseModelThumbnailRenderResponse,
+  type ModelThumbnailSourceAuthorization,
   type ModelThumbnailRenderRequest,
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
@@ -152,7 +153,9 @@ const pendingModelThumbnailRenders = new Map<string, {
  * MODEL_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS.
  */
 function requestModelThumbnailRender(
-  input: Omit<ModelThumbnailRenderRequest, 'type' | 'requestId'>,
+  input: Omit<ModelThumbnailRenderRequest, 'type' | 'requestId'> & {
+    sourceAuthorizations: readonly ModelThumbnailSourceAuthorization[];
+  },
   signal?: AbortSignal,
 ): Promise<ModelThumbnailRenderResult> {
   const requestId = randomUUID();
@@ -285,6 +288,19 @@ async function orchestrateRender(input: {
       libraryId: input.libraryId,
       assetId: input.assetId,
     });
+    const sourceAuthorizations: ModelThumbnailSourceAuthorization[] = [
+      authorizeModelSource(libraryService, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+        revisionId: input.revisionId,
+      }),
+      ...companions.map((companion) =>
+        authorizeModelSource(libraryService, {
+          libraryId: input.libraryId,
+          assetId: companion.assetId,
+          revisionId: companion.revisionId,
+        })),
+    ];
     return requestModelThumbnailRender(
       {
         libraryId: input.libraryId,
@@ -302,9 +318,26 @@ async function orchestrateRender(input: {
         width: MODEL_THUMBNAIL_DEFAULT_EDGE,
         height: MODEL_THUMBNAIL_DEFAULT_EDGE,
         timeoutMs: MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
+        sourceAuthorizations,
       },
       input.signal,
     );
+}
+
+function authorizeModelSource(
+  service: LibraryService,
+  input: Pick<ModelThumbnailSourceAuthorization, 'libraryId' | 'assetId' | 'revisionId'>,
+): ModelThumbnailSourceAuthorization {
+  const source = service.getCurrentMediaSource(
+    input.libraryId,
+    input.assetId,
+    input.revisionId,
+  );
+  return {
+    ...input,
+    absolutePath: source.absolutePath,
+    mimeType: source.mimeType,
+  };
 }
 
 async function writePluginMediaArtifact(input: {
@@ -1804,6 +1837,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.assetId,
         request.command.exrPlane,
         request.command.colorSpace,
+        request.command.intent,
       );
       return {
         ok: true,

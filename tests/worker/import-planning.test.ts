@@ -369,7 +369,9 @@ describe('pending import plans', () => {
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
     writeFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'same');
 
-    const duplicate = service.prepareImport({
+    // Same destination basename wins as name-conflict even when bytes match
+    // (IMPORT-007 / Serpent-12ae). Content-duplicate is only for free names.
+    const sameNameSameContent = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(firstSource, 'same.png')],
@@ -380,11 +382,11 @@ describe('pending import plans', () => {
       sourcePaths: [path.join(secondSource, 'same.png')],
     });
 
-    expect(duplicate).toMatchObject({
-      suspectedDuplicateCount: 1,
+    expect(sameNameSameContent).toMatchObject({
+      suspectedDuplicateCount: 0,
       libraryDuplicateCount: 0,
-      nameConflictCount: 0,
-      examples: [{ displayName: 'same.png', kind: 'suspected-duplicate' }],
+      nameConflictCount: 1,
+      examples: [{ displayName: 'same.png', kind: 'name-conflict' }],
     });
     expect(conflict).toMatchObject({
       suspectedDuplicateCount: 0,
@@ -675,15 +677,17 @@ describe('pending import plans', () => {
   });
 
   it('applies all suspected-duplicate decisions independently', () => {
+    // Content-duplicate requires a free destination basename (IMPORT-007):
+    // same bytes with a different filename. Same-name collisions are name-conflicts.
     const root = temporaryRoot();
     const originalDirectory = path.join(root, 'original');
     const incomingDirectory = path.join(root, 'incoming');
     mkdirSync(originalDirectory);
     mkdirSync(incomingDirectory);
     const originalSource = path.join(originalDirectory, 'same.png');
-    const incomingSource = path.join(incomingDirectory, 'same.png');
+    const duplicateSource = path.join(incomingDirectory, 'dup-a.png');
     writeFileSync(originalSource, 'same-content');
-    writeFileSync(incomingSource, 'same-content');
+    writeFileSync(duplicateSource, 'same-content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Duplicates', selectedParentPath: root });
     const initial = service.prepareImport({
@@ -691,18 +695,19 @@ describe('pending import plans', () => {
       sourceKind: 'files',
       sourcePaths: [originalSource],
     });
-    const initialAsset = service.resolveImport({
+    service.resolveImport({
       importId: initial.importId,
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
-    }).assets[0]!;
+    });
 
     const skipPlan = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
-      sourcePaths: [incomingSource],
+      sourcePaths: [duplicateSource],
     });
     expect(skipPlan.suspectedDuplicateCount).toBe(1);
+    expect(skipPlan.nameConflictCount).toBe(0);
     expect(service.resolveImport({
       importId: skipPlan.importId,
       suspectedDuplicate: 'skip',
@@ -715,23 +720,50 @@ describe('pending import plans', () => {
     const copyPlan = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
-      sourcePaths: [incomingSource],
+      sourcePaths: [duplicateSource],
     });
     const copy = service.resolveImport({
       importId: copyPlan.importId,
       suspectedDuplicate: 'create-copy',
       nameConflict: 'replace',
     });
-    expect(copy.assets[0]?.relativeFilePath).toBe('same (2).png');
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same (2).png'), 'utf8')).toBe(
+    expect(copy.assets[0]?.relativeFilePath).toBe('dup-a.png');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'dup-a.png'), 'utf8')).toBe(
       'same-content',
     );
+    service.closeAll();
+  });
+
+  it('merges suspected-duplicate content onto the existing asset', () => {
+    const root = temporaryRoot();
+    const originalDirectory = path.join(root, 'original');
+    const incomingDirectory = path.join(root, 'incoming');
+    mkdirSync(originalDirectory);
+    mkdirSync(incomingDirectory);
+    const originalSource = path.join(originalDirectory, 'same.png');
+    const duplicateSource = path.join(incomingDirectory, 'dup.png');
+    writeFileSync(originalSource, 'same-content');
+    writeFileSync(duplicateSource, 'same-content');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'MergeDuplicates', selectedParentPath: root });
+    const initial = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [originalSource],
+    });
+    const initialAsset = service.resolveImport({
+      importId: initial.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    }).assets[0]!;
 
     const mergePlan = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
-      sourcePaths: [incomingSource],
+      sourcePaths: [duplicateSource],
     });
+    expect(mergePlan.suspectedDuplicateCount).toBe(1);
+    expect(mergePlan.nameConflictCount).toBe(0);
     const merged = service.resolveImport({
       importId: mergePlan.importId,
       suspectedDuplicate: 'merge',

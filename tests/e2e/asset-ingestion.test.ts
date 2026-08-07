@@ -101,8 +101,10 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     writeFileSync(imageSource, Buffer.from('image-v2-different'));
     const abandoned = await prepareAndAbandonConflict(window);
     expect(JSON.stringify(abandoned.plan)).not.toContain(sourceRoot);
-    expect(abandoned.plan.suspectedDuplicateCount).toBe(1);
-    expect(abandoned.plan.nameConflictCount).toBe(1);
+    // Both re-imports collide on destination basename → name conflicts only
+    // (IMPORT-007: path/name wins over content-duplicate classification).
+    expect(abandoned.plan.suspectedDuplicateCount).toBe(0);
+    expect(abandoned.plan.nameConflictCount).toBe(2);
     expect(abandoned.replayOk).toBe(false);
     expect(abandoned.replayErrorCode).toBeTruthy();
     const operationsPath = path.join(libraryPath, '.serpent', 'operations');
@@ -112,7 +114,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     // actions. Drive the same typed preload import contract so this test keeps
     // covering the conflict plan and its atomic resolution.
     const conflictPlan = await importFilesAndResolveConflict(window);
-    expect(conflictPlan).toMatchObject({ suspectedDuplicateCount: 1, nameConflictCount: 1 });
+    expect(conflictPlan).toMatchObject({ suspectedDuplicateCount: 0, nameConflictCount: 2 });
     const assetsAfterCopy = await listAllAssets(window);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('hero')).length).toBe(2);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);

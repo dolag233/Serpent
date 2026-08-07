@@ -14071,6 +14071,7 @@ export class LibraryService {
     assetId: string,
     requestedExrPlane?: number,
     requestedColorSpace?: string,
+    intent: 'viewer' | 'hover' = 'viewer',
   ): Promise<ReturnType<LibraryService['getPreviewArtifact']> & {
     exrPlanes?: ExrPlaneDescriptor[];
     selectedExrPlane?: number;
@@ -14093,7 +14094,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
 
-    const basePreview = this.getPreviewArtifact(libraryId, assetId);
+    const basePreview = this.getPreviewArtifact(libraryId, assetId, intent);
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const decoder = imageDecoderForExtension(extension);
     if (basePreview.mediaType === 'video' && asset.current_revision_id) {
@@ -14203,6 +14204,7 @@ export class LibraryService {
   getPreviewArtifact(
     libraryId: string,
     assetId: string,
+    intent: 'viewer' | 'hover' = 'viewer',
   ): {
     mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
@@ -14319,6 +14321,43 @@ export class LibraryService {
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     if (mediaType === 'video' || mediaType === 'audio') {
+      // REQ-VIEW-002: the viewer always plays the ORIGINAL source when the
+      // container is natively playable — a ready proxy must never take over
+      // the viewer (regression: the proxy-first branch made every analyzed
+      // video play its WebM derivative instead of the source). The proxy
+      // paths below remain for containers Chromium cannot play natively
+      // (AVI/WMV), and the 'hover' intent keeps the old proxy-first behavior
+      // so card hover previews stay lightweight.
+      if (intent === 'viewer' && nativeMimeType && asset.current_revision_id) {
+        const extracted =
+          mediaType === 'video'
+            ? this.getExtractedMetadata({ libraryId, assetId })
+            : null;
+        const sourceCodecs =
+          extracted?.status === 'ready' && extracted.metadata?.videoCodec
+            ? [extracted.metadata.videoCodec]
+            : undefined;
+        const sourceContainer =
+          mediaType === 'video' && extension === '.mp4'
+            ? 'mp4'
+            : mediaType === 'video' && extension === '.mov'
+              ? 'mov'
+              : mediaType === 'video' && extension === '.webm'
+                ? 'webm'
+                : undefined;
+        return {
+          mediaType,
+          status: 'ready',
+          kind,
+          mimeType: nativeMimeType,
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+          playbackMode: 'source',
+          sourceRevisionId: asset.current_revision_id,
+          sourceMimeType: nativeMimeType,
+          ...(sourceContainer ? { sourceContainer } : {}),
+          ...(sourceContainer && sourceCodecs ? { sourceCodecs } : {}),
+        };
+      }
       const status = artifact?.status === 'generating' ? 'pending' : artifact?.status;
       if (status === 'ready' && artifact) {
         return {
@@ -16032,7 +16071,7 @@ export class LibraryService {
             AND technical_thumbnail.status = 'ready'
             AND technical_thumbnail.invalidated_at IS NULL
            JOIN asset_search_index sc ON a.asset_id = sc.asset_id
-           JOIN asset_search s ON sc.rowid = s.rowid`
+           ${useTrigramIndex ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
       : `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
@@ -22143,22 +22182,37 @@ export class LibraryService {
     return row ?? null;
   }
 
-  private findActiveManagedAssetIdByContent(
+  private findActiveManagedAssetByContent(
     openLibrary: OpenLibrary,
     byteSize: number,
     sha256: string,
     contentHashCache: Map<string, string>,
-  ): string | null {
+  ): {
+    assetId: string;
+    displayName: string;
+    thumbnailArtifactId: string | null;
+  } | null {
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.relative_file_path
+        `SELECT a.asset_id, a.relative_file_path,
+                ra.artifact_id AS thumbnail_artifact_id,
+                ra.status AS thumbnail_status
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
+           LEFT JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind = 'thumbnail'
+            AND ra.invalidated_at IS NULL
           WHERE a.deleted_at IS NULL
             AND a.location_kind = 'managed'
             AND r.byte_size = ?`,
       )
-      .all(byteSize) as Array<{ asset_id: string; relative_file_path: string }>;
+      .all(byteSize) as Array<{
+      asset_id: string;
+      relative_file_path: string;
+      thumbnail_artifact_id: string | null;
+      thumbnail_status: string | null;
+    }>;
 
     for (const row of rows) {
       const absolutePath = this.folderPath(openLibrary, row.relative_file_path);
@@ -22171,9 +22225,32 @@ export class LibraryService {
           continue;
         }
       }
-      if (fileHash === sha256) return row.asset_id;
+      if (fileHash === sha256) {
+        return {
+          assetId: row.asset_id,
+          displayName: path.posix.basename(row.relative_file_path),
+          thumbnailArtifactId:
+            row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
+        };
+      }
     }
     return null;
+  }
+
+  private findActiveManagedAssetIdByContent(
+    openLibrary: OpenLibrary,
+    byteSize: number,
+    sha256: string,
+    contentHashCache: Map<string, string>,
+  ): string | null {
+    return (
+      this.findActiveManagedAssetByContent(
+        openLibrary,
+        byteSize,
+        sha256,
+        contentHashCache,
+      )?.assetId ?? null
+    );
   }
 
   private classifyImportEntryConflict(input: {
@@ -22191,30 +22268,20 @@ export class LibraryService {
       entry,
       entrySha256,
       existingSize,
-      existingAbsolutePath,
       contentHashCache,
       seenContentHashes,
       ignoreBatchContentHash = false,
     } = input;
 
-    if (!ignoreBatchContentHash && seenContentHashes.has(entrySha256)) {
-      return 'suspected-duplicate';
+    // Path collision always wins (IMPORT-007 / Serpent-12ae): same destination
+    // basename is a name conflict even when the bytes also match. Content
+    // duplicate is reserved for free destination names with matching content.
+    if (existingSize !== undefined) {
+      return 'name-conflict';
     }
 
-    if (existingSize !== undefined) {
-      if (existingSize === -1) return 'name-conflict';
-      if (existingSize !== entry.byteSize) return 'name-conflict';
-      if (!existingAbsolutePath) return 'name-conflict';
-      let destinationHash = contentHashCache.get(existingAbsolutePath);
-      if (destinationHash === undefined) {
-        try {
-          destinationHash = sha256FileAtPath(existingAbsolutePath);
-          contentHashCache.set(existingAbsolutePath, destinationHash);
-        } catch {
-          return 'name-conflict';
-        }
-      }
-      return destinationHash === entrySha256 ? 'suspected-duplicate' : 'name-conflict';
+    if (!ignoreBatchContentHash && seenContentHashes.has(entrySha256)) {
+      return 'suspected-duplicate';
     }
 
     if (
@@ -22504,9 +22571,27 @@ export class LibraryService {
           const isLibraryScope = existingSize === undefined;
           if (isLibraryScope) libraryDuplicateCount += 1;
           if (examples.length < 8) {
+            const matched = this.findActiveManagedAssetByContent(
+              openLibrary,
+              entry.byteSize,
+              entrySha256,
+              contentHashCache,
+            );
             examples.push({
               displayName: path.posix.basename(entry.destinationRelativePath),
               kind: isLibraryScope ? 'library-duplicate' : 'suspected-duplicate',
+              ...(matched
+                ? {
+                    existingDisplayName: matched.displayName,
+                    existingAssetId: matched.assetId,
+                    ...(matched.thumbnailArtifactId
+                      ? {
+                          existingThumbnailArtifactId:
+                            matched.thumbnailArtifactId,
+                        }
+                      : {}),
+                  }
+                : {}),
             });
           }
           continue;

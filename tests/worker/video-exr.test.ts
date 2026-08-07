@@ -504,6 +504,94 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
+  it('keeps the ORIGINAL source for natively playable videos even when a proxy artifact exists (REQ-VIEW-002)', async () => {
+    // Regression: the video resolution branch used to return playbackMode
+    // 'proxy' whenever a ready webm_proxy artifact existed, so the viewer
+    // played the WebM derivative instead of the original MP4. REQ-VIEW-002
+    // requires the viewer to always present the original source; the proxy
+    // stays for non-native containers (AVI/WMV) and hover derivatives.
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        const outPath = args[args.length - 1];
+        if (
+          outPath &&
+          (outPath.endsWith('.webm') ||
+            outPath.endsWith('.jpg') ||
+            outPath.endsWith('.json'))
+        ) {
+          mkdirSync(path.dirname(outPath), { recursive: true });
+          writeFileSync(outPath, Buffer.from('mock-output-data'));
+        }
+        if (command === '/fake/ffprobe' || command.includes('ffprobe')) {
+          return {
+            stdout: Buffer.from(CANNED_FFPROBE_JSON, 'utf-8'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'DirectSource',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const assets = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    });
+
+    // Run the media queue so the ffprobe probe artifact (source of the
+    // sourceCodecs hint) is written, like a real ingested video.
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
+
+    // Premise: a ready WebM proxy derivative exists for the MP4.
+    const proxyArtifact = service.writeDerivedArtifact({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+      kind: 'webm_proxy',
+      mimeType: 'video/webm',
+      bytes: Buffer.from('mock-proxy-bytes'),
+      generatorVersion: 'test',
+      maxBytes: 1024 * 1024,
+    });
+    expect(proxyArtifact.artifactId).toBeTruthy();
+
+    // The viewer resolution must still present the ORIGINAL source, with the
+    // container/codecs populated so the renderer can probe and pre-warm the
+    // proxy only as a fallback.
+    expect(
+      service.getPreviewArtifact(created.libraryId, assets[0]!.assetId),
+    ).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'video/mp4',
+      sourceContainer: 'mp4',
+      sourceCodecs: ['h264'],
+    });
+
+    // Hover previews keep the proxy-first behavior: with a ready proxy the
+    // 'hover' intent returns the lightweight WebM, never the original source.
+    expect(
+      service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'hover'),
+    ).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      kind: 'webm_proxy',
+      mimeType: 'video/webm',
+      playbackMode: 'proxy',
+    });
+
+    service.closeAll();
+  });
+
   it('rejects and removes a WebM proxy above the 512 MiB safety limit', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
@@ -590,11 +678,14 @@ describe('video (ffprobe + ffmpeg)', () => {
     const posterFailed = failedRows.find((r) => r.kind === 'video_poster');
     expect(posterFailed).toBeDefined();
 
+    // REQ-VIEW-002: the MP4 container is natively playable, so the viewer
+    // resolution stays on the ORIGINAL source even when proxy generation
+    // failed (the failed-artifact evidence is asserted above).
     expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
       mediaType: 'video',
-      status: 'pending',
-      kind: 'webm_proxy',
-      mimeType: 'video/webm',
+      status: 'ready',
+      playbackMode: 'source',
+      mimeType: 'video/mp4',
     });
 
     db.close();
@@ -1886,12 +1977,13 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
 
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy'))
       .toMatchObject({ status: 'ready', mimeType: 'audio/ogg' });
+    // REQ-VIEW-002: WAV is natively playable, so the viewer resolution stays
+    // on the ORIGINAL source; the Ogg proxy remains a hover/derivative path.
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
       mediaType: 'audio',
       status: 'ready',
-      kind: 'audio_proxy',
-      mimeType: 'audio/ogg',
-      playbackMode: 'proxy',
+      playbackMode: 'source',
+      mimeType: 'audio/wav',
     });
     const proxyCall = capturedSpawnArgs.find((call) =>
       call.args.includes('libopus') && call.args.at(-1)?.endsWith('.ogg'),

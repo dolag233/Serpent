@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from 'react';
+import { forwardRef } from 'react';
 
 import { UI_LAYER } from '../foundation';
 import { cx } from '../primitives/cx';
@@ -11,29 +12,36 @@ export interface PopoverSurfaceProps extends Omit<HTMLAttributes<HTMLDivElement>
 }
 
 /** Shared non-modal overlay surface. Positioning and open state stay with the caller. */
-export function PopoverSurface({
-  children,
-  className,
-  labelledBy,
-  role = 'dialog',
-  title,
-  ...rest
-}: PopoverSurfaceProps): ReactNode {
-  return (
-    <div
-      {...rest}
-      aria-labelledby={labelledBy}
-      className={cx('ui-popover-surface', className)}
-      data-ui-layer={UI_LAYER.popover}
-      data-ui-layer-name="popover"
-      data-ui-pattern="popover-surface"
-      role={role}
-    >
-      {title === undefined ? null : <div className="ui-popover-surface__title">{title}</div>}
-      {children}
-    </div>
-  );
-}
+export const PopoverSurface = forwardRef<HTMLDivElement, PopoverSurfaceProps>(
+  function PopoverSurface(
+    {
+      children,
+      className,
+      labelledBy,
+      role = 'dialog',
+      title,
+      ...rest
+    },
+    ref,
+  ) {
+    return (
+      <div
+        {...rest}
+        aria-labelledby={labelledBy}
+        className={cx('ui-popover-surface', className)}
+        data-ui-layer={UI_LAYER.popover}
+        data-ui-layer-name="popover"
+        data-ui-pattern="popover-surface"
+        ref={ref}
+        role={role}
+      >
+        {title === undefined ? null : <div className="ui-popover-surface__title">{title}</div>}
+        {children}
+      </div>
+    );
+  },
+);
+
 
 export interface SettingsCardProps extends Omit<HTMLAttributes<HTMLElement>, 'children' | 'className' | 'title'> {
   readonly children?: ReactNode;

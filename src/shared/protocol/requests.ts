@@ -842,6 +842,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     mode: z.enum(['client', 'fullscreen']),
+    /** 'viewer' (default) plays the ORIGINAL source; 'hover' prefers the proxy. */
+    intent: z.enum(['viewer', 'hover']).optional(),
     exrPlane: z.number().int().min(0).max(255).optional(),
     colorSpace: nonBlankString.max(120).optional(),
   }),
@@ -1978,6 +1980,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-preview-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+    intent: z.enum(['viewer', 'hover']).optional(),
     exrPlane: z.number().int().min(0).max(255).optional(),
     colorSpace: nonBlankString.max(120).optional(),
   }),

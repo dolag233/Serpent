@@ -189,7 +189,7 @@ export interface SerpentLibraryApi {
   pasteIntoFolder(input: {
     libraryId: string;
     folderId?: string | null;
-  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   /** Duplicate managed folder subtree as a sibling. */
   cloneFolder(input: {
     libraryId: string;
@@ -530,7 +530,7 @@ export interface SerpentLibraryApi {
   // artifactId is absent for model assets: no Worker raster generator exists
   // for them (Serpent-fu2i), so the no-op result carries no artifact.
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
-  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
+  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model
   // previews. Only library-relative paths + ids; no absolute paths.

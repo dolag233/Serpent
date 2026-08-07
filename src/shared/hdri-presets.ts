@@ -2,8 +2,9 @@
  * Bundled HDRI environment preset receipts (spec 3D-09 / §5) — shared
  * metadata only, no glob, no runtime URL resolution.
  *
- * This table is the single source of truth for the two Poly Haven CC0 1K
- * equirectangular `.hdr` files bundled with the app:
+ * This table is the single source of truth for the four Poly Haven CC0 1K
+ * equirectangular `.hdr` files bundled with the app (user-selected set,
+ * 2026-08-06: product / interior / outdoor / nature):
  * - the renderer viewer toolbar (`src/renderer/3d-viewer/hdri-presets.ts`
  *   re-exports from here and adds the `import.meta.glob` runtime URL map);
  * - the Main-process `serpent://app-assets` handler (`src/main/app-assets.ts`)
@@ -13,7 +14,12 @@
  * Acquisition metadata is replayed by `scripts/acquire-hdri.mjs`.
  */
 
-export const BUNDLED_HDRI_PRESET_IDS = ['studio-small-09', 'kloppenheim-02'] as const;
+export const BUNDLED_HDRI_PRESET_IDS = [
+  'ferndale-studio-03',
+  'dancing-hall',
+  'pergola-walkway',
+  'scythian-tombs-2',
+] as const;
 
 export type BundledHdriPresetId = (typeof BUNDLED_HDRI_PRESET_IDS)[number];
 export type HdriPresetCategory = 'studio' | 'natural';
@@ -25,6 +31,8 @@ export type HdriPreset = {
   readonly category: HdriPresetCategory;
   /** File name under `src/renderer/assets/hdri/` (dev) / packaged renderer assets. */
   readonly fileName: string;
+  /** Optional preview thumbnail (`*_preview.png`) shown in the HDRI picker. */
+  readonly previewFileName?: string;
   readonly width: number;
   readonly height: number;
   readonly fileSizeBytes: number;
@@ -36,27 +44,55 @@ export type HdriPreset = {
 
 export const HDRI_PRESETS: readonly HdriPreset[] = [
   {
-    id: 'studio-small-09',
-    displayName: { 'zh-CN': '摄影棚小景', en: 'Studio Small 09' },
+    id: 'ferndale-studio-03',
+    displayName: { 'zh-CN': '产品', en: 'Product' },
     category: 'studio',
-    fileName: 'studio_small_09_1k.hdr',
+    fileName: 'ferndale_studio_03_1k.hdr',
+    previewFileName: 'ferndale_studio_03_1k_preview.png',
     width: 1024,
     height: 512,
-    fileSizeBytes: 1615248,
-    sha256: 'e7cfda5f4e98e623db12b8bfd0184e048488e4855d9c83e2751fb44a32e80c45',
-    sourceUrl: 'https://polyhaven.com/a/studio_small_09',
+    fileSizeBytes: 1597780,
+    sha256: '6ef28f78bc80056ef6fc4d15c5e730be81b61a3c7ae48bc5d8d33dc522d2b1de',
+    sourceUrl: 'https://polyhaven.com/a/ferndale_studio_03',
     license: 'CC0',
   },
   {
-    id: 'kloppenheim-02',
-    displayName: { 'zh-CN': '户外晴天', en: 'Kloppenheim 02 (Sunny)' },
-    category: 'natural',
-    fileName: 'kloppenheim_02_1k.hdr',
+    id: 'dancing-hall',
+    displayName: { 'zh-CN': '室内', en: 'Indoor' },
+    category: 'studio',
+    fileName: 'dancing_hall_1k.hdr',
+    previewFileName: 'dancing_hall_1k_preview.png',
     width: 1024,
     height: 512,
-    fileSizeBytes: 1740414,
-    sha256: '04d23c6b243742b5046310b29211aec671d7a0570f3596e1a6b43e614c9acadf',
-    sourceUrl: 'https://polyhaven.com/a/kloppenheim_02',
+    fileSizeBytes: 1725266,
+    sha256: 'e76e7838ae18cd32628143c6b8f1e92453d247a3e20dff773246c7c119ceb043',
+    sourceUrl: 'https://polyhaven.com/a/dancing_hall',
+    license: 'CC0',
+  },
+  {
+    id: 'pergola-walkway',
+    displayName: { 'zh-CN': '室外', en: 'Outdoor' },
+    category: 'natural',
+    fileName: 'pergola_walkway_1k.hdr',
+    previewFileName: 'pergola_walkway_1k_preview.png',
+    width: 1024,
+    height: 512,
+    fileSizeBytes: 1755642,
+    sha256: '7f17a1ec2703b71cbf92a8387eb04c47ebd9f19f885065d26545a7190c85b456',
+    sourceUrl: 'https://polyhaven.com/a/pergola_walkway',
+    license: 'CC0',
+  },
+  {
+    id: 'scythian-tombs-2',
+    displayName: { 'zh-CN': '自然', en: 'Nature' },
+    category: 'natural',
+    fileName: 'scythian_tombs_2_1k.hdr',
+    previewFileName: 'scythian_tombs_2_1k_preview.png',
+    width: 1024,
+    height: 512,
+    fileSizeBytes: 1676908,
+    sha256: '3a77faff212008b11b2bcf0ed955e44390e7637bedbcd479c3c9df27bbf931f8',
+    sourceUrl: 'https://polyhaven.com/a/scythian_tombs_2',
     license: 'CC0',
   },
 ];

@@ -20,7 +20,7 @@ function makeJob(overrides: Partial<ModelThumbnailRenderRequest> = {}): ModelThu
     format: 'glb',
     renderUrl: 'serpent://preview/lib-1/art-1',
     companionMap: [],
-    hdriPresetId: 'studio-small-09',
+    hdriPresetId: 'ferndale-studio-03',
     width: 512,
     height: 512,
     timeoutMs: 30_000,
@@ -96,8 +96,15 @@ describe('offscreen thumbnail frame pipeline (slice E, page side)', () => {
     const loadHdrData = deps.loadHdrData as ReturnType<typeof vi.fn>;
     await renderModelThumbnailFrame(makeJob(), deps);
     expect(loadHdrData).toHaveBeenCalledWith(
-      'serpent://app-assets/hdri/studio_small_09_1k.hdr',
+      'serpent://app-assets/hdri/ferndale_studio_03_1k.hdr',
     );
+  });
+
+  it('can render with the deterministic key-light fallback', async () => {
+    const deps = makeDeps({ enableHdri: false });
+    await renderModelThumbnailFrame(makeJob(), deps);
+    expect(deps.loadHdrData).not.toHaveBeenCalled();
+    expect(deps.renderer.render).toHaveBeenCalledTimes(1);
   });
 
   it('degrades to the key light when the environment fails to load', async () => {
@@ -108,6 +115,16 @@ describe('offscreen thumbnail frame pipeline (slice E, page side)', () => {
     });
     const outcome = await renderModelThumbnailFrame(makeJob(), deps);
     expect(outcome.status).toBe('ok');
+  });
+
+  it('degrades to the key light when the HDRI request hangs', async () => {
+    const deps = makeDeps({
+      hdriLoadTimeoutMs: 1,
+      loadHdrData: vi.fn(() => new Promise<never>(() => {})),
+    });
+    const outcome = await renderModelThumbnailFrame(makeJob(), deps);
+    expect(outcome.status).toBe('ok');
+    expect(deps.loadModel).toHaveBeenCalled();
   });
 
   it('reports MODEL_LOAD_FAILED when the model cannot be parsed', async () => {

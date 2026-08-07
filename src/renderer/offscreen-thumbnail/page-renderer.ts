@@ -38,7 +38,7 @@ import {
   computeCameraPlacement,
   sphereFromBounds,
 } from '../3d-viewer/camera-policy';
-import { clampExposure } from '../3d-viewer/exposure';
+
 import {
   buildEnvironment,
   type EnvironmentHandle,
@@ -53,6 +53,8 @@ import { createSceneComposer } from '../3d-viewer/scene-composer';
 
 /** Fixed neutral backdrop for model thumbnails (consistent across themes). */
 export const OFFSCREEN_THUMBNAIL_BACKGROUND = 0x1a1c1f;
+/** A custom protocol request must not strand the model render indefinitely. */
+export const OFFSCREEN_HDRI_LOAD_TIMEOUT_MS = 5_000;
 
 /** Structural renderer surface (real three WebGLRenderer or test fake). */
 export interface FrameRendererLike {
@@ -99,6 +101,13 @@ export interface FramePipelineDeps extends FrameEnvironmentDeps, FrameModelDeps 
   computeBounds?: (scene: unknown) => FrameBoundsResult;
   /** Structured logging hook (page console, forwarded by Main diagnostics). */
   log?: (message: string, context?: Record<string, unknown>) => void;
+  /** Injectable HDRI deadline for tests; production keeps the short fallback. */
+  hdriLoadTimeoutMs?: number;
+  /**
+   * Offscreen Chromium can leave custom-protocol HDR requests pending forever.
+   * The ground-shadow key light remains available as a deterministic fallback.
+   */
+  enableHdri?: boolean;
 }
 
 export type FrameOutcome =
@@ -145,20 +154,29 @@ export async function renderModelThumbnailFrame(
     scene,
   });
   composer.setBackground(new Color(OFFSCREEN_THUMBNAIL_BACKGROUND));
+  log('offscreen-thumbnail.stage.renderer-ready');
 
   let environment: EnvironmentHandle | null = null;
   try {
     // Environment failure degrades to the contact-shadow key light only — the
     // model stays visible (3D-11: not black), same policy as the viewer.
-    const preset = getBundledHdriPreset(job.data.hdriPresetId);
+    const preset = deps.enableHdri === false
+      ? null
+      : getBundledHdriPreset(job.data.hdriPresetId);
     if (preset) {
       try {
-        environment = await loadHdrEnvironmentForFrame(`serpent://app-assets/hdri/${preset.fileName}`, {
-          renderer: deps.renderer,
-          pmrem: deps.pmrem,
-          loadHdrData: deps.loadHdrData,
-        });
+        log('offscreen-thumbnail.stage.hdri-loading', { presetId: preset.id });
+        environment = await promiseWithTimeout(
+          loadHdrEnvironmentForFrame(`serpent://app-assets/hdri/${preset.fileName}`, {
+            renderer: deps.renderer,
+            pmrem: deps.pmrem,
+            loadHdrData: deps.loadHdrData,
+          }),
+          deps.hdriLoadTimeoutMs ?? OFFSCREEN_HDRI_LOAD_TIMEOUT_MS,
+          `HDRI load timed out: ${preset.id}`,
+        );
         composer.setEnvironment(environment.environmentTexture);
+        log('offscreen-thumbnail.stage.hdri-ready', { presetId: preset.id });
       } catch (error) {
         log('offscreen-thumbnail.hdri-failed', {
           presetId: preset.id,
@@ -172,12 +190,14 @@ export async function renderModelThumbnailFrame(
     );
     let loaded: LoadedModelScene;
     try {
+      log('offscreen-thumbnail.stage.model-loading', { format: job.data.format });
       loaded = await (deps.loadModel ?? loadModelScene)({
         format: job.data.format,
         sourceUrl: job.data.renderUrl,
         libraryId: job.data.libraryId,
         companionMap,
       });
+      log('offscreen-thumbnail.stage.model-ready', { format: job.data.format });
     } catch (error) {
       return {
         status: 'failed',
@@ -214,7 +234,9 @@ export async function renderModelThumbnailFrame(
     setupGroundShadow(composer.scene, sphere, bounds.min[1]);
 
     // Exactly one frame — no rAF, no throttling dependency (research §4.7).
+    log('offscreen-thumbnail.stage.rendering');
     composer.renderOnce();
+    log('offscreen-thumbnail.stage.rendered');
 
     // Frame readback (preserveDrawingBuffer, set by the page's renderer).
     const blank = (deps.isBlank ?? detectBlankWebglFrame)(canvas, deps.renderer.getContext());
@@ -246,6 +268,26 @@ export async function renderModelThumbnailFrame(
   }
 }
 
+function promiseWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** Real HDRI pipeline for the page (mirrors the viewer's environment module). */
 async function loadHdrEnvironmentForFrame(
   url: string,
@@ -259,7 +301,6 @@ async function loadHdrEnvironmentForFrame(
     hdrTexture: texture,
     pmrem,
     renderer: deps.renderer,
-    exposure: clampExposure(1),
   });
 }
 

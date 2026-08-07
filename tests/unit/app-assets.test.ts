@@ -76,7 +76,7 @@ describe('app-assets (Serpent-qvc6 / packaged .hdr route)', () => {
         'renderer',
         'main_window',
         'assets',
-        'kloppenheim_02_1k-0123456789abcdef.hdr',
+        `${base}-0123456789abcdef.hdr`,
       ),
     );
   });

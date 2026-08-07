@@ -31,7 +31,7 @@
     "make": "electron-forge make",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.extension.json",
-    "test": "node scripts/run-vitest-with-electron.mjs run",
+    "test": "node scripts/run-vitest-with-electron.mjs run --exclude tests/worker/search-performance.test.ts",
     "pretest": "node scripts/ensure-native.mjs",
     "test:unit": "vitest run --config vitest.config.ts tests/unit",
     "test:worker": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker",

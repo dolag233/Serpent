@@ -68,6 +68,10 @@ export const importConflictPlanSchema = z.strictObject({
     z.strictObject({
       displayName: safeDisplayName,
       kind: z.enum(['suspected-duplicate', 'library-duplicate', 'name-conflict']),
+      /** Library asset that already holds matching content (content-duplicate). */
+      existingDisplayName: safeDisplayName.optional(),
+      existingAssetId: nonBlankString.optional(),
+      existingThumbnailArtifactId: nonBlankString.optional(),
     }),
   ).max(8),
 });

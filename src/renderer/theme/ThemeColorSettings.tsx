@@ -43,7 +43,6 @@ export function ThemeColorSettings(): ReactNode {
 
   return (
     <SettingsDisclosure
-      defaultOpen
       title={t('settings.customTheme')}
     >
       <div className="app-settings-custom-theme-grid">

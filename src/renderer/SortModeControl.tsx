@@ -9,12 +9,12 @@ import {
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import type { SortDefinition } from "../shared/asset-types";
+import { PortaledPopover } from "./PortaledPopover";
 import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
   ROVING_OPTION_SELECTOR,
 } from "./roving-list-keyboard";
-import { PopoverSurface } from "./ui/patterns";
 
 /** Field options + in-panel order radios share one arrow-key roving set. */
 const SORT_PANEL_ROVING_SELECTOR = `${ROVING_OPTION_SELECTOR}, [role="radio"]`;
@@ -102,6 +102,7 @@ export function SortModeControl({
   const [open, setOpen] = useState(false);
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const dimRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
   const nonDefault =
@@ -124,8 +125,10 @@ export function SortModeControl({
     if (!open) return;
     const onMouseDown = (event: MouseEvent) => {
       const root = rootRef.current;
-      if (!root || !(event.target instanceof Node)) return;
-      if (!root.contains(event.target)) closeList(false);
+      if (!root || !(event.target instanceof Element)) return;
+      if (root.contains(event.target)) return;
+      if (event.target.closest("[data-dimension-filter-popover]")) return;
+      closeList(false);
     };
     document.addEventListener("mousedown", onMouseDown, true);
     const raf = requestAnimationFrame(() => {
@@ -184,7 +187,7 @@ export function SortModeControl({
   return (
     <div className="sort-mode-control" ref={rootRef}>
       <div className="dimension-filter-dim-sep" aria-hidden="true" />
-      <div className="dimension-filter-dim">
+      <div className="dimension-filter-dim" ref={dimRef}>
         <button
           aria-expanded={open || undefined}
           aria-haspopup="listbox"
@@ -210,11 +213,13 @@ export function SortModeControl({
           ) : null}
         </button>
         {open && (
-          <PopoverSurface
+          <PortaledPopover
+            anchorRef={dimRef}
             className={`dimension-filter-popover sort-mode-popover${keyboardNav ? " is-keyboard-navigation" : ""}`}
             id={listId}
             onKeyDown={onListKeyDown}
             onPointerMove={() => setKeyboardNav(false)}
+            preferRight
             role="dialog"
           >
             <div
@@ -289,7 +294,7 @@ export function SortModeControl({
                 </button>
               ))}
             </div>
-          </PopoverSurface>
+          </PortaledPopover>
         )}
       </div>
     </div>

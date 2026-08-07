@@ -82,9 +82,10 @@ async function createFolderViaSidebar(window: Page, folderName: string) {
  * accessible-name match. Targeting the label text + ancestor row is stable.
  */
 function sidebarFolderRow(window: Page, folderName: string) {
-  return window
-    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
-    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+  const escapedTitle = folderName.replace(/["\\]/gu, "\\$&");
+  return window.locator(
+    `.navigation-pane button.nav-row[title="${escapedTitle}"]`,
+  );
 }
 
 /**
@@ -105,6 +106,7 @@ function sidebarFolderRowExact(window: Page, folderName: string) {
 async function openFolderContextMenu(window: Page, folderName: string) {
   const row = sidebarFolderRow(window, folderName);
   await expect(row).toBeVisible();
+  await window.mouse.move(0, 0);
   await row.click({ button: "right" });
   const menu = window.getByRole("menu", {
     name: `文件夹操作：${folderName}`,

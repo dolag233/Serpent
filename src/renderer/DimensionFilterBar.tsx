@@ -20,7 +20,9 @@ import {
 } from "./filter-presets";
 import {
   applyDimensionSelectionClick,
+  formatGroupSelectionState,
   formatTokensHas,
+  toggleFormatGroup,
   toggleFormatToken,
 } from "./dimension-filter-selection";
 import {
@@ -49,7 +51,7 @@ import { SortModeControl, type SortFieldOption } from "./SortModeControl";
 import { useT } from "./i18n";
 import type { TagSummary } from "../shared/asset-types";
 import type { SortDefinition } from "../shared/asset-types";
-import { PopoverSurface } from "./ui/patterns";
+import { PortaledPopover } from "./PortaledPopover";
 
 export type DimensionId =
   | "color"
@@ -131,6 +133,40 @@ export type DimensionFilterBarProps = {
   onShuffle?: () => void;
   onClearFilter: (id: ClearableFilterId) => void;
 };
+
+/** Category checkbox with native indeterminate for partial format selection. */
+function FormatGroupCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  disabled: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.indeterminate = indeterminate;
+    }
+  }, [indeterminate]);
+  return (
+    <label className="format-filter-group-check">
+      <input
+        checked={checked}
+        disabled={disabled}
+        onChange={onToggle}
+        ref={inputRef}
+        type="checkbox"
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
 
 function DimensionButton({
   icon,
@@ -219,6 +255,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   const [openDimension, setOpenDimension] = useState<DimensionId | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const colorDimRef = useRef<HTMLDivElement>(null);
+  const tagsDimRef = useRef<HTMLDivElement>(null);
+  const shapeDimRef = useRef<HTMLDivElement>(null);
+  const ratingDimRef = useRef<HTMLDivElement>(null);
+  const formatDimRef = useRef<HTMLDivElement>(null);
+  const moreDimRef = useRef<HTMLDivElement>(null);
 
   // REQ-FILTER-020: remembers tag names recently applied through this
   // picker so its default (empty-query) view can surface a "recent" section
@@ -231,8 +273,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     if (!openDimension) return;
     const onMouseDown = (event: MouseEvent) => {
       const root = rootRef.current;
-      if (!root || !(event.target instanceof Node)) return;
-      if (!root.contains(event.target)) setOpenDimension(null);
+      if (!root || !(event.target instanceof Element)) return;
+      // Portaled popovers live under document.body (MENU-015), so outside-click
+      // must treat both the bar and `[data-dimension-filter-popover]` as inside.
+      if (root.contains(event.target)) return;
+      if (event.target.closest("[data-dimension-filter-popover]")) return;
+      setOpenDimension(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -256,7 +302,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   // outside-click-close effect above and hover-tip.tsx's document-listener
   // pattern. A short close delay absorbs the gap between a button and its
   // popover (rendered a few pixels below it) so moving the pointer from one
-  // into the other doesn't flicker-close.
+  // into the other doesn't flicker-close. Portaled popovers sit under body
+  // (MENU-015), so pointer/focus leave also treats
+  // `[data-dimension-filter-popover]` as still inside the filter chrome.
   useEffect(() => {
     const root = rootRef.current;
     if (!root || disabled || interactionsLocked) {
@@ -279,35 +327,51 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       clearCloseTimer();
       setOpenDimension(id);
     };
-    const isWithinDimension = (target: EventTarget | null) =>
-      target instanceof Element && target.closest("[data-dimension]") !== null;
+    const isFilterChrome = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      return (
+        root.contains(target) ||
+        target.closest("[data-dimension-filter-popover]") !== null
+      );
+    };
     const scheduleClose = () => {
       clearCloseTimer();
       closeTimer = setTimeout(() => setOpenDimension(null), HOVER_CLOSE_DELAY_MS);
     };
 
-    const onPointerOver = (event: PointerEvent) =>
+    const onPointerOver = (event: PointerEvent) => {
+      if (!isFilterChrome(event.target)) return;
       openForDimensionOf(event.target);
+      clearCloseTimer();
+    };
     const onPointerOut = (event: PointerEvent) => {
-      if (isWithinDimension(event.relatedTarget)) return;
+      if (!isFilterChrome(event.target)) return;
+      if (isFilterChrome(event.relatedTarget)) return;
       scheduleClose();
     };
-    const onFocusIn = (event: FocusEvent) => openForDimensionOf(event.target);
+    const onFocusIn = (event: FocusEvent) => {
+      if (!isFilterChrome(event.target)) return;
+      openForDimensionOf(event.target);
+      clearCloseTimer();
+    };
     const onFocusOut = (event: FocusEvent) => {
-      if (isWithinDimension(event.relatedTarget)) return;
+      if (!isFilterChrome(event.target)) return;
+      if (isFilterChrome(event.relatedTarget)) return;
       scheduleClose();
     };
 
-    root.addEventListener("pointerover", onPointerOver);
-    root.addEventListener("pointerout", onPointerOut);
-    root.addEventListener("focusin", onFocusIn);
-    root.addEventListener("focusout", onFocusOut);
+    // Document-level: portaled popovers are outside `root`, so root-only
+    // pointerout never sees the leave-from-popover case.
+    document.addEventListener("pointerover", onPointerOver, true);
+    document.addEventListener("pointerout", onPointerOut, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    document.addEventListener("focusout", onFocusOut, true);
     return () => {
       clearCloseTimer();
-      root.removeEventListener("pointerover", onPointerOver);
-      root.removeEventListener("pointerout", onPointerOut);
-      root.removeEventListener("focusin", onFocusIn);
-      root.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("pointerover", onPointerOver, true);
+      document.removeEventListener("pointerout", onPointerOut, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+      document.removeEventListener("focusout", onFocusOut, true);
     };
   }, [disabled, interactionsLocked]);
 
@@ -535,7 +599,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
   return (
     <div className="dimension-filter-bar" ref={rootRef}>
       <div className="dimension-filter-dims" role="toolbar" aria-label={t("filter.dimensions")}>
-        <div className="dimension-filter-dim" data-dimension="color">
+        <div className="dimension-filter-dim" data-dimension="color" ref={colorDimRef}>
           <DimensionButton
             active={colorActive}
             disabled={controlsDisabled}
@@ -546,7 +610,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "color"}
           />
           {openDimension === "color" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PortaledPopover
+              anchorRef={colorDimRef}
+              className="dimension-filter-popover"
+              data-dimension="color"
+              role="dialog"
+            >
               <div className="dimension-color-row" role="listbox" aria-label={t("filter.dimColor")}>
                 {COLOR_PRESETS.map((preset) => (
                   <button
@@ -574,11 +643,11 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
-        <div className="dimension-filter-dim" data-dimension="tags">
+        <div className="dimension-filter-dim" data-dimension="tags" ref={tagsDimRef}>
           <DimensionButton
             active={tagActive}
             disabled={controlsDisabled}
@@ -589,7 +658,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "tags"}
           />
           {openDimension === "tags" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PortaledPopover
+              anchorRef={tagsDimRef}
+              className="dimension-filter-popover"
+              data-dimension="tags"
+              role="dialog"
+            >
               <FilterTagPicker
                 disabled={controlsDisabled}
                 onChange={handleTagNamesChange}
@@ -609,11 +683,11 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
-        <div className="dimension-filter-dim" data-dimension="shape">
+        <div className="dimension-filter-dim" data-dimension="shape" ref={shapeDimRef}>
           <DimensionButton
             active={shapeActive}
             disabled={controlsDisabled}
@@ -623,7 +697,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "shape"}
           />
           {openDimension === "shape" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PortaledPopover
+              anchorRef={shapeDimRef}
+              className="dimension-filter-popover"
+              data-dimension="shape"
+              role="dialog"
+            >
               <FilterPresetChips
                 disabled={controlsDisabled}
                 label={t("filter.orientation")}
@@ -663,11 +742,11 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 step="0.01"
               />
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
-        <div className="dimension-filter-dim" data-dimension="rating">
+        <div className="dimension-filter-dim" data-dimension="rating" ref={ratingDimRef}>
           <DimensionButton
             active={ratingActive}
             disabled={controlsDisabled}
@@ -678,7 +757,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "rating"}
           />
           {openDimension === "rating" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PortaledPopover
+              anchorRef={ratingDimRef}
+              className="dimension-filter-popover"
+              data-dimension="rating"
+              role="dialog"
+            >
               <div className="dimension-rating-row" role="group">
                 {[5, 4, 3, 2, 1, 0].map((star) => (
                   <button
@@ -705,7 +789,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
@@ -719,7 +803,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           />
         </div>
 
-        <div className="dimension-filter-dim" data-dimension="format">
+        <div className="dimension-filter-dim" data-dimension="format" ref={formatDimRef}>
           <DimensionButton
             active={formatActive}
             disabled={controlsDisabled}
@@ -730,7 +814,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "format"}
           />
           {openDimension === "format" && (
-            <PopoverSurface className="dimension-filter-popover" role="dialog">
+            <PortaledPopover
+              anchorRef={formatDimRef}
+              className="dimension-filter-popover is-wide format-filter-popover"
+              data-dimension="format"
+              role="dialog"
+            >
               <input
                 aria-label={t("filter.format")}
                 className="text-field"
@@ -739,38 +828,64 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 placeholder="png, jpg, mp4"
                 value={formatFilter}
               />
-              {FORMAT_FILTER_GROUPS.map((group) => (
-                <div className="filter-preset-group" key={group.labelKey}>
-                  <span className="filter-preset-group-label">
-                    {t(group.labelKey)}
-                  </span>
-                  <div className="filter-presets" role="group">
-                    {group.extensions.map((ext) => {
-                      const active = formatTokensHas(formatFilter, ext);
-                      return (
-                        <button
-                          aria-pressed={active}
-                          className={`filter-preset-chip${active ? " is-active" : ""}`}
-                          disabled={controlsDisabled}
-                          key={ext}
-                          onClick={(event) =>
-                            setFormatFilter(
-                              toggleFormatToken(formatFilter, ext, event.shiftKey),
-                            )
-                          }
-                          type="button"
-                        >
-                          {ext}
-                        </button>
-                      );
-                    })}
+              {FORMAT_FILTER_GROUPS.map((group) => {
+                const groupState = formatGroupSelectionState(
+                  formatFilter,
+                  group.extensions,
+                );
+                return (
+                  <div className="format-filter-group" key={group.labelKey}>
+                    <FormatGroupCheckbox
+                      checked={groupState === "all"}
+                      disabled={controlsDisabled}
+                      indeterminate={groupState === "partial"}
+                      label={t(group.labelKey)}
+                      onToggle={() =>
+                        setFormatFilter(
+                          toggleFormatGroup(formatFilter, group.extensions),
+                        )
+                      }
+                    />
+                    <div className="filter-presets" role="group">
+                      {group.extensions.map((ext) => {
+                        const active = formatTokensHas(formatFilter, ext);
+                        return (
+                          <button
+                            aria-pressed={active}
+                            className={`filter-preset-chip${active ? " is-active" : ""}`}
+                            disabled={controlsDisabled}
+                            key={ext}
+                            onClick={(event) =>
+                              setFormatFilter(
+                                toggleFormatToken(
+                                  formatFilter,
+                                  ext,
+                                  event.shiftKey,
+                                ),
+                              )
+                            }
+                            type="button"
+                          >
+                            {ext}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ))}
-              <div className="filter-preset-group">
-                <span className="filter-preset-group-label">
-                  {t("filter.formatGroupOther")}
-                </span>
+                );
+              })}
+              <div className="format-filter-group">
+                <FormatGroupCheckbox
+                  checked={formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)}
+                  disabled={controlsDisabled}
+                  indeterminate={false}
+                  label={t("filter.formatGroupOther")}
+                  onToggle={() =>
+                    setFormatFilter(
+                      toggleFormatGroup(formatFilter, [FORMAT_TEXT_TOKEN]),
+                    )
+                  }
+                />
                 <div className="filter-presets" role="group">
                   <button
                     aria-pressed={formatTokensHas(formatFilter, FORMAT_TEXT_TOKEN)}
@@ -807,11 +922,11 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 {t("filter.exclude")}
               </label>
               <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
-        <div className="dimension-filter-dim" data-dimension="more">
+        <div className="dimension-filter-dim" data-dimension="more" ref={moreDimRef}>
           <DimensionButton
             active={moreActive}
             disabled={controlsDisabled}
@@ -822,7 +937,12 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
             open={openDimension === "more"}
           />
           {openDimension === "more" && (
-            <PopoverSurface className="dimension-filter-popover is-wide" role="dialog">
+            <PortaledPopover
+              anchorRef={moreDimRef}
+              className="dimension-filter-popover is-wide"
+              data-dimension="more"
+              role="dialog"
+            >
               <label>
                 {t("filter.favoriteField")}
                 <select
@@ -963,7 +1083,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                 setRange={setDurationRange}
                 step="0.1"
               />
-            </PopoverSurface>
+            </PortaledPopover>
           )}
         </div>
 
