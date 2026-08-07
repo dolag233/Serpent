@@ -10259,9 +10259,10 @@ function AppInner() {
         }}
         recentLibraries={recentLibraries}
       />
-      {conflicts && conflictPhase === "name" && (
+      {conflicts && conflictPhase === "name" && library && (
         <NameConflictDialog
           conflicts={conflicts}
+          libraryId={library.libraryId}
           decision={nameDecision}
           remember={rememberNameConflict}
           onDecisionChange={setNameDecision}

@@ -166,3 +166,11 @@
 **ufbx 修复跟进（Serpent-8pg6，2026-08-07 当晚）**：用户要求先修 ufbx 而非换 FBXLoader。**根因找到**：ufbx.h 注释称 `ufbx_triangulate_face` 需要 `(n-2)*3-1` 索引空间，但**实现实际写入 `(n-2)*3`**——B 切片按注释分配缓冲区导致写越界 → "wasm32 输出损坏"的误判 → 绕开写了 fan。**修复**：桥改用 `ufbx_triangulate_face`（四边形最短对角线+交叉检测、多边形 ear clipping，正确处理凹面），正确分配 `(n-2)*3`。**验证**：用户模型 498K 三角，三角形几何法线 vs per-corner 法线一致性——**flipped=0、badAngle>45° 仅 0.06%**（fan 版本必然大量翻转）；fbx-conversion 20/20；model-viewer E2E FBX 用例（ufbx 主路径）通过。**loader-registry 恢复 ufbx 转换主路径**（FBXLoader 为转换失败兜底）。WASM 重建 + lock 更新（glue 不变）。用户实机确认中。
 
 **最终根因确认（2026-08-07 深夜）**：**UV V 坐标未翻转**。FBX 的 UV 原点在左下角，glTF 在左上角（GLTFLoader 设 flipY=false）——不翻转则贴图上下颠倒 + normal map 采样错乱 → "支离破碎"。参考行业实现（Facebook FBX2glTF、ezhangle/FBX2glTF、cocos/FBX-glTF-conv 全部默认翻转 V）确认这是标准要求。**修复**：桥在写 UV blob 时 `v' = 1-v`（提交 9c2f7d5）。排除过程：三角形几何（triangulate_face 修复后 flipped=0）、UV 集合（与 FBXLoader 100% 一致）、贴图字节（SHA 全匹配）、normal map（移除后仍碎）——最终定位 V 翻转。**用户实机验证通过**。
+
+### 9. 重名冲突窗口缺已有资产信息 + FBX 重复检查实测（Serpent-793k/vqg9，2026-08-07 深夜）
+
+**用户反馈**：① 重名冲突窗口出现但没显示原始资产名称和缩略图（"功能又没了"）；② FBX 等文件没有重复检查。
+
+**彻查结论（793k）**：内容重复对话框（ContentDuplicateDialog）的缩略图功能**存在且调用链完整**（65a2b67 已合入、App.tsx 传 libraryId）——但 **name-conflict（重名）分支**：worker 只填导入文件名、**没填已有资产信息**（existingDisplayName/existingThumbnailArtifactId），重名窗口（NameConflictDialog）因此无名称/缩略图。**修复**：worker 新增 findActiveManagedAssetAtPath（按路径查库内资产），name-conflict example 填充 existing 信息；NameConflictDialog 复用 content-duplicate 的缩略图展示（libraryId + examplesContent）。测试：重名冲突 example 断言 existing 字段。
+
+**FBX 重复检查（vqg9）实测**：重复检测**格式无关**（byte_size + SHA-256，classifyImportEntryConflict/findActiveManagedAssetByContent 无格式过滤）——测试证明：FBX 改名后导入相同内容 → suspected-duplicate 触发 + existingDisplayName 填充。用户未触发的原因待场景确认（同名导入时 name-conflict 优先、或导入入口差异）。

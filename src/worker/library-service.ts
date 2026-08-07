@@ -22300,6 +22300,49 @@ export class LibraryService {
     return null;
   }
 
+  /**
+   * Serpent-793k: find the managed asset occupying a destination path (a
+   * name-conflict collision target) so the conflict UI can show its real
+   * display name and thumbnail. Path matching is case-insensitive (Windows).
+   */
+  private findActiveManagedAssetAtPath(
+    openLibrary: OpenLibrary,
+    relativeFilePath: string,
+  ): {
+    assetId: string;
+    displayName: string;
+    thumbnailArtifactId: string | null;
+  } | null {
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.relative_file_path,
+                ra.artifact_id AS thumbnail_artifact_id,
+                ra.status AS thumbnail_status
+           FROM assets a
+           LEFT JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind = 'thumbnail'
+            AND ra.invalidated_at IS NULL
+          WHERE a.deleted_at IS NULL
+            AND a.location_kind = 'managed'
+            AND a.current_revision_id IS NOT NULL
+            AND LOWER(a.relative_file_path) = LOWER(?)`,
+      )
+      .get(relativeFilePath) as {
+      asset_id: string;
+      relative_file_path: string;
+      thumbnail_artifact_id: string | null;
+      thumbnail_status: string | null;
+    } | undefined;
+    if (!row) return null;
+    return {
+      assetId: row.asset_id,
+      displayName: path.posix.basename(row.relative_file_path),
+      thumbnailArtifactId:
+        row.thumbnail_status === 'ready' ? row.thumbnail_artifact_id : null,
+    };
+  }
+
   private findActiveManagedAssetIdByContent(
     openLibrary: OpenLibrary,
     byteSize: number,
@@ -22662,9 +22705,35 @@ export class LibraryService {
         if (conflictKind === 'name-conflict') {
           nameConflictCount += 1;
           if (examples.length < 8) {
+            // Serpent-793k: surface the colliding (already-existing) asset's
+            // display name + thumbnail in the name-conflict dialog, matching
+            // what content duplicates already show.
+            const destination = this.portableDiskDestination(
+              openLibrary,
+              entry.destinationRelativePath,
+            );
+            const existing =
+              destination && destination.size !== -1
+                ? this.findActiveManagedAssetAtPath(
+                    openLibrary,
+                    destination.actualRelativePath,
+                  )
+                : null;
             examples.push({
               displayName: path.posix.basename(entry.destinationRelativePath),
               kind: 'name-conflict',
+              ...(existing
+                ? {
+                    existingDisplayName: existing.displayName,
+                    existingAssetId: existing.assetId,
+                    ...(existing.thumbnailArtifactId
+                      ? {
+                          existingThumbnailArtifactId:
+                            existing.thumbnailArtifactId,
+                        }
+                      : {}),
+                  }
+                : {}),
             });
           }
           continue;

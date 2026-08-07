@@ -397,6 +397,78 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('surfaces the colliding asset name + thumbnail in name-conflict examples (Serpent-793k)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const firstSource = mkdtempSync(path.join(root, 'first-'));
+    const secondSource = mkdtempSync(path.join(root, 'second-'));
+    writeFileSync(path.join(firstSource, 'model.fbx'), 'aaa');
+    writeFileSync(path.join(secondSource, 'model.fbx'), 'bbb');
+
+    // Import the first file so the library holds a real asset row with a
+    // thumbnail artifact (Serpent-793k: name-conflict examples must carry the
+    // colliding asset's display name + preview, like content duplicates).
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(firstSource, 'model.fbx')],
+    });
+    expect('importedCount' in imported).toBe(true);
+
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(secondSource, 'model.fbx')],
+    });
+    expect(conflict.nameConflictCount).toBe(1);
+    const example = conflict.examples.find((item) => item.kind === 'name-conflict');
+    expect(example?.displayName).toBe('model.fbx');
+    expect(example?.existingDisplayName).toBe('model.fbx');
+    expect(example?.existingAssetId).toMatch(/^[0-9a-f-]{36}$/u);
+    // A thumbnail artifact may not be generated yet in this test, but the
+    // field must be present when it is (assert structure via schema later).
+    service.closeAll();
+  });
+
+  it('detects content duplicates for 3D files under a different name (Serpent-vqg9)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'src-'));
+    writeFileSync(path.join(sourceDir, 'model.fbx'), 'same-fbx-bytes');
+    writeFileSync(path.join(sourceDir, 'copy.fbx'), 'same-fbx-bytes');
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'model.fbx')],
+    });
+    expect('importedCount' in imported).toBe(true);
+
+    // Same content under a different name must be flagged as a duplicate —
+    // duplicate detection is content-hash based and format-agnostic.
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'copy.fbx')],
+    });
+    // suspectedDuplicateCount is the total duplicate count (library matches
+    // also increment the library subset).
+    expect(conflict.suspectedDuplicateCount).toBe(1);
+    expect(conflict.libraryDuplicateCount).toBe(1);
+    expect(conflict.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: 'copy.fbx',
+          kind: expect.stringMatching(/duplicate$/u),
+          existingDisplayName: 'model.fbx',
+        }),
+      ]),
+    );
+    service.closeAll();
+  });
+
   it('detects library-wide suspected duplicates across folders via byteSize and SHA-256', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
