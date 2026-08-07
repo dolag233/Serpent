@@ -23,6 +23,13 @@ export interface MigrationFailureRecord {
   error: string;
   attemptedAt: string;
   attempts: number;
+  /**
+   * The build's supported schema version when the failure was recorded.
+   * The stuck latch only holds while this matches the current build: after a
+   * Serpent upgrade the migration is retried once, so a newer build can
+   * recover a library the old build could not migrate (0031 §2.2 "失败可恢复").
+   */
+  supportedSchemaVersion?: number;
 }
 
 export function migrationFailurePath(libraryPath: string): string {
@@ -57,6 +64,7 @@ export function recordMigrationFailure(
   toVersion: number,
   error: string,
   now = new Date(),
+  supportedSchemaVersion?: number,
 ): MigrationFailureRecord {
   const previous = readMigrationFailure(libraryPath);
   const record: MigrationFailureRecord = {
@@ -65,6 +73,10 @@ export function recordMigrationFailure(
     error,
     attemptedAt: now.toISOString(),
     attempts: (previous?.attempts ?? 0) + 1,
+    // Records written before the build-version latch existed carry no
+    // supportedSchemaVersion; readers treat that as "current build" so the
+    // existing latch behaviour is preserved for them.
+    supportedSchemaVersion: supportedSchemaVersion ?? previous?.supportedSchemaVersion,
   };
   const filePath = migrationFailurePath(libraryPath);
   mkdirSync(path.dirname(filePath), { recursive: true });

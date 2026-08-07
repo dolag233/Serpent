@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LibraryService, MIGRATIONS } from '../../src/worker/library-service';
+import { LibraryService, MIGRATIONS, SUPPORTED_SCHEMA_VERSION } from '../../src/worker/library-service';
 import {
   clearMigrationFailure,
   MAX_MIGRATION_ATTEMPTS,
@@ -137,6 +137,38 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     const browse = stuck.listAssets({ libraryId: summary.libraryId, recursive: true });
     expect(browse).toEqual([]);
     stuck.closeAll();
+  });
+
+  it('an upgraded build retries a stuck library instead of staying latched', () => {
+    const root = temporaryRoot();
+    const libraryPath = buildV23Library(root);
+
+    // Three failing opens latch the library under the current build.
+    for (let attempt = 1; attempt <= MAX_MIGRATION_ATTEMPTS; attempt += 1) {
+      const failing = new LibraryService({
+        afterSchemaMigrationTransactionBegin: () => {
+          throw new Error('injected migration failure');
+        },
+      });
+      expect(() => failing.openLibrary(libraryPath)).toThrow();
+      failing.closeAll();
+    }
+    const latched = new LibraryService();
+    expect(latched.openLibrary(libraryPath).readOnly).toBe(true);
+    latched.closeAll();
+
+    // A newer build (supported schema bumped) must not honour the old
+    // build's latch: the migration is retried and succeeds.
+    const record = readMigrationFailure(libraryPath)!;
+    writeFileSync(
+      migrationFailurePath(libraryPath),
+      JSON.stringify({ ...record, supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION - 1 }),
+    );
+    const upgraded = new LibraryService();
+    const summary = upgraded.openLibrary(libraryPath);
+    expect(summary.readOnly === true).toBe(false);
+    expect(existsSync(migrationFailurePath(libraryPath))).toBe(false);
+    upgraded.closeAll();
   });
 
   it('a successful migration clears the failure record', () => {

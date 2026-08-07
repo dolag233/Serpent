@@ -80,7 +80,7 @@ import {
   type LibraryWriteLeaseHeartbeat,
 } from './library-write-coordinator';
 
-import { columnsFor, hasTable, invalidateColumnProbe, qualify, selectColumns } from './lenient-columns';
+import { columnsFor, degradedDefaults, hasTable, invalidateColumnProbe, missingColumns, qualify, selectColumns } from './lenient-columns';
 import {
   clearMigrationFailure,
   MAX_MIGRATION_ATTEMPTS,
@@ -2258,6 +2258,17 @@ export const MIGRATIONS = [
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
+/**
+ * Serpent-verg.7 — the in-place table-rebuild migrations (CREATE replacement
+ * → copy → DROP old → RENAME). The worker disables FK enforcement around
+ * these; `tests/worker/migration-discipline.test.ts` asserts this set matches
+ * the static gate's rebuild exceptions exactly, so a new rebuild migration
+ * must be added to both places.
+ */
+export const TABLE_REBUILD_MIGRATION_VERSIONS: ReadonlySet<number> = new Set([
+  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33,
+]);
+
 interface LibraryRow {
   library_id: string;
   display_name: string;
@@ -4040,23 +4051,12 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
     // from blocking and guarantees the rebuild is clean.
     //
     // Serpent-verg.7 (discipline audit): the full set of in-place table
-    // rebuilds is v4/v6/v7/v10/v14/v16/v18/v21/v25/v30/v32/v33 — every one
-    // creates a replacement table, copies, drops the old and renames. The FK
-    // guard is kept in lockstep so a future FK on any rebuilt table cannot
-    // silently break the DROP phase. (v15 dropped the old asset_search table
-    // without rebuilding — a historical pre-discipline exception.)
-    const rebuildsTable = migration.version === 4 ||
-      migration.version === 6 ||
-      migration.version === 7 ||
-      migration.version === 10 ||
-      migration.version === 14 ||
-      migration.version === 16 ||
-      migration.version === 18 ||
-      migration.version === 21 ||
-      migration.version === 25 ||
-      migration.version === 30 ||
-      migration.version === 32 ||
-      migration.version === 33;
+    // rebuilds — every one creates a replacement table, copies, drops the
+    // old and renames. The FK guard is kept in lockstep so a future FK on
+    // any rebuilt table cannot silently break the DROP phase. (v15 dropped
+    // the old asset_search table without rebuilding — a historical
+    // pre-discipline exception, intentionally not in this set.)
+    const rebuildsTable = TABLE_REBUILD_MIGRATION_VERSIONS.has(migration.version);
     if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
@@ -5521,6 +5521,14 @@ export class LibraryService {
 
   private syncGitignore(openLibrary: OpenLibrary, text = readGitignoreText(openLibrary.summary.libraryPath)): void {
     if (openLibrary.readOnly || text === openLibrary.gitignoreText) return;
+    // Serpent-verg review fix: libraries predating the ignore-rule tables
+    // have no gitignore state to sync.
+    if (
+      !hasTable(openLibrary.connection, 'explicit_ignored_paths') ||
+      !hasTable(openLibrary.connection, 'gitignore_ignored_paths')
+    ) {
+      return;
+    }
     const rules = parseGitignore(text);
     const transaction = openLibrary.connection.transaction(() => {
       // Managed ignore state is file-backed. Older versions also mirrored
@@ -7898,6 +7906,14 @@ export class LibraryService {
     }
 
     if (folderIds) {
+      // Serpent-verg review fix: the ignore/sequence-frame subqueries
+      // reference tables older libraries do not have; conditions are only
+      // added when the tables exist.
+      const connection = openLibrary.connection;
+      const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+      const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+      const hasExplicitIgnore = hasTable(connection, 'explicit_ignored_paths');
+      const hasGitignore = hasTable(connection, 'gitignore_ignored_paths');
       const placeholders = folderIds.map(() => '?').join(', ');
       const assetRows = openLibrary.connection
         .prepare(
@@ -7905,40 +7921,53 @@ export class LibraryService {
              FROM assets
             WHERE managed_folder_id IN (${placeholders})
               AND deleted_at IS NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
-              )
-              AND ${this.explicitIgnoreSql(openLibrary.connection, 'assets', showIgnored)}
-              AND NOT EXISTS (
+              ${hasIgnoreTable
+                ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id)'
+                : ''}
+              AND ${this.explicitIgnoreSql(connection, 'assets', showIgnored)}
+              ${hasSequenceFrames
+                ? `AND NOT EXISTS (
                 SELECT 1
                   FROM asset_sequence_frames hidden_sequence_frame
                  WHERE hidden_sequence_frame.asset_id = assets.asset_id
                    AND hidden_sequence_frame.position > 0
-              )
+              )`
+                : ''}
             GROUP BY managed_folder_id`,
         )
         .all(...folderIds) as Array<{ folder_id: string; count: number }>;
       for (const row of assetRows) directAssetCounts.set(row.folder_id, row.count);
 
+      const folderIgnoreClauses = [
+        hasExplicitIgnore
+          ? `NOT EXISTS (
+            SELECT 1 FROM explicit_ignored_paths ignored_folder
+             WHERE ignored_folder.location_kind = 'managed'
+               AND ignored_folder.linked_folder_id = ''
+               AND ignored_folder.path_kind = 'folder'
+               AND (mf.relative_path = ignored_folder.relative_path
+                 OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
+          )`
+          : null,
+        hasGitignore
+          ? `NOT EXISTS (
+            SELECT 1 FROM gitignore_ignored_paths ignored_git
+             WHERE ignored_git.path_kind = 'folder'
+               AND (mf.relative_path = ignored_git.relative_path
+                 OR mf.relative_path LIKE ignored_git.relative_path || '/%')
+          )`
+          : null,
+      ].filter((sql): sql is string => sql !== null);
       const childRows = openLibrary.connection
         .prepare(
           `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
              FROM managed_folders mf
             WHERE parent_folder_id IN (${placeholders})
-              AND ${showIgnored ? '1 = 1' : `NOT EXISTS (
-                SELECT 1 FROM explicit_ignored_paths ignored_folder
-                 WHERE ignored_folder.location_kind = 'managed'
-                   AND ignored_folder.linked_folder_id = ''
-                   AND ignored_folder.path_kind = 'folder'
-                   AND (mf.relative_path = ignored_folder.relative_path
-                     OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM gitignore_ignored_paths ignored_git
-                 WHERE ignored_git.path_kind = 'folder'
-                   AND (mf.relative_path = ignored_git.relative_path
-                     OR mf.relative_path LIKE ignored_git.relative_path || '/%')
-              )`}
+              AND ${
+                showIgnored || folderIgnoreClauses.length === 0
+                  ? '1 = 1'
+                  : folderIgnoreClauses.join(' AND ')
+              }
             GROUP BY parent_folder_id`,
         )
         .all(...folderIds) as Array<{ folder_id: string; count: number }>;
@@ -7946,46 +7975,66 @@ export class LibraryService {
       return { directAssetCounts, childFolderCounts };
     }
 
+    // Serpent-verg review fix: guard the ignore/sequence-frame subqueries
+    // (same table-existence rules as the folderIds variant above).
+    const connection = openLibrary.connection;
+    const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+    const hasExplicitIgnore = hasTable(connection, 'explicit_ignored_paths');
+    const hasGitignore = hasTable(connection, 'gitignore_ignored_paths');
     const assetRows = openLibrary.connection
       .prepare(
         `SELECT managed_folder_id AS folder_id, COUNT(*) AS count
            FROM assets
           WHERE managed_folder_id IS NOT NULL
             AND deleted_at IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
-            )
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'assets', showIgnored)}
-            AND NOT EXISTS (
+            ${hasIgnoreTable
+              ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id)'
+              : ''}
+            AND ${this.explicitIgnoreSql(connection, 'assets', showIgnored)}
+            ${hasSequenceFrames
+              ? `AND NOT EXISTS (
               SELECT 1
                 FROM asset_sequence_frames hidden_sequence_frame
                WHERE hidden_sequence_frame.asset_id = assets.asset_id
                  AND hidden_sequence_frame.position > 0
-            )
+            )`
+              : ''}
           GROUP BY managed_folder_id`,
       )
       .all() as Array<{ folder_id: string; count: number }>;
     for (const row of assetRows) directAssetCounts.set(row.folder_id, row.count);
 
+    const folderIgnoreClauses = [
+      hasExplicitIgnore
+        ? `NOT EXISTS (
+          SELECT 1 FROM explicit_ignored_paths ignored_folder
+           WHERE ignored_folder.location_kind = 'managed'
+             AND ignored_folder.linked_folder_id = ''
+             AND ignored_folder.path_kind = 'folder'
+             AND (mf.relative_path = ignored_folder.relative_path
+               OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
+        )`
+        : null,
+      hasGitignore
+        ? `NOT EXISTS (
+          SELECT 1 FROM gitignore_ignored_paths ignored_git
+           WHERE ignored_git.path_kind = 'folder'
+             AND (mf.relative_path = ignored_git.relative_path
+               OR mf.relative_path LIKE ignored_git.relative_path || '/%')
+        )`
+        : null,
+    ].filter((sql): sql is string => sql !== null);
     const childRows = openLibrary.connection
       .prepare(
         `SELECT parent_folder_id AS folder_id, COUNT(*) AS count
            FROM managed_folders mf
           WHERE parent_folder_id IS NOT NULL
-            AND ${showIgnored ? '1 = 1' : `NOT EXISTS (
-              SELECT 1 FROM explicit_ignored_paths ignored_folder
-               WHERE ignored_folder.location_kind = 'managed'
-                 AND ignored_folder.linked_folder_id = ''
-                 AND ignored_folder.path_kind = 'folder'
-                   AND (mf.relative_path = ignored_folder.relative_path
-                     OR mf.relative_path LIKE ignored_folder.relative_path || '/%')
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM gitignore_ignored_paths ignored_git
-               WHERE ignored_git.path_kind = 'folder'
-                 AND (mf.relative_path = ignored_git.relative_path
-                   OR mf.relative_path LIKE ignored_git.relative_path || '/%')
-            )`}
+            AND ${
+              showIgnored || folderIgnoreClauses.length === 0
+                ? '1 = 1'
+                : folderIgnoreClauses.join(' AND ')
+            }
           GROUP BY parent_folder_id`,
       )
       .all() as Array<{ folder_id: string; count: number }>;
@@ -8000,6 +8049,14 @@ export class LibraryService {
   ): Map<string, string[]> {
     const covers = new Map<string, string[]>();
     if (folderIds.length === 0) return covers;
+    // Serpent-verg review fix: libraries predating revision_artifacts.status
+    // (v9) or linked_ignored_assets have no covers to map.
+    if (
+      !columnsFor(openLibrary.connection, 'revision_artifacts').has('status') ||
+      !hasTable(openLibrary.connection, 'linked_ignored_assets')
+    ) {
+      return covers;
+    }
     const placeholders = folderIds.map(() => '?').join(', ');
     const rows = openLibrary.connection
       .prepare(
@@ -8895,19 +8952,19 @@ export class LibraryService {
     // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
     // an older library does not have (0031 §1.1): the feature degrades
     // (size/metadata/thumbnail not shown) instead of the query failing.
-    const degradedFill: Record<string, unknown> = {};
-    if (!assetColumns.has('trashed_from_relative_path')) {
-      degradedFill.trashed_from_relative_path = null;
-    }
-    if (!revisionColumns.has('byte_size')) degradedFill.byte_size = 0;
-    if (!revisionColumns.has('modified_at')) degradedFill.modified_at = '';
-    if (!metadataColumns.has('rating')) degradedFill.rating = 0;
-    if (!metadataColumns.has('favorite')) degradedFill.favorite = 0;
-    if (!artifactColumns.has('status')) degradedFill.thumbnail_status = null;
-    if (!artifactColumns.has('artifact_id')) degradedFill.thumbnail_artifact_id = null;
-    if (!artifactColumns.has('width')) degradedFill.artifact_width = null;
-    if (!artifactColumns.has('height')) degradedFill.artifact_height = null;
-    if (!artifactColumns.has('duration_ms')) degradedFill.artifact_duration_ms = null;
+    // Column-name defaults come from the shared registry; the thumbnail row
+    // aliases (thumbnail_status/artifact_*) are keyed by result-field name
+    // and stay explicit here.
+    const degradedFill: Record<string, unknown> = {
+      ...degradedDefaults('assets', missingColumns(connection, 'assets', ['trashed_from_relative_path'])),
+      ...degradedDefaults('revisions', missingColumns(connection, 'revisions', ['byte_size', 'modified_at'])),
+      ...degradedDefaults('asset_metadata', missingColumns(connection, 'asset_metadata', ['rating', 'favorite'])),
+      ...(!artifactColumns.has('status') ? { thumbnail_status: null } : {}),
+      ...(!artifactColumns.has('artifact_id') ? { thumbnail_artifact_id: null } : {}),
+      ...(!artifactColumns.has('width') ? { artifact_width: null } : {}),
+      ...(!artifactColumns.has('height') ? { artifact_height: null } : {}),
+      ...(!artifactColumns.has('duration_ms') ? { artifact_duration_ms: null } : {}),
+    };
 
     const assets = rows
       .map((row) => ({ ...degradedFill, ...row }))
@@ -16610,18 +16667,13 @@ export class LibraryService {
       }>;
 
     // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
-    // an older library does not have (0031 §1.1).
-    const degradedFill: Record<string, unknown> = {};
-    if (!revisionColumns.has('byte_size')) degradedFill.byte_size = 0;
-    if (!revisionColumns.has('modified_at')) degradedFill.modified_at = '';
-    if (!metadataColumns.has('rating')) degradedFill.rating = 0;
-    if (!metadataColumns.has('favorite')) degradedFill.favorite = 0;
-    if (!assetColumns.has('trashed_from_relative_path')) {
-      degradedFill.trashed_from_relative_path = null;
-    }
-    if (!assetColumns.has('trashed_from_tombstone_id')) {
-      degradedFill.trashed_from_tombstone_id = null;
-    }
+    // an older library does not have (0031 §1.1); defaults come from the
+    // shared registry.
+    const degradedFill: Record<string, unknown> = {
+      ...degradedDefaults('assets', missingColumns(connection, 'assets', ['trashed_from_relative_path', 'trashed_from_tombstone_id'])),
+      ...degradedDefaults('revisions', missingColumns(connection, 'revisions', ['byte_size', 'modified_at'])),
+      ...degradedDefaults('asset_metadata', missingColumns(connection, 'asset_metadata', ['rating', 'favorite'])),
+    };
 
     const artifactMap = this.thumbnailArtifactMap(
       input.libraryId,
@@ -21967,6 +22019,9 @@ export class LibraryService {
     linkedFolderId: string | null,
     relativePath: string,
   ): boolean {
+    // Serpent-verg review fix: libraries predating the ignore-rule table
+    // have no explicit ignores.
+    if (!hasTable(openLibrary.connection, 'explicit_ignored_paths')) return false;
     const normalized = this.normalizeExplicitIgnorePath(relativePath, locationKind === 'linked');
     const row = openLibrary.connection.prepare(
       `SELECT 1 FROM explicit_ignored_paths
@@ -24329,10 +24384,16 @@ export class LibraryService {
       const migrationFailure = probedVersion === null
         ? null
         : readMigrationFailure(canonicalPath);
+      // Serpent-verg.5 review fix: the stuck latch only holds while the
+      // failure was recorded by this build's supported schema version. After
+      // an upgrade the migration is retried, so a newer build can recover a
+      // library the old build could not migrate (0031 §2.2 失败可恢复).
       const migrationStuck = probedVersion !== null &&
         migrationFailure !== null &&
         migrationFailure.fromVersion === probedVersion &&
-        migrationFailure.attempts >= MAX_MIGRATION_ATTEMPTS;
+        migrationFailure.attempts >= MAX_MIGRATION_ATTEMPTS &&
+        (migrationFailure.supportedSchemaVersion ?? SUPPORTED_SCHEMA_VERSION) ===
+          SUPPORTED_SCHEMA_VERSION;
       if (probedVersion !== null &&
         (probedVersion > SUPPORTED_SCHEMA_VERSION || migrationStuck)) {
         if (migrationStuck) {
@@ -24477,8 +24538,12 @@ export class LibraryService {
           recordMigrationFailure(
             canonicalPath,
             schemaVersion(connection!),
-            0,
+            // The migration target is always the current build's supported
+            // schema (0031 §2.2 records fromVersion/toVersion).
+            SUPPORTED_SCHEMA_VERSION,
             error instanceof LibraryServiceError ? error.code : 'LIBRARY_MIGRATION_FAILED',
+            undefined,
+            SUPPORTED_SCHEMA_VERSION,
           );
         } catch {
           // The primary failure remains more useful than a record failure.

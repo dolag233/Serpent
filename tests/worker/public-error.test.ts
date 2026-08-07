@@ -52,6 +52,25 @@ describe('Library Worker public error boundary', () => {
     });
   });
 
+  it('maps a missing-column write failure to LIBRARY_STRUCTURE_MISMATCH', () => {
+    const sqliteError = new Error('no such column: mandatory_tag');
+    Object.assign(sqliteError, { code: 'SQLITE_ERROR' });
+    expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
+      code: 'LIBRARY_STRUCTURE_MISMATCH',
+      message:
+        'This library has an incompatible structure for this operation. Upgrade Serpent to the latest version.',
+    });
+  });
+
+  it('keeps unrelated SQLITE_ERROR failures generic', () => {
+    const sqliteError = new Error('database is locked');
+    Object.assign(sqliteError, { code: 'SQLITE_ERROR' });
+    expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
+      code: 'INTERNAL_ERROR',
+      message: 'Serpent could not complete the request.',
+    });
+  });
+
   it('safely degrades malformed LibraryServiceError states', () => {
     for (const malformed of [
       new LibraryServiceError('VERSION_CONFLICT'),

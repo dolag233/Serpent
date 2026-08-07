@@ -6,19 +6,20 @@
 // v14/v32) are the explicit, documented exceptions.
 import { describe, expect, it } from 'vitest';
 
-import { MIGRATIONS } from '../../src/worker/library-service';
+import { MIGRATIONS, TABLE_REBUILD_MIGRATION_VERSIONS } from '../../src/worker/library-service';
 
 /**
- * Documented exceptions to the add-only discipline. v4/v6/v7/v10/v14/v16/
- * v18/v21/v25/v30/v32/v33 rebuild a table in place (CREATE replacement →
- * copy → DROP old → RENAME), matching the worker's rebuild handling; v15
- * dropped the old asset_search table without rebuilding (recreated in v18)
- * — a historical pre-discipline exception, not a pattern for new
- * migrations.
+ * Documented exceptions to the add-only discipline. In-place table rebuilds
+ * (CREATE replacement → copy → DROP old → RENAME) must match the worker's
+ * `TABLE_REBUILD_MIGRATION_VERSIONS` exactly (asserted below) so the FK
+ * guard and the static gate can never drift apart. v15 is a separate
+ * historical exception: it dropped the old asset_search table without
+ * rebuilding (recreated in v18) — predates the discipline, not a pattern.
  */
 const TABLE_REBUILD_VERSIONS: ReadonlySet<number> = new Set([
-  4, 6, 7, 10, 14, 15, 16, 18, 21, 25, 30, 32, 33,
+  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33,
 ]);
+const HISTORICAL_DROP_EXCEPTIONS: ReadonlySet<number> = new Set([15]);
 
 export interface DisciplineViolation {
   version: number;
@@ -40,7 +41,8 @@ export function checkMigrationDiscipline(
   sql: string,
 ): DisciplineViolation[] {
   const violations: DisciplineViolation[] = [];
-  const isRebuild = TABLE_REBUILD_VERSIONS.has(version);
+  const isRebuild =
+    TABLE_REBUILD_VERSIONS.has(version) || HISTORICAL_DROP_EXCEPTIONS.has(version);
 
   // Table-rebuild migrations are the documented exception: they replace a
   // table in place (CREATE replacement → copy → DROP old → RENAME), so their
@@ -88,10 +90,14 @@ describe('migration discipline static gate (Serpent-verg.7)', () => {
     expect(allViolations).toEqual([]);
   });
 
-  it('rebuild versions are exactly the documented set', () => {
+  it('rebuild versions match the worker FK-guard set exactly (lockstep)', () => {
     expect([...TABLE_REBUILD_VERSIONS].sort((a, b) => a - b)).toEqual([
-      4, 6, 7, 10, 14, 15, 16, 18, 21, 25, 30, 32, 33,
-    ]);
+      ...TABLE_REBUILD_MIGRATION_VERSIONS,
+    ].sort((a, b) => a - b));
+  });
+
+  it('historical drop exception is exactly v15', () => {
+    expect([...HISTORICAL_DROP_EXCEPTIONS]).toEqual([15]);
   });
 
   it('versions are contiguous (no gaps in the chain)', () => {
