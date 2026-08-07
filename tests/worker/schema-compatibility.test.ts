@@ -22,7 +22,10 @@ interface TestDatabaseConnection {
   close(): void;
   exec(sql: string): void;
   pragma(source: string, options?: { simple?: boolean }): unknown;
-  prepare(source: string): { run(...params: unknown[]): unknown };
+  prepare(source: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+  };
 }
 
 const Database = require('better-sqlite3') as new (filename: string) => TestDatabaseConnection;
