@@ -80,7 +80,7 @@ import {
   type LibraryWriteLeaseHeartbeat,
 } from './library-write-coordinator';
 
-import { columnsFor, hasTable, invalidateColumnProbe, qualify } from './lenient-columns';
+import { columnsFor, hasTable, invalidateColumnProbe, qualify, selectColumns } from './lenient-columns';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
@@ -14116,34 +14116,52 @@ export class LibraryService {
       .get(assetId) as { current_revision_id: string | null } | undefined;
     if (!assetRow?.current_revision_id) return null;
 
-    const row = openLibrary.connection
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // artifact table (or the columns needed to address an artifact) have no
+    // current artifact; callers already treat null as "no artifact".
+    const connection = openLibrary.connection;
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    if (!artifactColumns.has('artifact_id') || !artifactColumns.has('kind')) {
+      return null;
+    }
+    const present = selectColumns(connection, 'revision_artifacts', [
+      'artifact_id',
+      'file_path',
+      'mime_type',
+      'generator_version',
+      'status',
+      'error_code',
+    ]);
+    if (present.length === 0) return null;
+    const row = connection
       .prepare(
-        `SELECT artifact_id, file_path, mime_type, generator_version, status, error_code
+        `SELECT ${present.join(', ')}
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = ?
-            AND invalidated_at IS NULL
+            ${artifactColumns.has('invalidated_at') ? 'AND invalidated_at IS NULL' : ''}
           LIMIT 1`,
       )
       .get(assetRow.current_revision_id, kind) as {
-        artifact_id: string;
-        file_path: string;
-        mime_type: string;
-        generator_version: string;
-        status: string;
-        error_code: string | null;
+        artifact_id?: string;
+        file_path?: string;
+        mime_type?: string;
+        generator_version?: string;
+        status?: string;
+        error_code?: string | null;
       } | undefined;
 
-    return row
-      ? {
-          artifactId: row.artifact_id,
-          filePath: row.file_path,
-          mimeType: row.mime_type,
-          generatorVersion: row.generator_version,
-          status: row.status,
-          errorCode: row.error_code,
-        }
-      : null;
+    if (!row) return null;
+    return {
+      artifactId: row.artifact_id ?? '',
+      filePath: row.file_path ?? '',
+      mimeType: row.mime_type ?? '',
+      generatorVersion: row.generator_version ?? '',
+      // A missing status degrades to a non-ready value so callers treat the
+      // artifact as absent instead of failing.
+      status: row.status ?? '',
+      errorCode: row.error_code ?? null,
+    };
   }
 
   private async getImageColorSpace(
