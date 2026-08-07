@@ -3837,7 +3837,10 @@ function searchFieldsForClause(field: string | null): readonly SearchIndexField[
  * for one/two-character terms). It is deliberately parameterized: user text
  * never becomes SQL, even when a saved smart collection is malformed.
  */
-function buildContextualSearchWhere(groups: SearchGroup[]): {
+function buildContextualSearchWhere(
+  groups: SearchGroup[],
+  assetOnly = false,
+): {
   sql: string;
   params: string[];
 } {
@@ -3855,10 +3858,24 @@ function buildContextualSearchWhere(groups: SearchGroup[]): {
         continue;
       }
       const valueExpressions = normalizedValues.map((value) => {
-        const fieldExpressions = fields.map((field) => {
-          params.push(value);
-          return `instr(sc.${field}, ?) > 0`;
-        });
+        // Serpent-verg.2 — lenient read (0031 §1): libraries without the
+        // asset_search_index table degrade to a filename substring match on
+        // the assets table; non-filename fields are not searchable there and
+        // degrade to no match.
+        const fieldExpressions = fields
+          .map((field) => {
+            if (assetOnly) {
+              if (field !== 'filename' && field !== 'folder_path') return null;
+              params.push(value);
+              return `instr(a.relative_file_path, ?) > 0`;
+            }
+            params.push(value);
+            return `instr(sc.${field}, ?) > 0`;
+          })
+          .filter((expression): expression is string => expression !== null);
+        if (fieldExpressions.length === 0) {
+          return '0';
+        }
         return fieldExpressions.length === 1
           ? fieldExpressions[0]!
           : `(${fieldExpressions.join(' OR ')})`;
@@ -3921,9 +3938,13 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
     }
   }
   return {
+    // Serpent-verg.2 — an empty rank must not emit a bare numeric literal:
+    // SQLite parses ORDER BY <number> as a column ordinal, so `ORDER BY 99`
+    // crashed every search whose fields were not indexed. Callers treat an
+    // empty sql as "no relevance tier" and fall back to the default sort.
     sql:
       termRanks.length === 0
-        ? '99'
+        ? ''
         : termRanks.length === 1
           ? termRanks[0]!
           : `MIN(${termRanks.join(', ')})`,
@@ -7859,7 +7880,7 @@ export class LibraryService {
               AND NOT EXISTS (
                 SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
               )
-              AND ${this.explicitIgnoreSql('assets', showIgnored)}
+              AND ${this.explicitIgnoreSql(openLibrary.connection, 'assets', showIgnored)}
               AND NOT EXISTS (
                 SELECT 1
                   FROM asset_sequence_frames hidden_sequence_frame
@@ -7906,7 +7927,7 @@ export class LibraryService {
             AND NOT EXISTS (
               SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = assets.asset_id
             )
-            AND ${this.explicitIgnoreSql('assets', showIgnored)}
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'assets', showIgnored)}
             AND NOT EXISTS (
               SELECT 1
                 FROM asset_sequence_frames hidden_sequence_frame
@@ -7976,7 +7997,7 @@ export class LibraryService {
             AND NOT EXISTS (
               SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
             )
-            AND ${this.explicitIgnoreSql('a', showIgnored)}
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
           ORDER BY a.managed_folder_id, a.relative_file_path`,
       )
       .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
@@ -8046,7 +8067,7 @@ export class LibraryService {
         .prepare(`SELECT COUNT(*) AS count FROM assets a
                    WHERE a.linked_folder_id = ?
                      AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
-                     AND ${this.explicitIgnoreSql('a')}
+                     AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
                      AND NOT EXISTS (
                        SELECT 1
                          FROM asset_sequence_frames hidden_sequence_frame
@@ -8532,6 +8553,14 @@ export class LibraryService {
     assets: readonly AssetSummary[],
   ): AssetSummary[] {
     if (assets.length === 0) return [];
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // sequence tables have no memberships; return assets unchanged.
+    if (
+      !hasTable(openLibrary.connection, 'asset_sequence_frames') ||
+      !hasTable(openLibrary.connection, 'asset_sequences')
+    ) {
+      return assets.map((asset) => ({ ...asset, sequence: null }));
+    }
     const assetIds = assets.map((asset) => asset.assetId);
     const membershipPlaceholders = assetIds.map(() => '?').join(',');
     const memberships = openLibrary.connection.prepare(
@@ -8820,8 +8849,9 @@ export class LibraryService {
             AND video_meta.kind = 'extracted_metadata'
             ${artifactColumns.has('status') ? "AND video_meta.status = 'ready'" : ''}
             AND video_meta.invalidated_at IS NULL
-          WHERE NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
-            AND ${this.explicitIgnoreSql('a', input.showIgnored === true)}
+          WHERE ${hasTable(connection, 'linked_ignored_assets')
+            ? 'NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id) AND '
+            : ''}${this.explicitIgnoreSql(connection, 'a', input.showIgnored === true)}
           ORDER BY a.relative_file_path`,
       )
       .all() as Array<AssetSummaryRow & {
@@ -15832,6 +15862,11 @@ export class LibraryService {
   }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     if (assetIds.length === 0) return new Map();
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating
+    // revision_artifacts.status have no thumbnail artifacts to map.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return new Map();
+    }
 
     const placeholders = assetIds.map(() => '?').join(',');
     const rows = openLibrary.connection
@@ -16082,6 +16117,17 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
+    // Serpent-verg.2 — lenient read (0031 §1): display/derived columns and
+    // auxiliary tables added after the earliest supported schema are
+    // whitelisted; missing ones degrade the query instead of failing.
+    const assetColumns = columnsFor(connection, 'assets');
+    const revisionColumns = columnsFor(connection, 'revisions');
+    const metadataColumns = columnsFor(connection, 'asset_metadata');
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+    const hasSearchIndex = hasTable(connection, 'asset_search_index');
+    const hasSearchFts = hasTable(connection, 'asset_search');
     const scopeMode = input.scopeMode === true;
     const limit = scopeMode ? BROWSE_SCOPE_MAX_ASSETS : (input.limit ?? 50);
     const offset = scopeMode ? 0 : (input.offset ?? 0);
@@ -16089,12 +16135,15 @@ export class LibraryService {
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
     const hasQuery = searchGroups.length > 0;
     const hasPositiveQuery = hasPositiveSearchClause(searchGroups);
-    const useTrigramIndex = hasQuery && ftsCanNarrowSearchGroups(searchGroups);
+    // Serpent-verg.2 — lenient read: the trigram FTS path requires the FTS
+    // tables to exist; older libraries fall back to the contextual substring
+    // search instead of referencing a missing MATCH table.
+    const useTrigramIndex = hasQuery && hasSearchIndex && hasSearchFts && ftsCanNarrowSearchGroups(searchGroups);
     const fts5Query = useTrigramIndex
       ? buildTrigramFts5Query(searchGroups)
       : null;
     const { sql: contextualSearchWhere, params: contextualSearchParams } = hasQuery
-      ? buildContextualSearchWhere(searchGroups)
+      ? buildContextualSearchWhere(searchGroups, !hasSearchIndex)
       : { sql: '', params: [] };
     const { sql: filterWhere, params: filterParams } = this.buildFilterWhere(
       input.filters ?? [],
@@ -16105,26 +16154,56 @@ export class LibraryService {
     let orderBy: string;
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
-      const relevance = buildContextualSearchRank(searchGroups);
-      orderBy = `${relevance.sql} ASC, a.relative_file_path ASC, a.asset_id ASC`;
-      orderParams.push(...relevance.params);
+      // Serpent-verg.2 — relevance ranking requires the search index table;
+      // without it (or when no field ranks apply) fall back to the default
+      // name sort instead of emitting an invalid ORDER BY ordinal.
+      const relevance = hasSearchIndex
+        ? buildContextualSearchRank(searchGroups)
+        : { sql: '', params: [] };
+      if (relevance.sql) {
+        orderBy = `${relevance.sql} ASC, a.relative_file_path ASC, a.asset_id ASC`;
+        orderParams.push(...relevance.params);
+      } else {
+        orderBy = `a.relative_file_path ASC, a.asset_id ASC`;
+      }
     } else if (input.sort) {
       const sortField = input.sort.field;
       const dir = input.sort.order === 'desc' ? 'DESC' : 'ASC';
+      // Serpent-verg.2 — lenient read: sorting by a column that an older
+      // library does not have degrades to the default name sort instead of
+      // failing the query.
+      const sortableByStructure = {
+        modified_at: revisionColumns.has('modified_at'),
+        byte_size: revisionColumns.has('byte_size'),
+        rating: metadataColumns.has('rating'),
+        author: metadataColumns.has('author'),
+        duration: artifactColumns.has('duration_ms'),
+        long_edge: artifactColumns.has('width') && artifactColumns.has('height'),
+        color: artifactColumns.has('dominant_hue') && artifactColumns.has('dominant_lightness'),
+      };
+      const defaultNameSort = `a.relative_file_path ASC, a.asset_id ASC`;
       switch (sortField) {
         case 'name':
           orderBy = `a.relative_file_path ${dir}, a.asset_id ASC`;
           break;
         case 'modified_at':
-          orderBy = `r.modified_at ${dir}, a.asset_id ASC`;
+          orderBy = sortableByStructure.modified_at
+            ? `r.modified_at ${dir}, a.asset_id ASC`
+            : defaultNameSort;
           break;
         case 'created_at':
           orderBy = `a.created_at ${dir}, a.asset_id ASC`;
           break;
         case 'byte_size':
-          orderBy = `r.byte_size ${dir}, a.asset_id ASC`;
+          orderBy = sortableByStructure.byte_size
+            ? `r.byte_size ${dir}, a.asset_id ASC`
+            : defaultNameSort;
           break;
         case 'long_edge': {
+          if (!sortableByStructure.long_edge) {
+            orderBy = defaultNameSort;
+            break;
+          }
           // Same long-edge expression as REQ-FILTER-010 numeric filters.
           const width =
             'COALESCE(duration_meta.width, technical_thumbnail.width)';
@@ -16136,22 +16215,30 @@ export class LibraryService {
           break;
         }
         case 'duration':
-          orderBy = `duration_meta.duration_ms IS NULL ASC, duration_meta.duration_ms ${dir}, a.asset_id ASC`;
+          orderBy = sortableByStructure.duration
+            ? `duration_meta.duration_ms IS NULL ASC, duration_meta.duration_ms ${dir}, a.asset_id ASC`
+            : defaultNameSort;
           break;
         case 'rating':
-          orderBy = `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`;
+          orderBy = sortableByStructure.rating
+            ? `COALESCE(m.rating, 0) ${dir}, a.asset_id ASC`
+            : defaultNameSort;
           break;
         case 'author':
-          orderBy = `COALESCE(m.author, '') = '' ASC, COALESCE(m.author, '') COLLATE NOCASE ${dir}, a.asset_id ASC`;
+          orderBy = sortableByStructure.author
+            ? `COALESCE(m.author, '') = '' ASC, COALESCE(m.author, '') COLLATE NOCASE ${dir}, a.asset_id ASC`
+            : defaultNameSort;
           break;
         case 'color':
-          orderBy = `palette_meta.dominant_hue IS NULL ASC,
-                     palette_meta.dominant_hue ${dir},
-                     palette_meta.dominant_lightness ${dir},
-                     a.asset_id ASC`;
+          orderBy = sortableByStructure.color
+            ? `palette_meta.dominant_hue IS NULL ASC,
+               palette_meta.dominant_hue ${dir},
+               palette_meta.dominant_lightness ${dir},
+               a.asset_id ASC`
+            : defaultNameSort;
           break;
         default:
-          orderBy = `a.relative_file_path ASC, a.asset_id ASC`;
+          orderBy = defaultNameSort;
       }
     } else if (input.scope?.kind === 'collection') {
       if (input.scope.recursive) {
@@ -16194,12 +16281,12 @@ export class LibraryService {
            LEFT JOIN revision_artifacts duration_meta
              ON duration_meta.revision_id = a.current_revision_id
             AND duration_meta.kind = 'extracted_metadata'
-            AND duration_meta.status = 'ready'
+            ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
             AND duration_meta.invalidated_at IS NULL
            LEFT JOIN revision_artifacts palette_meta
              ON palette_meta.revision_id = a.current_revision_id
             AND palette_meta.kind = 'extracted_palette'
-            AND palette_meta.status = 'ready'
+            ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
             AND palette_meta.invalidated_at IS NULL
            LEFT JOIN revision_artifacts technical_thumbnail
              ON technical_thumbnail.revision_id = a.current_revision_id
@@ -16214,22 +16301,24 @@ export class LibraryService {
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
-            AND technical_thumbnail.status = 'ready'
+            ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
             AND technical_thumbnail.invalidated_at IS NULL
-           JOIN asset_search_index sc ON a.asset_id = sc.asset_id
-           ${useTrigramIndex ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
+           ${hasSearchIndex ? 'JOIN asset_search_index sc ON a.asset_id = sc.asset_id' : ''}
+           ${useTrigramIndex && hasSearchIndex && hasSearchFts
+             ? 'JOIN asset_search s ON sc.rowid = s.rowid'
+             : ''}`
       : `FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
            LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
            LEFT JOIN revision_artifacts duration_meta
              ON duration_meta.revision_id = a.current_revision_id
             AND duration_meta.kind = 'extracted_metadata'
-            AND duration_meta.status = 'ready'
+            ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
             AND duration_meta.invalidated_at IS NULL
            LEFT JOIN revision_artifacts palette_meta
              ON palette_meta.revision_id = a.current_revision_id
             AND palette_meta.kind = 'extracted_palette'
-            AND palette_meta.status = 'ready'
+            ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
             AND palette_meta.invalidated_at IS NULL
            LEFT JOIN revision_artifacts technical_thumbnail
              ON technical_thumbnail.revision_id = a.current_revision_id
@@ -16244,7 +16333,7 @@ export class LibraryService {
               THEN 'video_poster'
               ELSE 'thumbnail'
             END
-            AND technical_thumbnail.status = 'ready'
+            ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
             AND technical_thumbnail.invalidated_at IS NULL`;
 
     // WHERE clause.
@@ -16266,14 +16355,21 @@ export class LibraryService {
     whereParts.push(input.scope?.kind === 'trash'
       ? 'a.deleted_at IS NOT NULL'
       : 'a.deleted_at IS NULL');
-    whereParts.push('NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)');
-    whereParts.push(this.explicitIgnoreSql('a', input.showIgnored === true));
-    whereParts.push(`NOT EXISTS (
-      SELECT 1
-        FROM asset_sequence_frames hidden_sequence_frame
-       WHERE hidden_sequence_frame.asset_id = a.asset_id
-         AND hidden_sequence_frame.position > 0
-    )`);
+    // Serpent-verg.2 — lenient read: the ignore/sequence-frame subqueries
+    // reference tables that older libraries do not have; the conditions are
+    // only added when the tables exist.
+    if (hasIgnoreTable) {
+      whereParts.push('NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)');
+    }
+    whereParts.push(this.explicitIgnoreSql(connection, 'a', input.showIgnored === true));
+    if (hasSequenceFrames) {
+      whereParts.push(`NOT EXISTS (
+        SELECT 1
+          FROM asset_sequence_frames hidden_sequence_frame
+         WHERE hidden_sequence_frame.asset_id = a.asset_id
+           AND hidden_sequence_frame.position > 0
+      )`);
+    }
 
     if (filterWhere.length > 0) {
       whereParts.push(filterWhere);
@@ -16343,17 +16439,26 @@ export class LibraryService {
     const whereClause =
       whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
-    // Columns for data query.
-    const dataColumns = useTrigramIndex
-      ? `a.asset_id, a.location_kind, a.managed_folder_id, a.linked_folder_id, a.relative_file_path, a.current_revision_id,
-         a.availability, r.byte_size, r.modified_at,
-         COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-         a.deleted_at, a.trashed_from_relative_path, a.trashed_from_tombstone_id,
-         snippet(asset_search, -1, '<b>', '</b>', '...', 32) AS snippet_text`
-      : `a.asset_id, a.location_kind, a.managed_folder_id, a.linked_folder_id, a.relative_file_path, a.current_revision_id,
-         a.availability, r.byte_size, r.modified_at,
-         COALESCE(m.rating, 0) AS rating, COALESCE(m.favorite, 0) AS favorite,
-         a.deleted_at, a.trashed_from_relative_path, a.trashed_from_tombstone_id`;
+    // Columns for data query. Display/derived columns are whitelisted per
+    // table (Serpent-verg.2): missing columns on older libraries are omitted
+    // here and filled with degraded defaults on the result rows.
+    const dataColumns = [
+      'a.asset_id',
+      'a.location_kind',
+      'a.managed_folder_id',
+      'a.linked_folder_id',
+      'a.relative_file_path',
+      'a.current_revision_id',
+      'a.availability',
+      'a.deleted_at',
+      ...qualify('r', revisionColumns, ['byte_size', 'modified_at']),
+      ...(metadataColumns.has('rating') ? ['COALESCE(m.rating, 0) AS rating'] : []),
+      ...(metadataColumns.has('favorite') ? ['COALESCE(m.favorite, 0) AS favorite'] : []),
+      ...qualify('a', assetColumns, ['trashed_from_relative_path', 'trashed_from_tombstone_id']),
+      ...(useTrigramIndex && hasSearchFts
+        ? ["snippet(asset_search, -1, '<b>', '</b>', '...', 32) AS snippet_text"]
+        : []),
+    ].join(',\n');
 
     // Total count query.
     const countSql = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause}`;
@@ -16383,11 +16488,29 @@ export class LibraryService {
         snippet_text?: string;
       }>;
 
+    // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
+    // an older library does not have (0031 §1.1).
+    const degradedFill: Record<string, unknown> = {};
+    if (!revisionColumns.has('byte_size')) degradedFill.byte_size = 0;
+    if (!revisionColumns.has('modified_at')) degradedFill.modified_at = '';
+    if (!metadataColumns.has('rating')) degradedFill.rating = 0;
+    if (!metadataColumns.has('favorite')) degradedFill.favorite = 0;
+    if (!assetColumns.has('trashed_from_relative_path')) {
+      degradedFill.trashed_from_relative_path = null;
+    }
+    if (!assetColumns.has('trashed_from_tombstone_id')) {
+      degradedFill.trashed_from_tombstone_id = null;
+    }
+
     const artifactMap = this.thumbnailArtifactMap(
       input.libraryId,
       rows.map((row) => row.asset_id),
     );
-    const items = this.withImageSequenceSummaries(openLibrary, rows.map((row) => {
+    const items = this.withImageSequenceSummaries(
+      openLibrary,
+      rows
+        .map((row) => ({ ...degradedFill, ...row }) as typeof row)
+        .map((row) => {
       const artifact = artifactMap.get(row.asset_id);
       const detectedMediaType = LibraryService.detectMediaType(row.relative_file_path);
       return this.assetSummaryFromRow({
@@ -21663,8 +21786,21 @@ export class LibraryService {
     }
   }
 
-  private explicitIgnoreSql(alias = 'a', showIgnored = false): string {
+  private explicitIgnoreSql(
+    connection: DatabaseConnection,
+    alias = 'a',
+    showIgnored = false,
+  ): string {
     if (showIgnored) return '1 = 1';
+    // Serpent-verg.2 — lenient read (0031 §1): libraries predating the
+    // ignore-rule tables have no ignored paths to exclude; skip the
+    // subqueries instead of failing on the missing tables.
+    if (
+      !hasTable(connection, 'explicit_ignored_paths') ||
+      !hasTable(connection, 'gitignore_ignored_paths')
+    ) {
+      return '1 = 1';
+    }
     return `NOT EXISTS (
       SELECT 1
         FROM explicit_ignored_paths ignored_path
