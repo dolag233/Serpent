@@ -133,7 +133,7 @@
 
 **根因**：enqueueThumbnailJobs 的入队条件 `NOT EXISTS (status IN ('ready','failed'))`——**failed artifact 永久挡住重新入队**，失败后无任何后续触发点（MEDIA-003 组件修复仅覆盖组件缺失且单会话一次）。
 
-**实现**（提交 63f5f0b）：
+**实现**（提交 12326e1）：
 - 新模块 `src/worker/derived-artifact-repair.ts`：`requeueRetryableFailedArtifacts`——单条 SQL 找出「可重试 failed 衍生件」（源 available + error_code 不在持久失败集 + 上次失败 ≥ 30 分钟节流 + 无 active job）→ invalidate（现有入队 SQL 自动重新匹配）。**持久失败**（SOURCE_NOT_FOUND/FILE_TOO_LARGE/UNSUPPORTED_FORMAT/FBX_NOT_FBX 等 10 码）保持 failed 标记永不重试
 - `enqueueThumbnailJobs` 新增 `retryFailed` 选项；openLibrary startup + scheduleThumbnailScene 全部场景带 `retryFailed: true`——**打开库/浏览到即自动补生成**
 - 测试：tests/worker/derived-artifact-repair.test.ts 5 用例（可重试重入队、持久失败不重试、节流、源缺失不重试、幂等）
