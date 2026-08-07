@@ -4038,7 +4038,25 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
     // table references smart_collections via FK, the table itself has an
     // outgoing FK to library(library_id). Disabling FK prevents DROP TABLE
     // from blocking and guarantees the rebuild is clean.
-    const rebuildsTable = migration.version === 4 || migration.version === 6 || migration.version === 7 || migration.version === 14 || migration.version === 32;
+    //
+    // Serpent-verg.7 (discipline audit): the full set of in-place table
+    // rebuilds is v4/v6/v7/v10/v14/v16/v18/v21/v25/v30/v32/v33 — every one
+    // creates a replacement table, copies, drops the old and renames. The FK
+    // guard is kept in lockstep so a future FK on any rebuilt table cannot
+    // silently break the DROP phase. (v15 dropped the old asset_search table
+    // without rebuilding — a historical pre-discipline exception.)
+    const rebuildsTable = migration.version === 4 ||
+      migration.version === 6 ||
+      migration.version === 7 ||
+      migration.version === 10 ||
+      migration.version === 14 ||
+      migration.version === 16 ||
+      migration.version === 18 ||
+      migration.version === 21 ||
+      migration.version === 25 ||
+      migration.version === 30 ||
+      migration.version === 32 ||
+      migration.version === 33;
     if (rebuildsTable) connection.pragma('foreign_keys = OFF');
     try {
       connection.transaction(() => {
