@@ -30,3 +30,10 @@
 - `Serpent-tcr1`（批量 AI 分析后 Inspector 不刷新，P1）
 - `Serpent-sd9n`（HDRI 选择器 E2E 失败，P2，既有问题）
 - `Serpent-5xbg`（缺失衍生件后台补生成，P1，用户点名）
+
+## 本机（Windows）后续合并补充记录（2026-08-07）
+
+- 本机 `git pull` 合并 9 个远端提交：唯一 git 冲突为 `.beads/issues.jsonl`，按 ID 并集 + `updated_at` 比较解决（673 条；远端 pjx2 重新打开 supersede 本机 defer）。合并提交 `ff55c00`。
+- 本地 Dolt 与远端 Dolt 再次 non-fast-forward：本机 bd 同样无冲突解决命令。处理：先 `bd import .beads/issues.jsonl --json` 全量 upsert 对齐本地 Dolt（内容 = 权威 JSONL），`bd dolt pull` 仍报历史级冲突 → 按上文先例不再强制合并；**本机不 push Dolt**（远端已由 Mac 侧 force 到一致状态）。
+- 本地快照存档：`bd export --all -o .beads/beads-local-snapshot-2026-08-07.jsonl`（673 条），该文件不入 git（随镜像提交无意义，供冲突时恢复）。
+- 遗留：若未来本机需要 push 本地 Dolt 新工单，先导出快照，必要时按先例 `bd dolt push --force`（内容均已在 JSONL 镜像）。
