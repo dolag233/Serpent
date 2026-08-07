@@ -20,6 +20,7 @@ import {
   LibraryServiceError,
   type ImportFailurePoint,
 } from '../../src/worker/library-service';
+import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
 
@@ -466,6 +467,53 @@ describe('pending import plans', () => {
         }),
       ]),
     );
+    service.closeAll();
+  });
+
+  it('carries the existing asset thumbnail in name-conflict examples when ready (Serpent-793k)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const srcDir = mkdtempSync(path.join(root, 'src-'));
+    const firstSource = path.join(srcDir, 'same.png');
+    const secondSource = path.join(srcDir, 'other.png');
+    writeFileSync(firstSource, ONE_PX_RED_PNG);
+    const bluePng = Buffer.from(ONE_PX_RED_PNG);
+    bluePng[44] = 0; // different content, still a valid PNG
+    // The colliding import keeps the same destination basename (same.png)
+    // with different bytes — that is the name-conflict case.
+    writeFileSync(secondSource, bluePng);
+    // Import the second file under the colliding name by staging it as
+    // same.png in a separate source dir.
+    const collideDir = mkdtempSync(path.join(root, 'collide-'));
+    writeFileSync(path.join(collideDir, 'same.png'), bluePng);
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [firstSource],
+    });
+    expect('importedCount' in imported).toBe(true);
+    // Generate the thumbnail so the library asset has a ready preview.
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    const asset = assets.find((item) => item.displayName === 'same.png');
+    expect(asset).toBeDefined();
+    const thumb = await service.generateThumbnail({
+      libraryId: library.libraryId,
+      assetId: asset!.assetId,
+    });
+    expect(thumb?.artifactId).toBeTruthy();
+
+    // Import a different-content file that collides on the same basename.
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'same.png')],
+    });
+    expect(conflict.nameConflictCount).toBe(1);
+    const example = conflict.examples.find((item) => item.kind === 'name-conflict');
+    expect(example?.existingDisplayName).toBe('same.png');
+    expect(example?.existingThumbnailArtifactId).toBe(thumb!.artifactId);
     service.closeAll();
   });
 
