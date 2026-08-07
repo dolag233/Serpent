@@ -1722,6 +1722,8 @@ export const en = {
       LIBRARY_CORRUPT: "The library database or migration record is corrupt.",
       LIBRARY_VERSION_TOO_NEW: "This library was created by a newer version of Serpent.",
       LIBRARY_READ_ONLY: "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
+      LIBRARY_MIGRATION_FAILED: "The library migration failed and was rolled back. Serpent will retry it automatically when you open the library again.",
+      LIBRARY_MIGRATION_STUCK: "This library could not be migrated after repeated attempts and is now read-only. Keep this version of Serpent installed and try upgrading once it is available.",
       LIBRARY_NOT_WRITABLE: "Serpent cannot write to the selected location.",
       LIBRARY_CLEANUP_FAILED: "Creation failed, and temporary files could not be cleaned up automatically.",
       LIBRARY_NOT_OPEN: "That library is not open.",

@@ -986,7 +986,10 @@ describe('LibraryService lifecycle', () => {
     service.closeAll();
     downgradeLibraryToV1(created.libraryPath, true);
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    // Serpent-verg.5 (0031 §2.2): a rolled-back migration failure is now a
+    // retryable LIBRARY_MIGRATION_FAILED (recorded for the retry path)
+    // rather than LIBRARY_CORRUPT — the version still does not advance.
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_MIGRATION_FAILED');
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(database.pragma('user_version')).toEqual([{ user_version: 1 }]);
@@ -1013,7 +1016,8 @@ describe('LibraryService lifecycle', () => {
     ).run(randomUUID(), randomUUID(), new Date().toISOString(), new Date().toISOString());
     before.close();
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    // Serpent-verg.5: a rolled-back table-rebuild failure is retryable.
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_MIGRATION_FAILED');
 
     const after = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(after.pragma('user_version')).toEqual([{ user_version: 3 }]);

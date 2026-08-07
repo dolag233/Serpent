@@ -81,6 +81,12 @@ import {
 } from './library-write-coordinator';
 
 import { columnsFor, hasTable, invalidateColumnProbe, qualify, selectColumns } from './lenient-columns';
+import {
+  clearMigrationFailure,
+  MAX_MIGRATION_ATTEMPTS,
+  readMigrationFailure,
+  recordMigrationFailure,
+} from './schema-failure';
 import { sanitizeAiDescription } from '../shared/ai-analysis-settings';
 import {
   CONTENT_REPLACE_BATCH_MAX_ITEMS,
@@ -3369,17 +3375,15 @@ function schemaVersion(connection: DatabaseConnection): number {
 }
 
 /**
- * Serpent-033e: probe whether a library file was written by a newer build
- * without running any migration or WAL pragma. Returns the library's schema
- * version when it exceeds the supported one, otherwise null (the normal open
- * path reports real errors itself).
+ * Serpent-033e/verg.5: probe the library's schema version without running
+ * any migration or WAL pragma. Returns the version number, or null when the
+ * file cannot be probed (the normal open path reports real errors itself).
  */
 function schemaVersionProbe(filename: string): number | null {
   let connection: DatabaseConnection | undefined;
   try {
     connection = openConfiguredDatabase(filename, 5_000, { readonly: true });
-    const version = schemaVersion(connection);
-    return version > SUPPORTED_SCHEMA_VERSION ? version : null;
+    return schemaVersion(connection);
   } catch {
     return null;
   } finally {
@@ -4081,7 +4085,11 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           // The primary migration failure remains more useful than a re-enable failure.
         }
       }
-      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      // Serpent-verg.5 (0031 §2.2): a rolled-back migration failure is
+      // retryable and diagnosed via .serpent/migration-failed.json; the
+      // open path records it. verifyMigrationHistory failures above/below
+      // keep LIBRARY_CORRUPT (damaged history is never retried).
+      throw new LibraryServiceError('LIBRARY_MIGRATION_FAILED', { cause: error });
     }
     if (rebuildsTable) connection.pragma('foreign_keys = ON');
   }
@@ -10313,7 +10321,6 @@ export class LibraryService {
     // asset_metadata (or missing individual metadata columns) degrade to the
     // empty-metadata shape instead of failing.
     const connection = openLibrary.connection;
-    const metadataColumns = columnsFor(connection, 'asset_metadata');
     const present = hasTable(connection, 'asset_metadata')
       ? selectColumns(connection, 'asset_metadata', [
           'asset_id',
@@ -16694,7 +16701,6 @@ export class LibraryService {
     // fill with defaults.
     const connection = openLibrary.connection;
     if (!hasTable(connection, 'smart_collections')) return [];
-    const smartColumns = columnsFor(connection, 'smart_collections');
     const present = selectColumns(connection, 'smart_collections', [
       'collection_id',
       'name',
@@ -24292,13 +24298,32 @@ export class LibraryService {
     }
 
     let connection: DatabaseConnection | undefined;
+    let migrationAttempted = false;
     try {
       // Serpent-033e: a library written by a newer build still opens — in
       // read-only mode (browse/search/preview work; every write fails with
       // LIBRARY_READ_ONLY at the SQLite level). Schema bumps must never lock
       // a user out of their library.
-      const tooNew = schemaVersionProbe(databasePath(canonicalPath));
-      if (tooNew !== null) {
+      // Serpent-verg.5 (0031 §2.2): a migration that failed MAX attempts
+      // against the same from-version stops retrying and opens read-only
+      // too (lenient read) instead of failing forever.
+      const probedVersion = schemaVersionProbe(databasePath(canonicalPath));
+      const migrationFailure = probedVersion === null
+        ? null
+        : readMigrationFailure(canonicalPath);
+      const migrationStuck = probedVersion !== null &&
+        migrationFailure !== null &&
+        migrationFailure.fromVersion === probedVersion &&
+        migrationFailure.attempts >= MAX_MIGRATION_ATTEMPTS;
+      if (probedVersion !== null &&
+        (probedVersion > SUPPORTED_SCHEMA_VERSION || migrationStuck)) {
+        if (migrationStuck) {
+          this.diagnose('library.migration-stuck', new Error(migrationFailure.error), {
+            libraryPath: canonicalPath,
+            fromVersion: migrationFailure.fromVersion,
+            attempts: migrationFailure.attempts,
+          });
+        }
         connection = openConfiguredDatabase(
           databasePath(canonicalPath),
           this.options.sqliteBusyTimeoutMsForTests,
@@ -24321,7 +24346,7 @@ export class LibraryService {
           displayName: libraryRow.display_name,
           libraryPath: canonicalPath,
           readOnly: true,
-          libraryVersion: tooNew,
+          libraryVersion: probedVersion,
           supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
         };
         const openLibrary: OpenLibrary = {
@@ -24340,7 +24365,11 @@ export class LibraryService {
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
       );
+      migrationAttempted = true;
       migrateDatabase(connection, false, this.options);
+      // Serpent-verg.5: a successful migration clears the failure record so
+      // the retry counter never leaks into later sessions.
+      clearMigrationFailure(canonicalPath);
       backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
       try {
@@ -24414,6 +24443,26 @@ export class LibraryService {
       });
       return summary;
     } catch (error) {
+      // Serpent-verg.5 (0031 §2.2): a rolled-back migration failure is
+      // recorded so the next open retries (up to MAX_MIGRATION_ATTEMPTS)
+      // and then degrades to read-only instead of failing forever.
+      // verifyMigrationHistory failures stay LIBRARY_CORRUPT and are never
+      // recorded (damaged history is not retryable).
+      if (
+        migrationAttempted &&
+        !(error instanceof LibraryServiceError && error.code === 'LIBRARY_CORRUPT')
+      ) {
+        try {
+          recordMigrationFailure(
+            canonicalPath,
+            schemaVersion(connection!),
+            0,
+            error instanceof LibraryServiceError ? error.code : 'LIBRARY_MIGRATION_FAILED',
+          );
+        } catch {
+          // The primary failure remains more useful than a record failure.
+        }
+      }
       closeIgnoringFailure(connection);
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }

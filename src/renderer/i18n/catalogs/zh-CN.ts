@@ -1702,6 +1702,8 @@ export const zhCN = {
       LIBRARY_CORRUPT: "资源库数据库或迁移记录已损坏。",
       LIBRARY_VERSION_TOO_NEW: "该资源库由更新版本的 Serpent 创建。",
       LIBRARY_READ_ONLY: "该资源库由更新版本的 Serpent 创建，当前为只读模式。升级 Serpent 后可继续编辑。",
+      LIBRARY_MIGRATION_FAILED: "资源库迁移失败并已回滚。下次打开资源库时会自动重试。",
+      LIBRARY_MIGRATION_STUCK: "该资源库多次尝试迁移均失败，现为只读模式。请保留当前版本的 Serpent，待新版可用后再升级。",
       LIBRARY_NOT_WRITABLE: "Serpent 无法写入所选位置。",
       LIBRARY_CLEANUP_FAILED: "创建失败，且临时文件无法自动清理。",
       LIBRARY_NOT_OPEN: "该资源库当前没有打开。",
