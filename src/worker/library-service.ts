@@ -14071,6 +14071,7 @@ export class LibraryService {
     assetId: string,
     requestedExrPlane?: number,
     requestedColorSpace?: string,
+    intent: 'viewer' | 'hover' = 'viewer',
   ): Promise<ReturnType<LibraryService['getPreviewArtifact']> & {
     exrPlanes?: ExrPlaneDescriptor[];
     selectedExrPlane?: number;
@@ -14093,7 +14094,7 @@ export class LibraryService {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
 
-    const basePreview = this.getPreviewArtifact(libraryId, assetId);
+    const basePreview = this.getPreviewArtifact(libraryId, assetId, intent);
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const decoder = imageDecoderForExtension(extension);
     if (basePreview.mediaType === 'video' && asset.current_revision_id) {
@@ -14203,6 +14204,7 @@ export class LibraryService {
   getPreviewArtifact(
     libraryId: string,
     assetId: string,
+    intent: 'viewer' | 'hover' = 'viewer',
   ): {
     mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
@@ -14319,6 +14321,43 @@ export class LibraryService {
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
     if (mediaType === 'video' || mediaType === 'audio') {
+      // REQ-VIEW-002: the viewer always plays the ORIGINAL source when the
+      // container is natively playable — a ready proxy must never take over
+      // the viewer (regression: the proxy-first branch made every analyzed
+      // video play its WebM derivative instead of the source). The proxy
+      // paths below remain for containers Chromium cannot play natively
+      // (AVI/WMV), and the 'hover' intent keeps the old proxy-first behavior
+      // so card hover previews stay lightweight.
+      if (intent === 'viewer' && nativeMimeType && asset.current_revision_id) {
+        const extracted =
+          mediaType === 'video'
+            ? this.getExtractedMetadata({ libraryId, assetId })
+            : null;
+        const sourceCodecs =
+          extracted?.status === 'ready' && extracted.metadata?.videoCodec
+            ? [extracted.metadata.videoCodec]
+            : undefined;
+        const sourceContainer =
+          mediaType === 'video' && extension === '.mp4'
+            ? 'mp4'
+            : mediaType === 'video' && extension === '.mov'
+              ? 'mov'
+              : mediaType === 'video' && extension === '.webm'
+                ? 'webm'
+                : undefined;
+        return {
+          mediaType,
+          status: 'ready',
+          kind,
+          mimeType: nativeMimeType,
+          ...(posterArtifactId ? { posterArtifactId } : {}),
+          playbackMode: 'source',
+          sourceRevisionId: asset.current_revision_id,
+          sourceMimeType: nativeMimeType,
+          ...(sourceContainer ? { sourceContainer } : {}),
+          ...(sourceContainer && sourceCodecs ? { sourceCodecs } : {}),
+        };
+      }
       const status = artifact?.status === 'generating' ? 'pending' : artifact?.status;
       if (status === 'ready' && artifact) {
         return {

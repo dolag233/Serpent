@@ -47,9 +47,10 @@ export function PortaledPopover({
   ...rest
 }: PortaledPopoverProps): ReactNode {
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<AnchorRect | null>(() =>
-    readAnchorRect(anchorRef.current),
-  );
+  // Reading anchorRef inside the useState initializer violates
+  // react-hooks/refs (refs must not be read during render); the layout
+  // effect below performs the first measure instead.
+  const [coords, setCoords] = useState<AnchorRect | null>(null);
 
   useLayoutEffect(() => {
     const update = () => {

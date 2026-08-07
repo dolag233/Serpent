@@ -3371,6 +3371,10 @@ function AppInner() {
       // Refresh only — completion toast is owned by queue-drain (Serpent-4i18).
       void reloadCurrentContentRef.current();
       if (selectedAssetIdRef.current === event.assetId) {
+        // Serpent-c9r3: refreshAfterAi refreshes the primary's metadata and
+        // (for multi-selections) every selected asset's metadata, then
+        // rebuilds the batch-edit Inspector model — without the rebuild the
+        // multiEdit chips stay stale after a batch AI analysis completes.
         void refreshAfterAiRef.current(event.assetId);
       }
     });
@@ -5419,6 +5423,23 @@ function AppInner() {
       // Best-effort; AI content load still proceeds.
     }
     await loadAiContentForAsset(assetId);
+    // Multi-selection: the batch-edit Inspector reads the multiEdit model
+    // built from per-asset metadata (intersection), so every selected
+    // asset's metadata must be fresh before the model is rebuilt — the
+    // primary alone was refreshed above (Serpent-c9r3 regression: batch AI
+    // analysis completed but the Inspector stayed stale until a reselect).
+    if (selectedAssetIdsRef.current.length >= 2) {
+      const ids = [...new Set(selectedAssetIdsRef.current)];
+      for (const id of ids) {
+        if (id === assetId) continue;
+        try {
+          await refreshTagAndMetadataState(id);
+        } catch {
+          // Best-effort per asset; the rebuild still proceeds.
+        }
+      }
+      rebuildAndApplyMultiEdit(ids);
+    }
   };
 
   async function revealAfterImport(completion: {

@@ -77,6 +77,10 @@ export function useAssetCardHoverPreview(input: {
             libraryId,
             assetId: targetAssetId,
             mode: "client",
+            // Hover previews must stay lightweight: play the WebM proxy when
+            // one exists, never the original source (REQ-VIEW-002 only
+            // applies to the double-click viewer).
+            intent: "hover",
           });
           if (sequence !== requestSeqRef.current) return;
           if (!result.ok) return;

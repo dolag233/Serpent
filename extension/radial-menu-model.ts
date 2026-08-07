@@ -489,7 +489,6 @@ export function clampCenter(
   y: number,
   viewportWidth: number,
   viewportHeight: number,
-  _geometry?: unknown,
 ): { x: number; y: number } {
   const margin = DEFAULT_TREE_GEOMETRY.viewportMargin + 40;
   return {

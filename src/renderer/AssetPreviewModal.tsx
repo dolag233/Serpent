@@ -259,6 +259,9 @@ export const AssetPreviewModal = forwardRef<
           libraryId,
           assetId: asset.assetId,
           mode,
+          // The double-click viewer always plays the ORIGINAL source
+          // (REQ-VIEW-002); proxies are for hover previews only.
+          intent: "viewer",
           ...(asset.mediaType === "image" ? { exrPlane } : {}),
           ...(colorSpace ? { colorSpace } : {}),
         });

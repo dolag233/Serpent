@@ -2475,6 +2475,7 @@ async function commandFor(
         type: "media.get-preview-artifact",
         libraryId: request.libraryId,
         assetId: request.assetId,
+        ...(request.intent === undefined ? {} : { intent: request.intent }),
         ...(request.exrPlane === undefined ? {} : { exrPlane: request.exrPlane }),
         ...(request.colorSpace === undefined ? {} : { colorSpace: request.colorSpace }),
       };

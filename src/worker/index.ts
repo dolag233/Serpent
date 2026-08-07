@@ -1837,6 +1837,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.assetId,
         request.command.exrPlane,
         request.command.colorSpace,
+        request.command.intent,
       );
       return {
         ok: true,
