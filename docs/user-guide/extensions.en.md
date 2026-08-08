@@ -37,3 +37,14 @@ MCP (Model Context Protocol) lets an external agent or MCP host drive Serpent.
 - External agent or MCP host: **MCP**
 
 Full authoring guides and API references are in the [extension author manual](../manual/README.md).
+
+```mermaid
+flowchart TB
+    Q{What are you building?}
+    Q -->|Menus, settings, toolbar, custom UI| P[Plugin]
+    Q -->|Repeatable one-off batch| S[Automation script]
+    Q -->|External agent or MCP host| M[MCP]
+    P --> P2[Long-lived, sandboxed host contributions]
+    S --> S2[Desktop Console, isolated run]
+    M --> M2[Local stdio, shared permissions]
+```

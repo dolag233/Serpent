@@ -269,7 +269,7 @@ summary:focus-visible {
 
 /* Thin overlay scrollbars (Serpent-62wm): thumb stays transparent until the
    user scrolls or the pointer is near the track — not on generic panel hover.
-   Show is instant; hide fades out (docs/ui/0005-motion-and-reveal-ux-principles).
+   Show is instant; hide fades out (docs/internal/ui/0005-motion-and-reveal-ux-principles).
    Windows canvas still reserves scrollbar-gutter (Serpent-itr). */
 * {
   scrollbar-color: transparent transparent;

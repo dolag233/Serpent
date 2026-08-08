@@ -8,7 +8,7 @@
  * `src/main/index.ts` supplies plain display data read from
  * `electron.screen`.
  *
- * See docs/development/2026-07-19-e2e-isolated-session-development-log.md
+ * See docs/internal/development/2026-07-19-e2e-isolated-session-development-log.md
  * for why this replaced the earlier `BrowserWindow.showInactive` attempt.
  */
 

@@ -686,7 +686,7 @@ function focusSerpentWindow(windowId?: number): boolean {
  * Isolated-session placement for `SERPENT_E2E_ISOLATED=1`: real E2E must keep
  * real `show()`/focus semantics (an earlier `showInactive` attempt broke
  * keyboard/focus tests and was reverted — see
- * docs/development/2026-07-19-e2e-isolated-session-development-log.md), so
+ * docs/internal/development/2026-07-19-e2e-isolated-session-development-log.md), so
  * this only changes *where* the window appears, never how it is shown.
  * When a non-primary display exists, the window is placed fully within it;
  * on a single-display Mac there is no isolation available yet and the

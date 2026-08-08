@@ -10,7 +10,7 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 /**
  * Wave 3 UI/UX audit capture utility (not part of the gate suites): drives the
  * real app through the primary surfaces and saves screenshots to
- * docs/qa/evidence/wave3-ux-audit/ for human/agent visual review.
+ * docs/internal/qa/evidence/wave3-ux-audit/ for human/agent visual review.
  */
 test.describe.configure({ timeout: 180_000 });
 

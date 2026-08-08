@@ -310,7 +310,7 @@ default 必须在 minimum/maximum 内，slider 的 step 必须大于 0。静态�
 自定义页面是 sandboxed iframe，声明在 `contributes.views`，location 为 `sidebar`、`workspace`、`inspector`、`viewer` 或 `settings`，
 可选 `entry` 指向包内 HTML。`ui.entry` 是包级 UI 入口；页面通过 typed bridge 使用 Host/后端能力，不能注入 React、访问宿主 DOM 或 Node。
 插件设置字段已经使用 Host 内部 UI library 的统一 primitives；插件仍不能把宿主 CSS class 当作 API。更复杂的 Host-rendered
-结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+结构化 UI descriptor 使用 `contributes.ui`，设计与字段限制见 [`0029 UI 标准化执行方案与插件原生 UI 契约`](../../internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
 
 ### 8.1 Plugin UI Contract v1
 

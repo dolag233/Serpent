@@ -2,7 +2,7 @@ import type { ExtensionFolderOption } from './folder-menu';
 
 /**
  * Serpent-c0ml / REQ-EXT-005 拖拽思维导图树状保存菜单纯逻辑。
- * 规格：docs/ui/0002-extension-drag-radial-save-menu.md（v7 树状）。
+ * 规格：docs/internal/ui/0002-extension-drag-radial-save-menu.md（v7 树状）。
  * 本模块不接触 DOM；命中矩形与层级项生成可单测。渲染在 radial-menu.ts。
  */
 

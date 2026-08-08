@@ -37,3 +37,14 @@ MCP（Model Context Protocol）让外部 Agent 或 MCP Host 接入 Serpent 执�
 - 外部 Agent 或 MCP Host 调用：**MCP**
 
 编写扩展的完整指南与 API 参考见[扩展作者手册](../manual/README.md)。
+
+```mermaid
+flowchart TB
+    Q{你要构建什么？}
+    Q -->|菜单、设置、工具栏、自定义 UI| P[插件]
+    Q -->|可重复的一次性批处理| S[自动化脚本]
+    Q -->|外部 Agent 或 MCP Host 调用| M[MCP]
+    P --> P2[长期运行，使用沙箱与宿主贡献]
+    S --> S2[Desktop Console，隔离运行]
+    M --> M2[本地 stdio，共享权限模型]
+```

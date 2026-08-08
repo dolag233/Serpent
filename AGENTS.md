@@ -6,7 +6,7 @@
 
 Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产管理软件，对标 Eagle/Billfish。首发用户为游戏美术、影视后期、平面/UI/品牌设计师。技术栈：Electron + TypeScript + SQLite + Vite + React。
 
-完整产品定义、领域模型、术语、开发流程都在版本控制内的 `docs/` 下。开始工作前先读 `docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md`、`docs/project-status.md` 和 `docs/qa/human-acceptance-checklist.md`。
+完整产品定义、领域模型、术语、开发流程都在版本控制内的 `docs/` 下。开始工作前先读 `docs/product-brief.md`、`docs/internal/development-process.md`、`docs/internal/domain-model.md`、`docs/internal/project-status.md` 和 `docs/internal/qa/human-acceptance-checklist.md`。
 
 ## 环境约束（必读）
 
@@ -75,7 +75,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 工单管理（beads）
 
-本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
+本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
 
 - 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
 - **排他认领（强制）**：同一工单同一时间只允许一个 agent 实施。选中后立刻 `bd update <id> --claim`（原子认领：设 assignee + `in_progress`）；不要只改状态却不认领。禁止对已是 `in_progress`、或已有其他 assignee 的工单动手；不确定时先 `bd show <id>` / `bd list --status=in_progress`。不得与其他 agent「一起做」同一工单，也不得绕过 `bd ready` 凭标题或记忆开干。
@@ -87,16 +87,16 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - **工单迁移安全**：已有 Dolt 数据库禁止直接运行 `bd init --from-jsonl`、`--reinit-local` 或覆盖式重建。使用 `bd import <snapshot> --json` 做增量 upsert，检查实际 ID 集合、重复 ID、状态/优先级冲突和依赖，再运行 `bd export -o .beads/issues.jsonl` 生成完整镜像；`bd import --dry-run` 的批次计数不能作为逐项迁移证据。
 - **合并后的提交门禁**：`.beads/issues.jsonl` 与 `.beads/interactions.jsonl` 的工单变更必须和代码合并一起提交；提交前核对 `bd list --all --json` 与完整导出的 ID 集合一致，并在开发日志中记录来源快照、迁移结果和未解决冲突。若原分支只有本地 Dolt、没有快照，不能凭标题猜测恢复描述、依赖或验收条件。
 - 可运行 `bd prime` 获取完整命令参考。
-- **真实编码待办怎么查**（与「待人类验收」清单区分）：见 [`docs/agent-work-queue.md`](docs/agent-work-queue.md)。开工顺序：`bd ready --json` → `docs/project-status.md` 当前前沿 → 清单中仅「人类验收不通过」作缺陷池。
+- **真实编码待办怎么查**（与「待人类验收」清单区分）：见 [`docs/internal/agent-work-queue.md`](docs/internal/agent-work-queue.md)。开工顺序：`bd ready --json` → `docs/internal/project-status.md` 当前前沿 → 清单中仅「人类验收不通过」作缺陷池。
 
 ## 当前开发状态
 
-垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/development-process.md`）。
+垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/internal/development-process.md`）。
 
 - 0001–0010 已有广泛实现，仍按各切片 QA 文档收口 packaged、Windows、真实外部旅程与发布阻断；不能把历史实现提交视为最终验收。
 - 0012 已完成 macOS 开发态验收；0013 查看体验继续收口；0014 功能候选为 `f1330a7`，最终合流和 Windows 证据待补。
-- 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/implementation/mvp-ui-ux-requirements-backlog.md`。
-- 当前事实、优先级和保留条件以 `docs/project-status.md` 为准，不在本文件复制逐切片细节。
+- 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/internal/implementation/mvp-ui-ux-requirements-backlog.md`。
+- 当前事实、优先级和保留条件以 `docs/internal/project-status.md` 为准，不在本文件复制逐切片细节。
 
 ## 关键约束
 
@@ -109,7 +109,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 验收纪律（2026-07-14 复盘新增，强制生效）
 
-> 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，所有 agent 每会话强制遵守。
+> 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/internal/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，所有 agent 每会话强制遵守。
 
 1. **四列可追溯**：每项规格验收维护四列——需求条目 | 实现位置(file:line) | 自动化测试(test:line) | 人工/平台证据。任一列缺失只能写"部分完成/未验证"，不得写"覆盖完整/已验证"。
 2. **代码存在 ≠ 覆盖**：failpoint/恢复路径的存在不构成覆盖证据；必须证明 failpoint 实际触发 + 进程重启 + 磁盘/DB 对账。未触发即"未验证"。
@@ -128,25 +128,25 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 ## 文档入口
 
 - `docs/product-brief.md` — 产品愿景与 MVP 边界
-- `docs/development-process.md` — 切片开发与质量流程
-- `docs/domain-model.md` / `docs/glossary.md` — 领域模型与术语
-- `docs/adr/0001`–`0022` — 架构决策记录
-- `docs/implementation/NNNN-*.md` — 切片实施规格
-- `docs/implementation/mvp-ui-ux-requirements-backlog.md` — 2026-07-16 新增 MVP UI/UX、文件管理需求与集中澄清队列
-- `docs/development/NNNN-*.md` — 切片开发日志
-- `docs/reviews/NNNN-*.md` — 双轴代码审查
-- `docs/qa/NNNN-*.md` — QA 报告
-- `docs/qa/human-acceptance-checklist.md` — 面向产品负责人的持续人类验收队列
-- `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
-- `docs/ui/0003-keyboard-shortcut-ux-principles.md` — 默认快捷键 UX 原则（何时配键、跨平台、查看器媒体键）
-- `docs/ui/0004-calm-error-and-copy-ux-principles.md` — 错误与文案语气（禁止「严重错误」、阻塞窗标题、避免焦虑）
-- `docs/research/` — 技术调研
+- `docs/internal/development-process.md` — 切片开发与质量流程
+- `docs/internal/domain-model.md` / `docs/glossary.md` — 领域模型与术语
+- `docs/internal/adr/0001`–`0022` — 架构决策记录
+- `docs/internal/implementation/NNNN-*.md` — 切片实施规格
+- `docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` — 2026-07-16 新增 MVP UI/UX、文件管理需求与集中澄清队列
+- `docs/internal/development/NNNN-*.md` — 切片开发日志
+- `docs/internal/reviews/NNNN-*.md` — 双轴代码审查
+- `docs/internal/qa/NNNN-*.md` — QA 报告
+- `docs/internal/qa/human-acceptance-checklist.md` — 面向产品负责人的持续人类验收队列
+- `docs/internal/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
+- `docs/internal/ui/0003-keyboard-shortcut-ux-principles.md` — 默认快捷键 UX 原则（何时配键、跨平台、查看器媒体键）
+- `docs/internal/ui/0004-calm-error-and-copy-ux-principles.md` — 错误与文案语气（禁止「严重错误」、阻塞窗标题、避免焦虑）
+- `docs/internal/research/` — 技术调研
 
 ## 人类功能验收清单（强制）
 
-- `docs/qa/human-acceptance-checklist.md` 是跨 agent 的功能验收队列。所有 agent 在开始开发前必须读取，开发过程中持续更新，不能只在会话结束时补写。
+- `docs/internal/qa/human-acceptance-checklist.md` 是跨 agent 的功能验收队列。所有 agent 在开始开发前必须读取，开发过程中持续更新，不能只在会话结束时补写。
 - **UI / 浏览等需人眼的条目**：按可由人类独立操作的最小功能拆分。只有功能路径已实现、相关自动化通过、无该范围已知阻断、且能写出操作步骤与预期时，才能加入「待人类验收」。自动化通过或 agent 自测**不能**把这类条目改为「人类验收通过」；仅用户本人确认后才可。用户报问题时立即改为「人类验收不通过」或「已撤回」。
-- **插件 / 脚本 / MCP / Gateway（`PLUGIN-*`、`AUT-*`）**：以自动化测试为准（档位见 [`docs/agent-plugin-playbook.md`](docs/agent-plugin-playbook.md)）。Agent 在声明档位绿时可设「自动化验收通过」；缺档位设「自动化证据不足」；失败设「自动化未通过」。不要求人类逐步点验。packaged / Windows 未跑须在条目中标明「未执行」。
+- **插件 / 脚本 / MCP / Gateway（`PLUGIN-*`、`AUT-*`）**：以自动化测试为准（档位见 [`docs/internal/agent-plugin-playbook.md`](docs/internal/agent-plugin-playbook.md)）。Agent 在声明档位绿时可设「自动化验收通过」；缺档位设「自动化证据不足」；失败设「自动化未通过」。不要求人类逐步点验。packaged / Windows 未跑须在条目中标明「未执行」。
 - 每完成一个新的可验收增量，必须在同一提交中更新清单，并在汇报中列出变化的 ID。
 
 ## 核心体验回归门禁
@@ -154,7 +154,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 浏览、缩略图解码、客户端查看、导入、搜索和删除是核心用户旅程。任何跨 Renderer / Preload / Main / Worker、自定义协议、CSP、媒体二进制或打包资源的修改，都必须重跑真实 Electron E2E。
 - 预览测试必须证明媒体被解码：图片检查 `complete && naturalWidth > 0`；视频至少检查元数据和非零尺寸。只断言 DOM、状态或 job 成功不算通过。
 - 持久化必须以“完整退出应用后重新启动”为测试边界；仅关闭窗口或复用同一 Worker 不算重启恢复。
-- 多 agent 或共享工作树结束后，主 agent 必须在最终合并状态运行 `npm run verify:mainline`。详见 `docs/development-process.md`。
+- 多 agent 或共享工作树结束后，主 agent 必须在最终合并状态运行 `npm run verify:mainline`。详见 `docs/internal/development-process.md`。
 - 每个较大功能或核心 UX 更新在验收前，主 agent 必须使用 Computer Use 操作真实 Serpent 应用，并用截图检查关键 UI 状态；自动化全绿不能代替 UX/视觉验收。截图证据与发现写入对应开发日志或 QA 报告。
 - 当前环境没有 Computer Use 或等价真实桌面控制能力时，该项必须记为未执行并移交给具备能力的 agent 或人工 QA；不得自行跳过或标记为通过。
 

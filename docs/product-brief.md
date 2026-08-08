@@ -176,7 +176,7 @@ MVP 常用格式：PNG、JPG/JPEG、GIF、WebP、BMP、TIFF、TGA、EXR、ICO、
 - 全屏查看：从资产查看页面显式进入的沉浸显示方式，不与“进入资产查看页面”混为同一动作。
 - 外部打开：调用系统默认或用户指定的创作软件正式打开文件。
 
-资产查看页面不常驻显示底部缩放条，也不使用占满顶部的工程式工具栏。正式实施前先研究成熟图片查看器并验证交互原型；缩放需要对触控板 pinch 足够灵敏、围绕手势焦点，并在放大后提供不会与资产切换或媒体控制冲突的平移方式。详细验收见 `implementation/0013-asset-viewer-navigation-and-gestures-vertical-slice.md`。
+资产查看页面不常驻显示底部缩放条，也不使用占满顶部的工程式工具栏。正式实施前先研究成熟图片查看器并验证交互原型；缩放需要对触控板 pinch 足够灵敏、围绕手势焦点，并在放大后提供不会与资产切换或媒体控制冲突的平移方式。详细验收见 `internal/implementation/0013-asset-viewer-navigation-and-gestures-vertical-slice.md`。
 
 所有资产在悬停时都放大卡片。在放大状态下，视频和 GIF 支持按设置自动播放或悬停播放，音频支持播放；其他格式逐步增加适合自身的快速交互。放大交互需先通过独立原型验证视觉效果与易用性；若验证不通过，MVP 使用普通资产卡片和显式预览入口，不为保留该交互牺牲可用性。
 
@@ -211,7 +211,7 @@ Serpent 不设置隐藏优先级。
 
 第一阶段支持本地包、本地目录和符合规范的 GitHub 仓库 URL，不建设插件社区，也不执行
 远程仓库中的依赖安装、构建或生命周期脚本。完整边界见
-[`0024-script-plugin-platform.md`](implementation/0024-script-plugin-platform.md)。
+[`0024-script-plugin-platform.md`](internal/implementation/0024-script-plugin-platform.md)。
 
 资产调用外部应用只通过右键菜单中的“使用外部应用打开/打开方式”进入。
 
@@ -351,10 +351,10 @@ MVP：
 
 ## 相关研究
 
-- [创意资产的版本、同步、锁与审批](research/asset-versioning-and-sync.md)：建议 MVP 推迟版本管理 UI，但底层预留稳定资产身份、不可变修订与冲突保全。
-- [Electron 后台任务架构调研](research/electron-background-worker-architecture.md)：建议沙箱化 Renderer、精简 Main、单个 UtilityProcess 和按需 FFmpeg 子进程。
-- [数据库与全文搜索技术调研](research/database-and-fulltext-search.md)：建议 better-sqlite3、SQLite FTS5、应用单实例、每库单连接和按存储位置切换 journal 模式。
-- [媒体解析与预览技术栈](research/media-preview-stack.md)：建议 Chromium 播放、LGPL-only FFmpeg、sharp、OpenImageIO 和 OpenColorIO。
+- [创意资产的版本、同步、锁与审批](internal/research/asset-versioning-and-sync.md)：建议 MVP 推迟版本管理 UI，但底层预留稳定资产身份、不可变修订与冲突保全。
+- [Electron 后台任务架构调研](internal/research/electron-background-worker-architecture.md)：建议沙箱化 Renderer、精简 Main、单个 UtilityProcess 和按需 FFmpeg 子进程。
+- [数据库与全文搜索技术调研](internal/research/database-and-fulltext-search.md)：建议 better-sqlite3、SQLite FTS5、应用单实例、每库单连接和按存储位置切换 journal 模式。
+- [媒体解析与预览技术栈](internal/research/media-preview-stack.md)：建议 Chromium 播放、LGPL-only FFmpeg、sharp、OpenImageIO 和 OpenColorIO。
 
 ## 访谈原则
 

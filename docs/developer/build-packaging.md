@@ -37,6 +37,17 @@ npm run release:local
 
 跳过慢阶段的选项：`--skip-verify` / `--skip-media` / `--skip-e2e`。单独跑某阶段：`npm run release:<phase>`（e2e 阶段为 `npm run release:e2e:packaged`）。
 
+```mermaid
+flowchart LR
+    C[代码变更] --> L[Lint + typecheck]
+    L --> U[Unit tests]
+    U --> W[Worker integration]
+    W --> E[Electron E2E]
+    E --> P[Package + verify]
+    P --> PE[Packaged E2E]
+    PE --> R[Make release artifacts]
+```
+
 ### 本地试跑（无媒体晋升时）
 
 媒体包需先"晋升"（构建产物登记进 `bundle-lock.json` 的不可变 URL + 哈希）才能走正式流水线。本地已有匹配 `source-lock.json` 的产物时，跳过 provenance 校验：
@@ -85,4 +96,4 @@ npm run extension:build   # 构建 dist/extension
 3. **签名升级**：SignPath 申请 / Apple Developer 账号
 4. **CI/CD**：GitHub Actions tag 驱动 + 平台 matrix + draft → 正式 release
 
-详见[研究文档](../research/2026-08-08-local-release-packaging.md)。
+详见[研究文档](../internal/research/2026-08-08-local-release-packaging.md)。

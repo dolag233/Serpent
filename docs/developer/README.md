@@ -13,10 +13,10 @@
 
 其他软件文档：
 
-- [开发流程](../development-process.md)——切片流程与质量门禁
-- [领域模型](../domain-model.md) / [术语表](../glossary.md)
-- [架构决策记录](../adr/)——ADR-0000 起
-- [实施规格](../implementation/)——切片规格
+- [开发流程](../internal/development-process.md)——切片流程与质量门禁
+- [领域模型](../internal/domain-model.md) / [术语表](../glossary.md)
+- [架构决策记录](../internal/adr/)——ADR-0000 起
+- [实施规格](../internal/implementation/)——切片规格
 
 ## 第二部分：扩展开发
 

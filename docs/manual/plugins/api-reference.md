@@ -416,7 +416,7 @@ iframe view 的 Host target 为 `sidebar.entries`、`workspace.views`、`inspect
 Host-rendered Plugin UI Contract v1 通过 `contributes.ui` 提供 settings group、menu/submenu、notice、activity 和 job descriptor。
 设置组引用同一 manifest 的 `contributes.settings`，菜单复用现有 command/condition/placement 语义；descriptor 只接受版本化 JSON 数据，不接受函数、HTML、CSS 或宿主 DOM 引用。
 字段级诊断会跳过非法条目而保留其他合法 UI。完整示例与限制见插件开发手册的 [Plugin UI Contract v1](development.md#81-plugin-ui-contract-v1)，设计决策见
-[`0029 UI 标准化执行方案与插件原生 UI 契约`](../../implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
+[`0029 UI 标准化执行方案与插件原生 UI 契约`](../../internal/implementation/0029-ui-standardization-execution-and-plugin-ui-contract.md)。
 在实现发布前，不要从宿主 CSS class、React 结构或 DOM 层级推导插件行为。
 
 ## 8. 错误与测试契约

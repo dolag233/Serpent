@@ -13,10 +13,10 @@ For developers working on Serpent itself: architecture, building from source, te
 
 Other software docs:
 
-- [Development process](../development-process.md) — slice workflow and quality gates
-- [Domain model](../domain-model.md) / [Glossary](../glossary.md)
-- [Architecture decision records](../adr/) — ADR-0000 onward
-- [Implementation specs](../implementation/) — slice specs
+- [Development process](../internal/development-process.md) — slice workflow and quality gates
+- [Domain model](../internal/domain-model.md) / [Glossary](../glossary.md)
+- [Architecture decision records](../internal/adr/) — ADR-0000 onward
+- [Implementation specs](../internal/implementation/) — slice specs
 
 ## Part 2: Extension development
 

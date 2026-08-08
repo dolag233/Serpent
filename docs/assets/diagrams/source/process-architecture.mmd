@@ -1,0 +1,16 @@
+flowchart TB
+    R[Renderer<br/>Sandboxed React UI] -->|Typed commands/events| P[Preload<br/>Minimal contextBridge]
+    P -->|Validated IPC| M[Main<br/>Window, dialogs, lifecycle]
+    M -->|Worker protocol| W[Library Worker<br/>SQLite + filesystem owner]
+    W --> DB[(library.db)]
+    W --> AS[Assets/]
+    W --> AR[.serpent/artifacts/]
+    M -.-> O[Offscreen window<br/>3D thumbnail rendering]
+    O --> AR
+
+    classDef boundary fill:#1f2937,stroke:#60a5fa,color:#f8fafc;
+    classDef owner fill:#12352b,stroke:#34d399,color:#f8fafc;
+    classDef storage fill:#3f2d13,stroke:#fbbf24,color:#fef3c7;
+    class R,P,M,O boundary;
+    class W owner;
+    class DB,AS,AR storage;

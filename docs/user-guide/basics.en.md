@@ -26,9 +26,15 @@ Files are copied into the library's `Assets/` directory and get a stable asset i
 - Cards show a thumbnail and file name. Hover to preview, click to select, double-click to open the viewer
 - Marquee select by dragging; multi-select with ⌘/Ctrl+click. Batch actions (rating, tags, …) work from the Inspector
 
+![Masonry canvas, sidebar, and Inspector](../assets/ui/asset-inspector.png)
+
+After selecting an asset, the Inspector stays visible with metadata and editing controls for the current selection.
+
 ## Search
 
 The search box supports keyword search across: file name, tags, description, source URL, author, folder path, metadata. Click `?` next to the box for syntax. Search combines with format, size, rating and tag filters.
+
+![Filter and sort panel](../assets/ui/filter-panel.png)
 
 ## Tags and collections
 
@@ -46,6 +52,10 @@ Double-click a 3D model to open it.
 - Left-drag rotates, scroll zooms, middle-click dollies; right-drag rotates the HDRI light source (Ctrl+left-drag too)
 - Toolbar: HDRI environment presets (4 Poly Haven sets), light intensity, preview mode, display mode
 - FBX goes through the built-in conversion pipeline (ufbx → GLB) with PBR materials
+
+The viewer keeps the Inspector visible so you can move between previewing an asset and checking its metadata.
+
+![Asset viewer](../assets/ui/asset-viewer.png)
 
 ## Trash
 

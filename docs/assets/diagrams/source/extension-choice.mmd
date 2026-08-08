@@ -1,0 +1,15 @@
+flowchart TB
+    Q{What are you building?}
+    Q -->|Menus, settings, toolbar, custom UI| P[Plugin]
+    Q -->|Repeatable one-off batch| S[Automation script]
+    Q -->|External agent or MCP host| M[MCP]
+    P --> P2[Long-lived, sandboxed, host contributions]
+    S --> S2[Desktop Console, isolated run]
+    M --> M2[Local stdio, shared permissions]
+
+    classDef question fill:#312e81,stroke:#a5b4fc,color:#fff;
+    classDef choice fill:#1f2937,stroke:#60a5fa,color:#fff;
+    classDef detail fill:#12352b,stroke:#34d399,color:#fff;
+    class Q question;
+    class P,S,M choice;
+    class P2,S2,M2 detail;

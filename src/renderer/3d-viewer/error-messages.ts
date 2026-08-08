@@ -6,7 +6,7 @@
  * every code has a translation at compile time. Viewer-local codes
  * (`MODEL_TOO_LARGE`, `MODEL_LOAD_FAILED`, `MODEL_WEBGL_UNAVAILABLE`,
  * `MODEL_CONTEXT_LOST`) map to the `viewer3d.error.*` catalog namespace.
- * Copy tone follows docs/ui/0004: specific, actionable, no alarm wording.
+ * Copy tone follows docs/internal/ui/0004: specific, actionable, no alarm wording.
  */
 
 import type { FbxConvertErrorCode } from '../../shared/fbx-conversion';

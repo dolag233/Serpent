@@ -1,6 +1,6 @@
 /**
  * F8 AI visual-analysis settings + system prompt builder.
- * See docs/development/2026-07-20-f8-ai-analysis-design-decisions.md
+ * See docs/internal/development/2026-07-20-f8-ai-analysis-design-decisions.md
  */
 
 export type AiOutputStyle = 'normal' | 'concise' | 'rigorous';

@@ -2,7 +2,7 @@
 
 这组手册面向希望为 Serpent 编写插件、自动化脚本或 MCP 客户端的用户和开发者。它描述的是当前仓库已经提供的开发态接口；实现尚未发布为独立 SDK，示例应在 Serpent 仓库根目录、Node.js 24 环境中运行。
 
-`docs/manual/` 是面向扩展作者发布的用户手册目录；架构决策、实施规格、开发日志和 QA 记录仍分别位于 `docs/adr/`、`docs/implementation/`、`docs/development/` 和 `docs/qa/`。
+`docs/manual/` 是面向扩展作者发布的用户手册目录；架构决策、实施规格、开发日志和 QA 记录仍分别位于 `docs/internal/adr/`、`docs/internal/implementation/`、`docs/internal/development/` 和 `docs/internal/qa/`。
 
 ## 从哪里开始
 
@@ -12,7 +12,7 @@
 | 编写自动化脚本 | [脚本开发指南](scripts/development.md) | [脚本 API 参考](scripts/api-reference.md) |
 | 接入 MCP | [MCP 开发指南](mcp/development.md) | [MCP API 参考](mcp/api-reference.md) |
 
-脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过本地 stdio 连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](../skills/serpent-automation/automation-api.d.ts)。
+脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过本地 stdio 连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](../internal/skills/serpent-automation/automation-api.d.ts)。
 
 ## 三种扩展方式如何选择
 
@@ -39,10 +39,10 @@
 
 ## 相关规范
 
-- [脚本自动化 Skill](../skills/serpent-automation/SKILL.md)：面向 Agent 的操作约束和运行提示。
+- [脚本自动化 Skill](../internal/skills/serpent-automation/SKILL.md)：面向 Agent 的操作约束和运行提示。
 - [插件分发与更新](plugins/distribution-and-updates.md)：GitHub Release、ZIP、文件夹安装及更新策略。
-- [插件平台最终设计](../implementation/0024-script-plugin-platform.md)：Host/插件边界、贡献模型和生命周期的设计来源。
-- [脚本/MCP 框架实施规格](../implementation/0023-automation-scripting-mcp-framework.md)：自动化 Gateway、脚本运行时和 MCP 的实现背景。
+- [插件平台最终设计](../internal/implementation/0024-script-plugin-platform.md)：Host/插件边界、贡献模型和生命周期的设计来源。
+- [脚本/MCP 框架实施规格](../internal/implementation/0023-automation-scripting-mcp-framework.md)：自动化 Gateway、脚本运行时和 MCP 的实现背景。
 
 ## 文档状态
 

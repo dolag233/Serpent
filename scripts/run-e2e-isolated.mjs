@@ -13,7 +13,7 @@
  *   npm run test:e2e:isolated
  *
  * Residual limitation (see
- * docs/development/2026-07-19-e2e-isolated-session-development-log.md):
+ * docs/internal/development/2026-07-19-e2e-isolated-session-development-log.md):
  * on a single-display macOS machine there is no general-purpose virtual
  * display available yet, so the suite still runs but the window opens on
  * the primary display and can steal foreground focus. This script logs

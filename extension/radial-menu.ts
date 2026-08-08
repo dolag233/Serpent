@@ -31,7 +31,7 @@ import type { SaveIntent } from './save-client';
 
 /**
  * Serpent-c0ml / REQ-EXT-005 思维导图树状拖放保存菜单。
- * 规格：docs/ui/0002-extension-drag-radial-save-menu.md（v7）。
+ * 规格：docs/internal/ui/0002-extension-drag-radial-save-menu.md（v7）。
  * 命中走矩形几何（radial-menu-model）；面板 pointer-events:none，不拦截原生拖拽。
  */
 

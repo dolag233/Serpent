@@ -13,6 +13,18 @@ Main (window + dialogs + process lifecycle)
 Library Worker (UtilityProcess; filesystem + SQLite owner)
 ```
 
+```mermaid
+flowchart TB
+    R[Renderer<br/>Sandboxed React UI] -->|Typed commands/events| P[Preload<br/>Minimal contextBridge]
+    P -->|Validated IPC| M[Main<br/>Window, dialogs, lifecycle]
+    M -->|Worker protocol| W[Library Worker<br/>SQLite + filesystem owner]
+    W --> DB[(library.db)]
+    W --> AS[Assets/]
+    W --> AR[.serpent/artifacts/]
+    M -.-> O[Offscreen window<br/>3D thumbnail rendering]
+    O --> AR
+```
+
 Invariants:
 
 - The Renderer never gets arbitrary path or SQL capabilities
@@ -50,7 +62,7 @@ docs/              # documentation (this tree, ADRs, specs, QA)
 
 - Each library is one SQLite database (`.serpent/library.db`) with versioned schema migrations (`MIGRATIONS`, currently v33)
 - Asset files live in `Assets/`; derived data (thumbnails/proxies) in `.serpent/artifacts/`
-- **Data-compatibility discipline**: migrations are add-only (no dropping/renaming existing tables, columns, indexes or triggers); new builds must open old libraries (lenient reads — missing columns degrade to defaults, never crash); read-only degrade is the last resort. See [ADR-0028](../adr/0028-schema-compatibility-read-only-degrade.md) and `docs/implementation/0031-schema-compatibility-guarantee.md`
+- **Data-compatibility discipline**: migrations are add-only (no dropping/renaming existing tables, columns, indexes or triggers); new builds must open old libraries (lenient reads — missing columns degrade to defaults, never crash); read-only degrade is the last resort. See [ADR-0028](../internal/adr/0028-schema-compatibility-read-only-degrade.md) and `docs/internal/implementation/0031-schema-compatibility-guarantee.md`
 
 ## Media pipeline
 

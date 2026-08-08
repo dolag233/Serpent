@@ -37,6 +37,17 @@ Phases: `verify` → `media` → `package` → `e2e` → `make` → `checksums`
 
 Skip slow phases with `--skip-verify` / `--skip-media` / `--skip-e2e`. Run one phase with `npm run release:<phase>` (the e2e phase is `npm run release:e2e:packaged`).
 
+```mermaid
+flowchart LR
+    C[Change] --> L[Lint + typecheck]
+    L --> U[Unit tests]
+    U --> W[Worker integration]
+    W --> E[Electron E2E]
+    E --> P[Package + verify]
+    P --> PE[Packaged E2E]
+    PE --> R[Make release artifacts]
+```
+
 ### Local trial without media promotion
 
 The media bundle must be "promoted" (built and registered in `bundle-lock.json` with an immutable URL + hashes) before the formal pipeline runs. If local artifacts already match `source-lock.json`, you can skip provenance:
@@ -85,4 +96,4 @@ npm run extension:build   # builds dist/extension
 3. **Signing upgrade**: SignPath application / Apple Developer account
 4. **CI/CD**: GitHub Actions tag-driven + platform matrix + draft → release
 
-See the [research doc](../research/2026-08-08-local-release-packaging.md) for details.
+See the [research doc](../internal/research/2026-08-08-local-release-packaging.md) for details.

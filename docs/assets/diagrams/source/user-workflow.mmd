@@ -1,0 +1,15 @@
+flowchart LR
+    A[Create library] --> B[Import files or folders]
+    B --> C[Browse masonry canvas]
+    C --> D{Organize}
+    D --> E[Tags and collections]
+    D --> F[Folders and metadata]
+    C --> G[Search and filter]
+    C --> H[Open viewer]
+    H --> I[Inspect or edit metadata]
+    C --> J[Trash and restore]
+
+    classDef action fill:#1f2937,stroke:#60a5fa,color:#f8fafc;
+    classDef result fill:#12352b,stroke:#34d399,color:#f8fafc;
+    class A,B,C,G,H,J action;
+    class D,E,F,I result;

@@ -2,7 +2,7 @@
 
 本文面向在 Serpent Desktop 的“自动化脚本”Console 中编写实际脚本的开发者。脚本是一次性、受控的 JavaScript/TypeScript 批处理；它通过注入的 `serpent` 领域 API 调用 Automation Command Gateway，不是 Node 程序，也不是通用命令行。
 
-API 版本：`AUTOMATION_API_VERSION = 1`。本文以当前 Console 实际注入的 `src/scripting/serpent-guest-api.ts`、Registry 和 E2E 行为为准。逐项签名见 [脚本 API 参考](api-reference.md)；编辑器类型提示见 [`docs/skills/serpent-automation/automation-api.d.ts`](../../skills/serpent-automation/automation-api.d.ts)。类型声明由 Registry 生成/校验，但个别 Registry 命令尚未投影到 Console，见“实现差异”。
+API 版本：`AUTOMATION_API_VERSION = 1`。本文以当前 Console 实际注入的 `src/scripting/serpent-guest-api.ts`、Registry 和 E2E 行为为准。逐项签名见 [脚本 API 参考](api-reference.md)；编辑器类型提示见 [`docs/internal/skills/serpent-automation/automation-api.d.ts`](../../internal/skills/serpent-automation/automation-api.d.ts)。类型声明由 Registry 生成/校验，但个别 Registry 命令尚未投影到 Console，见“实现差异”。
 
 ## 先跑起来
 

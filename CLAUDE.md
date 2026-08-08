@@ -6,7 +6,7 @@
 
 Serpent 是一款开源（MIT）、跨平台（Windows + macOS）的数字资产管理软件，对标 Eagle/Billfish。首发用户为游戏美术、影视后期、平面/UI/品牌设计师。技术栈：Electron + TypeScript + SQLite + Vite + React。
 
-开始工作前必须读取 `AGENTS.md`、`docs/product-brief.md`、`docs/development-process.md`、`docs/domain-model.md`、`docs/project-status.md` 和 `docs/qa/human-acceptance-checklist.md`。
+开始工作前必须读取 `AGENTS.md`、`docs/product-brief.md`、`docs/internal/development-process.md`、`docs/internal/domain-model.md`、`docs/internal/project-status.md` 和 `docs/internal/qa/human-acceptance-checklist.md`。
 
 ## 环境约束（必读）
 
@@ -82,7 +82,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 工单管理（beads）
 
-本仓库使用 beads（`bd` CLI）作为唯一工单系统。`.beads/issues.jsonl` 和 `.beads/interactions.jsonl` 是随 Git 同步的工单镜像；`.beads/embeddeddolt` 是未纳入 Git 的本地嵌入式 Dolt 数据库，不能假设会随分支切换同步。`docs/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
+本仓库使用 beads（`bd` CLI）作为唯一工单系统。`.beads/issues.jsonl` 和 `.beads/interactions.jsonl` 是随 Git 同步的工单镜像；`.beads/embeddeddolt` 是未纳入 Git 的本地嵌入式 Dolt 数据库，不能假设会随分支切换同步。`docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
 
 - 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
 - **排他认领（强制）**：同一工单同一时间只允许一个 agent 实施。选中后立刻 `bd update <id> --claim`（原子认领：设 assignee + `in_progress`）；不要只改状态却不认领。禁止对已是 `in_progress`、或已有其他 assignee 的工单动手；不确定时先 `bd show <id>` / `bd list --status=in_progress`。不得与其他 agent「一起做」同一工单，也不得绕过 `bd ready` 凭标题或记忆开干。
@@ -98,12 +98,12 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 当前开发状态
 
-垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/development-process.md`）。
+垂直切片推进，每切片交付代码 + 测试 + 开发日志 + 代码审查 + QA 报告（见 `docs/internal/development-process.md`）。
 
 - 0001–0010 已有广泛实现，仍按各切片 QA 文档收口 packaged、Windows、真实外部旅程与发布阻断；不能把历史实现提交视为最终验收。
 - 0012 已完成 macOS 开发态验收；0013 查看体验继续收口；0014 功能候选为 `f1330a7`，最终合流和 Windows 证据待补。
-- 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/implementation/mvp-ui-ux-requirements-backlog.md`。
-- 当前事实、优先级和保留条件以 `docs/project-status.md` 为准，不在本文件复制逐切片细节。
+- 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/internal/implementation/mvp-ui-ux-requirements-backlog.md`。
+- 当前事实、优先级和保留条件以 `docs/internal/project-status.md` 为准，不在本文件复制逐切片细节。
 
 ## 关键约束
 
@@ -124,7 +124,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 验收纪律（2026-07-14 复盘新增，强制生效）
 
-> 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，Claude Code 每会话强制遵守。
+> 触发：autonomous loop 出现"部分实现 + 局部测试通过"被写成"规格覆盖完整"的系统性偏差（详见 `docs/internal/development/2026-07-14-acceptance-discipline-retrospective.md`）。下列规则覆盖"完成定义"的判定口径，Claude Code 每会话强制遵守。
 
 1. **四列可追溯**：每项规格验收维护四列——需求条目 | 实现位置(file:line) | 自动化测试(test:line) | 人工/平台证据。任一列缺失只能写"部分完成/未验证"，不得写"覆盖完整/已验证"。
 2. **代码存在 ≠ 覆盖**：failpoint/恢复路径的存在不构成覆盖证据；必须证明 failpoint 实际触发 + 进程重启 + 磁盘/DB 对账。未触发即"未验证"。
@@ -143,21 +143,21 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 ## 文档入口
 
 - `docs/product-brief.md` — 产品愿景与 MVP 边界
-- `docs/development-process.md` — 切片开发与质量流程
-- `docs/domain-model.md` / `docs/glossary.md` — 领域模型与术语
-- `docs/adr/0001`–`0022` — 架构决策记录
-- `docs/implementation/NNNN-*.md` — 切片实施规格
-- `docs/implementation/mvp-ui-ux-requirements-backlog.md` — 2026-07-16 新增 MVP UI/UX、文件管理需求与集中澄清队列
-- `docs/development/NNNN-*.md` — 切片开发日志
-- `docs/reviews/NNNN-*.md` — 双轴代码审查
-- `docs/qa/NNNN-*.md` — QA 报告
-- `docs/qa/human-acceptance-checklist.md` — 功能验收队列；UI 仅用户可标「人类验收通过」；`PLUGIN-*`/`AUT-*` 以自动化测试为准（见 `docs/agent-plugin-playbook.md`）
-- `docs/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
-- `docs/research/` — 技术调研
+- `docs/internal/development-process.md` — 切片开发与质量流程
+- `docs/internal/domain-model.md` / `docs/glossary.md` — 领域模型与术语
+- `docs/internal/adr/0001`–`0022` — 架构决策记录
+- `docs/internal/implementation/NNNN-*.md` — 切片实施规格
+- `docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` — 2026-07-16 新增 MVP UI/UX、文件管理需求与集中澄清队列
+- `docs/internal/development/NNNN-*.md` — 切片开发日志
+- `docs/internal/reviews/NNNN-*.md` — 双轴代码审查
+- `docs/internal/qa/NNNN-*.md` — QA 报告
+- `docs/internal/qa/human-acceptance-checklist.md` — 功能验收队列；UI 仅用户可标「人类验收通过」；`PLUGIN-*`/`AUT-*` 以自动化测试为准（见 `docs/internal/agent-plugin-playbook.md`）
+- `docs/internal/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
+- `docs/internal/research/` — 技术调研
 
 ## 核心体验回归门禁
 
-遵循 `AGENTS.md` 的“核心体验回归门禁”和 `docs/development-process.md`。尤其禁止用 job/DOM 存在代替媒体实际解码，也禁止用关闭窗口代替完整进程重启的持久化测试。
+遵循 `AGENTS.md` 的“核心体验回归门禁”和 `docs/internal/development-process.md`。尤其禁止用 job/DOM 存在代替媒体实际解码，也禁止用关闭窗口代替完整进程重启的持久化测试。
 
 较大功能或核心 UX 更新还必须由主 agent 使用 Computer Use 操作真实桌面应用，并以截图完成 UI/视觉验收；Claude Code 的自动化实现或测试结果不能替代该最终产品验收。
 

@@ -13,6 +13,18 @@ Main (window + dialogs + process lifecycle)
 Library Worker (UtilityProcess; filesystem + SQLite owner)
 ```
 
+```mermaid
+flowchart TB
+    R[Renderer<br/>Sandboxed React UI] -->|Typed commands/events| P[Preload<br/>Minimal contextBridge]
+    P -->|Validated IPC| M[Main<br/>Window, dialogs, lifecycle]
+    M -->|Worker protocol| W[Library Worker<br/>SQLite + filesystem owner]
+    W --> DB[(library.db)]
+    W --> AS[Assets/]
+    W --> AR[.serpent/artifacts/]
+    M -.-> O[Offscreen window<br/>3D thumbnail rendering]
+    O --> AR
+```
+
 不变量：
 
 - Renderer 永远不接收任意路径读写或 SQL 能力
@@ -50,7 +62,7 @@ docs/              # 文档（本目录、ADR、实施规格、QA）
 
 - 每个资源库一个 SQLite 数据库（`.serpent/library.db`），schema 版本化迁移（`MIGRATIONS`，当前 v33）
 - 资产文件存 `Assets/`，派生数据（缩略图/代理）存 `.serpent/artifacts/`
-- **数据兼容纪律**：迁移只加不改（禁删改现有表/列/索引/触发器）；新代码必须能打开旧库（宽容读取：缺列降级默认值，不崩溃）；只读降级是最后兜底。见 [ADR-0028](../adr/0028-schema-compatibility-read-only-degrade.md) 与 `docs/implementation/0031-schema-compatibility-guarantee.md`
+- **数据兼容纪律**：迁移只加不改（禁删改现有表/列/索引/触发器）；新代码必须能打开旧库（宽容读取：缺列降级默认值，不崩溃）；只读降级是最后兜底。见 [ADR-0028](../internal/adr/0028-schema-compatibility-read-only-degrade.md) 与 `docs/internal/implementation/0031-schema-compatibility-guarantee.md`
 
 ## 媒体管线
 
