@@ -15,7 +15,7 @@
   },
   "components": {
     "ffmpeg": {
-      "version": "8.1",
+      "version": "n6.1",
       "sourceUrl": "https://registry.npmmirror.com/-/binary/ffmpeg-builds/v6.1.0/ffmpeg-6.1.0-win32-x64-lgpl.tar.xz",
       "sha256": "ca26dae299c98c1ccb1302267a1b3c163a952a017c4483269a36f368b74c9834",
       "license": "LGPL-2.1-or-later",

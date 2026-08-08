@@ -396,21 +396,22 @@ export function generateManifest({ root, platform }) {
   }
 
   const inspection = inspectBinaries(root, platform);
-  if (!inspection.ffmpegVersion.includes(sourceLock.components.ffmpeg.version)) {
-    throw new Error(`FFmpeg is not locked version ${sourceLock.components.ffmpeg.version}.`);
+  const expectedVersions = expectedComponents(sourceLock, platform);
+  if (!inspection.ffmpegVersion.includes(expectedVersions.ffmpeg.version)) {
+    throw new Error(`FFmpeg is not locked version ${expectedVersions.ffmpeg.version}.`);
   }
-  if (!inspection.ffprobeVersion.includes(sourceLock.components.ffmpeg.version)) {
-    throw new Error(`ffprobe is not locked version ${sourceLock.components.ffmpeg.version}.`);
+  if (!inspection.ffprobeVersion.includes(expectedVersions.ffmpeg.version)) {
+    throw new Error(`ffprobe is not locked version ${expectedVersions.ffmpeg.version}.`);
   }
-  if (!inspection.oiiotoolVersion.includes(sourceLock.components.openimageio.version)) {
-    throw new Error(`oiiotool is not locked version ${sourceLock.components.openimageio.version}.`);
+  if (!inspection.oiiotoolVersion.includes(expectedVersions.openimageio.version)) {
+    throw new Error(`oiiotool is not locked version ${expectedVersions.openimageio.version}.`);
   }
 
   const manifest = {
     schemaVersion: 1,
     platform,
     generatedAt: new Date().toISOString(),
-    components: sourceLock.components,
+    components: expectedComponents(sourceLock, platform),
     reportedVersions: {
       ffmpegVersion: inspection.ffmpegVersion,
       ffprobeVersion: inspection.ffprobeVersion,
