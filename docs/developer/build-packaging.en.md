@@ -90,6 +90,31 @@ The Windows installer `SerpentSetup.exe` is built with **Inno Setup** (same appr
 
 > History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`.
 
+## Media binary promotion (Serpent-Build)
+
+Media bundles (FFmpeg/OpenImageIO) are distributed via GitHub Releases on the
+[Serpent-Build](https://github.com/dolag233/Serpent-Build) repo (immutable URL +
+SHA-256); main-repo `release:media` downloads and verifies them:
+
+1. **Build once** (not in CI):
+   - `ffmpeg/ffprobe`: BtbN LGPL builds (`registry.npmmirror.com/-/binary/ffmpeg-builds/`
+     `ffmpeg-<ver>-win32-x64-lgpl.tar.xz`, or the macOS variant), LGPL-only (no GPL markers)
+   - `oiiotool`: `scripts/media-build/build-oiiotool-win32.ps1` (Windows) /
+     `darwin-arm64.sh` (macOS) — vcpkg build (pinned toolchain + registry commit)
+2. **Package and upload**:
+   ```bash
+   # assemble zip (platform layer ffmpeg/<platform>/…) + sha256
+   # upload (create/reuse Release media-v<ver> + assets + publish):
+   node scripts/release/publish-media-bundle.mjs --platform win32-x64 \
+     --version v0.1.1 --zip artifacts/media-binaries/serpent-media-win32-x64.zip
+   ```
+3. **Promote in main repo**: set the platform entry in
+   `resources/media-binaries/bundle-lock.json` to
+   `{status: ready, url, sha256, size, manifestSha256}` (script prints the entry).
+
+> Versioning: bundle versions are independent of app versions (`media-vX.Y.Z`);
+> Releases use GitHub Immutable Releases (assets immutable, tags non-reusable).
+
 ## Browser extension
 
 The extension ships inside the app bundle (`Resources/extension`), not via a store:
@@ -112,4 +137,4 @@ npm run extension:build   # builds dist/extension
 3. **Signing upgrade**: SignPath application / Apple Developer account
 4. **CI/CD**: GitHub Actions tag-driven + platform matrix + draft → release
 
-See the [research doc](../internal/research/2026-08-08-local-release-packaging.md) for details.
+See the research doc for details.

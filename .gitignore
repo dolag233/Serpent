@@ -35,3 +35,7 @@ artifacts/media-binaries/
 .beads-credential-key
 .beads/proxieddb/
 /skills
+
+# 媒体产物目录（manifest 等为构建生成，来源/锁文件在 media-binaries/ 根）
+resources/media-binaries/*/
+!resources/media-binaries/vcpkg/

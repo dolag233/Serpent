@@ -90,6 +90,30 @@ Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款�
 
 > 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`。
 
+## 媒体二进制晋升（Serpent-Build）
+
+媒体 bundle（FFmpeg/OpenImageIO）经 [Serpent-Build](https://github.com/dolag233/Serpent-Build)
+仓库的 GitHub Release（不可变 URL + SHA-256）分发，主仓 `release:media`
+下载并强制校验：
+
+1. **构建一次**（非 CI）：
+   - `ffmpeg/ffprobe`：BtbN LGPL builds（`registry.npmmirror.com/-/binary/ffmpeg-builds/`
+     `ffmpeg-<ver>-win32-x64-lgpl.tar.xz`，或 mac 版），LGPL-only 合规（无 GPL 标记）
+   - `oiiotool`：`scripts/media-build/build-oiiotool-win32.ps1`（Windows）/
+     `darwin-arm64.sh`（macOS）——vcpkg 构建（锁定版本工具链 + registry commit）
+2. **打包上传**：
+   ```bash
+   # 组装 zip（平台层级结构 ffmpeg/<platform>/…）+ sha256
+   # 上传（创建/复用 Release media-v<ver> + assets + 发布）：
+   node scripts/release/publish-media-bundle.mjs --platform win32-x64 \
+     --version v0.1.1 --zip artifacts/media-binaries/serpent-media-win32-x64.zip
+   ```
+3. **主仓晋升**：`resources/media-binaries/bundle-lock.json` 对应平台条目
+   填 `{status: ready, url, sha256, size, manifestSha256}`（脚本输出贴入）。
+
+> 版本策略：bundle 版本独立于应用版本（`media-vX.Y.Z`）；Release 启用
+> Immutable Releases（资产不可改删、tag 不可复用）。
+
 ## 浏览器扩展
 
 扩展不通过商店上架，构建后内嵌进应用包（`Resources/extension`）：
@@ -112,4 +136,4 @@ npm run extension:build   # 构建 dist/extension
 3. **签名升级**：SignPath 申请 / Apple Developer 账号
 4. **CI/CD**：GitHub Actions tag 驱动 + 平台 matrix + draft → 正式 release
 
-详见[研究文档](../internal/research/2026-08-08-local-release-packaging.md)。
+详见研究文档。
