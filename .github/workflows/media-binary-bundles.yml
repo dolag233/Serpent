@@ -29,18 +29,13 @@ jobs:
         include:
           - platform: darwin-arm64
             runner: macos-15
-            shell: bash
-            command: ./scripts/media-build/darwin-arm64.sh
           - platform: win32-x64
             runner: windows-2025
-            shell: pwsh
-            command: ./scripts/media-build/win32-x64.ps1
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     env:
       VCPKG_DISABLE_METRICS: '1'
       VCPKG_BINARY_SOURCES: clear
-      SERPENT_MEDIA_BUILD_DIR: ${{ runner.temp }}/serpent-media-build
     steps:
       - name: Check out Serpent
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -55,9 +50,20 @@ jobs:
             *) exit 2 ;;
           esac
 
-      - name: Build, inspect and archive bundle
-        shell: ${{ matrix.shell }}
-        run: ${{ matrix.command }}
+      # shell 属性不接受 matrix 表达式（解析器限制），按平台分步；
+      # runner 上下文仅在 step 级可用（job 级 env 会导致解析失败）。
+      - name: Build, inspect and archive bundle (darwin-arm64)
+        if: matrix.platform == 'darwin-arm64'
+        shell: bash
+        env:
+          SERPENT_MEDIA_BUILD_DIR: ${{ runner.temp }}/serpent-media-build
+        run: ./scripts/media-build/darwin-arm64.sh
+      - name: Build, inspect and archive bundle (win32-x64)
+        if: matrix.platform == 'win32-x64'
+        shell: pwsh
+        env:
+          SERPENT_MEDIA_BUILD_DIR: ${{ runner.temp }}/serpent-media-build
+        run: ./scripts/media-build/win32-x64.ps1
 
       - name: Upload checksum-pinned bundle candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
