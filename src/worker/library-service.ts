@@ -13908,7 +13908,7 @@ export class LibraryService {
       `fps=1/${interval}`,
       `scale=${frameW}:${frameH}:flags=lanczos`,
       fontPath
-        ? `drawtext=fontfile='${fontPath}':text='%{pts\:hms}':x=w-tw-8:y=h-th-8:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.5`
+        ? `drawtext=fontfile='${fontPath}':text='%{pts\\:hms}':x=w-tw-8:y=h-th-8:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.5`
         : null,
       `tile=${columns}x${rows}:margin=2:padding=2:color=#1a1a1a`,
     ].filter((part): part is string => part !== null).join(',');
@@ -13925,6 +13925,7 @@ export class LibraryService {
       ], { timeoutMs: 180_000, signal: execution.signal });
 
       if (result.exitCode !== 0) {
+        console.error('[CONTACT-SHEET-FFMPEG-ERR]', result.stderr.slice(-800));
         throw new Error(`ffmpeg contact sheet exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
 

@@ -425,7 +425,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     // Serpent-6w40: the AI contact sheet stamps a timestamp (HH:MM:SS.mmm)
     // on every frame using the bundled DejaVu Sans font.
     expect(vfValue2).toContain('drawtext=');
-    expect(vfValue2).toContain('%{pts:hms}');
+    expect(vfValue2).toContain('%{pts\\:hms}');
     expect(vfValue2).toContain('DejaVuSans.ttf');
     expect(vfValue2).toContain('tile=');
 
