@@ -1,20 +1,20 @@
 {
-  "schemaVersion": 1,
-  "bundles": {
-    "darwin-arm64": {
-      "status": "ready",
-      "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.1/serpent-media-darwin-arm64.zip",
-      "sha256": "e13e392d555797229e3dbe32857c7dd0f0f30df820b379eb6f7c436ecd09b774",
-      "size": 32647951,
-      "manifestSha256": "92bf182a2cc7dbf855b038ea92098fb153d799c24edcb1c09cf63f1c0d641472"
-    },
-    "win32-x64": {
-      "status": "ready",
-      "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.1/serpent-media-win32-x64.zip",
-      "sha256": "7a9ac5bdd48bb8b476503fadcbd52d7f0c41b73bfbb246943b244ddb3089f662",
-      "size": 83849282,
-      "manifestSha256": "42a059cf61cc6d90614a99edc33b1bf1034930bdf9d896370df88d5a358ffb71",
-      "promotedAt": "2026-08-08T12:39:09.184Z"
-    }
+ "schemaVersion": 1,
+ "bundles": {
+  "darwin-arm64": {
+   "status": "ready",
+   "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.1/serpent-media-darwin-arm64.zip",
+   "sha256": "e13e392d555797229e3dbe32857c7dd0f0f30df820b379eb6f7c436ecd09b774",
+   "size": 32647951,
+   "manifestSha256": "92bf182a2cc7dbf855b038ea92098fb153d799c24edcb1c09cf63f1c0d641472"
+  },
+  "win32-x64": {
+   "status": "ready",
+   "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.1/serpent-media-win32-x64-n8.1.zip",
+   "sha256": "806d4b762dc43b62171b3e090fa17ad9b505a9a7b2b49628570652773e151857",
+   "size": 100169431,
+   "manifestSha256": "c891c997157a21f3ffc7851269df8e538b68d9dddf446dbf3dc4b6e786762c53",
+   "promotedAt": "2026-08-08T14:25:05.313Z"
   }
+ }
 }

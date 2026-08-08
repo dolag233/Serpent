@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * 上传媒体 bundle 到 Serpent-Build Release（不可变 URL + SHA-256 校验）。
+ * 上传媒体 bundle 到 Serpent-Build Release（单一 Release 模式）。
+ *
+ * 策略（2026-08-08 产品确定）：
+ *   - 只保留一个 Release（tag media-v0.1.1，标题 SerpentBuildDependencies）
+ *   - 每次更新上传**带版本后缀的 asset 名**（serpent-media-<platform>-<suffix>.zip），
+ *     不覆盖旧资产（Immutable Releases 下资产不可改删，旧版本可追溯）
+ *   - bundle-lock 的 URL 指向最新带版本 asset
  *
  * 用法：
  *   node scripts/release/publish-media-bundle.mjs \
- *     --platform win32-x64 --version v0.1.0 \
+ *     --platform win32-x64 --version v0.1.1 --suffix n8.1 \
  *     --zip artifacts/media-binaries/serpent-media-win32-x64.zip
  *
  * 认证：GITHUB_TOKEN 环境变量，或 git credential（HTTPS）。
- * 流程：创建/复用 Release（media-<version>）→ 上传 zip + .sha256 +
- * manifest.sha256 → 打印 bundle-lock 晋升条目。
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
@@ -63,9 +67,9 @@ function parseArgs(argv) {
 }
 
 function main() {
-  const { platform, version, zip } = parseArgs(process.argv.slice(2));
-  if (!platform || !version || !zip) {
-    fail('Usage: --platform win32-x64 --version v0.1.0 --zip <bundle.zip>');
+  const { platform, version, suffix, zip } = parseArgs(process.argv.slice(2));
+  if (!platform || !version || !suffix || !zip) {
+    fail('Usage: --platform win32-x64 --version v0.1.1 --suffix n8.1 --zip <bundle.zip>');
   }
   if (!['win32-x64', 'darwin-arm64'].includes(platform)) fail(`Unsupported platform ${platform}.`);
 
@@ -74,43 +78,26 @@ function main() {
   const shaPath = `${zipPath}.sha256`;
   const manifestShaPath = zipPath.replace(/\.zip$/, '.manifest.sha256');
 
-  const tag = `media-${version}`;
-  const assetFiles = [zipPath];
-  for (const extra of [shaPath, manifestShaPath]) {
-    if (readFileSync(extra, 'utf8').trim()) assetFiles.push(extra);
-  }
+  // 带版本 asset 名（不覆盖旧资产，Immutable Releases 兼容）
+  const base = `serpent-media-${platform}-${suffix}`;
+  const assetFiles = [
+    [zipPath, `${base}.zip`],
+    [shaPath, `${base}.zip.sha256`],
+    [manifestShaPath, `${base}.manifest.sha256`],
+  ];
 
-  console.log(`[publish-media] Release ${tag} for ${platform}`);
+  console.log(`[publish-media] Uploading ${base} to ${BUILD_REPO} Release ${version}`);
   console.log(`  zip sha256: ${zipSha}`);
   console.log(`  size: ${(statSync(zipPath).size / 1024 / 1024).toFixed(1)} MB`);
 
-  // draft release 无法通过 /releases/tags/{tag} 访问（该端点只对已发布
-  // release 生效），统一走 /releases 列表拿 release id。
   api(`/repos/${BUILD_REPO}/releases?per_page=100`)
     .then(async (listResponse) => {
       const releases = await listResponse.json();
-      let release = releases.find((r) => r.tag_name === tag);
-      let uploadUrl;
-      if (!release) {
-        const created = await api(`/repos/${BUILD_REPO}/releases`, {
-          method: 'POST',
-          body: JSON.stringify({
-            tag_name: tag,
-            name: `Serpent media bundle ${version}`,
-            draft: true,
-            prerelease: true,
-            generate_release_notes: false,
-          }),
-        });
-        release = await created.json();
-        uploadUrl = release.upload_url;
-      } else {
-        uploadUrl = release.upload_url;
-      }
-      const releaseId = release.id;
+      const release = releases.find((r) => r.tag_name === version);
+      if (!release) fail(`Release ${version} not found (create it manually or fix --version).`);
+      const uploadUrl = release.upload_url;
 
-      for (const file of assetFiles) {
-        const name = path.basename(file);
+      for (const [file, name] of assetFiles) {
         const upload = await fetch(uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(name)}`), {
           method: 'POST',
           headers: {
@@ -124,19 +111,11 @@ function main() {
         console.log(`  uploaded ${name}`);
       }
 
-      // 发布（draft → published；Immutable Releases 下发布即不可变）。
-      // 注意：PATCH 只能用 /releases/{id}（/releases/tags/{tag} 只支持 GET）。
-      await api(`/repos/${BUILD_REPO}/releases/${releaseId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ draft: false }),
-      });
-      console.log(`[publish-media] Release published: https://github.com/${BUILD_REPO}/releases/tag/${tag}`);
-
-      // bundle-lock 晋升条目（贴给主仓库）
-      console.log(`\n[bundle-lock] ${platform} promotion entry:`);
+      console.log(`[publish-media] Done: https://github.com/${BUILD_REPO}/releases/tag/${version}`);
+      console.log('\n[bundle-lock] promotion entry:');
       console.log(JSON.stringify({
         status: 'ready',
-        url: `https://github.com/${BUILD_REPO}/releases/download/${tag}/${path.basename(zipPath)}`,
+        url: `https://github.com/${BUILD_REPO}/releases/download/${version}/${base}.zip`,
         sha256: zipSha,
         size: statSync(zipPath).size,
         manifestSha256: readFileSync(manifestShaPath, 'utf8').trim().split(/\s+/)[0],
