@@ -20,9 +20,10 @@ const FORBIDDEN_FFMPEG_MARKERS = [
   '--enable-libfdk-aac',
 ];
 
+// LGPL 合规由 FORBIDDEN_FFMPEG_MARKERS（无 --enable-gpl/nonfree/x264/x265/
+// fdk-aac）保证；显式 --disable-gpl/--disable-nonfree 是 vcpkg 自建的自证
+// 标记，外部 LGPL build（BtbN 等）不包含，因此不作硬性要求。
 const REQUIRED_FFMPEG_CONFIG = [
-  '--disable-gpl',
-  '--disable-nonfree',
   '--enable-libvpx',
   '--enable-libopus',
   '--enable-libfreetype',
