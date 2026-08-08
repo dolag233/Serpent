@@ -35,7 +35,7 @@ Phases: `verify` → `media` → `package` → `e2e` → `make` → `checksums`
 | make | build installers |
 | checksums | SHA-256 manifests (versioned header) |
 
-Skip slow phases with `--skip-verify` / `--skip-media` / `--skip-e2e`. Run one phase with `npm run release:<phase>`.
+Skip slow phases with `--skip-verify` / `--skip-media` / `--skip-e2e`. Run one phase with `npm run release:<phase>` (the e2e phase is `npm run release:e2e:packaged`).
 
 ### Local trial without media promotion
 
@@ -46,6 +46,12 @@ SERPENT_MEDIA_SKIP_PROVENANCE=1 npm run release:local -- --skip-verify --skip-me
 ```
 
 > `SKIP_PROVENANCE` is for local trials only. Formal releases must go through promotion.
+
+Another local path is `--build-media-locally`: build the full media bundle on this machine with vcpkg (`scripts/media-build/*`, takes 1-3 hours) and let the gates use the local artifacts:
+
+```bash
+npm run release:local -- --skip-verify --build-media-locally
+```
 
 ### Versions
 

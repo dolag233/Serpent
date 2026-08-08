@@ -1,6 +1,13 @@
 # 安装
 
-## macOS
+
+## 系统要求
+
+- macOS：Apple Silicon（arm64）或 Intel（x64）macOS 11+；约 500 MB 磁盘空间（不含资源库数据）
+- Windows：64 位 Windows 10 或 11；约 500 MB 磁盘空间
+
+资源库数据另占磁盘（取决于资产数量）。Windows 验证仍在进行中，见[构建与打包](../developer/build-packaging.md)。
+
 
 1. 下载 `Serpent-<版本>-arm64.dmg`
 2. 打开 dmg，把 Serpent 拖入「应用程序」
@@ -15,7 +22,7 @@ xattr -cr /Applications/Serpent.app
 
 ## Windows
 
-1. 下载 `Serpent-Setup-<版本>.exe`
+1. 下载 `Serpent-<版本> Setup.exe`
 2. 运行安装，按提示完成
 
 未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。卸载通过系统「应用和功能」。

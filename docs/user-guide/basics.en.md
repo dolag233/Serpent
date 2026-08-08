@@ -43,7 +43,7 @@ The right panel shows file info (name, size, dimensions, modified time, path), t
 
 Double-click a 3D model to open it.
 
-- Left-drag rotates, right-drag pans, scroll zooms (middle-click dollies)
+- Left-drag rotates, scroll zooms, middle-click dollies; right-drag rotates the HDRI light source (Ctrl+left-drag too)
 - Toolbar: HDRI environment presets (4 Poly Haven sets), light intensity, preview mode, display mode
 - FBX goes through the built-in conversion pipeline (ufbx → GLB) with PBR materials
 
@@ -61,5 +61,5 @@ Deleted assets go to Trash and stay for 30 days — restore or purge them there.
 | Focus search | ⌘F | Ctrl+F |
 | Rename | F2 | F2 |
 | Move to trash | ⌘⌫ | Delete |
-| Delete from disk | ⌥⌘Delete | — |
+| Delete from disk | ⌥⌘Delete | Shift+Delete |
 | Copy / Paste | ⌘C / ⌘V | Ctrl+C / Ctrl+V |

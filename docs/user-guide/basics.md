@@ -43,7 +43,7 @@
 
 双击 3D 模型打开。
 
-- 左键旋转，右键平移，滚轮缩放（中键 dolly）
+- 左键旋转，滚轮缩放，中键 dolly；右键拖拽旋转环境光源（Ctrl+左键同）
 - 工具栏：HDRI 环境光切换（内置 4 套 Poly Haven 预设）、光照强度、预览模式、显示模式
 - FBX 经内置转换管线（ufbx → GLB）支持 PBR 材质
 
@@ -61,5 +61,5 @@
 | 搜索聚焦 | ⌘F | Ctrl+F |
 | 重命名 | F2 | F2 |
 | 移到回收站 | ⌘⌫ | Delete |
-| 从磁盘删除 | ⌥⌘Delete | — |
+| 从磁盘删除 | ⌥⌘Delete | Shift+Delete |
 | 复制 / 粘贴 | ⌘C / ⌘V | Ctrl+C / Ctrl+V |

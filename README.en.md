@@ -10,7 +10,7 @@ Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), 
 
 ## Install
 
-Download the installer from GitHub Releases.
+Formal releases have not started yet (no installers on GitHub Releases at this time). Build installers locally with `npm run make`, or ask the maintainers.
 
 **macOS**: download `Serpent-<version>-arm64.dmg` and drag it into Applications. On first launch macOS shows "cannot verify the developer" — right-click the app → Open (first time only), or run:
 
@@ -18,7 +18,7 @@ Download the installer from GitHub Releases.
 xattr -cr /Applications/Serpent.app
 ```
 
-**Windows**: run `Serpent-Setup-<version>.exe`. Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway".
+**Windows**: run `Serpent-<version> Setup.exe`. Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway".
 
 **Browser extension**: ships inside the app (not via a store). Open `chrome://extensions`, enable Developer mode, and load the unpacked extension:
 
@@ -43,7 +43,7 @@ npm run typecheck        # tsc --noEmit
 npm run test             # unit + worker integration tests
 npm run test:e2e         # Playwright E2E
 npm run package          # package to out/Serpent-<platform>-<arch>/
-npm run make             # build installers (dmg / squirrel / zip)
+npm run make             # build platform installers (dmg / squirrel / zip)
 ```
 
 The full build, packaging and release flow is in the [developer docs](docs/developer/build-packaging.en.md).

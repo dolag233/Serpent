@@ -35,7 +35,7 @@ npm run release:local
 | make | 生成安装包 |
 | checksums | 产物 SHA-256 manifest（带版本头） |
 
-跳过慢阶段的选项：`--skip-verify` / `--skip-media` / `--skip-e2e`。单独跑某阶段：`npm run release:<phase>`。
+跳过慢阶段的选项：`--skip-verify` / `--skip-media` / `--skip-e2e`。单独跑某阶段：`npm run release:<phase>`（e2e 阶段为 `npm run release:e2e:packaged`）。
 
 ### 本地试跑（无媒体晋升时）
 
@@ -46,6 +46,12 @@ SERPENT_MEDIA_SKIP_PROVENANCE=1 npm run release:local -- --skip-verify --skip-me
 ```
 
 > `SKIP_PROVENANCE` 只用于本地试跑，正式发布必须走晋升流程。
+
+另一条本地路径是 `--build-media-locally`：在本机用 vcpkg 完整构建媒体组件（`scripts/media-build/*`，耗时 1-3 小时）后自动以本地产物放行门禁：
+
+```bash
+npm run release:local -- --skip-verify --build-media-locally
+```
 
 ### 版本
 

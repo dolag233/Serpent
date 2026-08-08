@@ -32,7 +32,7 @@ npm start
 
 `npm ci` **不安装** FFmpeg/ffprobe/OpenImageIO。缺组件时普通开发与图片导入不受影响；视频缩略图/代理生成会报 `FFMPEG_REQUIRED`，EXR/TGA/复杂 TIFF 需要 OpenImageIO。
 
-打包产物使用受控媒体包（FFmpeg 8.1 LGPL-only + OpenImageIO 3.1.12.0），门禁校验产物哈希与来源（`resources/media-binaries/bundle-lock.json`）。本地开发可用 `SERPENT_FFMPEG_PATH` 指向任意可信 FFmpeg（需含所需滤镜/编码器，且 `ffprobe` 同目录；GPL 构建仅限本地覆盖）：
+打包产物使用受控媒体包（FFmpeg 8.1 LGPL-only + OpenImageIO 3.1.12.0），门禁校验产物哈希与来源（`bundle-lock.json` 的晋升状态 + `source-lock.json` 的版本匹配）。本地开发可用 `SERPENT_FFMPEG_PATH` 指向任意可信 FFmpeg（需含所需滤镜/编码器，且 `ffprobe` 同目录；GPL 构建仅限本地覆盖）：
 
 ```bash
 # macOS

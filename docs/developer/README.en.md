@@ -15,7 +15,7 @@ Other software docs:
 
 - [Development process](../development-process.md) — slice workflow and quality gates
 - [Domain model](../domain-model.md) / [Glossary](../glossary.md)
-- [Architecture decision records](../adr/) — ADR-0001 onward
+- [Architecture decision records](../adr/) — ADR-0000 onward
 - [Implementation specs](../implementation/) — slice specs
 
 ## Part 2: Extension development

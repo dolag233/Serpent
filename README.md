@@ -10,7 +10,7 @@
 
 ## 安装
 
-从 GitHub Releases 下载安装包。
+正式发布尚未开始（GitHub Releases 暂无可下载安装包）。当前安装包由 `npm run make` 本地生成，或向项目维护者获取。
 
 **macOS**：下载 `Serpent-<版本>-arm64.dmg`，拖入「应用程序」。首次打开时 macOS 会提示"无法验证开发者"，右键点击应用 → 打开（仅首次），或运行：
 
@@ -18,7 +18,7 @@
 xattr -cr /Applications/Serpent.app
 ```
 
-**Windows**：运行 `Serpent-Setup-<版本>.exe`。未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。
+**Windows**：运行 `Serpent-<版本> Setup.exe`。未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。
 
 **浏览器扩展**：不通过商店上架，随应用分发。安装后打开 `chrome://extensions`，开启开发者模式，加载已解压的扩展：
 
@@ -43,7 +43,7 @@ npm run typecheck        # tsc --noEmit
 npm run test             # 单元 + Worker 集成测试
 npm run test:e2e         # Playwright E2E
 npm run package          # 打包到 out/Serpent-<platform>-<arch>/
-npm run make             # 生成安装包（dmg / squirrel / zip）
+npm run make             # 按平台生成安装包（dmg / squirrel / zip）
 ```
 
 完整的构建、打包、发布流程见[开发者文档](docs/developer/build-packaging.md)。
