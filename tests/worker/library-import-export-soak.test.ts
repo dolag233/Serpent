@@ -693,7 +693,7 @@ describe('Library import/export soak (20k assets)', () => {
         onDiagnostic: ({ scope, context }) => {
           if (scope.startsWith('debug-import-open.')) {
             writeFileSync(
-              '/tmp/serpent-import-perf.log',
+              path.join(tmpdir(), 'serpent-import-perf.log'),
               `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
               { flag: 'a' },
             );
@@ -715,7 +715,7 @@ describe('Library import/export soak (20k assets)', () => {
         const refreshStartedAt = performance.now();
         const refresh = importService.refreshManagedAssets(imported.libraryId);
         writeFileSync(
-          '/tmp/serpent-import-perf.log',
+          path.join(tmpdir(), 'serpent-import-perf.log'),
           `folder-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
           { flag: 'a' },
         );
@@ -763,7 +763,7 @@ describe('Library import/export soak (20k assets)', () => {
         onDiagnostic: ({ scope, context }) => {
           if (scope.startsWith('debug-import-open.')) {
             writeFileSync(
-              '/tmp/serpent-import-perf.log',
+              path.join(tmpdir(), 'serpent-import-perf.log'),
               `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
               { flag: 'a' },
             );
@@ -785,7 +785,7 @@ describe('Library import/export soak (20k assets)', () => {
         const refreshStartedAt = performance.now();
         const refresh = importService.refreshManagedAssets(imported.libraryId);
         writeFileSync(
-          '/tmp/serpent-import-perf.log',
+          path.join(tmpdir(), 'serpent-import-perf.log'),
           `zip-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
           { flag: 'a' },
         );
