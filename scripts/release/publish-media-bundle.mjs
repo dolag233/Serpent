@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 上传媒体 bundle 到 Serpent-Build Release（不可变 URL + SHA-256 校验）。
+ * 上传媒体 bundle 到 SerpentBuildDependencies Release（不可变 URL + SHA-256 校验）。
  *
  * 用法：
  *   node scripts/release/publish-media-bundle.mjs \
