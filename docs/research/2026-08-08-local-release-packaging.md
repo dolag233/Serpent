@@ -114,3 +114,37 @@ npm run release:local -- --skip-e2e
 - CI/CD 自动化（下一阶段，复用同一 pipeline）
 
 建议先做步骤 1（本机全流程验证）与 2（版本机制），同时启动证书/Windows 环境的准备工作。
+
+## 5. 外部开源项目实践调研（2026-08-08，三个并行 agent）
+
+### 5.1 ffmpeg/大二进制分发：GitHub Release 附件，不用 LFS（实证）
+
+- **生态共识**：BtbN/FFmpeg-Builds（每日 Actions 构建 → Release 附件 + `checksums.sha256`，不可变日期 tag）、gyan.dev（自建主站 + GitHub Release 镜像双通道）、eugeneware/ffmpeg-static（56 个平台附件挂 Release）——**均无 LFS**（`.gitattributes` 实测 404）
+- **LFS 否决理由**（GitHub API/文档实证）：免费配额 **10 GiB 存储 + 10 GiB 带宽/月**（按账户计，fork/CI 下载都消耗）；Serpent 场景 CI 每月 ~30 次构建 × 150MB ≈ 5-9 GiB 带宽——**极易打爆，超限当月整账户 LFS 禁用**（zig-gamedev#4 真实教训）；Release 附件**无带宽限制**（单文件 <2GiB）
+- **供应链锚点替代 LFS**：Release 附件用**不可变版本/日期 tag + 仓库内提交的 sha256 校验文件**锁定（BtbN `checksums.sha256` 范式）——零配额成本，达到与 LFS OID 同等的不可变校验
+- **建议方案**：内部工具链独立仓库（构建 ffmpeg/oiiotool，每批次 release 附件 + checksums，不可变 tag）→ 主仓库 `tools/versions.json` 记录版本 + sha256 → 打包脚本按平台从固定 tag 下载校验后内嵌进安装包（复用 ufbx-wasm-lock 先例）。oiiotool 无现成构建源，需工具链仓库自建 CI 构建
+
+### 5.2 Electron 开源项目发布流程（Joplin/Zettlr/MarkText/GDevelop/Beekeeper）
+
+- **共性**：tag 驱动发布（推 v* tag 触发）、按平台 matrix 并行构建、**先 draft release 再转正式**、SHA256SUMS.txt（Zettlr/MarkText）或 latest*.yml 内嵌校验（Joplin/GDevelop）
+- **签名铁律**：只签正式版（Joplin `SIGN_APPLICATION=1` 仅 tag 构建）；云签名避免私钥进 CI（SSL.com eSigner ×2、Azure OIDC ×1、GCP KMS+jsign ×1）
+- **MarkText = 无签名发布范本**（与 Serpent 现状最接近）：完全不签名，release notes 引导 macOS 用户 `xattr -cr`，Windows SmartScreen 手动放行，发 SHA256SUMS
+- **Zettlr = 条件公证范本**（与我们同为 electron-forge）：`osxNotarize` 仅在 `APPLE_ID` 环境变量存在时启用——拿证书后只加 secret 即升级，代码零改动
+
+### 5.3 免费签名渠道（实证）
+
+- **Windows：SignPath Foundation**（唯一真正免费）：MIT ✅ + 公开仓库 + CI 构建 + GitHub 组织全员 2FA + 无付费版；人工审批 1-2 周，可能因 star/声誉不足被拒；**VSCodium**（Electron，~3 万 star）在 Actions 里用 `signpath/github-action-submit-signing-request` 签名——最接近的先例。Azure Trusted Signing 付费（$9.99/月）且 Public Trust 对中国主体不开放；Certum 开源计划已收费化（29-69€/年 + 智能卡）
+- **macOS：无免费 Developer ID**（$99/年是唯一消除警告路径）；**免费底线 = ad-hoc 签名**——Apple Silicon 上完全不签名会报"已损坏"无法启动；VSCodium macOS 至今未签名，README 引导"右键→打开"
+- **未签名发布现实**：VSCodium/Joplin/MarkText 均为先例；产品影响：首发用户（设计师）首次启动安全弹窗摩擦伤转化
+
+## 6. 综合建议（Serpent 具体路径）
+
+| 项 | 建议 | 依据 |
+|---|---|---|
+| ffmpeg/oiiotool 分发 | **GitHub Release 附件 + 不可变 tag + git 锁 sha256**（不用 LFS） | 5.1 配额实证 |
+| 构建源 | 独立工具链仓库（自建 CI 构建 oiiotool；ffmpeg 可参考 BtbN 或上游） | 5.1 |
+| 发布流水线 | 保留现有 release:local + 接入 CI：tag 驱动 → matrix → draft→正式 → SHA256SUMS 强制 | 5.2 |
+| 签名（当前） | macOS ad-hoc（Apple Silicon 必需）+ release notes 引导 `xattr -cr`；Windows 未签名 + SmartScreen 引导 | 5.3 |
+| 签名（正式版） | Windows 申请 SignPath（尽早提交，审批 1-2 周）；macOS $99/年 Developer ID + 公证（Zettlr 条件模式，加 secret 即升级） | 5.3 + 5.2 |
+| 版本 | 已实施：npm version + tag + pipeline 版本输出 + checksum 版本头 | — |
+| 扩展 | 已实施：extraResource 内嵌 dist/extension（手动加载） | — |
