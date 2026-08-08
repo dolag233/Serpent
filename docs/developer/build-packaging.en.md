@@ -90,10 +90,10 @@ The Windows installer `SerpentSetup.exe` is built with **Inno Setup** (same appr
 
 > History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`.
 
-## Media binary promotion (SerpentBuildDependencies)
+## Media binary promotion (Serpent-Build)
 
 Media bundles (FFmpeg/OpenImageIO) are distributed via GitHub Releases on the
-[SerpentBuildDependencies](https://github.com/dolag233/SerpentBuildDependencies) repo (immutable URL +
+[Serpent-Build](https://github.com/dolag233/Serpent-Build) repo (immutable URL +
 SHA-256); main-repo `release:media` downloads and verifies them:
 
 1. **Build once** (not in CI):

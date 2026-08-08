@@ -90,9 +90,9 @@ Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款�
 
 > 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`。
 
-## 媒体二进制晋升（SerpentBuildDependencies）
+## 媒体二进制晋升（Serpent-Build）
 
-媒体 bundle（FFmpeg/OpenImageIO）经 [SerpentBuildDependencies](https://github.com/dolag233/SerpentBuildDependencies)
+媒体 bundle（FFmpeg/OpenImageIO）经 [Serpent-Build](https://github.com/dolag233/Serpent-Build)
 仓库的 GitHub Release（不可变 URL + SHA-256）分发，主仓 `release:media`
 下载并强制校验：
 
