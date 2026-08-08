@@ -43,6 +43,10 @@ const config: ForgeConfig = {
     prePackage: async (_forgeConfig, platform, arch) => {
       const mediaPlatform = nativeMediaPlatform(platform, arch);
       runNodeGate('scripts/media-binaries.mjs', ['verify', '--platform', mediaPlatform]);
+      // The browser extension is not shipped to a store yet; it ships inside
+      // the app bundle (Contents/Resources/extension) for manual loading.
+      // Rebuild it so the package always carries the current sources.
+      runNodeGate('scripts/build-extension.mjs');
     },
     postPackage: async (_forgeConfig, packageResult) => {
       nativeMediaPlatform(packageResult.platform, packageResult.arch);
@@ -74,6 +78,10 @@ const config: ForgeConfig = {
     // checks against this copied directory.
     extraResource: [
       'resources',
+      // Browser extension bundle (manual-load distribution): installed at
+      // Serpent.app/Contents/Resources/extension (macOS) or
+      // resources/extension (Windows) so users can load it unpacked.
+      'dist/extension',
       'assets/icons/app-dock.png',
       'assets/icons/app.png',
       'assets/icons/app.ico',

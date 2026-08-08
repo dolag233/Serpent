@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import {
   collectMakeArtifacts,
+  currentVersion,
   repoRoot,
   resolvePackagedExecutable,
   runNpmScript,
@@ -189,6 +190,10 @@ function main() {
     printUsage();
     process.exit(2);
   }
+
+  // Every release phase runs against an explicit semver from package.json;
+  // bump with `npm version patch|minor|major` before releasing.
+  console.log(`[release] Serpent v${currentVersion()} on ${currentPlatformKey()}`);
 
   const options = {
     skipVerify: flags.has('--skip-verify'),

@@ -82,7 +82,7 @@ export function collectMakeArtifacts(makeRoot = path.join(repoRoot, 'out', 'make
   return files.sort();
 }
 
-export function writeChecksumManifest(files, outputPath) {
+export function writeChecksumManifest(files, outputPath, version = currentVersion()) {
   const lines = files.map((filePath) => {
     const hash = createHash('sha256');
     hash.update(readFileSync(filePath));
@@ -90,9 +90,22 @@ export function writeChecksumManifest(files, outputPath) {
     return `${hash.digest('hex')}  ${relativePath}`;
   });
 
-  writeFileSync(outputPath, `${lines.join('\n')}\n`, 'utf8');
+  writeFileSync(
+    outputPath,
+    `# Serpent v${version} (${currentPlatformKey()})\n${lines.join('\n')}\n`,
+    'utf8',
+  );
   console.log(`Wrote checksum manifest: ${outputPath}`);
   return outputPath;
+}
+
+/** Current package.json version (semver string like 0.1.0). */
+export function currentVersion() {
+  const { version } = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+/.test(version)) {
+    throw new Error(`package.json version must be semver (got ${String(version)}).`);
+  }
+  return version;
 }
 
 export function platformKey() {
