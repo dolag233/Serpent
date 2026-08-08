@@ -160,6 +160,11 @@ function phaseE2E() {
 
 function phaseMake() {
   runReleaseScript('make');
+  // Windows 安装器（Inno Setup）在 Windows 原生环境构建；
+  // macOS 不产安装器（dmg 已由 make 产出）。
+  if (process.platform === 'win32') {
+    runReleaseScript('make:inno');
+  }
 }
 
 function phaseChecksums() {

@@ -62,6 +62,14 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_e2e != true }}
         run: npm run release:e2e:packaged
 
+      - name: Install Inno Setup (Windows installer tool)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://nuget.azure.cn/v3-flatcontainer/tools.innosetup/7.0.2/tools.innosetup.7.0.2.nupkg" -OutFile "$env:LOCALAPPDATA\inno.zip"
+          Expand-Archive "$env:LOCALAPPDATA\inno.zip" "$env:LOCALAPPDATA\SerpentTools\inno"
+          "SERPENT_INNO_TOOLS=$env:LOCALAPPDATA\SerpentTools\inno\tools" | Out-File -Append $env:GITHUB_ENV
+
       - name: Create installers
         run: npm run release:make
 

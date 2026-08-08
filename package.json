@@ -30,6 +30,7 @@
     "extension:verify": "node scripts/build-extension.mjs",
     "premake": "node scripts/media-binaries.mjs verify && node scripts/verify-ufbx-wasm.mjs",
     "make": "electron-forge make",
+    "make:inno": "node scripts/inno-build.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.extension.json",
     "test": "node scripts/run-vitest-with-electron.mjs run --exclude tests/worker/search-performance.test.ts",
