@@ -344,6 +344,12 @@ if (allowMultiInstance && process.env.SERPENT_E2E !== "1" && !mcpModeEnabled) {
 // over serpent:// Range responses (Serpent-jh2).
 protocol.registerSchemesAsPrivileged(serpentProtocolSchemes());
 
+// E2E（本地/CI）：虚拟化 runner 的 GPU 不可靠，白屏会让所有交互测试
+// 超时（CI mac 上 69 个 E2E 全挂）。禁用硬件加速换取稳定渲染。
+if (process.env.SERPENT_E2E === "1") {
+  app.disableHardwareAcceleration();
+}
+
 app.enableSandbox();
 
 const hasSingleInstanceLock = allowMultiInstance
