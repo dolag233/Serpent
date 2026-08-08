@@ -112,9 +112,15 @@ test('redacts local filesystem paths only for the in-app view', () => {
     const logger = new AppLogger(logPath);
     logger.error('media.failed', new Error(`Could not open ${root}/source.mp4`));
 
-    expect(JSON.stringify(logger.readRecent())).toContain(root);
-    expect(JSON.stringify(logger.readRecent(500, { redactPaths: true }))).not.toContain(root);
-    expect(JSON.stringify(logger.readRecent(500, { redactPaths: true }))).toContain('[PATH_REDACTED]');
+    // 解析 JSON 后断言（Windows 下 JSON.stringify 会转义反斜杠，不能对
+    // 序列化文本做 toContain(root)）。
+    const raw = JSON.parse(JSON.stringify(logger.readRecent())) as Array<{
+      error?: { message?: string };
+    }>;
+    expect(raw[0]?.error?.message).toContain(root);
+    const redacted = JSON.stringify(logger.readRecent(500, { redactPaths: true }));
+    expect(redacted).not.toContain(root);
+    expect(redacted).toContain('[PATH_REDACTED]');
   } finally {
     rmSync(root, { force: true, recursive: true });
   }

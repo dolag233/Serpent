@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -174,8 +176,9 @@ describe('plugin custom UI contract', () => {
     expect(parsePluginUiAssetRequest(
       'serpent-plugin://com.example.iframe/instance-a/%2e%2e/secret.js?libraryId=library-a&contributionId=com.example.iframe.probe-view',
     )).toBeUndefined();
+    // path.resolve 返回平台路径（Windows 下带盘符）
     expect(resolvePluginUiAssetPath('/plugins/com.example.iframe/1.0.0', 'entry/index.html'))
-      .toBe('/plugins/com.example.iframe/1.0.0/entry/index.html');
+      .toBe(path.resolve('/plugins/com.example.iframe/1.0.0/entry/index.html'));
     expect(resolvePluginUiAssetPath('/plugins/com.example.iframe/1.0.0', '../secret.js'))
       .toBeUndefined();
   });

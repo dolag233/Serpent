@@ -335,7 +335,8 @@ it('uses one LibRaw- and zlib-enabled media manifest for macOS and Windows build
   expect(windowsScript).toContain("$ManifestRoot = Join-Path $Root 'resources/media-binaries/vcpkg'");
   expect(macScript).toContain('export VCPKG_ROOT');
   expect(windowsScript).toContain('$env:VCPKG_ROOT = $VcpkgRoot');
-  expect(windowsScript).toContain("Join-Path $env:LOCALAPPDATA 'Serpent\\media-build\\win32-x64'");
+  // 工作目录不得与 Squirrel/Inno 安装目录 %LOCALAPPDATA%\Serpent 撞名
+  expect(windowsScript).toContain("Join-Path $env:LOCALAPPDATA 'SerpentMediaBuild\\win32-x64'");
 });
 
 it('keeps the PNG encoder required for audio waveform thumbnails in the FFmpeg overlay', () => {

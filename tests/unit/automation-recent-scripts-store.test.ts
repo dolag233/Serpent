@@ -41,7 +41,10 @@ describe('AutomationRecentScriptsStore', () => {
       lastOpenedAt: '2026-07-31T08:00:00.000Z',
     }]);
     expect(store.list().every((entry) => !('absolutePath' in entry))).toBe(true);
-    expect(store.resolvePath(handleA)).toBe('/Users/test/scripts/rating.serpent.ts');
+    // store 以 path.resolve 规范化存储（Windows 下会带盘符）
+    expect(store.resolvePath(handleA)).toBe(
+      path.resolve('/Users/test/scripts/rating.serpent.ts'),
+    );
   });
 
   it('moves the same file to the front and updates lastOpenedAt without duplicating entries', () => {
@@ -93,6 +96,8 @@ describe('AutomationRecentScriptsStore', () => {
     expect(store.list()[0]?.displayName).toBe(`script-${AUTOMATION_RECENT_SCRIPTS_LIMIT + 1}.serpent.ts`);
     const persisted = JSON.parse(readFileSync(filename, 'utf8')) as { entries: { absolutePath: string }[] };
     expect(persisted.entries).toHaveLength(AUTOMATION_RECENT_SCRIPTS_LIMIT);
-    expect(persisted.entries.every((entry) => entry.absolutePath.startsWith('/tmp/'))).toBe(true);
+    // 持久化路径是 path.resolve 规范化后的平台路径（Windows 下带盘符）
+    const tmpPrefix = path.resolve('/tmp/');
+    expect(persisted.entries.every((entry) => entry.absolutePath.startsWith(tmpPrefix))).toBe(true);
   });
 });
