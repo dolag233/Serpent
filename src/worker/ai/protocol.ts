@@ -111,6 +111,8 @@ export interface AiAnalysisRequest {
   displayName: string;
   filename: string;
   mime: string;
+  /** Visual presentation kind — drives the system prompt explanation. */
+  mediaType?: 'image' | 'video' | 'model';
   contactSheetDescription?: string;
   imageBase64?: string;
   contactSheetBase64?: string;
@@ -146,7 +148,7 @@ export function buildAiAnalysisUserTextLines(
   }
   if (request.contactSheetBase64) {
     lines.push(
-      'The first image is the poster frame and the second is a contact sheet of key frames.',
+      'The first image is the poster frame and the second is a contact sheet of key frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.',
     );
   }
   return lines;

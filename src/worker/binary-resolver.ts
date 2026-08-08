@@ -77,6 +77,33 @@ function resolveBundledBinary(
   return undefined;
 }
 
+
+/**
+ * Resolve the bundled drawtext font (DejaVu Sans) shipped under
+ * resources/fonts/. Same dev/packaged candidates as the media binaries.
+ */
+export function resolveBundledFontPath(): string | undefined {
+  const relative = path.join('fonts', 'DejaVuSans.ttf');
+  const candidates: string[] = [];
+  if (
+    typeof process.resourcesPath === 'string' &&
+    process.resourcesPath.length > 0
+  ) {
+    candidates.push(path.join(process.resourcesPath, 'resources', relative));
+    candidates.push(path.join(process.resourcesPath, relative));
+  }
+  candidates.push(path.join(process.cwd(), 'resources', relative));
+  for (const candidate of candidates) {
+    try {
+      const stat = statSync(candidate);
+      if (stat.isFile() && stat.size > 0) return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  return undefined;
+}
+
 /**
  * Resolve the FFmpeg binary path.
  *

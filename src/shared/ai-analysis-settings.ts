@@ -186,8 +186,10 @@ export function buildAiAnalysisSystemPrompt(input: {
     rating: boolean;
   };
   existingTagNames: readonly string[];
+  /** Visual presentation kind; drives the input-image explanation. */
+  mediaType?: 'image' | 'video' | 'model';
 }): string {
-  const { language, settings, enabledFields, existingTagNames } = input;
+  const { language, settings, enabledFields, existingTagNames, mediaType = 'image' } = input;
   const fields: string[] = [];
   if (enabledFields.description) fields.push('description');
   if (enabledFields.tags) fields.push('tags');
@@ -207,6 +209,15 @@ export function buildAiAnalysisSystemPrompt(input: {
   const languageRule = buildTagLanguageRule(language);
 
   let prompt = `这是一个视觉分析任务，需要你分析资源库中一个多媒体资产的视觉特征。请分析输入图片/视频，根据风格、氛围、情绪、类型等特征，以严格 JSON 输出（不要 Markdown）。\n`;
+
+  if (mediaType === 'video') {
+    prompt +=
+      '这是一张将视频多帧画面拼接在一起的图片，每一帧的右下角标明了当前帧的时间（HH:MM:SS.mmm 格式）。请结合多帧内容综合判断视频的整体风格、氛围与内容变化。\n';
+  } else if (mediaType === 'model') {
+    prompt +=
+      '这是一个 3D 模型三视图拼接而成的图片，从左到右分别代表了斜 45 度视图、正视、侧视、俯视图。请基于这些视图分析模型的外观、形态与材质特征。\n';
+  }
+
   prompt += `JSON 形状：{"description": string|null, "tags": string[], "rating": number|null}\n`;
   prompt += `本次需要填充的字段：${fields.join(', ') || '（无）'}\n`;
   prompt += `未启用的字段请输出 null 或空数组（tags 用 []）。\n\n`;

@@ -1561,6 +1561,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         displayName,
         filename,
         mime: requestMime,
+        mediaType: requestMime.startsWith('video/') ? 'video' : 'image',
         imageBase64,
         contactSheetBase64,
         contactSheetDescription,

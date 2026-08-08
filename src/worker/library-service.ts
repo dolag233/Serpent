@@ -41,6 +41,7 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 
 import {
+  resolveBundledFontPath,
   resolveFfmpegPath,
   resolveFfprobePath,
   resolveOiiotoolPath,
@@ -13745,6 +13746,33 @@ export class LibraryService {
   }
 
   /** Generate a contact sheet (grid of sampled frames). */
+  /**
+   * Probe a video file's frame dimensions via ffprobe. Falls back to
+   * square 1:1 when the probe fails so contact-sheet layout still works.
+   */
+  private async probeVideoDimensions(assetPath: string): Promise<{ width: number; height: number }> {
+    const ffprobePath = resolveFfprobePath();
+    try {
+      const result = await this.runFfmpeg(ffprobePath, [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_streams',
+        assetPath,
+      ], { timeoutMs: 30_000, signal: new AbortController().signal });
+      if (result.exitCode !== 0) throw new Error(result.stderr.slice(-200));
+      const parsed = JSON.parse(String(result.stdout)) as {
+        streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
+      };
+      const video = parsed.streams?.find((s) => s.codec_type === 'video');
+      if (video?.width && video?.height) {
+        return { width: video.width, height: video.height };
+      }
+    } catch {
+      // fall through to 1:1
+    }
+    return { width: 640, height: 360 };
+  }
+
   private async generateContactSheet(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -13758,18 +13786,40 @@ export class LibraryService {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.jpg`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
-    const frameCount = 16;
-    const interval = Math.max(0.5, durationSec / frameCount);
-    const columns = 4;
-    const rows = Math.ceil(frameCount / columns);
 
-    // The LGPL bundle disables fontconfig. Until Serpent ships a licensed font,
-    // avoid drawtext rather than depending on a platform-specific system font.
+    // Serpent-6w40: the AI contact sheet must stay within a 2048 long edge
+    // while showing at least 16 frames. Large videos shrink each frame to a
+    // ~509 cell (4×4 baseline); small videos keep their native size, which
+    // lets the grid grow to more frames.
+    const { width, height } = await this.probeVideoDimensions(assetPath);
+    const TARGET_EDGE = 2048;
+    const MARGIN = 2;
+    const PADDING = 2;
+    const longEdge = Math.max(width, height);
+    const baselineCell = Math.floor((TARGET_EDGE - 2 * PADDING - 2 * MARGIN * 4) / 4);
+    const frameEdge = Math.min(baselineCell, longEdge);
+    const frameW = Math.max(2, Math.round((frameEdge * width / longEdge) / 2) * 2);
+    const frameH = Math.max(2, Math.round((frameEdge * height / longEdge) / 2) * 2);
+    const columns = Math.max(4, Math.min(20,
+      Math.floor((TARGET_EDGE - 2 * PADDING + MARGIN) / (frameW + MARGIN))));
+    const rows = Math.max(4, Math.min(20,
+      Math.floor((TARGET_EDGE - 2 * PADDING + MARGIN) / (frameH + MARGIN))));
+    const frameCount = columns * rows;
+    const interval = durationSec / frameCount;
+
+    // drawtext stamps the current frame time (HH:MM:SS.mmm) at the bottom
+    // right of every frame. The bundled DejaVu Sans font keeps the LGPL
+    // build independent of fontconfig/system fonts.
+    const fontPath = resolveBundledFontPath();
+    const fontSize = Math.max(14, Math.round(frameH * 0.12));
     const filterGraph = [
       `fps=1/${interval}`,
-      'scale=320:-1:flags=lanczos',
+      `scale=${frameW}:${frameH}:flags=lanczos`,
+      fontPath
+        ? `drawtext=fontfile='${fontPath}':text='%{pts\:hms}':x=w-tw-8:y=h-th-8:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.5`
+        : null,
       `tile=${columns}x${rows}:margin=2:padding=2:color=#1a1a1a`,
-    ].join(',');
+    ].filter((part): part is string => part !== null).join(',');
 
     try {
       const result = await this.runFfmpeg(ffmpegPath, [
