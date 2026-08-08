@@ -25,6 +25,7 @@ test('the packaged application starts and completes a real Worker import', async
       ...process.env,
       SERPENT_E2E: '1',
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
     },
   });
 
@@ -33,9 +34,11 @@ test('the packaged application starts and completes a real Worker import', async
       ({ dialog }, paths) => {
         dialog.showOpenDialog = async (...args: unknown[]) => {
           const options = args.at(-1) as { title?: string };
-          const selectedPath = options.title === 'Create Library'
-            ? paths.temporaryRoot
-            : paths.sourcePath;
+          // The native dialog title follows the OS locale (Create Library /
+          // 创建资源库); match either so the mock works on any system.
+          const isCreate =
+            options.title === 'Create Library' || options.title === '创建资源库';
+          const selectedPath = isCreate ? paths.temporaryRoot : paths.sourcePath;
           return { canceled: false, filePaths: [selectedPath] };
         };
       },
@@ -57,7 +60,7 @@ test('the packaged application starts and completes a real Worker import', async
     await expect(window.getByText(libraryName, { exact: true }).first()).toBeVisible();
 
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    await expect(window.getByText('packaged-worker.txt', { exact: true })).toBeVisible();
+    await expect(window.getByText('packaged-worker.txt', { exact: true }).first()).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'packaged-worker.txt'))).toBe(true);
 
     const screenshotPath = test.info().outputPath('packaged-worker-import.png');
@@ -96,6 +99,7 @@ test('the packaged application FTS5 search finds and filters imported assets', a
       ...process.env,
       SERPENT_E2E: '1',
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
     },
   });
 
@@ -104,9 +108,11 @@ test('the packaged application FTS5 search finds and filters imported assets', a
       ({ dialog }, paths) => {
         dialog.showOpenDialog = async (...args: unknown[]) => {
           const options = args.at(-1) as { title?: string };
-          const selectedPath = options.title === 'Create Library'
-            ? paths.temporaryRoot
-            : paths.sourcePath;
+          // The native dialog title follows the OS locale (Create Library /
+          // 创建资源库); match either so the mock works on any system.
+          const isCreate =
+            options.title === 'Create Library' || options.title === '创建资源库';
+          const selectedPath = isCreate ? paths.temporaryRoot : paths.sourcePath;
           return { canceled: false, filePaths: [selectedPath] };
         };
       },
@@ -124,7 +130,7 @@ test('the packaged application FTS5 search finds and filters imported assets', a
 
     // Import a real valid PNG so the asset is searchable via FTS5
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    await expect(window.getByText('search-smoke-test.png', { exact: true })).toBeVisible();
+    await expect(window.getByText('search-smoke-test.png', { exact: true }).first()).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'search-smoke-test.png'))).toBe(true);
 
     // FTS5 keyword search: matching keyword finds the asset
@@ -166,6 +172,7 @@ test('the packaged Windows close button hides the window and keeps the tray proc
       ...process.env,
       SERPENT_E2E: '1',
       SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
     },
   });
   const childProcess = application.process();

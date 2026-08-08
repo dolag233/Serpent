@@ -70,7 +70,12 @@ const config: ForgeConfig = {
   packagerConfig: {
     icon: appIconBase,
     asar: {
-      unpack: '**/node_modules/trash/lib/{macos-trash,windows-trash.exe}',
+      unpack:
+        '**/node_modules/trash/lib/{macos-trash,windows-trash.exe},' +
+        // Sharp 0.35 ships prebuilt natives under @img/* (e.g.
+        // @img/sharp-darwin-arm64/lib/*.node); native modules cannot load
+        // from inside app.asar, so they must stay unpacked.
+        '**/node_modules/@img/**',
     },
     // Serpent 初版不购买签名证书（MarkText/VSCodium 先例：未签名发布 +
     // 文档引导）。但 Apple Silicon 上完全不签名会报"已损坏"无法启动，所以
