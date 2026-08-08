@@ -12,7 +12,7 @@
  * manifest.sha256 → 打印 bundle-lock 晋升条目。
  */
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
