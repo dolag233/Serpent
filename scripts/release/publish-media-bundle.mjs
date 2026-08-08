@@ -1,16 +1,14 @@
 #!/usr/bin/env node
 /**
- * 上传媒体 bundle 到 Serpent-Build Release（单一 Release 模式）。
+ * 上传媒体 bundle 到 Serpent-Build Release（单一 Release + 标准 asset 名）。
  *
  * 策略（2026-08-08 产品确定）：
  *   - 只保留一个 Release（tag media-v0.1.1，标题 SerpentBuildDependencies）
- *   - 每次更新上传**带版本后缀的 asset 名**（serpent-media-<platform>-<suffix>.zip），
- *     不覆盖旧资产（Immutable Releases 下资产不可改删，旧版本可追溯）
- *   - bundle-lock 的 URL 指向最新带版本 asset
+ *   - asset 用标准名（serpent-media-<platform>.zip），更新时删除旧资产再上传
  *
  * 用法：
  *   node scripts/release/publish-media-bundle.mjs \
- *     --platform win32-x64 --version v0.1.1 --suffix n8.1 \
+ *     --platform win32-x64 --version v0.1.1 \
  *     --zip artifacts/media-binaries/serpent-media-win32-x64.zip
  *
  * 认证：GITHUB_TOKEN 环境变量，或 git credential（HTTPS）。
@@ -67,9 +65,9 @@ function parseArgs(argv) {
 }
 
 function main() {
-  const { platform, version, suffix, zip } = parseArgs(process.argv.slice(2));
-  if (!platform || !version || !suffix || !zip) {
-    fail('Usage: --platform win32-x64 --version v0.1.1 --suffix n8.1 --zip <bundle.zip>');
+  const { platform, version, zip } = parseArgs(process.argv.slice(2));
+  if (!platform || !version || !zip) {
+    fail('Usage: --platform win32-x64 --version v0.1.1 --zip <bundle.zip>');
   }
   if (!['win32-x64', 'darwin-arm64'].includes(platform)) fail(`Unsupported platform ${platform}.`);
 
@@ -78,8 +76,8 @@ function main() {
   const shaPath = `${zipPath}.sha256`;
   const manifestShaPath = zipPath.replace(/\.zip$/, '.manifest.sha256');
 
-  // 带版本 asset 名（不覆盖旧资产，Immutable Releases 兼容）
-  const base = `serpent-media-${platform}-${suffix}`;
+  // 标准 asset 名（先删旧资产再上传，避免同名冲突）
+  const base = `serpent-media-${platform}`;
   const assetFiles = [
     [zipPath, `${base}.zip`],
     [shaPath, `${base}.zip.sha256`],
@@ -96,12 +94,23 @@ function main() {
       const release = releases.find((r) => r.tag_name === version);
       if (!release) fail(`Release ${version} not found (create it manually or fix --version).`);
       const uploadUrl = release.upload_url;
+      const token = process.env.GITHUB_TOKEN || tokenFromGitCredential();
+
+      // 删除同名旧资产（Release 允许删 asset）
+      for (const [, name] of assetFiles) {
+        const existing = (release.assets ?? []).find((a) => a.name === name);
+        if (existing) {
+          const del = await api(`/repos/${BUILD_REPO}/releases/assets/${existing.id}`, { method: 'DELETE' });
+          if (!del.ok && del.status !== 404) fail(`Delete ${name} → ${del.status}`);
+          console.log(`  removed old ${name}`);
+        }
+      }
 
       for (const [file, name] of assetFiles) {
         const upload = await fetch(uploadUrl.replace('{?name,label}', `?name=${encodeURIComponent(name)}`), {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN || tokenFromGitCredential()}`,
+            Authorization: `Bearer ${token}`,
             Accept: 'application/vnd.github+json',
             'Content-Type': 'application/octet-stream',
           },
