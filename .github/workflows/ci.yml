@@ -1,4 +1,7 @@
-name: CI
+      - name: Rebuild SQLite for Electron
+        # windows-2022（VS 2022）——@electron/rebuild 3.x 的 node-gyp 正常识别；
+        # windows-2025 已迁移 VS 2026（node-gyp<12.1 不识，见 node-gyp#3228）。
+        run: npx electron-rebuild -f -w better-sqlite3name: CI
 
 on:
   workflow_dispatch:
@@ -19,7 +22,7 @@ jobs:
           - platform: macOS arm64
             runner: macos-15
           - platform: Windows x64
-            runner: windows-2025
+            runner: windows-2022
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -38,11 +41,8 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org
 
       - name: Rebuild SQLite for Electron
-        # windows-2025 镜像为 VS 18（2026）：@electron/rebuild 内置 node-gyp
-        # 的 VS 探测超 maxBuffer 且不认识 VS 18——用 VSINSTALLDIR 直达
-        # （mac 上为空，无影响）。
-        env:
-          VSINSTALLDIR: ${{ runner.os == 'Windows' && 'C:\Program Files\Microsoft Visual Studio\18\Enterprise' || '' }}
+        # windows-2022（VS 2022）——@electron/rebuild 3.x 的 node-gyp 正常识别；
+        # windows-2025 已迁移 VS 2026（node-gyp<12.1 不识，见 node-gyp#3228）。
         run: npx electron-rebuild -f -w better-sqlite3
 
       - name: Static verification
