@@ -4,6 +4,7 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 
 - [Install](installation.en.md) — macOS / Windows, browser extension, upgrades
 - [Basics](basics.en.md) — create a library, import, browse, search, tags, collections, 3D viewer
+- [Plugins, scripts and MCP](extensions.en.md) — using extensions
 - [Troubleshooting](troubleshooting.en.md) — common problems and fixes
 
 ## Quick start

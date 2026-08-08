@@ -4,6 +4,7 @@
 
 - [安装](installation.md)——macOS / Windows 安装、浏览器扩展、升级
 - [基本使用](basics.md)——创建资源库、导入、浏览、搜索、标签、合集、3D 查看器
+- [插件、脚本与 MCP](extensions.md)——使用扩展的方法
 - [故障排查](troubleshooting.md)——常见问题与解决
 
 ## 快速开始
