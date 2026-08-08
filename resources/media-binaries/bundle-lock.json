@@ -1,13 +1,17 @@
 {
-  "schemaVersion": 1,
-  "bundles": {
-    "darwin-arm64": {
-      "status": "build-required",
-      "reason": "The project-controlled vcpkg workflow is defined, but no successful macOS arm64 bundle artifact has been promoted to an immutable HTTPS URL and checksum-pinned yet."
-    },
-    "win32-x64": {
-      "status": "build-required",
-      "reason": "The project-controlled vcpkg workflow is defined, but no successful Windows x64 bundle artifact has been promoted to an immutable HTTPS URL and checksum-pinned yet."
-    }
+ "schemaVersion": 1,
+ "bundles": {
+  "darwin-arm64": {
+   "status": "build-required",
+   "reason": "The project-controlled vcpkg workflow is defined, but no successful macOS arm64 bundle artifact has been promoted to an immutable HTTPS URL and checksum-pinned yet."
+  },
+  "win32-x64": {
+   "status": "ready",
+   "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.0/serpent-media-win32-x64.zip",
+   "sha256": "24c2c1e3d8d3f3dbc185d582a2cdef001570ba68abfad277affa0345f149d4b4",
+   "size": 83849102,
+   "manifestSha256": "42a059cf61cc6d90614a99edc33b1bf1034930bdf9d896370df88d5a358ffb71",
+   "promotedAt": "2026-08-08T12:34:26.366Z"
   }
+ }
 }
