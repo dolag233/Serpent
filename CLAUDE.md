@@ -87,6 +87,13 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 工单管理（beads）
 
+- **Git hooks（必装，一次性）**：工单镜像随提交/推送自动同步依赖 `.beads/hooks/` 的 git hooks。新 clone 后执行：
+  ```bash
+  bd hooks install
+  chmod +x .beads/hooks/*   # bd install 未设执行权限，git 会忽略无权限 hook
+  ```
+  安装后 pre-commit 自动导出 `.beads/issues.jsonl`，pre-push 触发 bd 同步（2026-08-08 实测：此前 hook 无执行权限被 git 忽略，导致镜像与 Dolt 长期漂移、需手动 `bd export`）。
+
 本仓库使用 beads（`bd` CLI）作为唯一工单系统。`.beads/issues.jsonl` 和 `.beads/interactions.jsonl` 是随 Git 同步的工单镜像；`.beads/embeddeddolt` 是未纳入 Git 的本地嵌入式 Dolt 数据库，不能假设会随分支切换同步。`docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
 
 - 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
