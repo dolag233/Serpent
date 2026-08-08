@@ -4,7 +4,7 @@
 
 ```bash
 npm run package          # 打包应用（含构建）→ out/Serpent-<platform>-<arch>/
-npm run make             # 生成安装包 → out/make/（dmg / squirrel / zip）
+npm run make             # 生成安装包 → out/make/（macOS dmg / Windows zip；Windows 安装器 SerpentSetup.exe 由 Inno Setup 构建）
 npm run verify:package   # 校验打包产物（ASAR、native 模块、媒体组件）
 ```
 
@@ -73,6 +73,22 @@ npm run release:local -- --skip-verify --build-media-locally
 ### 平台
 
 `forge.config.ts` 强制**原生平台构建**（`darwin-arm64` / `win32-x64` 白名单）——媒体二进制、ufbx、native 模块均为平台相关，不支持交叉打包。Windows 需在 Windows 原生环境跑同一流水线。
+
+### Windows 安装器（Inno Setup）
+
+Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款方案，脚本 `assets/inno/serpentsetup.iss`）：
+
+```bash
+# 先 package（Inno 从 out/Serpent-win32-x64 打包），再编译安装器：
+& "$env:LOCALAPPDATA\SerpentTools\inno\tools\ISCC.exe" assets\inno\serpentsetup.iss
+```
+
+- 多语言：安装启动时显示语言选择（默认跟随系统语言），中英双语
+- 安装向导：安装路径选择（默认 `C:\Program Files\Serpent`）、开始菜单/桌面快捷方式
+- per-machine 安装（UAC 提权）、自动生成卸载器 `unins000.exe` 与应用和功能条目
+- Inno Setup 工具获取：NuGet 包 `Tools.InnoSetup`（免管理员，解压即用），见 CLAUDE.md
+
+> 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`。
 
 ## 浏览器扩展
 

@@ -43,7 +43,7 @@ npm run typecheck        # tsc --noEmit
 npm run test             # unit + worker integration tests
 npm run test:e2e         # Playwright E2E
 npm run package          # package to out/Serpent-<platform>-<arch>/
-npm run make             # build platform installers (dmg / squirrel / zip)
+npm run make             # build platform installers (macOS dmg / Windows zip; Windows setup via Inno Setup)
 ```
 
 The full build, packaging and release flow is in the [developer docs](docs/developer/build-packaging.en.md).

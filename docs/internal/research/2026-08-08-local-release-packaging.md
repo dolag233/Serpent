@@ -13,7 +13,7 @@
 | 项 | 现状 |
 |---|---|
 | 平台门禁 | `nativeMediaPlatform` 强制**原生平台构建**（白名单 `darwin-arm64` / `win32-x64`），交叉打包被显式拒绝——media 二进制/ufbx/native 模块都是平台相关，不能跨平台打包 |
-| makers | **Squirrel**（Windows 安装包：Setup.exe + RELEASES + .nupkg）、**DMG**（macOS 安装包）、**ZIP**（darwin/win32 通用包） |
+| makers | **DMG**（macOS 安装包）、**ZIP**（darwin/win32 通用包）；Windows 安装器用 **Inno Setup** 独立构建（assets/inno/serpentsetup.iss，VS Code 同款，2026-08-08 决策替换 Squirrel/WiX） |
 | hooks | prePackage/postPackage/preMake 全链路门禁：`media-binaries.mjs verify --platform` + `verify-package.mjs`（校验 ASAR、better_sqlite3.node、ufbx WASM、media 产物） |
 | packager | asar + unpack（trash 原生模块）、extraResource（media 二进制/图标）、Vite 多入口（main/preload/offscreen/worker/脚本运行时） |
 
@@ -36,7 +36,7 @@ Flags：`--skip-verify` / `--skip-media` / `--skip-e2e` / `--build-media-locally
 ### 1.3 版本与产物
 
 - `package.json` version = `0.1.0`（硬编码，无版本提升机制）
-- 产物：`out/Serpent-<platform>-<arch>/`（package）、`out/make/`（dmg/squirrel/zip + checksums）
+- 产物：`out/Serpent-<platform>-<arch>/`（package）、`out/make/`（macOS dmg / Windows zip；Windows 安装器 SerpentSetup.exe 由 Inno Setup 构建到 out/make/inno/）
 
 ### 1.4 media 二进制晋升门禁（2026-08-08 实测发现）
 
@@ -57,11 +57,11 @@ Flags：`--skip-verify` / `--skip-media` / `--skip-e2e` / `--build-media-locally
 - 影响：未签名/未公证的 .app 与 .dmg 在 macOS Gatekeeper 下被拦截（"无法验证开发者"），用户无法正常安装——**发布必需**，不是可选项
 - 需要：Apple Developer 账号（$99/年）→ Developer ID Application 证书 + App Store Connect API key（公证用 notarytool）；或至少 ad-hoc 签名（内部试用，不能对外分发）
 
-### 2.2 🔴 Windows 打包从未验证（CLAUDE.md 显式未验证项）
+### 2.2 🟡 Windows 打包（2026-08-08 已实测，更新自"从未验证"）
 
-- win32-x64 在平台白名单内，Squirrel maker 已配置，但**从未在 Windows 上跑过**（无 Windows 机器/runner）
-- 流水线是平台无关的（pipeline.mjs 通用）——**Windows 机器上跑 `npm run release:local` 即可**，但以下未验证：Squirrel Setup.exe 生成、RELEASES 清单、nupkg、Windows 安装/卸载旅程、Windows 上 media binaries acquire/verify
-- Windows 签名：需代码签名证书（EV/OV，费用另计）——Squirrel 未签名会被 SmartScreen 拦截
+- **2026-08-08 已在真实 Windows 实测**：package/make、Inno Setup 安装器构建（语言选择/路径选择/卸载旅程）均验证通过，见开发日志 `2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`
+- Windows 安装器 = **Inno Setup**（VS Code 同款）：Squirrel（无向导/路径选择/卸载残留）与 WiX MSI（语言切换需自定义 bootstrapper）均已回退
+- 仍待验证：真实 Windows CI runner（release.yml）、安装器签名（未签名会被 SmartScreen 拦截，需代码签名证书 EV/OV）
 
 ### 2.3 🟡 版本号管理缺失
 
@@ -93,7 +93,7 @@ npm run release:local -- --skip-e2e
 ### 3.3 版本管理
 
 - `npm version patch/minor/major` 提升 + git tag（`v0.1.1`）→ checksum manifest 文件名/内容带版本号
-- make 产物命名建议含版本（当前 Squirrel/DMG 用 package.json version ✓——只需提升机制）
+- make 产物命名建议含版本（当前 Inno/DMG 用 package.json version ✓——只需提升机制）
 
 ### 3.4 实施顺序建议
 

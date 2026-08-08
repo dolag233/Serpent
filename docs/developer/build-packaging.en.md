@@ -4,7 +4,7 @@
 
 ```bash
 npm run package          # package the app (includes build) → out/Serpent-<platform>-<arch>/
-npm run make             # build installers → out/make/ (dmg / squirrel / zip)
+npm run make             # build installers → out/make/ (macOS dmg / Windows zip; Windows setup built with Inno Setup)
 npm run verify:package   # verify the packaged output (ASAR, native modules, media)
 ```
 
@@ -73,6 +73,22 @@ npm run release:local -- --skip-verify --build-media-locally
 ### Platforms
 
 `forge.config.ts` enforces **native-platform builds** (allowlist `darwin-arm64` / `win32-x64`) — media binaries, ufbx and native modules are platform-specific; cross-packaging is not supported. Windows runs the same pipeline on a Windows host.
+
+### Windows installer (Inno Setup)
+
+The Windows installer `SerpentSetup.exe` is built with **Inno Setup** (same approach as VS Code; script `assets/inno/serpentsetup.iss`):
+
+```bash
+# package first (Inno packs from out/Serpent-win32-x64), then compile:
+& "$env:LOCALAPPDATA\SerpentTools\inno\tools\ISCC.exe" assets\inno\serpentsetup.iss
+```
+
+- Multilingual: language selection dialog on launch (defaults to the system language), English + Simplified Chinese
+- Wizard with install-path selection (default `C:\Program Files\Serpent`), Start Menu / desktop shortcuts
+- Per-machine install (UAC elevation), automatic uninstaller `unins000.exe` and Apps & Features entry
+- Getting Inno Setup: NuGet package `Tools.InnoSetup` (no admin needed, extract and use), see CLAUDE.md
+
+> History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`.
 
 ## Browser extension
 

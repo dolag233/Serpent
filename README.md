@@ -43,7 +43,7 @@ npm run typecheck        # tsc --noEmit
 npm run test             # 单元 + Worker 集成测试
 npm run test:e2e         # Playwright E2E
 npm run package          # 打包到 out/Serpent-<platform>-<arch>/
-npm run make             # 按平台生成安装包（dmg / squirrel / zip）
+npm run make             # 按平台生成安装包（macOS dmg / Windows zip；Windows 安装器用 Inno Setup 构建）
 ```
 
 完整的构建、打包、发布流程见[开发者文档](docs/developer/build-packaging.md)。

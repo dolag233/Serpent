@@ -52,7 +52,7 @@ npm run test:e2e       # Playwright E2E（library-lifecycle + asset-ingestion + 
 npm run test:e2e:packaged  # packaged app 启动测试（需先 npm run package）
 npm run package        # 打包到 out/Serpent-<platform>-<arch>/
 npm run verify:package # 校验 ASAR 和 better_sqlite3.node 原生模块
-npm run make           # 生成平台安装包（dmg/squirrel/zip）
+npm run make           # 生成平台安装包（macOS dmg / Windows zip + Inno Setup 安装器）
 # 注意：npm run package / make 会更新 dev 的 node_modules/electron binary，跑完务必执行
 # npx @electron/rebuild -f -w better-sqlite3 恢复 dev native 模块，否则 npm run test 会报
 # better_sqlite3.node NODE_MODULE_VERSION 不匹配（package 用新 Electron Node ABI，dev 测试需重编译对齐）。

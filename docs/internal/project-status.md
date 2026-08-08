@@ -141,7 +141,7 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 - 在 `codex/windows-adaptation` 当前源码上以隔离 userData/临时资源库运行真实 Windows Electron；启动 smoke 通过，基础 Ctrl/Shift/Ctrl+Shift 选择、框选、F2 原地重命名、Explorer 右键文案、普通拖动移动、查看切图/返回与切范围退出已获得 Windows 实机证据。完整矩阵见 `docs/internal/qa/2026-07-19-windows-interaction-audit.md`。
 - 用户点名并实机确认三项 P1：平铺 caption 高度模型错误导致 13/13 缩略图横向留白（`Serpent-omn`）；侧栏/窗口收窄后 grid 保留旧 min-content 宽并遮挡资产、视觉锚点丢失（`Serpent-itr` / `Serpent-32p`）；图片查看普通 wheel 不缩放（`Serpent-6k1`）。
 - 同轮新增 Windows 原生菜单默认英文并暴露 Reload/DevTools/网页 Zoom（`Serpent-j5x`）、原生文件对话框中英硬编码混杂（`Serpent-bwb`）、文本输入无编辑右键菜单（`Serpent-d8u`）、Alt 拖拽复制未完成且提示误写 Option（`Serpent-2vn`）。
-- 这只是开发态 UI/交互审计，不代表 Windows 平台完成：125%/150% DPI、多屏、真实媒体 bundle、packaged/Squirrel、签名、升级卸载与全量 `verify:mainline` 仍未验证；P0 Windows runner 仍是发布阻断。
+- 这只是开发态 UI/交互审计，不代表 Windows 平台完成：125%/150% DPI、多屏、真实媒体 bundle、packaged/安装器、签名、升级卸载与全量 `verify:mainline` 仍未验证；P0 Windows runner 仍是发布阻断。
 
 ## 2026-07-17 第二批用户反馈排期与 Wave 1 启动
 
@@ -301,4 +301,4 @@ v0.1.0 继续收口 0001–0010 的桌面主线，并纳入真实使用反馈确
 
 ## 仍未宣称完成
 
-Windows 已完成一次有边界的开发态 UI/交互审计，但尚未完成 DPI、多屏、真实媒体、packaged/Squirrel 与发布级平台 QA；0006 的首发视频格式、FFmpeg/OIIO 随包分发和 packaged-app 媒体主线仍需验证。任何“已实现”不等同于满足项目完成定义。
+Windows 已完成一次有边界的开发态 UI/交互审计，但尚未完成 DPI、多屏、真实媒体、packaged/安装器与发布级平台 QA；0006 的首发视频格式、FFmpeg/OIIO 随包分发和 packaged-app 媒体主线仍需验证。任何“已实现”不等同于满足项目完成定义。
