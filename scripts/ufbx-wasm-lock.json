@@ -32,7 +32,8 @@
       "note": "2026-08-07 rebuilt on Windows with Emscripten 6.0.5 after the Serpent-a5ic bridge change #3: flip V texture coordinates (FBX bottom-left origin -> glTF top-left; matches FBX2glTF default). Wasm hash changed by the bridge edit; JS glue unchanged."
     },
     "ufbx.js": {
-      "sha256": "82a9376d575be30e953691a866fe213a4ae385a0a1e372bf52a66afc0a28884e"
+      "sha256": "e85bf030aa96ae59c4b41415e653ffae9bbf212f72bc2aa8b15b030b537d3652",
+      "note": "2026-08-08 corrected to the committed glue hash (wasm from the 2026-08-07 Windows rebuild matches; the glue entry had kept a stale pre-bridge value)"
     }
   }
 }
