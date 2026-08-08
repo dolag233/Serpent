@@ -38,6 +38,10 @@ jobs:
         run: npm ci --registry=https://registry.npmjs.org
 
       - name: Rebuild SQLite for Electron
+        # GYP_MSVS_VERSION 跳过 node-gyp 的 VS 探测（windows-2025 镜像的
+        # PowerShell 检测输出超 maxBuffer 导致 "Could not find any VS"）。
+        env:
+          GYP_MSVS_VERSION: 2026
         run: npx electron-rebuild -f -w better-sqlite3
 
       - name: Static verification
