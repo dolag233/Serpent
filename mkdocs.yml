@@ -1,0 +1,46 @@
+# Serpent documentation site (mkdocs-material)
+# Usage: pip install mkdocs-material && mkdocs serve
+site_name: Serpent
+repo_url: https://github.com/dolag233/Serpent
+edit_uri: blob/codex/slice-002-asset-ingestion/docs/
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - codehilite
+  - tables
+nav:
+  - 首页: README.md
+  - 使用手册:
+      - 总览: user-guide/README.md
+      - 安装: user-guide/installation.md
+      - 基本使用: user-guide/basics.md
+      - 故障排查: user-guide/troubleshooting.md
+      - User Guide (EN):
+          - Overview: user-guide/README.en.md
+          - Installation: user-guide/installation.en.md
+          - Basics: user-guide/basics.en.md
+          - Troubleshooting: user-guide/troubleshooting.en.md
+  - 开发者文档:
+      - 总览: developer/README.md
+      - 环境搭建: developer/setup.md
+      - 构建与打包: developer/build-packaging.md
+      - 架构: developer/architecture.md
+      - 测试: developer/testing.md
+      - Developer Docs (EN):
+          - Overview: developer/README.en.md
+          - Setup: developer/setup.en.md
+          - Build & Packaging: developer/build-packaging.en.md
+          - Architecture: developer/architecture.en.md
+          - Testing: developer/testing.en.md
+  - 扩展作者手册: manual/README.md
+  - 产品简报: product-brief.md
