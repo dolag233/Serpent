@@ -1,7 +1,4 @@
-      - name: Rebuild SQLite for Electron
-        # windows-2022（VS 2022）——@electron/rebuild 3.x 的 node-gyp 正常识别；
-        # windows-2025 已迁移 VS 2026（node-gyp<12.1 不识，见 node-gyp#3228）。
-        run: npx electron-rebuild -f -w better-sqlite3name: CI
+name: CI
 
 on:
   workflow_dispatch:
