@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseWorkerRequest, type WorkerRequest } from '../shared/protocol/requests';
 import {
@@ -220,12 +221,12 @@ function modelPreviewUrl(libraryId: string, artifactId: string): string {
   return `serpent://preview/${libraryId}/${artifactId}`;
 }
 
-/**
- * Offscreen render orchestration for one queued model job: format dispatch,
- * FBX→GLB conversion first (a conversion failure fails the job with the typed
- * FBX_* code — the renderer never sees the raw FBX), companion index, then
- * the Main render request.
- */
+const MODEL_FILE_EXTENSIONS = new Set(['.fbx', '.obj', '.glb', '.gltf', '.stl']);
+
+function isModelFileFormat(filePath: string): boolean {
+  return MODEL_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
 async function renderModelThumbnailViaMain(input: {
   libraryId: string;
   assetId: string;
@@ -252,6 +253,35 @@ async function renderModelThumbnailViaMain(input: {
   });
 }
 
+async function renderModelAiViewsViaMain(input: {
+  libraryId: string;
+  assetId: string;
+  revisionId: string;
+  relativeFilePath: string;
+  byteSize: number | null;
+  signal: AbortSignal;
+  views?: ReadonlyArray<readonly [number, number, number]>;
+}): Promise<ModelThumbnailRenderOutcome> {
+  return withModelRenderGate(input.signal, async () => {
+    try {
+      return await orchestrateRender({ ...input, views: input.views });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      libraryService.reportDiagnostic('model-views.orchestrate', error, {
+        libraryId: input.libraryId,
+        assetId: input.assetId,
+      });
+      return { status: 'failed', errorCode: 'MODEL_LOAD_FAILED' };
+    }
+  });
+}
+
+/**
+ * Offscreen render orchestration for one queued model job: format dispatch,
+ * FBX→GLB conversion first (a conversion failure fails the job with the typed
+ * FBX_* code — the renderer never sees the raw FBX), companion index, then
+ * the Main render request.
+ */
 async function orchestrateRender(input: {
   libraryId: string;
   assetId: string;
@@ -259,6 +289,8 @@ async function orchestrateRender(input: {
   relativeFilePath: string;
   byteSize: number | null;
   signal: AbortSignal;
+  /** Multi-view render (AI four views) — omitted for the single thumbnail. */
+  views?: ReadonlyArray<readonly [number, number, number]>;
 }): Promise<ModelThumbnailRenderOutcome> {
     const format = modelThumbnailFormatForFileName(input.relativeFilePath);
     if (!format) {
@@ -319,6 +351,9 @@ async function orchestrateRender(input: {
         height: MODEL_THUMBNAIL_DEFAULT_EDGE,
         timeoutMs: MODEL_THUMBNAIL_RENDER_TIMEOUT_MS,
         sourceAuthorizations,
+        ...(input.views === undefined
+          ? {}
+          : { views: input.views.map((v) => [v[0], v[1], v[2]] as [number, number, number]) }),
       },
       input.signal,
     );
@@ -439,6 +474,7 @@ function scheduleThumbnailQueue(
           // shared-window gate inside renderModelThumbnailViaMain keeps at
           // most one render in flight process-wide.
           modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
+          modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
         })))).reduce((total, count) => total + count, 0);
       continueImmediately = processed === 4;
     } catch (error) {
@@ -1515,6 +1551,25 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
               : 'THUMBNAIL_REQUIRED',
           });
         }
+      } else if (isModelFileFormat(filePath)) {
+        // Serpent-6w40: 3D models get an AI four-view sheet — render the
+        // views offscreen, tile them, then analyze the strip.
+        try {
+          const sheet = await libraryService.renderModelViewsSheet(
+            { libraryId, assetId },
+            new AbortController().signal,
+          );
+          // The strip is already ≤2048 wide (4×512) — send it as-is.
+          imageBase64 = Buffer.from(sheet.pngBytes).toString('base64');
+          requestMime = sheet.mime;
+        } catch {
+          return {
+            ok: true,
+            type: 'asset.analyze-unsupported' as const,
+            assetId,
+            reason: 'THUMBNAIL_REQUIRED',
+          };
+        }
       } else {
         // Non-image, non-video assets (e.g., .txt, .pdf).
         return {
@@ -1561,7 +1616,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         displayName,
         filename,
         mime: requestMime,
-        mediaType: requestMime.startsWith('video/') ? 'video' : 'image',
+        mediaType: isModelFileFormat(filePath) ? 'model' : (requestMime.startsWith('video/') ? 'video' : 'image'),
         imageBase64,
         contactSheetBase64,
         contactSheetDescription,

@@ -11,6 +11,11 @@ import {
 } from '../../src/worker/library-service';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
+const VALID_1X1_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
 
@@ -421,6 +426,45 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       service.closeAll();
     });
   });
+
+
+  describe('model AI four-view sheet (Serpent-6w40)', () => {
+    const PNG_BYTES = new Uint8Array(VALID_1X1_PNG);
+
+    it('renders four views and tiles them into a sheet', async () => {
+      const root = temporaryRoot();
+      const service = new LibraryService();
+      const created = service.createLibrary({ displayName: 'ModelsAI', selectedParentPath: root });
+      importNoConflict(service, created.libraryId, createSourceFile(root, 'robot.glb'));
+      const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+      const viewsSeen: Array<readonly [number, number, number]> = [];
+      const sheet = await service.renderModelViewsSheet(
+        { libraryId: created.libraryId, assetId: asset.assetId },
+        new AbortController().signal,
+        {
+          modelAiViewsRenderer: async (input) => {
+            viewsSeen.push(...(input.views ?? []));
+            return {
+              status: 'ok',
+              frames: (input.views ?? []).map((view) => ({
+                view: [view[0], view[1], view[2]] as [number, number, number],
+                pngBytes: PNG_BYTES,
+                width: 512,
+                height: 512,
+              })),
+            };
+          },
+        },
+      );
+
+      expect(viewsSeen).toHaveLength(4);
+      expect(sheet.mime).toBe('image/png');
+      expect(sheet.pngBytes.byteLength).toBeGreaterThan(8);
+      service.closeAll();
+    });
+  });
+
 
   describe('resolveModelCompanions', () => {
     it('returns an empty payload when the model directory holds only the model', () => {

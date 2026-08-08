@@ -72,7 +72,7 @@ describe('model-thumbnail render protocol (slice E)', () => {
       requestId: 'req-1',
       result: { status: 'ok', pngBytes, width: 512, height: 512 },
     });
-    if (parsed.result.status === 'ok') {
+    if (parsed.result.status === 'ok' && 'pngBytes' in parsed.result) {
       expect(parsed.result.pngBytes).toBeInstanceOf(Uint8Array);
       expect(parsed.result.pngBytes[0]).toBe(0x89);
       expect(parsed.result.width).toBe(512);

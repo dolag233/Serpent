@@ -105,6 +105,8 @@ export const modelThumbnailRenderRequestSchema = z.object({
   width: z.number().int().min(64).max(2048),
   height: z.number().int().min(64).max(2048),
   timeoutMs: z.number().int().min(1000).max(120_000),
+  /** Optional camera directions for multi-view renders (e.g. AI four views). */
+  views: z.array(z.tuple([z.number(), z.number(), z.number()])).min(1).max(8).optional(),
 });
 export type ModelThumbnailRenderRequest = z.infer<typeof modelThumbnailRenderRequestSchema>;
 
@@ -143,12 +145,21 @@ export function parseModelThumbnailRenderRequest(input: unknown): ModelThumbnail
   return modelThumbnailRenderRequestSchema.parse(input);
 }
 
-export const modelThumbnailRenderResultSchema = z.discriminatedUnion('status', [
+export const modelThumbnailRenderResultSchema = z.union([
   z.object({
     status: z.literal('ok'),
     pngBytes: z.instanceof(Uint8Array),
     width: z.number().int().min(64).max(2048),
     height: z.number().int().min(64).max(2048),
+  }),
+  z.object({
+    status: z.literal('ok'),
+    frames: z.array(z.object({
+      view: z.tuple([z.number(), z.number(), z.number()]),
+      pngBytes: z.instanceof(Uint8Array),
+      width: z.number().int().min(64).max(2048),
+      height: z.number().int().min(64).max(2048),
+    })).min(1),
   }),
   z.object({
     status: z.literal('failed'),

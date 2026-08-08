@@ -737,7 +737,9 @@ describe('processThumbnailQueue', () => {
         rotate() { return this; },
         toColourspace() { return this; },
         resize() { return this; },
+        composite() { return this; },
         webp() { return this; },
+        jpeg() { return this; },
         async toFile() { throw new Error('unreachable'); },
       }),
     });
@@ -832,7 +834,9 @@ describe('processThumbnailQueue', () => {
       rotate() { return this; },
       toColourspace() { return this; },
       resize() { return this; },
+      composite() { return this; },
       webp() { return this; },
+      jpeg() { return this; },
       async toFile(outputPath: string) {
         decodeStarted();
         await blocked;
@@ -876,7 +880,9 @@ describe('processThumbnailQueue', () => {
         rotate() { return this; },
         toColourspace() { return this; },
         resize() { return this; },
+        composite() { return this; },
         webp() { return this; },
+        jpeg() { return this; },
         async toFile(outputPath: string) {
           active += 1;
           maximum = Math.max(maximum, active);

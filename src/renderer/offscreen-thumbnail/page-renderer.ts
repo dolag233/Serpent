@@ -118,6 +118,15 @@ export type FrameOutcome =
       height: number;
     }
   | {
+      status: 'ok';
+      frames: Array<{
+        view: [number, number, number];
+        pngBase64: string;
+        width: number;
+        height: number;
+      }>;
+    }
+  | {
       status: 'failed';
       errorCode: ModelThumbnailErrorCode;
       reason?: string;
@@ -225,17 +234,81 @@ export async function renderModelThumbnailFrame(
       min: bounds.min,
       max: bounds.max,
     });
-    const placement = computeCameraPlacement({
-      bounds: sphere,
-      viewportAspect: width / height,
-    });
-    camera.position.set(...placement.position);
-    camera.lookAt(...placement.target);
+    const directions: ReadonlyArray<readonly [number, number, number] | undefined> =
+      job.data.views && job.data.views.length > 0
+        ? job.data.views
+        : [undefined];
     setupGroundShadow(composer.scene, sphere, bounds.min[1]);
 
-    // Exactly one frame — no rAF, no throttling dependency (research §4.7).
+    const renderOneFrame = (
+      direction: readonly [number, number, number] | undefined,
+    ): { pngBase64: string } => {
+      const placement = computeCameraPlacement({
+        bounds: sphere,
+        viewportAspect: width / height,
+        ...(direction === undefined ? {} : { direction }),
+      });
+      camera.position.set(...placement.position);
+      if (direction !== undefined && direction[1] > 0.98) {
+        // Top view: three.js "up" must not be parallel to the view axis.
+        camera.up.set(0, 0, -1);
+      } else {
+        camera.up.set(0, 1, 0);
+      }
+      camera.lookAt(...placement.target);
+      // Exactly one frame — no rAF, no throttling dependency (research §4.7).
+      composer.renderOnce();
+      const dataUrl = (deps.capturePng ?? ((target) => target.toDataURL('image/png')))(canvas);
+      if (!dataUrl.startsWith('data:image/png;base64,')) {
+        throw new Error('canvas capture produced no PNG data URL');
+      }
+      return { pngBase64: dataUrl.slice('data:image/png;base64,'.length) };
+    };
+
+    if (job.data.views && job.data.views.length > 0) {
+      // Serpent-6w40: multi-view render (AI four views) — each direction
+      // renders one frame; the worker tiles them afterwards.
+      const frames: Array<{
+        view: [number, number, number];
+        pngBase64: string;
+        width: number;
+        height: number;
+      }> = [];
+      for (const view of job.data.views) {
+        try {
+          const frame = renderOneFrame(view);
+          frames.push({ view, pngBase64: frame.pngBase64, width, height });
+        } catch {
+          return {
+            status: 'failed',
+            errorCode: 'MODEL_FRAME_INVALID',
+            reason: 'canvas capture produced no PNG data URL',
+          };
+        }
+      }
+      // Frame readback (preserveDrawingBuffer, set by the page's renderer).
+      const blank = (deps.isBlank ?? detectBlankWebglFrame)(canvas, deps.renderer.getContext());
+      if (blank) {
+        return {
+          status: 'failed',
+          errorCode: 'MODEL_BLANK_FRAME',
+          reason: 'rendered frame is uniform (readback or render failure)',
+        };
+      }
+      return { status: 'ok', frames };
+    }
+
     log('offscreen-thumbnail.stage.rendering');
-    composer.renderOnce();
+    let pngBase64: string;
+    try {
+      pngBase64 = renderOneFrame(undefined).pngBase64;
+    } catch {
+      return {
+        status: 'failed',
+        errorCode: 'MODEL_FRAME_INVALID',
+        reason: 'canvas capture produced no PNG data URL',
+      };
+    }
     log('offscreen-thumbnail.stage.rendered');
 
     // Frame readback (preserveDrawingBuffer, set by the page's renderer).
@@ -247,18 +320,9 @@ export async function renderModelThumbnailFrame(
         reason: 'rendered frame is uniform (readback or render failure)',
       };
     }
-
-    const dataUrl = (deps.capturePng ?? ((target) => target.toDataURL('image/png')))(canvas);
-    if (!dataUrl.startsWith('data:image/png;base64,')) {
-      return {
-        status: 'failed',
-        errorCode: 'MODEL_FRAME_INVALID',
-        reason: 'canvas capture produced no PNG data URL',
-      };
-    }
     return {
       status: 'ok',
-      pngBase64: dataUrl.slice('data:image/png;base64,'.length),
+      pngBase64,
       width,
       height,
     };

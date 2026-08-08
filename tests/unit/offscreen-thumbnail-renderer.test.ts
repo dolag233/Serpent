@@ -190,7 +190,7 @@ describe('offscreen thumbnail renderer (slice E, main side)', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('ok');
-    if (result.status === 'ok') {
+    if (result.status === 'ok' && 'pngBytes' in result) {
       expect(isValidPngBytes(result.pngBytes)).toBe(true);
       expect(result.width).toBe(512);
     }
@@ -244,7 +244,7 @@ describe('offscreen thumbnail renderer (slice E, main side)', () => {
 
     const result = await resultPromise;
     expect(result.status).toBe('ok');
-    if (result.status === 'ok') {
+    if (result.status === 'ok' && 'pngBytes' in result) {
       expect(result.pngBytes[0]).toBe(0x89); // paint PNG bytes
     }
     renderer.dispose();

@@ -118,7 +118,7 @@ import type { PluginProviderFieldType } from '../plugins/plugin-providers';
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
 export interface SharpModule {
-  (input: string, options?: { page?: number }): SharpInstance;
+  (input: string | Buffer, options?: { page?: number }): SharpInstance;
   cache?(options: boolean | { files?: number }): unknown;
 }
 export interface SharpInstance {
@@ -142,13 +142,20 @@ export interface SharpInstance {
     fit?: 'inside' | 'cover' | 'fill' | 'outside';
     withoutEnlargement?: boolean;
   }): SharpInstance;
+  composite(inputs: ReadonlyArray<{
+    input: Buffer | string;
+    left?: number;
+    top?: number;
+  }>): SharpInstance;
+  jpeg(options?: { quality?: number }): SharpInstance;
   /** Replace transparent pixels with a solid background (audio waveform covers). */
   flatten?(options: {
     background: { r: number; g: number; b: number };
   }): SharpInstance;
   png?(options?: { quality?: number }): SharpInstance;
   raw?(): SharpInstance;
-  toBuffer?(options: { resolveWithObject: true }): Promise<{
+  toBuffer?(options?: { resolveWithObject?: false }): Promise<Buffer>;
+  toBuffer?(options?: { resolveWithObject: true }): Promise<{
     data: Uint8Array;
     info: { channels: number };
   }>;
@@ -2798,6 +2805,15 @@ export type ModelThumbnailRenderOutcome =
       height: number;
     }
   | {
+      status: 'ok';
+      frames: Array<{
+        view: [number, number, number];
+        pngBytes: Uint8Array;
+        width: number;
+        height: number;
+      }>;
+    }
+  | {
       status: 'failed';
       errorCode: string;
       reason?: string;
@@ -2810,6 +2826,8 @@ export interface ModelThumbnailRendererInput {
   relativeFilePath: string;
   byteSize: number | null;
   signal: AbortSignal;
+  /** Multi-view render (AI four views) — omitted for the single thumbnail. */
+  views?: ReadonlyArray<readonly [number, number, number]>;
 }
 
 export type ModelThumbnailRenderer = (
@@ -4214,6 +4232,10 @@ export class LibraryService {
   private suppressWatcherNotifyUntilMs = 0;
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  private modelAiViewsRenderer?: (
+    input: ModelThumbnailRendererInput,
+  ) => Promise<ModelThumbnailRenderOutcome>;
 
   private noteClientFilesystemMutation(): void {
     const debounceMs = this.options.debounceMs ?? 250;
@@ -11540,6 +11562,7 @@ export class LibraryService {
     const videoExts = new Set([
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
     ]);
+    const modelExts = new Set(['.fbx', '.obj', '.glb', '.gltf', '.stl']);
     const videoArtifactsReady = conn.prepare(
       `SELECT COUNT(DISTINCT ra.kind) AS ready_count
          FROM assets a
@@ -11573,7 +11596,8 @@ export class LibraryService {
         const ext = path.extname(row.relative_file_path).toLowerCase();
         const isImage = imageExts.has(ext);
         const isVideo = videoExts.has(ext);
-        if (!isImage && !isVideo) {
+        const isModel = modelExts.has(ext);
+        if (!isImage && !isVideo && !isModel) {
           skippedAssetIds.push(assetId);
           continue;
         }
@@ -12753,7 +12777,75 @@ export class LibraryService {
         ...(outcome.reason === undefined ? {} : { cause: new Error(outcome.reason) }),
       });
     }
+    if ('frames' in outcome) {
+      // Multi-view renders are consumed by the AI analysis path
+      // (renderModelViewsSheet); a thumbnail job receiving frames is a bug.
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+      });
+    }
     return this.writeModelThumbnailArtifact(openLibrary, input, outcome);
+  }
+
+  /**
+   * Render the AI four-view sheet for a model asset: four camera views
+   * (斜45°/正视/侧视/俯视) rendered offscreen, tiled into a 1×4 strip
+   * (≤2048 wide) and returned as PNG bytes. Not persisted — each analysis
+   * re-renders so no schema migration is needed for the sheet kind.
+   */
+  async renderModelViewsSheet(
+    input: { libraryId: string; assetId: string },
+    signal: AbortSignal,
+    options: {
+      modelAiViewsRenderer?: (
+        input: ModelThumbnailRendererInput,
+      ) => Promise<ModelThumbnailRenderOutcome>;
+    } = {},
+  ): Promise<{ pngBytes: Uint8Array; mime: string }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const renderer = options.modelAiViewsRenderer ?? this.modelAiViewsRenderer;
+    const asset = openLibrary.connection
+      .prepare(
+        'SELECT relative_file_path, current_revision_id FROM assets WHERE asset_id = ?',
+      )
+      .get(input.assetId) as {
+        relative_file_path: string;
+        current_revision_id: string | null;
+      } | undefined;
+    if (!asset || !renderer) {
+      throw new LibraryServiceError('AI_ANALYSIS_FAILED', { reason: 'THUMBNAIL_REQUIRED' });
+    }
+    const views: ReadonlyArray<readonly [number, number, number]> = [
+      [0.6708203932499369, 0.5031153024374527, 0.6708203932499369], // 斜45°
+      [0, 0, 1],   // 正视
+      [1, 0, 0],   // 侧视
+      [0, 1, 0],   // 俯视
+    ];
+    const outcome = await renderer({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      revisionId: asset.current_revision_id ?? '',
+      relativeFilePath: asset.relative_file_path,
+      byteSize: null,
+      signal,
+      views,
+    });
+    if (outcome.status === 'failed' || !('frames' in outcome)) {
+      throw new LibraryServiceError('AI_ANALYSIS_FAILED', { reason: 'THUMBNAIL_REQUIRED' });
+    }
+    const frames = outcome.frames;
+    const sharp = this.options.sharpFn ?? requireSharp();
+    // 1×4 strip, left to right: 斜45°/正视/侧视/俯视 (each frame ≤512 wide).
+    const tiledResult = await sharp(
+      Buffer.concat(frames.map((frame) => Buffer.from(frame.pngBytes))),
+    ).composite(
+      frames.map((frame, index) => ({
+        input: Buffer.from(frame.pngBytes),
+        left: index * frame.width,
+        top: 0,
+      })),
+    ).png!().toBuffer!();
+    return { pngBytes: tiledResult as Buffer, mime: 'image/png' };
   }
 
   /** Persist an offscreen-rendered model thumbnail as the standard artifact. */
@@ -15791,8 +15883,15 @@ export class LibraryService {
       }) => Promise<string | null>;
       /** Slice E: offscreen renderer for model assets (null keeps the legacy no-op). */
       modelThumbnailRenderer?: ModelThumbnailRenderer;
+      /** Serpent-6w40: renders the AI four-view sheet via the offscreen page. */
+      modelAiViewsRenderer?: (
+        input: ModelThumbnailRendererInput,
+      ) => Promise<ModelThumbnailRenderOutcome>;
     } = {},
   ): Promise<number> {
+    if (options.modelAiViewsRenderer) {
+      this.modelAiViewsRenderer = options.modelAiViewsRenderer;
+    }
     const openLibrary = this.requireOpenLibrary(libraryId);
     const nextJob = openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, attempt_count

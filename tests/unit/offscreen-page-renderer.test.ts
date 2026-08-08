@@ -74,7 +74,7 @@ describe('offscreen thumbnail frame pipeline (slice E, page side)', () => {
     const outcome = await renderModelThumbnailFrame(makeJob(), deps);
 
     expect(outcome).toMatchObject({ status: 'ok', width: 512, height: 512 });
-    if (outcome.status === 'ok') {
+    if (outcome.status === 'ok' && 'pngBase64' in outcome) {
       expect(outcome.pngBase64.startsWith('iVBOR')).toBe(true);
     }
     // Exactly one frame, fixed DPR-free drawing buffer.

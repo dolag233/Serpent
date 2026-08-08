@@ -161,6 +161,12 @@ interface FrameMessage {
   readonly requestId: string;
   readonly status: 'ok' | 'failed';
   readonly pngBase64?: string;
+  readonly frames?: Array<{
+    view: [number, number, number];
+    pngBase64: string;
+    width?: number;
+    height?: number;
+  }>;
   readonly width?: number;
   readonly height?: number;
   readonly errorCode?: string;
@@ -172,6 +178,31 @@ function parseFrameMessage(payload: unknown): FrameMessage | null {
   const record = payload as Record<string, unknown>;
   if (typeof record.requestId !== 'string' || record.requestId.length === 0) return null;
   if (record.status === 'ok') {
+    if (Array.isArray(record.frames)) {
+      const frames = record.frames.filter(
+        (frame): frame is {
+          view: [number, number, number];
+          pngBase64: string;
+          width?: number;
+          height?: number;
+        } =>
+          typeof frame === 'object' && frame !== null &&
+          Array.isArray(frame.view) && frame.view.length === 3 &&
+          frame.view.every((n: unknown) => typeof n === 'number') &&
+          typeof frame.pngBase64 === 'string' && frame.pngBase64.length > 0,
+      );
+      if (frames.length === 0) return null;
+      return {
+        requestId: record.requestId,
+        status: 'ok',
+        frames: frames.map((frame) => ({
+          view: [frame.view[0], frame.view[1], frame.view[2]] as [number, number, number],
+          pngBase64: frame.pngBase64,
+          width: typeof frame.width === 'number' ? frame.width : undefined,
+          height: typeof frame.height === 'number' ? frame.height : undefined,
+        })),
+      };
+    }
     if (typeof record.pngBase64 !== 'string' || record.pngBase64.length === 0) return null;
     return {
       requestId: record.requestId,
@@ -281,6 +312,36 @@ export function createOffscreenThumbnailRenderer(
         errorCode: asErrorCode(message.errorCode ?? 'MODEL_LOAD_FAILED'),
         reason: `offscreen render failed for ${current.job.libraryId}/${current.job.assetId}`,
       });
+      return;
+    }
+
+    if (message.frames && message.frames.length > 0) {
+      // Serpent-6w40: multi-view render — validate every frame and hand the
+      // packed bytes to the worker (it tiles them into the AI sheet).
+      const frames: Array<{
+        view: [number, number, number];
+        pngBytes: Uint8Array<ArrayBuffer>;
+        width: number;
+        height: number;
+      }> = [];
+      for (const frame of message.frames) {
+        const bytes = base64ToBytes(frame.pngBase64);
+        if (!isValidPngBytes(bytes)) {
+          settleActive({
+            status: 'failed',
+            errorCode: 'MODEL_FRAME_INVALID',
+            reason: 'offscreen multi-view frame is not a PNG',
+          });
+          return;
+        }
+        frames.push({
+          view: frame.view,
+          pngBytes: new Uint8Array(bytes) as Uint8Array<ArrayBuffer>,
+          width: frame.width ?? current.job.width,
+          height: frame.height ?? current.job.height,
+        });
+      }
+      settleActive({ status: 'ok', frames });
       return;
     }
 
