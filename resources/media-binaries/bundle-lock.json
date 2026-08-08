@@ -4,8 +4,8 @@
     "darwin-arm64": {
       "status": "ready",
       "url": "https://github.com/dolag233/Serpent-Build/releases/download/media-v0.1.1/serpent-media-darwin-arm64.zip",
-      "sha256": "7211df65f69c8045d9ded0d317f68073ba0ade230eea025ed2dfef5bfb4ed061",
-      "size": 32647948,
+      "sha256": "e13e392d555797229e3dbe32857c7dd0f0f30df820b379eb6f7c436ecd09b774",
+      "size": 32647951,
       "manifestSha256": "92bf182a2cc7dbf855b038ea92098fb153d799c24edcb1c09cf63f1c0d641472"
     },
     "win32-x64": {
