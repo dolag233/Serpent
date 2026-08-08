@@ -46,7 +46,7 @@ const config: ForgeConfig = {
       // The browser extension is not shipped to a store yet; it ships inside
       // the app bundle (Contents/Resources/extension) for manual loading.
       // Rebuild it so the package always carries the current sources.
-      runNodeGate('scripts/build-extension.mjs');
+      runNodeGate('scripts/build-extension.mjs', []);
     },
     postPackage: async (_forgeConfig, packageResult) => {
       nativeMediaPlatform(packageResult.platform, packageResult.arch);
@@ -71,6 +71,13 @@ const config: ForgeConfig = {
     icon: appIconBase,
     asar: {
       unpack: '**/node_modules/trash/lib/{macos-trash,windows-trash.exe}',
+    },
+    // Serpent 初版不购买签名证书（MarkText/VSCodium 先例：未签名发布 +
+    // 文档引导）。但 Apple Silicon 上完全不签名会报"已损坏"无法启动，所以
+    // 用 ad-hoc 签名（identity '-'）作为技术底线。拿到 Developer ID 后把
+    // identity 换成证书名并补 osxNotarize（Zettlr 条件模式）即可升级。
+    osxSign: {
+      identity: '-',
     },
     // Media executables must remain outside app.asar so the Library Worker can
     // spawn them. `npm run media:verify` is the release gate that validates the
