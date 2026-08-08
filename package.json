@@ -3,6 +3,7 @@
   "productName": "Serpent",
   "version": "0.1.0",
   "description": "An open-source digital asset manager for creative professionals.",
+  "author": "dolag233",
   "license": "MIT",
   "private": true,
   "main": ".vite/build/main.js",
@@ -78,7 +79,6 @@
   "devDependencies": {
     "@electron-forge/cli": "7.11.2",
     "@electron-forge/maker-dmg": "7.11.2",
-    "@electron-forge/maker-squirrel": "7.11.2",
     "@electron-forge/maker-zip": "7.11.2",
     "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
     "@electron-forge/plugin-vite": "7.11.2",

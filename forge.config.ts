@@ -3,7 +3,6 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { MakerDMG } from '@electron-forge/maker-dmg';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { VitePlugin } from '@electron-forge/plugin-vite';
@@ -109,9 +108,9 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({
-      setupIcon: `${appIconBase}.ico`,
-    }),
+    // Windows 安装器待接入 Inno Setup（2026-08-08 决策：WiX MSI 已回退——
+    // MSI 语言切换需自定义 bootstrapper（社区确认），Inno/NSIS 内置多语言
+    // 选择（VS Code 用 Inno）。当前 Windows 只产 zip（portable）。
     new MakerZIP({}, ['darwin', 'win32']),
     new MakerDMG({}),
   ],

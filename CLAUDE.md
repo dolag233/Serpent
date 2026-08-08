@@ -54,7 +54,12 @@ npm run test:e2e       # Playwright E2E（library-lifecycle + asset-ingestion + 
 npm run test:e2e:packaged  # packaged app 启动测试（需先 npm run package）
 npm run package        # 打包到 out/Serpent-<platform>-<arch>/
 npm run verify:package # 校验 ASAR 和 better_sqlite3.node 原生模块
-npm run make           # 生成平台安装包（dmg/squirrel/zip）
+npm run make           # 生成平台安装包（macOS dmg / Windows zip（安装器待 Inno Setup））
+# GitHub 直连不稳定时需 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+# （@electron/get 缓存命中后仍强制拉 SHASUMS256.txt 校验）。
+# Windows 安装器方案（2026-08-08 决策）：WiX MSI 已回退——MSI 的 UI 语言在
+# 启动时锁定，切换语言需自定义 bootstrapper（WiX 社区确认）；Inno Setup /
+# NSIS 内置多语言选择（VS Code 用 Inno）。Inno Setup 接入进行中。
 # 注意：npm run package / make 会更新 dev 的 node_modules/electron binary，跑完务必执行
 # npm run rebuild:native 恢复 dev native 模块（重编 better-sqlite3 并用 Electron ABI 实测 FTS5），
 # 否则 npm run test 会报 better_sqlite3.node NODE_MODULE_VERSION 不匹配

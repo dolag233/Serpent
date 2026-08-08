@@ -8,7 +8,8 @@ import { currentPlatformKey } from '../media-binaries-lib.mjs';
 
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-const DISTRIBUTABLE_EXTENSIONS = new Set(['.exe', '.dmg', '.zip', '.nupkg']);
+// .msi 是 WiX 安装器产物（2026-08-08 起替换 Squirrel 的 Setup.exe/.nupkg）。
+const DISTRIBUTABLE_EXTENSIONS = new Set(['.exe', '.dmg', '.zip', '.nupkg', '.msi']);
 const DISTRIBUTABLE_BASENAMES = new Set(['RELEASES']);
 
 export function runNpmScript(scriptName, extraEnv = {}, pipelineEnv = {}) {

@@ -4191,6 +4191,12 @@ function applyDesktopAutomationSelection(
 }
 
 async function startApplication(): Promise<void> {
+  // Windows: taskbar/start-pin grouping requires the AppUserModelID to match
+  // the shortcuts created by the installer (WiX/Squirrel both set one). Without
+  // this, the taskbar shows the default Electron icon and pinning breaks.
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.serpent.app");
+  }
   // Isolated E2E runs must not write the log into the real user profile
   // (~/Library/Logs/Serpent); pin it under the temp userData instead.
   if (process.env.SERPENT_E2E === "1" && process.env.SERPENT_E2E_USER_DATA_PATH) {

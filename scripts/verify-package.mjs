@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 import {
   currentPlatformKey,
@@ -10,7 +11,9 @@ import {
 
 const require = createRequire(import.meta.url);
 const asar = require('@electron/asar');
-const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+// fileURLToPath（而非 URL.pathname）保证 Windows 上盘符不丢失：
+// file:///E:/repo/scripts/verify-package.mjs → E:\repo\scripts\verify-package.mjs
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const platformDirectory = `Serpent-${process.platform}-${process.arch}`;
 const packageRoot = process.env.SERPENT_PACKAGE_ROOT ?? path.resolve('out', platformDirectory);
@@ -90,6 +93,7 @@ const apiVersion = Number(apiVersionMatch[1]);
 const declarationPath = path.join(
   projectRoot,
   'docs',
+  'internal',
   'skills',
   'serpent-automation',
   'automation-api.d.ts',
@@ -136,7 +140,12 @@ const mainEntry = asarFiles.find((entry) => {
 if (!mainEntry) {
   throw new Error('Package ASAR is missing the Main process entry.');
 }
-const mainSource = asar.extractFile(asarPath, mainEntry.replace(/^\/+/u, '')).toString('utf8');
+// @electron/asar 的 listPackage 返回 path.join 风格的条目：Windows 上为
+// `\.vite\build\main.js`（反斜杠+前导分隔符），macOS 上为 `/.vite/build/main.js`；
+// 其内部遍历按 path.sep 分割，因此 extractFile 需要去掉前导分隔符、保留平台分隔符。
+const mainSource = asar
+  .extractFile(asarPath, mainEntry.replace(/^[\\/]+/u, ''))
+  .toString('utf8');
 if (!mainSource.includes(`AUTOMATION_API_VERSION`) || !mainSource.includes(String(apiVersion))) {
   throw new Error(
     `Packaged Main does not contain the Registry API version marker (expected ${apiVersion}).`,
