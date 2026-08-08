@@ -148,3 +148,22 @@ npm run release:local -- --skip-e2e
 | 签名（正式版） | Windows 申请 SignPath（尽早提交，审批 1-2 周）；macOS $99/年 Developer ID + 公证（Zettlr 条件模式，加 secret 即升级） | 5.3 + 5.2 |
 | 版本 | 已实施：npm version + tag + pipeline 版本输出 + checksum 版本头 | — |
 | 扩展 | 已实施：extraResource 内嵌 dist/extension（手动加载） | — |
+
+## 7. 本地打包全流程验证结果（2026-08-08，实测通过）
+
+`SERPENT_MEDIA_SKIP_PROVENANCE=1`（本地 media 门禁放行，现有 darwin-arm64 产物匹配 source-lock）下全链路验证：
+
+| 阶段 | 结果 | 产物 |
+|---|---|---|
+| release:package | ✅（build + media/ufbx 门禁 + verify:package） | out/Serpent-darwin-arm64/Serpent.app |
+| release:make | ✅ | Serpent-0.1.0-arm64.dmg（240M）+ portable zip |
+| release:e2e:packaged | ✅ 2/2（创建库 + 真实 Worker 导入 + FTS5 搜索） | — |
+| release:checksums | ✅ | SHA256SUMS-darwin-arm64.txt + 每产物 .sha256 |
+
+**验证中发现并修复的打包问题**：
+1. **Sharp native 未 unpack**（发布阻断）：Sharp 0.35 预编译包（`@img/*.node`）在 asar 内无法加载 → 所有导入失败"图像处理引擎 Sharp 不可用"。修复：`asar.unpack` 加 `**/node_modules/@img/**`。
+2. **ufbx-wasm-lock 陈旧 glue 哈希**（门禁阻断）：ab7621b 提交的 ufbx.js 与 lock 记录不一致（lock 沿用旧值）——以提交产物为权威修正 lock；fbx-conversion 20/20 验证。
+3. **packaged E2E 测试三处缺陷**：dialog mock 只匹配英文标题（zh-CN 系统返回错误路径）→ 双语文案匹配；资产名断言匹配 2 元素（卡片+inspector）→ `.first()`；`SERPENT_E2E_CREATE_PARENT_PATH` env 补充（dev 分支用）。
+4. **媒体门禁认知修正**：本机 7 月 26 日构建的 darwin-arm64 产物（ffmpeg 8.1 + OIIO 3.1.12.0）**与 source-lock 完全匹配**——`SKIP_PROVENANCE` 下直接通过，无需 vcpkg 重建（pipeline 的 --build-media-locally 1-3 小时路径可避免）。正式晋升（bundle-lock status=ready + 不可变 URL）仍是正式发布的前置。
+
+**遗留**：正式晋升（Release 附件 + versions.json）、Windows 原生验证、macOS 公证/签名升级（Zettlr 条件模式）、CI/CD（tag 驱动 + matrix + draft→正式）。
