@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const BUILD_REPO = 'dolag233/Serpent-Build';
+const BUILD_REPO = 'dolag233/SerpentBuildDependencies';
 
 function fail(message) {
   console.error(`[publish-media] FAILED: ${message}`);
@@ -133,7 +133,7 @@ function main() {
       console.log(`[publish-media] Release published: https://github.com/${BUILD_REPO}/releases/tag/${tag}`);
 
       // bundle-lock 晋升条目（贴给主仓库）
-      console.log('\n[bundle-lock] win32-x64 promotion entry:');
+      console.log(`\n[bundle-lock] ${platform} promotion entry:`);
       console.log(JSON.stringify({
         status: 'ready',
         url: `https://github.com/${BUILD_REPO}/releases/download/${tag}/${path.basename(zipPath)}`,

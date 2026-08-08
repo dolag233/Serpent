@@ -283,7 +283,7 @@ function validateManifestShape(manifest, platform, sourceLock) {
     throw new Error('Media manifest files must be an array.');
   }
   for (const component of ['ffmpeg', 'openimageio']) {
-    const expected = sourceLock.components?.[component];
+    const expected = expectedComponents(sourceLock, platform)?.[component];
     const actual = manifest.components?.[component];
     if (!expected || !actual) {
       throw new Error(`Media manifest is missing component metadata for ${component}.`);
@@ -318,6 +318,16 @@ function assertRegularRequiredFile(root, file, platform) {
   }
 }
 
+/**
+ * Expected component metadata for a platform: a per-platform override in
+ * source-lock.json (`platforms.<platform>.components`) wins over the global
+ * `components` block, so each platform bundle can pin its own versions.
+ */
+function expectedComponents(sourceLock, platform) {
+  const override = sourceLock.platforms?.[platform]?.components;
+  return override ? { ...sourceLock.components, ...override } : sourceLock.components;
+}
+
 export function verifyBundle({ root, platform, execute = true }) {
   assertPlatform(platform);
   const sourceLock = readJson(path.join(root, 'media-binaries', 'source-lock.json'));
@@ -347,7 +357,7 @@ export function verifyBundle({ root, platform, execute = true }) {
   let inspection;
   if (execute) {
     inspection = inspectBinaries(root, platform);
-    const expectedVersions = sourceLock.components;
+    const expectedVersions = expectedComponents(sourceLock, platform);
     if (!inspection.ffmpegVersion.includes(expectedVersions.ffmpeg.version)) {
       throw new Error(`FFmpeg version does not contain ${expectedVersions.ffmpeg.version}.`);
     }
