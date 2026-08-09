@@ -54,12 +54,14 @@ npm run test:e2e       # Playwright E2E（library-lifecycle + asset-ingestion + 
 npm run test:e2e:packaged  # packaged app 启动测试（需先 npm run package）
 npm run package        # 打包到 out/Serpent-<platform>-<arch>/
 npm run verify:package # 校验 ASAR 和 better_sqlite3.node 原生模块
-npm run make           # 生成平台安装包（macOS dmg / Windows zip（安装器待 Inno Setup））
+npm run make           # 生成平台安装包（macOS dmg / Windows zip）；Windows 安装器：npm run make:inno（ISCC → out/make/inno/SerpentSetup.exe，需先 npm run package）
 # GitHub 直连不稳定时需 ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 # （@electron/get 缓存命中后仍强制拉 SHASUMS256.txt 校验）。
 # Windows 安装器方案（2026-08-08 决策）：WiX MSI 已回退——MSI 的 UI 语言在
 # 启动时锁定，切换语言需自定义 bootstrapper（WiX 社区确认）；Inno Setup /
-# NSIS 内置多语言选择（VS Code 用 Inno）。Inno Setup 接入进行中。
+# NSIS 内置多语言选择（VS Code 用 Inno）。Inno Setup 已接入（独立于 Forge
+# make：scripts/inno-build.mjs + assets/inno/serpentsetup.iss；语言选择、
+# per-machine 安装路径、干净卸载；AppVersion 自动取自 package.json）。
 # 注意：npm run package / make 会更新 dev 的 node_modules/electron binary，跑完务必执行
 # npm run rebuild:native 恢复 dev native 模块（重编 better-sqlite3 并用 Electron ABI 实测 FTS5），
 # 否则 npm run test 会报 better_sqlite3.node NODE_MODULE_VERSION 不匹配
@@ -119,7 +121,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 关键约束
 
-- **平台**：macOS arm64 已验证；Windows 完全未验证（无 runner）。Windows 行为（命名冲突、rename 语义、打包）是显式未验证项，不能写成"通过"。
+- **平台**：macOS arm64 已验证（开发态 + Computer Use 验收）；Windows 2026-08-08 起有真机开发态验证与 package/make/Inno 安装器实测（见 `docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md`），但 DPI/多屏/真实媒体/签名/升级卸载等发布级条目仍待收口，相关功能不能仅凭 Windows 未测就写"通过"。
 - **Node**：`>=24 <25`，`.nvmrc` 锁定 24.15.0。
 - **打包后 `.app` 不能从 SMB 运行**：必须先复制到本地 APFS（macOS QA 用）。
 - **共享知识进入仓库**：事故复盘、质量门禁和切片状态不得只留在 Claude memory、聊天或本机忽略文件中。

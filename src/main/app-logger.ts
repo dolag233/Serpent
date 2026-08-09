@@ -70,8 +70,14 @@ function serializeError(error: unknown, depth = 0): SerializedLogError | { value
 }
 
 export class AppLogger {
-  constructor(readonly filePath: string) {
+  private readonly mirrorPath: string | null;
+
+  constructor(
+    readonly filePath: string,
+    options: { mirrorPath?: string } = {},
+  ) {
     mkdirSync(path.dirname(filePath), { recursive: true });
+    this.mirrorPath = options.mirrorPath ? path.resolve(options.mirrorPath) : null;
   }
 
   error(scope: string, error: unknown, context?: Record<string, unknown>): void {
@@ -147,11 +153,20 @@ export class AppLogger {
   }
 
   private write(entry: Record<string, unknown>): void {
+    const line = `${JSON.stringify(redactValue({ timestamp: new Date().toISOString(), ...entry }))}\n`;
     try {
-      appendFileSync(this.filePath, `${JSON.stringify(redactValue({ timestamp: new Date().toISOString(), ...entry }))}\n`);
+      appendFileSync(this.filePath, line);
     } catch (error) {
       // Logging must not replace the primary application failure.
       console.error('Serpent could not write its application log.', error);
+    }
+    if (this.mirrorPath) {
+      try {
+        mkdirSync(path.dirname(this.mirrorPath), { recursive: true });
+        appendFileSync(this.mirrorPath, line);
+      } catch {
+        // Mirror is diagnostic only (CI E2E); failures must not break the app.
+      }
     }
   }
 }

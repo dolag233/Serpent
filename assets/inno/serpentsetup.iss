@@ -5,7 +5,11 @@
 ; 构建：ISCC.exe assets\inno\serpentsetup.iss（SourceDir 指向打包产物父目录）
 
 #define AppName "Serpent"
-#define AppVersion "0.1.0"
+; 版本由 inno-build.mjs 从 package.json 以 -DAppVersion 传入（npm version 提升后
+; 安装器版本自动跟随）；缺省 0.1.0 仅为直接手工编译 ISCC 时的兜底。
+#ifndef AppVersion
+  #define AppVersion "0.1.0"
+#endif
 #define AppExeName "Serpent.exe"
 
 [Setup]

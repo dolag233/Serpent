@@ -14,11 +14,26 @@
  * 用法：node scripts/inno-build.mjs [--out <dir>]
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, statSync, mkdirSync } from 'node:fs';
+import { existsSync, statSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** 从 package.json 读版本（npm version 提升后自动跟随）。 */
+function packageVersion() {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
+    );
+    if (typeof manifest.version === 'string' && manifest.version.trim()) {
+      return manifest.version.trim();
+    }
+  } catch {
+    // fall through to default
+  }
+  return '0.1.0';
+}
 
 const defaultIscc = process.env.SERPENT_INNO_TOOLS
   ? path.resolve(process.env.SERPENT_INNO_TOOLS, 'ISCC.exe')
@@ -45,11 +60,19 @@ function main() {
   }
 
   mkdirSync(outDir, { recursive: true });
-  const result = spawnSync(defaultIscc, [path.join(repoRoot, 'assets', 'inno', 'serpentsetup.iss')], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-    shell: false,
-  });
+  const version = packageVersion();
+  const result = spawnSync(
+    defaultIscc,
+    [
+      `/DAppVersion=${version}`,
+      path.join(repoRoot, 'assets', 'inno', 'serpentsetup.iss'),
+    ],
+    {
+      cwd: repoRoot,
+      stdio: 'inherit',
+      shell: false,
+    },
+  );
   if (result.error || result.status !== 0) {
     fail(`ISCC exited with ${String(result.status)} (${result.error?.message ?? 'see output above'})`);
   }

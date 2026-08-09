@@ -108,9 +108,10 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    // Windows 安装器待接入 Inno Setup（2026-08-08 决策：WiX MSI 已回退——
-    // MSI 语言切换需自定义 bootstrapper（社区确认），Inno/NSIS 内置多语言
-    // 选择（VS Code 用 Inno）。当前 Windows 只产 zip（portable）。
+    // Windows 安装器不在此处（2026-08-08 决策：WiX MSI 已回退——MSI 语言
+    // 切换需自定义 bootstrapper（社区确认），Inno/NSIS 内置多语言选择
+    // （VS Code 用 Inno））。Inno Setup 以独立脚本产出（scripts/inno-build.mjs
+    // + assets/inno/serpentsetup.iss），release pipeline 的 make 阶段会串联。
     new MakerZIP({}, ['darwin', 'win32']),
     new MakerDMG({}),
   ],

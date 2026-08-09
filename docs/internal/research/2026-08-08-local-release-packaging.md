@@ -4,6 +4,8 @@
 > 关联：Serpent-rp7m（首版正式化）、Serpent-d112（发布前质量收口）、CLAUDE.md 环境约束
 > 目标：研究「本地自动打包」的现状、缺口与方案——产出 release 版本软件（build + package）并封装安装包（make），覆盖 Windows 与 macOS。
 
+> **状态更新（2026-08-09）**：2.0 media 晋升已解决（双平台 `bundle-lock.json` status=ready，Serpent-Build `media-v0.1.1`，2026-08-09 修复 win32 URL 命名）；2.2 Windows 已真机验证 package/make/Inno；2.4 已有 `.github/workflows/ci.yml`（macos-15/windows-2022 matrix）；版本号由 `inno-build.mjs` 从 package.json 传入（`/DAppVersion`）。正文保留为决策档案，以当日结论为准。
+
 ## 1. 现状盘点（已存在的基础设施）
 
 ### 1.1 打包工具链（Electron Forge 7.11.2）
