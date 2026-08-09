@@ -172,7 +172,6 @@ import type { AutomationExecutionContext } from '../automation/command-gateway';
 import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
-import { libraryExportDefaultName } from "../shared/library-export-name";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
@@ -2248,17 +2247,6 @@ async function commandFor(
       return undefined;
     case "library.export.request": {
       const host = createNativeDialogHost();
-      const defaultExportName = libraryExportDefaultName(
-        request.libraryName ?? "serpent-library-export",
-        request.format,
-      );
-      // Windows 的保存对话框对文件名-only 的 defaultPath 不预填文件名
-      // （electron#812：SetDefaultFolder vs SetFolder），macOS 特判可用——
-      // 统一拼上 downloads 目录的完整路径，两平台都预填库名。
-      const defaultExportPath = path.join(
-        app.getPath("downloads"),
-        defaultExportName,
-      );
       const destinationPath =
         request.format === "zip"
           ? await selectSavePath(
@@ -2266,7 +2254,7 @@ async function commandFor(
               "exportZip",
               process.env.SERPENT_E2E_EXPORT_DEST_ZIP,
               {
-                defaultPath: defaultExportPath,
+                defaultPath: "serpent-library-export.zip",
                 filters: [{ name: "ZIP", extensions: ["zip"] }],
               },
             )
@@ -2274,7 +2262,7 @@ async function commandFor(
               host,
               "exportFolder",
               process.env.SERPENT_E2E_EXPORT_DEST,
-              { defaultPath: defaultExportPath },
+              { defaultPath: "serpent-library-export" },
             );
       return destinationPath
         ? {
@@ -5018,12 +5006,6 @@ async function startApplication(): Promise<void> {
   workerClient.onAiProgress(publishAiProgress);
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
   workerClient.onAiContentCleared(publishAiCleared);
-  workerClient.onAiInputReady((event) => {
-    // Video contact sheets are the actual AI input. Import-time enqueue is
-    // intentionally best-effort for images; videos re-attempt here once that
-    // input exists, without waiting for a browsing poster or WebM proxy.
-    void enqueueAutoAnalyzeAfterImport(event.libraryId, [event.assetId]);
-  });
 
   const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
     logger?.error("recent-library.read", error);
