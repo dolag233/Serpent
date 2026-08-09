@@ -177,6 +177,7 @@ import {
   type OpenExternalUrlResult,
   type RevealAppLogResult,
 } from "../shared/external-url";
+import { libraryExportDefaultName } from "../shared/library-export-name";
 import { parseReadAppLogRequest, type ReadAppLogResult } from "../shared/app-log";
 import type { ShowEditContextMenuResult } from "../shared/edit-context-menu";
 import {
@@ -2247,6 +2248,17 @@ async function commandFor(
       return undefined;
     case "library.export.request": {
       const host = createNativeDialogHost();
+      const defaultExportName = libraryExportDefaultName(
+        request.libraryName ?? "serpent-library-export",
+        request.format,
+      );
+      // Windows 的保存对话框对文件名-only 的 defaultPath 不预填文件名
+      // （electron#812：SetDefaultFolder vs SetFolder），macOS 特判可用——
+      // 统一拼上 downloads 目录的完整路径，两平台都预填库名。
+      const defaultExportPath = path.join(
+        app.getPath("downloads"),
+        defaultExportName,
+      );
       const destinationPath =
         request.format === "zip"
           ? await selectSavePath(
@@ -2254,7 +2266,7 @@ async function commandFor(
               "exportZip",
               process.env.SERPENT_E2E_EXPORT_DEST_ZIP,
               {
-                defaultPath: "serpent-library-export.zip",
+                defaultPath: defaultExportPath,
                 filters: [{ name: "ZIP", extensions: ["zip"] }],
               },
             )
@@ -2262,7 +2274,7 @@ async function commandFor(
               host,
               "exportFolder",
               process.env.SERPENT_E2E_EXPORT_DEST,
-              { defaultPath: "serpent-library-export" },
+              { defaultPath: defaultExportPath },
             );
       return destinationPath
         ? {
