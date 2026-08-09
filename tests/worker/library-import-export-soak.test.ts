@@ -8,6 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
 
+/** Perf-log 的 tmpdir 在 CI runner 上可能不存在（TEMP 指向被清理/未创建的
+ * 目录，如 D:\tmp）；writeFileSync 不创建父目录会 ENOENT。先确保目录存在。 */
+function appendPerfLog(line: string): void {
+  mkdirSync(tmpdir(), { recursive: true });
+  writeFileSync(path.join(tmpdir(), 'serpent-import-perf.log'), line, { flag: 'a' });
+}
+
 // ── Configuration ────────────────────────────────────────────────────────
 // 100k assets was the 0005 gate, but for a full round-trip export+import
 // soak the bottleneck is the filesystem copy of real asset files.  Writing
@@ -692,11 +699,7 @@ describe('Library import/export soak (20k assets)', () => {
       const importService = new LibraryService({
         onDiagnostic: ({ scope, context }) => {
           if (scope.startsWith('debug-import-open.')) {
-            writeFileSync(
-              path.join(tmpdir(), 'serpent-import-perf.log'),
-              `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
-              { flag: 'a' },
-            );
+            appendPerfLog(`${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`);
           }
         },
       });
@@ -714,10 +717,8 @@ describe('Library import/export soak (20k assets)', () => {
         console.info(`[soak] folder-import ${importElapsedMs.toFixed(0)}ms libraryId=${imported.libraryId}`);
         const refreshStartedAt = performance.now();
         const refresh = importService.refreshManagedAssets(imported.libraryId);
-        writeFileSync(
-          path.join(tmpdir(), 'serpent-import-perf.log'),
+        appendPerfLog(
           `folder-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
-          { flag: 'a' },
         );
 
         expect(imported.libraryId).toBeTruthy();
@@ -762,11 +763,7 @@ describe('Library import/export soak (20k assets)', () => {
       const importService = new LibraryService({
         onDiagnostic: ({ scope, context }) => {
           if (scope.startsWith('debug-import-open.')) {
-            writeFileSync(
-              path.join(tmpdir(), 'serpent-import-perf.log'),
-              `${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`,
-              { flag: 'a' },
-            );
+            appendPerfLog(`${scope} ${String(context?.durationMs ?? 'unknown')}ms\n`);
           }
         },
       });
@@ -784,10 +781,8 @@ describe('Library import/export soak (20k assets)', () => {
         console.info(`[soak] zip-import ${importElapsedMs.toFixed(0)}ms libraryId=${imported.libraryId}`);
         const refreshStartedAt = performance.now();
         const refresh = importService.refreshManagedAssets(imported.libraryId);
-        writeFileSync(
-          path.join(tmpdir(), 'serpent-import-perf.log'),
+        appendPerfLog(
           `zip-refresh ${(performance.now() - refreshStartedAt).toFixed(0)}ms changed=${refresh.changedCount}\n`,
-          { flag: 'a' },
         );
 
         expect(imported.libraryId).toBeTruthy();
