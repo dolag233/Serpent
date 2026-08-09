@@ -6,6 +6,7 @@ import {
   parseFolderMenuId,
   pushRecentFolderId,
   RECENT_FOLDER_IDS_KEY,
+  saveHereMenuId,
   sortFoldersForSaveMenu,
   type ExtensionFolderOption,
   type SaveMenuTreeFolder,
@@ -158,6 +159,20 @@ async function createFolderSubmenu(
     contexts: ['image', 'video'],
     enabled: true,
   });
+  if (folder.children.length === 0) return;
+  // 有子文件夹的文件夹：子菜单第一行「保存到此文件夹」（Chrome 父项点击只
+  // 展开不触发 onClicked，必须显式提供保存到自身的入口）。
+  if (folder.folderId !== null) {
+    const hereId = saveHereMenuId(folder.folderId);
+    dynamicFolderMenuIds.push(hereId);
+    await createMenuItem({
+      id: hereId,
+      parentId: id,
+      title: '保存到此文件夹',
+      contexts: ['image', 'video'],
+      enabled: true,
+    });
+  }
   for (const child of folder.children) {
     await createFolderSubmenu(id, child);
   }

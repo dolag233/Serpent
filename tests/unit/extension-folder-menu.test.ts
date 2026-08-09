@@ -10,6 +10,7 @@ import {
   folderMenuPathId,
   parseFolderMenuId,
   pushRecentFolderId,
+  saveHereMenuId,
   sortFoldersForSaveMenu,
   type ExtensionFolderOption,
   type SaveMenuTreeItem,
@@ -134,6 +135,10 @@ describe('folderMenuItemId / parseFolderMenuId', () => {
     });
     expect(id).toBe(folderMenuPathId('概念'));
     expect(parseFolderMenuId(id)).toBeUndefined();
+  });
+
+  it('「保存到此文件夹」解析回原 folderId', () => {
+    expect(parseFolderMenuId(saveHereMenuId('d1'))).toBe('d1');
   });
 
   it('「保存至此」解析为 null（根目录），未知 id 为 undefined', () => {
