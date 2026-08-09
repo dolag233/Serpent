@@ -1,12 +1,12 @@
+import {
+  buildFolderTree,
+  pickTreeRecentFolderIds,
+  type FolderNode,
+} from './radial-menu-model';
+
 export const EXTENSION_ROOT_FOLDER_KEY = '__root__';
 export const RECENT_FOLDER_IDS_KEY = 'recentFolderIds';
 export const MAX_RECENT_FOLDERS = 20;
-
-/** 右键/轮盘每一级最多展示的条目数（含导航项时由轮盘逻辑另行扣减）。 */
-export const MAX_ITEMS_PER_MENU_LEVEL = 8;
-
-/** 顶栏留给「根目录」父菜单 1 格，其余给快捷文件夹。 */
-export const MAX_TOP_LEVEL_FOLDER_SLOTS = MAX_ITEMS_PER_MENU_LEVEL - 1;
 
 export type ExtensionFolderOption = {
   readonly folderId: string;
@@ -20,18 +20,23 @@ export type SaveMenuFolderHints = {
   readonly browsedRecentIds: readonly string[];
 };
 
-export type SaveMenuFolderSplit = {
-  /** 「保存到 Serpent」下直接展示的文件夹（最多 7 个）。 */
-  readonly topLevel: ExtensionFolderOption[];
-  /** 「根目录」子菜单内的文件夹（其余全部）。 */
-  readonly underRoot: ExtensionFolderOption[];
+/** 右键保存菜单的文件夹树节点；folderId 为 null 表示纯容器（仅用于展开子级）。 */
+export type SaveMenuTreeFolder = {
+  readonly folderId: string | null;
+  name: string;
+  readonly path: string;
+  readonly children: SaveMenuTreeFolder[];
 };
+
+export type SaveMenuTreeItem =
+  | { readonly kind: 'separator' }
+  | { readonly kind: 'folder'; readonly folder: SaveMenuTreeFolder };
 
 export function folderMenuId(folderId: string): string {
   return `serpent-save-folder:${folderId}`;
 }
 
-/** 「根目录」父菜单（子项含「保存至此」+ 其余文件夹）。 */
+/** 「根目录」父菜单（子项「保存至此」= 保存到库根）。 */
 export const MENU_ROOT_PARENT_ID = 'serpent-save-root-parent';
 
 export function parseFolderMenuId(
@@ -39,6 +44,10 @@ export function parseFolderMenuId(
 ): string | null | undefined {
   if (menuItemId === 'serpent-save-root') return null;
   if (typeof menuItemId !== 'string') return undefined;
+  if (menuItemId.startsWith('serpent-save-folder-path:')) {
+    // 纯容器节点（仅用于展开子级，自身不可保存）
+    return undefined;
+  }
   if (!menuItemId.startsWith('serpent-save-folder:')) return undefined;
   return menuItemId.slice('serpent-save-folder:'.length);
 }
@@ -88,29 +97,6 @@ export function sortFoldersForSaveMenu(
   return [...ordered, ...rest];
 }
 
-/**
- * 拆分顶栏与「根目录」子菜单：顶栏最多 {@link MAX_TOP_LEVEL_FOLDER_SLOTS} 个文件夹，
- * 其余进入根目录下一级。
- */
-export function splitSaveMenuFolders(
-  folders: readonly ExtensionFolderOption[],
-  hints: SaveMenuFolderHints,
-): SaveMenuFolderSplit {
-  const sorted = sortFoldersForSaveMenu(folders, hints);
-  return {
-    topLevel: sorted.slice(0, MAX_TOP_LEVEL_FOLDER_SLOTS),
-    underRoot: sorted.slice(MAX_TOP_LEVEL_FOLDER_SLOTS),
-  };
-}
-
-/** @deprecated Use {@link splitSaveMenuFolders}. */
-export function pickFirstLevelSaveFolders(
-  folders: readonly ExtensionFolderOption[],
-  hints: SaveMenuFolderHints,
-): ExtensionFolderOption[] {
-  return splitSaveMenuFolders(folders, hints).topLevel;
-}
-
 export function buildSaveMenuFolderHints(
   folders: readonly ExtensionFolderOption[],
   recentFolderIds: readonly string[],
@@ -123,16 +109,77 @@ export function buildSaveMenuFolderHints(
   };
 }
 
-/** @deprecated Use {@link sortFoldersForSaveMenu}. */
-export function sortFoldersForMenu(
+/** 纯容器节点（无自己文件夹记录）的唯一菜单 id。 */
+export function folderMenuPathId(path: string): string {
+  return `serpent-save-folder-path:${path}`;
+}
+
+/** 文件夹节点的菜单 id：优先 folderId，退化为路径 id。 */
+export function folderMenuItemId(folder: SaveMenuTreeFolder): string {
+  return folder.folderId !== null
+    ? folderMenuId(folder.folderId)
+    : folderMenuPathId(folder.path);
+}
+
+function folderNodeToTreeFolder(node: FolderNode): SaveMenuTreeFolder {
+  return {
+    folderId: node.folderId,
+    name: node.name,
+    path: node.path,
+    children: node.children.map(folderNodeToTreeFolder),
+  };
+}
+
+/** 同级重名时展开为完整路径消歧（与拖拽树一致）。 */
+function disambiguateLevel(folders: SaveMenuTreeFolder[]): void {
+  const counts = new Map<string, number>();
+  for (const folder of folders) {
+    counts.set(folder.name, (counts.get(folder.name) ?? 0) + 1);
+  }
+  for (const folder of folders) {
+    if ((counts.get(folder.name) ?? 0) > 1) {
+      folder.name = folder.path.split('/').join(' / ');
+    }
+    disambiguateLevel(folder.children);
+  }
+}
+
+/**
+ * 构建右键保存菜单树，与拖拽树（radial-menu-model.itemsForLevel 根级）一致：
+ * 最近保存 → 最近浏览 → 分割线 → 所有一级目录；有子文件夹的目录递归展开下一级。
+ */
+export function buildSaveMenuTree(
   folders: readonly ExtensionFolderOption[],
-  recentFolderIds: readonly string[],
-): ExtensionFolderOption[] {
-  const validFolderIds = new Set(folders.map((folder) => folder.folderId));
-  return sortFoldersForSaveMenu(folders, {
-    savedRecentIds: filterSavedRecentFolderIds(recentFolderIds, validFolderIds),
-    browsedRecentIds: [],
+  hints: SaveMenuFolderHints,
+): SaveMenuTreeItem[] {
+  const tree = buildFolderTree(folders);
+
+  const recentIds = pickTreeRecentFolderIds(
+    hints.savedRecentIds,
+    hints.browsedRecentIds,
+  );
+  const recentPaths = new Set<string>();
+  const recent: SaveMenuTreeFolder[] = [];
+  for (const folderId of recentIds) {
+    const node = tree.byId.get(folderId);
+    if (!node) continue;
+    recentPaths.add(node.path);
+    recent.push(folderNodeToTreeFolder(node));
+  }
+  disambiguateLevel(recent);
+
+  const tops: SaveMenuTreeFolder[] = tree.roots
+    .filter((node) => !recentPaths.has(node.path))
+    .map(folderNodeToTreeFolder);
+  disambiguateLevel(tops);
+
+  const item = (folder: SaveMenuTreeFolder): SaveMenuTreeItem => ({
+    kind: 'folder',
+    folder,
   });
+  if (recent.length === 0) return tops.map(item);
+  if (tops.length === 0) return recent.map(item);
+  return [...recent.map(item), { kind: 'separator' }, ...tops.map(item)];
 }
 
 export function normalizeRecentFolderIds(

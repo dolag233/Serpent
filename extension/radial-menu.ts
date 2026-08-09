@@ -28,6 +28,7 @@ import {
   type TreeParentInfo,
 } from './radial-menu-model';
 import type { SaveIntent } from './save-client';
+import { showSaveBubble } from './save-bubble';
 
 /**
  * Serpent-c0ml / REQ-EXT-005 思维导图树状拖放保存菜单。
@@ -46,7 +47,6 @@ interface ConnectionStatusResponse {
 interface FolderListResponse {
   kind: 'ok';
   folders: ExtensionFolderOption[];
-  firstLevelFolderIds?: string[];
   recentFolderIds?: string[];
   recentBrowsedFolderIds?: string[];
   libraryDisplayName?: string;
@@ -300,18 +300,6 @@ const STYLE_TEXT = `
     border-radius: 999px; padding: 4px 10px;
     white-space: nowrap;
   }
-  .bubble {
-    position: fixed; z-index: 2147483647; pointer-events: none;
-    background: rgba(24, 26, 28, 0.94); color: #f5f5f5;
-    border-radius: 999px; padding: 9px 16px;
-    font: 12px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    opacity: 0; transition: opacity 180ms, transform 180ms;
-    transform: translateX(-50%) translateY(6px);
-    max-width: 320px; white-space: normal; text-align: center;
-  }
-  .bubble.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .bubble .msg { display: block; opacity: 0.72; font-size: 11px; }
 `;
 
 function svgIcon(inner: string): string {
@@ -348,7 +336,6 @@ let shadowRoot: ShadowRoot | null = null;
 let scrimEl: HTMLDivElement | null = null;
 let hostEl: HTMLDivElement | null = null;
 let state: MenuState | null = null;
-let bubbleTimer = 0;
 let scrollRaf = 0;
 let navDwellTimer = 0;
 
@@ -715,31 +702,6 @@ function goBack(): void {
   runSlideTransition('back');
 }
 
-function showBubble(x: number, y: number, title: string, message?: string): void {
-  const root = ensureShadowRoot();
-  let bubble = root.querySelector<HTMLDivElement>('.bubble');
-  if (!bubble) {
-    bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    root.appendChild(bubble);
-  }
-  bubble.replaceChildren();
-  const titleNode = document.createElement('span');
-  titleNode.textContent = title;
-  bubble.appendChild(titleNode);
-  if (message) {
-    const messageNode = document.createElement('span');
-    messageNode.className = 'msg';
-    messageNode.textContent = message;
-    bubble.appendChild(messageNode);
-  }
-  bubble.style.left = `${Math.min(Math.max(x, 170), window.innerWidth - 170)}px`;
-  bubble.style.top = `${Math.min(y + 18, window.innerHeight - 70)}px`;
-  bubble.classList.add('show');
-  window.clearTimeout(bubbleTimer);
-  bubbleTimer = window.setTimeout(() => bubble?.classList.remove('show'), 2200);
-}
-
 async function requestSave(
   media: MediaTarget,
   targetFolderId: string | null,
@@ -756,7 +718,7 @@ async function requestSave(
     type: 'serpent-save-request',
     intent,
   });
-  showBubble(bubbleX, bubbleY, response.notification.title, response.notification.message);
+  showSaveBubble(bubbleX, bubbleY, response.notification.title, response.notification.message);
 }
 
 function updateHitFromPointer(clientX: number, clientY: number): void {
@@ -876,7 +838,7 @@ function onDrop(event: DragEvent): void {
     if (item && isFolderItem(item)) {
       const media = s.media;
       closeMenu();
-      showBubble(
+      showSaveBubble(
         event.clientX,
         event.clientY,
         `保存到：${item.path.split('/').join(' / ')}`,
@@ -893,7 +855,7 @@ function onDrop(event: DragEvent): void {
       parent.folderId === null
         ? `${parent.label}（根目录）`
         : parent.path.split('/').join(' / ');
-    showBubble(event.clientX, event.clientY, `保存到：${label}`, '发送中…');
+    showSaveBubble(event.clientX, event.clientY, `保存到：${label}`, '发送中…');
     void requestSave(media, parent.folderId, event.clientX, event.clientY);
     return;
   }
@@ -1057,7 +1019,7 @@ export async function startRadialSaveMenu(
     }
     if (!connected) {
       if (!dragEndedEarly) {
-        showBubble(clientX, clientY, '未连接 Serpent', '请先启动应用并打开资源库');
+        showSaveBubble(clientX, clientY, '未连接 Serpent', '请先启动应用并打开资源库');
       }
       return;
     }

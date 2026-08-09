@@ -5,6 +5,19 @@ import {
   readDragRadialMenuEnabled,
 } from './preferences';
 import { applyDragGhostThumbnail, startRadialSaveMenu } from './radial-menu';
+import { showSaveToast } from './save-bubble';
+
+// 右键菜单保存（background.ts）通过此消息把「保存中/保存结果」反馈到当前页面。
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || typeof message !== 'object') return;
+  if (Reflect.get(message, 'type') !== 'serpent-save-feedback') return;
+  if (Reflect.get(message, 'state') === 'saving') {
+    showSaveToast('正在保存到 Serpent', '发送中…');
+  } else {
+    showSaveToast(Reflect.get(message, 'title'), Reflect.get(message, 'message'));
+  }
+  sendResponse({ ok: true });
+});
 
 // 右键保存走 Chrome 扩展原生 contextMenus（background.ts），不拦截页面右键，
 // 避免浮层菜单替换整站原生菜单（Serpent-ak94 / 用户反馈 2026-07-26）。

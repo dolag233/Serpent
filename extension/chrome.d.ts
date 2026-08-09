@@ -3,6 +3,7 @@ interface SerpentContextMenuClickData {
   mediaType?: 'image' | 'video' | 'audio';
   pageUrl?: string;
   srcUrl?: string;
+  tab?: { id?: number };
 }
 
 interface SerpentContextMenuShownInfo {
@@ -46,10 +47,11 @@ interface SerpentChromeApi {
     create(
       properties: {
         id: string;
-        title: string;
-        contexts: Array<'image' | 'video'>;
+        title?: string;
+        contexts?: Array<'image' | 'video'>;
         parentId?: string;
         enabled?: boolean;
+        type?: 'normal' | 'separator';
       },
       callback?: () => void,
     ): void;
@@ -69,6 +71,9 @@ interface SerpentChromeApi {
     onShown?: {
       addListener(callback: (info: SerpentContextMenuShownInfo) => void): void;
     };
+  };
+  tabs: {
+    sendMessage(tabId: number, message: unknown, callback?: () => void): void;
   };
   notifications: {
     create(
