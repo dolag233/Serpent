@@ -1291,6 +1291,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             );
             const assignTagItem = resolvedById.get("assets.assign-tag");
             const removeTagItem = resolvedById.get("assets.remove-tag");
+            const aiAnalyzeMissingItem = resolvedById.get("assets.ai-analyze-pending");
             const aiAnalyzeItem = resolvedById.get("assets.ai-analyze");
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
@@ -1367,8 +1368,25 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   </div>
                 )}
             {(targetAssetIds.length > 0 &&
-              (aiAnalyzeItem || clearAiContentItem)) && (
+              (aiAnalyzeMissingItem || aiAnalyzeItem || clearAiContentItem)) && (
               <ContextMenuSection label={t("command.group.metadata")}>
+                {aiAnalyzeMissingItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="smart" size={14} />}
+                    label={
+                      !canAnalyze
+                        ? `${aiAnalyzeMissingItem.label}${t("command.reason.aiDisconnectedSuffix")}`
+                        : aiAnalyzeMissingItem.label
+                    }
+                    disabled={aiAnalyzeMissingItem.disabled || !canAnalyze}
+                    disabledReason={
+                      !canAnalyze
+                        ? t("command.reason.aiSetupHint")
+                        : (aiAnalyzeMissingItem.disabledReason ?? undefined)
+                    }
+                    onAction={() => runMultiCommand("assets.ai-analyze-pending")}
+                  />
+                )}
                 {aiAnalyzeItem && (
                   <ContextMenuItem
                     icon={

@@ -843,3 +843,46 @@ function makeImageRequest(): AiAnalysisRequest {
     existingTagNames: [],
   };
 }
+
+describe('pendingAiAssets（「AI分析未分析项」运行时判断）', () => {
+  it('returns only assets without any ai_content records', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'AI Pending',
+      selectedParentPath: root,
+    });
+
+    writeFileSync(path.join(root, 'a.png'), 'image-data');
+    writeFileSync(path.join(root, 'b.png'), 'image-data');
+    const a = importNoConflict(service, created.libraryId, path.join(root, 'a.png'));
+    const b = importNoConflict(service, created.libraryId, path.join(root, 'b.png'));
+    const aId = a.assets[0]!.assetId;
+    const bId = b.assets[0]!.assetId;
+
+    // 只有 a 有 AI 数据（描述）。
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId: aId,
+      description: 'Has AI.',
+      tags: [],
+      modelId: 'gpt-4o',
+      modelVersion: 'gpt-4o-2024-05-13',
+      enabledFields: { description: true, tags: true, rating: false },
+    });
+
+    const pending = service.pendingAiAssets({
+      libraryId: created.libraryId,
+      assetIds: [aId, bId],
+    });
+    expect(pending).toEqual([bId]);
+
+    // 已知 id 缺失/空输入安全。
+    expect(service.pendingAiAssets({ libraryId: created.libraryId, assetIds: [] })).toEqual([]);
+    expect(
+      service.pendingAiAssets({ libraryId: created.libraryId, assetIds: ['missing-id'] }),
+    ).toEqual([]);
+
+    service.closeAll();
+  });
+});
