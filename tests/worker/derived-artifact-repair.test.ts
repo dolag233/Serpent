@@ -1,4 +1,5 @@
-// Serpent-5xbg: failed derived artifacts (thumbnail/video_poster/webm_proxy/
+// Serpent-5xbg: failed derived artifacts (thumbnail/video_poster/contact_sheet/
+// webm_proxy/
 // audio_proxy) are re-opened for regeneration when the asset surfaces —
 // throttled, permanent failures excluded — instead of blocking forever.
 import { createRequire } from 'node:module';
@@ -45,7 +46,7 @@ function insertFailedAsset(
   libraryPath: string,
   input: {
     fileName: string;
-    kind: 'thumbnail' | 'webm_proxy';
+    kind: 'thumbnail' | 'contact_sheet' | 'webm_proxy';
     errorCode: string;
     failedAt: Date;
     available?: boolean;
@@ -93,10 +94,21 @@ function insertFailedAsset(
         generator_version, status, error_code, generated_at)
      VALUES (?, ?, ?, 'application/octet-stream', 0, ?, 'test-1', ?, ?, ?)`,
   );
-  // webm_proxy jobs only enqueue once a ready thumbnail/poster exists
+  // contact_sheet jobs only enqueue once a ready video poster exists; webm_proxy
+  // jobs only enqueue once a ready thumbnail/poster exists
   // (playbackRows semantics); mirror that precondition in the fixture. The
   // artifact file must exist on disk too, otherwise reconcileMissingArtifactFiles
   // invalidates the ready thumbnail on open.
+  if (input.kind === 'contact_sheet') {
+    const posterRelativePath = 'poster.jpg';
+    if (input.available !== false) {
+      writeFileSync(path.join(libraryPath, '.serpent', 'artifacts', posterRelativePath), 'poster');
+    }
+    insertArtifact.run(
+      randomUUID(), revisionId, 'video_poster', posterRelativePath,
+      'ready', null, now,
+    );
+  }
   if (input.kind === 'webm_proxy') {
     // file_path must be relative to the artifacts root (production writes
     // `${artifactId}.png`), otherwise reconcileMissingArtifactFiles resolves
@@ -164,6 +176,26 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
 
     expect(queuedJobCount(dbPath, 'generate_webm_proxy')).toBe(1);
+    expect(invalidatedArtifactCount(dbPath)).toBe(1);
+  });
+
+  it('re-enqueues a failed contact sheet when the video poster is ready', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: '联系表重试库', selectedParentPath: root });
+    service.closeAll();
+    const dbPath = path.join(created.libraryPath, '.serpent', 'library.db');
+    insertFailedAsset(created.libraryPath, {
+      fileName: 'video.mp4',
+      kind: 'contact_sheet',
+      errorCode: 'CONTACT_SHEET_GENERATION_FAILED',
+      failedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+
+    service.openLibrary(created.libraryPath);
+    service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
+
+    expect(queuedJobCount(dbPath, 'generate_contact_sheet')).toBe(1);
     expect(invalidatedArtifactCount(dbPath)).toBe(1);
   });
 
