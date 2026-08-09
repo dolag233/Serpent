@@ -2506,4 +2506,10 @@ parentPort.on('message', async (event) => {
   parentPort.postMessage(response);
 });
 
+// CI 诊断：UtilityProcess fork 后若模块加载失败/被系统杀，main 只见握手
+// 超时且无任何输出。ready 前打印 boot 行（经 stdout 转发到 app-log），
+// 可区分「worker 未执行」与「执行但握手慢」。
+process.stdout.write(
+  `${JSON.stringify({ scope: 'worker.boot', message: 'worker module loaded, sending ready.' })}\n`,
+);
 parentPort.postMessage({ type: 'worker.ready' });

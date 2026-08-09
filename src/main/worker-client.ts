@@ -159,6 +159,14 @@ export class LibraryWorkerClient {
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
+        // CI 诊断：超时是启动慢还是 worker 死，靠 worker.boot / worker.exit
+        // 日志区分；此处补一条超时记录（此前 reject 前无日志，main 若随后
+        // 崩溃会完全无痕）。
+        this.logger.error(
+          'worker.ready-timeout',
+          new Error('Library Worker ready handshake timed out.'),
+          { pid: child.pid, timeoutMs: READY_TIMEOUT_MS },
+        );
         reject(new Error('Library Worker ready handshake timed out.'));
         child.kill();
       }, READY_TIMEOUT_MS);

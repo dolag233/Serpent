@@ -24,6 +24,12 @@ jobs:
     timeout-minutes: 45
     env:
       CI: 'true'
+      # electronjs.org 在 CI 上不稳定（实测：npm ci 的 electron binary 下载与
+      # rebuild 的 headers 下载都失败）。@electron/get 读 ELECTRON_MIRROR；
+      # @electron/node-gyp 读 NODEJS_ORG_MIRROR（process-release.js，不读
+      # ELECTRON_MIRROR）——两个都要设，否则 headers 仍走 electronjs.org。
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      NODEJS_ORG_MIRROR: https://npmmirror.com/mirrors/electron/
     steps:
       - name: Check out Serpent
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
