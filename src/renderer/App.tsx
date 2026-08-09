@@ -93,6 +93,7 @@ import {
 } from "./folder-recursive-preferences";
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
+import type { ApplicationMenuCommand } from "../shared/application-menu";
 import type { SearchQuery } from "../shared/asset-types";
 import {
   createWorkspaceNavHistory,
@@ -1343,6 +1344,8 @@ function AppInner() {
   );
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
+  const importActivationPendingRef = useRef(false);
+  const [importActivationPending, setImportActivationPending] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importLibraryChooserOpen, setImportLibraryChooserOpen] =
     useState(false);
@@ -3159,7 +3162,12 @@ function AppInner() {
   useEffect(() => {
     if (library) return;
     if (scriptSandboxPreviewOpen) return;
-    if (importLibraryChooserOpen || appSettingsOpen || busy) return;
+    // Keep the required start surface closed while any import flow owns the
+    // foreground. The native ZIP picker can take long enough for the chooser
+    // to close before its progress event arrives; without this guard the
+    // no-library effect immediately remounts CreateDialog over the picker or
+    // import progress (Serpent-o5j3).
+    if (importLibraryChooserOpen || importValidated || importProgress || appSettingsOpen || busy) return;
     if (dialog === "library") return;
     queueMicrotask(() => {
       setDialogValue(t("shell.myLibrary"));
@@ -3170,6 +3178,8 @@ function AppInner() {
     library,
     dialog,
     importLibraryChooserOpen,
+    importValidated,
+    importProgress,
     appSettingsOpen,
     busy,
     scriptSandboxPreviewOpen,
@@ -3322,6 +3332,9 @@ function AppInner() {
                   ...item,
                   thumbnailStatus: "ready" as const,
                   thumbnailArtifactId: event.artifactId ?? null,
+                  ...(event.width === undefined ? {} : { width: event.width }),
+                  ...(event.height === undefined ? {} : { height: event.height }),
+                  ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
                 }
               : item,
           );
@@ -3695,10 +3708,10 @@ function AppInner() {
     setSearchTotal(null);
     setSearchSnippets(new Map());
     const folderId = scope === "all" || scope === "root" ? undefined : scope;
-    managedImportTargetFolderIdRef.current =
-      folderId && folders.some((folder) => folder.folderId === folderId)
-        ? folderId
-        : undefined;
+    // 不做 folders 列表校验：新建文件夹后自动进入时，新文件夹尚未出现在
+    // folders state（异步刷新），校验会误伤并把导入目标降级为根目录。
+    // folderId 来源可信（创建结果/导航），loadContent 会处理无效值。
+    managedImportTargetFolderIdRef.current = folderId ?? undefined;
     api?.setActiveContext(library.libraryId, folderId);
     setUiState("loading");
     try {
@@ -4159,7 +4172,10 @@ function AppInner() {
       setShowCollectionInput(false);
       setCollectionInputValue("");
       setNewCollectionParentId(null);
-      await reloadCurrentContent();
+      // Creation should land in the new collection immediately, matching
+      // folder and smart-collection creation instead of leaving the user in
+      // the previous browse scope.
+      await chooseCollection(result.value.collectionId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "create", locale));
     } finally {
@@ -5045,14 +5061,19 @@ function AppInner() {
     setLastUndoableOp,
   });
 
-  const { handleFoldersDroppedOnFolder } = useFolderDragDropHandlers({
+  const {
+    handleFoldersDroppedOnFolder,
+    handleFoldersDroppedOnTrash,
+  } = useFolderDragDropHandlers({
     api: api ?? null,
     libraryId: library?.libraryId ?? null,
+    assetScope,
     folders,
     setNotice,
     setError,
     setUiState,
     reloadCurrentContent,
+    onDeletedCurrentScope: () => chooseFolder("root"),
   });
 
   const {
@@ -8276,6 +8297,23 @@ function AppInner() {
     },
   });
 
+  // macOS keeps a native menu bar. Route its commands through the same
+  // canonical renderer menu actions used by the Windows in-app menu so the
+  // two platforms expose identical product functionality.
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onApplicationMenuCommand((command: ApplicationMenuCommand) => {
+      if (command === "settings") {
+        mainMenuSections.find((section) => section.id === "settings")?.onSelect?.();
+        return;
+      }
+      const item = mainMenuSections
+        .flatMap((section) => section.items ?? [])
+        .find((candidate) => candidate.id === command);
+      item?.onSelect();
+    });
+  }, [mainMenuSections, shellApi]);
+
   return (
     <>
     <HoverTipHost />
@@ -8519,6 +8557,7 @@ function AppInner() {
         onAssetsDroppedOnTrash={(assetIds) =>
           handleAssetsDroppedOnTrash(assetIds)
         }
+        onFoldersDroppedOnTrash={handleFoldersDroppedOnTrash}
         onAssetsDroppedOnCollection={(collectionId, assetIds, mode) =>
           handleAssetsDroppedOnCollection(collectionId, assetIds, mode)
         }
@@ -8555,7 +8594,10 @@ function AppInner() {
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
         onInlineFolderEditCommit={(onCreateSuccess) =>
-          void commitInlineFolderEdit(onCreateSuccess)
+          void commitInlineFolderEdit((folderId, parentFolderId) => {
+            onCreateSuccess?.(folderId, parentFolderId);
+            void chooseFolder(folderId);
+          })
         }
         onInlineFolderEditCancel={cancelInlineFolderEdit}
         inlineSmartCollectionEdit={inlineSmartCollectionEdit}
@@ -8701,38 +8743,40 @@ function AppInner() {
                 </>
               )
             )}
-            <CanvasToolbarControls
-              actions={{
-                refresh: () => {
-                  void refreshAssets();
-                },
-                setViewMode: (mode) => {
-                  setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
-                },
-                toggleField: (field) => {
-                  setCanvasPrefs((p) => ({
-                    ...p,
-                    fields: { ...p.fields, [field]: !p.fields[field] },
-                  }));
-                },
-                openAiSettings: () => {
-                  setAppSettingsCategory("ai");
-                  setAppSettingsOpen(true);
-                },
-                openAppSettings: () => {
-                  setAppSettingsCategory("general");
-                  setAppSettingsOpen(true);
-                },
-              }}
-              busy={busy}
-              canvasPrefs={canvasPrefs}
-              cardSize={assetCardSize}
-              cardSizeStops={cardSizeStops}
-              libraryOpen={Boolean(library)}
-              locale={locale}
-              onCardSizeChange={resizeAssetCards}
-              platform={SHORTCUT_PLATFORM}
-            />
+            {!showTagManagement && !showPluginSidebarView && (
+              <CanvasToolbarControls
+                actions={{
+                  refresh: () => {
+                    void refreshAssets();
+                  },
+                  setViewMode: (mode) => {
+                    setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+                  },
+                  toggleField: (field) => {
+                    setCanvasPrefs((p) => ({
+                      ...p,
+                      fields: { ...p.fields, [field]: !p.fields[field] },
+                    }));
+                  },
+                  openAiSettings: () => {
+                    setAppSettingsCategory("ai");
+                    setAppSettingsOpen(true);
+                  },
+                  openAppSettings: () => {
+                    setAppSettingsCategory("general");
+                    setAppSettingsOpen(true);
+                  },
+                }}
+                busy={busy}
+                canvasPrefs={canvasPrefs}
+                cardSize={assetCardSize}
+                cardSizeStops={cardSizeStops}
+                libraryOpen={Boolean(library)}
+                locale={locale}
+                onCardSizeChange={resizeAssetCards}
+                platform={SHORTCUT_PLATFORM}
+              />
+            )}
             <PluginToolbarButtons
               disabled={busy || library === null || showTagManagement || showPluginSidebarView}
               libraryId={library?.libraryId}
