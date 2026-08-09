@@ -221,7 +221,7 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
       const asset = videoAssets.find((candidate) => candidate.displayName === `sample.${extension}`);
       expect(asset).toBeDefined();
       const proxy = service.getCurrentArtifact(library.libraryId, asset!.assetId, 'webm_proxy');
-      expect(proxy).toMatchObject({ status: 'ready', mimeType: 'video/webm' });
+      expect(proxy).toMatchObject({ status: 'ready', mimeType: 'video/mp4' });
       const proxyPath = service.getArtifactAbsolutePath(
         library.libraryId,
         proxy!.artifactId,
@@ -235,9 +235,9 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
       const expectedSize = extension === 'avi'
         ? { width: 64, height: 48 }
         : { width: 48, height: 64 };
-      expect(video).toMatchObject({ codec_name: 'vp9', ...expectedSize });
+      expect(video).toMatchObject({ codec_name: 'h264', ...expectedSize });
       expect(Math.max(video?.width ?? 0, video?.height ?? 0)).toBeLessThanOrEqual(720);
-      expect(audio).toMatchObject({ codec_name: 'opus' });
+      expect(audio).toMatchObject({ codec_name: 'aac' });
       expect(Number(probe.format?.duration)).toBeGreaterThan(0);
       run(ffmpegPath, [
         '-hide_banner', '-loglevel', 'error', '-ss', '0.25', '-i', proxyPath,
@@ -275,7 +275,7 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
         )).toMatchObject({
           artifactId: persisted.artifactId,
           status: 'ready',
-          mimeType: 'video/webm',
+          mimeType: 'video/mp4',
         });
         expect(reopenedJobs.jobs
           .filter((job) => job.assetId === persisted.assetId && job.kind === 'generate_webm_proxy')

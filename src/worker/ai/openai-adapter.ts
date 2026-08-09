@@ -418,7 +418,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
       imageParts.push({
         type: 'image_url',
         image_url: {
-          url: `data:image/png;base64,${request.contactSheetBase64}`,
+          url: `data:${request.contactSheetMime ?? 'image/png'};base64,${request.contactSheetBase64}`,
           detail: 'low',
         },
       });
@@ -451,7 +451,7 @@ export class OpenAIVendorAdapter implements VendorAdapter {
     if (request.contactSheetBase64) {
       parts.push({
         type: 'input_image',
-        image_url: `data:image/png;base64,${request.contactSheetBase64}`,
+        image_url: `data:${request.contactSheetMime ?? 'image/png'};base64,${request.contactSheetBase64}`,
         detail: 'low',
       });
     }

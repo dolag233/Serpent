@@ -169,7 +169,7 @@ export class DashScopeVendorAdapter implements VendorAdapter {
       });
     }
     if (request.contactSheetBase64) {
-      content.push({ image: `data:image/png;base64,${request.contactSheetBase64}` });
+      content.push({ image: `data:${request.contactSheetMime ?? 'image/png'};base64,${request.contactSheetBase64}` });
     }
     const lines = buildAiAnalysisUserTextLines(request);
     content.push({ text: lines.join('\n') });

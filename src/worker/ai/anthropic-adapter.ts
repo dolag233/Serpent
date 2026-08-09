@@ -253,7 +253,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/png',
+          media_type: request.contactSheetMime ?? 'image/png',
           data: request.contactSheetBase64,
         },
       });

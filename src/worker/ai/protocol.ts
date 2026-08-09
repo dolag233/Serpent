@@ -116,6 +116,8 @@ export interface AiAnalysisRequest {
   contactSheetDescription?: string;
   imageBase64?: string;
   contactSheetBase64?: string;
+  /** MIME of the contact-sheet derivative (normally image/jpeg). */
+  contactSheetMime?: string;
   /** Prompt language line (may list multiple). */
   language: string;
   enabledFields: {
@@ -148,7 +150,9 @@ export function buildAiAnalysisUserTextLines(
   }
   if (request.contactSheetBase64) {
     lines.push(
-      'The first image is the poster frame and the second is a contact sheet of key frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.',
+      request.imageBase64
+        ? 'The first image is the poster frame and the second is a contact sheet of key frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.'
+        : 'The supplied image is a contact sheet of key video frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.',
     );
   }
   return lines;

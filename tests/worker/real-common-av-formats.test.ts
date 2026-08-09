@@ -127,7 +127,9 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
           .map(({ kind: jobKind, status, errorCode }) => ({ kind: jobKind, status, errorCode }));
         expect(artifact, `${asset.displayName}: ${JSON.stringify(jobs)}`).toMatchObject({
           status: 'ready',
-          mimeType: asset.mediaType === 'video' ? 'video/webm' : 'audio/ogg',
+          mimeType: asset.mediaType === 'video'
+            ? expect.stringMatching(/^video\/(mp4|webm)$/u)
+            : 'audio/ogg',
         });
         const proxyPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'proxy');
         const probe = spawnSync(ffprobePath!, [
@@ -135,10 +137,14 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
         ], { encoding: 'utf8', timeout: 30_000 });
         expect(probe.status, `${asset.displayName}: ${probe.stderr}`).toBe(0);
         const streams = JSON.parse(probe.stdout) as { streams?: Array<{ codec_name?: string; codec_type?: string }> };
-        expect(streams.streams?.some((stream) => stream.codec_name === 'opus' && stream.codec_type === 'audio'))
+        const expectedAudioCodec = asset.mediaType === 'video'
+          ? (artifact!.mimeType === 'video/mp4' ? 'aac' : 'opus')
+          : 'opus';
+        expect(streams.streams?.some((stream) => stream.codec_name === expectedAudioCodec && stream.codec_type === 'audio'))
           .toBe(true);
         if (asset.mediaType === 'video') {
-          expect(streams.streams?.some((stream) => stream.codec_name === 'vp9' && stream.codec_type === 'video'))
+          const videoCodec = artifact!.mimeType === 'video/mp4' ? 'h264' : 'vp9';
+          expect(streams.streams?.some((stream) => stream.codec_name === videoCodec && stream.codec_type === 'video'))
             .toBe(true);
         }
       }

@@ -94,8 +94,8 @@ function insertFailedAsset(
         generator_version, status, error_code, generated_at)
      VALUES (?, ?, ?, 'application/octet-stream', 0, ?, 'test-1', ?, ?, ?)`,
   );
-  // contact_sheet jobs only enqueue once a ready video poster exists; webm_proxy
-  // jobs only enqueue once a ready thumbnail/poster exists
+  // contact_sheet jobs require durable metadata (and historically also had a
+  // ready poster precondition); webm_proxy jobs require a ready thumbnail/poster
   // (playbackRows semantics); mirror that precondition in the fixture. The
   // artifact file must exist on disk too, otherwise reconcileMissingArtifactFiles
   // invalidates the ready thumbnail on open.
@@ -106,6 +106,17 @@ function insertFailedAsset(
     }
     insertArtifact.run(
       randomUUID(), revisionId, 'video_poster', posterRelativePath,
+      'ready', null, now,
+    );
+    const metadataRelativePath = 'metadata.json';
+    if (input.available !== false) {
+      writeFileSync(
+        path.join(libraryPath, '.serpent', 'artifacts', metadataRelativePath),
+        JSON.stringify({ durationMs: 1000, width: 1920, height: 1080 }),
+      );
+    }
+    insertArtifact.run(
+      randomUUID(), revisionId, 'extracted_metadata', metadataRelativePath,
       'ready', null, now,
     );
   }
@@ -179,7 +190,7 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     expect(invalidatedArtifactCount(dbPath)).toBe(1);
   });
 
-  it('re-enqueues a failed contact sheet when the video poster is ready', () => {
+  it('re-enqueues a failed contact sheet when metadata and poster are ready', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: '联系表重试库', selectedParentPath: root });

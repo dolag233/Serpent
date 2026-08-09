@@ -13,6 +13,7 @@ import {
   parseWorkerResponse,
   parseProgressEvent,
   parseThumbnailEvent,
+  parseAiInputReadyEvent,
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
   parseAiContentClearedEvent,
@@ -21,6 +22,7 @@ import {
   type LibraryChangedEvent,
   type ProgressEvent,
   type ThumbnailEvent,
+  type AiInputReadyEvent,
   type AiProgressEvent,
   type AiAnalysisCompletedEvent,
   type AiContentClearedEvent,
@@ -113,6 +115,7 @@ export class LibraryWorkerClient {
   #libraryChangedListeners = new Set<(event: LibraryChangedEvent) => void>();
   #progressListeners = new Set<(event: ProgressEvent) => void>();
   #thumbnailListeners = new Set<(event: ThumbnailEvent) => void>();
+  #aiInputReadyListeners = new Set<(event: AiInputReadyEvent) => void>();
   #aiProgressListeners = new Set<(event: AiProgressEvent) => void>();
   #aiCompletedListeners = new Set<(event: AiAnalysisCompletedEvent) => void>();
   #aiClearedListeners = new Set<(event: AiContentClearedEvent) => void>();
@@ -237,6 +240,11 @@ export class LibraryWorkerClient {
   onThumbnailEvent(listener: (event: ThumbnailEvent) => void): () => void {
     this.#thumbnailListeners.add(listener);
     return () => this.#thumbnailListeners.delete(listener);
+  }
+
+  onAiInputReady(listener: (event: AiInputReadyEvent) => void): () => void {
+    this.#aiInputReadyListeners.add(listener);
+    return () => this.#aiInputReadyListeners.delete(listener);
   }
 
   onAiProgress(listener: (event: AiProgressEvent) => void): () => void {
@@ -394,7 +402,15 @@ export class LibraryWorkerClient {
       for (const listener of this.#thumbnailListeners) listener(thumbnail);
       return;
     } catch {
-      // Not a thumbnail event; try AI events next.
+      // Not a thumbnail event; try video AI-input readiness next.
+    }
+
+    try {
+      const aiInputReady = parseAiInputReadyEvent(message);
+      for (const listener of this.#aiInputReadyListeners) listener(aiInputReady);
+      return;
+    } catch {
+      // Not an AI-input event; try AI progress next.
     }
 
     try {

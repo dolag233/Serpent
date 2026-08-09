@@ -151,6 +151,7 @@ function NavRow({
         <span className="nav-row-label">{label}</span>
         {childCount !== undefined && childCount > 0 && (
           <span
+            aria-hidden="true"
             aria-label={childCountLabel}
             className="nav-count nav-child-count"
             title={childCountLabel}
@@ -158,7 +159,11 @@ function NavRow({
             {childCount}
           </span>
         )}
-        {count !== undefined && <span className="nav-count">{count}</span>}
+        {count !== undefined && (
+          <span aria-hidden="true" className="nav-count">
+            {count}
+          </span>
+        )}
       </button>
     </div>
   );
@@ -541,6 +546,7 @@ export interface NavigationSidebarProps {
   /** Canvas/sidebar folder selection for folder drag (Serpent-nno6). */
   selectedFolderIds: readonly string[];
   onAssetsDroppedOnTrash: (assetIds: string[]) => void;
+  onFoldersDroppedOnTrash: (folderIds: string[]) => void;
   onAssetsDroppedOnCollection: (
     collectionId: string,
     assetIds: string[],
@@ -653,6 +659,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onFoldersDroppedOnFolder,
     selectedFolderIds,
     onAssetsDroppedOnTrash,
+    onFoldersDroppedOnTrash,
     onAssetsDroppedOnCollection,
     onManagedAssetCopyModeChange,
     onImportFolderAsLinked,
@@ -1203,7 +1210,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }}
           dropActive={assetDropTarget === "trash"}
           onDragEnter={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer))
+            if (
+              supportsManagedFolderDrag(event.dataTransfer) ||
+              supportsManagedAssetDrag(event.dataTransfer)
+            )
               setAssetDropTarget("trash");
           }}
           onDragLeave={(event) => {
@@ -1214,7 +1224,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             );
           }}
           onDragOver={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer)) {
+            if (
+              supportsManagedFolderDrag(event.dataTransfer) ||
+              supportsManagedAssetDrag(event.dataTransfer)
+            ) {
               // Trash is always a move/delete target; Option does not copy.
               event.preventDefault();
               event.dataTransfer.dropEffect = "move";
@@ -1222,6 +1235,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             }
           }}
           onDrop={(event) => {
+            const folderIds = parseManagedFolderDrag(event.dataTransfer);
+            setAssetDropTarget(null);
+            if (folderIds && folderIds.length > 0) {
+              event.preventDefault();
+              onFoldersDroppedOnTrash(folderIds);
+              return;
+            }
             const ids = parseManagedAssetDrag(event.dataTransfer);
             setAssetDropTarget(null);
             if (!ids || ids.length === 0) return;

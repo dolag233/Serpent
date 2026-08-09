@@ -236,7 +236,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
     if (request.contactSheetBase64) {
       parts.push({
         inlineData: {
-          mimeType: 'image/png',
+          mimeType: request.contactSheetMime ?? 'image/png',
           data: request.contactSheetBase64,
         },
       });

@@ -172,6 +172,7 @@ import type { AutomationExecutionContext } from '../automation/command-gateway';
 import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
+import { libraryExportDefaultName } from "../shared/library-export-name";
 import {
   resolveOpenExternalUrlTarget,
   type OpenExternalUrlResult,
@@ -2247,6 +2248,10 @@ async function commandFor(
       return undefined;
     case "library.export.request": {
       const host = createNativeDialogHost();
+      const defaultExportName = libraryExportDefaultName(
+        request.libraryName ?? "serpent-library-export",
+        request.format,
+      );
       const destinationPath =
         request.format === "zip"
           ? await selectSavePath(
@@ -2254,7 +2259,7 @@ async function commandFor(
               "exportZip",
               process.env.SERPENT_E2E_EXPORT_DEST_ZIP,
               {
-                defaultPath: "serpent-library-export.zip",
+                defaultPath: defaultExportName,
                 filters: [{ name: "ZIP", extensions: ["zip"] }],
               },
             )
@@ -2262,7 +2267,7 @@ async function commandFor(
               host,
               "exportFolder",
               process.env.SERPENT_E2E_EXPORT_DEST,
-              { defaultPath: "serpent-library-export" },
+              { defaultPath: defaultExportName },
             );
       return destinationPath
         ? {
@@ -5006,6 +5011,12 @@ async function startApplication(): Promise<void> {
   workerClient.onAiProgress(publishAiProgress);
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
   workerClient.onAiContentCleared(publishAiCleared);
+  workerClient.onAiInputReady((event) => {
+    // Video contact sheets are the actual AI input. Import-time enqueue is
+    // intentionally best-effort for images; videos re-attempt here once that
+    // input exists, without waiting for a browsing poster or WebM proxy.
+    void enqueueAutoAnalyzeAfterImport(event.libraryId, [event.assetId]);
+  });
 
   const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
     logger?.error("recent-library.read", error);

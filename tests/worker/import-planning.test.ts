@@ -517,6 +517,68 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('carries a video poster in name and content conflict examples', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Video conflicts', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'source-'));
+    const collideDir = mkdtempSync(path.join(root, 'collide-'));
+    const originalBytes = Buffer.from('original-video-bytes');
+    const originalPath = path.join(sourceDir, 'clip.mp4');
+    writeFileSync(originalPath, originalBytes);
+    writeFileSync(path.join(collideDir, 'clip.mp4'), 'different-video-bytes');
+    writeFileSync(path.join(collideDir, 'copy.mp4'), originalBytes);
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [originalPath],
+    });
+    expect('importedCount' in imported).toBe(true);
+    const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0];
+    expect(asset).toBeDefined();
+    const poster = service.writeDerivedArtifact({
+      libraryId: library.libraryId,
+      assetId: asset!.assetId,
+      kind: 'video_poster',
+      mimeType: 'image/jpeg',
+      bytes: Buffer.from('poster'),
+      generatorVersion: 'test',
+      maxBytes: 1024,
+    });
+
+    const nameConflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'clip.mp4')],
+    });
+    expect(nameConflict.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'name-conflict',
+          existingThumbnailArtifactId: poster.artifactId,
+        }),
+      ]),
+    );
+    service.abandonImport(nameConflict.importId);
+
+    const contentDuplicate = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'copy.mp4')],
+    });
+    expect(contentDuplicate.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: expect.stringMatching(/duplicate$/u),
+          existingThumbnailArtifactId: poster.artifactId,
+        }),
+      ]),
+    );
+    service.abandonImport(contentDuplicate.importId);
+    service.closeAll();
+  });
+
   it('detects library-wide suspected duplicates across folders via byteSize and SHA-256', () => {
     const root = temporaryRoot();
     const service = new LibraryService();

@@ -683,7 +683,7 @@ describe('enqueueAiAnalysisJobs', () => {
     service.closeAll();
   });
 
-  it('does not enqueue for video assets (contact sheet needed)', () => {
+  it('enqueues video analysis when its contact sheet is ready without a poster', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AI No Video', selectedParentPath: root });
@@ -697,10 +697,23 @@ describe('enqueueAiAnalysisJobs', () => {
 
     importNoConflict(service, libraryId, videoPath);
 
+    const assetId = service.listAssets({ libraryId, recursive: true })[0]!.assetId;
+    service.writeDerivedArtifact({
+      libraryId,
+      assetId,
+      kind: 'contact_sheet',
+      mimeType: 'image/jpeg',
+      bytes: Buffer.from('contact-sheet'),
+      generatorVersion: 'test',
+      maxBytes: 1024,
+    });
+
     const result = service.enqueueAiAnalysisJobs({ libraryId });
-    // Video should not be enqueued for AI analysis (needs contact sheet)
-    expect(result.enqueued).toBe(0);
-    expect(result.skippedAssetIds).toHaveLength(1);
+    expect(result.enqueued).toBe(1);
+    expect(result.skippedAssetIds).toHaveLength(0);
+    expect(service.getAiJobStatus(libraryId).jobs).toEqual([
+      expect.objectContaining({ assetId, kind: 'ai.video.analysis', status: 'queued' }),
+    ]);
 
     service.closeAll();
   });

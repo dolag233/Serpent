@@ -234,10 +234,6 @@ export async function renderModelThumbnailFrame(
       min: bounds.min,
       max: bounds.max,
     });
-    const directions: ReadonlyArray<readonly [number, number, number] | undefined> =
-      job.data.views && job.data.views.length > 0
-        ? job.data.views
-        : [undefined];
     setupGroundShadow(composer.scene, sphere, bounds.min[1]);
 
     const renderOneFrame = (
@@ -397,4 +393,3 @@ export function detectBlankWebglFrame(
   }
   return true;
 }
-

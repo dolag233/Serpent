@@ -444,7 +444,7 @@ export interface SerpentLibraryApi {
   // Extension active context
   setActiveContext(libraryId: string | null, selectedFolderId?: string): void;
   // Export / Import
-  exportLibrary(input: { libraryId: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }): Promise<LibraryApiResult<ExportCompletedResult>>;
+  exportLibrary(input: { libraryId: string; libraryName?: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }): Promise<LibraryApiResult<ExportCompletedResult>>;
   cancelLibraryExport(input: { exportId: string }): Promise<LibraryApiResult<{ exportId: string }>>;
   importLibrary(): Promise<LibraryApiResult<ImportValidatedResult>>;
   importLibraryZip(): Promise<LibraryApiResult<ImportCompletedResult>>;

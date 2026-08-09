@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   isFolderDescendantOf,
   resolveDraggedFolderIds,
+  resolveDraggedFolderIdsForTrash,
   resolveFolderOntoFolderDrop,
 } from "../../src/renderer/folder-drag-drop";
 
@@ -20,6 +21,20 @@ describe("resolveDraggedFolderIds (Serpent-nno6)", () => {
 
   it("drags only the handle when it is not in the selection", () => {
     expect(resolveDraggedFolderIds("c", ["a"])).toEqual(["c"]);
+  });
+});
+
+describe("resolveDraggedFolderIdsForTrash", () => {
+  it("trashes a selected parent once instead of retrying its descendants", () => {
+    expect(
+      resolveDraggedFolderIdsForTrash(["a", "b", "c", "b"], folders),
+    ).toEqual(["a"]);
+  });
+
+  it("deduplicates an ancestor selection", () => {
+    expect(
+      resolveDraggedFolderIdsForTrash(["root-child", "a"], folders),
+    ).toEqual(["root-child"]);
   });
 });
 

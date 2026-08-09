@@ -214,10 +214,28 @@ const FFMPEG_VERSION = '8.1';
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
+const VIDEO_PROXY_SCALE_FILTER =
+  'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2';
+const H264_PROXY_ENCODERS = [
+  'h264_videotoolbox',
+  'h264_mf',
+  'h264_nvenc',
+  'h264_qsv',
+  'h264_amf',
+  'libopenh264',
+] as const;
+type VideoProxyProfile = {
+  codec: 'h264' | 'vp9';
+  encoder: string;
+  extension: 'mp4' | 'webm';
+  mimeType: 'video/mp4' | 'video/webm';
+  args: string[];
+};
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
 const MEDIA_JOB_KINDS = [
   'generate_thumbnail',
   'generate_video_poster',
+  'extract_metadata',
   'generate_contact_sheet',
   'generate_webm_proxy',
   'generate_audio_proxy',
@@ -2783,11 +2801,16 @@ class AsyncSemaphore {
 // therefore cap decoder pressure across all LibraryService instances and all
 // libraries in the process, not merely within one queue drain.
 const sharpDecoderSemaphore = new AsyncSemaphore(2);
-const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
+// Keep a bounded amount of decoder pressure while allowing a video import
+// batch to make progress on more than one asset. This covers both ffmpeg and
+// ffprobe because they contend for the same media decode resources.
+const ffmpegDecoderSemaphore = new AsyncSemaphore(4);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
 
 interface MediaExecutionContext {
   signal?: AbortSignal;
+  /** Queue-owned video metadata is a separate durable job. */
+  includeVideoMetadata?: boolean;
 }
 
 /**
@@ -4224,6 +4247,8 @@ export class LibraryService {
   private readonly exrPlanesByRevision = new Map<string, ExrPlaneDescriptor[]>();
   /** Color metadata probes are immutable for a revision. */
   private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
+  /** Cache the first H.264-capable encoder discovered for each FFmpeg binary. */
+  private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
   /**
    * After in-app filesystem mutations (text save, copy, move, import…), watcher
    * refreshes still update DB but must not surface a "disk synced" toast — that
@@ -11494,7 +11519,7 @@ export class LibraryService {
     return { clearedCount: targetAssetIds.length, affectedAssetIds: targetAssetIds };
   }
 
-  /** Enqueue image jobs and video jobs whose poster/contact sheet are ready. */
+  /** Enqueue image jobs and video jobs whose contact sheet is ready. */
   enqueueAiAnalysisJobs(input: {
     libraryId: string;
     assetIds?: string[];
@@ -11563,12 +11588,12 @@ export class LibraryService {
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
     ]);
     const modelExts = new Set(['.fbx', '.obj', '.glb', '.gltf', '.stl']);
-    const videoArtifactsReady = conn.prepare(
-      `SELECT COUNT(DISTINCT ra.kind) AS ready_count
+    const videoContactSheetReady = conn.prepare(
+      `SELECT COUNT(*) AS ready_count
          FROM assets a
          JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
         WHERE a.asset_id = ?
-          AND ra.kind IN ('contact_sheet', 'video_poster')
+          AND ra.kind = 'contact_sheet'
           AND ra.status = 'ready'
           AND ra.invalidated_at IS NULL`,
     );
@@ -11602,8 +11627,8 @@ export class LibraryService {
           continue;
         }
         if (isVideo) {
-          const artifacts = videoArtifactsReady.get(assetId) as { ready_count: number };
-          if (artifacts.ready_count !== 2) {
+          const artifacts = videoContactSheetReady.get(assetId) as { ready_count: number };
+          if (artifacts.ready_count !== 1) {
             skippedAssetIds.push(assetId);
             continue;
           }
@@ -12663,7 +12688,10 @@ export class LibraryService {
 
     const isGifAsset = assetPath.toLowerCase().endsWith('.gif');
     const artifactKinds = mediaType === 'video'
-      ? ['extracted_metadata', 'video_poster']
+      ? [
+          ...(execution.includeVideoMetadata === false ? [] : ['extracted_metadata']),
+          'video_poster',
+        ]
       : mediaType === 'audio'
         // thumbnail = 4:3 grid cover; video_poster = wide viewer strip (Serpent-vlx)
         ? ['extracted_metadata', 'thumbnail', 'video_poster']
@@ -12715,7 +12743,14 @@ export class LibraryService {
     }
 
     if (mediaType === 'video') {
-      return this.generateVideoArtifacts(input, openLibrary, assetPath, revisionId, execution);
+      return this.generateVideoArtifacts(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        execution,
+        execution.includeVideoMetadata !== false,
+      );
     }
 
     if (mediaType === 'audio') {
@@ -13373,8 +13408,9 @@ export class LibraryService {
   // ── Video artifacts (ffprobe + ffmpeg) ─────────────────────────────
 
   /**
-   * Generate only latency-sensitive metadata and poster. Long derivatives run
-   * as independent persistent jobs after the poster-ready event.
+   * Generate a video poster, and (for direct requests) metadata. Queue-owned
+   * imports set `includeMetadata` false: durable metadata and contact-sheet
+   * jobs then run independently of the browsing poster.
    * Returns the poster artifact ID (the primary visual thumbnail).
    */
   private async generateVideoArtifacts(
@@ -13383,6 +13419,7 @@ export class LibraryService {
     assetPath: string,
     revisionId: string,
     execution: MediaExecutionContext,
+    includeMetadata: boolean,
   ): Promise<{ artifactId: string }> {
     const ffprobePath = resolveFfprobePath();
     const ffmpegPath = resolveFfmpegPath();
@@ -13391,14 +13428,18 @@ export class LibraryService {
 
     let posterArtifactId: string | null = null;
 
-    // 1. ffprobe metadata extraction
-    try {
-      await this.probeVideoAsset(
-        input, openLibrary, assetPath, revisionId, ffprobePath, execution,
-      );
-    } catch (error) {
-      this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
-      // Continue with remaining artifacts even if probe fails
+    if (includeMetadata) {
+      // Direct callers retain the historical all-in-one behavior. The queue
+      // deliberately keeps this out of the poster job so AI can proceed
+      // without waiting for the card preview.
+      try {
+        await this.probeVideoAsset(
+          input, openLibrary, assetPath, revisionId, ffprobePath, execution,
+        );
+      } catch (error) {
+        this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
+        // Continue with the poster even if probing fails.
+      }
     }
 
     // 2. Video poster
@@ -13454,6 +13495,31 @@ export class LibraryService {
           attempt_count, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'queued', ?, 0.0, 0, ?, ?)`,
     ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, kind, priority, now, now);
+  }
+
+  private enqueueVideoMetadataJob(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+    priority: number,
+  ): void {
+    const terminalArtifact = openLibrary.connection.prepare(
+      `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'
+        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
+    ).get(revisionId);
+    if (terminalArtifact) return;
+    const active = openLibrary.connection.prepare(
+      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ? AND kind = 'extract_metadata'
+        AND status IN ('queued', 'running', 'paused') LIMIT 1`,
+    ).get(assetId, revisionId);
+    if (active) return;
+    const now = new Date().toISOString();
+    openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'extract_metadata', 'queued', ?, 0.0, 0, ?, ?)`,
+    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
   }
 
   private enqueueAudioProxyJob(
@@ -13638,29 +13704,67 @@ export class LibraryService {
     if (asset.current_revision_id !== queuedRevisionId) return false;
     const revisionId = queuedRevisionId;
     const ffmpegPath = resolveFfmpegPath();
+    const ffprobePath = resolveFfprobePath();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
     if (kind === 'generate_webm_proxy') {
-      await this.generateWebmProxy({ libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution);
+      await this.generateVideoProxy({ libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution);
       return true;
     }
-    let durationSec = 0;
     const metadata = this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata');
-    if (metadata?.status === 'ready') {
-      try {
-        const parsed = JSON.parse(
-          readFileSync(path.join(artifactsDir, metadata.filePath), 'utf-8'),
-        ) as { durationMs?: number };
-        durationSec = (parsed.durationMs ?? 0) / 1000;
-      } catch {
-        // Optional contact sheets can be skipped when metadata cache vanished.
-      }
+    if (metadata?.status !== 'ready') {
+      throw new LibraryServiceError('INTERNAL_ERROR', { reason: 'MEDIA_PROCESSING_FAILED' });
     }
-    if (durationSec > 1) {
-      await this.generateContactSheet(
-        { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, durationSec, execution,
-      );
+    let durationSec: number;
+    let dimensions: { width: number; height: number };
+    try {
+      const parsed = JSON.parse(
+        readFileSync(path.join(artifactsDir, metadata.filePath), 'utf-8'),
+      ) as { durationMs?: number; width?: number; height?: number };
+      durationSec = (parsed.durationMs ?? 0) / 1000;
+      const width = Number.isFinite(parsed.width) && (parsed.width ?? 0) > 0
+        ? parsed.width!
+        : 640;
+      const height = Number.isFinite(parsed.height) && (parsed.height ?? 0) > 0
+        ? parsed.height!
+        : 360;
+      dimensions = { width, height };
+    } catch (error) {
+      throw new LibraryServiceError('INTERNAL_ERROR', {
+        reason: 'MEDIA_PROCESSING_FAILED',
+        cause: error,
+      });
     }
+    if (durationSec <= 0) {
+      throw new LibraryServiceError('INTERNAL_ERROR', { reason: 'MEDIA_PROCESSING_FAILED' });
+    }
+    await this.generateContactSheet(
+      { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
+      Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
+    );
+    return true;
+  }
+
+  private async generateQueuedVideoMetadata(
+    libraryId: string,
+    assetId: string,
+    queuedRevisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(assetId) as { current_revision_id: string | null } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.current_revision_id !== queuedRevisionId) return false;
+    await this.probeVideoAsset(
+      { libraryId, assetId },
+      openLibrary,
+      this.resolveAssetPath(libraryId, assetId),
+      queuedRevisionId,
+      resolveFfprobePath(),
+      execution,
+    );
     return true;
   }
 
@@ -13838,33 +13942,6 @@ export class LibraryService {
   }
 
   /** Generate a contact sheet (grid of sampled frames). */
-  /**
-   * Probe a video file's frame dimensions via ffprobe. Falls back to
-   * square 1:1 when the probe fails so contact-sheet layout still works.
-   */
-  private async probeVideoDimensions(assetPath: string): Promise<{ width: number; height: number }> {
-    const ffprobePath = resolveFfprobePath();
-    try {
-      const result = await this.runFfmpeg(ffprobePath, [
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_streams',
-        assetPath,
-      ], { timeoutMs: 30_000, signal: new AbortController().signal });
-      if (result.exitCode !== 0) throw new Error(result.stderr.slice(-200));
-      const parsed = JSON.parse(String(result.stdout)) as {
-        streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
-      };
-      const video = parsed.streams?.find((s) => s.codec_type === 'video');
-      if (video?.width && video?.height) {
-        return { width: video.width, height: video.height };
-      }
-    } catch {
-      // fall through to 1:1
-    }
-    return { width: 640, height: 360 };
-  }
-
   private async generateContactSheet(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -13873,6 +13950,8 @@ export class LibraryService {
     ffmpegPath: string,
     artifactsDir: string,
     durationSec: number,
+    dimensions: { width: number; height: number },
+    ffprobePath: string,
     execution: MediaExecutionContext,
   ): Promise<string> {
     const artifactId = randomUUID();
@@ -13883,7 +13962,7 @@ export class LibraryService {
     // while showing at least 16 frames. Large videos shrink each frame to a
     // ~509 cell (4×4 baseline); small videos keep their native size, which
     // lets the grid grow to more frames.
-    const { width, height } = await this.probeVideoDimensions(assetPath);
+    const { width, height } = dimensions;
     const TARGET_EDGE = 2048;
     const MARGIN = 2;
     const PADDING = 2;
@@ -13904,6 +13983,8 @@ export class LibraryService {
     // build independent of fontconfig/system fonts.
     const fontPath = resolveBundledFontPath();
     const fontSize = Math.max(14, Math.round(frameH * 0.12));
+    const keyframeCount = await this.countVideoKeyframes(ffprobePath, assetPath, execution);
+    const useKeyframeFastPath = keyframeCount !== null && keyframeCount >= 16;
     const filterGraph = [
       `fps=1/${interval}`,
       `scale=${frameW}:${frameH}:flags=lanczos`,
@@ -13916,6 +13997,7 @@ export class LibraryService {
     try {
       const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
+        ...(useKeyframeFastPath ? ['-skip_frame', 'nokey'] : []),
         '-i', assetPath,
         '-vf', filterGraph,
         '-frames:v', '1',
@@ -13948,8 +14030,111 @@ export class LibraryService {
     }
   }
 
-  /** Generate a WebM VP9/Opus proxy for playback. */
-  private async generateWebmProxy(
+  /**
+   * Count decoder keyframes cheaply so long-GOP videos can avoid decoding
+   * every inter-frame just to build an AI contact sheet. Short clips and
+   * unusual streams fall back to the full sequential pass when the probe
+   * cannot establish a safe fast path.
+   */
+  private async countVideoKeyframes(
+    ffprobePath: string,
+    assetPath: string,
+    execution: MediaExecutionContext,
+  ): Promise<number | null> {
+    try {
+      const result = await this.runFfmpeg(ffprobePath, [
+        '-v', 'error',
+        '-skip_frame', 'nokey',
+        '-count_frames',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=nb_read_frames',
+        '-of', 'json',
+        assetPath,
+      ], { timeoutMs: 60_000, signal: execution.signal });
+      if (result.exitCode !== 0) return null;
+      const parsed = JSON.parse(result.stdout.toString('utf-8')) as {
+        streams?: Array<{ nb_read_frames?: string | number }>;
+      };
+      const count = Number(parsed.streams?.[0]?.nb_read_frames);
+      return Number.isInteger(count) && count >= 0 ? count : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private h264VideoProxyProfile(encoder: string): VideoProxyProfile {
+    return {
+      codec: 'h264',
+      encoder,
+      extension: 'mp4',
+      mimeType: 'video/mp4',
+      args: [
+        '-c:v', encoder,
+        ...(encoder === 'h264_videotoolbox' ? ['-realtime', 'true'] : []),
+        '-b:v', '1M',
+        '-g', '60',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+      ],
+    };
+  }
+
+  private vp9VideoProxyProfile(): VideoProxyProfile {
+    return {
+      codec: 'vp9',
+      encoder: 'libvpx-vp9',
+      extension: 'webm',
+      mimeType: 'video/webm',
+      args: [
+        '-c:v', 'libvpx-vp9',
+        '-b:v', '1M',
+        '-deadline', 'realtime',
+        '-cpu-used', '8',
+        '-row-mt', '1',
+        '-g', '60',
+        '-c:a', 'libopus',
+        '-b:a', '128k',
+      ],
+    };
+  }
+
+  private async resolveVideoProxyProfiles(
+    ffmpegPath: string,
+    execution: MediaExecutionContext,
+  ): Promise<VideoProxyProfile[]> {
+    let encoder = this.videoProxyEncoderByFfmpegPath.get(ffmpegPath);
+    if (encoder === undefined) {
+      encoder = null;
+      try {
+        const result = await this.runFfmpeg(
+          ffmpegPath,
+          ['-hide_banner', '-encoders'],
+          { timeoutMs: 30_000, signal: execution.signal },
+        );
+        if (result.exitCode === 0) {
+          const available = new Set(
+            `${result.stdout.toString('utf8')}\n${result.stderr}`.split(/\s+/u),
+          );
+          encoder = H264_PROXY_ENCODERS.find((candidate) => available.has(candidate)) ?? null;
+        }
+      } catch (error) {
+        // The actual encode remains the source of truth. If capability probing
+        // is unavailable, try the fast VP9 fallback instead of blocking proxy
+        // generation on a best-effort metadata query.
+        this.diagnose('video-proxy.encoder-probe', error, { ffmpegPath });
+      }
+      this.videoProxyEncoderByFfmpegPath.set(ffmpegPath, encoder);
+    }
+
+    return encoder === null
+      ? [this.vp9VideoProxyProfile()]
+      : [this.h264VideoProxyProfile(encoder), this.vp9VideoProxyProfile()];
+  }
+
+  /** Generate an H.264/MP4 proxy, with fast VP9/WebM fallback. */
+  private async generateVideoProxy(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
     assetPath: string,
@@ -13959,51 +14144,79 @@ export class LibraryService {
     execution: MediaExecutionContext,
   ): Promise<string> {
     const artifactId = randomUUID();
-    const artifactRelPath = `${artifactId}.webm`;
-    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const profiles = await this.resolveVideoProxyProfiles(ffmpegPath, execution);
+    let lastError: unknown = new Error('No video proxy encoder is available.');
+    let failedProfile = profiles[0] ?? this.vp9VideoProxyProfile();
 
-    try {
-      const result = await this.runFfmpeg(ffmpegPath, [
-        '-y',
-        '-i', assetPath,
-        '-c:v', 'libvpx-vp9',
-        '-b:v', '1M',
-        '-c:a', 'libopus',
-        '-vf', 'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2',
-        '-g', '60',
-        '-row-mt', '1',
-        artifactAbsPath,
-      ], { timeoutMs: 600_000, signal: execution.signal });
+    for (const profile of profiles) {
+      failedProfile = profile;
+      const artifactRelPath = `${artifactId}.${profile.extension}`;
+      const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+      try {
+        const result = await this.runFfmpeg(ffmpegPath, [
+          '-y',
+          '-i', assetPath,
+          ...profile.args,
+          '-vf', VIDEO_PROXY_SCALE_FILTER,
+          artifactAbsPath,
+        ], { timeoutMs: 600_000, signal: execution.signal });
 
-      if (result.exitCode !== 0) {
-        throw new Error(`ffmpeg webm proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
-      }
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `ffmpeg ${profile.codec} proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`,
+          );
+        }
 
-      const outputStat = statSync(artifactAbsPath);
-      if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+        const outputStat = statSync(artifactAbsPath);
+        if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+          const error = new Error(
+            `Generated ${profile.codec} proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
+          ) as Error & { code: string };
+          error.code = 'MEDIA_PROCESSING_FAILED';
+          throw error;
+        }
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                generator_version, status, generated_at)
+             VALUES (?, ?, 'webm_proxy', ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            revisionId,
+            profile.mimeType,
+            outputStat.size,
+            artifactRelPath,
+            `ffmpeg@${FFMPEG_VERSION};proxy=${profile.codec};encoder=${profile.encoder}`,
+            new Date().toISOString(),
+          );
+
+        return artifactId;
+      } catch (error) {
+        lastError = error;
+        this.diagnose('video-proxy.encode', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+          codec: profile.codec,
+          encoder: profile.encoder,
+        });
         rmSync(artifactAbsPath, { force: true });
-        const error = new Error(
-          `Generated WebM proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
-        ) as Error & { code: string };
-        error.code = 'MEDIA_PROCESSING_FAILED';
-        throw error;
       }
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO revision_artifacts
-             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-              generator_version, status, generated_at)
-           VALUES (?, ?, 'webm_proxy', 'video/webm', ?, ?, ?, 'ready', ?)`,
-        )
-        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `ffmpeg@${FFMPEG_VERSION}`, new Date().toISOString());
-
-      return artifactId;
-    } catch (error) {
-      this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'webm_proxy',
-        'video/webm', artifactRelPath, `ffmpeg@${FFMPEG_VERSION}`, error);
-      throw error;
     }
+
+    const failedArtifactRelPath = `${artifactId}.${failedProfile.extension}`;
+    this.writeFailedArtifact(
+      openLibrary,
+      artifactId,
+      revisionId,
+      'webm_proxy',
+      failedProfile.mimeType,
+      failedArtifactRelPath,
+      `ffmpeg@${FFMPEG_VERSION};proxy=${failedProfile.codec};encoder=${failedProfile.encoder}`,
+      lastError,
+    );
+    throw lastError;
   }
 
   /** Generate an Opus/Ogg proxy so audio playback does not rely on source codecs. */
@@ -14705,14 +14918,14 @@ export class LibraryService {
       : mediaType === 'audio'
         ? 'audio_proxy'
         : 'thumbnail';
+    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     const mimeType = mediaType === 'video'
-      ? 'video/webm'
+      ? artifact?.mimeType ?? 'video/mp4'
       : mediaType === 'audio'
         ? 'audio/ogg'
         : mediaType === 'text'
           ? 'text/plain'
         : 'image/webp';
-    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
     if (mediaType === 'other') {
       if (artifact?.status === 'ready' && artifact.generatorVersion.startsWith('plugin:')) {
         return {
@@ -15786,6 +15999,36 @@ export class LibraryService {
       enqueued += inserted.changes;
     }
 
+    // Video AI consumes the timestamped contact sheet, not the browsing
+    // poster. Probe metadata is therefore its own durable, higher-priority
+    // job: it can enqueue a contact sheet immediately while poster and WebM
+    // work continue independently.
+    const videoMetadataRows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.current_revision_id IS NOT NULL
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND (${videoExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
+          ORDER BY a.relative_file_path
+          ${queryLimit}`,
+      )
+      .all(
+        ...selectedIds,
+        ...videoExtensions.map((extension) => `%.${extension}`),
+        ...(limit === undefined ? [] : [limit]),
+      ) as Array<{ asset_id: string; current_revision_id: string }>;
+    for (const row of videoMetadataRows) {
+      this.enqueueVideoMetadataJob(
+        openLibrary,
+        row.asset_id,
+        row.current_revision_id,
+        (options.priority ?? 0) + 50,
+      );
+    }
+
     // Libraries created before the proxy-first viewer may already have a
     // poster/waveform and therefore never re-enter the thumbnail queue. Give
     // those legacy-ready assets an independent playback route. Fresh assets
@@ -15853,10 +16096,9 @@ export class LibraryService {
       }
     }
 
-    // A video can already have its poster while its optional contact sheet is
-    // missing or was generated by an older build and failed.  The AI queue
-    // requires both artifacts, so keep the contact-sheet job independently
-    // repairable instead of leaving those assets permanently ineligible.
+    // A video can already have metadata while its AI contact sheet is missing
+    // or was generated by an older build and failed. Keep this repair path
+    // independent from video_poster: poster generation serves browsing only.
     const videoExtensionSql = videoExtensions
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -15870,11 +16112,11 @@ export class LibraryService {
             ${selectedSql}
             AND (${videoExtensionSql})
             AND EXISTS (
-              SELECT 1 FROM revision_artifacts poster
-               WHERE poster.revision_id = a.current_revision_id
-                 AND poster.kind = 'video_poster'
-                 AND poster.status = 'ready'
-                 AND poster.invalidated_at IS NULL
+              SELECT 1 FROM revision_artifacts metadata
+               WHERE metadata.revision_id = a.current_revision_id
+                 AND metadata.kind = 'extracted_metadata'
+                 AND metadata.status = 'ready'
+                 AND metadata.invalidated_at IS NULL
             )
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts sheet
@@ -15904,7 +16146,7 @@ export class LibraryService {
         row.asset_id,
         row.current_revision_id,
         'generate_contact_sheet',
-        (options.priority ?? 0) - 100,
+        (options.priority ?? 0) + 40,
       );
     }
 
@@ -15928,6 +16170,8 @@ export class LibraryService {
         artifactId?: string;
         errorCode?: string;
       }) => void;
+      /** Fired once a durable visual input is ready for automatic video AI. */
+      onAiInputReady?: (event: { assetId: string; artifactId: string }) => void;
       pluginMediaProvider?: (input: {
         assetId: string;
         signal: AbortSignal;
@@ -15951,11 +16195,11 @@ export class LibraryService {
     }
     const openLibrary = this.requireOpenLibrary(libraryId);
     const nextJob = openLibrary.connection.prepare(
-      `SELECT job_id, asset_id, revision_id, kind, attempt_count
+      `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count
          FROM jobs
         WHERE library_id = ?
           AND kind IN ('generate_thumbnail', 'generate_video_poster',
-                       'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+                       'extract_metadata', 'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
                        'extract_palette')
           AND status = 'queued'
         ORDER BY priority DESC, created_at
@@ -15970,6 +16214,7 @@ export class LibraryService {
         asset_id: string;
         revision_id: string;
         kind: MediaJobKind;
+        priority: number;
         attempt_count: number;
       } | undefined;
       if (!job) break;
@@ -16051,7 +16296,7 @@ export class LibraryService {
                 )
               : await this.generateThumbnail(
                 { libraryId, assetId: job.asset_id },
-                { signal: controller.signal },
+                { signal: controller.signal, includeVideoMetadata: false },
               );
           if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
             this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
@@ -16066,7 +16311,6 @@ export class LibraryService {
             'SELECT relative_file_path FROM assets WHERE asset_id = ?',
           ).get(job.asset_id) as { relative_file_path: string } | undefined;
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'video') {
-            this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_contact_sheet', -100);
             // Container names and Chromium capabilities are not a contract.
             // Generate one safe WebM route for every video rather than first
             // presenting a MOV/MKV/etc. source that may immediately error.
@@ -16083,6 +16327,24 @@ export class LibraryService {
           if (generated) {
             options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
           }
+        } else if (job.kind === 'extract_metadata') {
+          const current = await this.generateQueuedVideoMetadata(
+            libraryId, job.asset_id, job.revision_id, { signal: controller.signal },
+          );
+          if (!current) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ?",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
+          this.enqueueVideoDerivativeJob(
+            openLibrary,
+            job.asset_id,
+            job.revision_id,
+            'generate_contact_sheet',
+            job.priority - 10,
+          );
         } else if (job.kind === 'extract_palette') {
           const current = await this.generateQueuedPaletteArtifact(
             libraryId,
@@ -16134,6 +16396,15 @@ export class LibraryService {
         openLibrary.connection
           .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ? WHERE job_id = ? AND status = 'running'")
           .run(new Date().toISOString(), job.job_id);
+        if (job.kind === 'generate_contact_sheet') {
+          const contactSheet = this.getCurrentArtifact(libraryId, job.asset_id, 'contact_sheet');
+          if (contactSheet?.status === 'ready') {
+            options.onAiInputReady?.({
+              assetId: job.asset_id,
+              artifactId: contactSheet.artifactId,
+            });
+          }
+        }
       } catch (error) {
         if (jobHeartbeat.error !== undefined || error instanceof LibraryWriteCoordinatorError) {
           this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
@@ -16174,6 +16445,8 @@ export class LibraryService {
         }
         const failedKind = job.kind === 'extract_palette'
           ? 'extracted_palette'
+          : job.kind === 'extract_metadata'
+            ? 'extracted_metadata'
           : job.kind === 'generate_contact_sheet'
             ? 'contact_sheet'
           : job.kind === 'generate_webm_proxy'
@@ -22880,9 +23153,19 @@ export class LibraryService {
                 ra.status AS thumbnail_status
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN revision_artifacts ra
+          LEFT JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
-            AND ra.kind = 'thumbnail'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
             AND ra.invalidated_at IS NULL
           WHERE a.deleted_at IS NULL
             AND a.location_kind = 'managed'
@@ -22939,7 +23222,17 @@ export class LibraryService {
            FROM assets a
            LEFT JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
-            AND ra.kind = 'thumbnail'
+            AND ra.kind = CASE
+              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+                OR LOWER(a.relative_file_path) LIKE '%.webm'
+                OR LOWER(a.relative_file_path) LIKE '%.mov'
+                OR LOWER(a.relative_file_path) LIKE '%.avi'
+                OR LOWER(a.relative_file_path) LIKE '%.wmv'
+                OR LOWER(a.relative_file_path) LIKE '%.mkv'
+                OR LOWER(a.relative_file_path) LIKE '%.m4v'
+              THEN 'video_poster'
+              ELSE 'thumbnail'
+            END
             AND ra.invalidated_at IS NULL
           WHERE a.deleted_at IS NULL
             AND a.location_kind = 'managed'

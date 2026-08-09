@@ -34,6 +34,27 @@ export function resolveDraggedFolderIds(
     : [draggedFolderId];
 }
 
+/**
+ * A folder drag can contain both a folder and one of its descendants when a
+ * multi-selection is dragged. Trash the highest selected folders only: the
+ * worker recursively moves their contents, so sending the descendants again
+ * would create avoidable not-found errors after the parent is gone.
+ */
+export function resolveDraggedFolderIdsForTrash(
+  draggedFolderIds: readonly string[],
+  folders: readonly FolderDragFact[],
+): string[] {
+  const unique = [...new Set(draggedFolderIds.filter(Boolean))];
+  return unique.filter(
+    (folderId) =>
+      !unique.some(
+        (candidateAncestorId) =>
+          candidateAncestorId !== folderId &&
+          isFolderDescendantOf(folders, candidateAncestorId, folderId),
+      ),
+  );
+}
+
 export function supportsManagedFolderDrag(transfer: DataTransfer): boolean {
   return transfer.types.includes(MANAGED_FOLDERS_DRAG_TYPE);
 }

@@ -1253,8 +1253,8 @@ const library: SerpentLibraryApi = Object.freeze({
       ipcRenderer.removeListener(EXTENSION_SAVE_COMPLETED_CHANNEL, subscription);
   },
 
-  async exportLibrary({ libraryId, includeLinkedContent, format }: { libraryId: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }) {
-    const result = await request({ type: 'library.export.request', libraryId, includeLinkedContent, format });
+  async exportLibrary({ libraryId, libraryName, includeLinkedContent, format }: { libraryId: string; libraryName?: string; includeLinkedContent: boolean; format: 'folder' | 'zip' }) {
+    const result = await request({ type: 'library.export.request', libraryId, libraryName, includeLinkedContent, format });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.exported') throw new Error('Unexpected export response.');
     return { ok: true as const, value: result };

@@ -14,6 +14,7 @@ import {
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
   parseAiContentClearedEvent,
+  parseAiInputReadyEvent,
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
@@ -312,6 +313,25 @@ describe('renderer request protocol', () => {
       assetId: 'asset-01',
       kind: 'audio_proxy',
     })).toMatchObject({ kind: 'audio_proxy' });
+  });
+
+  it('round-trips the optional library name used for export dialog defaults', () => {
+    expect(parseRendererRequest({
+      type: 'library.export.request',
+      libraryId: 'library-01',
+      libraryName: 'Reference Library',
+      format: 'zip',
+      includeLinkedContent: false,
+    })).toMatchObject({
+      type: 'library.export.request',
+      libraryName: 'Reference Library',
+    });
+    expect(parseRendererRequest({
+      type: 'library.export.request',
+      libraryId: 'library-01',
+      format: 'folder',
+      includeLinkedContent: true,
+    })).not.toHaveProperty('libraryName');
   });
 
   it('accepts path-free reveal-in-folder and copy-file-path requests by asset id only', () => {
@@ -1629,6 +1649,20 @@ describe('worker request protocol', () => {
       type: 'ai.progress', libraryId: 'library-1', queued: 0,
       running: 0, succeeded: 0, failed: 0,
       inFlight: 1,
+    })).toThrow();
+  });
+
+  it('validates the internal video AI-input-ready event', () => {
+    expect(parseAiInputReadyEvent({
+      type: 'asset.ai-input.ready',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      artifactId: 'contact-sheet-1',
+    })).toMatchObject({ assetId: 'asset-1', artifactId: 'contact-sheet-1' });
+    expect(() => parseAiInputReadyEvent({
+      type: 'asset.ai-input.ready',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
     })).toThrow();
   });
 

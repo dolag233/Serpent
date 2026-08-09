@@ -773,6 +773,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     format: z.enum(['folder', 'zip']),
     includeLinkedContent: z.boolean(),
+    libraryName: displayNameSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.export.cancel.request'),

@@ -5045,14 +5045,19 @@ function AppInner() {
     setLastUndoableOp,
   });
 
-  const { handleFoldersDroppedOnFolder } = useFolderDragDropHandlers({
+  const {
+    handleFoldersDroppedOnFolder,
+    handleFoldersDroppedOnTrash,
+  } = useFolderDragDropHandlers({
     api: api ?? null,
     libraryId: library?.libraryId ?? null,
+    assetScope,
     folders,
     setNotice,
     setError,
     setUiState,
     reloadCurrentContent,
+    onDeletedCurrentScope: () => chooseFolder("root"),
   });
 
   const {
@@ -6624,6 +6629,7 @@ function AppInner() {
     try {
       const result = await api.exportLibrary({
         libraryId: library.libraryId,
+        libraryName: library.displayName,
         includeLinkedContent,
         format,
       });
@@ -8517,6 +8523,9 @@ function AppInner() {
         selectedFolderIds={selectedFolderIds}
         onAssetsDroppedOnTrash={(assetIds) =>
           handleAssetsDroppedOnTrash(assetIds)
+        }
+        onFoldersDroppedOnTrash={(folderIds) =>
+          handleFoldersDroppedOnTrash(folderIds)
         }
         onAssetsDroppedOnCollection={(collectionId, assetIds, mode) =>
           handleAssetsDroppedOnCollection(collectionId, assetIds, mode)

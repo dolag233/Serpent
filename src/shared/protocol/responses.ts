@@ -268,6 +268,20 @@ export function parseThumbnailEvent(input: unknown): ThumbnailEvent {
   return thumbnailEventSchema.parse(input);
 }
 
+/** Internal Worker→Main signal: the contact sheet required for video AI exists. */
+export const aiInputReadyEventSchema = z.strictObject({
+  type: z.literal('asset.ai-input.ready'),
+  libraryId: nonBlankString,
+  assetId: nonBlankString,
+  artifactId: nonBlankString,
+});
+
+export type AiInputReadyEvent = z.infer<typeof aiInputReadyEventSchema>;
+
+export function parseAiInputReadyEvent(input: unknown): AiInputReadyEvent {
+  return aiInputReadyEventSchema.parse(input);
+}
+
 export const aiProgressEventSchema = z.strictObject({
   type: z.literal('ai.progress'),
   libraryId: nonBlankString,
@@ -320,6 +334,7 @@ export const mediaJobSchema = z.strictObject({
   kind: z.enum([
     'generate_thumbnail',
     'generate_video_poster',
+    'extract_metadata',
     'generate_contact_sheet',
     'generate_webm_proxy',
     'generate_audio_proxy',

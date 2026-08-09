@@ -256,3 +256,54 @@ test("asset cards can be dropped onto folder cards in the browse canvas", async 
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
+
+test("managed folder rows can be dragged into Trash", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-folder-trash-drop-e2e-"),
+  );
+  const libraryName = "文件夹拖入回收站验收";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  mkdirSync(sourceRoot);
+  const sourcePath = path.join(sourceRoot, "inside-folder.txt");
+  writeFileSync(sourcePath, "inside folder");
+
+  const application = await launchApp(temporaryRoot, libraryPath, sourcePath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createFolderViaSidebar(window, "待回收文件夹");
+    const folderRow = sidebarFolderRow(window, "待回收文件夹");
+    await folderRow.click();
+    await expect(window.locator(".scope-crumb-label.is-current")).toHaveText(
+      "待回收文件夹",
+    );
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+    await expect(window.locator('[data-asset-id][title="inside-folder.txt"]')).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const trashRow = window.getByRole("button", {
+      name: "回收站",
+      exact: true,
+    });
+    await folderRow.dragTo(trashRow);
+    await expect(window.locator(".workspace-notice")).toContainText(
+      "已移入回收站",
+      { timeout: 15_000 },
+    );
+    await expect(folderRow).toHaveCount(0);
+    await trashRow.click();
+    await expect(window.locator(".folder-card.is-trashed-folder")).toHaveCount(
+      1,
+      { timeout: 15_000 },
+    );
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
