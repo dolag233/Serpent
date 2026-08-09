@@ -163,7 +163,7 @@ npm run release:checksums
 
 - [`resources/media-binaries/bundle-lock.json`](../../../resources/media-binaries/bundle-lock.json) 两个平台仍为 `build-required`；`release:media` 会在此阻断并打印下一步指引。
 - [`.github/workflows/release.yml`](../../../.github/workflows/release.yml) 已就位，但在媒体 bundle 晋升前 tag 发布会失败。
-- [`ci.yml`](../../../.github/workflows/ci.yml) 尚未改为直接调用 `release:verify`（步骤等价，可后续合并以减少漂移）。
+- 主仓库 GitHub Actions 已于 2026-08-09 移除（本地 CICD，见 `docs/internal/development/local-cicd.md`）；原 `ci.yml` 与 `release:verify` 的等价合并不再适用。
 - Windows/macOS 安装、卸载、重装和发布包平台证据尚未形成。
 
 ## 2026-07-28 当前评估记录

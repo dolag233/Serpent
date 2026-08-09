@@ -135,6 +135,8 @@ npm run extension:build   # builds dist/extension
 1. **Media promotion**: toolchain repo (Release attachments + `versions.json`) to remove the `SKIP_PROVENANCE` need
 2. **Windows native validation**: same pipeline on a Windows host + install/uninstall journey
 3. **Signing upgrade**: SignPath application / Apple Developer account
-4. **CI/CD**: GitHub Actions tag-driven + platform matrix + draft → release
+4. **CI/CD**: local CICD (2026-08-09 decision: main repo dropped GitHub Actions;
+   each platform runs `npm run release:local`; the browser-extension repo keeps
+   Actions for release publishing). See `docs/internal/development/local-cicd.md`.
 
 See the research doc for details.

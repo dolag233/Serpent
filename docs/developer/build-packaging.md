@@ -134,6 +134,8 @@ npm run extension:build   # 构建 dist/extension
 1. **媒体晋升**：工具链仓库（Release 附件 + `versions.json`），解除 `SKIP_PROVENANCE`
 2. **Windows 原生验证**：同一流水线在 Windows 环境跑通 + 安装/卸载旅程
 3. **签名升级**：SignPath 申请 / Apple Developer 账号
-4. **CI/CD**：GitHub Actions tag 驱动 + 平台 matrix + draft → 正式 release
+4. **CI/CD**：本地 CICD（2026-08-09 决策：主仓库放弃 GitHub Actions，
+   双平台各自跑 `npm run release:local`；浏览器扩展仓库保留 Actions 发布）。
+   详见 `docs/internal/development/local-cicd.md`。
 
 详见研究文档。
