@@ -2,11 +2,11 @@ import {
   buildSaveMenuFolderHints,
   buildSaveMenuTree,
   folderMenuItemId,
+  folderMenuSelfId,
   MENU_ROOT_PARENT_ID,
   parseFolderMenuId,
   pushRecentFolderId,
   RECENT_FOLDER_IDS_KEY,
-  saveHereMenuId,
   sortFoldersForSaveMenu,
   type ExtensionFolderOption,
   type SaveMenuTreeFolder,
@@ -159,14 +159,13 @@ async function createFolderSubmenu(
     contexts: ['image', 'video'],
     enabled: true,
   });
-  if (folder.children.length === 0) return;
-  // 有子文件夹的文件夹：子菜单第一行「保存到此文件夹」（Chrome 父项点击只
-  // 展开不触发 onClicked，必须显式提供保存到自身的入口）。
-  if (folder.folderId !== null) {
-    const hereId = saveHereMenuId(folder.folderId);
-    dynamicFolderMenuIds.push(hereId);
+  if (folder.children.length > 0 && folder.folderId !== null) {
+    // contextMenus 父项点击只展开不保存；子菜单第一行提供「保存到此文件夹」
+    // （对齐拖拽树「松开 = 保存进该文件夹」）。
+    const selfId = folderMenuSelfId(folder.folderId);
+    dynamicFolderMenuIds.push(selfId);
     await createMenuItem({
-      id: hereId,
+      id: selfId,
       parentId: id,
       title: '保存到此文件夹',
       contexts: ['image', 'video'],

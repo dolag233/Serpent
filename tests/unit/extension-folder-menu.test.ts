@@ -8,9 +8,9 @@ import {
   folderMenuId,
   folderMenuItemId,
   folderMenuPathId,
+  folderMenuSelfId,
   parseFolderMenuId,
   pushRecentFolderId,
-  saveHereMenuId,
   sortFoldersForSaveMenu,
   type ExtensionFolderOption,
   type SaveMenuTreeItem,
@@ -137,13 +137,23 @@ describe('folderMenuItemId / parseFolderMenuId', () => {
     expect(parseFolderMenuId(id)).toBeUndefined();
   });
 
-  it('「保存到此文件夹」解析回原 folderId', () => {
-    expect(parseFolderMenuId(saveHereMenuId('d1'))).toBe('d1');
-  });
-
   it('「保存至此」解析为 null（根目录），未知 id 为 undefined', () => {
     expect(parseFolderMenuId('serpent-save-root')).toBeNull();
     expect(parseFolderMenuId('serpent-save-whatever')).toBeUndefined();
+  });
+});
+
+describe('folderMenuSelfId / parseFolderMenuId', () => {
+  it('「保存到此文件夹」项解析回该 folderId，与其他 id 不冲突', () => {
+    const id = folderMenuSelfId('d1');
+    expect(id).toBe('serpent-save-self:d1');
+    expect(parseFolderMenuId(id)).toBe('d1');
+    expect(id).not.toBe(folderMenuId('d1'));
+    expect(parseFolderMenuId(folderMenuId('d1'))).toBe('d1');
+  });
+
+  it('容器路径 id 不受 self 前缀影响', () => {
+    expect(parseFolderMenuId(folderMenuPathId('概念'))).toBeUndefined();
   });
 });
 

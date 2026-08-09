@@ -36,6 +36,11 @@ export function folderMenuId(folderId: string): string {
   return `serpent-save-folder:${folderId}`;
 }
 
+/** 有子文件夹的文件夹子菜单第一行的「保存到此文件夹」项 id。 */
+export function folderMenuSelfId(folderId: string): string {
+  return `serpent-save-self:${folderId}`;
+}
+
 /** 「根目录」父菜单（子项「保存至此」= 保存到库根）。 */
 export const MENU_ROOT_PARENT_ID = 'serpent-save-root-parent';
 
@@ -48,8 +53,9 @@ export function parseFolderMenuId(
     // 纯容器节点（仅用于展开子级，自身不可保存）
     return undefined;
   }
-  if (menuItemId.startsWith('serpent-save-here:')) {
-    return menuItemId.slice('serpent-save-here:'.length);
+  if (menuItemId.startsWith('serpent-save-self:')) {
+    // 「保存到此文件夹」→ 保存到该文件夹自身
+    return menuItemId.slice('serpent-save-self:'.length);
   }
   if (!menuItemId.startsWith('serpent-save-folder:')) return undefined;
   return menuItemId.slice('serpent-save-folder:'.length);
@@ -115,11 +121,6 @@ export function buildSaveMenuFolderHints(
 /** 纯容器节点（无自己文件夹记录）的唯一菜单 id。 */
 export function folderMenuPathId(path: string): string {
   return `serpent-save-folder-path:${path}`;
-}
-
-/** 有子文件夹的文件夹子菜单第一行的「保存到此文件夹」id。 */
-export function saveHereMenuId(folderId: string): string {
-  return `serpent-save-here:${folderId}`;
 }
 
 /** 文件夹节点的菜单 id：优先 folderId，退化为路径 id。 */
