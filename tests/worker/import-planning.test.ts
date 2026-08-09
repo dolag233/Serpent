@@ -1238,10 +1238,51 @@ describe('managed asset refresh', () => {
 
     const statOnlyTime = new Date(acceptedTime.getTime() + 20_000);
     utimesSync(managedPath, statOnlyTime, statOnlyTime);
+    // Serpent-1tio: a pure mtime touch with identical content (portable
+    // library copy / utimes) is NOT a content change — the content
+    // fingerprint matches, so the revision and its artifacts survive.
     const statOnly = service.refreshManagedAssets(library.libraryId);
-    expect(statOnly).toMatchObject({ changedCount: 1, missingCount: 0 });
+    expect(statOnly).toMatchObject({ changedCount: 0, missingCount: 0 });
     expect(statOnly.assets[0]?.assetId).toBe(initial.assetId);
-    expect(statOnly.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
+    expect(statOnly.assets[0]?.currentRevisionId).toBe(overwriteRevision.currentRevisionId);
+
+    // Same byte-size content edit is still detected via the fingerprint.
+    writeFileSync(managedPath, 'second version!');
+    utimesSync(managedPath, new Date(acceptedTime.getTime() + 40_000), new Date(acceptedTime.getTime() + 40_000));
+    const sameSizeEdit = service.refreshManagedAssets(library.libraryId);
+    expect(sameSizeEdit).toMatchObject({ changedCount: 1, missingCount: 0 });
+    expect(sameSizeEdit.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
+    service.closeAll();
+  });
+
+  it('keeps a revision whose mtime moved but content is identical when no fingerprint is recorded yet (portable copy backfill)', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'portable.png');
+    writeFileSync(source, 'portable bytes');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Portable', selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
+    const managedPath = path.join(library.libraryPath, 'Assets', 'portable.png');
+    const beforeRevision = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!.currentRevisionId;
+
+    // Simulate a pre-fingerprint (exported) revision: clear the recorded
+    // fingerprint and move the mtime like a zip extraction would.
+    const connection = (service as unknown as {
+      openById: Map<string, { connection: { prepare(sql: string): { run(...args: unknown[]): void; get(...args: unknown[]): unknown } } }>;
+    }).openById.get(library.libraryId)!.connection;
+    connection.prepare('UPDATE revisions SET content_fingerprint = NULL WHERE revision_id = ?').run(beforeRevision);
+    const copiedTime = new Date(Date.now() + 60_000);
+    utimesSync(managedPath, copiedTime, copiedTime);
+
+    const refreshed = service.refreshManagedAssets(library.libraryId);
+    expect(refreshed).toMatchObject({ changedCount: 0, missingCount: 0 });
+    expect(refreshed.assets[0]?.currentRevisionId).toBe(beforeRevision);
+    // The fingerprint is backfilled from the file for future comparisons.
+    const stored = connection.prepare(
+      'SELECT content_fingerprint FROM revisions WHERE revision_id = ?',
+    ).get(beforeRevision) as { content_fingerprint: string | null };
+    expect(stored.content_fingerprint).toBeTruthy();
     service.closeAll();
   });
 

@@ -2125,6 +2125,32 @@ const MODEL_ARTIFACT_KIND_SCHEMA_CHECKSUM = createHash('sha256')
   .digest('hex');
 
 /**
+ * Migration v34: content fingerprint for portable change detection.
+ * A library copied to another platform rewrites every file mtime (zip
+ * extraction), so mtime alone can no longer prove a revision unchanged.
+ * `refreshManagedAssets` stores a SHA-1 of the file bytes on the current
+ * revision; a NULL fingerprint means "never verified" and is backfilled on
+ * the first mtime mismatch (treated as unchanged — see refreshManagedAssets).
+ * Additive column only; satisfies the migrate-add-only discipline.
+ */
+const CONTENT_FINGERPRINT_SCHEMA_SQL = `
+  ALTER TABLE revisions ADD COLUMN content_fingerprint TEXT;
+`;
+const CONTENT_FINGERPRINT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(CONTENT_FINGERPRINT_SCHEMA_SQL)
+  .digest('hex');
+
+/**
+ * Idempotent v34 apply: downgrade fixtures and re-run scenarios may already
+ * carry the column, so the ALTER must be skipped instead of failing the
+ * migration chain (same pattern as v20/v31 ensure functions).
+ */
+function ensureContentFingerprintColumn(connection: DatabaseConnection): void {
+  if (columnsFor(connection, 'revisions').has('content_fingerprint')) return;
+  connection.exec(CONTENT_FINGERPRINT_SCHEMA_SQL);
+}
+
+/**
  * Migration v28: namespaced, package-versioned materialized Provider fields.
  * Queries only select the active package hash supplied by Main, so upgrading
  * or deactivating a plugin cannot expose stale values.
@@ -2298,6 +2324,11 @@ export const MIGRATIONS = [
     version: 33,
     sql: MODEL_ARTIFACT_KIND_SCHEMA_SQL,
     checksum: MODEL_ARTIFACT_KIND_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 34,
+    sql: CONTENT_FINGERPRINT_SCHEMA_SQL,
+    checksum: CONTENT_FINGERPRINT_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -4132,6 +4163,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           backfillTrashedFromTombstoneIds(connection);
         } else if (migration.version === 31) {
           ensurePluginDerivedFieldsSchema(connection);
+        } else if (migration.version === 34) {
+          ensureContentFingerprintColumn(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -16340,7 +16373,18 @@ export class LibraryService {
 
     let processed = 0;
     const maxJobs = Math.max(1, Math.min(20, options.maxJobs ?? 20));
-    while (processed < maxJobs) {
+    // Serpent-1tio: media jobs no longer run strictly serially. Claim and run
+    // up to 4 in parallel per queue call — the bounded Sharp/FFmpeg(4)/OIIO(1)
+    // decoder semaphores and the process-wide model-render gate cap the real
+    // concurrency. The claim UPDATE is atomic (WHERE status = 'queued'), so
+    // concurrent workers never double-execute a job. `budget` is reserved
+    // synchronously at claim time (before any await), so a wave starts at
+    // most maxJobs jobs exactly; a lease-busy retry returns its slot.
+    const workerCount = Math.min(maxJobs, 4);
+    let budget = maxJobs;
+    const runWorker = async (): Promise<void> => {
+    while (budget > 0) {
+      budget -= 1;
       const job = nextJob.get(libraryId) as {
         job_id: string;
         asset_id: string;
@@ -16349,7 +16393,7 @@ export class LibraryService {
         priority: number;
         attempt_count: number;
       } | undefined;
-      if (!job) break;
+      if (!job) return;
       const now = new Date().toISOString();
       const claimed = openLibrary.connection
         .prepare(
@@ -16368,6 +16412,7 @@ export class LibraryService {
         openLibrary.connection.prepare(
           "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_BUSY', updated_at = ? WHERE job_id = ? AND status = 'running'",
         ).run(new Date().toISOString(), job.job_id);
+        budget += 1;
         continue;
       }
       const jobHeartbeat = jobLease.startHeartbeat();
@@ -16640,7 +16685,10 @@ export class LibraryService {
         settleActiveJob();
       }
       processed += 1;
+      if (processed >= maxJobs) return;
     }
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 
     return processed;
   }
@@ -24550,12 +24598,35 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Content fingerprint of a file (SHA-1 of the full bytes). Used by
+   * refreshManagedAssets to tell a real edit from a portable-library copy
+   * (zip extraction rewrites every mtime but not the bytes). Sync by design:
+   * it only runs when an mtime mismatch is already detected, so normal
+   * refreshes never pay for it.
+   */
+  private computeContentFingerprint(filePath: string): string {
+    const hash = createHash('sha1');
+    const descriptor = openSync(filePath, 'r');
+    try {
+      const buffer = Buffer.allocUnsafe(1 << 20);
+      let bytesRead = 0;
+      while ((bytesRead = readSync(descriptor, buffer, 0, buffer.length, null)) > 0) {
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      closeSync(descriptor);
+    }
+    return hash.digest('hex');
+  }
+
   refreshManagedAssets(libraryId: string): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const before = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
-                a.current_revision_id, a.availability, r.byte_size, r.modified_at
+                a.current_revision_id, a.availability, r.byte_size, r.modified_at,
+                r.content_fingerprint
           FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
           WHERE a.deleted_at IS NULL
@@ -24570,6 +24641,7 @@ export class LibraryService {
         availability: 'available' | 'missing';
         byte_size: number;
         modified_at: string;
+        content_fingerprint: string | null;
       }>;
     let changedCount = 0;
     let missingCount = 0;
@@ -24826,8 +24898,36 @@ export class LibraryService {
         // genuine source edit is still represented by a larger timestamp or
         // byte-size change.
         const timestampEquivalent = Math.abs(Date.parse(modifiedAt) - Date.parse(asset.modified_at)) <= 1;
-        const statChanged = byteSize !== asset.byte_size
-          || (modifiedAt !== asset.modified_at && !timestampEquivalent);
+        const byteChanged = byteSize !== asset.byte_size;
+        const mtimeChanged = modifiedAt !== asset.modified_at && !timestampEquivalent;
+        // Serpent-1tio: a library copied to another platform (zip export →
+        // extraction) rewrites every file mtime while the bytes stay identical.
+        // mtime alone would re-import the whole library and orphan the exported
+        // artifacts. When only the mtime moved and the size matches, verify the
+        // content fingerprint: a match keeps the revision (and its artifacts);
+        // a NULL stored fingerprint means the revision was never verified —
+        // backfill it from the file and treat the copy as unchanged.
+        let statChanged = byteChanged || mtimeChanged;
+        let fingerprint: string | null = null;
+        if (statChanged) {
+          fingerprint = this.computeContentFingerprint(assetPath);
+          if (!byteChanged && mtimeChanged) {
+            const stored = asset.content_fingerprint;
+            if (stored === null) {
+              // Backfill also adopts the file's mtime: otherwise every later
+              // refresh would re-hash the file (mtime still differs) while
+              // the content is known identical.
+              openLibrary.connection
+                .prepare(
+                  'UPDATE revisions SET content_fingerprint = ?, modified_at = ? WHERE revision_id = ?',
+                )
+                .run(fingerprint, modifiedAt, asset.current_revision_id);
+              statChanged = false;
+            } else if (fingerprint === stored) {
+              statChanged = false;
+            }
+          }
+        }
         const now = new Date().toISOString();
         if (statChanged) {
           const revisionId = randomUUID();
@@ -24835,8 +24935,8 @@ export class LibraryService {
             .prepare(
               `INSERT INTO revisions
                  (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
-                  original_filename, origin, accepted_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?)`,
+                  original_filename, origin, accepted_at, content_fingerprint)
+               VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?, ?)`,
             )
             .run(
               revisionId,
@@ -24846,6 +24946,7 @@ export class LibraryService {
               modifiedAt,
               path.posix.basename(asset.relative_file_path),
               now,
+              fingerprint,
             );
           openLibrary.connection
             .prepare(

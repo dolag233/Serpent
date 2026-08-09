@@ -8652,6 +8652,28 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
+/* Serpent-1tio: progressive loading — a subtle shimmer while the
+   poster/thumbnail artifact is still generating. Never interactive. */
+.asset-card-media.is-pending {
+  background: linear-gradient(
+    100deg,
+    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 40%,
+    rgba(128, 128, 128, 0.22) 50%,
+    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 60%
+  );
+  background-size: 200% 100%;
+  animation: serpent-card-pending-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes serpent-card-pending-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
 .image-sequence-dialog-section {
   display: flex;
   flex-direction: column;

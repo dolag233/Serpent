@@ -6809,9 +6809,14 @@ function AppInner() {
 
   async function completeImportCopy() {
     if (!api || !importValidated) return;
+    // Serpent-1tio: the validated dialog must disappear the moment the import
+    // starts; the persistent activity strip (正在导入资源库) is the only
+    // indicator from here until completion.
+    const validated = importValidated;
+    setImportValidated(null);
     setImportProgress({
       type: "import.progress",
-      importId: importValidated.importId,
+      importId: validated.importId,
       phase: "copy",
       filesProcessed: 0,
       totalFiles: 0,
@@ -6820,7 +6825,7 @@ function AppInner() {
     });
     try {
       const result = await api.importLibraryCopy({
-        importId: importValidated.importId,
+        importId: validated.importId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
@@ -6830,7 +6835,6 @@ function AppInner() {
         }
         return;
       }
-      setImportValidated(null);
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
@@ -6844,9 +6848,14 @@ function AppInner() {
 
   async function completeImportInPlace() {
     if (!api || !importValidated) return;
+    // Serpent-1tio: same immediate-dismissal contract as completeImportCopy —
+    // the validated dialog closes as soon as the import starts and the
+    // persistent activity strip (正在导入资源库) becomes the only indicator.
+    const validated = importValidated;
+    setImportValidated(null);
     setImportProgress({
       type: "import.progress",
-      importId: importValidated.importId,
+      importId: validated.importId,
       phase: "open",
       filesProcessed: 0,
       totalFiles: 0,
@@ -6855,7 +6864,7 @@ function AppInner() {
     });
     try {
       const result = await api.importLibraryOpenInPlace({
-        importId: importValidated.importId,
+        importId: validated.importId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
@@ -6865,7 +6874,6 @@ function AppInner() {
         }
         return;
       }
-      setImportValidated(null);
       setImportProgress(null);
       await activateImportedLibrary(result.value);
     } catch (caught) {
@@ -9568,13 +9576,23 @@ function AppInner() {
                           }
                           return (
                             <>
+                              {asset.thumbnailStatus === "pending" ? (
+                                // Serpent-1tio: progressive loading — a
+                                // skeleton while the poster/thumbnail is
+                                // still generating instead of a blank tile.
+                                <div
+                                  aria-hidden="true"
+                                  className="asset-card-media is-pending"
+                                />
+                              ) : (
+                                <Icon name="file" size={28} />
+                              )}
                               {!showExtension &&
                                 shouldShowExtensionBadge(asset.mediaType) && (
                                   <span className="asset-extension">
                                     {fileExtensionLabel(asset.displayName)}
                                   </span>
                                 )}
-                              <Icon name="file" size={28} />
                             </>
                           );
                         })()}

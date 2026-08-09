@@ -460,36 +460,36 @@ function scheduleThumbnailQueue(
           });
         }
       };
-      // Four consumers make the bounded Sharp/FFmpeg(4) semaphores effective
-      // for a normal single-library session; atomic job claims prevent
-      // duplicate processing.
-      const processed = (await Promise.all([0, 1, 2, 3].map(() =>
-        libraryService.processThumbnailQueue(libraryId, {
-          maxJobs: 2,
-          onResult,
-          onAiInputReady: (event) => {
-            parentPort?.postMessage({
-              type: 'asset.ai-input.ready',
-              libraryId,
-              assetId: event.assetId,
-              artifactId: event.artifactId,
-            });
-          },
-          pluginMediaProvider: async ({ assetId, signal, asset }) => {
-            if (signal?.aborted) return null;
-            return (await writePluginMediaArtifact({
-              libraryId,
-              assetId,
-              kind: 'thumbnail',
-              ...(asset === undefined ? {} : { asset }),
-            }))?.artifactId ?? null;
-          },
-          // Slice E (Serpent-hnmg): model jobs render offscreen in Main; the
-          // shared-window gate inside renderModelThumbnailViaMain keeps at
-          // most one render in flight process-wide.
-          modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
-          modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
-      })))).reduce((total, count) => total + count, 0);
+      // Serpent-1tio: one queue call whose internal worker pool (capped at 4)
+      // replaces the previous four serial consumers — the bounded
+      // Sharp/FFmpeg(4)/OIIO(1) semaphores keep the real process concurrency
+      // identical, and atomic job claims prevent duplicate processing.
+      const processed = await libraryService.processThumbnailQueue(libraryId, {
+        maxJobs: 8,
+        onResult,
+        onAiInputReady: (event) => {
+          parentPort?.postMessage({
+            type: 'asset.ai-input.ready',
+            libraryId,
+            assetId: event.assetId,
+            artifactId: event.artifactId,
+          });
+        },
+        pluginMediaProvider: async ({ assetId, signal, asset }) => {
+          if (signal?.aborted) return null;
+          return (await writePluginMediaArtifact({
+            libraryId,
+            assetId,
+            kind: 'thumbnail',
+            ...(asset === undefined ? {} : { asset }),
+          }))?.artifactId ?? null;
+        },
+        // Slice E (Serpent-hnmg): model jobs render offscreen in Main; the
+        // shared-window gate inside renderModelThumbnailViaMain keeps at
+        // most one render in flight process-wide.
+        modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
+        modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
+      });
       continueImmediately = processed === 8;
     } catch (error) {
       libraryService.reportDiagnostic('thumbnail-schedule.process', error, { libraryId });
