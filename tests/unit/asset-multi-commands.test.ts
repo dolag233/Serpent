@@ -36,6 +36,8 @@ function makeActions(calls: RecordedCall[]): AssetMultiCommandActions {
     deleteFromDisk: record('deleteFromDisk'),
     restore: record('restore'),
     deletePermanent: record('deletePermanent'),
+    aiAnalyze: record('aiAnalyze'),
+    clearAiContent: record('clearAiContent'),
     clearSelection: record('clearSelection'),
   };
 }
@@ -63,6 +65,7 @@ function makeCtx(
     managedAssetIds: ['a-1', 'a-2'],
     availableManagedAssetIds: ['a-1'],
     availableAssetIds: ['a-1', 'a-3'],
+    aiPendingAssetIds: [],
     pasteTargetFolderId: 'folder-1',
     actions: makeActions(calls),
     ...overrides,
@@ -359,6 +362,7 @@ describe('注册表完整性', () => {
       'assets.delete-permanent',
       'assets.assign-tag',
       'assets.remove-tag',
+      'assets.ai-analyze-pending',
       'assets.ai-analyze',
       'assets.clear-ai-content',
       'assets.copy',
@@ -385,5 +389,27 @@ describe('注册表完整性', () => {
       'delete',
       'delete',
     ]);
+  });
+
+  it('AI分析未分析项：有 pending 时可见且排在 ai-analyze 前，run 只传 pending id', () => {
+    const { ctx, calls } = makeCtx({
+      aiPendingAssetIds: ['a-1'],
+    });
+    const ids = resolveIds(ctx);
+    const pendingIndex = ids.indexOf('assets.ai-analyze-pending');
+    const analyzeIndex = ids.indexOf('assets.ai-analyze');
+    expect(pendingIndex).toBeGreaterThanOrEqual(0);
+    expect(pendingIndex).toBeLessThan(analyzeIndex);
+    const def = registry.get('assets.ai-analyze-pending');
+    expect(def).toBeDefined();
+    void def?.run(ctx);
+    expect(calls).toEqual([
+      { action: 'aiAnalyze', args: [['a-1']] },
+    ]);
+  });
+
+  it('AI分析未分析项：无 pending 时不可见，不干扰普通 AI 分析', () => {
+    const { ctx } = makeCtx();
+    expect(resolveIds(ctx)).not.toContain('assets.ai-analyze-pending');
   });
 });

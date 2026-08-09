@@ -453,6 +453,7 @@ export const en = {
       clearSelection: "Clear selection ({count})",
       assignTag: "Add tags…",
       removeTag: "Remove tags…",
+      aiAnalyzeMissing: "AI analyze missing ({count})",
       aiAnalyze: "AI analyze ({count})",
       copy: "Copy ({count})"
     },

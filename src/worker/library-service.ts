@@ -232,6 +232,24 @@ type VideoProxyProfile = {
   args: string[];
 };
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
+
+/**
+ * Escape a local path before embedding it in an FFmpeg filtergraph option.
+ *
+ * FFmpeg parses filter options after the process has already received the
+ * argument, so passing a Windows path as a normal argv value is not enough:
+ * the drive-letter colon is treated as an option separator and backslashes
+ * are interpreted as filter escapes. Normalising separators and escaping the
+ * remaining filter metacharacters keeps bundled font paths valid on both
+ * Windows and POSIX.
+ */
+export function escapeFfmpegFilterPath(filePath: string): string {
+  return filePath
+    .replaceAll('\\', '/')
+    .replaceAll(':', '\\:')
+    .replaceAll("'", "\\'");
+}
+
 const MEDIA_JOB_KINDS = [
   'generate_thumbnail',
   'generate_video_poster',
@@ -3240,6 +3258,12 @@ async function copyDirRecursiveCancellable(
       await copyDirRecursiveCancellable(childSource, childDest, cancelState);
     } else if (child.isFile()) {
       copyFileSync(childSource, childDest);
+      // Keep the source mtime across a library copy. The first open compares
+      // this value with the revision recorded in library.db; preserving it
+      // avoids treating every copied asset as externally edited while still
+      // allowing a genuinely changed source file to be reconciled normally.
+      const sourceStat = statSync(childSource);
+      utimesSync(childDest, sourceStat.atime, sourceStat.mtime);
     }
   }
 }
@@ -4289,6 +4313,74 @@ export class LibraryService {
       }
     } catch (error) {
       this.diagnose('open.refresh-managed-assets', error, { libraryId });
+    }
+  }
+
+  /**
+   * Restore the source timestamps recorded by an exported library before it is
+   * opened on another platform. ZIP entries do not carry a timezone and the
+   * streaming extractor intentionally writes new files without trusting the
+   * archive timestamp. If we leave those files with the extraction time,
+   * `refreshManagedAssetsOnOpen` treats every asset as externally edited,
+   * invalidates its ready derived artifacts, and queues a new decode wave.
+   * That is especially visible when a macOS library is imported on Windows.
+   * Only same-size, non-symlink managed files are adjusted; a content mismatch
+   * remains an external change and is handled by the normal refresh path.
+   */
+  private restoreManagedAssetTimestamps(libraryPath: string): void {
+    const dbPath = databasePath(libraryPath);
+    let connection: DatabaseConnection | undefined;
+    try {
+      connection = openConfiguredDatabase(
+        dbPath,
+        this.options.sqliteBusyTimeoutMsForTests,
+        { readonly: true },
+      );
+      const rows = connection
+        .prepare(
+          `SELECT a.relative_file_path, r.byte_size, r.modified_at
+             FROM assets a
+             JOIN revisions r ON r.revision_id = a.current_revision_id
+            WHERE a.location_kind = 'managed'
+              AND a.deleted_at IS NULL`,
+        )
+        .all() as Array<{
+          relative_file_path: string;
+          byte_size: number;
+          modified_at: string;
+        }>;
+      const assetsRoot = path.join(libraryPath, 'Assets');
+      for (const row of rows) {
+        const targetPath = path.resolve(assetsRoot, ...row.relative_file_path.split('/'));
+        if (!pathIsWithin(assetsRoot, targetPath)) continue;
+        try {
+          const stat = lstatSync(targetPath);
+          const modifiedAt = Date.parse(row.modified_at);
+          if (
+            !stat.isFile()
+            || stat.isSymbolicLink()
+            || stat.size !== row.byte_size
+            || !Number.isFinite(modifiedAt)
+          ) {
+            continue;
+          }
+          const timestamp = new Date(modifiedAt);
+          utimesSync(targetPath, timestamp, timestamp);
+        } catch (error) {
+          // A single unreadable asset must not make an otherwise valid import
+          // fail; refreshManagedAssetsOnOpen will report it as missing.
+          this.diagnose('import.restore-asset-timestamp', error, {
+            libraryPath,
+            relativeFilePath: row.relative_file_path,
+          });
+        }
+      }
+    } catch (error) {
+      // Timestamp restoration is a compatibility aid, not a validity gate.
+      // The normal open/reconcile path remains authoritative if this fails.
+      this.diagnose('import.restore-asset-timestamps', error, { libraryPath });
+    } finally {
+      closeIgnoringFailure(connection);
     }
   }
 
@@ -11519,6 +11611,30 @@ export class LibraryService {
     return { clearedCount: targetAssetIds.length, affectedAssetIds: targetAssetIds };
   }
 
+  /**
+   * 返回给定资产里没有任何 AI 生成数据的（ai_content 无记录）——供
+   * 「AI分析未分析项」菜单计数与批量跳过（运行时判断，不动数据库字段）。
+   */
+  pendingAiAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): string[] {
+    const conn = this.requireOpenLibrary(input.libraryId).connection;
+    if (input.assetIds.length === 0) return [];
+    const placeholders = input.assetIds.map(() => '?').join(', ');
+    const rows = conn
+      .prepare(
+        `SELECT asset_id FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND NOT EXISTS (
+              SELECT 1 FROM ai_content
+               WHERE ai_content.asset_id = assets.asset_id
+            )`,
+      )
+      .all(...input.assetIds) as Array<{ asset_id: string }>;
+    return rows.map((r) => r.asset_id);
+  }
+
   /** Enqueue image jobs and video jobs whose contact sheet is ready. */
   enqueueAiAnalysisJobs(input: {
     libraryId: string;
@@ -11645,6 +11761,16 @@ export class LibraryService {
             resumePausedJob.run(now, existingJob.job_id);
           }
           alreadyPendingJobIds.push(existingJob.job_id);
+          continue;
+        }
+
+        // 「AI分析未分析项」语义：已有 AI 生成数据的资产跳过（运行时判断：
+        // ai_content 存在至少一条记录即视为已分析——不动数据库字段）。
+        const hasAiContent = conn
+          .prepare('SELECT 1 FROM ai_content WHERE asset_id = ? LIMIT 1')
+          .get(assetId);
+        if (hasAiContent) {
+          skippedAssetIds.push(assetId);
           continue;
         }
 
@@ -13982,14 +14108,17 @@ export class LibraryService {
     // right of every frame. The bundled DejaVu Sans font keeps the LGPL
     // build independent of fontconfig/system fonts.
     const fontPath = resolveBundledFontPath();
+    const escapedFontPath = fontPath
+      ? escapeFfmpegFilterPath(fontPath)
+      : null;
     const fontSize = Math.max(14, Math.round(frameH * 0.12));
     const keyframeCount = await this.countVideoKeyframes(ffprobePath, assetPath, execution);
     const useKeyframeFastPath = keyframeCount !== null && keyframeCount >= 16;
     const filterGraph = [
       `fps=1/${interval}`,
       `scale=${frameW}:${frameH}:flags=lanczos`,
-      fontPath
-        ? `drawtext=fontfile='${fontPath}':text='%{pts\\:hms}':x=w-tw-8:y=h-th-8:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.5`
+      escapedFontPath
+        ? `drawtext=fontfile='${escapedFontPath}':text='%{pts\\:hms}':x=w-tw-8:y=h-th-8:fontsize=${fontSize}:fontcolor=white:box=1:boxcolor=black@0.5`
         : null,
       `tile=${columns}x${rows}:margin=2:padding=2:color=#1a1a1a`,
     ].filter((part): part is string => part !== null).join(',');
@@ -16169,6 +16298,9 @@ export class LibraryService {
         assetId: string;
         artifactId?: string;
         errorCode?: string;
+        width?: number;
+        height?: number;
+        durationMs?: number;
       }) => void;
       /** Fired once a durable visual input is ready for automatic video AI. */
       onAiInputReady?: (event: { assetId: string; artifactId: string }) => void;
@@ -16325,7 +16457,14 @@ export class LibraryService {
           // job was marked failed by the catch path) or when no renderer is
           // wired (legacy no-op); nothing is published either way.
           if (generated) {
-            options.onResult?.({ assetId: job.asset_id, artifactId: generated.artifactId });
+            const mediaInfo = this.thumbnailArtifactMap(libraryId, [job.asset_id]).get(job.asset_id);
+            options.onResult?.({
+              assetId: job.asset_id,
+              artifactId: generated.artifactId,
+              ...(mediaInfo?.width ? { width: mediaInfo.width } : {}),
+              ...(mediaInfo?.height ? { height: mediaInfo.height } : {}),
+              ...(mediaInfo?.durationMs != null ? { durationMs: mediaInfo.durationMs } : {}),
+            });
           }
         } else if (job.kind === 'extract_metadata') {
           const current = await this.generateQueuedVideoMetadata(
@@ -26125,6 +26264,7 @@ export class LibraryService {
           this.emitProgress({ type: 'import.progress', importId, phase: 'cancelled', filesProcessed: 0, totalFiles: 0, bytesProcessed: 0, totalBytes: 0 });
           throw new LibraryServiceError('CANCELLED');
         }
+
       } else {
         // Open in place.
         libraryPath = input.sourceFolderPath;
@@ -26737,6 +26877,11 @@ export class LibraryService {
       }
       assertTreeContainsNoSymlinks(canonicalExtractPath);
       this.validateImportSource(canonicalExtractPath);
+
+      // ZIP timestamps have no timezone; use the revision timestamps stored in
+      // the database instead of trusting the archive metadata. This keeps a
+      // macOS export's ready thumbnails valid after a Windows import.
+      this.restoreManagedAssetTimestamps(canonicalExtractPath);
 
       // Phase 4: open
       this.emitProgress({

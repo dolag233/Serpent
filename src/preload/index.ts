@@ -6,6 +6,7 @@ import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
 import type { ViewerVideoShortcutAction } from '../shared/viewer-video-shortcuts';
+import type { ApplicationMenuCommand } from '../shared/application-menu';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
 import type { ModelCompanionAsset } from '../shared/model-companions';
@@ -35,6 +36,7 @@ import {
   DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
+  APPLICATION_MENU_COMMAND_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_MAXIMIZED_CHANNEL,
@@ -1459,6 +1461,13 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
+  async pendingAiAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ assetIds: string[] }>> {
+    const result = await request({ type: 'ai.pending-assets.request', libraryId, assetIds });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'ai.pending-assets') throw new Error('Unexpected pending-ai response.');
+    return { ok: true as const, value: { assetIds: result.assetIds } };
+  },
+
   async requestThumbnail({ libraryId, assetId }: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>> {
     const result = await request({ type: 'asset.thumbnail.request', libraryId, assetId });
     if (!result.ok) return failure(result);
@@ -2051,6 +2060,27 @@ const shell: SerpentShellApi = Object.freeze({
     ipcRenderer.on(COPY_SELECTION_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(COPY_SELECTION_CHANNEL, handler);
+    };
+  },
+  onApplicationMenuCommand(listener: (command: ApplicationMenuCommand) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      if (typeof input !== 'string') return;
+      const commands: readonly ApplicationMenuCommand[] = [
+        'invert-selection', 'copy-selection',
+        'file.import-files', 'file.import-folder', 'file.import-linked-folder',
+        'edit.undo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
+        'library.create', 'library.open', 'library.close', 'library.remove',
+        'library.delete-from-disk', 'library.import', 'library.export', 'library.settings',
+        'window.background-jobs', 'window.diagnostics',
+        'about.serpent', 'about.github', 'about.open-source', 'settings',
+      ];
+      if (commands.includes(input as ApplicationMenuCommand)) {
+        listener(input as ApplicationMenuCommand);
+      }
+    };
+    ipcRenderer.on(APPLICATION_MENU_COMMAND_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(APPLICATION_MENU_COMMAND_CHANNEL, handler);
     };
   },
   async nativeEditCopy(): Promise<void> {

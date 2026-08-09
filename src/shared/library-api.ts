@@ -527,6 +527,11 @@ export interface SerpentLibraryApi {
     enqueued: number;
   }>>;
   // Thumbnail & Preview
+  // 多选菜单「AI分析未分析项」：返回选中里没有任何 AI 生成数据的资产。
+  pendingAiAssets(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<LibraryApiResult<{ assetIds: string[] }>>;
   // artifactId is absent for model assets: no Worker raster generator exists
   // for them (Serpent-fu2i), so the no-op result carries no artifact.
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
@@ -560,7 +565,7 @@ export interface SerpentLibraryApi {
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   listPluginJobs(input: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>>;
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void): () => void;
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void): () => void;
   // AI extended
   testAiConnection(input: {
     apiFormat: AiApiFormat;

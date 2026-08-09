@@ -434,6 +434,9 @@ function scheduleThumbnailQueue(
         assetId: string;
         artifactId?: string;
         errorCode?: string;
+        width?: number;
+        height?: number;
+        durationMs?: number;
       }) => {
         if (result.artifactId) {
           parentPort?.postMessage({
@@ -441,6 +444,9 @@ function scheduleThumbnailQueue(
             libraryId,
             assetId: result.assetId,
             artifactId: result.artifactId,
+            ...(result.width === undefined ? {} : { width: result.width }),
+            ...(result.height === undefined ? {} : { height: result.height }),
+            ...(result.durationMs === undefined ? {} : { durationMs: result.durationMs }),
           });
         } else {
           const errorCode = result.errorCode ?? 'THUMBNAIL_GENERATION_FAILED';
@@ -2171,6 +2177,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         jobIds,
         alreadyPendingJobIds,
         skippedAssetIds,
+      };
+    }
+    case 'ai.pending-assets.request': {
+      return {
+        ok: true,
+        type: 'ai.pending-assets' as const,
+        assetIds: libraryService.pendingAiAssets(request.command),
       };
     }
     case 'ai.process-queue': {

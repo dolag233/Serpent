@@ -252,6 +252,12 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     assetId: nonBlankString,
     artifactId: nonBlankString,
+    // Video dimensions are learned by the metadata job before the poster is
+    // published. Carry them with the event so a browse grid can reflow the
+    // card immediately instead of keeping the initial square fallback.
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+    durationMs: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.thumbnail.failed'),
@@ -1469,6 +1475,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('ai.pending-assets'),
+    assetIds: z.array(nonBlankString),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('media.jobs.processed'),
     libraryId: nonBlankString,
     processed: z.number().int().nonnegative(),
@@ -1701,6 +1712,11 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     plan: aiSearchPlanSchema,
     apiFormat: z.enum(['dashscope_native', 'openai_chat', 'openai_responses', 'anthropic', 'gemini_native']),
     model: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('ai.pending-assets'),
+    assetIds: z.array(nonBlankString),
   }),
   ...assetOperationSuccessSchemas,
 ]);

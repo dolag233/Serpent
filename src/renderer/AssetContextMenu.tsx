@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
   TagSummary,
   CollectionSummary,
@@ -6,6 +7,13 @@ import type {
   AssetSummary,
   ManagedFolderSummary,
 } from "../shared/asset-types";
+
+type RendererWindow = Window & {
+  serpent?: {
+    library?: SerpentLibraryApi;
+    plugins?: SerpentPluginManagerApi;
+  };
+};
 import {
   ContextMenu,
   ContextMenuBackdrop,
@@ -455,6 +463,44 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     setTagPicker(null);
     setMemberIdsByCollection(null);
   }
+
+  // 「AI分析未分析项」：多选菜单打开时预取选中里没有任何 AI 数据的资产
+  //（运行时判断 ai_content 有无记录，不动数据库字段）。key 变化时在
+  // render 期重置（与 pickerMenuKey 同模式），effect 只做异步查询。
+  const [aiPendingKey, setAiPendingKey] = useState(activeDescriptorKey);
+  const [aiPendingAssetIds, setAiPendingAssetIds] = useState<readonly string[]>([]);
+  if (aiPendingKey !== activeDescriptorKey) {
+    setAiPendingKey(activeDescriptorKey);
+    setAiPendingAssetIds([]);
+  }
+  useEffect(() => {
+    const descriptor = activeContextMenu?.descriptor;
+    if (
+      !descriptor ||
+      descriptor.type !== "multi-asset" ||
+      !props.libraryId
+    ) {
+      return;
+    }
+    const assetIds = [...descriptor.assetIds];
+    if (assetIds.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    void (window as RendererWindow).serpent?.library
+      ?.pendingAiAssets({ libraryId: props.libraryId, assetIds })
+      .then((result) => {
+        if (!cancelled && result.ok) {
+          setAiPendingAssetIds(result.value.assetIds);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAiPendingAssetIds([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDescriptorKey, activeContextMenu, props.libraryId]);
 
   useEffect(() => {
     const descriptor = activeContextMenu?.descriptor;
@@ -1195,6 +1241,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               assetScope: "multi",
               trashMode: allTrashed,
               selectionCount: skipReport.selectionCount,
+              aiPendingAssetIds,
               managedCount: managedAssetIds.length,
               availableManagedCount: availableManagedAssetIds.length,
               linkedCount: skipReport.linkedCount,

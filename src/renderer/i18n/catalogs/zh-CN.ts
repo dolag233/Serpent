@@ -441,6 +441,7 @@ export const zhCN = {
       clearSelection: "清除选择（{count} 项）",
       assignTag: "添加标签…",
       removeTag: "移除标签…",
+      aiAnalyzeMissing: "AI 分析未分析项（{count} 项）",
       aiAnalyze: "AI 分析（{count} 项）",
       copy: "复制（{count} 项）"
     },

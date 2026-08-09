@@ -995,6 +995,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     jobIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
+  z.strictObject({
+    type: z.literal('ai.pending-assets.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
 ]);
 
 export type RendererRequest = z.infer<typeof rendererRequestSchema>;
@@ -2014,6 +2019,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema.optional(),
     /** Manual analysis may resume jobs intentionally paused by the user. */
     resumePaused: z.boolean().optional(),
+  }),
+  z.strictObject({
+    // 多选菜单「AI分析未分析项」：返回选中里没有任何 AI 生成数据的资产。
+    type: z.literal('ai.pending-assets.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
     type: z.literal('ai.process-queue'),

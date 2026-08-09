@@ -65,6 +65,10 @@ export interface AssetMultiCommandContext extends CommandContext {
   /** Available (non-missing) assets that can be written to OS clipboard. */
   readonly availableAssetIds: readonly string[];
   /**
+   * 选中里没有任何 AI 生成数据的资产（菜单打开时预取）——「AI分析未分析项」。
+   */
+  readonly aiPendingAssetIds: readonly string[];
+  /**
    * Managed folder that receives OS clipboard paste. Null hides paste.
    */
   readonly pasteTargetFolderId: string | null | undefined;
@@ -122,6 +126,19 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       run: (ctx) => ctx.actions.openRemoveTagPicker([...ctx.selectedAssetIds]),
     },
     // ---- AI 元数据 ----
+    {
+      // 「AI分析未分析项」排在最前：只分析没有任何 AI 生成数据的资产，
+      // 计数来自 ctx.aiPendingAssetIds（菜单打开时预取）。
+      id: 'assets.ai-analyze-pending',
+      title: (ctx) =>
+        t(ctx, 'command.assets.aiAnalyzeMissing', {
+          count: ctx.aiPendingAssetIds.length,
+        }),
+      group: 'metadata',
+      visible: (ctx) =>
+        !ctx.trashedAll && ctx.aiPendingAssetIds.length > 0,
+      run: (ctx) => ctx.actions.aiAnalyze?.([...ctx.aiPendingAssetIds]),
+    },
     {
       id: 'assets.ai-analyze',
       title: (ctx) =>
