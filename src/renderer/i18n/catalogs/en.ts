@@ -610,6 +610,7 @@ export const en = {
     mixedValues: "Multiple Values",
     noSharedTags: "No shared tags",
     multiSelectionTitle: "{name} and {count} files",
+    multiSelectionCount: " and {count} files",
     available: "Available",
     missing: "Missing file",
     offline: "Offline",

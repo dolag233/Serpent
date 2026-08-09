@@ -9487,6 +9487,27 @@ select.ai-config-input.ai-config-languages {
   margin-top: 2px;
 }
 
+/* Multi-selection: ellipsize the primary asset name, but never collapse the
+   "… 等 N 个文件" count suffix — the count must always stay visible. */
+.inspector-hero-compact.is-multi .inspector-hero-title {
+  display: flex;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.inspector-hero-compact.is-multi .inspector-hero-title .inspector-multi-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-hero-compact.is-multi .inspector-hero-title .inspector-multi-count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .preview-state.is-silent {
   max-width: none;
   min-height: 0;

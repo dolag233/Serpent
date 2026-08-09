@@ -598,6 +598,7 @@ export const zhCN = {
     mixedValues: "多个值",
     noSharedTags: "选中项无共有标签",
     multiSelectionTitle: "{name} 等{count}个文件",
+    multiSelectionCount: " 等{count}个文件",
     available: "可用",
     missing: "文件丢失",
     offline: "离线",

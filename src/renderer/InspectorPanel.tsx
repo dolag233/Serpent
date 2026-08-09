@@ -449,7 +449,15 @@ function InspectorHero({
         />
       )}
       <strong className="inspector-hero-title" title={title}>
-        {filenameParts ? (
+        {isMulti ? (
+          <>
+            {/* Serpent-poly1: name 可缩略、计数后缀不缩略，保证「等 N 个文件」始终可见。 */}
+            <span className="inspector-multi-name">{asset.displayName}</span>
+            <span className="inspector-multi-count">
+              {t("inspector.multiSelectionCount", { count: selectionCount })}
+            </span>
+          </>
+        ) : filenameParts ? (
           <>
             <span className="asset-filename-prefix">{filenameParts.prefix}</span>
             {filenameParts.tail ? (
