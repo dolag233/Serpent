@@ -18,6 +18,7 @@
 - **Console 与 MCP 暴露同一套领域 Action 命令面**（只读与写入、含 `library.create`、`file.import` 等高风险 Action）。差别仅在调用者与 transport；不得维护「MCP 永久只读、脚本另有一套」的平行子集。分页、计划批准与错误契约在两端一致。
 - MCP 是本地 Agent 的结构化工具适配器（stdio）。不暴露任意脚本 `eval`、Shell、SQL、秘密配置或未声明的 Node 接口。复杂长尾仍可由 Agent 生成可审查脚本，在获得人类授权后于受控执行器中运行；这与「MCP 工具面 = 脚本 Action 面」不矛盾。
 - Automation Execution **可以没有当前资源库**（headless）：允许先执行 `library.create` 等不依赖已打开库的 Action，再把后续命令绑定到新建或显式指定的资源库。第一版不提供跨资源库事务；需要跨库时拆为独立 Execution 或在同一 Execution 内显式切换目标库。
+- Automation Execution 的“是否有当前资源库”是可变的会话上下文，不是 MCP Host 的运行模式。Desktop-attached 与 headless 只代表进程/界面拓扑，必须共享相同的建库、开库、显式换库和授权语义；同一 MCP 连接可以在本机确认后改变当前资源库，不得要求通过重启连接完成换库。Desktop 焦点变化不得静默改变 Agent 的目标库。
 - 每次脚本运行形成 `Automation Execution`，记录来源、代码哈希、可选目标资源库、能力授权、命令轨迹、结果摘要、取消/超时状态和日志关联 ID。日志必须脱敏，API Key 与秘密配置永不进入脚本、MCP 输出或执行记录。
 - Script/MCP 请求只能提交 `executionId`、命令 ID 与经过 Schema 校验的输入；资源库、来源和能力集合只能由 Main/Execution journal 按 `executionId` 解析。调用方提交的 envelope 不得成为授权或跨库读取依据。
 - Agent 与本地下载/粘贴的脚本均按不可信输入处理。能力授权由人类签发；**Agent/脚本不得自行提权**。高风险 Action（导入、建库、移动/重命名、回收站等）对 Console 用户与 MCP Agent **同等**要求计划摘要与本机批准 UI（类比操作系统管理员权限提示），不得因调用者是“用户自己”而静默跳过。
@@ -44,3 +45,12 @@
 2. `library.create`、`file.import` 等 Action 属于脚本/MCP；注册菜单/Hook/界面属于插件。
 3. 高风险操作对用户脚本与 Agent 均需本机批准弹窗；禁止自提权。
 4. 脚本按 headless 理解：无已打开资源库亦可建库。
+
+## 2026-08-09 修订摘要
+
+一次真实 Desktop-attached MCP 使用暴露出实现偏差：附着会话把首次聚焦资源库复制为不可变字段，`library.create` 却仍出现在工具列表中并在 Gateway 以 `AUTOMATION_INVALID_REQUEST` 拒绝。产品负责人确认不接受“换库必须重启连接”，因此明确：
+
+1. attached/headless 是 Host 拓扑，不是两套 Action 面或两套资源库生命周期。
+2. unbound/bound 是 Automation Execution 的当前上下文状态；状态可以在同一连接内显式转换。
+3. 换库必须经过 Main 持有的目标校验和本机授权，不能从 Desktop 焦点或 MCP 输入静默推断。
+4. 动态工具列表必须与当前上下文一致，不能暴露当前状态必然拒绝的工具。

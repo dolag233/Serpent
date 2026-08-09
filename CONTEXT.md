@@ -65,3 +65,17 @@ _Avoid_: Live selection, contribution context
 **Context key**:
 A canonical value available to contribution condition expressions. Expensive plugin-derived values are resolved asynchronously and published under the plugin namespace before a UI surface opens.
 _Avoid_: Synchronous plugin callback, arbitrary expression code
+
+## Automation
+
+**Automation execution**:
+The bounded authorization, resource-budget, audit, and cancellation lifecycle for one script run or one MCP connection. It may have no active library and does not end merely because its active library changes.
+_Avoid_: Library binding, MCP process, transport session
+
+**Active library context**:
+The one library targeted by subsequent library-scoped commands in an Automation Execution. It changes only through an explicit context transition and is independent of Desktop focus.
+_Avoid_: Current folder, focused library, permanent binding
+
+**Library authorization**:
+Local human consent for an Automation Execution to use a specific library with a stated capability set. Authorization permits a context transition but is not itself the active library context.
+_Avoid_: Active library, write-access flag, library binding
