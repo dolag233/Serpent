@@ -548,3 +548,119 @@ describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)',
     expect(worker.commands).toHaveLength(1);
   });
 });
+
+function writeResolver(extraCapabilities: string[]): AutomationExecutionResolver {
+  return {
+    resolve: (executionId) => executionId === 'mcp-execution'
+      ? {
+          executionId: 'mcp-execution',
+          source: 'mcp',
+          libraryId: 'library-1',
+          grantedCapabilities: [...readCapabilities, ...extraCapabilities],
+        }
+      : undefined,
+  };
+}
+
+describe('Serpent MCP jobs, idempotency and reconnect (Serpent-8b5b.4)', () => {
+  it('cancels media jobs by id and reports the cancelled count', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'media.jobs.cancelled',
+      libraryId: 'library-1',
+      cancelledCount: 2,
+    });
+    const gateway = createAutomationCommandGateway(worker, writeResolver(['job.manage']));
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_media_jobs_cancel',
+      arguments: { libraryId: 'library-1', jobIds: ['job-1', 'job-2'] },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(result).toMatchObject({ ok: true, commandId: 'media.jobs.cancel', result: { cancelledCount: 2 } });
+    expect(worker.commands).toEqual([expect.objectContaining({ type: 'media.cancel-jobs', libraryId: 'library-1', jobIds: ['job-1', 'job-2'] })]);
+  });
+
+  it('queries media job state from a fresh call after a reconnect without any session context', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'media.jobs.listed',
+      libraryId: 'library-1',
+      queued: 1,
+      running: 0,
+      succeeded: 3,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      jobs: [
+        { jobId: 'job-1', assetId: 'asset-1', revisionId: null, kind: 'generate_thumbnail', status: 'queued', progress: 0, attemptCount: 0, errorCode: null, errorDetail: null, createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z' },
+        { jobId: 'job-2', assetId: 'asset-2', revisionId: null, kind: 'generate_webm_proxy', status: 'succeeded', progress: 1, attemptCount: 1, errorCode: null, errorDetail: null, createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z' },
+      ],
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    // Two independent calls — the second stands in for a reconnect: no
+    // session context, no prior calls, the same worker state is reachable.
+    for (let i = 0; i < 2; i += 1) {
+      const result = await callSerpentMcpTool({
+        toolName: 'serpent_media_jobs_list',
+        arguments: { libraryId: 'library-1', limit: 10 },
+        context: mcpContext(readExposure),
+        exposure: readExposure,
+        gateway,
+      });
+      expect(result).toMatchObject({ ok: true, commandId: 'media.jobs.list' });
+      if (result.ok) {
+        expect(result.result).toMatchObject({ total: 2, queued: 1, succeeded: 3 });
+      }
+    }
+    expect(worker.commands).toHaveLength(2);
+  });
+
+  it('does not execute an import twice for a repeated idempotency key', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.completed',
+      completion: {
+        importedCount: 1,
+        fileCount: 1,
+        assetCount: 1,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [],
+      },
+    });
+    const gateway = createAutomationCommandGateway(worker, writeResolver(['file.import']), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => ({ planHash: '0'.repeat(64) }),
+      },
+    });
+    const input = {
+      libraryId: 'library-1',
+      sourceKind: 'files' as const,
+      sourcePaths: ['/tmp/one.png'],
+      idempotencyKey: 'import-8b5b4-1',
+    };
+    const first = await callSerpentMcpTool({
+      toolName: 'serpent_file_import',
+      arguments: input,
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    const second = await callSerpentMcpTool({
+      toolName: 'serpent_file_import',
+      arguments: input,
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      expect(second.result).toEqual(first.result);
+    }
+    // The worker saw the import only once; the second call reused the key.
+    expect(worker.commands).toHaveLength(1);
+  });
+});

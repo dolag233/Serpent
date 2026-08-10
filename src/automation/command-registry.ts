@@ -607,6 +607,9 @@ export const automationCommandInputSchemas = {
   }),
   'smart-collection.list': paginatedInputSchema({}),
   'media.jobs.list': paginatedInputSchema({}),
+  'media.jobs.cancel': z.strictObject({
+    jobIds: z.array(nonBlankString).min(1).max(10_000).optional(),
+  }),
   'ai.jobs.status': paginatedInputSchema({
     jobIds: z.array(nonBlankString).min(1).max(10_000).optional(),
   }),
@@ -896,6 +899,13 @@ const mediaJobsWorkerResultSchema = z.strictObject({
   jobs: z.array(mediaJobSchema),
 });
 
+const mediaJobsCancelWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('media.jobs.cancelled'),
+  libraryId: nonBlankString,
+  cancelledCount: z.number().int().nonnegative(),
+});
+
 const aiJobsWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('ai.jobs.status'),
@@ -1173,6 +1183,7 @@ export const automationCommandResultSchemas = {
   })),
   'smart-collection.list': paginatedResultSchema(smartCollectionSummarySchema),
   'media.jobs.list': mediaJobsAutomationResultSchema,
+  'media.jobs.cancel': z.strictObject({ cancelledCount: z.number().int().nonnegative() }),
   'ai.jobs.status': paginatedResultSchema(aiJobSchema),
   'ai.enqueue': z.strictObject({
     enqueued: z.number().int().nonnegative(),
@@ -2483,6 +2494,27 @@ export const automationCommandRegistry = [
         paused: parsed.data.paused,
         cancelled: parsed.data.cancelled,
       };
+    },
+  }),
+  readDescriptor({
+    commandId: 'media.jobs.cancel',
+    summary: '取消排队或运行中的媒体后台任务。',
+    inputSchema: automationCommandInputSchemas['media.jobs.cancel'],
+    resultSchema: automationCommandResultSchemas['media.jobs.cancel'],
+    workerResultSchema: mediaJobsCancelWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'job.read', 'job.manage'],
+    allowedSources: ['mcp'],
+    targetScope: 'library',
+    supportsBatch: true,
+    mcp: { public: true, toolName: 'serpent_media_jobs_cancel', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input) => ({
+      type: 'media.cancel-jobs',
+      libraryId,
+      ...(input.jobIds === undefined ? {} : { jobIds: input.jobIds }),
+    }),
+    projectResult: (result) => {
+      const parsed = mediaJobsCancelWorkerResultSchema.safeParse(result);
+      return parsed.success ? { cancelledCount: parsed.data.cancelledCount } : undefined;
     },
   }),
   readDescriptor({
