@@ -19,11 +19,6 @@ export interface SerpentMcpSessionBackend {
   getExecutionContext(): AutomationExecutionContext | undefined;
   getToolExposure(): SerpentMcpToolExposure;
   getPluginTools(): SerpentMcpPluginToolBridge | undefined;
-  callContextCommand?(
-    commandId: 'library.list-open' | 'library.open' | 'library.use',
-    input: unknown,
-    options?: { signal?: AbortSignal },
-  ): Promise<unknown>;
   subscribe?(listener: (event: SerpentMcpSessionEvent) => void): () => void;
 }
 
@@ -118,32 +113,6 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
         }
       };
     await reportProgress?.(0, 1, 'Serpent is running the tool.');
-    const contextCommand = request.params.name === 'serpent_library_list_open'
-      ? 'library.list-open'
-      : request.params.name === 'serpent_library_open'
-        ? 'library.open'
-        : request.params.name === 'serpent_library_show_in_desktop'
-          ? 'library.use'
-          : undefined;
-    if (contextCommand !== undefined) {
-      if (backend.callContextCommand === undefined) {
-        return { ...toolResultText({ ok: false, code: 'MCP_GATEWAY_FAILURE', message: 'Library context commands are unavailable.' }), isError: true };
-      }
-      try {
-        const result = await backend.callContextCommand(contextCommand, request.params.arguments ?? {}, {
-          signal: extra.signal,
-        });
-        await reportProgress?.(1, 1, 'Serpent completed the tool.');
-        return toolResultText({ ok: true, result });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Library context command failed.';
-        const code = typeof error === 'object' && error !== null && 'code' in error
-          && typeof (error as { code?: unknown }).code === 'string'
-          ? (error as { code: string }).code
-          : 'AUTOMATION_LIBRARY_SWITCH_DENIED';
-        return { ...toolResultText({ ok: false, code, message }), isError: true };
-      }
-    }
     const result = await callSerpentMcpTool({
       toolName: request.params.name,
       arguments: request.params.arguments ?? {},

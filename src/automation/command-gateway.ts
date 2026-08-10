@@ -233,7 +233,7 @@ export interface AutomationLibraryBindingHandler {
 
 export interface AutomationLibraryContextHandler {
   execute(input: {
-    commandId: 'library.list-open' | 'library.open' | 'library.use';
+    commandId: 'library.list-open' | 'library.open' | 'library.show-in-desktop';
     executionId: string;
     context: AutomationExecutionContext;
     commandInput: unknown;
@@ -618,7 +618,7 @@ export function createAutomationCommandGateway(
             : 'AUTOMATION_LIBRARY_CONTEXT_REQUIRED',
         ));
       }
-      if ((commandId === 'library.list-open' || commandId === 'library.open' || commandId === 'library.use')
+      if ((commandId === 'library.list-open' || commandId === 'library.open' || commandId === 'library.show-in-desktop')
         && libraryContextHandler !== undefined) {
         try {
           const result = await libraryContextHandler.execute({

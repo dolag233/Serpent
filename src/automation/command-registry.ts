@@ -451,7 +451,7 @@ export const automationCommandInputSchemas = {
   'library.open': z.strictObject({
     libraryId: z.string().uuid().optional(),
   }),
-  'library.use': z.strictObject({
+  'library.show-in-desktop': z.strictObject({
     libraryId: z.string().uuid(),
   }),
   'file.import': z.strictObject({
@@ -1009,7 +1009,7 @@ export const automationCommandResultSchemas = {
     displayName: nonBlankString,
     contextRevision: z.number().int().nonnegative(),
   }),
-  'library.use': z.strictObject({
+  'library.show-in-desktop': z.strictObject({
     libraryId: nonBlankString,
     displayName: nonBlankString,
     contextRevision: z.number().int().nonnegative(),
@@ -1349,10 +1349,10 @@ export const automationCommandRegistry = [
     projectResult: () => undefined,
   }),
   readDescriptor({
-    commandId: 'library.use',
+    commandId: 'library.show-in-desktop',
     summary: '请求 Desktop 显示指定资源库；不会改变 MCP 后续调用的目标。',
-    inputSchema: automationCommandInputSchemas['library.use'],
-    resultSchema: automationCommandResultSchemas['library.use'],
+    inputSchema: automationCommandInputSchemas['library.show-in-desktop'],
+    resultSchema: automationCommandResultSchemas['library.show-in-desktop'],
     workerResultSchema: z.never(),
     requiredCapabilities: [],
     allowedSources: lifecycleSources,
@@ -1361,7 +1361,7 @@ export const automationCommandRegistry = [
     mcp: { public: true, toolName: 'serpent_library_show_in_desktop', outputLimit: 1 },
     libraryContext: 'transition',
     toWorkerCommand: () => {
-      throw new Error('library.use is resolved by Desktop Main.');
+      throw new Error('library.show-in-desktop is resolved by Desktop Main.');
     },
     projectResult: () => undefined,
   }),

@@ -737,28 +737,6 @@ export class EmbeddedMcpServer {
         };
       },
       getPluginTools: (): SerpentMcpPluginToolBridge | undefined => this.#getPluginTools(),
-      callContextCommand: (
-        commandId: 'library.list-open' | 'library.open' | 'library.use',
-        input: unknown,
-        options?: { signal?: AbortSignal },
-      ) => {
-        return this.#gateway.execute({
-          apiVersion: AUTOMATION_API_VERSION,
-          commandId,
-          executionId: execution.executionId,
-          input,
-        }, options).then((result) => {
-          if (result.ok) return result.result;
-          // Serpent-8b5b.2: context commands are never critical; treat a
-          // challenge outcome defensively as a gateway failure.
-          const failure = 'challenge' in result && result.challenge !== undefined
-            ? { code: 'AUTOMATION_CHALLENGE_REQUIRED', message: 'Dangerous operation requires agent confirmation.' }
-            : (result as { error: { code: string; message: string } }).error;
-          const error = new EmbeddedMcpServerError('MCP_SERVER_AUTH_REQUIRED', failure.message);
-          Object.defineProperty(error, 'code', { value: failure.code, enumerable: true });
-          throw error;
-        });
-      },
       subscribe: (listener: (event: SerpentMcpSessionEvent) => void) => {
         const onContext = (): void => listener({ type: 'context-changed' });
         const unsubscribe = this.#journal.onContextChanged(onContext);

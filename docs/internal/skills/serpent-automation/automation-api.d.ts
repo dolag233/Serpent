@@ -9,7 +9,7 @@ declare global {
     | 'library.create'
     | 'library.list-open'
     | 'library.open'
-    | 'library.use'
+    | 'library.show-in-desktop'
     | 'file.import'
     | 'library.inspect'
     | 'library.change-sequence'

@@ -228,7 +228,7 @@ describe('Automation Command Registry', () => {
       if (command.commandId === 'library.create' || command.commandId === 'file.import') {
         expect(command.supportsIdempotencyKey).toBe(true);
       }
-      if (!['execution.status', 'library.list-open', 'library.open', 'library.use', 'ui.notify'].includes(command.commandId)) {
+      if (!['execution.status', 'library.list-open', 'library.open', 'library.show-in-desktop', 'ui.notify'].includes(command.commandId)) {
         expect(command.requiredCapabilities.length).toBeGreaterThan(0);
       }
       expect(command.mcp.toolName).toMatch(/^serpent_/u);

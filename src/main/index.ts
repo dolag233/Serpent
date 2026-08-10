@@ -4270,7 +4270,7 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
 }
 
 async function executeMcpLibraryContextCommand(input: {
-  commandId: 'library.list-open' | 'library.open' | 'library.use';
+  commandId: 'library.list-open' | 'library.open' | 'library.show-in-desktop';
   executionId: string;
   context: AutomationExecutionContext;
   commandInput: unknown;
@@ -4356,7 +4356,7 @@ async function executeMcpLibraryContextCommand(input: {
   if (selected.libraryId === '') {
     throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
   }
-  if (input.commandId === 'library.use') {
+  if (input.commandId === 'library.show-in-desktop') {
     publishLifecycle({
       type: 'library.opened',
       source: 'mcp',
