@@ -139,10 +139,13 @@ export class McpOperationChallengeStore {
     if (record.libraryId !== input.libraryId) return { status: 'tampered' };
     if (record.planHash !== input.planHash) return { status: 'tampered' };
     if (record.inputHash !== inputHashOf(input.canonicalInput)) return { status: 'tampered' };
-    if (record.contextRevision !== null
-      && input.contextRevision !== null
-      && record.contextRevision !== input.contextRevision) {
-      return { status: 'state-changed' };
+    if (record.contextRevision !== input.contextRevision) {
+      // Both null (stateless sessions without a revision) matches; any
+      // concrete mismatch — including one side null — means the library
+      // context moved since the challenge was issued.
+      if (record.contextRevision !== null || input.contextRevision !== null) {
+        return { status: 'state-changed' };
+      }
     }
     record.consumedAt = new Date(now).toISOString();
     return { status: 'ok' };

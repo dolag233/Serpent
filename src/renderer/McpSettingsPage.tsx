@@ -86,7 +86,7 @@ export function McpSettingsPage({
   useEffect(() => api?.onChanged((nextSnapshot) => {
     setSnapshot(nextSnapshot);
     setPortDraft(String(nextSnapshot.preferences.port));
-  }), [api]);
+  }) ?? undefined, [api]);
 
   async function request(input: Parameters<SerpentMcpSettingsApi["request"]>[0]): Promise<void> {
     if (!api) return;

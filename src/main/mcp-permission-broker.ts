@@ -90,15 +90,10 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
       return this.authorizeCritical(input);
     }
 
-    const requested = getAutomationCommandPermissionMetadata(descriptor).requestableCapabilities;
-    if (requested.length === 0) {
-      // Pure read (or nothing askable): always allowed.
-      return { allowed: true, scope: 'already-granted' };
-    }
-
-    if (mode === 'read-only') {
-      // A write outside the read-only profile: ask the desktop user when one
-      // is present; otherwise deny deterministically.
+    // Serpent-8b5b.8 review: the read-only gate applies to EVERY write,
+    // including allow-policy writes (e.g. library.create) that have no
+    // askable capabilities and would otherwise short-circuit below.
+    if (mode === 'read-only' && descriptor.impact !== 'read') {
       const targetCount = this.deriveTargets(input.commandInput).length;
       if (this.#confirmOutOfScope !== undefined) {
         const approved = await this.#confirmOutOfScope({
@@ -125,6 +120,7 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
       return { allowed: false, reason: 'denied' };
     }
 
+    const requested = getAutomationCommandPermissionMetadata(descriptor).requestableCapabilities;
     this.#audit?.info('mcp.permission.auto', 'MCP capability allowed without a human prompt.', {
       credentialId,
       commandId: descriptor.commandId,

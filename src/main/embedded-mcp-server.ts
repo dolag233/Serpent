@@ -108,7 +108,6 @@ type EmbeddedSession = {
   server: Server;
   transport: StreamableHTTPServerTransport;
   closing: boolean;
-  inFlightRequests: number;
   idleTimer?: ReturnType<typeof setTimeout>;
 };
 
@@ -214,7 +213,19 @@ function isPortUnavailable(error: unknown): boolean {
 
 function closeHttpServer(server: HttpServer): Promise<void> {
   return new Promise((resolve, reject) => {
-    server.close((error) => error === undefined ? resolve() : reject(error));
+    // Windows review: wedged/half-open keep-alive sockets can make server.close()
+    // wait forever; force-close connections after a grace period.
+    const timer = setTimeout(() => {
+      server.closeAllConnections();
+      resolve();
+    }, 5_000);
+    timer.unref();
+    server.closeIdleConnections();
+    server.close((error) => {
+      clearTimeout(timer);
+      if (error === undefined) resolve();
+      else reject(error);
+    });
   });
 }
 
@@ -542,8 +553,13 @@ export class EmbeddedMcpServer {
                 : code === 'MCP_SESSION_CLOSED'
                   ? 410
                   : 500;
+        // Serpent review: never leak raw internal error messages (they may
+        // contain disk paths); log the detail, send a fixed message.
+        this.#logger.error('mcp.server.request-failed', error, { code, statusCode });
         writeJson(response, statusCode, {
-          error: error instanceof Error ? error.message : 'MCP request failed.',
+          error: error instanceof EmbeddedMcpServerError
+            ? error.message
+            : 'The MCP request failed.',
           code,
         });
       });
@@ -611,7 +627,9 @@ export class EmbeddedMcpServer {
   }
 
   async #handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const port = this.#settings.preferences.port;
+    // Use the actually bound port while running (preferences may differ
+    // briefly during stop/port-change windows).
+    const port = this.#runtime.status === 'running' ? this.#runtime.port : this.#settings.preferences.port;
     if (!allowedHost(request.headers.host, port) || !allowedOrigin(request.headers.origin, port)) {
       writeJson(response, 403, {
         code: 'MCP_CLIENT_UNAUTHORIZED',
@@ -658,8 +676,13 @@ export class EmbeddedMcpServer {
       return;
     }
     if (session !== undefined) {
-      session.inFlightRequests += 1;
       this.#touchSession(session);
+      // Serpent review: the 'close' listener must stay attached until the
+      // response actually closes — for GET (SSE) the transport resolves at
+      // handoff while the stream stays open, so removing the listeners in a
+      // finally would let a dropped SSE client linger until the idle timeout.
+      // `once` self-removes; POST/DELETE responses close immediately with
+      // writableFinished set, so they never tear down the session.
       const closeOnDisconnect = (): void => {
         if (!response.writableFinished) void this.#closeSession(session.sessionId);
       };
@@ -674,9 +697,6 @@ export class EmbeddedMcpServer {
         }
         if (request.method === 'DELETE') await this.#closeSession(session.sessionId);
       } finally {
-        request.removeListener('aborted', closeOnDisconnect);
-        response.removeListener('close', closeOnDisconnect);
-        session.inFlightRequests = Math.max(0, session.inFlightRequests - 1);
         if (!session.closing) this.#touchSession(session);
       }
       return;
@@ -747,7 +767,6 @@ export class EmbeddedMcpServer {
       server: mcpServer,
       transport,
       closing: false,
-      inFlightRequests: 1,
     };
     transport.onclose = () => {
       void this.#closeSession(generatedSessionId);
@@ -781,7 +800,6 @@ export class EmbeddedMcpServer {
     } finally {
       request.removeListener('aborted', closeOnInitialDisconnect);
       response.removeListener('close', closeOnInitialDisconnect);
-      currentSession.inFlightRequests = Math.max(0, currentSession.inFlightRequests - 1);
       if (!currentSession.closing) this.#touchSession(currentSession);
     }
   }

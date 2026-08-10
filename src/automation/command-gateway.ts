@@ -367,6 +367,9 @@ export function createAutomationCommandGateway(
     permissionBroker,
   } = options;
   const inFlightCommandCounts = new Map<string, number>();
+  // Serpent-8b5b.4 review: cap idempotency retention so a chatty client with
+  // unique keys cannot grow the map without bound; oldest entries evict first.
+  const IDEMPOTENCY_ENTRY_LIMIT = 4096;
   const idempotencyEntries = new Map<string, {
     fingerprint: string;
     promise: Promise<AutomationGatewayResult>;
@@ -556,7 +559,15 @@ export function createAutomationCommandGateway(
           && context.source === 'mcp'
           && permissionBroker !== undefined
           && missingRequestableCapabilities.length > 0;
-        if (missingRequestableCapabilities.length > 0 && !deferPlanPermission) {
+        // Serpent-8b5b.8 review: a read-only credential must be gated on
+        // EVERY write, not only on askable capabilities — allow-policy write
+        // capabilities (e.g. library.create) are pre-granted by the session
+        // and would otherwise bypass the permission broker entirely.
+        const mustAuthorizeWrite = context.source === 'mcp'
+          && permissionBroker !== undefined
+          && descriptor.impact !== 'read'
+          && !deferPlanPermission;
+        if ((missingRequestableCapabilities.length > 0 && !deferPlanPermission) || mustAuthorizeWrite) {
           if (context.source !== 'mcp' || permissionBroker === undefined) {
             return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
           }
@@ -707,6 +718,10 @@ export function createAutomationCommandGateway(
           resolveEntry = resolve;
         });
         idempotencyEntry = { fingerprint, promise, resolve: resolveEntry };
+        if (idempotencyEntries.size >= IDEMPOTENCY_ENTRY_LIMIT) {
+          const oldestKey = idempotencyEntries.keys().next().value;
+          if (oldestKey !== undefined) idempotencyEntries.delete(oldestKey);
+        }
         idempotencyEntries.set(idempotencyEntryKey, idempotencyEntry);
       }
       if (libraryContext === 'active' && contextBarrier !== undefined) {

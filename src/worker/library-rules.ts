@@ -93,7 +93,15 @@ export function normalizeAbsolutePath(input: string): string {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid library path.');
   }
 
-  return path.normalize(input);
+  const normalized = path.normalize(input);
+  // Windows review: '\\?\' extended-length spellings are a different string
+  // for the same location and bypass root/identity checks; strip the prefix
+  // for identity and reject overly long library parents (paths beyond ~260
+  // chars fail later with ENOENT on Windows).
+  if (process.platform === 'win32' && /^\\\\?\\/u.test(normalized)) {
+    return normalized.slice(4);
+  }
+  return normalized;
 }
 
 export function targetLibraryPath(selectedParentPath: string, displayName: string): string {
@@ -109,6 +117,11 @@ export function targetLibraryPath(selectedParentPath: string, displayName: strin
   // Windows drive roots are covered even when they are writable.
   if (parentPath === path.parse(parentPath).root) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Library parent must not be a filesystem root.');
+  }
+  // Windows review: keep the full library path inside the classic 260-char
+  // limit so later filesystem operations do not fail with ENOENT/EINVAL.
+  if (Buffer.byteLength(targetPath, 'utf8') > 240) {
+    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Library path exceeds the supported length.');
   }
 
   return targetPath;
@@ -127,6 +140,12 @@ export function normalizeRelativeAssetPath(input: string): string {
     normalized.startsWith('../') ||
     normalized.startsWith('/')
   ) {
+    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid relative asset path.');
+  }
+  // Windows review: segments with characters illegal on NTFS would fail at
+  // copy time with EINVAL; reject them up front (defense in depth — real
+  // basenames cannot contain them on any supported platform).
+  if (/[:?*|"<>]/u.test(normalized)) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid relative asset path.');
   }
 

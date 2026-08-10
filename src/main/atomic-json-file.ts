@@ -10,7 +10,28 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
-const WINDOWS_REPLACE_ERROR_CODES = new Set(['EEXIST', 'EPERM', 'ENOTEMPTY']);
+const WINDOWS_REPLACE_ERROR_CODES = new Set(['EEXIST', 'EPERM', 'ENOTEMPTY', 'EACCES', 'EBUSY']);
+
+const TRANSIENT_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'EPERM', 'ENOTEMPTY']);
+
+/**
+ * Sync retry for transient filesystem locks (Windows Defender / indexer can
+ * hold a just-written file for a few milliseconds). No blocking sleep — the
+ * lock is typically released between syscalls.
+ */
+function withTransientRetry<T>(operation: () => T, attempts = 4): T {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      lastError = error;
+      if (!TRANSIENT_ERROR_CODES.has(String(errorCode(error)))) throw error;
+      if (attempt >= attempts) break;
+    }
+  }
+  throw lastError;
+}
 
 function errorCode(error: unknown): unknown {
   return typeof error === 'object' && error !== null && 'code' in error
@@ -61,38 +82,44 @@ export function writeAtomicJsonFile(filename: string, contents: string): void {
   mkdirSync(directory, { recursive: true });
   recoverAtomicJsonFile(filename);
 
-  try {
+  // Windows review: Defender/Search-indexer can briefly hold the temp or
+  // destination file (EACCES/EBUSY); retry the write and rename.
+  withTransientRetry(() => {
     writeFileSync(temporary, contents, {
       encoding: 'utf8',
       mode: 0o600,
       flush: true,
     });
-    try {
-      renameSync(temporary, filename);
-    } catch (error) {
-      if (!WINDOWS_REPLACE_ERROR_CODES.has(String(errorCode(error))) || !existsSync(filename)) {
-        throw error;
-      }
-      renameSync(filename, backup);
+  });
+  try {
+    withTransientRetry(() => {
       try {
         renameSync(temporary, filename);
-      } catch (replaceError) {
-        try {
-          renameSync(backup, filename);
-        } catch (restoreError) {
-          throw new Error('The JSON file could not be restored after replacement failed.', {
-            cause: restoreError,
-          });
+      } catch (error) {
+        if (!WINDOWS_REPLACE_ERROR_CODES.has(String(errorCode(error))) || !existsSync(filename)) {
+          throw error;
         }
-        throw replaceError;
+        renameSync(filename, backup);
+        try {
+          renameSync(temporary, filename);
+        } catch (replaceError) {
+          try {
+            renameSync(backup, filename);
+          } catch (restoreError) {
+            throw new Error('The JSON file could not be restored after replacement failed.', {
+              cause: restoreError,
+            });
+          }
+          throw replaceError;
+        }
+        try {
+          unlinkSync(backup);
+        } catch {
+          // The next read/write recovers the stale backup after a successful replace.
+        }
       }
-      try {
-        unlinkSync(backup);
-      } catch {
-        // The next read/write recovers the stale backup after a successful replace.
-      }
-    }
-    chmodSync(filename, 0o600);
+    });
+    withTransientRetry(() => chmodSync(filename, 0o600));
   } catch (error) {
     try {
       unlinkSync(temporary);

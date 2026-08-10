@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
@@ -64,6 +65,21 @@ function readOrCreatePepper(filename: string): Buffer {
     return existing;
   }
   chmodSync(filename, 0o600);
+  // Windows review: POSIX mode bits are ignored on NTFS — the pepper (the
+  // secret keying every token hash) must get an explicit ACL restricted to
+  // the current user, otherwise it inherits the userData directory ACL.
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('icacls', [
+        filename,
+        '/inheritance:r',
+        '/grant:r',
+        `${process.env.USERNAME ?? process.env.USER ?? 'Users'}:F`,
+      ], { stdio: 'ignore', windowsHide: true });
+    } catch {
+      // Best effort — the pepper file still inherits userData protection.
+    }
+  }
   return pepper;
 }
 
@@ -81,6 +97,7 @@ export class McpClientCredentialStore {
   readonly #filePath: string;
   readonly #pepper: Buffer;
   #records: CredentialRecord[] = [];
+  #persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(userDataPath: string) {
     this.#filePath = path.join(userDataPath, 'mcp-client-credentials.json');
@@ -93,6 +110,9 @@ export class McpClientCredentialStore {
   }
 
   issue(label = 'MCP client'): IssuedMcpClientCredential {
+    if (this.#records.length >= 256) {
+      throw new Error('The MCP client credential limit of 256 has been reached; revoke an old credential first.');
+    }
     const now = new Date().toISOString();
     const token = randomBytes(32).toString('base64url');
     const record: CredentialRecord = {
@@ -112,7 +132,15 @@ export class McpClientCredentialStore {
     const record = this.findByToken(token);
     if (record === undefined || record.revokedAt !== null) return undefined;
     record.lastUsedAt = new Date().toISOString();
-    this.persist();
+    // Serpent review: a chatty agent would otherwise rewrite the whole file
+    // on every request; coalesce lastUsedAt updates into one write.
+    if (this.#persistTimer === undefined) {
+      this.#persistTimer = setTimeout(() => {
+        this.#persistTimer = undefined;
+        this.persist();
+      }, 5_000);
+      this.#persistTimer.unref();
+    }
     return { ...record };
   }
 
@@ -162,6 +190,10 @@ export class McpClientCredentialStore {
   }
 
   private persist(): void {
+    if (this.#persistTimer !== undefined) {
+      clearTimeout(this.#persistTimer);
+      this.#persistTimer = undefined;
+    }
     writeAtomicJsonFile(
       this.#filePath,
       JSON.stringify({ version: 1, credentials: this.#records }, null, 2),
