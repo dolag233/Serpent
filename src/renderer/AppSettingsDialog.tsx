@@ -178,7 +178,7 @@ export function AppSettingsDialog({
                 onToggleShowAiBadges={onToggleShowAiBadges}
               />
             ) : null}
-            {!showingPluginSettings && activeCategory === "mcp" ? <McpSettingsPage api={mcpApi} /> : null}
+            {!showingPluginSettings && activeCategory === "mcp" ? <McpSettingsPage api={mcpApi} onOpenAppLog={onOpenAppLog} /> : null}
             {!showingPluginSettings && activeCategory === "plugins" ? (
               <PluginSettingsPage
                 api={pluginApi}
