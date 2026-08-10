@@ -36,8 +36,22 @@ describe('MCP permission contract', () => {
       expect(descriptor).toBeDefined();
       expect(tool.requiredCapabilities).toEqual(descriptor?.requiredCapabilities);
     }
+    // Serpent-8b5b.2: dangerous operations are exposed only through the
+    // two-phase challenge — exactly one critical tool exists, gated by the
+    // challenge confirmation fields, and no other critical operation leaks.
+    const dangerousTool = tools.find((tool) => tool.commandId === 'asset.delete-permanent');
+    expect(dangerousTool).toBeDefined();
+    expect(dangerousTool?.riskTier).toBe('critical');
+    expect(dangerousTool?.annotations.destructiveHint).toBe(true);
+    expect(dangerousTool?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        challengeId: expect.anything(),
+        acknowledged: expect.anything(),
+      }),
+    });
     for (const operation of automationCriticalOperationRegistry) {
-      expect(tools.some((tool) => tool.name === operation.operation)).toBe(false);
+      if ((operation.operation as string) === 'asset.delete-permanent') continue;
+      expect(tools.some((tool) => tool.commandId === operation.operation)).toBe(false);
     }
 
     expect(currentManual).not.toContain('skipApproval');

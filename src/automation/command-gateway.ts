@@ -25,6 +25,10 @@ import {
 import { PluginHookBlockedError } from '../plugins/plugin-hooks';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
+import {
+  stripMcpChallengeConfirmationFields,
+  type McpDangerousOperationChallenge,
+} from './mcp-challenge';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -83,7 +87,13 @@ export type AutomationGatewaySuccess<Id extends AutomationCommandId = Automation
   undoGroupId?: string;
 };
 
-export type AutomationGatewayResult = AutomationGatewaySuccess | AutomationGatewayFailure;
+/** Serpent-8b5b.2: a dangerous call answered with a two-phase challenge instead of executing. */
+export type AutomationGatewayChallengeOutcome = {
+  ok: false;
+  challenge: McpDangerousOperationChallenge;
+};
+
+export type AutomationGatewayResult = AutomationGatewaySuccess | AutomationGatewayFailure | AutomationGatewayChallengeOutcome;
 
 /**
  * Deliberately narrower than LibraryWorkerClient. This prevents Gateway and
@@ -185,8 +195,9 @@ export interface AutomationPermissionPlanSummary {
 }
 
 export type AutomationPermissionAuthorization =
-  | { allowed: true; scope: 'allow-once' | 'allow-session' | 'always-allow' | 'already-granted' }
-  | { allowed: false; reason: 'denied' | 'cancelled' };
+  | { allowed: true; scope: 'allow-once' | 'allow-session' | 'always-allow' | 'already-granted' | 'challenge-confirmed'; challengeConsumed?: boolean }
+  | { allowed: false; reason: 'denied' | 'cancelled' }
+  | { allowed: false; reason: 'challenge-required'; challenge: McpDangerousOperationChallenge };
 
 /** Main-owned policy and prompt boundary for MCP controlled capabilities. */
 export interface AutomationPermissionBroker {
@@ -397,7 +408,10 @@ export function createAutomationCommandGateway(
       const parsedEnvelope = automationCommandEnvelopeSchema.safeParse(envelope);
       if (!parsedEnvelope.success) return gatewayFailure('AUTOMATION_INVALID_REQUEST');
 
-      const { apiVersion, commandId, executionId, input } = parsedEnvelope.data;
+      const { apiVersion, commandId, executionId, input: envelopeInput } = parsedEnvelope.data;
+      // Serpent-8b5b.2: challenge confirmation fields are stripped after the
+      // broker consumes the challenge, before schema parsing / worker dispatch.
+      let input: unknown = envelopeInput;
       if (apiVersion !== AUTOMATION_API_VERSION) {
         return gatewayFailure('AUTOMATION_API_VERSION_UNSUPPORTED');
       }
@@ -462,13 +476,20 @@ export function createAutomationCommandGateway(
         contextLease?.release();
         contextLease = undefined;
       };
+      const outcomeFailureCode = (result: AutomationGatewayResult): string | undefined => {
+        if (result.ok) return undefined;
+        if ('challenge' in result && result.challenge !== undefined) {
+          return 'AUTOMATION_CHALLENGE_REQUIRED';
+        }
+        return (result as AutomationGatewayFailure).error.code;
+      };
       const recordOutcome = async (result: AutomationGatewayResult): Promise<AutomationGatewayResult> => {
         try {
           await auditSink?.recordCommandResult(
             executionId,
             descriptor.commandId,
             result.ok ? 'succeeded' : 'failed',
-            result.ok ? undefined : result.error.code,
+            outcomeFailureCode(result),
           );
         } catch (error) {
           // The command result is already complete and must remain stable even
@@ -479,7 +500,7 @@ export function createAutomationCommandGateway(
             executionId,
             commandId: descriptor.commandId,
             outcome: result.ok ? 'succeeded' : 'failed',
-            ...(result.ok ? {} : { failureCode: result.error.code }),
+            ...(result.ok ? {} : { failureCode: outcomeFailureCode(result) }),
           });
         }
         releaseContextLease();
@@ -491,27 +512,13 @@ export function createAutomationCommandGateway(
       if (!isSourceAllowed(context.source, descriptor.allowedSources)) {
         return recordOutcome(gatewayFailure('AUTOMATION_SOURCE_NOT_ALLOWED'));
       }
-      const missingCapabilities = descriptor.requiredCapabilities.filter(
-        (capability) => !context.grantedCapabilities.includes(capability),
-      );
-      const requestableCapabilities = getAutomationCommandPermissionMetadata(descriptor)
-        .requestableCapabilities;
-      const missingRequestableCapabilities = missingCapabilities.filter(
-        (capability) => requestableCapabilities.includes(capability),
-      );
-      const missingNonRequestableCapabilities = missingCapabilities.filter(
-        (capability) => !requestableCapabilities.includes(capability),
-      );
-      if (missingNonRequestableCapabilities.length > 0) {
-        return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
-      }
-      const deferPlanPermission = descriptor.approvalPolicy === 'plan'
-        && context.source === 'mcp'
-        && permissionBroker !== undefined
-        && missingRequestableCapabilities.length > 0;
-      if (missingRequestableCapabilities.length > 0 && !deferPlanPermission) {
+      const isCriticalOperation = descriptor.criticalOperation === true;
+      if (isCriticalOperation) {
+        // Serpent-8b5b.2: dangerous commands are MCP-only and gated entirely
+        // by the two-phase agent challenge — capabilities are never askable
+        // for them, and the first call must not dispatch anything.
         if (context.source !== 'mcp' || permissionBroker === undefined) {
-          return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+          return recordOutcome(gatewayFailure('AUTOMATION_SOURCE_NOT_ALLOWED'));
         }
         const authorization = await permissionBroker.authorize({
           context,
@@ -520,20 +527,61 @@ export function createAutomationCommandGateway(
           signal: context.abortSignal,
         });
         if (!authorization.allowed) {
+          if (authorization.reason === 'challenge-required') {
+            return recordOutcome({ ok: false, challenge: authorization.challenge });
+          }
           return recordOutcome(authorization.reason === 'cancelled'
             ? cancellationFailure(context.abortSignal ?? new AbortController().signal)
             : gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
         }
-        context = {
-          ...context,
-          grantedCapabilities: [...new Set([
-            ...context.grantedCapabilities,
-            ...missingRequestableCapabilities,
-          ])],
-        };
-      }
-      if (!deferPlanPermission && !hasCapabilities(context.grantedCapabilities, descriptor.requiredCapabilities)) {
-        return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+        if (authorization.challengeConsumed === true) {
+          input = stripMcpChallengeConfirmationFields(input);
+        }
+      } else {
+        const missingCapabilities = descriptor.requiredCapabilities.filter(
+          (capability) => !context.grantedCapabilities.includes(capability),
+        );
+        const requestableCapabilities = getAutomationCommandPermissionMetadata(descriptor)
+          .requestableCapabilities;
+        const missingRequestableCapabilities = missingCapabilities.filter(
+          (capability) => requestableCapabilities.includes(capability),
+        );
+        const missingNonRequestableCapabilities = missingCapabilities.filter(
+          (capability) => !requestableCapabilities.includes(capability),
+        );
+        if (missingNonRequestableCapabilities.length > 0) {
+          return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+        }
+        const deferPlanPermission = descriptor.approvalPolicy === 'plan'
+          && context.source === 'mcp'
+          && permissionBroker !== undefined
+          && missingRequestableCapabilities.length > 0;
+        if (missingRequestableCapabilities.length > 0 && !deferPlanPermission) {
+          if (context.source !== 'mcp' || permissionBroker === undefined) {
+            return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+          }
+          const authorization = await permissionBroker.authorize({
+            context,
+            descriptor,
+            commandInput: input,
+            signal: context.abortSignal,
+          });
+          if (!authorization.allowed) {
+            return recordOutcome(authorization.reason === 'cancelled'
+              ? cancellationFailure(context.abortSignal ?? new AbortController().signal)
+              : gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+          }
+          context = {
+            ...context,
+            grantedCapabilities: [...new Set([
+              ...context.grantedCapabilities,
+              ...missingRequestableCapabilities,
+            ])],
+          };
+        }
+        if (!deferPlanPermission && !hasCapabilities(context.grantedCapabilities, descriptor.requiredCapabilities)) {
+          return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+        }
       }
 
       let normalizedInput = input;
@@ -821,11 +869,11 @@ export function createAutomationCommandGateway(
                 ...(operationId === undefined ? { failureReason: 'Worker returned no recovery reference.' } : {}),
               });
             }
-            else {
+            else if (!('challenge' in result && result.challenge !== undefined)) {
               undoGroupHandler.complete({
                 undoGroupId,
                 status: 'failed',
-                failureReason: result.error.message,
+                failureReason: (result as AutomationGatewayFailure).error.message,
               });
             }
           }

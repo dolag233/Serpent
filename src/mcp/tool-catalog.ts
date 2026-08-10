@@ -103,6 +103,37 @@ function withExplicitLibraryTarget(
   };
 }
 
+/**
+ * Serpent-8b5b.2: dangerous tools accept the agent's second-phase confirmation
+ * on the SAME tool call. The gateway strips these fields after the challenge
+ * is consumed, so they never reach the worker schema.
+ */
+function withChallengeConfirmationFields(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = schema.properties !== null && typeof schema.properties === 'object'
+    ? { ...(schema.properties as Record<string, unknown>) }
+    : {};
+  properties.challengeId = {
+    type: 'string',
+    description: '第一次调用返回的 challengeId。第二次调用必须原样回传。',
+  };
+  properties.planHash = {
+    type: 'string',
+    nullable: true,
+    description: '风险报告中的 planHash；第二次调用必须原样回传。',
+  };
+  properties.acknowledged = {
+    type: 'boolean',
+    description: '第二次调用必须为 true；单独 true 而缺少精确 challengeId/planHash 不生效。',
+  };
+  properties.idempotencyKey = {
+    type: 'string',
+    description: '第二次调用的幂等键，用于审计与去重。',
+  };
+  return { ...schema, properties };
+}
+
 /** Builds the single MCP tools/list projection from the Automation Registry. */
 export function listSerpentMcpTools(
   exposure: SerpentMcpToolExposure,
@@ -126,6 +157,9 @@ export function listSerpentMcpTools(
     );
     const explicitLibraryTarget = libraryContextForDescriptor(descriptor) === 'active';
     const permission = getAutomationCommandPermissionMetadata(descriptor);
+    const baseInputSchema = explicitLibraryTarget
+      ? withExplicitLibraryTarget(inputSchema, true)
+      : inputSchema;
     tools.push({
       name,
       commandId: descriptor.commandId,
@@ -137,9 +171,9 @@ export function listSerpentMcpTools(
         `approval=${descriptor.approvalPolicy}`,
         `outputLimit=${descriptor.mcp.outputLimit}`,
       ].join(' · '),
-      inputSchema: explicitLibraryTarget
-        ? withExplicitLibraryTarget(inputSchema, true)
-        : inputSchema,
+      inputSchema: descriptor.criticalOperation === true
+        ? withChallengeConfirmationFields(baseInputSchema)
+        : baseInputSchema,
       outputLimit: descriptor.mcp.outputLimit,
       impact: descriptor.impact,
       approvalPolicy: descriptor.approvalPolicy,

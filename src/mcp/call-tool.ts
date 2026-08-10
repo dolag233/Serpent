@@ -202,10 +202,21 @@ export async function callSerpentMcpTool(
     },
   });
   if (!gatewayResult.ok) {
+    // Serpent-8b5b.2: a dangerous call answered with a two-phase challenge is
+    // a structured risk report for the agent, not an error.
+    if ('challenge' in gatewayResult && gatewayResult.challenge !== undefined) {
+      return {
+        ok: true,
+        toolName: tool.name,
+        commandId: tool.commandId,
+        result: gatewayResult.challenge,
+      };
+    }
+    const gatewayError = (gatewayResult as { error: { code: string; message?: string } }).error;
     return {
       ok: false,
-      code: gatewayResult.error.code,
-      message: gatewayResult.error.message ?? gatewayResult.error.code,
+      code: gatewayError.code as SerpentMcpCallToolFailure['code'],
+      message: gatewayError.message ?? gatewayError.code,
       gateway: gatewayResult,
     };
   }

@@ -119,6 +119,7 @@ import {
 import { EmbeddedMcpServer, EmbeddedMcpServerError } from './embedded-mcp-server';
 import { McpPermissionBroker } from './mcp-permission-broker';
 import { McpPermissionPolicyStore } from './mcp-permission-policy-store';
+import { McpOperationChallengeStore } from './mcp-operation-challenge';
 import { CriticalConfirmationWindowManager } from './critical-confirmation-window';
 import {
   mcpSettingsRequestSchema,
@@ -353,6 +354,7 @@ let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let embeddedMcpServer: EmbeddedMcpServer | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
 let mcpPermissionPolicyStore: McpPermissionPolicyStore | undefined;
+let mcpOperationChallengeStore: McpOperationChallengeStore | undefined;
 let mcpPermissionBroker: McpPermissionBroker | undefined;
 let criticalConfirmationWindowManager: CriticalConfirmationWindowManager | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
@@ -4515,8 +4517,10 @@ async function startApplication(): Promise<void> {
     logger,
   });
   mcpPermissionPolicyStore = new McpPermissionPolicyStore(app.getPath('userData'));
+  mcpOperationChallengeStore = new McpOperationChallengeStore();
   mcpPermissionBroker = new McpPermissionBroker({
     policyStore: mcpPermissionPolicyStore,
+    challengeStore: mcpOperationChallengeStore,
     audit: logger,
   });
   automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
@@ -4755,13 +4759,18 @@ async function startApplication(): Promise<void> {
       input: commandInput,
     });
     if (!result.ok) {
-      logger?.error('plugin.host-command.gateway-failed', new Error(result.error.message ?? result.error.code), {
+      // Serpent-8b5b.2: plugin host commands are never critical; a challenge
+      // outcome is mapped defensively to a gateway failure.
+      const failure = 'challenge' in result && result.challenge !== undefined
+        ? { code: 'AUTOMATION_CHALLENGE_REQUIRED', message: 'Dangerous operation requires agent confirmation.' }
+        : (result as { error: { code: string; message: string } }).error;
+      logger?.error('plugin.host-command.gateway-failed', new Error(failure.message ?? failure.code), {
         instanceId: context.instanceId,
         pluginId: context.pluginId,
         commandId,
-        errorCode: result.error.code,
+        errorCode: failure.code,
       });
-      throw new PluginHostCommandError(result.error.code, result.error.message ?? result.error.code);
+      throw new PluginHostCommandError(failure.code, failure.message ?? failure.code);
     }
     return result.result;
   };

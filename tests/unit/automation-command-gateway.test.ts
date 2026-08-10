@@ -140,7 +140,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(44);
+    expect(automationCommandRegistry).toHaveLength(45);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -186,6 +186,12 @@ describe('Automation Command Registry', () => {
       ].includes(command.commandId)) {
         expect(command.impact).toBe('file-write');
         expect(command.approvalPolicy).toBe('plan');
+        expect(command.mcp.public).toBe(false);
+      } else if (command.commandId === 'asset.delete-permanent') {
+        // Serpent-8b5b.2: the dangerous command is a write with no plan
+        // approval — the two-phase challenge replaces it.
+        expect(command.impact).toBe('destructive');
+        expect(command.approvalPolicy).toBe('none');
         expect(command.mcp.public).toBe(false);
       } else {
         expect(command.impact).toBe('read');
@@ -297,8 +303,12 @@ describe('Automation Command Registry', () => {
 
     for (const command of automationCommandRegistry) {
       const metadata = getAutomationCommandPermissionMetadata(command);
-      expect(metadata.riskTier).toBe(command.impact === 'read' ? 'safe' : 'controlled');
-      expect(metadata.requiresCriticalConfirmation).toBe(false);
+      // Serpent-8b5b.2: the single MCP-exposed dangerous command is critical.
+      const expectedTier = command.criticalOperation === true
+        ? 'critical'
+        : command.impact === 'read' ? 'safe' : 'controlled';
+      expect(metadata.riskTier).toBe(expectedTier);
+      expect(metadata.requiresCriticalConfirmation).toBe(command.criticalOperation === true);
       for (const capability of command.requiredCapabilities) {
         expect(getAutomationCapabilityDefinition(capability)).toBeDefined();
       }

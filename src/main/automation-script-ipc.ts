@@ -179,7 +179,16 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       input: commandInput,
     });
     if (!result.ok) {
-      const failure = automationScriptHostErrorSchema.safeParse(result.error);
+      // Serpent-8b5b.2: critical operations are MCP-only by registry
+      // declaration, so scripts cannot receive a challenge outcome; map any
+      // such outcome defensively instead of dereferencing a missing error.
+      let error: unknown;
+      if ('challenge' in result && result.challenge !== undefined) {
+        error = createPublicError('INTERNAL_ERROR');
+      } else {
+        error = (result as { error: unknown }).error;
+      }
+      const failure = automationScriptHostErrorSchema.safeParse(error);
       if (!failure.success) {
         options.logger()?.error('automation.script.invalid-command-error', failure.error, {
           executionId,

@@ -26,6 +26,7 @@ declare global {
     | 'asset.rating.set'
     | 'asset.paths.copy'
     | 'asset.trash'
+    | 'asset.delete-permanent'
     | 'asset.content.replace'
     | 'asset.content.stage'
     | 'asset.content.replace-batch'

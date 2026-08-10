@@ -33,6 +33,7 @@ import {
 } from '../shared/mcp';
 import { McpClientCredentialStore } from './mcp-client-credentials';
 import type { McpPermissionPolicyStore } from './mcp-permission-policy-store';
+import { McpPermissionBroker } from './mcp-permission-broker';
 import { McpSettingsStore } from './mcp-settings-store';
 
 const MAX_HTTP_BODY_BYTES = 1 * 1024 * 1024;
@@ -402,6 +403,8 @@ export class EmbeddedMcpServer {
     this.#publish();
     const sessions = [...this.#sessions.keys()];
     await Promise.all(sessions.map((sessionId) => this.#closeSession(sessionId)));
+    // Serpent-8b5b.2: a stopped server must not leave confirmable challenges.
+    (this.#permissionBroker as McpPermissionBroker | undefined)?.clearAllChallenges();
     const server = this.#httpServer;
     this.#httpServer = undefined;
     try {
@@ -455,6 +458,9 @@ export class EmbeddedMcpServer {
     this.#credentials.revoke(credentialId);
     this.#permissionPolicyStore?.clearCredential(credentialId);
     this.#permissionBroker?.clearCredential(credentialId);
+    // Serpent-8b5b.2: revoked credentials must not be able to confirm
+    // outstanding dangerous challenges.
+    (this.#permissionBroker as McpPermissionBroker | undefined)?.clearCredentialChallenges(credentialId);
     await Promise.all([...this.#sessions.values()]
       .filter((session) => session.credentialId === credentialId)
       .map((session) => this.#closeSession(session.sessionId)));
@@ -683,8 +689,13 @@ export class EmbeddedMcpServer {
           input,
         }, options).then((result) => {
           if (result.ok) return result.result;
-          const error = new EmbeddedMcpServerError('MCP_SERVER_AUTH_REQUIRED', result.error.message);
-          Object.defineProperty(error, 'code', { value: result.error.code, enumerable: true });
+          // Serpent-8b5b.2: context commands are never critical; treat a
+          // challenge outcome defensively as a gateway failure.
+          const failure = 'challenge' in result && result.challenge !== undefined
+            ? { code: 'AUTOMATION_CHALLENGE_REQUIRED', message: 'Dangerous operation requires agent confirmation.' }
+            : (result as { error: { code: string; message: string } }).error;
+          const error = new EmbeddedMcpServerError('MCP_SERVER_AUTH_REQUIRED', failure.message);
+          Object.defineProperty(error, 'code', { value: failure.code, enumerable: true });
           throw error;
         });
       },

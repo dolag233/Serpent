@@ -63,7 +63,7 @@ Windows 路径必须按 Windows 语义传递：盘符、反斜杠、UNC、长路
 
 Serpent 不再提供“每次询问”“通过一次”“本会话总是通过”或隐藏工具来模拟权限管理。这样才能让美术、设计师的批量 Agent 任务保持可用。
 
-真正不可恢复的低频操作不作为普通 MCP 工具暴露；若未来暴露危险工具，Auto 必须先返回风险报告和一次性 challenge，Agent 以同一工具提交绑定的 `challengeId`、`planHash` 和 `acknowledged: true`，不得用单独布尔值绕过确认。Full Access 可跳过这一步，但不能跳过领域边界和 Worker 校验。
+危险工具（当前为 `serpent_asset_delete_permanent`）采用 Agent 二阶段确认：第一次调用绝不执行，只返回绑定本次精确调用的风险报告（challengeId、影响对象、数量、可恢复性、过期时间）；Agent 评估后以**同一工具**再次调用并回传 `challengeId`、`planHash` 和 `acknowledged: true`，只有完全匹配且未过期、未消费过的 challenge 才会执行，且只执行一次。篡改参数、跨客户端复用、重放、状态变化都会拒绝并签发新风险报告。Full Access 不跳过该流程，也不能跳过领域边界和 Worker 校验。
 
 ## Desktop 信息投影
 

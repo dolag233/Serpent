@@ -507,6 +507,9 @@ export const automationCommandInputSchemas = {
   'asset.trash': z.strictObject({
     assetIds: z.array(nonBlankString).min(1).max(10_000),
   }),
+  'asset.delete-permanent': z.strictObject({
+    assetIds: z.array(nonBlankString).min(1).max(10_000),
+  }),
   'asset.content.replace': z.strictObject({
     assetId: nonBlankString,
     dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
@@ -750,6 +753,14 @@ const assetTrashWorkerResultSchema = z.strictObject({
   type: z.literal('asset.trashed'),
   trashedCount: z.number().int().nonnegative(),
   operationId: nonBlankString,
+});
+
+const assetDeletePermanentWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('asset.deleted-permanent'),
+  deletedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  skippedReasons: z.array(nonBlankString),
 });
 
 const assetContentReplaceWorkerResultSchema = z.strictObject({
@@ -1057,6 +1068,11 @@ export const automationCommandResultSchemas = {
     trashedCount: z.number().int().nonnegative(),
     operationId: nonBlankString,
   }),
+  'asset.delete-permanent': z.strictObject({
+    deletedCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+    skippedReasons: z.array(nonBlankString),
+  }),
   'asset.content.replace': z.strictObject({
     assetId: nonBlankString,
     revisionId: nonBlankString,
@@ -1204,6 +1220,8 @@ export interface AutomationCommandDescriptor<Id extends AutomationCommandId = Au
   supportsUndo: boolean;
   atomicity: AutomationAtomicity;
   approvalPolicy: AutomationApprovalPolicy;
+  /** Serpent-8b5b.2: the command is dangerous — MCP calls require the two-phase agent challenge. */
+  criticalOperation?: boolean;
   mcp: AutomationMcpMetadata;
   libraryContext?: AutomationLibraryContext;
   hostCapabilities?: readonly ('desktop-ui')[];
@@ -1561,6 +1579,48 @@ export const automationCommandRegistry = [
       const parsed = assetTrashWorkerResultSchema.safeParse(result);
       return parsed.success
         ? { trashedCount: parsed.data.trashedCount, operationId: parsed.data.operationId }
+        : undefined;
+    },
+  },
+  {
+    // Serpent-8b5b.2: the first MCP-exposed dangerous command. It is MCP-only
+    // (Desktop uses its own red-confirmation flow), requires explicit target
+    // IDs, and every call is gated by the two-phase agent challenge — the
+    // first call only returns a risk report bound to the exact call.
+    commandId: 'asset.delete-permanent',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '从应用回收站永久删除所选资产；文件不进入磁盘回收站，不可恢复。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['asset.delete-permanent'],
+    resultSchema: automationCommandResultSchemas['asset.delete-permanent'],
+    workerResultSchema: assetDeletePermanentWorkerResultSchema,
+    requiredCapabilities: ['library.read', 'asset.read', 'trash.write'],
+    allowedSources: ['mcp'],
+    impact: 'destructive',
+    targetScope: 'asset-set',
+    supportsBatch: true,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    atomicity: 'best-effort',
+    approvalPolicy: 'none',
+    criticalOperation: true,
+    mcp: { public: false, toolName: 'serpent_asset_delete_permanent', outputLimit: 1 },
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.delete-permanent'>) => ({
+      type: 'asset.delete-permanent',
+      libraryId,
+      assetIds: input.assetIds,
+    }),
+    projectResult: (result) => {
+      const parsed = assetDeletePermanentWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? {
+            deletedCount: parsed.data.deletedCount,
+            skippedCount: parsed.data.skippedCount,
+            skippedReasons: parsed.data.skippedReasons,
+          }
         : undefined;
     },
   },
@@ -2482,7 +2542,7 @@ export const automationCommandRegistry = [
         : undefined;
     },
   },
-] as const satisfies readonly AutomationCommandDescriptor[];
+] satisfies readonly AutomationCommandDescriptor[];
 
 const descriptorsById = new Map<string, AutomationCommandDescriptor>(
   automationCommandRegistry.map((descriptor) => [descriptor.commandId, descriptor]),
@@ -2512,15 +2572,21 @@ export interface AutomationCommandPermissionMetadata {
 export function getAutomationCommandPermissionMetadata(
   descriptor: AutomationCommandDescriptor,
 ): AutomationCommandPermissionMetadata {
-  const riskTier: AutomationRiskTier = descriptor.impact === 'read' ? 'safe' : 'controlled';
-  const requestableCapabilities = descriptor.requiredCapabilities.filter((capability) => {
-    const definition = getAutomationCapabilityDefinition(capability);
-    return definition?.defaultPolicy === 'ask';
-  });
+  // Serpent-8b5b.2: critical commands are gated by the two-phase agent
+  // challenge instead of requestable capabilities or runtime prompts.
+  const riskTier: AutomationRiskTier = descriptor.criticalOperation === true
+    ? 'critical'
+    : descriptor.impact === 'read' ? 'safe' : 'controlled';
+  const requestableCapabilities = riskTier === 'critical'
+    ? []
+    : descriptor.requiredCapabilities.filter((capability) => {
+      const definition = getAutomationCapabilityDefinition(capability);
+      return definition?.defaultPolicy === 'ask';
+    });
   return {
     riskTier,
     requiresPlan: descriptor.approvalPolicy === 'plan',
-    requiresCriticalConfirmation: false,
+    requiresCriticalConfirmation: descriptor.criticalOperation === true,
     requestableCapabilities,
     canPersist: riskTier === 'controlled'
       && requestableCapabilities.every((capability) => getAutomationCapabilityDefinition(capability)?.canPersist === true),

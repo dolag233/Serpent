@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -18,6 +18,26 @@ import {
   readExposure,
   writeExposure,
 } from './serpent-mcp-test-fixtures';
+import { McpPermissionBroker } from '../../src/main/mcp-permission-broker';
+import { McpPermissionPolicyStore } from '../../src/main/mcp-permission-policy-store';
+import { McpOperationChallengeStore } from '../../src/main/mcp-operation-challenge';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const challengeRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of challengeRoots.splice(0)) rmSync(root, { force: true, recursive: true });
+});
+function createTestPermissionBroker(): McpPermissionBroker {
+  const root = mkdtempSync(path.join(tmpdir(), 'serpent-mcp-challenge-'));
+  challengeRoots.push(root);
+  return new McpPermissionBroker({
+    policyStore: new McpPermissionPolicyStore(root),
+    challengeStore: new McpOperationChallengeStore(),
+  });
+}
 
 function backend(
   exposure: SerpentMcpToolExposure = readExposure,
@@ -350,5 +370,111 @@ describe('Serpent MCP tools/call → Gateway', () => {
     expect(called.isError).not.toBe(true);
     await writeClient.close();
     await writeServer.close();
+  });
+});
+
+describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
+  function dangerousGateway(worker: RecordingWorker) {
+    return createAutomationCommandGateway(worker, resolver(), {
+      permissionBroker: createTestPermissionBroker(),
+    });
+  }
+
+  it('issues a risk report on the first call and executes only the exact second call', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.deleted-permanent',
+      deletedCount: 1,
+      skippedCount: 0,
+      skippedReasons: [],
+    });
+    const gateway = dangerousGateway(worker);
+    const input = {
+      libraryId: 'library-1',
+      assetIds: ['00000000-0000-4000-8000-000000000010'],
+    };
+    const first = await callSerpentMcpTool({
+      toolName: 'serpent_asset_delete_permanent',
+      arguments: input,
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(first).toMatchObject({
+      ok: true,
+      commandId: 'asset.delete-permanent',
+      result: { status: 'confirmation-required', severity: 'dangerous' },
+    });
+    // Nothing executed on the first call.
+    expect(worker.commands).toHaveLength(0);
+    if (!first.ok) throw new Error('expected challenge result');
+    const challenge = first.result as { challengeId: string; planHash: string | null };
+
+    const confirmed = await callSerpentMcpTool({
+      toolName: 'serpent_asset_delete_permanent',
+      arguments: {
+        ...input,
+        challengeId: challenge.challengeId,
+        planHash: challenge.planHash,
+        acknowledged: true,
+        idempotencyKey: 'delete-permanent-1',
+      },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(confirmed).toMatchObject({
+      ok: true,
+      commandId: 'asset.delete-permanent',
+      result: { deletedCount: 1 },
+    });
+    expect(worker.commands).toHaveLength(1);
+    expect(worker.commands[0]).toMatchObject({
+      type: 'asset.delete-permanent',
+      libraryId: 'library-1',
+      assetIds: ['00000000-0000-4000-8000-000000000010'],
+    });
+    // The worker command must not carry challenge confirmation fields.
+    expect(JSON.stringify(worker.commands[0])).not.toContain('challengeId');
+    expect(JSON.stringify(worker.commands[0])).not.toContain('acknowledged');
+  });
+
+  it('rejects a stale or forged second call and still executes nothing', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.deleted-permanent',
+      deletedCount: 1,
+      skippedCount: 0,
+      skippedReasons: [],
+    });
+    const gateway = dangerousGateway(worker);
+    const input = {
+      libraryId: 'library-1',
+      assetIds: ['00000000-0000-4000-8000-000000000010'],
+    };
+    const first = await callSerpentMcpTool({
+      toolName: 'serpent_asset_delete_permanent',
+      arguments: input,
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    if (!first.ok) throw new Error('expected challenge result');
+
+    const forged = await callSerpentMcpTool({
+      toolName: 'serpent_asset_delete_permanent',
+      arguments: {
+        ...input,
+        challengeId: '00000000-0000-4000-8000-0000000000ff',
+        planHash: null,
+        acknowledged: true,
+        idempotencyKey: 'delete-permanent-forged',
+      },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(forged).toMatchObject({ ok: true, result: { status: 'confirmation-required' } });
+    expect(worker.commands).toHaveLength(0);
   });
 });
