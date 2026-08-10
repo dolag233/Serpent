@@ -207,6 +207,40 @@ export function McpSettingsPage({ api }: { api?: SerpentMcpSettingsApi }): React
 
       <SettingsCard>
         <div className="app-settings-row-copy">
+          <strong>{t("settings.mcpRecentActivity")}</strong>
+          <span>{t("settings.mcpRecentActivityHint")}</span>
+        </div>
+        {snapshot?.recentActivity.length ? (
+          <ul className="app-settings-help-list">
+            {snapshot.recentActivity.map((entry) => {
+              const label = snapshot.credentials.find(
+                (credential) => credential.credentialId === entry.credentialId,
+              )?.label;
+              const outcome = entry.failedCommandCount > 0
+                ? t("settings.mcpActivityFailed")
+                : t("settings.mcpActivitySucceeded");
+              return (
+                <li key={entry.executionId}>
+                  <span>
+                    {entry.clientName ?? label ?? entry.credentialId.slice(0, 8)}
+                    {" · "}
+                    {new Date(entry.createdAt).toLocaleString()}
+                    {" · "}
+                    {entry.commandCount} {t("settings.mcpActivityCommands")}
+                    {" · "}
+                    {entry.lastCommandId ?? "-"}
+                    {" · "}
+                    {outcome}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="app-settings-help-note">{t("settings.mcpRecentActivityEmpty")}</p>}
+      </SettingsCard>
+
+      <SettingsCard>
+        <div className="app-settings-row-copy">
           <strong>{t("settings.mcpPermissionsTitle")}</strong>
           <span>{t("settings.mcpPermissionsHint")}</span>
         </div>
@@ -222,23 +256,44 @@ export function McpSettingsPage({ api }: { api?: SerpentMcpSettingsApi }): React
                   <strong>{credential.label}</strong>
                   <span>{t("settings.mcpPermissionClientHint")}</span>
                 </div>
-                <select
-                  aria-label={`${credential.label} ${t("settings.mcpAccessMode")}`}
-                  className="settings-select"
-                  disabled={busy}
-                  onChange={(event) => {
-                    void request({ type: "set-access-mode", credentialId: credential.credentialId, mode: event.target.value as "auto" | "full-access" });
-                  }}
-                  value={permissionState?.mode ?? "auto"}
-                >
-                  <option value="auto">{t("settings.mcpAccessModeAuto")}</option>
-                  <option value="full-access">{t("settings.mcpAccessModeFull")}</option>
-                </select>
+                <div className="app-settings-option-group">
+                  <select
+                    aria-label={`${credential.label} ${t("settings.mcpAccessMode")}`}
+                    className="settings-select"
+                    disabled={busy}
+                    onChange={(event) => {
+                      void request({ type: "set-access-mode", credentialId: credential.credentialId, mode: event.target.value as "read-only" | "read-write" | "full-access" });
+                    }}
+                    value={permissionState?.mode ?? "read-write"}
+                  >
+                    <option value="read-only">{t("settings.mcpAccessModeReadOnly")}</option>
+                    <option value="read-write">{t("settings.mcpAccessModeReadWrite")}</option>
+                    <option value="full-access">{t("settings.mcpAccessModeFull")}</option>
+                  </select>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void request({ type: "duplicate-credential", credentialId: credential.credentialId, format })}
+                    type="button"
+                  >
+                    {t("settings.mcpCopyCredential")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void request({ type: "revoke-credential", credentialId: credential.credentialId })}
+                    type="button"
+                  >
+                    {t("settings.mcpDeleteCredential")}
+                  </button>
+                </div>
               </div>
               <p className="app-settings-help-note">
                 {permissionState?.mode === "full-access"
                   ? t("settings.mcpAccessModeFullHint")
-                  : t("settings.mcpAccessModeAutoHint")}
+                  : permissionState?.mode === "read-only"
+                    ? t("settings.mcpAccessModeReadOnlyHint")
+                    : t("settings.mcpAccessModeReadWriteHint")}
               </p>
             </div>
           );

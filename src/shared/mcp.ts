@@ -5,9 +5,21 @@ export const MCP_MIN_PORT = 1_024;
 export const MCP_MAX_PORT = 65_535;
 export const MCP_ENDPOINT_PATH = '/mcp' as const;
 
-/** Credential-level mode. It never depends on an MCP transport session. */
-export const mcpAccessModeSchema = z.enum(['auto', 'full-access']);
+/**
+ * Credential-level permission profile. It never depends on an MCP transport
+ * session.
+ * - 'read-only':    reads only; any write needs a desktop confirmation.
+ * - 'read-write':   ordinary reads and recoverable writes run directly;
+ *                   dangerous operations still need the two-phase challenge.
+ * - 'full-access':  everything runs directly, including dangerous operations;
+ *                   the user accepts the responsibility when enabling it.
+ */
+export const mcpAccessModeSchema = z.enum(['read-only', 'read-write', 'full-access']);
 export type McpAccessMode = z.infer<typeof mcpAccessModeSchema>;
+
+/** Legacy 'auto' values read from pre-profile policy files map to 'read-write'. */
+export const mcpLegacyAccessModeSchema = z.enum(['auto', 'read-only', 'read-write', 'full-access']);
+export type McpLegacyAccessMode = z.infer<typeof mcpLegacyAccessModeSchema>;
 
 export const mcpCredentialPermissionSchema = z.strictObject({
   credentialId: z.string().uuid(),
@@ -55,11 +67,27 @@ export const mcpClientCredentialSummarySchema = z.strictObject({
 });
 export type McpClientCredentialSummary = z.infer<typeof mcpClientCredentialSummarySchema>;
 
+/** One recent MCP execution, projected for the settings activity log. */
+export const mcpRecentActivityEntrySchema = z.strictObject({
+  executionId: z.string().min(1).max(255),
+  credentialId: z.string().uuid(),
+  clientName: z.string().max(128).optional(),
+  commandCount: z.number().int().nonnegative(),
+  succeededCommandCount: z.number().int().nonnegative(),
+  failedCommandCount: z.number().int().nonnegative(),
+  lastCommandId: z.string().max(255).nullable(),
+  failureCode: z.string().max(128).nullable(),
+  createdAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+});
+export type McpRecentActivityEntry = z.infer<typeof mcpRecentActivityEntrySchema>;
+
 export const mcpSettingsSnapshotSchema = z.strictObject({
   preferences: mcpServerPreferencesSchema,
   runtime: mcpRuntimeStateSchema,
   credentials: z.array(mcpClientCredentialSummarySchema).max(256),
   credentialPermissions: z.array(mcpCredentialPermissionSchema).max(256),
+  recentActivity: z.array(mcpRecentActivityEntrySchema).max(16),
 });
 export type McpSettingsSnapshot = z.infer<typeof mcpSettingsSnapshotSchema>;
 
@@ -91,6 +119,11 @@ export const mcpSettingsRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('stop') }),
   z.strictObject({ type: z.literal('enable'), enabled: z.boolean() }),
   z.strictObject({ type: z.literal('create-client-config'), input: mcpCreateClientConfigInputSchema }),
+  z.strictObject({
+    type: z.literal('duplicate-credential'),
+    credentialId: z.string().uuid(),
+    format: mcpConfigFormatSchema,
+  }),
   z.strictObject({ type: z.literal('revoke-credential'), credentialId: z.string().uuid() }),
 ]);
 export type McpSettingsRequest = z.infer<typeof mcpSettingsRequestSchema>;

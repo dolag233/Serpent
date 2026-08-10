@@ -313,6 +313,22 @@ export class EmbeddedMcpServer {
         activeSessionCount: this.#sessions.size,
       }
       : this.#runtime;
+    const recentActivity = this.#journal.list()
+      .filter((record) => record.source === 'mcp' && record.clientCredentialId !== undefined)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 8)
+      .map((record) => ({
+        executionId: record.executionId,
+        credentialId: record.clientCredentialId!,
+        ...(record.clientName === undefined ? {} : { clientName: record.clientName }),
+        commandCount: record.commandCount,
+        succeededCommandCount: record.succeededCommandCount,
+        failedCommandCount: record.failedCommandCount,
+        lastCommandId: record.lastCommandId,
+        failureCode: record.failureCode,
+        createdAt: record.createdAt,
+        finishedAt: record.finishedAt,
+      }));
     return {
       preferences: this.#settings.preferences,
       runtime,
@@ -320,6 +336,7 @@ export class EmbeddedMcpServer {
       credentialPermissions: this.#permissionPolicyStore?.snapshots(
         this.#credentials.list().map((credential) => credential.credentialId),
       ) ?? [],
+      recentActivity,
     };
   }
 
@@ -438,9 +455,46 @@ export class EmbeddedMcpServer {
       throw new EmbeddedMcpServerError('MCP_SERVER_NOT_RUNNING', 'The MCP server is not running.');
     }
     const credential = this.#credentials.issue(label);
-    const endpoint = this.#runtime.endpoint;
-    const authorization = `Bearer ${credential.token}`;
-    const configText = format === 'generic-json'
+    const configText = this.#buildConfigText(format, this.#runtime.endpoint, credential.token);
+    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText };
+  }
+
+  /**
+   * Clone an existing credential: a NEW token with the same label and
+   * permission profile, whose fresh config is returned for copying. Tokens
+   * are stored hashed, so the original config can never be re-shown; a
+   * duplicate is the honest "copy this credential" affordance.
+   */
+  public async duplicateCredential(
+    credentialId: string,
+    format: McpConfigFormat,
+  ): Promise<{ credentialId: string; snapshot: McpSettingsSnapshot; configText: string }> {
+    if (this.#runtime.status !== 'running') {
+      if (!this.#settings.preferences.enabled) {
+        throw new EmbeddedMcpServerError('MCP_SERVER_NOT_ENABLED', 'Enable and start the MCP server before copying a client configuration.');
+      }
+      await this.start();
+    }
+    if (this.#runtime.status !== 'running') {
+      throw new EmbeddedMcpServerError('MCP_SERVER_NOT_RUNNING', 'The MCP server is not running.');
+    }
+    const existing = this.#credentials.list().find(
+      (candidate) => candidate.credentialId === credentialId,
+    );
+    if (existing === undefined || existing.revokedAt !== null) {
+      throw new EmbeddedMcpServerError('MCP_CLIENT_UNAUTHORIZED', 'The MCP client credential is unavailable.');
+    }
+    const mode = this.#permissionPolicyStore?.getMode(credentialId) ?? 'read-write';
+    const label = `${existing.label} 副本`;
+    const credential = this.#credentials.issue(label);
+    this.#permissionPolicyStore?.setMode(credential.credentialId, mode);
+    const configText = this.#buildConfigText(format, this.#runtime.endpoint, credential.token);
+    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText };
+  }
+
+  #buildConfigText(format: McpConfigFormat, endpoint: string, token: string): string {
+    const authorization = `Bearer ${token}`;
+    return format === 'generic-json'
       ? JSON.stringify({
         mcpServers: {
           serpent: {
@@ -451,7 +505,6 @@ export class EmbeddedMcpServer {
         },
       }, null, 2)
       : `${endpoint}\nAuthorization: ${authorization}`;
-    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText };
   }
 
   public async revokeCredential(credentialId: string): Promise<McpSettingsSnapshot> {
@@ -672,7 +725,7 @@ export class EmbeddedMcpServer {
       getExecutionContext: (): AutomationExecutionContext | undefined => this.#journal.resolve(execution.executionId),
       getToolExposure: () => {
         return {
-          accessMode: this.#permissionPolicyStore?.getMode(credential.credentialId) ?? 'auto',
+          accessMode: this.#permissionPolicyStore?.getMode(credential.credentialId) ?? 'read-write',
           hostCapabilities: ['desktop-ui'] as const,
         };
       },

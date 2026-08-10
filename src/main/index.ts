@@ -4522,6 +4522,26 @@ async function startApplication(): Promise<void> {
     policyStore: mcpPermissionPolicyStore,
     challengeStore: mcpOperationChallengeStore,
     audit: logger,
+    confirmOutOfScope: async (input) => {
+      const manager = criticalConfirmationWindowManager;
+      if (manager === undefined) return false;
+      const english = appLocale === 'en';
+      const client = input.clientName?.trim() || (english ? 'An MCP client' : '某个 MCP 客户端');
+      return manager.request({
+        title: english ? 'MCP permission confirmation' : 'MCP 权限确认',
+        heading: english
+          ? 'Allow this MCP client to write?'
+          : '允许这个 MCP 客户端写入？',
+        message: english
+          ? `${client} wants to: ${input.summary}`
+          : `${client} 请求：${input.summary}`,
+        detail: english
+          ? `Credential ${input.credentialId.slice(0, 8)} is read-only. This operation affects ${input.targetCount} target(s).`
+          : `凭据 ${input.credentialId.slice(0, 8)} 是只读权限。此操作涉及 ${input.targetCount} 个目标。`,
+        cancelLabel: english ? 'Deny' : '拒绝',
+        confirmLabel: english ? 'Allow once' : '允许一次',
+      });
+    },
   });
   automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
     path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
@@ -5307,6 +5327,16 @@ async function startApplication(): Promise<void> {
       if (request.type === 'enable') return response({ ok: true, snapshot: await server.setEnabled(request.enabled) });
       if (request.type === 'revoke-credential') {
         return response({ ok: true, snapshot: await server.revokeCredential(request.credentialId) });
+      }
+      if (request.type === 'duplicate-credential') {
+        const duplicated = await server.duplicateCredential(request.credentialId, request.format);
+        clipboard.writeText(duplicated.configText);
+        return response({
+          ok: true,
+          copied: true,
+          credentialId: duplicated.credentialId,
+          snapshot: duplicated.snapshot,
+        });
       }
       const config = await server.createClientConfig(request.input.format, request.input.label);
       clipboard.writeText(config.configText);

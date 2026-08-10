@@ -8,7 +8,7 @@ Serpent MCP 由 Desktop Main 进程内嵌提供，仅监听 `127.0.0.1` 的 Stre
 2. 可选打开“自动启动”。
 3. 点击“启动 MCP 服务”。
 4. 点击“复制 MCP 配置”，粘贴到目标客户端。
-5. 新 credential 默认 Auto；可信客户端可在设置里确认一次红色警告后切到 Full Access。
+5. 新 credential 默认读写（read-write）；可切到只读（read-only，写入需桌面确认）或完全（full-access，一切直接执行，启用时有红色警告）。
 
 不需要编辑 JSON、启动 npm、选择工作目录或重复批准普通操作。
 
@@ -35,16 +35,16 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 
 MCP 路径请求绝不调用 Electron 原生文件选择器。Windows 需要独立验证盘符、UNC、长路径、保留名、大小写不敏感、反斜杠和 reparse point/junction。
 
-## Auto / Full Access
+## 权限档：只读 / 读写 / 完全
 
 `McpPermissionPolicyStore` 只保存 credential 级 `mode`：
 
 - `auto` 是默认值。普通和可恢复操作由 Gateway 直接执行，不能调用人类权限 prompt。
 - `full-access` 由设置页的独立红色确认窗口开启；开启后普通及暴露的危险 MCP 调用均不等待 Agent 二次确认。
 
-Permission Broker 只读取 credential mode，不保存 transport session grant，也不接收 prompt 回调。普通计划型文件操作仍执行 Worker 的只读计划、状态 token、change sequence 和幂等校验；Auto 下不弹窗。
+Permission Broker 只读取 credential 权限档，不保存 transport session grant。只读档的写入请求由桌面确认框决定（调用方等待用户决定）；读写档的普通操作不弹窗；完全档一切直接执行。普通计划型文件操作仍执行 Worker 的只读计划、状态 token、change sequence 和幂等校验。
 
-不可恢复低频操作应从 MCP 工具目录排除。若产品日后向 MCP 暴露危险命令，应把一次性 challenge 绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；Auto 第一次调用只能返回风险报告，第二次精确确认才能执行，Full Access 可跳过确认但不能跳过领域校验。
+危险命令（如永久删除）在只读/读写档下使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行。完全档直接执行（启用时用户已确认责任），但不能跳过领域校验。
 
 ## Desktop 通知
 
@@ -56,7 +56,7 @@ Permission Broker 只读取 credential mode，不保存 transport session grant�
 
 定向自动化测试至少覆盖：
 
-- Auto / Full Access 模式持久化和凭据隔离；
+- 只读 / 读写 / 完全 权限档持久化和凭据隔离；
 - 多连接、断开重连后工具目录和显式 `libraryId` 行为不变；
 - 缺少库目标时的稳定错误；
 - 空资源库列表、显式建库和显式路径导入；

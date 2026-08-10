@@ -56,7 +56,7 @@ function resolver(): AutomationExecutionResolver {
       ? {
           executionId: 'mcp-execution',
           source: 'mcp',
-          clientCredentialId: 'test-credential',
+          clientCredentialId: '00000000-0000-4000-8000-0000000000aa',
           libraryId: 'library-1',
           grantedCapabilities: [...readCapabilities],
         }

@@ -18,29 +18,43 @@ import type { McpOperationChallengeStore } from './mcp-operation-challenge';
 
 export interface McpPermissionBrokerOptions {
   policyStore: McpPermissionPolicyStore;
-  /** Serpent-8b5b.2: single-use store for dangerous two-phase challenges. */
+  /** Single-use store for dangerous two-phase challenges. */
   challengeStore: McpOperationChallengeStore;
+  /**
+   * Desktop confirmation for writes that are outside the credential's
+   * profile (a read-only credential attempting a write). The MCP call
+   * waits for the user's decision; an absent handler denies immediately.
+   */
+  confirmOutOfScope?: (input: {
+    credentialId: string;
+    clientName?: string;
+    commandId: string;
+    summary: string;
+    targetCount: number;
+  }) => Promise<boolean>;
   audit?: {
     info(scope: string, message: string, context?: Record<string, unknown>): void;
   };
 }
 
 /**
- * Resolves credential-level MCP access without waiting for Desktop input.
+ * Resolves credential-profile MCP access without transport-session state.
  *
- * Auto is deliberately permissive for ordinary and recoverable commands.
- * Dangerous (critical) commands never execute on the first call: the broker
- * issues a short-lived challenge bound to the exact call and only consumes it
- * on the agent's second, exact call — never a per-call human prompt.
+ * Profiles: read-only (writes need a desktop confirmation), read-write
+ * (ordinary writes direct, dangerous ops need the two-phase challenge),
+ * full-access (everything direct — the user accepted the responsibility when
+ * enabling it).
  */
 export class McpPermissionBroker implements AutomationPermissionBroker {
   readonly #policyStore: McpPermissionPolicyStore;
   readonly #challengeStore: McpOperationChallengeStore;
+  readonly #confirmOutOfScope: McpPermissionBrokerOptions['confirmOutOfScope'];
   readonly #audit: McpPermissionBrokerOptions['audit'];
 
   public constructor(options: McpPermissionBrokerOptions) {
     this.#policyStore = options.policyStore;
     this.#challengeStore = options.challengeStore;
+    this.#confirmOutOfScope = options.confirmOutOfScope;
     this.#audit = options.audit;
   }
 
@@ -55,18 +69,62 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
     if (input.signal?.aborted || context.abortSignal?.aborted) {
       return { allowed: false, reason: 'cancelled' };
     }
-    if (descriptor.criticalOperation === true) {
-      return this.authorizeCritical(input);
-    }
-    const requested = getAutomationCommandPermissionMetadata(descriptor).requestableCapabilities;
-    if (requested.length === 0) {
-      return { allowed: true, scope: 'already-granted' };
-    }
     const credentialId = context.clientCredentialId;
     if (credentialId === undefined) {
       return { allowed: false, reason: 'denied' };
     }
     const mode = this.#policyStore.getMode(credentialId);
+
+    // Dangerous operations: full-access runs them directly (the user accepted
+    // the responsibility); every other profile still needs the two-phase
+    // agent challenge.
+    if (descriptor.criticalOperation === true) {
+      if (mode === 'full-access') {
+        this.#audit?.info(
+          'mcp.permission.full-access-critical',
+          'Dangerous MCP operation executed under the full-access profile.',
+          { credentialId, commandId: descriptor.commandId },
+        );
+        return { allowed: true, scope: 'always-allow' };
+      }
+      return this.authorizeCritical(input);
+    }
+
+    const requested = getAutomationCommandPermissionMetadata(descriptor).requestableCapabilities;
+    if (requested.length === 0) {
+      // Pure read (or nothing askable): always allowed.
+      return { allowed: true, scope: 'already-granted' };
+    }
+
+    if (mode === 'read-only') {
+      // A write outside the read-only profile: ask the desktop user when one
+      // is present; otherwise deny deterministically.
+      const targetCount = this.deriveTargets(input.commandInput).length;
+      if (this.#confirmOutOfScope !== undefined) {
+        const approved = await this.#confirmOutOfScope({
+          credentialId,
+          clientName: context.clientName,
+          commandId: descriptor.commandId,
+          summary: descriptor.summary,
+          targetCount,
+        });
+        if (approved) {
+          this.#audit?.info(
+            'mcp.permission.out-of-scope-approved',
+            'A write outside the read-only profile was approved by the desktop user.',
+            { credentialId, commandId: descriptor.commandId, targetCount },
+          );
+          return { allowed: true, scope: 'already-granted' };
+        }
+      }
+      this.#audit?.info(
+        'mcp.permission.out-of-scope-denied',
+        'A write outside the read-only profile was denied.',
+        { credentialId, commandId: descriptor.commandId, targetCount },
+      );
+      return { allowed: false, reason: 'denied' };
+    }
+
     this.#audit?.info('mcp.permission.auto', 'MCP capability allowed without a human prompt.', {
       credentialId,
       commandId: descriptor.commandId,
@@ -142,9 +200,9 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
     return { allowed: false, reason: 'challenge-required', challenge: issue() };
   }
 
-  private deriveTargets(canonicalInput: unknown): Array<{ id: string }> {
-    if (canonicalInput === null || typeof canonicalInput !== 'object') return [];
-    const record = canonicalInput as Record<string, unknown>;
+  private deriveTargets(commandInput: unknown): Array<{ id: string }> {
+    if (commandInput === null || typeof commandInput !== 'object') return [];
+    const record = commandInput as Record<string, unknown>;
     if (Array.isArray(record.assetIds)) {
       return (record.assetIds as unknown[])
         .filter((id): id is string => typeof id === 'string')
@@ -159,8 +217,7 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
   }
 
   public clearCredential(): void {
-    // Persistent mode is cleared by McpPermissionPolicyStore on revoke;
-    // outstanding challenges are cleared via clearCredentialChallenges.
+    // Persistent profile is cleared by McpPermissionPolicyStore on revoke.
   }
 
   /** Drop outstanding challenges for a credential (revocation). */

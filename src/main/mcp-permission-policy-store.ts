@@ -2,12 +2,20 @@ import path from 'node:path';
 
 import { z } from 'zod';
 
-import { mcpAccessModeSchema, type McpAccessMode, type McpCredentialPermission } from '../shared/mcp';
+import {
+  mcpAccessModeSchema,
+  mcpLegacyAccessModeSchema,
+  type McpAccessMode,
+  type McpCredentialPermission,
+  type McpLegacyAccessMode,
+} from '../shared/mcp';
 import { readAtomicJsonFile, writeAtomicJsonFile } from './atomic-json-file';
 
 const persistedCredentialSchema = z.strictObject({
   credentialId: z.string().uuid(),
-  mode: mcpAccessModeSchema.optional(),
+  // Legacy 'auto' is accepted on read and mapped to 'read-write'; it is
+  // never written back.
+  mode: mcpLegacyAccessModeSchema.optional(),
   // Accepted only when reading files written by the abandoned per-capability
   // policy model. It is intentionally never written back.
   policies: z.array(z.unknown()).max(64).optional(),
@@ -20,11 +28,17 @@ const persistedFileSchema = z.strictObject({
 
 const credentialIdSchema = z.string().uuid();
 
+function normalizeMode(mode: McpLegacyAccessMode | undefined): McpAccessMode | undefined {
+  if (mode === undefined) return undefined;
+  return mode === 'auto' ? 'read-write' : mode;
+}
+
 /**
- * Main-owned credential access mode storage.
+ * Main-owned credential permission profile storage.
  *
- * The MCP runtime has exactly two modes. There is no per-call grant cache,
- * session permission, or capability matrix to synchronize with a client.
+ * Profiles are 'read-only' | 'read-write' | 'full-access'. There is no
+ * per-call grant cache, session permission, or capability matrix to
+ * synchronize with a client.
  */
 export class McpPermissionPolicyStore {
   readonly #filePath: string;
@@ -37,13 +51,13 @@ export class McpPermissionPolicyStore {
 
   public getMode(credentialId: string): McpAccessMode {
     credentialIdSchema.parse(credentialId);
-    return this.#modes.get(credentialId) ?? 'auto';
+    return this.#modes.get(credentialId) ?? 'read-write';
   }
 
   public setMode(credentialId: string, mode: McpAccessMode): void {
     credentialIdSchema.parse(credentialId);
     mcpAccessModeSchema.parse(mode);
-    if (mode === 'auto') this.#modes.delete(credentialId);
+    if (mode === 'read-write') this.#modes.delete(credentialId);
     else this.#modes.set(credentialId, mode);
     this.#persist();
   }
@@ -70,8 +84,8 @@ export class McpPermissionPolicyStore {
       if (!parsed.success) return;
       this.#modes = new Map(
         parsed.data.credentials
-          .filter((record) => record.mode !== undefined)
-          .map((record) => [record.credentialId, record.mode!]),
+          .map((record) => [record.credentialId, normalizeMode(record.mode)] as const)
+          .filter((entry): entry is readonly [string, McpAccessMode] => entry[1] !== undefined),
       );
     } catch {
       this.#modes = new Map();
