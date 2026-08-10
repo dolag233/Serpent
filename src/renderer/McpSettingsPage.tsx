@@ -224,6 +224,9 @@ export function McpSettingsPage({
               value={format}
             >
               <option value="generic-json">{t("settings.mcpConfigGeneric")}</option>
+              <option value="claude">{t("settings.mcpConfigClaude")}</option>
+              <option value="cursor">{t("settings.mcpConfigCursor")}</option>
+              <option value="codex">{t("settings.mcpConfigCodex")}</option>
               <option value="endpoint-and-token">{t("settings.mcpConfigEndpoint")}</option>
             </select>
           </div>
