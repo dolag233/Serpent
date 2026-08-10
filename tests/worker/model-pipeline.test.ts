@@ -264,7 +264,12 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       db.close();
 
       // The ready event flows to the renderer and the summary shows ready.
-      expect(results).toEqual([{ assetId: asset.assetId, artifactId: expect.any(String) }]);
+      expect(results).toEqual([{
+        assetId: asset.assetId,
+        artifactId: expect.any(String),
+        width: 512,
+        height: 512,
+      }]);
       const listed = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
       expect(listed.thumbnailStatus).toBe('ready');
       expect(listed.thumbnailArtifactId).toBeTruthy();
@@ -492,6 +497,7 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       createSourceFile(sourceDir, 'robot.mtl');
       createSourceFile(sourceDir, 'robot.fbm/albedo.png');
       createSourceFile(sourceDir, 'robot.fbm/normal.jpg');
+      createSourceFile(sourceDir, 'robot.fbm/LICENSE');
       importFolderNoConflict(service, created.libraryId, sourceDir);
 
       const model = service.listAssets({ libraryId: created.libraryId, recursive: true })
@@ -509,6 +515,7 @@ describe('model asset pipeline (slice A, Serpent-fu2i)', () => {
       ]));
       for (const companion of companions) {
         expect(companion.assetId).toBeTruthy();
+        expect(companion.extension).not.toBe('');
         // Relative POSIX paths only — no absolute path or traversal may leak.
         expect(companion.relativeFilePath).not.toMatch(/^[/\\]|^[A-Za-z]:/u);
         expect(companion.relativeFilePath).not.toContain('\\');

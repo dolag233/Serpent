@@ -8,6 +8,7 @@ import {
   GeneralSettingsPage,
   SafetySettingsPage,
 } from "./AppSettingsPages";
+import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginSettingsPage } from "./PluginSettingsPage";
 import {
   PluginSettingsDetailPage,
@@ -23,6 +24,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
+import type { SerpentMcpSettingsApi } from "../shared/mcp";
 import { DialogShell } from "./ui/patterns";
 
 export interface AppSettingsDialogProps {
@@ -40,6 +42,7 @@ export interface AppSettingsDialogProps {
   pluginApi?: SerpentPluginManagerApi;
   pluginContributionRefreshKey?: string | null;
   libraryId?: string;
+  mcpApi?: SerpentMcpSettingsApi;
 }
 
 /**
@@ -62,6 +65,7 @@ export function AppSettingsDialog({
   pluginApi,
   pluginContributionRefreshKey,
   libraryId,
+  mcpApi,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const [pluginSettingsPluginId, setPluginSettingsPluginId] = useState<string | null>(null);
@@ -174,6 +178,7 @@ export function AppSettingsDialog({
                 onToggleShowAiBadges={onToggleShowAiBadges}
               />
             ) : null}
+            {!showingPluginSettings && activeCategory === "mcp" ? <McpSettingsPage api={mcpApi} /> : null}
             {!showingPluginSettings && activeCategory === "plugins" ? (
               <PluginSettingsPage
                 api={pluginApi}

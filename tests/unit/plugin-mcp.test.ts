@@ -15,6 +15,7 @@ import {
 import { PluginMcpExposureStore } from '../../src/main/plugin-mcp-exposure-store';
 import { PluginMcpToolProvider } from '../../src/main/plugin-mcp-tool-provider';
 import { callSerpentMcpTool } from '../../src/mcp/call-tool';
+import { mcpContext, readExposure, writeExposure } from './serpent-mcp-test-fixtures';
 
 const roots: string[] = [];
 
@@ -107,8 +108,8 @@ describe('PLUGIN-031 MCP call gate', () => {
     const result = await callSerpentMcpTool({
       toolName,
       arguments: { assetIds: ['asset-1'] },
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: false },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
       gateway: {} as never,
       pluginTools: {
         list: () => listPluginMcpTools([{
@@ -154,8 +155,8 @@ describe('PLUGIN-031 MCP call gate', () => {
     const result = await callSerpentMcpTool({
       toolName: pluginMcpToolName('com.example.mcp-probe', 'declared'),
       arguments: { assetIds: ['asset-1'] },
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: true },
+      context: mcpContext(writeExposure),
+      exposure: writeExposure,
       gateway: {} as never,
       pluginTools: {
         list: () => [],
@@ -178,8 +179,8 @@ describe('PLUGIN-031 MCP call gate', () => {
     const result = await callSerpentMcpTool({
       toolName,
       arguments: { assetIds: ['asset-1'] },
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: true },
+      context: mcpContext(writeExposure),
+      exposure: writeExposure,
       gateway: {} as never,
       pluginTools: {
         list: () => listPluginMcpTools([{

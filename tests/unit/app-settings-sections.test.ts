@@ -34,6 +34,7 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "appearance",
       "browse",
       "ai",
+      "mcp",
       "plugins",
       "safety",
     ]);

@@ -79,3 +79,23 @@ _Avoid_: Current folder, focused library, permanent binding
 **Library authorization**:
 Local human consent for an Automation Execution to use a specific library with a stated capability set. Authorization permits a context transition but is not itself the active library context.
 _Avoid_: Active library, write-access flag, library binding
+
+**Automation capability**:
+A stable permission unit for one class of semantic domain actions. Possessing it permits a request but never bypasses domain validation, library authorization, an execution plan, or a critical confirmation.
+_Avoid_: Write-access flag, tool name, risk level
+
+**Permission policy**:
+A user-managed, persistent decision for whether one identified automation client must ask for or may always use one non-critical Automation Capability. It does not grant library access and never applies to critical operations.
+_Avoid_: Global trust, credential, all-powerful mode
+
+**Session permission grant**:
+An in-memory decision allowing one identified Automation Execution to reuse one non-critical Automation Capability until that execution ends or the decision is revoked.
+_Avoid_: Persistent permission, client credential, library authorization
+
+**One-shot operation approval**:
+A decision allowing one specific, currently validated operation to proceed once. When an Execution Plan exists, the approval is bound to that plan and becomes invalid when its target or preconditions change.
+_Avoid_: Session permission, permanent permission
+
+**Critical confirmation**:
+A mandatory per-operation local confirmation for an irreversible, low-frequency, or broad-impact action. It cannot be satisfied by a Permission Policy, Session Permission Grant, or an “allow all” setting.
+_Avoid_: Permission prompt, warning toast, suppressible confirmation

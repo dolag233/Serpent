@@ -26,20 +26,15 @@ export const WINDOW_CONTROL_CHANNEL = 'serpent:shell:window-control' as const;
 export const INVERT_SELECTION_CHANNEL = 'serpent:shell:invert-selection' as const;
 /** Main → Renderer: Edit Copy (⌘C) — file copy when assets selected (Serpent-166q). */
 export const COPY_SELECTION_CHANNEL = 'serpent:shell:copy-selection' as const;
+/** Main → Renderer: dispatch a native menu command through the app menu model. */
+export const APPLICATION_MENU_COMMAND_CHANNEL =
+  'serpent:shell:application-menu-command' as const;
 /** Renderer → Main: fall back to Chromium text copy when no asset file copy. */
 export const NATIVE_EDIT_COPY_CHANNEL = 'serpent:shell:native-edit-copy' as const;
 export const WINDOW_MAXIMIZED_CHANNEL =
   'serpent:shell:window-maximized' as const;
 /** Main → Renderer: BrowserWindow focus state (macOS traffic lights / shell chrome). */
 export const WINDOW_FOCUS_CHANNEL = 'serpent:shell:window-focus' as const;
-/** Main → Renderer: apply a selection requested by an attached local Agent. */
-export const DESKTOP_AUTOMATION_SELECTION_CHANNEL =
-  'serpent:desktop-automation:selection' as const;
-/** Main ↔ Renderer: typed browse commands and responses for Attached MCP. */
-export const DESKTOP_AUTOMATION_BROWSE_CHANNEL =
-  'serpent:desktop-automation:browse' as const;
-export const DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL =
-  'serpent:desktop-automation:browse-result' as const;
 /** Renderer → Main: enable Main before-input capture for video letter keys. */
 export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
   'serpent:viewer:video-shortcuts-active' as const;
@@ -60,6 +55,12 @@ export const AUTOMATION_SCRIPT_HISTORY_CHANNEL = 'serpent:automation:script-hist
 export const AUTOMATION_SCRIPT_UNDO_CHANNEL = 'serpent:automation:script-undo' as const;
 export const AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL = 'serpent:automation:script-recent-list' as const;
 export const AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL = 'serpent:automation:script-recent-open' as const;
+/** Renderer ↔ Main: device-level embedded MCP service settings. */
+export const MCP_SETTINGS_REQUEST_CHANNEL = 'serpent:mcp:settings-request' as const;
+export const MCP_SETTINGS_EVENT_CHANNEL = 'serpent:mcp:settings-event' as const;
+/** Critical confirmation child window: the preload exposes only these two calls. */
+export const CRITICAL_CONFIRMATION_GET_CHANNEL = 'serpent:critical-confirmation:get' as const;
+export const CRITICAL_CONFIRMATION_DECIDE_CHANNEL = 'serpent:critical-confirmation:decide' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
 /** Main → Renderer: plugin contributions changed after install/enable/refresh. */

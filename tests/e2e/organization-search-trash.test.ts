@@ -500,13 +500,19 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
     await window.locator('.asset-card').first().click({ button: 'right' });
     await window.getByRole('menuitem', { name: /永久删除（2 项）/ }).click();
-    await expect(window.getByRole('dialog')).toContainText('所选 2 项资产');
-    const permanentDeleteDialog = window.getByRole('dialog');
-    const permanentDeleteButton = permanentDeleteDialog.getByRole('button', {
-      name: '永久删除 2 项',
-    });
-    await expect(permanentDeleteButton).toBeFocused();
-    await permanentDeleteButton.click();
+    const windowCountBeforeCritical = application.windows().length;
+    await expect
+      .poll(() => application.windows().length, { timeout: 5_000 })
+      .toBeGreaterThan(windowCountBeforeCritical);
+    const permanentDeleteWindow = application.windows().at(-1)!;
+    await expect(
+      permanentDeleteWindow.getByRole('heading', { name: '永久删除这些回收站资产？' }),
+    ).toBeVisible();
+    await expect(permanentDeleteWindow.locator('button.confirm')).toBeVisible();
+    await permanentDeleteWindow
+      .getByRole('button', { name: '永久删除', exact: true })
+      .click()
+      .catch(() => undefined);
     await expect(window.locator('.workspace-notice')).toContainText('已永久删除 2 项');
     await expect(window.locator('.asset-card')).toHaveCount(0);
   } finally {
@@ -515,7 +521,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
   }
 });
 
-test('confirmation dialogs focus their primary action', async () => {
+test('critical confirmation windows focus cancel and require red confirmation', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-dialog-focus-e2e-'));
   const sourcePath = path.join(temporaryRoot, 'focus.txt');
   writeFileSync(sourcePath, 'focus target');
@@ -550,10 +556,20 @@ test('confirmation dialogs focus their primary action', async () => {
     await expect(trashedAsset).toBeVisible();
     await trashedAsset.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '永久删除' }).click();
-    const dialog = window.getByRole('dialog');
-    await expect(dialog.getByRole('button', { name: '永久删除' })).toBeFocused();
-    await window.keyboard.press('Escape');
-    await expect(dialog).toBeHidden();
+    const windowCountBeforeCritical = application.windows().length;
+    await expect
+      .poll(() => application.windows().length, { timeout: 5_000 })
+      .toBeGreaterThan(windowCountBeforeCritical);
+    const criticalWindow = application.windows().at(-1)!;
+    await expect(
+      criticalWindow.getByRole('heading', { name: '永久删除这些回收站资产？' }),
+    ).toBeVisible();
+    await expect(
+      criticalWindow.getByRole('button', { name: '取消', exact: true }),
+    ).toBeFocused();
+    await expect(criticalWindow.locator('button.confirm')).toBeVisible();
+    await criticalWindow.keyboard.press('Escape').catch(() => undefined);
+    await expect.poll(() => criticalWindow.isClosed()).toBe(true);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

@@ -137,6 +137,13 @@ const config: ForgeConfig = {
           target: 'preload',
         },
         {
+          // Critical confirmation child windows have a deliberately narrow
+          // bridge; they must not inherit the full application preload.
+          entry: 'src/preload/critical-confirmation.ts',
+          config: 'vite.critical-confirmation-preload.config.ts',
+          target: 'preload',
+        },
+        {
           entry: 'src/worker/index.ts',
           config: 'vite.worker.config.ts',
           target: 'main',

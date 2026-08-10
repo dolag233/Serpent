@@ -11,6 +11,7 @@ const nonBlankString = z.string().min(1);
 export const RECENT_LIBRARIES_LIMIT = 8;
 
 export const recentLibraryEntrySchema = z.strictObject({
+  libraryId: z.string().uuid().optional(),
   path: nonBlankString,
   name: nonBlankString,
   lastOpenedAt: nonBlankString,

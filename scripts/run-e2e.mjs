@@ -91,6 +91,25 @@ await build({
   },
 });
 
+// Critical confirmation child windows use a separate, narrow preload bridge;
+// keep the production-like E2E build graph in lockstep with Forge.
+await build({
+  configFile: path.join(projectRoot, 'vite.critical-confirmation-preload.config.ts'),
+  resolve: nodeResolve,
+  build: {
+    emptyOutDir: false,
+    lib: {
+      entry: path.join(projectRoot, 'src/preload/critical-confirmation.ts'),
+      fileName: () => 'critical-confirmation.js',
+      formats: ['cjs'],
+    },
+    outDir: mainBuildDirectory,
+    rollupOptions: {
+      external: electronExternals,
+    },
+  },
+});
+
 await build({
   configFile: path.join(projectRoot, 'vite.worker.config.ts'),
   resolve: nodeResolve,

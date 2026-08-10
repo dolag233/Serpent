@@ -11,16 +11,7 @@ import { createSerpentMcpServer } from '../../src/mcp/create-serpent-mcp-server'
 import { listSerpentMcpTools } from '../../src/mcp/tool-catalog';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
-
-const readCapabilities = [
-  'library.read',
-  'folder.read',
-  'asset.read',
-  'metadata.read',
-  'tag.read',
-  'collection.read',
-  'job.read',
-] as const;
+import { mcpContext, readCapabilities, readExposure } from './serpent-mcp-test-fixtures';
 
 function resolver(): AutomationExecutionResolver {
   return {
@@ -68,8 +59,11 @@ describe('Serpent MCP dual-client smoke (Phase C)', () => {
     const gateway = createAutomationCommandGateway(worker, resolver());
     const server = createSerpentMcpServer({
       gateway,
-      getExecutionId: () => 'mcp-execution',
-      getExposure: () => ({ writeAccessGranted: false }),
+      backend: {
+        getExecutionContext: () => mcpContext(readExposure),
+        getToolExposure: () => readExposure,
+        getPluginTools: () => undefined,
+      },
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -80,13 +74,15 @@ describe('Serpent MCP dual-client smoke (Phase C)', () => {
     ]);
 
     const listed = await client.listTools();
-    const catalogNames = listSerpentMcpTools({ writeAccessGranted: false }).tools.map((tool) => tool.name);
+    const catalogNames = listSerpentMcpTools(readExposure).tools.map((tool) => tool.name);
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([...catalogNames].sort());
-    expect(listed.tools.map((tool) => tool.name)).not.toContain('serpent_tag_create');
+    // Requestable tools stay discoverable while the Permission Broker owns the
+    // ask/allow decision at call time.
+    expect(listed.tools.map((tool) => tool.name)).toContain('serpent_tag_create');
 
     const called = await client.callTool({
       name: 'serpent_library_inspect',
-      arguments: {},
+      arguments: { libraryId: 'library-1' },
     });
     expect(called.isError).not.toBe(true);
     const text = Array.isArray(called.content)
@@ -104,8 +100,11 @@ describe('Serpent MCP dual-client smoke (Phase C)', () => {
     const gateway = createAutomationCommandGateway(worker, resolver());
     const server = createSerpentMcpServer({
       gateway,
-      getExecutionId: () => 'mcp-execution',
-      getExposure: () => ({ writeAccessGranted: false }),
+      backend: {
+        getExecutionContext: () => mcpContext(readExposure),
+        getToolExposure: () => readExposure,
+        getPluginTools: () => undefined,
+      },
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: 'serpent-test-host-b', version: '2.0.0' });
@@ -118,7 +117,7 @@ describe('Serpent MCP dual-client smoke (Phase C)', () => {
     expect(listed.tools.some((tool) => tool.name === 'serpent_asset_search')).toBe(true);
     const search = await client.callTool({
       name: 'serpent_asset_search',
-      arguments: { query: null, limit: 10 },
+      arguments: { libraryId: 'library-1', query: null, limit: 10 },
     });
     expect(search.isError).not.toBe(true);
     expect(worker.commands.some((command) => command.type === 'asset.search')).toBe(true);

@@ -17,8 +17,6 @@ export type UseDialogEscapeDismissParams = {
   cancelImageSequenceImport: () => void;
   cancelImageSequenceDialog: () => void;
   cancelBatchRelink: () => void | Promise<void>;
-  setPermanentDeleteDialog: (value: null) => void;
-  cancelDiskDelete: () => void;
   setDeleteLinkedDialog: (value: null) => void;
   setRestoreDialog: (value: null) => void;
   setMoveDialog: (value: null) => void;
@@ -58,8 +56,6 @@ export function useDialogEscapeDismiss({
   cancelImageSequenceImport,
   cancelImageSequenceDialog,
   cancelBatchRelink,
-  setPermanentDeleteDialog,
-  cancelDiskDelete,
   setDeleteLinkedDialog,
   setRestoreDialog,
   setMoveDialog,
@@ -115,12 +111,6 @@ export function useDialogEscapeDismiss({
           return;
         case "close-image-sequence-dialog":
           cancelImageSequenceDialog();
-          return;
-        case "close-permanent-delete":
-          setPermanentDeleteDialog(null);
-          return;
-        case "close-disk-delete":
-          cancelDiskDelete();
           return;
         case "close-delete-linked":
           setDeleteLinkedDialog(null);
@@ -208,8 +198,6 @@ export function useDialogEscapeDismiss({
     cancelImageSequenceImport,
     cancelImageSequenceDialog,
     cancelBatchRelink,
-    cancelDiskDelete,
-    setPermanentDeleteDialog,
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,

@@ -688,11 +688,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               }
               icon={<Icon name="trash" size={14} />}
               label={t("toolbar.emptyTrash")}
-              onAction={() => {
-                if (confirm(t("toast.emptyTrashConfirm"))) {
-                  props.onEmptyTrash();
-                }
-              }}
+              onAction={props.onEmptyTrash}
             />
           </ContextMenuSection>
         )}

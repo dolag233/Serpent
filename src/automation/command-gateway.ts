@@ -5,6 +5,7 @@ import {
   AUTOMATION_API_VERSION,
   automationCapabilitySchema,
   automationSourceSchema,
+  getAutomationCommandPermissionMetadata,
   getAutomationCommandDescriptor,
   type AutomationCapability,
   type AutomationCommandId,
@@ -12,6 +13,7 @@ import {
   type AutomationCommandResult,
   type AutomationFileOperationPlanProof,
   type AutomationSource,
+  type AutomationCommandDescriptor,
 } from './command-registry';
 import type { PublicError } from '../shared/protocol/errors';
 import { createPublicError, toPublicError } from '../shared/protocol/errors';
@@ -32,7 +34,16 @@ const idempotencyKeySchema = nonBlankString.max(128);
 export const automationExecutionContextSchema = z.strictObject({
   executionId: nonBlankString.max(255),
   source: automationSourceSchema,
+  clientCredentialId: nonBlankString.max(255).optional(),
+  clientName: nonBlankString.max(128).optional(),
   libraryId: nonBlankString.max(255).nullable(),
+  activeLibrary: z.strictObject({
+    libraryId: nonBlankString.max(255),
+    displayName: nonBlankString.max(255).optional(),
+  }).nullable().optional(),
+  contextRevision: z.number().int().nonnegative().optional(),
+  authorizedLibraryIds: z.array(nonBlankString.max(255)).max(64).optional(),
+  hostCapabilities: z.array(z.enum(['desktop-ui'])).max(16).optional(),
   grantedCapabilities: z.array(automationCapabilitySchema).max(64),
   logId: nonBlankString.max(255).optional(),
   deadlineAt: z.string().datetime().optional(),
@@ -147,11 +158,80 @@ export interface AutomationFilePlanApprovalHandler {
     executionId: string;
     libraryId: string | null;
     commandInput: unknown;
+    source?: AutomationSource;
+    clientName?: string;
+    libraryDisplayName?: string;
+    requestApproval?: (input: {
+      commandId: AutomationCommandId;
+      executionId: string;
+      libraryId: string | null;
+      commandInput: unknown;
+      source: AutomationSource;
+      clientName?: string;
+      libraryDisplayName?: string;
+      summary: AutomationPermissionPlanSummary;
+    }) => Promise<boolean>;
   }): Promise<AutomationFileOperationPlanProof | undefined>;
 }
 
+export interface AutomationPermissionPlanSummary {
+  operation: string;
+  targetCount: number;
+  executableCount: number;
+  blockedCount: number;
+  conflictCount?: number;
+  undoSupported: boolean;
+  hookWarnings?: readonly string[];
+}
+
+export type AutomationPermissionAuthorization =
+  | { allowed: true; scope: 'allow-once' | 'allow-session' | 'always-allow' | 'already-granted' }
+  | { allowed: false; reason: 'denied' | 'cancelled' };
+
+/** Main-owned policy and prompt boundary for MCP controlled capabilities. */
+export interface AutomationPermissionBroker {
+  authorize(input: {
+    context: AutomationExecutionContext;
+    descriptor: AutomationCommandDescriptor;
+    commandInput: unknown;
+    planSummary?: AutomationPermissionPlanSummary;
+    signal?: AbortSignal;
+  }): Promise<AutomationPermissionAuthorization>;
+  clearExecution(executionId: string): void;
+  clearCredential(credentialId: string): void;
+  clearCapability(credentialId: string, capability: AutomationCapability): void;
+}
+
 export interface AutomationLibraryBindingHandler {
-  bindLibrary(input: { executionId: string; libraryId: string }): void | Promise<void>;
+  onLibraryCreated?(input: {
+    executionId: string;
+    source: AutomationSource;
+    library: { libraryId: string; displayName: string; libraryPath: string };
+  }): void | Promise<void>;
+  transitionLibraryContext?(input: {
+    executionId: string;
+    source?: AutomationSource;
+    libraryId: string;
+    displayName?: string;
+    expectedRevision: number;
+    authorizationSource: 'approved-plan' | 'context-confirmation';
+  }): void | Promise<{ contextRevision?: number } | void>;
+  /** Used by existing script/worker integration until all callers migrate. */
+  bindLibrary?(input: { executionId: string; libraryId: string }): void | Promise<void>;
+}
+
+export interface AutomationLibraryContextHandler {
+  execute(input: {
+    commandId: 'library.list-open' | 'library.open' | 'library.use';
+    executionId: string;
+    context: AutomationExecutionContext;
+    commandInput: unknown;
+    signal?: AbortSignal;
+  }): Promise<unknown>;
+}
+
+export interface AutomationContextBarrier {
+  beginCommand(executionId: string, contextRevision: number): { release: () => void };
 }
 
 /**
@@ -189,13 +269,31 @@ export interface AutomationCommandGatewayOptions {
   externalEffectHandler?: AutomationExternalEffectHandler;
   filePlanApprovalHandler?: AutomationFilePlanApprovalHandler;
   libraryBindingHandler?: AutomationLibraryBindingHandler;
+  libraryContextHandler?: AutomationLibraryContextHandler;
+  mcpInputNormalizer?: (input: {
+    commandId: AutomationCommandId;
+    executionId: string;
+    context: AutomationExecutionContext;
+    commandInput: unknown;
+    signal?: AbortSignal;
+  }) => Promise<unknown | undefined>;
+  contextBarrier?: AutomationContextBarrier;
   executionStatusHandler?: AutomationExecutionStatusHandler;
   uiNotifyHandler?: AutomationUiNotifyHandler;
   undoGroupHandler?: AutomationUndoGroupHandler;
+  permissionBroker?: AutomationPermissionBroker;
 }
 
 export interface AutomationCommandGateway {
-  execute(envelope: unknown): Promise<AutomationGatewayResult>;
+  execute(envelope: unknown, options?: {
+    signal?: AbortSignal;
+    contextOverrides?: {
+      libraryId?: string | null;
+      activeLibrary?: AutomationExecutionContext['activeLibrary'];
+      contextRevision?: number;
+      stateless?: boolean;
+    };
+  }): Promise<AutomationGatewayResult>;
 }
 
 function gatewayFailure(code: AutomationGatewayErrorCode): AutomationGatewayFailure {
@@ -249,9 +347,13 @@ export function createAutomationCommandGateway(
     externalEffectHandler,
     filePlanApprovalHandler,
     libraryBindingHandler,
+    libraryContextHandler,
+    mcpInputNormalizer,
+    contextBarrier,
     executionStatusHandler,
     uiNotifyHandler,
     undoGroupHandler,
+    permissionBroker,
   } = options;
   const inFlightCommandCounts = new Map<string, number>();
   const idempotencyEntries = new Map<string, {
@@ -280,7 +382,18 @@ export function createAutomationCommandGateway(
   };
 
   return {
-    async execute(envelope: unknown): Promise<AutomationGatewayResult> {
+    async execute(
+      envelope: unknown,
+      options?: {
+        signal?: AbortSignal;
+        contextOverrides?: {
+          libraryId?: string | null;
+          activeLibrary?: AutomationExecutionContext['activeLibrary'];
+          contextRevision?: number;
+          stateless?: boolean;
+        };
+      },
+    ): Promise<AutomationGatewayResult> {
       const parsedEnvelope = automationCommandEnvelopeSchema.safeParse(envelope);
       if (!parsedEnvelope.success) return gatewayFailure('AUTOMATION_INVALID_REQUEST');
 
@@ -320,16 +433,35 @@ export function createAutomationCommandGateway(
         };
       }
 
-      let context: AutomationExecutionContext | undefined;
+      let resolvedContext: AutomationExecutionContext | undefined;
       try {
-        context = await executionResolver.resolve(executionId);
+        resolvedContext = await executionResolver.resolve(executionId);
       } catch (error) {
         auditLogger?.error('automation.execution.resolve-failed', error, { executionId });
         return { ok: false, error: toPublicError(error) };
       }
-      if (!context || context.executionId !== executionId) {
+      if (!resolvedContext || resolvedContext.executionId !== executionId) {
         return gatewayFailure('AUTOMATION_EXECUTION_NOT_FOUND');
       }
+      const stateless = options?.contextOverrides?.stateless === true;
+      let context: AutomationExecutionContext = options?.contextOverrides === undefined
+        ? resolvedContext
+        : {
+          ...resolvedContext,
+          ...(options.contextOverrides.libraryId === undefined ? {} : { libraryId: options.contextOverrides.libraryId }),
+          ...(options.contextOverrides.activeLibrary === undefined ? {} : { activeLibrary: options.contextOverrides.activeLibrary }),
+          ...(options.contextOverrides.contextRevision === undefined ? {} : { contextRevision: options.contextOverrides.contextRevision }),
+        };
+      if (options?.signal !== undefined) {
+        context = context.abortSignal === undefined
+          ? { ...context, abortSignal: options.signal }
+          : { ...context, abortSignal: AbortSignal.any([context.abortSignal, options.signal]) };
+      }
+      let contextLease: { release: () => void } | undefined;
+      const releaseContextLease = (): void => {
+        contextLease?.release();
+        contextLease = undefined;
+      };
       const recordOutcome = async (result: AutomationGatewayResult): Promise<AutomationGatewayResult> => {
         try {
           await auditSink?.recordCommandResult(
@@ -350,6 +482,7 @@ export function createAutomationCommandGateway(
             ...(result.ok ? {} : { failureCode: result.error.code }),
           });
         }
+        releaseContextLease();
         return result;
       };
       if (context.abortSignal?.aborted) {
@@ -358,12 +491,128 @@ export function createAutomationCommandGateway(
       if (!isSourceAllowed(context.source, descriptor.allowedSources)) {
         return recordOutcome(gatewayFailure('AUTOMATION_SOURCE_NOT_ALLOWED'));
       }
-      if (!hasCapabilities(context.grantedCapabilities, descriptor.requiredCapabilities)) {
+      const missingCapabilities = descriptor.requiredCapabilities.filter(
+        (capability) => !context.grantedCapabilities.includes(capability),
+      );
+      const requestableCapabilities = getAutomationCommandPermissionMetadata(descriptor)
+        .requestableCapabilities;
+      const missingRequestableCapabilities = missingCapabilities.filter(
+        (capability) => requestableCapabilities.includes(capability),
+      );
+      const missingNonRequestableCapabilities = missingCapabilities.filter(
+        (capability) => !requestableCapabilities.includes(capability),
+      );
+      if (missingNonRequestableCapabilities.length > 0) {
+        return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+      }
+      const deferPlanPermission = descriptor.approvalPolicy === 'plan'
+        && context.source === 'mcp'
+        && permissionBroker !== undefined
+        && missingRequestableCapabilities.length > 0;
+      if (missingRequestableCapabilities.length > 0 && !deferPlanPermission) {
+        if (context.source !== 'mcp' || permissionBroker === undefined) {
+          return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+        }
+        const authorization = await permissionBroker.authorize({
+          context,
+          descriptor,
+          commandInput: input,
+          signal: context.abortSignal,
+        });
+        if (!authorization.allowed) {
+          return recordOutcome(authorization.reason === 'cancelled'
+            ? cancellationFailure(context.abortSignal ?? new AbortController().signal)
+            : gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
+        }
+        context = {
+          ...context,
+          grantedCapabilities: [...new Set([
+            ...context.grantedCapabilities,
+            ...missingRequestableCapabilities,
+          ])],
+        };
+      }
+      if (!deferPlanPermission && !hasCapabilities(context.grantedCapabilities, descriptor.requiredCapabilities)) {
         return recordOutcome(gatewayFailure('AUTOMATION_CAPABILITY_DENIED'));
       }
 
-      const parsedInput = descriptor.inputSchema.safeParse(input);
+      let normalizedInput = input;
+      if (context.source === 'mcp' && mcpInputNormalizer !== undefined) {
+        try {
+          normalizedInput = await mcpInputNormalizer({
+            commandId: descriptor.commandId,
+            executionId,
+            context,
+            commandInput: input,
+            signal: context.abortSignal,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.mcp-input-normalize-failed', error, {
+            executionId,
+            commandId,
+          });
+          return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+        }
+      }
+      const parsedInput = descriptor.inputSchema.safeParse(normalizedInput);
       if (!parsedInput.success) return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      const libraryContext = descriptor.libraryContext
+        ?? (descriptor.targetScope === 'library'
+          || descriptor.targetScope === 'asset'
+          || descriptor.targetScope === 'asset-set'
+          || descriptor.targetScope === 'job-set'
+          ? 'active'
+          : 'none');
+      if (libraryContext === 'active' && context.libraryId === null) {
+        return recordOutcome(gatewayFailure(
+          context.contextRevision === undefined
+            ? 'AUTOMATION_LIBRARY_NOT_BOUND'
+            : 'AUTOMATION_LIBRARY_CONTEXT_REQUIRED',
+        ));
+      }
+      if ((commandId === 'library.list-open' || commandId === 'library.open' || commandId === 'library.use')
+        && libraryContextHandler !== undefined) {
+        try {
+          const result = await libraryContextHandler.execute({
+            commandId,
+            executionId,
+            context,
+            commandInput: parsedInput.data,
+            signal: context.abortSignal,
+          });
+          if (context.abortSignal?.aborted) {
+            return recordOutcome(cancellationFailure(context.abortSignal));
+          }
+          if (!descriptor.resultSchema.safeParse(result).success) {
+            return recordOutcome(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+          }
+          return recordOutcome({
+            ok: true,
+            apiVersion: AUTOMATION_API_VERSION,
+            commandId,
+            executionId,
+            result: result as AutomationCommandResult<typeof commandId>,
+          });
+        } catch (error) {
+          const code = typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: unknown }).code
+            : undefined;
+          const stableCodes = new Set<AutomationGatewayErrorCode>([
+            'AUTOMATION_LIBRARY_CONTEXT_REQUIRED',
+            'AUTOMATION_LIBRARY_CONTEXT_CONFLICT',
+            'AUTOMATION_LIBRARY_CONTEXT_BUSY',
+            'AUTOMATION_LIBRARY_NOT_OPEN',
+            'AUTOMATION_LIBRARY_OPEN_FAILED',
+            'AUTOMATION_LIBRARY_AUTHORIZATION_REQUIRED',
+            'AUTOMATION_LIBRARY_SWITCH_DENIED',
+          ]);
+          return recordOutcome(
+            typeof code === 'string' && stableCodes.has(code as AutomationGatewayErrorCode)
+              ? gatewayFailure(code as AutomationGatewayErrorCode)
+              : { ok: false, error: toPublicError(error) },
+          );
+        }
+      }
       const parsedCommandInput = parsedInput.data as Record<string, unknown>;
       const idempotencyKey = descriptor.supportsIdempotencyKey
         ? idempotencyKeySchema.safeParse(parsedCommandInput.idempotencyKey).success
@@ -379,15 +628,15 @@ export function createAutomationCommandGateway(
       }
       const idempotencyPayload = { ...parsedCommandInput };
       delete idempotencyPayload.idempotencyKey;
+      const idempotencyOwner = stateless
+        ? (context.clientCredentialId ?? executionId)
+        : executionId;
       const idempotencyEntryKey = idempotencyKey === undefined
         ? undefined
-        : `${executionId}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
-      if (context.libraryId === null
-        && descriptor.commandId !== 'library.create'
-        && descriptor.commandId !== 'ui.notify') {
-        return recordOutcome(gatewayFailure('AUTOMATION_LIBRARY_NOT_BOUND'));
-      }
-      if (descriptor.commandId === 'library.create' && libraryBindingHandler === undefined) {
+        : `${idempotencyOwner}\u0000${context.libraryId ?? ''}\u0000${context.contextRevision ?? 0}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
+      if (descriptor.commandId === 'library.create'
+        && libraryBindingHandler?.transitionLibraryContext === undefined
+        && libraryBindingHandler?.bindLibrary === undefined) {
         // Host misconfiguration — not an open/bind failure of a created library.
         return recordOutcome({ ok: false, error: createPublicError('INTERNAL_ERROR') });
       }
@@ -405,9 +654,6 @@ export function createAutomationCommandGateway(
           }
           return existing.promise;
         }
-        if (descriptor.commandId === 'library.create' && context.libraryId !== null) {
-          return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
-        }
         let resolveEntry!: (result: AutomationGatewayResult) => void;
         const promise = new Promise<AutomationGatewayResult>((resolve) => {
           resolveEntry = resolve;
@@ -415,8 +661,27 @@ export function createAutomationCommandGateway(
         idempotencyEntry = { fingerprint, promise, resolve: resolveEntry };
         idempotencyEntries.set(idempotencyEntryKey, idempotencyEntry);
       }
-      if (descriptor.commandId === 'library.create' && context.libraryId !== null) {
-        return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+      if (libraryContext === 'active' && contextBarrier !== undefined) {
+        try {
+          contextLease = contextBarrier.beginCommand(
+            executionId,
+            context.contextRevision ?? 0,
+          );
+        } catch (error) {
+          const code = typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: unknown }).code
+            : undefined;
+          const stableCodes = new Set<AutomationGatewayErrorCode>([
+            'AUTOMATION_LIBRARY_CONTEXT_CONFLICT',
+            'AUTOMATION_LIBRARY_CONTEXT_BUSY',
+          ]);
+          if (idempotencyEntryKey !== undefined) idempotencyEntries.delete(idempotencyEntryKey);
+          return recordOutcome(
+            typeof code === 'string' && stableCodes.has(code as AutomationGatewayErrorCode)
+              ? gatewayFailure(code as AutomationGatewayErrorCode)
+              : gatewayFailure('AUTOMATION_LIBRARY_CONTEXT_CONFLICT'),
+          );
+        }
       }
       const completeIdempotency = (result: AutomationGatewayResult): void => {
         if (idempotencyEntry === undefined || idempotencyEntryKey === undefined) return;
@@ -469,6 +734,25 @@ export function createAutomationCommandGateway(
             executionId,
             libraryId: boundLibraryId,
             commandInput: parsedInput.data,
+            source: context.source,
+            ...(context.clientName === undefined ? {} : { clientName: context.clientName }),
+            ...(context.activeLibrary?.displayName === undefined
+              ? {}
+              : { libraryDisplayName: context.activeLibrary.displayName }),
+            ...(context.source === 'mcp' && permissionBroker !== undefined
+              ? {
+                requestApproval: async ({ summary }) => {
+                  const authorization = await permissionBroker.authorize({
+                    context,
+                    descriptor,
+                    commandInput: parsedInput.data,
+                    planSummary: summary,
+                    signal: context.abortSignal,
+                  });
+                  return authorization.allowed;
+                },
+              }
+              : {}),
           });
         } catch (error) {
           auditLogger?.error('automation.file-plan.failed', error, {
@@ -618,7 +902,7 @@ export function createAutomationCommandGateway(
         return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
       }
 
-      if (descriptor.commandId === 'library.create') {
+      if (descriptor.commandId === 'library.create' && !stateless) {
         const createdLibrary = result as { libraryId?: unknown };
         if (typeof createdLibrary.libraryId !== 'string') {
           return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
@@ -627,13 +911,52 @@ export function createAutomationCommandGateway(
           return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('INTERNAL_ERROR') });
         }
         try {
-          await libraryBindingHandler.bindLibrary({
-            executionId,
-            libraryId: createdLibrary.libraryId,
-          });
+          if (libraryBindingHandler.transitionLibraryContext !== undefined) {
+            await libraryBindingHandler.transitionLibraryContext({
+              executionId,
+              source: context.source,
+              libraryId: createdLibrary.libraryId,
+              displayName: typeof (result as { displayName?: unknown }).displayName === 'string'
+                ? (result as { displayName: string }).displayName
+                : undefined,
+              expectedRevision: context.contextRevision ?? 0,
+              authorizationSource: 'approved-plan',
+            });
+          } else if (libraryBindingHandler.bindLibrary !== undefined) {
+            await libraryBindingHandler.bindLibrary({
+              executionId,
+              libraryId: createdLibrary.libraryId,
+            });
+          } else {
+            return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+          }
         } catch (error) {
           auditLogger?.error('automation.library-bind.failed', error, { executionId });
-          return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_LIBRARY_OPEN_FAILED'));
+          const code = typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: unknown }).code
+            : undefined;
+          return recordOutcomeAndReleaseSlot(
+            typeof code === 'string'
+              && code.startsWith('AUTOMATION_')
+              && code in { AUTOMATION_LIBRARY_OPEN_FAILED: true, AUTOMATION_LIBRARY_CONTEXT_CONFLICT: true, AUTOMATION_LIBRARY_CONTEXT_BUSY: true }
+              ? gatewayFailure(code as AutomationGatewayErrorCode)
+              : gatewayFailure('AUTOMATION_LIBRARY_OPEN_FAILED'),
+          );
+        }
+      }
+      if (descriptor.commandId === 'library.create' && stateless
+        && libraryBindingHandler?.onLibraryCreated !== undefined
+        && workerResult.ok
+        && workerResult.type === 'library.opened') {
+        try {
+          await libraryBindingHandler.onLibraryCreated({
+            executionId,
+            source: context.source,
+            library: workerResult.library,
+          });
+        } catch (error) {
+          auditLogger?.error('automation.library-create.side-effects-failed', error, { executionId });
+          return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('INTERNAL_ERROR') });
         }
       }
 

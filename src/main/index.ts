@@ -84,8 +84,6 @@ import {
   SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
-  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
-  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
   PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
@@ -94,6 +92,8 @@ import {
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   OFFSCREEN_THUMBNAIL_FRAME_CHANNEL,
+  MCP_SETTINGS_REQUEST_CHANNEL,
+  MCP_SETTINGS_EVENT_CHANNEL,
 } from "../shared/protocol/channels";
 import {
   createAutomationCommandGateway,
@@ -112,32 +112,26 @@ import {
 } from './automation-file-plan-approval';
 import {
   AutomationExecutionJournal,
+  AutomationLibraryContextError,
   createJsonFileAutomationExecutionStore,
   projectAutomationExecutionStatus,
 } from './automation-execution-journal';
+import { EmbeddedMcpServer, EmbeddedMcpServerError } from './embedded-mcp-server';
+import { McpPermissionBroker } from './mcp-permission-broker';
+import { McpPermissionPolicyStore } from './mcp-permission-policy-store';
+import { CriticalConfirmationWindowManager } from './critical-confirmation-window';
+import {
+  mcpSettingsRequestSchema,
+  mcpSettingsResponseSchema,
+  mcpSettingsSnapshotSchema,
+  type McpSettingsRequest,
+} from '../shared/mcp';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import {
   createJsonFileAutomationRecentScriptsStore,
   type AutomationRecentScriptsStore,
 } from './automation-recent-scripts-store';
-import {
-  maybeStartAutomationMcpMode,
-  redirectConsoleToStderrForMcp,
-} from './automation-mcp-bootstrap';
-import type { AutomationMcpHostHandle } from './automation-mcp-host';
-import {
-  startDesktopAttachedMcp,
-  type DesktopAttachedMcpHandle,
-} from './desktop-attached-mcp';
-import {
-  type DesktopSelectionRequest,
-  type DesktopSelectionResult,
-} from '../shared/desktop-control';
-import {
-  createDesktopBrowseControl,
-  type DesktopBrowseControl,
-} from './desktop-browse-control';
 import { ScriptRuntimeSupervisor } from './script-runtime-supervisor';
 import { PluginRuntimeSupervisor, type PluginRuntimeHostCommandHandler, type PluginRuntimeInputCaptureStartHandler, type PluginRuntimeJobControlHandler, type PluginRuntimeJobEnqueueHandler, type PluginRuntimeJobProgressHandler, type PluginRuntimeStorageHandler } from './plugin-runtime-supervisor';
 import { normalizeAutomationAssetSearchInput } from './normalize-automation-asset-search-input';
@@ -169,7 +163,11 @@ import {
   validatePluginCauseChain,
 } from '../plugins/plugin-domain-events';
 import type { AutomationExecutionContext } from '../automation/command-gateway';
-import { AUTOMATION_API_VERSION } from '../automation/command-registry';
+import {
+  AUTOMATION_API_VERSION,
+  type AutomationCommandId,
+  type AutomationSource,
+} from '../automation/command-registry';
 import { shouldUseFramelessTitleBar } from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
@@ -313,28 +311,12 @@ if (process.env.SERPENT_E2E === "1") {
   );
 }
 
-// Headless MCP stdio host (0023 Phase C). Isolate userData and keep JSON-RPC
-// frames off console helpers before Forge/Vite noise is considered separately.
-const mcpModeEnabled = process.env.SERPENT_MCP === "1";
-const mcpAttachBootstrapEnabled = process.env.SERPENT_MCP_ATTACH_BOOTSTRAP === "1";
-const desktopControlEnabled =
-  process.env.SERPENT_E2E !== '1' || process.env.SERPENT_E2E_DESKTOP_CONTROL === '1';
-if (mcpModeEnabled || mcpAttachBootstrapEnabled) {
-  const mcpUserData = process.env.SERPENT_MCP_USER_DATA_PATH;
-  app.setPath(
-    "userData",
-    mcpUserData && path.isAbsolute(mcpUserData)
-      ? mcpUserData
-      : path.join(tmpdir(), "serpent-mcp-user-data", String(process.pid)),
-  );
-}
-
 // Dev multi-instance (Serpent-i6xg): isolate userData so SingletonLock / prefs
 // do not collide. Prefer `npm run start:multi`. Do not open the same library
 // for writes from two GUIs — SQLite write coordination is CLI/desktop lease
 // territory (ADR-0021), not dual-GUI.
 const allowMultiInstance = process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1";
-if (allowMultiInstance && process.env.SERPENT_E2E !== "1" && !mcpModeEnabled) {
+if (allowMultiInstance && process.env.SERPENT_E2E !== "1") {
   app.setPath(
     "userData",
     path.join(app.getPath("userData"), "dev-instances", `pid-${process.pid}`),
@@ -368,10 +350,11 @@ let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
-let automationMcpHost: AutomationMcpHostHandle | undefined;
-let desktopAttachedMcp: DesktopAttachedMcpHandle | undefined;
-let desktopBrowseControl: DesktopBrowseControl | undefined;
+let embeddedMcpServer: EmbeddedMcpServer | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
+let mcpPermissionPolicyStore: McpPermissionPolicyStore | undefined;
+let mcpPermissionBroker: McpPermissionBroker | undefined;
+let criticalConfirmationWindowManager: CriticalConfirmationWindowManager | undefined;
 let scriptRuntimeSupervisor: ScriptRuntimeSupervisor | undefined;
 let pluginRuntimeSupervisor: PluginRuntimeSupervisor | undefined;
 let pluginTrustedRuntimeSupervisor: PluginTrustedRuntimeSupervisor | undefined;
@@ -385,7 +368,6 @@ let automationRecentScripts: AutomationRecentScriptsStore | undefined;
 let pluginPackageManager: PluginPackageManager | undefined;
 let pluginMcpToolProvider: PluginMcpToolProvider | undefined;
 const pluginAutomationContexts = new Map<string, AutomationExecutionContext>();
-const desktopAutomationSelections = new Map<string, string[]>();
 
 function buildPluginInputCaptureSessionsPayload(): PluginInputCaptureSessionsPayload {
   const sessions = pluginInputCaptureBroker?.activeSessions() ?? [];
@@ -433,10 +415,10 @@ function currentPluginCompatibilityPlatform():
   return { platform, arch };
 }
 
-function rememberOpenedLibrary(libraryPath: string, displayName: string): void {
+function rememberOpenedLibrary(libraryPath: string, displayName: string, libraryId?: string): void {
   rememberRecentLibrary(
     recentLibraryPath(),
-    { path: libraryPath, name: displayName },
+    { path: libraryPath, name: displayName, ...(libraryId === undefined ? {} : { libraryId }) },
     {
       onError: (error) => {
         logger?.error("recent-library.write", error);
@@ -2442,6 +2424,12 @@ async function commandFor(
         libraryId: request.libraryId,
         ...(request.jobIds ? { jobIds: request.jobIds } : {}),
       };
+    case "ai.pending-assets.request":
+      return {
+        type: "ai.pending-assets.request",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "asset.analyze.request": {
       const config = loadAiConfig();
       if (!config.hasKey) return undefined; // Will be handled as error downstream.
@@ -2577,6 +2565,15 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     | undefined;
   try {
     const request = parseRendererRequest(input);
+
+    if (criticalRendererRequest(request)) {
+      logger?.info(
+        'critical-confirmation.route',
+        'Routing a renderer request through the critical confirmation window.',
+        { requestType: request.type },
+      );
+      if (!(await confirmCriticalRendererRequest(request))) return cancelled();
+    }
 
     if (request.type === "asset.import-drop-invalid.report") {
       logger?.error(
@@ -3430,14 +3427,16 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,
         workerResult.library.displayName,
+        workerResult.library.libraryId,
       );
     } else if (workerResult.ok && workerResult.type === "library.renamed") {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,
         workerResult.library.displayName,
+        workerResult.library.libraryId,
       );
     } else if (workerResult.ok && workerResult.type === "library.imported") {
-      rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName);
+      rememberOpenedLibrary(workerResult.libraryPath, workerResult.displayName, workerResult.libraryId);
     } else if (workerResult.ok && workerResult.type === "library.deleted") {
       removeRecentLibrary(
         recentLibraryPath(),
@@ -4092,7 +4091,15 @@ async function confirmDesktopAutomationWrite(): Promise<boolean> {
 
 let e2eAutomationFilePlanConfirmationCount = 0;
 
-async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanSummary): Promise<boolean> {
+async function confirmDesktopAutomationFilePlan(
+  plan: DesktopAutomationFilePlanSummary,
+  context?: {
+    source: AutomationSource;
+    executionId: string;
+    clientName?: string;
+    libraryDisplayName?: string;
+  },
+): Promise<boolean> {
   // See confirmDesktopAutomationWrite: this is an isolated, unpackaged E2E
   // seam only. Production builds always display the fresh plan confirmation.
   if (!app.isPackaged
@@ -4125,8 +4132,13 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
     defaultId: 1,
     cancelId: 0,
     title: '确认文件操作',
-    message: `准备${action} ${plan.executableCount} 项资产。`,
+    message: context?.source === 'mcp'
+      ? `${context.clientName ?? 'MCP 客户端'} 请求${action} ${plan.executableCount} 项资产${context.libraryDisplayName ? `（资源库“${context.libraryDisplayName}”）` : ''}。`
+      : `准备${action} ${plan.executableCount} 项资产。`,
     detail: [
+      ...(context?.source === 'mcp'
+        ? ['这是 MCP 客户端发起的文件操作；请确认目标和数量后再执行。']
+        : []),
       `本次选中 ${plan.targetCount} 项；${plan.blockedCount} 项因当前状态或冲突不会处理。`,
       ...(plan.conflictCount !== undefined && plan.conflictCount > 0
         ? [`其中 ${plan.conflictCount} 项检测到目标冲突。`]
@@ -4147,65 +4159,233 @@ async function confirmDesktopAutomationFilePlan(plan: DesktopAutomationFilePlanS
   return response.response === 1;
 }
 
-async function confirmDesktopMcpAttach(input: {
-  displayName: string;
-  requestWriteAccess: boolean;
-  clientName: string;
-}): Promise<boolean> {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  if (
-    !app.isPackaged
-    && process.env.SERPENT_E2E === '1'
-    && process.env.SERPENT_E2E_AUTOMATION_ATTACH_CONFIRM === '1'
-  ) {
-    return true;
-  }
-
-  const access = input.requestWriteAccess ? '读写能力' : '只读能力';
-  const response = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: ['拒绝', '允许附着'],
-    defaultId: 1,
-    cancelId: 0,
-    title: '允许 Agent 连接 Serpent',
-    message: `Agent “${input.clientName}”请求连接资源库“${input.displayName}”。`,
-    detail: `本次会话申请${access}。允许后，Agent 可以通过 Serpent 的受限自动化接口执行操作；不会获得任意文件系统、Shell、SQL 或网络权限。`,
+async function confirmCriticalLibraryDeletion(libraryId: string): Promise<boolean> {
+  const manager = criticalConfirmationWindowManager;
+  const client = workerClient;
+  if (manager === undefined || client === undefined) return false;
+  const listed = await client.request({ type: 'library.list' });
+  if (!listed.ok || listed.type !== 'library.list') return false;
+  const library = listed.libraries.find((candidate) => candidate.libraryId === libraryId);
+  if (library === undefined) return false;
+  const english = appLocale === 'en';
+  return manager.request({
+    title: english ? 'Confirm critical operation' : '确认危险操作',
+    heading: english ? 'Delete this library from disk?' : '从磁盘删除这个资源库？',
+    message: english
+      ? `The library “${library.displayName}” and its Serpent-managed directory will be permanently deleted.`
+      : `资源库“${library.displayName}”及其 Serpent 管理的目录将被永久删除。`,
+    detail: english
+      ? 'This cannot be undone. Linked-folder source directories are not included. This confirmation is required every time and cannot be remembered or bypassed by MCP permissions.'
+      : '此操作无法撤销。关联文件夹的源目录不会被删除。每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限或“开启所有权限”绕过。',
+    cancelLabel: english ? 'Cancel' : '取消',
+    confirmLabel: english ? 'Delete from disk' : '从磁盘删除',
   });
-  return response.response === 1;
 }
 
-function applyDesktopAutomationSelection(
-  libraryId: string,
-  request: DesktopSelectionRequest,
-): DesktopSelectionResult {
-  const current = desktopAutomationSelections.get(libraryId) ?? [];
-  const requested = [...new Set(request.assetIds)];
-  let selectedAssetIds: string[];
-  if (request.mode === 'replace') {
-    selectedAssetIds = requested;
-  } else if (request.mode === 'add') {
-    selectedAssetIds = [...new Set([...current, ...requested])];
-  } else {
-    const removed = new Set(requested);
-    selectedAssetIds = current.filter((assetId) => !removed.has(assetId));
+async function confirmEnableAllMcpPermissions(label: string): Promise<boolean> {
+  const manager = criticalConfirmationWindowManager;
+  if (manager === undefined) return false;
+  const english = appLocale === 'en';
+  return manager.request({
+    title: english ? 'Confirm permission expansion' : '确认扩大权限',
+    heading: english ? 'Enable Full Access for this MCP client?' : '为这个 MCP 客户端开启 Full Access？',
+    message: english
+      ? `“${label}” will be allowed to execute every MCP operation, including dangerous operations, without asking again.`
+      : `客户端“${label}”将可以直接执行所有 MCP 操作，包括危险操作，后续不再要求人工或 Agent 二次确认。`,
+    detail: english
+      ? 'This applies only to this client credential. Serpent still enforces exact targets, path boundaries, version checks, idempotency and worker safety checks. Disable Full Access or revoke the credential to stop it immediately.'
+      : '此设置只作用于当前客户端凭据。Serpent 仍会执行精确目标、路径边界、版本校验、幂等和 Worker 安全检查。关闭 Full Access 或撤销凭据即可立即停止。',
+    cancelLabel: english ? 'Cancel' : '取消',
+    confirmLabel: english ? 'Enable Full Access' : '开启 Full Access',
+  });
+}
+
+function criticalRendererRequest(request: RendererRequest): boolean {
+  return request.type === 'library.delete-from-disk.request'
+    || request.type === 'folder.delete-from-disk.request'
+    || request.type === 'asset.delete-from-disk.request'
+    || request.type === 'asset.delete-permanent.request'
+    || request.type === 'trash.purge.request'
+    || (request.type === 'asset.delete-linked.request' && request.deleteSourceFile)
+    || (request.type === 'linked-folder.delete-subtree.request' && request.deleteFromDisk);
+}
+
+async function confirmCriticalRendererRequest(request: RendererRequest): Promise<boolean> {
+  if (request.type === 'library.delete-from-disk.request') {
+    return confirmCriticalLibraryDeletion(request.libraryId);
   }
-  desktopAutomationSelections.set(libraryId, selectedAssetIds);
-  const primaryAssetId = selectedAssetIds.at(-1) ?? null;
-  const window = mainWindow;
-  if (window && !window.isDestroyed()) {
-    window.webContents.send(DESKTOP_AUTOMATION_SELECTION_CHANNEL, {
-      libraryId,
-      assetIds: requested,
-      mode: request.mode,
+  const manager = criticalConfirmationWindowManager;
+  if (manager === undefined) return false;
+  const english = appLocale === 'en';
+  const operation = request.type === 'folder.delete-from-disk.request'
+    ? 'folder'
+    : request.type === 'linked-folder.delete-subtree.request'
+      ? 'linked-folder'
+      : request.type === 'asset.delete-permanent.request'
+        ? 'asset-permanent'
+        : request.type === 'asset.delete-linked.request'
+          ? 'asset-linked-source'
+        : request.type === 'trash.purge.request'
+          ? 'trash-purge'
+          : 'asset';
+  const count = request.type === 'asset.delete-from-disk.request'
+    || request.type === 'asset.delete-permanent.request'
+    || request.type === 'asset.delete-linked.request'
+    ? request.assetIds.length
+    : undefined;
+  const heading = operation === 'folder'
+    ? (english ? 'Delete this folder from disk?' : '从磁盘删除这个文件夹？')
+    : operation === 'linked-folder'
+      ? (english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？')
+      : operation === 'asset-permanent'
+        ? (english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？')
+        : operation === 'asset-linked-source'
+          ? (english ? 'Delete linked asset source files?' : '删除链接资产源文件？')
+        : operation === 'trash-purge'
+          ? (english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？')
+          : (english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？');
+  const message = operation === 'folder'
+    ? (english ? 'The selected folder and its managed assets will be permanently deleted.' : '选定文件夹及其中的托管资产将被永久删除。')
+    : operation === 'linked-folder'
+      ? (english ? 'The selected linked-folder source files will be permanently deleted.' : '选定链接文件夹中的源文件将被永久删除。')
+      : operation === 'asset-permanent'
+        ? (english ? `${count ?? 0} selected trash asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项回收站资产将被永久删除。`)
+        : operation === 'asset-linked-source'
+          ? (english ? `${count ?? 0} linked asset source file(s) will be permanently deleted.` : `选定的 ${count ?? 0} 个链接资产源文件将被永久删除。`)
+        : operation === 'trash-purge'
+          ? (english ? 'All assets currently in the Serpent trash will be permanently deleted.' : 'Serpent 回收站中的全部资产将被永久删除。')
+          : (english ? `${count ?? 0} selected asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项资产将被永久删除。`);
+  return manager.request({
+    title: english ? 'Confirm critical operation' : '确认危险操作',
+    heading,
+    message,
+    detail: english
+      ? 'This cannot be undone and the files will not go to the application trash. This confirmation is required every time; it cannot be remembered or bypassed by MCP permissions.'
+      : '此操作无法撤销，文件不会进入应用回收站。每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限绕过。',
+    cancelLabel: english ? 'Cancel' : '取消',
+    confirmLabel: english ? 'Delete permanently' : '永久删除',
+  });
+}
+
+async function executeMcpLibraryContextCommand(input: {
+  commandId: 'library.list-open' | 'library.open' | 'library.use';
+  executionId: string;
+  context: AutomationExecutionContext;
+  commandInput: unknown;
+}): Promise<unknown> {
+  const journal = automationExecutionJournal;
+  const client = workerClient;
+  if (!journal || !client) {
+    throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
+  }
+  const listed = await client.request({ type: 'library.list' });
+  if (!listed.ok || listed.type !== 'library.list') {
+    throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
+  }
+  const libraries = listed.libraries;
+  if (input.commandId === 'library.list-open') {
+    return {
+      libraries: libraries.map((library) => ({
+        libraryId: library.libraryId,
+        displayName: library.displayName,
+        active: false,
+      })),
+      activeLibraryId: null,
+      contextRevision: 0,
+    };
+  }
+
+  const commandInput = input.commandInput as { libraryId?: string };
+  let selected = commandInput.libraryId === undefined
+    ? undefined
+    : libraries.find((library) => library.libraryId === commandInput.libraryId);
+  let needsOpen = false;
+  if (input.commandId === 'library.open' && selected === undefined && commandInput.libraryId !== undefined) {
+    const recent = readRecentLibraryEntries(recentLibraryPath(), (error) => {
+      logger?.error('recent-library.read', error);
+    }).find((entry) => entry.libraryId === commandInput.libraryId);
+    if (recent === undefined) {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_NOT_OPEN');
+    }
+    selected = {
+      libraryId: recent.libraryId!,
+      displayName: recent.name,
+      libraryPath: recent.path,
+    };
+    needsOpen = true;
+  }
+  if (input.commandId === 'library.open' && selected === undefined) {
+    throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_NOT_OPEN');
+  }
+  if (selected === undefined) {
+    throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_NOT_OPEN');
+  }
+  if (input.commandId === 'library.open') {
+    if (selected.libraryId === '' || needsOpen) {
+      publishLifecycle({ type: 'library.opening', operation: 'open' });
+      const opened = await client.request({
+        type: 'library.open',
+        selectedLibraryPath: selected.libraryPath,
+      });
+      if (!opened.ok || opened.type !== 'library.opened') {
+        throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
+      }
+      selected = opened.library;
+      rememberOpenedLibrary(selected.libraryPath, selected.displayName, selected.libraryId);
+      await notifyLibraryOpenedSideEffects({
+        libraryId: selected.libraryId,
+        libraryDirectory: selected.libraryPath,
+      });
+      publishLifecycle({
+        type: 'library.opened',
+        source: 'mcp',
+        library: {
+          libraryId: selected.libraryId,
+          displayName: selected.displayName,
+          displayPath: selected.libraryPath,
+          ...(selected.readOnly === undefined ? {} : { readOnly: selected.readOnly }),
+          ...(selected.libraryVersion === undefined ? {} : { libraryVersion: selected.libraryVersion }),
+          ...(selected.supportedSchemaVersion === undefined ? {} : { supportedSchemaVersion: selected.supportedSchemaVersion }),
+          ...(selected.migrationStuck === undefined ? {} : { migrationStuck: selected.migrationStuck }),
+        },
+      });
+    }
+  }
+  if (selected.libraryId === '') {
+    throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
+  }
+  if (input.commandId === 'library.use') {
+    publishLifecycle({
+      type: 'library.opened',
+      source: 'mcp',
+      library: {
+        libraryId: selected.libraryId,
+        displayName: selected.displayName,
+        displayPath: selected.libraryPath,
+      },
     });
   }
   return {
-    libraryId,
-    mode: request.mode,
-    selectedAssetIds,
-    primaryAssetId,
-    ignoredAssetIds: [],
+    libraryId: selected.libraryId,
+    displayName: selected.displayName,
+    contextRevision: 0,
   };
+}
+
+async function normalizeMcpCommandInput(input: {
+  commandId: AutomationCommandId;
+  executionId: string;
+  context: AutomationExecutionContext;
+  commandInput: unknown;
+  signal?: AbortSignal;
+}): Promise<unknown | undefined> {
+  // MCP always supplies explicit paths. Opening a native picker here would
+  // make a supposedly stateless/headless request depend on a human and would
+  // recreate the repeated confirmation failure this adapter is designed to
+  // eliminate. The Registry MCP schemas validate these fields before this
+  // normalizer runs.
+  if (input.signal?.aborted) return input.commandInput;
+  return input.commandInput;
 }
 
 async function startApplication(): Promise<void> {
@@ -4224,6 +4404,13 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = path.join(app.getPath("logs"), "serpent.log");
   logger = new AppLogger(appLogPath);
+  criticalConfirmationWindowManager = new CriticalConfirmationWindowManager({
+    getParentWindow: () => mainWindow ?? null,
+    createWindow: (options) => new BrowserWindow(options),
+    ipcMain,
+    preloadPath: path.join(__dirname, 'critical-confirmation.js'),
+    logger,
+  });
   app.on("child-process-gone", (_event, details) => {
     logRendererChildProcessGone(logger, undefined, details);
   });
@@ -4327,6 +4514,11 @@ async function startApplication(): Promise<void> {
     ),
     logger,
   });
+  mcpPermissionPolicyStore = new McpPermissionPolicyStore(app.getPath('userData'));
+  mcpPermissionBroker = new McpPermissionBroker({
+    policyStore: mcpPermissionPolicyStore,
+    audit: logger,
+  });
   automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
     path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
   );
@@ -4404,23 +4596,60 @@ async function startApplication(): Promise<void> {
           return { warnings: result.warnings };
         },
       }),
+      permissionBroker: mcpPermissionBroker,
+      contextBarrier: automationExecutionJournal,
+      libraryContextHandler: {
+        execute: executeMcpLibraryContextCommand,
+      },
+      mcpInputNormalizer: normalizeMcpCommandInput,
       libraryBindingHandler: {
-        bindLibrary: async ({ executionId, libraryId }) => {
+        onLibraryCreated: async ({ source, library }) => {
+          rememberOpenedLibrary(library.libraryPath, library.displayName, library.libraryId);
+          await notifyLibraryOpenedSideEffects({
+            libraryId: library.libraryId,
+            libraryDirectory: library.libraryPath,
+          });
+          publishLifecycle({
+            type: 'library.opened',
+            ...(source === 'mcp' ? { source } : {}),
+            library: {
+              libraryId: library.libraryId,
+              displayName: library.displayName,
+              displayPath: library.libraryPath,
+            },
+          });
+        },
+        transitionLibraryContext: async ({ executionId, source, libraryId, displayName, expectedRevision, authorizationSource }) => {
           const libraries = await activeWorkerClient.request({ type: 'library.list' });
           if (!libraries.ok || libraries.type !== 'library.list') {
-            throw new Error('The created library is not open in the Library Worker.');
+            throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
           }
           const boundLibrary = libraries.libraries.find((library) => library.libraryId === libraryId);
           if (!boundLibrary) {
-            throw new Error('The created library is not open in the Library Worker.');
+            throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_OPEN_FAILED');
           }
-          const bound = automationExecutionJournal?.bindLibrary(executionId, libraryId);
-          if (bound === undefined || bound.libraryId !== libraryId) {
+          const bound = automationExecutionJournal?.authorizeLibrary(executionId, libraryId);
+          const transitioned = automationExecutionJournal?.transitionLibraryContext({
+            executionId,
+            libraryId,
+            ...(displayName === undefined ? {} : { displayName }),
+            expectedRevision,
+            authorizationSource,
+          });
+          if (transitioned === undefined || transitioned.libraryId !== libraryId) {
             throw new Error('The automation execution could not bind the created library.');
           }
-          rememberOpenedLibrary(boundLibrary.libraryPath, boundLibrary.displayName);
+          if (bound === undefined) {
+            throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_CONTEXT_CONFLICT');
+          }
+          rememberOpenedLibrary(boundLibrary.libraryPath, boundLibrary.displayName, boundLibrary.libraryId);
+          await notifyLibraryOpenedSideEffects({
+            libraryId: boundLibrary.libraryId,
+            libraryDirectory: boundLibrary.libraryPath,
+          });
           publishLifecycle({
             type: 'library.opened',
+            ...(source === 'mcp' ? { source } : {}),
             library: {
               libraryId: boundLibrary.libraryId,
               displayName: boundLibrary.displayName,
@@ -4898,17 +5127,13 @@ async function startApplication(): Promise<void> {
         void pluginProviderScheduler?.materializeLibrary(libraryId).catch((error) => {
           logger?.error('plugin.providers.materialize', error, { libraryId });
         });
+        embeddedMcpServer?.notifyToolsChanged();
       },
       logger,
     });
     pluginMcpToolProvider = new PluginMcpToolProvider({
       activationCoordinator: pluginActivationCoordinator,
       getLibraryId: () => {
-        const executionId = automationMcpHost?.executionId;
-        const mcpLibraryId = executionId === undefined
-          ? null
-          : automationExecutionJournal?.get(executionId)?.libraryId ?? null;
-        if (mcpLibraryId !== null) return mcpLibraryId;
         return mainWindow === undefined
           ? null
           : focusedContexts.get(mainWindow.id)?.libraryId ?? null;
@@ -5009,6 +5234,85 @@ async function startApplication(): Promise<void> {
       }
     });
   }
+  if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
+    throw new Error('Embedded MCP server requires journal, gateway, worker, and logger.');
+  }
+  embeddedMcpServer = new EmbeddedMcpServer({
+    userDataPath: app.getPath('userData'),
+    journal: automationExecutionJournal,
+    gateway: automationCommandGateway,
+    workerClient,
+    logger,
+    getPluginTools: () => pluginMcpToolProvider,
+    permissionPolicyStore: mcpPermissionPolicyStore,
+    permissionBroker: mcpPermissionBroker,
+  });
+  embeddedMcpServer.onSnapshot((snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const validatedSnapshot = mcpSettingsSnapshotSchema.parse(snapshot);
+      mainWindow.webContents.send(MCP_SETTINGS_EVENT_CHANNEL, validatedSnapshot);
+    }
+  });
+  ipcMain.handle(MCP_SETTINGS_REQUEST_CHANNEL, async (event, input: unknown) => {
+    const server = embeddedMcpServer;
+    const response = (value: unknown) => mcpSettingsResponseSchema.parse(value);
+    if (!server || !mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('mcp.settings', 'Rejected MCP settings request.', { code: 'unauthorized_sender' });
+      return response({ ok: false, code: 'MCP_SETTINGS_UNAVAILABLE', message: 'MCP settings are unavailable.', snapshot: server?.snapshot() });
+    }
+    const parsed = mcpSettingsRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      return response({ ok: false, code: 'MCP_INVALID_REQUEST', message: 'The MCP settings request is invalid.', snapshot: server.snapshot() });
+    }
+    const request: McpSettingsRequest = parsed.data;
+    try {
+      if (request.type === 'get') return response({ ok: true, snapshot: server.snapshot() });
+      if (request.type === 'set-auto-start') return response({ ok: true, snapshot: await server.setAutoStart(request.enabled) });
+      if (request.type === 'set-access-mode') {
+        if (request.mode === 'full-access') {
+          const credential = server.snapshot().credentials.find(
+            (candidate) => candidate.credentialId === request.credentialId,
+          );
+          if (credential === undefined || credential.revokedAt !== null) {
+            return response({
+              ok: false,
+              code: 'MCP_CLIENT_UNAUTHORIZED',
+              message: 'The MCP client credential is unavailable.',
+              snapshot: server.snapshot(),
+            });
+          }
+          if (!(await confirmEnableAllMcpPermissions(credential.label))) {
+            return response({
+              ok: false,
+              code: 'MCP_PERMISSION_CONFIRMATION_CANCELLED',
+              message: 'The permission change was cancelled.',
+              snapshot: server.snapshot(),
+            });
+          }
+        }
+        return response({ ok: true, snapshot: await server.setAccessMode(request.credentialId, request.mode) });
+      }
+      if (request.type === 'set-port') return response({ ok: true, snapshot: await server.setPort(request.port) });
+      if (request.type === 'start') return response({ ok: true, snapshot: await server.start() });
+      if (request.type === 'stop') return response({ ok: true, snapshot: await server.stop() });
+      if (request.type === 'enable') return response({ ok: true, snapshot: await server.setEnabled(request.enabled) });
+      if (request.type === 'revoke-credential') {
+        return response({ ok: true, snapshot: await server.revokeCredential(request.credentialId) });
+      }
+      const config = await server.createClientConfig(request.input.format, request.input.label);
+      clipboard.writeText(config.configText);
+      return response({ ok: true, copied: true, credentialId: config.credentialId, snapshot: config.snapshot });
+    } catch (error) {
+      const code = error instanceof EmbeddedMcpServerError ? error.code : 'MCP_SERVER_START_FAILED';
+      logger?.error('mcp.settings', error, { code });
+      return response({
+        ok: false,
+        code,
+        message: error instanceof EmbeddedMcpServerError ? error.message : 'The MCP operation failed.',
+        snapshot: server.snapshot(),
+      });
+    }
+  });
   // Global user-scoped plugins have an application lifetime and must be set up
   // before recent-library restore, including when no library can be reopened.
   await pluginActivationCoordinator?.refreshGlobal();
@@ -5467,6 +5771,7 @@ async function startApplication(): Promise<void> {
               requestType,
             });
           }
+          embeddedMcpServer?.notifyToolsChanged();
         } catch (error) {
           logger?.error('plugin.activation.after-mutation', error, { requestType, libraryId });
         }
@@ -5661,16 +5966,6 @@ async function startApplication(): Promise<void> {
     }
   });
 
-  ipcMain.on(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, (event, payload: unknown) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
-      logger?.info('ipc.desktop-browse', 'Rejected Desktop browse response.', {
-        code: 'unauthorized_sender',
-      });
-      return;
-    }
-    desktopBrowseControl?.handleResult(event.sender, payload);
-  });
-
   ipcMain.on(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, (event, input: unknown) => {
     const active =
       typeof input === "object" &&
@@ -5716,64 +6011,11 @@ async function startApplication(): Promise<void> {
     logger,
   });
 
-  if (mcpModeEnabled) {
-    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
-      throw new Error('MCP mode requires journal, gateway, worker, and logger.');
-    }
-    redirectConsoleToStderrForMcp();
-    const startedMcpHost = await maybeStartAutomationMcpMode({
-      journal: automationExecutionJournal,
-      gateway: automationCommandGateway,
-      request: (command) => workerClient!.request(command),
-      onLibraryChanged: (listener) => workerClient!.onLibraryChanged(listener),
-      logger,
-      pluginTools: pluginMcpToolProvider,
-    });
-    if (startedMcpHost === null) {
-      throw new Error('SERPENT_MCP=1 but MCP host did not start.');
-    }
-    automationMcpHost = startedMcpHost;
-    startupComplete = true;
-    return;
-  }
-
   await createMainWindow();
-  desktopBrowseControl = createDesktopBrowseControl({
-    getWebContents: () =>
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null,
-  });
-
-  if (desktopControlEnabled) {
-    if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
-      throw new Error('Desktop attached MCP requires journal, gateway, worker, and logger.');
-    }
-    void startDesktopAttachedMcp({
-      userDataPath: app.getPath('userData'),
-      journal: automationExecutionJournal,
-      gateway: automationCommandGateway,
-      getActiveLibraryId: () => {
-        if (!mainWindow || mainWindow.isDestroyed()) return null;
-        return focusedContexts.get(mainWindow.id)?.libraryId ?? null;
-      },
-      getLibrarySummary: async (libraryId) => {
-        const result = await workerClient!.request({ type: 'library.list' });
-        if (!result.ok || result.type !== 'library.list') return null;
-        const library = result.libraries.find((entry) => entry.libraryId === libraryId);
-        return library === undefined
-          ? null
-          : { libraryId: library.libraryId, displayName: library.displayName };
-      },
-      confirmAttach: confirmDesktopMcpAttach,
-      focusMainWindow,
-      applySelection: applyDesktopAutomationSelection,
-      browseControl: desktopBrowseControl,
-      pluginTools: pluginMcpToolProvider,
-      logger,
-    }).then((handle) => {
-      desktopAttachedMcp = handle;
-    }).catch((error: unknown) => {
-      logger?.error('desktop.attached-mcp.start', error);
-    });
+  try {
+    await embeddedMcpServer?.initialize();
+  } catch (error) {
+    logger?.error('mcp.server.initialize', error);
   }
   windowsTray = createWindowsTray({
     getMainWindow: () => mainWindow,
@@ -5826,7 +6068,7 @@ if (!hasSingleInstanceLock) {
     });
 
   app.on("activate", () => {
-    if (!startupComplete || mcpModeEnabled) return;
+    if (!startupComplete) return;
     if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
     else focusMainWindow();
   });
@@ -5842,6 +6084,8 @@ if (!hasSingleInstanceLock) {
 
   app.on("before-quit", (event) => {
     aiQueueScheduler.clearAll();
+    criticalConfirmationWindowManager?.dispose();
+    criticalConfirmationWindowManager = undefined;
     if (quitAfterShutdown || !workerClient) return;
     event.preventDefault();
 
@@ -5859,10 +6103,8 @@ if (!hasSingleInstanceLock) {
       // Best effort.
     }
 
-    const mcpClose = automationMcpHost?.close() ?? Promise.resolve();
-    const desktopAttachedMcpClose = desktopAttachedMcp?.close() ?? Promise.resolve();
-    desktopBrowseControl?.close();
-    void Promise.all([mcpClose, desktopAttachedMcpClose])
+    const mcpClose = embeddedMcpServer?.close() ?? Promise.resolve();
+    void Promise.all([mcpClose])
       .catch((error: unknown) => {
         logger?.error("automation.mcp.close", error);
       })

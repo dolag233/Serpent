@@ -1,13 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from 'node:fs';
-import path from 'node:path';
-
 import { z } from 'zod';
 
 import {
@@ -23,6 +14,7 @@ import type {
   AutomationExecutionContext,
   AutomationExecutionResolver,
 } from '../automation/command-gateway';
+import { readAtomicJsonFile, writeAtomicJsonFile } from './atomic-json-file';
 
 export const automationExecutionStatusSchema = z.enum([
   'created',
@@ -52,6 +44,11 @@ const nonBlankString = z.string().min(1).max(255).refine((value) => value.trim()
  */
 const automationLibraryIdSchema = z.string().uuid();
 const automationSessionIdSchema = z.string().uuid();
+const automationCredentialIdSchema = z.string().uuid();
+const automationActiveLibrarySchema = z.strictObject({
+  libraryId: automationLibraryIdSchema,
+  displayName: nonBlankString.optional(),
+});
 
 const automationExecutionFailureCodes = [
   'AUTOMATION_INVALID_REQUEST',
@@ -62,7 +59,17 @@ const automationExecutionFailureCodes = [
   'AUTOMATION_CAPABILITY_DENIED',
   'AUTOMATION_LIBRARY_NOT_BOUND',
   'AUTOMATION_LIBRARY_OPEN_FAILED',
+  'AUTOMATION_LIBRARY_CONTEXT_REQUIRED',
+  'AUTOMATION_LIBRARY_CONTEXT_CONFLICT',
+  'AUTOMATION_LIBRARY_CONTEXT_BUSY',
+  'AUTOMATION_LIBRARY_NOT_OPEN',
+  'AUTOMATION_LIBRARY_AUTHORIZATION_REQUIRED',
+  'AUTOMATION_LIBRARY_SWITCH_DENIED',
+  'AUTOMATION_PLAN_STALE',
+  'AUTOMATION_OUTPUT_LIMIT_EXCEEDED',
   'AUTOMATION_CONCURRENCY_LIMIT_REACHED',
+  'AUTOMATION_EXECUTION_CANCELLED',
+  'AUTOMATION_EXECUTION_TIMED_OUT',
   'AUTOMATION_RESULT_INVALID',
   'AUTOMATION_GRANT_NOT_ALLOWED',
   'AUTOMATION_CANCELLED',
@@ -130,6 +137,8 @@ export const automationExecutionStatusProjectionSchema = z.strictObject({
   createdAt: z.string().datetime(),
   finishedAt: z.string().datetime().nullable(),
   summary: executionSummarySchema.nullable(),
+  activeLibrary: automationActiveLibrarySchema.nullable().optional(),
+  contextRevision: z.number().int().nonnegative().optional(),
 });
 
 export type AutomationExecutionStatusProjection = z.infer<typeof automationExecutionStatusProjectionSchema>;
@@ -150,6 +159,10 @@ export function projectAutomationExecutionStatus(
     createdAt: record.createdAt,
     finishedAt: record.finishedAt,
     summary: record.summary === null ? null : { ...record.summary },
+    ...(record.activeLibrary === undefined
+      ? {}
+      : { activeLibrary: record.activeLibrary === null ? null : { ...record.activeLibrary } }),
+    ...(record.contextRevision === undefined ? {} : { contextRevision: record.contextRevision }),
   };
 }
 
@@ -157,7 +170,12 @@ const automationExecutionRecordSchema = z.strictObject({
   executionId: nonBlankString,
   logId: nonBlankString,
   source: automationSourceSchema,
+  clientCredentialId: automationCredentialIdSchema.optional(),
+  clientName: nonBlankString.max(128).optional(),
   libraryId: automationLibraryIdSchema.nullable(),
+  activeLibrary: automationActiveLibrarySchema.nullable().optional(),
+  contextRevision: z.number().int().nonnegative().optional(),
+  authorizedLibraryIds: z.array(automationLibraryIdSchema).max(64).optional(),
   apiVersion: z.literal(AUTOMATION_API_VERSION),
   scriptHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
   sessionId: automationSessionIdSchema.nullable(),
@@ -271,6 +289,12 @@ function safeRecord(record: AutomationExecutionRecord): AutomationExecutionRecor
     ...record,
     declaredCapabilities: [...record.declaredCapabilities],
     grantedCapabilities: [...record.grantedCapabilities],
+    ...(record.activeLibrary === undefined
+      ? {}
+      : { activeLibrary: record.activeLibrary === null ? null : { ...record.activeLibrary } }),
+    ...(record.authorizedLibraryIds === undefined
+      ? {}
+      : { authorizedLibraryIds: [...record.authorizedLibraryIds] }),
     resourceBudget: { ...record.resourceBudget },
     summary: record.summary === null ? null : { ...record.summary },
   };
@@ -296,15 +320,13 @@ export interface AutomationExecutionStore {
 export function createJsonFileAutomationExecutionStore(filename: string): AutomationExecutionStore {
   return {
     load(): AutomationExecutionJournalSnapshot {
-      if (!existsSync(filename)) return defaultSnapshot();
-      return automationExecutionJournalSnapshotSchema.parse(JSON.parse(readFileSync(filename, 'utf8')));
+      const contents = readAtomicJsonFile(filename);
+      if (contents === undefined) return defaultSnapshot();
+      return automationExecutionJournalSnapshotSchema.parse(JSON.parse(contents));
     },
     save(snapshot: AutomationExecutionJournalSnapshot): void {
       const parsed = automationExecutionJournalSnapshotSchema.parse(snapshot);
-      mkdirSync(path.dirname(filename), { recursive: true });
-      const temporaryFilename = `${filename}.${process.pid}.${randomUUID()}.tmp`;
-      writeFileSync(temporaryFilename, `${JSON.stringify(parsed)}\n`, { encoding: 'utf8', mode: 0o600 });
-      renameSync(temporaryFilename, filename);
+      writeAtomicJsonFile(filename, `${JSON.stringify(parsed)}\n`);
     },
   };
 }
@@ -316,9 +338,54 @@ export interface AutomationExecutionAuditLogger {
 
 export type AutomationAuthorizationPersistence = 'session' | 'saved-script';
 
+export type AutomationLibraryContextTransitionInput = {
+  executionId: string;
+  libraryId: string;
+  displayName?: string;
+  expectedRevision: number;
+  authorizationSource: 'approved-plan' | 'context-confirmation';
+};
+
+export type AutomationLibraryContextChangedEvent = {
+  executionId: string;
+  previousLibraryId: string | null;
+  libraryId: string | null;
+  contextRevision: number;
+};
+
+export type AutomationLibraryContextErrorCode =
+  | 'AUTOMATION_LIBRARY_CONTEXT_CONFLICT'
+  | 'AUTOMATION_LIBRARY_CONTEXT_BUSY'
+  | 'AUTOMATION_LIBRARY_AUTHORIZATION_REQUIRED'
+  | 'AUTOMATION_LIBRARY_SWITCH_DENIED'
+  | 'AUTOMATION_LIBRARY_NOT_OPEN'
+  | 'AUTOMATION_LIBRARY_OPEN_FAILED';
+
+export class AutomationLibraryContextError extends Error {
+  public readonly code: AutomationLibraryContextErrorCode;
+
+  public constructor(code: AutomationLibraryContextErrorCode) {
+    super(code === 'AUTOMATION_LIBRARY_CONTEXT_CONFLICT'
+      ? 'The automation library context changed before this operation completed.'
+      : code === 'AUTOMATION_LIBRARY_CONTEXT_BUSY'
+        ? 'The automation library context is busy with another command.'
+      : code === 'AUTOMATION_LIBRARY_AUTHORIZATION_REQUIRED'
+          ? 'This automation session has not authorized the requested library.'
+          : code === 'AUTOMATION_LIBRARY_NOT_OPEN'
+            ? 'The requested library is not open in Serpent.'
+            : code === 'AUTOMATION_LIBRARY_OPEN_FAILED'
+              ? 'The requested library could not be opened in Serpent.'
+          : 'The automation library context switch was denied.');
+    this.name = 'AutomationLibraryContextError';
+    this.code = code;
+  }
+}
+
 export interface CreateAutomationExecutionInput {
   source: AutomationSource;
   libraryId: string | null;
+  clientCredentialId?: string;
+  clientName?: string;
   scriptSource?: string;
   sessionId?: string;
   declaredCapabilities: readonly AutomationCapability[];
@@ -327,6 +394,7 @@ export interface CreateAutomationExecutionInput {
 export interface AuthorizeAutomationExecutionInput {
   executionId: string;
   persistence: AutomationAuthorizationPersistence;
+  grantedCapabilities?: readonly AutomationCapability[];
 }
 
 export type AuthorizeAutomationExecutionResult =
@@ -392,6 +460,8 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
   readonly #resourceBudget: AutomationExecutionResourceBudget;
   readonly #abortControllers = new Map<string, AbortController>();
   readonly #deadlineTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #activeContextCommands = new Map<string, number>();
+  readonly #contextListeners = new Set<(event: AutomationLibraryContextChangedEvent) => void>();
   #snapshot: AutomationExecutionJournalSnapshot;
 
   constructor({
@@ -448,7 +518,16 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
       executionId: this.#nextUniqueId('execution'),
       logId: this.#nextUniqueId('log'),
       source,
+      ...(input.clientCredentialId === undefined
+        ? {}
+        : { clientCredentialId: automationCredentialIdSchema.parse(input.clientCredentialId) }),
+      ...(input.clientName === undefined
+        ? {}
+        : { clientName: nonBlankString.max(128).parse(input.clientName) }),
       libraryId,
+      activeLibrary: libraryId === null ? null : { libraryId },
+      contextRevision: 0,
+      authorizedLibraryIds: libraryId === null ? [] : [libraryId],
       apiVersion: AUTOMATION_API_VERSION,
       scriptHash,
       sessionId,
@@ -532,6 +611,13 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     const mcpSessionGrant = record.source === 'mcp' && input.persistence === 'session';
     if (!allowed && !mcpSessionGrant) return { ok: false, code: 'AUTOMATION_GRANT_NOT_ALLOWED' };
 
+    const grantedCapabilities = input.grantedCapabilities === undefined
+      ? record.declaredCapabilities
+      : normalizeCapabilities(z.array(automationCapabilitySchema).max(64).parse(input.grantedCapabilities));
+    if (grantedCapabilities.some((capability) => !record.declaredCapabilities.includes(capability))) {
+      return { ok: false, code: 'AUTOMATION_GRANT_NOT_ALLOWED' };
+    }
+
     if (input.persistence === 'saved-script' && record.scriptHash !== null && record.libraryId !== null) {
       this.#upsertPersistentGrant({
         scriptHash: record.scriptHash,
@@ -540,7 +626,7 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
         grantedAt: this.#now(),
       });
     }
-    record.grantedCapabilities = [...record.declaredCapabilities];
+    record.grantedCapabilities = [...grantedCapabilities];
     record.status = 'running';
     record.updatedAt = this.#now();
     this.#persist();
@@ -571,10 +657,19 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
   resolve(executionId: string): AutomationExecutionContext | undefined {
     const record = this.#find(executionId);
     if (!record || record.status !== 'running') return undefined;
+    const libraryId = record.libraryId;
+    const activeLibrary = record.activeLibrary === undefined
+      ? (libraryId === null ? null : { libraryId })
+      : record.activeLibrary;
     return {
       executionId: record.executionId,
       source: record.source,
-      libraryId: record.libraryId,
+      ...(record.clientCredentialId === undefined ? {} : { clientCredentialId: record.clientCredentialId }),
+      ...(record.clientName === undefined ? {} : { clientName: record.clientName }),
+      libraryId,
+      activeLibrary,
+      contextRevision: record.contextRevision ?? 0,
+      authorizedLibraryIds: [...(record.authorizedLibraryIds ?? (libraryId === null ? [] : [libraryId]))],
       grantedCapabilities: [...record.grantedCapabilities],
       logId: record.logId,
       deadlineAt: record.deadlineAt,
@@ -584,9 +679,107 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
   }
 
   /**
-   * Main calls this only after a headless `library.create` has completed the
-   * actual open/initialization handshake.  The execution cannot be rebound to
-   * another library after it becomes bound.
+   * A context transition is a compare-and-swap.  Main must complete the
+   * Worker open/activation handshake before calling this method, so the
+   * journal remains the single authority for what subsequent commands target.
+   */
+  transitionLibraryContext(input: AutomationLibraryContextTransitionInput): AutomationExecutionRecord | undefined {
+    const record = this.#find(input.executionId);
+    if (!record || terminalStatus(record.status)) {
+      return record === undefined ? undefined : safeRecord(record);
+    }
+    const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
+    const currentRevision = record.contextRevision ?? 0;
+    if (expectedRevision !== currentRevision) {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_CONTEXT_CONFLICT');
+    }
+    if ((this.#activeContextCommands.get(record.executionId) ?? 0) > 0) {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_CONTEXT_BUSY');
+    }
+    const libraryId = automationLibraryIdSchema.parse(input.libraryId);
+    const authorizedLibraryIds = record.authorizedLibraryIds ?? (record.libraryId === null ? [] : [record.libraryId]);
+    if (!authorizedLibraryIds.includes(libraryId)) {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_AUTHORIZATION_REQUIRED');
+    }
+    const previousLibraryId = record.libraryId;
+    record.libraryId = libraryId;
+    record.activeLibrary = {
+      libraryId,
+      ...(input.displayName === undefined ? {} : { displayName: nonBlankString.parse(input.displayName) }),
+    };
+    record.contextRevision = currentRevision + 1;
+    record.authorizedLibraryIds = [...authorizedLibraryIds];
+    record.updatedAt = this.#now();
+    this.#persist();
+    this.#info('library-context-changed', record, 'Automation execution library context changed.', {
+      previousLibraryId,
+      authorizationSource: input.authorizationSource,
+      contextRevision: record.contextRevision,
+    });
+    const event: AutomationLibraryContextChangedEvent = {
+      executionId: record.executionId,
+      previousLibraryId,
+      libraryId,
+      contextRevision: record.contextRevision,
+    };
+    for (const listener of this.#contextListeners) listener(event);
+    return safeRecord(record);
+  }
+
+  /** Main authorizes a library after a local confirmation or approved plan. */
+  authorizeLibrary(executionId: string, libraryId: string): AutomationExecutionRecord | undefined {
+    const record = this.#find(executionId);
+    if (!record || terminalStatus(record.status)) {
+      return record === undefined ? undefined : safeRecord(record);
+    }
+    const parsedLibraryId = automationLibraryIdSchema.parse(libraryId);
+    const authorizedLibraryIds = record.authorizedLibraryIds ?? (record.libraryId === null ? [] : [record.libraryId]);
+    if (!authorizedLibraryIds.includes(parsedLibraryId)) {
+      record.authorizedLibraryIds = [...authorizedLibraryIds, parsedLibraryId];
+      record.updatedAt = this.#now();
+      this.#persist();
+    }
+    return safeRecord(record);
+  }
+
+  isLibraryAuthorized(executionId: string, libraryId: string): boolean {
+    const record = this.#find(executionId);
+    if (!record) return false;
+    const authorizedLibraryIds = record.authorizedLibraryIds ?? (record.libraryId === null ? [] : [record.libraryId]);
+    return authorizedLibraryIds.includes(automationLibraryIdSchema.parse(libraryId));
+  }
+
+  onContextChanged(listener: (event: AutomationLibraryContextChangedEvent) => void): () => void {
+    this.#contextListeners.add(listener);
+    return () => this.#contextListeners.delete(listener);
+  }
+
+  beginCommand(executionId: string, contextRevision: number): { release: () => void } {
+    const record = this.#find(executionId);
+    if (!record || record.status !== 'running') {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_CONTEXT_CONFLICT');
+    }
+    const currentRevision = record.contextRevision ?? 0;
+    if (currentRevision !== contextRevision) {
+      throw new AutomationLibraryContextError('AUTOMATION_LIBRARY_CONTEXT_CONFLICT');
+    }
+    const count = this.#activeContextCommands.get(executionId) ?? 0;
+    this.#activeContextCommands.set(executionId, count + 1);
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        const currentCount = this.#activeContextCommands.get(executionId) ?? 0;
+        if (currentCount <= 1) this.#activeContextCommands.delete(executionId);
+        else this.#activeContextCommands.set(executionId, currentCount - 1);
+      },
+    };
+  }
+
+  /**
+   * Compatibility entrypoint for the existing Desktop Console and legacy
+   * unit seams. New callers must use `authorizeLibrary` + CAS transition.
    */
   bindLibrary(executionId: string, libraryId: string): AutomationExecutionRecord | undefined {
     const record = this.#find(executionId);
@@ -596,11 +789,13 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     if (record.libraryId !== null) {
       throw new Error('Automation execution is already bound to a library.');
     }
-    record.libraryId = automationLibraryIdSchema.parse(libraryId);
-    record.updatedAt = this.#now();
-    this.#persist();
-    this.#info('library-bound', record, 'Automation execution bound to an opened library.');
-    return safeRecord(record);
+    this.authorizeLibrary(executionId, libraryId);
+    return this.transitionLibraryContext({
+      executionId,
+      libraryId,
+      expectedRevision: record.contextRevision ?? 0,
+      authorizationSource: 'approved-plan',
+    });
   }
 
   get(executionId: string): AutomationExecutionRecord | undefined {

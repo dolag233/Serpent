@@ -7,6 +7,9 @@ declare global {
 
   type SerpentAutomationCommandId =
     | 'library.create'
+    | 'library.list-open'
+    | 'library.open'
+    | 'library.use'
     | 'file.import'
     | 'library.inspect'
     | 'library.change-sequence'

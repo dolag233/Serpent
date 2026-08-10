@@ -40,7 +40,9 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
     context: unknown;
     executionId: string;
     libraryId?: string;
+    signal?: AbortSignal;
   }): Promise<unknown> {
+    if (input.signal?.aborted) throw new Error('The plugin MCP command was cancelled.');
     const libraryId = input.libraryId ?? this.options.getLibraryId();
     if (libraryId === null) throw new Error('Plugin MCP commands require an open library.');
     const command = this.options.activationCoordinator
@@ -58,6 +60,7 @@ export class PluginMcpToolProvider implements SerpentMcpPluginToolBridge {
       ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
       ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
     });
+    if (input.signal?.aborted) throw new Error('The plugin MCP command was cancelled.');
     if (result.complete.status !== 'succeeded') {
       throw new Error('The plugin command did not complete successfully.');
     }

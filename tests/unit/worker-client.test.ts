@@ -1,6 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 
-import { requestTimeoutForCommand } from '../../src/main/worker-client';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { AppLogger } from '../../src/main/app-logger';
+
+class FakeUtilityProcess extends EventEmitter {
+  readonly pid = 1234;
+  readonly postMessage = vi.fn();
+  readonly kill = vi.fn();
+}
+
+const utilityProcessFork = vi.hoisted(() => vi.fn());
+vi.mock('electron', () => ({
+  utilityProcess: { fork: utilityProcessFork },
+}));
+
+import {
+  LibraryWorkerClient,
+  requestTimeoutForCommand,
+} from '../../src/main/worker-client';
 
 describe('requestTimeoutForCommand', () => {
   it('allows browser capture to finish its bounded download before Main times out', () => {
@@ -56,5 +74,64 @@ describe('requestTimeoutForCommand', () => {
       maxAttempts: 3,
       maxJobs: 20,
     })).toBe(2_460_000);
+  });
+
+  it('does not kill the Worker when a malformed model render event arrives', async () => {
+    const child = new FakeUtilityProcess();
+    utilityProcessFork.mockReturnValueOnce(child);
+    const logger = {
+      worker: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+    } as unknown as AppLogger;
+    const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    const start = client.start();
+    child.emit('message', { type: 'worker.ready' });
+    await start;
+
+    child.emit('message', {
+      type: 'model-thumbnail.render-request',
+      requestId: 'model-request-1',
+      libraryId: 'library-1',
+      assetId: 'asset-1',
+      revisionId: 'revision-1',
+      format: 'glb',
+      renderUrl: 'serpent://source/library-1/asset-1',
+      companionMap: [],
+      sourceAuthorizations: [],
+      hdriPresetId: 'studio-small-09',
+      width: 8,
+      height: 512,
+      timeoutMs: 30_000,
+    });
+
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(child.postMessage).toHaveBeenCalledWith({
+      type: 'model-thumbnail.render-response',
+      requestId: 'model-request-1',
+      result: {
+        status: 'failed',
+        errorCode: 'MODEL_LOAD_FAILED',
+        reason: 'The model thumbnail request was invalid.',
+      },
+    });
+    expect(logger.error).toHaveBeenCalledWith(
+      'worker.model-thumbnail.invalid-request',
+      expect.anything(),
+      expect.objectContaining({ hasRequestId: true }),
+    );
+
+    const shutdown = client.shutdown();
+    child.emit('message', { type: 'worker.shutdown.ack' });
+    await shutdown;
+    if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+    else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+    if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+    else process.env.SERPENT_OIIO_PATH = previousOiioPath;
   });
 });

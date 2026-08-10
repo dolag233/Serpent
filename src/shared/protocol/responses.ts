@@ -1743,6 +1743,10 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.opened'),
     library: rendererLibrarySummarySchema,
+    // Main-owned automation transitions must be distinguishable from the
+    // ordinary renderer request response so App can sync an already-open UI
+    // without double-loading normal open requests.
+    source: z.literal('mcp').optional(),
   }),
   z.strictObject({
     type: z.literal('library.open-failed'),

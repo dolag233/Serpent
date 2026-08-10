@@ -1,0 +1,159 @@
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import path from 'node:path';
+
+import { z } from 'zod';
+
+import type { McpClientCredentialSummary } from '../shared/mcp';
+import { readAtomicJsonFile, writeAtomicJsonFile } from './atomic-json-file';
+
+const credentialRecordSchema = z.strictObject({
+  credentialId: z.string().uuid(),
+  tokenHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  label: z.string().min(1).max(255),
+  createdAt: z.string().datetime(),
+  lastUsedAt: z.string().datetime().nullable(),
+  revokedAt: z.string().datetime().nullable(),
+});
+type CredentialRecord = z.infer<typeof credentialRecordSchema>;
+
+const credentialFileSchema = z.strictObject({
+  version: z.literal(1),
+  credentials: z.array(credentialRecordSchema).max(256),
+});
+
+const TOKEN_PEPPER_BYTES = 32;
+
+export type IssuedMcpClientCredential = {
+  credentialId: string;
+  token: string;
+  summary: McpClientCredentialSummary;
+};
+
+export type McpCredentialAuthenticationState = 'valid' | 'unknown' | 'revoked';
+
+function hashToken(token: string, pepper: Buffer): string {
+  return createHash('sha256').update(pepper).update(token, 'utf8').digest('hex');
+}
+
+function readOrCreatePepper(filename: string): Buffer {
+  try {
+    const existing = readFileSync(filename);
+    if (existing.byteLength === TOKEN_PEPPER_BYTES) return existing;
+  } catch {
+    // Create the pepper below.
+  }
+  const pepper = randomBytes(TOKEN_PEPPER_BYTES);
+  mkdirSync(path.dirname(filename), { recursive: true });
+  try {
+    writeFileSync(filename, pepper, { mode: 0o600, flag: 'wx', flush: true });
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+    if (code !== 'EEXIST') throw error;
+    const existing = readFileSync(filename);
+    if (existing.byteLength !== TOKEN_PEPPER_BYTES) {
+      throw new Error('The MCP credential pepper is invalid.', { cause: error });
+    }
+    return existing;
+  }
+  chmodSync(filename, 0o600);
+  return pepper;
+}
+
+function summary(record: CredentialRecord): McpClientCredentialSummary {
+  return {
+    credentialId: record.credentialId,
+    label: record.label,
+    createdAt: record.createdAt,
+    lastUsedAt: record.lastUsedAt,
+    revokedAt: record.revokedAt,
+  };
+}
+
+export class McpClientCredentialStore {
+  readonly #filePath: string;
+  readonly #pepper: Buffer;
+  #records: CredentialRecord[] = [];
+
+  constructor(userDataPath: string) {
+    this.#filePath = path.join(userDataPath, 'mcp-client-credentials.json');
+    this.#pepper = readOrCreatePepper(path.join(userDataPath, 'mcp-client-credential-pepper'));
+    this.load();
+  }
+
+  list(): McpClientCredentialSummary[] {
+    return this.#records.map(summary);
+  }
+
+  issue(label = 'MCP client'): IssuedMcpClientCredential {
+    const now = new Date().toISOString();
+    const token = randomBytes(32).toString('base64url');
+    const record: CredentialRecord = {
+      credentialId: randomUUID(),
+      tokenHash: hashToken(token, this.#pepper),
+      label: label.trim() || 'MCP client',
+      createdAt: now,
+      lastUsedAt: null,
+      revokedAt: null,
+    };
+    this.#records = [...this.#records, record].slice(-256);
+    this.persist();
+    return { credentialId: record.credentialId, token, summary: summary(record) };
+  }
+
+  authenticate(token: string): CredentialRecord | undefined {
+    const record = this.findByToken(token);
+    if (record === undefined || record.revokedAt !== null) return undefined;
+    record.lastUsedAt = new Date().toISOString();
+    this.persist();
+    return { ...record };
+  }
+
+  authenticationState(token: string): McpCredentialAuthenticationState {
+    const record = this.findByToken(token);
+    if (record === undefined) return 'unknown';
+    return record.revokedAt === null ? 'valid' : 'revoked';
+  }
+
+  revoke(credentialId: string): boolean {
+    const record = this.#records.find((candidate) => candidate.credentialId === credentialId);
+    if (record === undefined || record.revokedAt !== null) return false;
+    record.revokedAt = new Date().toISOString();
+    this.persist();
+    return true;
+  }
+
+  private load(): void {
+    try {
+      const contents = readAtomicJsonFile(this.#filePath);
+      if (contents === undefined) return;
+      const parsed = credentialFileSchema.safeParse(JSON.parse(contents));
+      if (parsed.success) this.#records = parsed.data.credentials;
+    } catch {
+      this.#records = [];
+    }
+  }
+
+  private findByToken(token: string): CredentialRecord | undefined {
+    const candidateHash = Buffer.from(hashToken(token, this.#pepper), 'hex');
+    return this.#records.find((candidate) => {
+      const storedHash = Buffer.from(candidate.tokenHash, 'hex');
+      return storedHash.byteLength === candidateHash.byteLength
+        && timingSafeEqual(storedHash, candidateHash);
+    });
+  }
+
+  private persist(): void {
+    writeAtomicJsonFile(
+      this.#filePath,
+      JSON.stringify({ version: 1, credentials: this.#records }, null, 2),
+    );
+  }
+}

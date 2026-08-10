@@ -1,6 +1,8 @@
 # 第0023框架规格：脚本自动化与 Agent MCP
 
-> 状态：顶层设计已确认（2026-07-30 对齐 Console/MCP Action 面与 headless 建库）
+> 状态：领域 Action 与安全模型继续有效；MCP transport/Host 部分已于 2026-08-10 被替代
+
+> 2026-08-10 MCP transport 与 Host 形态已由 [ADR-0029](../adr/0029-embedded-loopback-http-mcp-server.md) 和 [应用内嵌 HTTP MCP Server 顶层设计](../superpowers/specs/2026-08-10-embedded-http-mcp-server-design.md) 替代：产品只保留 Desktop Main 内嵌的 loopback Streamable HTTP Server，不再实施本文中的 stdio、headless Host、启动脚本或兼容路径。本文的 Gateway、Registry、Execution、授权、计划与沙箱要求继续有效。
 >
 > 日期：2026-07-28
 >

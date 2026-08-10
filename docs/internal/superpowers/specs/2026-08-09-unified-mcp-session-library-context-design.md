@@ -1,10 +1,12 @@
 # 统一 MCP 会话与资源库上下文设计
 
-- 状态：已接受（2026-08-09；产品确认保留现有 MCP 配置方式）
+- 状态：已废止（2026-08-10；由 [应用内嵌 HTTP MCP Server 顶层设计](2026-08-10-embedded-http-mcp-server-design.md) 替代）
 - 日期：2026-08-09
 - 工单：`Serpent-a0yk`
 - 依赖：[ADR-0025](../../adr/0025-automation-core-script-runtime-and-mcp.md)、[0023 自动化规格](../../implementation/0023-automation-scripting-mcp-framework.md)
 - 替代范围：接受后替代 [Desktop-attached MCP 设计](2026-07-31-desktop-attached-mcp-design.md) 第 5 节的单次绑定模型和第 6 节中把 `--unbound` 视为独立模式的部分；其本机确认、无任意 DOM/路径旁路等安全约束继续有效。
+
+> 2026-08-10 产品重新明确目标：Serpent 是全新产品，不保留 stdio、headless、attached、私有 socket、启动脚本或旧配置兼容。MCP 的唯一产品入口改为由正式 Desktop 应用内嵌并管理的 Streamable HTTP 服务。本文件仅保留为决策历史；其中可变资源库上下文、声明式工具目录、Gateway 安全边界等领域结论已由替代设计吸收。
 
 ## 1. 结论
 

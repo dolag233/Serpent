@@ -180,11 +180,12 @@ export function readActiveLibraryPath(
  */
 export function rememberRecentLibrary(
   filePath: string,
-  entry: { path: string; name: string },
+  entry: { path: string; name: string; libraryId?: string },
   options?: { now?: Date; onError?: ErrorSink },
 ): RecentLibraryEntry[] {
   if (!recentLibraryPersistenceEnabled()) return [];
   const next: RecentLibraryEntry = {
+    ...(entry.libraryId === undefined ? {} : { libraryId: entry.libraryId }),
     path: entry.path,
     name: entry.name,
     lastOpenedAt: (options?.now ?? new Date()).toISOString(),

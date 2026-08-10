@@ -36,6 +36,7 @@ export type AppSettingsCategoryId =
   | "appearance"
   | "browse"
   | "ai"
+  | "mcp"
   | "plugins"
   | "safety";
 
@@ -52,6 +53,7 @@ export type AppSettingsCategory = {
     | "settings.categoryAppearance"
     | "settings.categoryBrowse"
     | "settings.categoryAi"
+    | "settings.categoryMcp"
     | "settings.categoryPlugins"
     | "settings.categorySafety";
 };
@@ -76,6 +78,11 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "ai",
     icon: "activity",
     labelKey: "settings.categoryAi",
+  },
+  {
+    id: "mcp",
+    icon: "globe",
+    labelKey: "settings.categoryMcp",
   },
   {
     id: "plugins",

@@ -134,6 +134,46 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('executes a confirmed automation import plan with the default conflict policy', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'duplicate.png');
+    writeFileSync(source, 'same content');
+    const secondSource = path.join(root, 'duplicate-copy.png');
+    writeFileSync(secondSource, 'same content');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Automation conflicts', selectedParentPath: root });
+
+    const first = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    expect(first).toMatchObject({ importedCount: 1, skippedCount: 0 });
+
+    const plan = service.previewAutomationImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [secondSource],
+    });
+    expect(plan.suspectedDuplicateCount).toBe(1);
+
+    const confirmed = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [secondSource],
+      automationPlan: {
+        planHash: plan.planHash,
+        expectedChangeSequence: plan.changeSequence,
+        sourceStates: plan.sourceStates,
+      },
+    });
+
+    expect(confirmed).toMatchObject({ importedCount: 0, skippedCount: 1 });
+    expect('importId' in confirmed).toBe(false);
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
+    service.closeAll();
+  });
+
   it('enumerates a folder hierarchy without exposing source paths', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Source Art');

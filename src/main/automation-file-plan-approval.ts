@@ -8,6 +8,7 @@ import {
   automationCommandInputSchemas,
   type AutomationCommandId,
   type AutomationFileOperationPlanProof,
+  type AutomationSource,
 } from '../automation/command-registry';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
@@ -27,7 +28,25 @@ export interface DesktopAutomationFilePlanSummary {
 
 export interface DesktopAutomationFilePlanApprovalOptions {
   workerClient: AutomationWorkerClient;
-  confirm(summary: DesktopAutomationFilePlanSummary): Promise<boolean>;
+  confirm(
+    summary: DesktopAutomationFilePlanSummary,
+    context?: {
+      source: AutomationSource;
+      executionId: string;
+      clientName?: string;
+      libraryDisplayName?: string;
+    },
+  ): Promise<boolean>;
+  requestApproval?(input: {
+    commandId: AutomationCommandId;
+    executionId: string;
+    libraryId: string | null;
+    commandInput: unknown;
+    source: AutomationSource;
+    clientName?: string;
+    libraryDisplayName?: string;
+    summary: DesktopAutomationFilePlanSummary;
+  }): Promise<boolean>;
   /**
    * Optional Phase D onWill runner. Invoked after the readonly Worker plan and
    * before desktop confirmation. Must not touch SQLite write locks.
@@ -154,16 +173,43 @@ export function createDesktopAutomationFilePlanApprovalHandler(
   options: DesktopAutomationFilePlanApprovalOptions,
 ): AutomationFilePlanApprovalHandler {
   return {
-    async prepareAndApprove({ commandId, executionId, libraryId, commandInput }): Promise<AutomationFileOperationPlanProof | undefined> {
+    async prepareAndApprove({
+      commandId,
+      executionId,
+      libraryId,
+      commandInput,
+      source: requestedSource,
+      clientName,
+      libraryDisplayName,
+    }): Promise<AutomationFileOperationPlanProof | undefined> {
+      const source = requestedSource ?? 'desktop-console';
+      const approvalContext = {
+        source,
+        executionId,
+        ...(clientName === undefined ? {} : { clientName }),
+        ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+      };
       if (commandId === 'library.create') {
         const input = automationCommandInputSchemas['library.create'].parse(commandInput);
-        const approved = await options.confirm({
+        const summary: DesktopAutomationFilePlanSummary = {
           operation: 'create',
           targetCount: 1,
           executableCount: 1,
           blockedCount: 0,
           undoSupported: false,
-        });
+        };
+        const approved = options.requestApproval === undefined
+          ? await options.confirm(summary, approvalContext)
+          : await options.requestApproval({
+            commandId,
+            executionId,
+            libraryId,
+            commandInput,
+            source,
+            ...(clientName === undefined ? {} : { clientName }),
+            ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+            summary,
+          });
         if (!approved) return undefined;
         return {
           planHash: createHash('sha256').update(JSON.stringify({
@@ -197,13 +243,25 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         }
         const parsedPlan = planned.plan;
         const blockedCount = parsedPlan.suspectedDuplicateCount + parsedPlan.nameConflictCount;
-        const approved = await options.confirm({
+        const summary: DesktopAutomationFilePlanSummary = {
           operation: 'import',
           targetCount: parsedPlan.fileCount,
           executableCount: parsedPlan.fileCount - blockedCount,
           blockedCount,
           undoSupported: true,
-        });
+        };
+        const approved = options.requestApproval === undefined
+          ? await options.confirm(summary, approvalContext)
+          : await options.requestApproval({
+            commandId,
+            executionId,
+            libraryId,
+            commandInput,
+            source,
+            ...(clientName === undefined ? {} : { clientName }),
+            ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+            summary,
+          });
         if (!approved) return undefined;
         const planHash = parsedPlan.planHash;
         return {
@@ -242,10 +300,22 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         });
         hookWarnings = hookResult.warnings;
       }
-      const approved = await options.confirm({
+      const summaryWithHooks = {
         ...planSummary,
         ...(hookWarnings.length > 0 ? { hookWarnings } : {}),
-      });
+      };
+      const approved = options.requestApproval === undefined
+        ? await options.confirm(summaryWithHooks, approvalContext)
+        : await options.requestApproval({
+          commandId,
+          executionId,
+          libraryId,
+          commandInput,
+          source,
+          ...(clientName === undefined ? {} : { clientName }),
+          ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+          summary: summaryWithHooks,
+        });
       if (!approved) return undefined;
 
       if (planned.planHash === undefined) {

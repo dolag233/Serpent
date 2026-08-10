@@ -6946,6 +6946,52 @@ select.ai-config-input.ai-config-languages {
   color: var(--accent-soft-fg);
 }
 
+.app-settings-row-inline {
+  margin-top: 16px;
+}
+
+.settings-number-input,
+.settings-select {
+  min-width: 112px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--pane);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-error-message,
+.settings-success-message {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.settings-error-message {
+  color: var(--danger);
+}
+
+.settings-success-message {
+  color: var(--success, var(--accent));
+}
+
+.text-button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.text-button:disabled {
+  color: var(--tertiary);
+  cursor: default;
+}
+
 .app-settings-theme-section {
   display: grid;
   gap: var(--ui-space-4);

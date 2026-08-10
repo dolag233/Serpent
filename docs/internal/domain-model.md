@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
 > 状态：生效，持续演进
-> 日期：2026-07-11；最后校准：2026-08-02
+> 日期：2026-07-11；最后校准：2026-08-10
 
 ## 核心关系
 
@@ -25,7 +25,13 @@ Desktop、脚本与 MCP 都是第一方访问面，但 `Automation Command Gatew
 
 自动化入口只公开语义化领域 Action，不公开任意 SQL、数据库连接、Node.js、Shell、原始网络或绕过领域规则的文件系统接口。领域实体以稳定 ID 作为底层身份。精确定位单一实体时，入口只接受稳定 ID 或该实体在显式资源库中的唯一资源库路径，并解析为稳定 ID；标签、合集和其他结构化条件属于过滤，全文表达式属于搜索，二者都不冒充精确资源引用。
 
-每次脚本或 MCP 自动化运行形成 Automation Execution。Execution **可以没有当前资源库**（headless），以便先执行 `library.create` 等 Action，再绑定新建或显式指定的目标库。Execution 持有能力授权、取消与资源预算，记录命令轨迹和日志关联；脚本代码本身不直接接触 Library Worker。高风险文件与资源库生命周期写入还需形成 Execution Plan，并由本机人类批准（Console 与 MCP 同等；禁止自提权）。
+每次脚本运行形成 Automation Execution。MCP 的 transport session 只承载协议请求关联、progress、logging 与 cancellation，不形成业务上下文：不持有当前资源库、按库授权、会话权限或默认目标。每个 MCP 库级命令显式携带 `libraryId`，每次调用都可独立重试；客户端重连、刷新工具和 Desktop 焦点变化不改变业务语义。脚本和 MCP 都不直接接触 Library Worker。
+
+Automation Capability 是稳定权限单位，不是风险等级。MCP Permission Policy 按客户端凭据持久保存，默认 `auto`，也可预先设为 `read-only` 或禁用具体能力；命令执行期间不弹人类权限 Prompt，也不存在 session grant。执行计划、路径边界、实体版本、资源库 `changeSequence`、冲突与 Worker 状态校验始终保留。
+
+不可逆、低频或可能造成大范围数据损失的操作属于 dangerous。危险 MCP 命令第一次调用只生成精确风险报告和一次性 challenge，不产生写入；Agent 以绑定同一 credential、命令、参数、目标库和前置版本的第二次调用确认后才可执行。challenge 过期、篡改、重放或前提变化均不执行。它防止 Agent 单次误调用，不替代 credential 信任和能力禁用；全程不要求人类接管。
+
+MCP Server 是正式 Desktop Main 内嵌、由设置管理的 loopback 服务，只负责标准 Streamable HTTP transport、客户端认证和 Automation Command 的协议适配。核心工具目录静态可发现，资源库目标显式，Desktop 只是非阻塞投影。端口可达和客户端已认证不能绕过权限策略、危险 challenge 或领域校验。
 
 插件 Contribution（菜单、Hook、UI、输入捕获、Provider）不属于脚本/MCP Action 面。
 

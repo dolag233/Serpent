@@ -136,6 +136,295 @@ export const automationCapabilitySchema = z.enum([
 ]);
 export type AutomationCapability = z.infer<typeof automationCapabilitySchema>;
 
+export type AutomationRiskTier = 'safe' | 'controlled' | 'critical';
+
+export interface AutomationCapabilityDefinition {
+  capability: AutomationCapability;
+  displayName: string;
+  description: string;
+  riskTier: Exclude<AutomationRiskTier, 'critical'>;
+  defaultPolicy: 'allow' | 'ask';
+  canPersist: boolean;
+}
+
+/**
+ * The single user-facing capability catalogue. Commands declare capability IDs
+ * below; settings, MCP and approval UI must consume this catalogue instead of
+ * maintaining parallel lists.
+ */
+export const automationCapabilityRegistry = [
+  {
+    capability: 'library.create',
+    displayName: '创建资源库',
+    description: '创建并打开一个新的资源库。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'library.read',
+    displayName: '读取资源库',
+    description: '读取资源库的结构和状态。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'folder.read',
+    displayName: '读取文件夹',
+    description: '读取资源库文件夹和链接文件夹。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'folder.write',
+    displayName: '修改文件夹',
+    description: '创建或修改资源库中的文件夹。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'asset.read',
+    displayName: '读取资产',
+    description: '读取资产列表、搜索结果和资产状态。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'content.read',
+    displayName: '读取资产内容',
+    description: '读取资产内容或内容派生信息。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'content.write',
+    displayName: '修改资产内容',
+    description: '替换、暂存或修改受 Serpent 管理的资产文件。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'metadata.read',
+    displayName: '读取元数据',
+    description: '读取资产的元数据和 AI 内容。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'tag.read',
+    displayName: '读取标签',
+    description: '读取标签及其使用关系。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'collection.read',
+    displayName: '读取合集',
+    description: '读取合集及其成员关系。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'job.read',
+    displayName: '读取任务',
+    description: '读取媒体、AI 和其他后台任务状态。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+  {
+    capability: 'metadata.write',
+    displayName: '修改元数据',
+    description: '修改描述、评分、喜欢和其他资产元数据。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'tag.write',
+    displayName: '修改标签',
+    description: '创建、分配或移除标签。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'collection.write',
+    displayName: '修改合集',
+    description: '创建合集或修改合集成员关系。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'ai.enqueue',
+    displayName: '发起 AI 分析',
+    description: '将资产加入 AI 分析队列。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'job.manage',
+    displayName: '管理后台任务',
+    description: '暂停、恢复或取消后台任务。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'file.import',
+    displayName: '导入文件',
+    description: '从用户选择的磁盘位置导入文件或文件夹。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'file.move',
+    displayName: '移动文件',
+    description: '移动受 Serpent 管理的资产文件。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'file.rename',
+    displayName: '重命名文件',
+    description: '重命名受 Serpent 管理的资产文件。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'trash.write',
+    displayName: '移入回收站',
+    description: '将资产移入 Serpent 回收站，以便后续恢复或清理。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'clipboard.write',
+    displayName: '写入剪贴板',
+    description: '将资产路径等结果写入操作系统剪贴板。',
+    riskTier: 'controlled',
+    defaultPolicy: 'ask',
+    canPersist: true,
+  },
+  {
+    capability: 'ui.notify',
+    displayName: '向桌面显示提示',
+    description: '在 Serpent 桌面显示受限的信息提示。',
+    riskTier: 'safe',
+    defaultPolicy: 'allow',
+    canPersist: false,
+  },
+] as const satisfies readonly AutomationCapabilityDefinition[];
+
+export type AutomationCriticalOperationId =
+  | 'library.delete-from-disk'
+  | 'folder.delete-from-disk'
+  | 'linked-folder.delete-from-disk'
+  | 'asset.delete-from-disk'
+  | 'asset.delete-permanent'
+  | 'asset.delete-linked-source'
+  | 'trash.purge';
+
+export interface AutomationCriticalOperationDefinition {
+  operation: AutomationCriticalOperationId;
+  displayName: string;
+  description: string;
+  riskTier: 'critical';
+  canPersist: false;
+  exposedToMcp: false;
+}
+
+/** Critical operations are deliberately separate from ordinary capabilities. */
+export const automationCriticalOperationRegistry = [
+  {
+    operation: 'library.delete-from-disk',
+    displayName: '从磁盘删除资源库',
+    description: '删除整个资源库目录；链接源目录不属于删除范围。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'folder.delete-from-disk',
+    displayName: '从磁盘删除文件夹',
+    description: '删除文件夹及其托管资产；不会进入应用回收站。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'linked-folder.delete-from-disk',
+    displayName: '从磁盘删除链接文件夹内容',
+    description: '删除链接文件夹子树的源文件；不删除链接规则本身。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'asset.delete-from-disk',
+    displayName: '从磁盘删除资产',
+    description: '永久删除所选资产文件，不进入应用回收站。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'asset.delete-permanent',
+    displayName: '永久删除回收站资产',
+    description: '从应用回收站中永久删除所选资产。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'asset.delete-linked-source',
+    displayName: '删除链接资产源文件',
+    description: '永久删除链接资产对应的源文件。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+  {
+    operation: 'trash.purge',
+    displayName: '清空回收站',
+    description: '永久删除应用回收站中的全部资产。',
+    riskTier: 'critical',
+    canPersist: false,
+    exposedToMcp: false,
+  },
+] as const satisfies readonly AutomationCriticalOperationDefinition[];
+
+const automationCapabilityDefinitionsById = new Map<string, AutomationCapabilityDefinition>(
+  automationCapabilityRegistry.map((definition) => [definition.capability, definition]),
+);
+
+if (automationCapabilityDefinitionsById.size !== automationCapabilityRegistry.length
+  || automationCapabilityDefinitionsById.size !== automationCapabilitySchema.options.length
+  || automationCapabilitySchema.options.some((capability) => !automationCapabilityDefinitionsById.has(capability))) {
+  throw new Error('Automation capability registry is incomplete or contains duplicate IDs.');
+}
+
+export function getAutomationCapabilityDefinition(
+  capability: string,
+): AutomationCapabilityDefinition | undefined {
+  return automationCapabilityDefinitionsById.get(capability);
+}
+
 /** Immutable proof produced and approved by Main immediately before a file write. */
 export interface AutomationFileOperationPlanProof {
   planHash: string;
@@ -157,6 +446,13 @@ export const automationCommandInputSchemas = {
     displayName: nonBlankString.max(255),
     selectedParentPath: nonBlankString,
     idempotencyKey: idempotencyKeySchema.optional(),
+  }),
+  'library.list-open': noInputSchema,
+  'library.open': z.strictObject({
+    libraryId: z.string().uuid().optional(),
+  }),
+  'library.use': z.strictObject({
+    libraryId: z.string().uuid(),
   }),
   'file.import': z.strictObject({
     sourceKind: z.enum(['files', 'folder']),
@@ -676,6 +972,26 @@ export const automationCommandResultSchemas = {
   'library.create': z.strictObject({
     libraryId: nonBlankString,
     displayName: nonBlankString,
+    contextRevision: z.number().int().nonnegative().optional(),
+  }),
+  'library.list-open': z.strictObject({
+    libraries: z.array(z.strictObject({
+      libraryId: nonBlankString,
+      displayName: nonBlankString,
+      active: z.boolean(),
+    })).max(64),
+    activeLibraryId: nonBlankString.nullable(),
+    contextRevision: z.number().int().nonnegative(),
+  }),
+  'library.open': z.strictObject({
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+    contextRevision: z.number().int().nonnegative(),
+  }),
+  'library.use': z.strictObject({
+    libraryId: nonBlankString,
+    displayName: nonBlankString,
+    contextRevision: z.number().int().nonnegative(),
   }),
   'file.import': z.union([
     z.strictObject({ status: z.literal('conflicts'), plan: importConflictPlanSchema }),
@@ -862,7 +1178,11 @@ export interface AutomationMcpMetadata {
   public: boolean;
   toolName: string;
   outputLimit: number;
+  /** MCP-facing input projection; the internal Automation schema may contain Main-only fields. */
+  inputSchema?: z.ZodType;
 }
+
+export type AutomationLibraryContext = 'none' | 'active' | 'transition';
 
 export interface AutomationCommandDescriptor<Id extends AutomationCommandId = AutomationCommandId> {
   commandId: Id;
@@ -885,6 +1205,8 @@ export interface AutomationCommandDescriptor<Id extends AutomationCommandId = Au
   atomicity: AutomationAtomicity;
   approvalPolicy: AutomationApprovalPolicy;
   mcp: AutomationMcpMetadata;
+  libraryContext?: AutomationLibraryContext;
+  hostCapabilities?: readonly ('desktop-ui')[];
   toWorkerCommand(
     libraryId: string,
     input: AutomationCommandInput<Id>,
@@ -917,12 +1239,13 @@ function readDescriptor<Id extends AutomationCommandId>(
 
 const allReadSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as const;
 const allInteractiveSources = ['desktop-console', 'script', 'mcp', 'test', 'plugin'] as const;
+const lifecycleSources = ['desktop-console', 'script', 'mcp', 'test'] as const;
 
 export const automationCommandRegistry = [
   {
     commandId: 'library.create',
     apiVersion: AUTOMATION_API_VERSION,
-    summary: '创建并打开一个资源库，然后将其绑定到当前 headless 执行。',
+    summary: '创建一个资源库并返回其稳定 libraryId；不会建立 MCP session 默认资源库。',
     deprecated: false,
     inputSchema: automationCommandInputSchemas['library.create'],
     resultSchema: automationCommandResultSchemas['library.create'],
@@ -939,7 +1262,17 @@ export const automationCommandRegistry = [
     supportsUndo: false,
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
-    mcp: { public: false, toolName: 'serpent_library_create', outputLimit: 1 },
+    mcp: {
+      public: false,
+      toolName: 'serpent_library_create',
+      outputLimit: 1,
+      inputSchema: z.strictObject({
+        displayName: nonBlankString.max(255),
+        selectedParentPath: nonBlankString,
+        idempotencyKey: idempotencyKeySchema.optional(),
+      }),
+    },
+    libraryContext: 'transition',
     toWorkerCommand: (_libraryId, input: AutomationCommandInput<'library.create'>) => ({
       type: 'library.create',
       displayName: input.displayName,
@@ -952,6 +1285,57 @@ export const automationCommandRegistry = [
         : undefined;
     },
   },
+  readDescriptor({
+    commandId: 'library.list-open',
+    summary: '列出当前已打开的资源库，不返回磁盘路径；没有资源库时返回空列表。',
+    inputSchema: automationCommandInputSchemas['library.list-open'],
+    resultSchema: automationCommandResultSchemas['library.list-open'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: [],
+    allowedSources: lifecycleSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_library_list_open', outputLimit: 1 },
+    libraryContext: 'none',
+    toWorkerCommand: () => {
+      throw new Error('library.list-open is resolved by Desktop Main.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'library.open',
+    summary: '打开指定的已知资源库；不指定 libraryId 时返回需要路径的错误，不打开系统选择器。',
+    inputSchema: automationCommandInputSchemas['library.open'],
+    resultSchema: automationCommandResultSchemas['library.open'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: [],
+    allowedSources: lifecycleSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_library_open', outputLimit: 1 },
+    libraryContext: 'transition',
+    toWorkerCommand: () => {
+      throw new Error('library.open is resolved by Desktop Main.');
+    },
+    projectResult: () => undefined,
+  }),
+  readDescriptor({
+    commandId: 'library.use',
+    summary: '请求 Desktop 显示指定资源库；不会改变 MCP 后续调用的目标。',
+    inputSchema: automationCommandInputSchemas['library.use'],
+    resultSchema: automationCommandResultSchemas['library.use'],
+    workerResultSchema: z.never(),
+    requiredCapabilities: [],
+    allowedSources: lifecycleSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_library_show_in_desktop', outputLimit: 1 },
+    libraryContext: 'transition',
+    toWorkerCommand: () => {
+      throw new Error('library.use is resolved by Desktop Main.');
+    },
+    projectResult: () => undefined,
+  }),
   {
     commandId: 'file.import',
     apiVersion: AUTOMATION_API_VERSION,
@@ -975,7 +1359,19 @@ export const automationCommandRegistry = [
     supportsUndo: false,
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
-    mcp: { public: false, toolName: 'serpent_file_import', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
+    mcp: {
+      public: false,
+      toolName: 'serpent_file_import',
+      outputLimit: AUTOMATION_MAX_PAGE_SIZE,
+      inputSchema: z.strictObject({
+        sourceKind: z.enum(['files', 'folder']),
+        sourcePaths: z.array(nonBlankString).min(1).max(1_000),
+        targetFolderId: nonBlankString.optional(),
+        imageSequenceFps: z.number().int().min(1).max(240).optional(),
+        expandImageSequences: z.boolean().optional(),
+        idempotencyKey: idempotencyKeySchema.optional(),
+      }),
+    },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'file.import'>, plan) => ({
       type: 'asset.import.prepare',
       libraryId,
@@ -1005,6 +1401,7 @@ export const automationCommandRegistry = [
     targetScope: 'library',
     supportsBatch: false,
     mcp: { public: true, toolName: 'serpent_library_inspect', outputLimit: 1 },
+    libraryContext: 'active',
     toWorkerCommand: () => ({ type: 'library.list' }),
     projectResult: (result, libraryId) => {
       const parsed = libraryListWorkerResultSchema.safeParse(result);
@@ -1026,6 +1423,7 @@ export const automationCommandRegistry = [
     targetScope: 'library',
     supportsBatch: false,
     mcp: { public: true, toolName: 'serpent_library_change_sequence', outputLimit: 1 },
+    libraryContext: 'active',
     toWorkerCommand: (libraryId) => ({ type: 'library.change-sequence', libraryId }),
     projectResult: (result) => {
       const parsed = libraryChangeSequenceWorkerResultSchema.safeParse(result);
@@ -1043,6 +1441,7 @@ export const automationCommandRegistry = [
     targetScope: 'library',
     supportsBatch: false,
     mcp: { public: true, toolName: 'serpent_execution_status', outputLimit: 1 },
+    libraryContext: 'none',
     toWorkerCommand: () => {
       throw new Error('execution.status is resolved by Main and does not dispatch to the Worker.');
     },
@@ -1054,11 +1453,15 @@ export const automationCommandRegistry = [
     inputSchema: automationCommandInputSchemas['ui.notify'],
     resultSchema: automationCommandResultSchemas['ui.notify'],
     workerResultSchema: z.never(),
-    requiredCapabilities: ['ui.notify'],
+    // A bounded local info notice is not a library mutation and must remain
+    // available to read-only MCP sessions so an agent can explain what it is
+    // waiting for without first requesting write access.
+    requiredCapabilities: [],
     allowedSources: allInteractiveSources,
     targetScope: 'library',
     supportsBatch: false,
     mcp: { public: true, toolName: 'serpent_ui_notify', outputLimit: 1 },
+    libraryContext: 'none',
     toWorkerCommand: () => {
       throw new Error('ui.notify is resolved by Main and does not dispatch to the Worker.');
     },
@@ -2093,6 +2496,37 @@ export function getAutomationCommandDescriptor(commandId: string): AutomationCom
   return descriptorsById.get(commandId);
 }
 
+export interface AutomationCommandPermissionMetadata {
+  riskTier: AutomationRiskTier;
+  requiresPlan: boolean;
+  requiresCriticalConfirmation: boolean;
+  requestableCapabilities: readonly AutomationCapability[];
+  canPersist: boolean;
+}
+
+/**
+ * Projects command-level impact into the shared permission vocabulary. A
+ * command never becomes critical merely because it writes a file; critical
+ * operations must be explicitly registered in automationCriticalOperationRegistry.
+ */
+export function getAutomationCommandPermissionMetadata(
+  descriptor: AutomationCommandDescriptor,
+): AutomationCommandPermissionMetadata {
+  const riskTier: AutomationRiskTier = descriptor.impact === 'read' ? 'safe' : 'controlled';
+  const requestableCapabilities = descriptor.requiredCapabilities.filter((capability) => {
+    const definition = getAutomationCapabilityDefinition(capability);
+    return definition?.defaultPolicy === 'ask';
+  });
+  return {
+    riskTier,
+    requiresPlan: descriptor.approvalPolicy === 'plan',
+    requiresCriticalConfirmation: false,
+    requestableCapabilities,
+    canPersist: riskTier === 'controlled'
+      && requestableCapabilities.every((capability) => getAutomationCapabilityDefinition(capability)?.canPersist === true),
+  };
+}
+
 /**
  * A transport-neutral, JSON-safe description for Desktop help and future MCP
  * tool generation. It deliberately contains no worker implementation details.
@@ -2108,6 +2542,10 @@ export function describeAutomationCommands(): {
     requiredCapabilities: readonly AutomationCapability[];
     allowedSources: readonly AutomationSource[];
     impact: AutomationImpact;
+    riskTier: AutomationRiskTier;
+    requestableCapabilities: readonly AutomationCapability[];
+    canPersist: boolean;
+    requiresCriticalConfirmation: boolean;
     targetScope: AutomationCommandDescriptor['targetScope'];
     supportsBatch: boolean;
     supportsDryRun: boolean;
@@ -2131,6 +2569,7 @@ export function describeAutomationCommands(): {
       requiredCapabilities: descriptor.requiredCapabilities,
       allowedSources: descriptor.allowedSources,
       impact: descriptor.impact,
+      ...getAutomationCommandPermissionMetadata(descriptor),
       targetScope: descriptor.targetScope,
       supportsBatch: descriptor.supportsBatch,
       supportsDryRun: descriptor.supportsDryRun,

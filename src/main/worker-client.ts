@@ -305,8 +305,40 @@ export class LibraryWorkerClient {
     let mainRenderRequest;
     try {
       mainRenderRequest = parseModelThumbnailMainRenderRequest(message);
-    } catch {
-      return false;
+    } catch (error) {
+      if (
+        typeof message !== 'object'
+        || message === null
+        || !('type' in message)
+        || message.type !== 'model-thumbnail.render-request'
+      ) {
+        return false;
+      }
+      const requestId = 'requestId' in message && typeof message.requestId === 'string'
+        ? message.requestId
+        : undefined;
+      this.logger.error('worker.model-thumbnail.invalid-request', error, {
+        hasRequestId: requestId !== undefined,
+        companionCount: 'companionMap' in message && Array.isArray(message.companionMap)
+          ? message.companionMap.length
+          : undefined,
+        authorizationCount: 'sourceAuthorizations' in message && Array.isArray(message.sourceAuthorizations)
+          ? message.sourceAuthorizations.length
+          : undefined,
+      });
+      const child = this.#child;
+      if (child && requestId) {
+        child.postMessage({
+          type: 'model-thumbnail.render-response',
+          requestId,
+          result: {
+            status: 'failed',
+            errorCode: 'MODEL_LOAD_FAILED',
+            reason: 'The model thumbnail request was invalid.',
+          },
+        });
+      }
+      return true;
     }
     const { sourceAuthorizations, ...renderRequest } = mainRenderRequest;
     const child = this.#child;

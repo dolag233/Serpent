@@ -47,16 +47,13 @@
 - MCP 可轮询 `serpent_library_change_sequence`，也可监听标准 `notifications/message`；`data.type` 为 `library.changed` 时读取 `libraryId` 与 `changeSequence`。
 - 只有已绑定目标资源库的执行会收到推送；通知不含文件系统路径。
 
-## MCP 启动器
+## MCP 连接
 
-- 默认使用 `npm run mcp` 附着当前已打开的 Desktop；通过本机确认后可调用 Desktop 专用工具（见下）。这些工具只改变窗口、选中或浏览/查看语义状态，不写库、不产生 revision/entity_version 变化；不提供任意 UI、Shell、SQL、网络或文件系统控制。
-- Desktop 专用工具：`serpent_desktop_focus`、`serpent_desktop_select_assets`、`serpent_desktop_get_state`、`serpent_desktop_open_folder`、`serpent_desktop_set_discovery`、`serpent_desktop_reveal_asset`、`serpent_desktop_open_viewer`、`serpent_desktop_close_viewer`、`serpent_desktop_navigate_viewer`。
-- 多步 Agent 工作流应只附着一次。推荐用 `node scripts/mcp-session.mjs --write-access start` 建立长连接，再用 `call` 复用同一会话；`status` / `stop` 查看或结束。不要为每次工具调用重新 `npm run mcp` 或重复本机确认。
-- 需要隔离/无界面流程时使用 `npm run mcp -- --headless --library <绝对路径>`，或使用 `--unbound` 先暴露
-  `library.create`；`--write-access` 只表示本机已配置写入能力，不能由 Agent 自行提升。headless 不暴露 Desktop-only 工具。
-- `npm run mcp` / `npm run mcp -- --headless ...` 是当前仓库的 stdio 协议启动入口，不是通用 CLI；诊断写 stderr，stdout 只保留 MCP
-  JSON-RPC。未绑定执行不能调用资源库范围 Action。
-- MCP stdio 本身就是交互式请求/响应通道。若使用命令行包装器，包装器必须持有同一个 MCP Client 和传输连接，把“连接 → 查询 → 用户筛选 → 执行 → 复核”作为同一会话；一次性脚本只允许用于诊断。
+- MCP 由 Desktop Main 内嵌的 loopback Streamable HTTP 服务提供。用户在“设置 → MCP”中选择启用/停止/自动启动、端口，并使用“复制 MCP 配置”生成客户端配置；默认关闭。
+- 服务只绑定 `127.0.0.1`，端点形如 `http://127.0.0.1:<port>/mcp`。客户端不能假设固定端口，也不能启动 npm、Node、第二个 Desktop 或独立 MCP Host。
+- 每个 HTTP session 由 Main 绑定一个 Automation Execution。默认只读；写能力必须经过 Serpent 本机确认。资源库通过 `serpent_library_list_open`、`serpent_library_open`、`serpent_library_use` 显式选择。
+- 工具列表来自 Registry，并随能力和活动资源库动态变化。客户端应监听 `notifications/tools/list_changed` 与资源库 `notifications/message`，不要硬编码旧工具列表。
+- 服务不提供任意 UI、Shell、SQL、网络、文件系统、DOM、像素或绝对路径控制。MCP 客户端配置中的 bearer token 只能放在安全凭据存储中。
 
 独立类型声明见 `docs/internal/skills/serpent-automation/automation-api.d.ts`。它由当前
 Registry 的公开命令与 `AUTOMATION_API_VERSION` 维护，不能声明 Registry 之外的 API。

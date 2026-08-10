@@ -100,6 +100,37 @@ describe('Desktop automation file-plan approval', () => {
     }]);
   });
 
+  it('uses the Main permission decision for an MCP plan without a second prompt', async () => {
+    const worker = new RecordingWorker(plannedResult);
+    const requests: unknown[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async () => {
+        throw new Error('confirmation should be skipped');
+      },
+      requestApproval: async (input) => {
+        requests.push(input);
+        return input.source === 'mcp';
+      },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-mcp',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newBaseName: 'renamed' },
+      source: 'mcp',
+    });
+
+    expect(proof).toMatchObject({ expectedChangeSequence: 17 });
+    expect(requests).toEqual([expect.objectContaining({
+      source: 'mcp',
+      commandId: 'asset.rename-file',
+      executionId: 'execution-mcp',
+      summary: expect.objectContaining({ operation: 'rename-file' }),
+    })]);
+  });
+
   it('maps content replacement to a single-asset replace-content plan', async () => {
     const worker = new RecordingWorker({
       ...plannedResult,

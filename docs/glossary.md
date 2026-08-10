@@ -7,14 +7,21 @@
 | 桌面客户端 | Serpent 的图形化第一方访问面；通过 Automation Command Gateway 使用领域能力，并承载 Console 与保存脚本的交互。 | 已确认 |
 | 自动化命令网关（Automation Command Gateway） | Desktop、脚本、MCP 与测试共享的规范能力边界；统一命令 Schema、能力、副作用、错误、取消、日志与领域调度。避免称为 CLI 层或 MCP 层。 | 已确认 |
 | 自动化命令（Automation Command） | 由稳定 ID、输入/结果 Schema、能力要求、影响等级和执行策略定义的一次语义化领域操作；不同 transport 对同一命令不得改变领域语义。 | 已确认 |
-| 自动化执行（Automation Execution） | 一次脚本运行或 MCP 自动化会话形成的受控执行单元；绑定来源、代码哈希、能力、资源预算、状态和日志。目标资源库可选（headless 时可先无库，例如先 `library.create`）。避免称为系统进程或后台 Job，后两者是实现/调度概念。 | 已确认 |
+| 自动化执行（Automation Execution） | 一次脚本运行形成的受控执行单元；MCP transport session 不形成业务执行上下文，只承载请求关联、通知与取消。MCP 每个命令自包含目标和参数。避免称为系统进程或后台 Job，后两者是实现/调度概念。 | 已确认 |
 | 执行计划（Execution Plan） | 高风险文件写入在真正执行前生成的不可变影响摘要；绑定命令参数、实体版本和资源库变更序号，前提变化后必须重新生成。 | 已确认 |
 | Undo Group | 将同一用户意图下一个或多个可撤销领域操作组合成单一撤销边界；应用级 `Ctrl/Cmd+Z` 按组撤销，不暴露组内半完成状态。部分成功时保留可撤销子集和恢复引用。 | 已确认 |
 | 自动化能力（Automation Capability） | 授权脚本或 Agent 调用一类领域命令的稳定权限单位，例如读取资产、写入标签或移动文件；拥有能力不绕过领域校验。避免泛称权限开关。 | 已确认 |
 | 能力授权（Capability Grant） | 将脚本内容哈希、目标资源库与能力集合绑定的用户许可；代码、资源库或能力变化后失效，交互式 Console 默认仅会话有效。 | 已确认 |
+| 权限策略（Permission Policy） | 用户为一个 MCP 客户端凭据持久配置的能力边界；默认 Auto，也可设为只读或预先禁用具体能力。调用期间不逐项询问人类，连接重启不改变策略。 | 已确认 |
+| 会话权限授权（Session Permission Grant） | 已废止概念。transport session 不承载权限；不能以“本 session 总是允许”作为产品边界。 | 已废止 |
+| 危险操作 Challenge（Dangerous Operation Challenge） | dangerous MCP 命令第一次调用返回的短时、一次性风险证明；绑定客户端、命令、完整参数、目标库和前置版本。Agent 携带它二次确认后才可执行，过期、篡改、重放或状态变化均失效。 | 已确认 |
+| 关键危险确认（Critical Confirmation） | 已废止的运行时人类弹窗模型；MCP dangerous 操作改用 Agent 二阶段 Challenge，Desktop 自身的危险操作可按其独立交互设计处理。 | 已废止 |
 | 自动化脚本 | 使用受控 `serpent` API 组合领域命令的 JS/TS 程序或交互式代码；不等同于 Node.js 脚本，默认不能访问任意模块、进程环境、文件系统、网络或数据库。 | 已确认 |
 | 脚本运行时（Script Runtime） | 执行自动化脚本的隔离环境；只通过 Automation Command Gateway 获得能力，并可被限时、限内存、取消和终止。避免称为插件运行时。 | 已确认 |
-| MCP 适配器 | 把精选 Automation Command 映射为本地 Agent 可调用的 MCP 工具和资源的第一方入口；不拥有业务逻辑，也不默认提供任意脚本执行。 | 已确认 |
+| MCP Server | 正式 Desktop Main 内嵌、由应用设置启停的 loopback Streamable HTTP 服务；负责客户端认证、业务无状态的 MCP 请求和 Automation Command 协议适配，不拥有领域业务逻辑，也不提供任意脚本执行。避免称为 headless Host、attached proxy 或 daemon。 | 已确认 |
+| MCP 客户端凭据（MCP Client Credential） | 用户从设置页为一个 MCP 客户端签发的本机连接能力，以高熵 token 证明客户端身份；它不等于 session capability、资源库授权或高风险操作批准。 | 已确认 |
+| 显式资源库目标（Explicit Library Target） | 每个 MCP 库级命令必须携带的 `libraryId`；它只作用于本次调用，不建立 session 默认值，也不随 Desktop 焦点变化。 | 已确认 |
+| 活动资源库上下文（Active Library Context） | MCP 中已废止的 session 业务状态。Desktop 可以显示某个资源库，但它不成为 Agent 的隐式目标。 | 已废止 |
 | 命令行客户端（CLI） | 已撤回的旧方案：2026-07-28 的只读 CLI 基础层已被移除，当前不对人类、Shell Agent 或 CI 提供通用 CLI。若将来恢复，必须作为 Gateway 的薄适配器重新决策。 | 已撤回 |
 | 稳定标识符 | 不随实体移动、重命名或显示名称变化而改变的底层身份。 | 已确认 |
 | 资源库路径 | 在一个显式指定的资源库内唯一定位实体的路径。移动或重命名实体会改变资源库路径，但不会改变稳定标识符；它不同于任意操作系统路径、显示名称或合集路径。 | 已确认 |

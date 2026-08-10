@@ -1,19 +1,30 @@
 import {
   AUTOMATION_API_VERSION,
   automationCommandRegistry,
+  getAutomationCommandPermissionMetadata,
+  type AutomationCapability,
   type AutomationCommandDescriptor,
   type AutomationCommandId,
   type AutomationImpact,
 } from '../automation/command-registry';
+import type { McpAccessMode } from '../shared/mcp';
 
-/**
- * MCP Host may grant write tools only after a local human configures write
- * access for the connection. Unconfigured connections must list only
- * `mcp.public` (read) tools so the Agent cannot self-elevate by discovery.
- */
+/** Credential policy only. It deliberately contains no active library state. */
 export type SerpentMcpToolExposure = {
-  writeAccessGranted: boolean;
+  accessMode?: McpAccessMode;
+  /** @deprecated retained for non-MCP adapters while migration completes. */
+  activeLibraryId?: string | null;
+  /** @deprecated capability grants are no longer used to build tools/list. */
+  grantedCapabilities?: readonly AutomationCapability[];
+  hostCapabilities: readonly ('desktop-ui')[];
 };
+
+export function mcpExposureAllowsWrite(exposure: SerpentMcpToolExposure): boolean {
+  // Registry tools are static in both modes. Plugin tools have their own
+  // declaration/permission surface; until that surface is projected into the
+  // stateless contract, only Full Access may expose them.
+  return exposure.accessMode === 'full-access';
+}
 
 export type SerpentMcpToolDefinition = {
   name: string;
@@ -24,6 +35,9 @@ export type SerpentMcpToolDefinition = {
   impact: AutomationImpact;
   approvalPolicy: AutomationCommandDescriptor['approvalPolicy'];
   requiredCapabilities: readonly string[];
+  requestableCapabilities: readonly AutomationCapability[];
+  riskTier: ReturnType<typeof getAutomationCommandPermissionMetadata>['riskTier'];
+  canPersistPermission: boolean;
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
@@ -37,52 +51,81 @@ function isMcpEligible(descriptor: AutomationCommandDescriptor): boolean {
   return descriptor.allowedSources.includes('mcp');
 }
 
+function libraryContextForDescriptor(
+  descriptor: AutomationCommandDescriptor,
+): 'none' | 'active' | 'transition' {
+  if (descriptor.libraryContext !== undefined) return descriptor.libraryContext;
+  return descriptor.targetScope === 'library'
+    || descriptor.targetScope === 'asset'
+    || descriptor.targetScope === 'asset-set'
+    || descriptor.targetScope === 'job-set'
+    ? 'active'
+    : 'none';
+}
+
 function shouldExpose(
   descriptor: AutomationCommandDescriptor,
   exposure: SerpentMcpToolExposure,
 ): boolean {
   if (!isMcpEligible(descriptor)) return false;
+  if (descriptor.hostCapabilities !== undefined) {
+    const available = new Set(exposure.hostCapabilities ?? []);
+    if (descriptor.hostCapabilities.some((capability) => !available.has(capability))) return false;
+  }
   if (descriptor.mcp.public) return true;
-  if (!exposure.writeAccessGranted) return false;
-  // Execution-approved low-risk Actions require a connection write grant.
-  // Public plan-gated tools remain visible and always open Main's approval
-  // boundary; the MCP caller cannot bypass that boundary.
-  return descriptor.approvalPolicy === 'execution' || descriptor.approvalPolicy === 'plan';
+  return descriptor.approvalPolicy === 'execution'
+    || descriptor.approvalPolicy === 'plan'
+    || descriptor.requiredCapabilities.length > 0;
 }
 
 function asJsonSchemaObject(schema: object): Record<string, unknown> {
   const record = schema as Record<string, unknown>;
-  if (record.type === undefined) {
-    return { ...record, type: 'object' };
-  }
-  return { ...record };
+  return record.type === undefined ? { ...record, type: 'object' } : { ...record };
 }
 
-/**
- * Builds the MCP tools/list payload from the Automation Registry. Adapters must
- * not invent parallel tool names or schemas.
- */
+function withExplicitLibraryTarget(
+  schema: Record<string, unknown>,
+  required: boolean,
+): Record<string, unknown> {
+  const properties = schema.properties !== null && typeof schema.properties === 'object'
+    ? { ...(schema.properties as Record<string, unknown>) }
+    : {};
+  properties.libraryId = {
+    type: 'string',
+    description: '目标资源库的稳定 ID。每次库内调用都必须显式指定。',
+  };
+  const currentRequired = Array.isArray(schema.required) ? [...schema.required] : [];
+  if (required && !currentRequired.includes('libraryId')) currentRequired.push('libraryId');
+  return {
+    ...schema,
+    properties,
+    ...(currentRequired.length === 0 ? {} : { required: currentRequired }),
+  };
+}
+
+/** Builds the single MCP tools/list projection from the Automation Registry. */
 export function listSerpentMcpTools(
-  exposure: SerpentMcpToolExposure = { writeAccessGranted: false },
-): {
-  apiVersion: typeof AUTOMATION_API_VERSION;
-  tools: SerpentMcpToolDefinition[];
-} {
+  exposure: SerpentMcpToolExposure,
+): { apiVersion: typeof AUTOMATION_API_VERSION; tools: SerpentMcpToolDefinition[] } {
   const tools: SerpentMcpToolDefinition[] = [];
   const seenNames = new Set<string>();
 
   for (const descriptor of automationCommandRegistry) {
     if (!shouldExpose(descriptor, exposure)) continue;
-
     const name = descriptor.mcp.toolName;
     if (FORBIDDEN_TOOL_NAME_FRAGMENT.test(name)) {
       throw new Error(`Automation MCP tool name is forbidden: ${name}`);
     }
-    if (seenNames.has(name)) {
-      throw new Error(`Duplicate Automation MCP tool name: ${name}`);
-    }
+    if (seenNames.has(name)) throw new Error(`Duplicate Automation MCP tool name: ${name}`);
     seenNames.add(name);
-
+    const mcpInputSchema = 'inputSchema' in descriptor.mcp
+      ? descriptor.mcp.inputSchema
+      : undefined;
+    const inputSchema = asJsonSchemaObject(
+      (mcpInputSchema ?? descriptor.inputSchema).toJSONSchema(),
+    );
+    const explicitLibraryTarget = libraryContextForDescriptor(descriptor) === 'active';
+    const permission = getAutomationCommandPermissionMetadata(descriptor);
     tools.push({
       name,
       commandId: descriptor.commandId,
@@ -90,14 +133,20 @@ export function listSerpentMcpTools(
         descriptor.summary,
         `commandId=${descriptor.commandId}`,
         `impact=${descriptor.impact}`,
+        `risk=${permission.riskTier}`,
         `approval=${descriptor.approvalPolicy}`,
         `outputLimit=${descriptor.mcp.outputLimit}`,
       ].join(' · '),
-      inputSchema: asJsonSchemaObject(descriptor.inputSchema.toJSONSchema()),
+      inputSchema: explicitLibraryTarget
+        ? withExplicitLibraryTarget(inputSchema, true)
+        : inputSchema,
       outputLimit: descriptor.mcp.outputLimit,
       impact: descriptor.impact,
       approvalPolicy: descriptor.approvalPolicy,
       requiredCapabilities: descriptor.requiredCapabilities,
+      requestableCapabilities: permission.requestableCapabilities,
+      riskTier: permission.riskTier,
+      canPersistPermission: permission.canPersist,
       annotations: {
         readOnlyHint: descriptor.impact === 'read',
         destructiveHint: descriptor.impact === 'destructive',
@@ -105,13 +154,20 @@ export function listSerpentMcpTools(
       },
     });
   }
-
   return { apiVersion: AUTOMATION_API_VERSION, tools };
 }
 
 export function resolveSerpentMcpTool(
   toolName: string,
-  exposure: SerpentMcpToolExposure = { writeAccessGranted: false },
+  exposure: SerpentMcpToolExposure,
 ): SerpentMcpToolDefinition | undefined {
   return listSerpentMcpTools(exposure).tools.find((tool) => tool.name === toolName);
+}
+
+export function automationLibraryContextForMcpTool(
+  tool: SerpentMcpToolDefinition,
+): 'none' | 'active' | 'transition' {
+  const descriptor = automationCommandRegistry.find((candidate) => candidate.commandId === tool.commandId);
+  if (descriptor === undefined) return 'none';
+  return libraryContextForDescriptor(descriptor);
 }

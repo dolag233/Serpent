@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   automationCommandRegistry,
+  automationCapabilityRegistry,
+  automationCapabilitySchema,
+  automationCriticalOperationRegistry,
   AUTOMATION_MAX_PAGE_SIZE,
   type AutomationCapability,
   describeAutomationCommands,
+  getAutomationCapabilityDefinition,
+  getAutomationCommandPermissionMetadata,
   generateAutomationTypeDeclaration,
 } from '../../src/automation/command-registry';
 import {
@@ -49,12 +54,18 @@ function request(
 
 function resolver(overrides: Partial<{
   source: 'desktop-console' | 'script' | 'mcp' | 'test';
+  clientCredentialId: string;
+  clientName: string;
   libraryId: string | null;
   grantedCapabilities: readonly AutomationCapability[];
 }> = {}): AutomationExecutionResolver {
   const context = {
     executionId: 'execution-1',
     source: overrides.source ?? 'test',
+    ...(overrides.clientCredentialId === undefined
+      ? {}
+      : { clientCredentialId: overrides.clientCredentialId }),
+    ...(overrides.clientName === undefined ? {} : { clientName: overrides.clientName }),
     libraryId: overrides.libraryId === undefined ? 'library-1' : overrides.libraryId,
     grantedCapabilities: overrides.grantedCapabilities === undefined
       ? [...allReadCapabilities]
@@ -129,7 +140,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(41);
+    expect(automationCommandRegistry).toHaveLength(44);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -211,7 +222,7 @@ describe('Automation Command Registry', () => {
       if (command.commandId === 'library.create' || command.commandId === 'file.import') {
         expect(command.supportsIdempotencyKey).toBe(true);
       }
-      if (command.commandId !== 'execution.status') {
+      if (!['execution.status', 'library.list-open', 'library.open', 'library.use', 'ui.notify'].includes(command.commandId)) {
         expect(command.requiredCapabilities.length).toBeGreaterThan(0);
       }
       expect(command.mcp.toolName).toMatch(/^serpent_/u);
@@ -250,9 +261,182 @@ describe('Automation Command Registry', () => {
     expect(declaration).not.toContain('zod');
     expect(declaration).not.toContain('cli');
   });
+
+  it('keeps capability risk metadata complete and separates critical operations', () => {
+    expect(automationCapabilityRegistry).toHaveLength(automationCapabilitySchema.options.length);
+    expect(new Set(automationCapabilityRegistry.map((definition) => definition.capability)).size)
+      .toBe(automationCapabilityRegistry.length);
+    for (const definition of automationCapabilityRegistry) {
+      expect(getAutomationCapabilityDefinition(definition.capability)).toEqual(definition);
+      if (definition.defaultPolicy === 'allow') {
+        expect(definition.riskTier).toBe('safe');
+        expect(definition.canPersist).toBe(false);
+      } else {
+        expect(definition.riskTier).toBe('controlled');
+        expect(definition.canPersist).toBe(true);
+      }
+    }
+
+    expect(automationCriticalOperationRegistry).toHaveLength(7);
+    expect(automationCriticalOperationRegistry.map((operation) => operation.operation)).toEqual([
+      'library.delete-from-disk',
+      'folder.delete-from-disk',
+      'linked-folder.delete-from-disk',
+      'asset.delete-from-disk',
+      'asset.delete-permanent',
+      'asset.delete-linked-source',
+      'trash.purge',
+    ]);
+    for (const operation of automationCriticalOperationRegistry) {
+      expect(operation).toMatchObject({
+        riskTier: 'critical',
+        canPersist: false,
+        exposedToMcp: false,
+      });
+    }
+
+    for (const command of automationCommandRegistry) {
+      const metadata = getAutomationCommandPermissionMetadata(command);
+      expect(metadata.riskTier).toBe(command.impact === 'read' ? 'safe' : 'controlled');
+      expect(metadata.requiresCriticalConfirmation).toBe(false);
+      for (const capability of command.requiredCapabilities) {
+        expect(getAutomationCapabilityDefinition(capability)).toBeDefined();
+      }
+    }
+  });
 });
 
 describe('Automation Command Gateway', () => {
+  it('asks the Main permission broker for an MCP controlled capability before dispatch', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'tag.created',
+      tag: { tagId: 'tag-new', name: '天气-雨', assetCount: 0 },
+    });
+    const permissionBroker = {
+      authorize: vi.fn(async () => ({ allowed: true as const, scope: 'allow-once' as const })),
+      clearExecution: vi.fn(),
+      clearCredential: vi.fn(),
+      clearCapability: vi.fn(),
+    };
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      source: 'mcp',
+      clientCredentialId: '00000000-0000-4000-8000-000000000001',
+      clientName: 'Test MCP client',
+    }), { permissionBroker });
+
+    await expect(commandGateway.execute(request('tag.create', { name: '天气-雨' }))).resolves.toMatchObject({
+      ok: true,
+      result: { id: 'tag-new', name: '天气-雨' },
+    });
+    expect(permissionBroker.authorize).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        source: 'mcp',
+        clientCredentialId: '00000000-0000-4000-8000-000000000001',
+      }),
+      descriptor: expect.objectContaining({ commandId: 'tag.create' }),
+      commandInput: { name: '天气-雨' },
+    }));
+    expect(worker.commands).toEqual([{
+      type: 'tag.create',
+      libraryId: 'library-1',
+      name: '天气-雨',
+    }]);
+  });
+
+  it('does not dispatch an MCP controlled command when the permission broker denies it', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'tag.created',
+      tag: { tagId: 'tag-new', name: '天气-雨', assetCount: 0 },
+    });
+    const permissionBroker = {
+      authorize: vi.fn(async () => ({ allowed: false as const, reason: 'denied' as const })),
+      clearExecution: vi.fn(),
+      clearCredential: vi.fn(),
+      clearCapability: vi.fn(),
+    };
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      source: 'mcp',
+      clientCredentialId: '00000000-0000-4000-8000-000000000002',
+    }), { permissionBroker });
+
+    await expect(commandGateway.execute(request('tag.create', { name: '天气-雨' }))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'AUTOMATION_CAPABILITY_DENIED' },
+    });
+    expect(permissionBroker.authorize).toHaveBeenCalledOnce();
+    expect(worker.commands).toEqual([]);
+  });
+
+  it('uses one broker decision for an MCP plan and dispatches only the approved proof', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.trashed',
+      trashedCount: 1,
+      operationId: 'operation-trash-1',
+    });
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 42,
+      assetStates: [{ assetId: 'asset-1', stateToken: 'b'.repeat(64) }],
+    };
+    const permissionBroker = {
+      authorize: vi.fn(async () => ({ allowed: true as const, scope: 'allow-session' as const })),
+      clearExecution: vi.fn(),
+      clearCredential: vi.fn(),
+      clearCapability: vi.fn(),
+    };
+    const planApprovals: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      source: 'mcp',
+      clientCredentialId: '00000000-0000-4000-8000-000000000003',
+      clientName: 'Planner',
+    }), {
+      permissionBroker,
+      filePlanApprovalHandler: {
+        prepareAndApprove: async (input) => {
+          planApprovals.push(input);
+          expect(input.requestApproval).toBeDefined();
+          const approved = await input.requestApproval!({
+            commandId: input.commandId,
+            executionId: input.executionId,
+            libraryId: input.libraryId,
+            commandInput: input.commandInput,
+            source: 'mcp',
+            clientName: input.clientName,
+            libraryDisplayName: input.libraryDisplayName,
+            summary: {
+              operation: 'trash',
+              targetCount: 1,
+              executableCount: 1,
+              blockedCount: 0,
+              conflictCount: 0,
+              undoSupported: true,
+            },
+          });
+          return approved ? plan : undefined;
+        },
+      },
+    });
+
+    await expect(commandGateway.execute(request('asset.trash', { assetIds: ['asset-1'] }))).resolves.toMatchObject({
+      ok: true,
+      result: { trashedCount: 1, operationId: 'operation-trash-1' },
+    });
+    expect(planApprovals).toHaveLength(1);
+    expect(permissionBroker.authorize).toHaveBeenCalledOnce();
+    expect(permissionBroker.authorize).toHaveBeenCalledWith(expect.objectContaining({
+      planSummary: expect.objectContaining({ operation: 'trash', executableCount: 1 }),
+    }));
+    expect(worker.commands).toEqual([{
+      type: 'asset.trash',
+      libraryId: 'library-1',
+      assetIds: ['asset-1'],
+      automationPlan: plan,
+    }]);
+  });
+
   it('rejects library-scoped commands before Worker dispatch when a headless execution is unbound', async () => {
     const worker = new RecordingWorker({
       ok: true,
@@ -637,6 +821,7 @@ describe('Automation Command Gateway', () => {
       commandId: 'asset.trash',
       executionId: 'execution-1',
       libraryId: 'library-1',
+      source: 'test',
       commandInput: { assetIds: ['asset-1', 'asset-2'] },
     }]);
     expect(worker.commands).toEqual([{
@@ -687,6 +872,7 @@ describe('Automation Command Gateway', () => {
       commandId: 'asset.move',
       executionId: 'execution-1',
       libraryId: 'library-1',
+      source: 'test',
       commandInput: {
         assetIds: ['asset-1'],
         targetFolderId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
@@ -1535,7 +1721,7 @@ describe('Automation Command Gateway', () => {
     expect(worker.commands).toHaveLength(0);
   });
 
-  it('rejects ui.notify without the ui.notify capability', async () => {
+  it('allows bounded ui.notify without write capability', async () => {
     const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
     const commandGateway = createAutomationCommandGateway(
       worker,
@@ -1548,8 +1734,9 @@ describe('Automation Command Gateway', () => {
       severity: 'info',
       message: 'hello',
     }))).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'AUTOMATION_CAPABILITY_DENIED' },
+      ok: true,
+      commandId: 'ui.notify',
+      result: { shown: true, mode: 'toast', severity: 'info' },
     });
   });
 

@@ -12,7 +12,7 @@
 | 编写自动化脚本 | [脚本开发指南](scripts/development.md) | [脚本 API 参考](scripts/api-reference.md) |
 | 接入 MCP | [MCP 开发指南](mcp/development.md) | [MCP API 参考](mcp/api-reference.md) |
 
-脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过本地 stdio 连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](../internal/skills/serpent-automation/automation-api.d.ts)。
+脚本与 MCP 共用同一套 Gateway Action。脚本在 Desktop Console 中运行，MCP 通过 Desktop 内嵌的 loopback Streamable HTTP 服务连接；两者的命令名、参数、权限和执行状态应保持一致。脚本的 TypeScript 声明文件也可直接查看：[automation-api.d.ts](../internal/skills/serpent-automation/automation-api.d.ts)。
 
 ## 三种扩展方式如何选择
 
@@ -25,9 +25,9 @@
 
 - 脚本运行在 QuickJS 隔离进程中，不提供 Node.js 内置模块、任意文件系统、SQLite、任意网络或 Library Worker 句柄。
 - 插件的受限运行模式同样只能使用 Host 暴露的 API；无限制插件可以自行管理外部进程和模型，但 Host 不提供通用 GPU、CPU、内存或 VRAM 调度接口。
-- MCP 是本机 stdio 集成，不是远程服务。默认使用附着 Desktop，也可使用 headless 资源库模式和持久附着会话；写入能力受本机配置、能力和高风险操作确认共同控制。
-- 当前仓库没有可用的通用 `serpent run` 或 `serpent repl` CLI；请使用文档中列出的 `npm run mcp`、`npm run mcp:session` 和 Desktop Console 入口。
-- 当前发布文档覆盖开发态入口。打包后的独立 MCP 启动器、Windows 和跨平台发布旅程仍需以当前 QA 证据为准，不能仅凭本地开发态测试宣称已验证。
+- MCP 是 Desktop 内嵌的本机 loopback Streamable HTTP 服务，不是远程服务。服务默认关闭，用户可在设置中启停、设置自动启动、复制客户端配置和撤销 credential；写入能力受本机授权和高风险操作确认共同控制。
+- MCP 不假设用户安装 Node.js、npm 或任何命令行启动器；客户端只需使用设置页复制的 endpoint 和 credential 连接正在运行的 Serpent Desktop。
+- 当前发布文档覆盖开发态入口。打包后的 MCP 生命周期、Windows 和跨平台发布旅程仍需以当前 QA 证据为准，不能仅凭本地开发态测试宣称已验证。
 
 ## 共同的安全和可靠性约定
 

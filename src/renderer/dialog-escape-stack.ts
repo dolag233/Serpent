@@ -7,8 +7,6 @@ export type DialogEscapeSnapshot = {
   assetRenameOpen: boolean;
   imageSequenceImportOpen: boolean;
   imageSequenceDialogOpen: boolean;
-  permanentDeleteOpen: boolean;
-  diskDeleteOpen: boolean;
   deleteLinkedOpen: boolean;
   batchRelinkOpen: boolean;
   restoreOpen: boolean;
@@ -42,8 +40,6 @@ export type DialogEscapeAction =
   | { kind: "cancel-asset-rename" }
   | { kind: "close-image-sequence-import" }
   | { kind: "close-image-sequence-dialog" }
-  | { kind: "close-permanent-delete" }
-  | { kind: "close-disk-delete" }
   | { kind: "close-delete-linked" }
   | { kind: "cancel-batch-relink" }
   | { kind: "close-restore" }
@@ -93,8 +89,6 @@ export function resolveDialogEscapeAction(
   if (snapshot.imageSequenceDialogOpen) {
     return { kind: "close-image-sequence-dialog" };
   }
-  if (snapshot.permanentDeleteOpen) return { kind: "close-permanent-delete" };
-  if (snapshot.diskDeleteOpen) return { kind: "close-disk-delete" };
   if (snapshot.deleteLinkedOpen) return { kind: "close-delete-linked" };
   if (snapshot.batchRelinkOpen) return { kind: "cancel-batch-relink" };
   if (snapshot.restoreOpen) return { kind: "close-restore" };

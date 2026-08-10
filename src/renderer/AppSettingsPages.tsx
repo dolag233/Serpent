@@ -7,10 +7,6 @@ import {
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
 import type { CanvasPreferences } from "./canvas-preferences";
-import {
-  isDiskDeletePromptEnabled,
-  setDiskDeletePromptEnabled,
-} from "./disk-delete-confirm-preferences";
 import { useElevation } from "./ElevationProvider";
 import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import {
@@ -360,25 +356,11 @@ export function AiSettingsPage({
 
 export function SafetySettingsPage(): ReactNode {
   const t = useT();
-  const [diskDeletePromptEnabled, setDiskDeletePromptEnabledState] = useState(
-    () => isDiskDeletePromptEnabled(),
-  );
   const [importConflictRemembered, setImportConflictRemembered] = useState(() =>
     hasRememberedImportConflictPreferences(),
   );
   return (
     <SettingsCard>
-      <SettingsToggleRow
-        checked={diskDeletePromptEnabled}
-        hint={t("settings.diskDeleteConfirmHint")}
-        label={t("settings.diskDeleteConfirm")}
-        onChange={() => {
-          const next = !diskDeletePromptEnabled;
-          setDiskDeletePromptEnabled(next);
-          setDiskDeletePromptEnabledState(next);
-        }}
-      />
-      <div className="app-settings-card-divider" />
       <div className="app-settings-action-row">
         <div className="app-settings-row-copy">
           <strong>{t("settings.importConflictRemember")}</strong>

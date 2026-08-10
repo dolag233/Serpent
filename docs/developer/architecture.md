@@ -72,7 +72,7 @@ docs/              # 文档（本目录、ADR、实施规格、QA）
 
 ## 扩展体系
 
-- 插件（sandboxed UI + Host API）、自动化脚本（QuickJS 隔离）、MCP（本地 stdio）——详见[扩展作者手册](../manual/README.md)
+- 插件（sandboxed UI + Host API）、自动化脚本（QuickJS 隔离）、MCP（Desktop 内嵌 loopback Streamable HTTP）——详见[扩展作者手册](../manual/README.md)
 
 ## 关键设计决策
 

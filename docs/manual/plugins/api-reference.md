@@ -391,7 +391,7 @@ Provider kind 为 `preview`、`thumbnail`、`metadata`、`import`、`export`、`
 "mcp": { "expose": ["inspect"] }
 ```
 
-激活后会成为 MCP 候选工具，但只有使用 `--write-access`（或附着模式获得本地写入确认）的连接才会在 `tools/list` 中看到并调用它们。插件命令目前按可能产生副作用处理；只导出稳定、有界、可校验的命令，不能导出任意 eval、秘密、路径
+激活后会成为 MCP 候选工具，但只有 Desktop 用户在连接授权中允许写入的 session 才会在 `tools/list` 中看到并调用它们。插件命令目前按可能产生副作用处理；只导出稳定、有界、可校验的命令，不能导出任意 eval、秘密、路径
 或 Node 接口。
 
 插件 MCP 命令的输入必须包含至少一个非空的 `assetIds`、`folderIds` 或 `collectionIds` 数组；`tools/list` 的 JSON Schema 与运行时均以

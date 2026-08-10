@@ -7,6 +7,13 @@ import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
 import type { ViewerVideoShortcutAction } from '../shared/viewer-video-shortcuts';
 import type { ApplicationMenuCommand } from '../shared/application-menu';
+import {
+  mcpSettingsResponseSchema,
+  mcpSettingsSnapshotSchema,
+  type McpSettingsSnapshot,
+  type McpSettingsRequest,
+  type SerpentMcpSettingsApi,
+} from '../shared/mcp';
 import { searchQuerySchema } from '../shared/asset-types';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
 import type { ModelCompanionAsset } from '../shared/model-companions';
@@ -31,9 +38,6 @@ import {
   SHELL_NOTIFY_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
-  DESKTOP_AUTOMATION_SELECTION_CHANNEL,
-  DESKTOP_AUTOMATION_BROWSE_CHANNEL,
-  DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL,
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
   APPLICATION_MENU_COMMAND_CHANNEL,
@@ -58,6 +62,8 @@ import {
   PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
+  MCP_SETTINGS_REQUEST_CHANNEL,
+  MCP_SETTINGS_EVENT_CHANNEL,
 } from '../shared/protocol/channels';
 import {
   parsePluginInputCapturePublishPayload,
@@ -102,14 +108,6 @@ import {
   type ShellSwipeDirection,
 } from '../shared/external-url';
 import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
-import {
-  desktopControlSelectionEventSchema,
-  desktopBrowseActionSchema,
-  desktopBrowseResultSchema,
-  type DesktopControlSelectionEvent,
-  type DesktopBrowseAction,
-  type DesktopBrowseResult,
-} from '../shared/desktop-control';
 import {
   appLogAutomationCorrelationIdSchema,
   parseAppLogEntry,
@@ -2005,34 +2003,6 @@ const shell: SerpentShellApi = Object.freeze({
       ipcRenderer.removeListener(WINDOW_FOCUS_CHANNEL, handler);
     };
   },
-  onDesktopAutomationSelection(
-    listener: (event: DesktopControlSelectionEvent) => void,
-  ) {
-    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      const parsed = desktopControlSelectionEventSchema.safeParse(payload);
-      if (parsed.success) listener(parsed.data);
-    };
-    ipcRenderer.on(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(DESKTOP_AUTOMATION_SELECTION_CHANNEL, handler);
-    };
-  },
-  onDesktopAutomationBrowse(
-    listener: (action: DesktopBrowseAction) => void,
-  ) {
-    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      const parsed = desktopBrowseActionSchema.safeParse(payload);
-      if (parsed.success) listener(parsed.data);
-    };
-    ipcRenderer.on(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
-    return () => {
-      ipcRenderer.removeListener(DESKTOP_AUTOMATION_BROWSE_CHANNEL, handler);
-    };
-  },
-  respondDesktopAutomationBrowse(result: DesktopBrowseResult): void {
-    const parsed = desktopBrowseResultSchema.safeParse(result);
-    if (parsed.success) ipcRenderer.send(DESKTOP_AUTOMATION_BROWSE_RESULT_CHANNEL, parsed.data);
-  },
   onInvertSelection(listener: () => void): () => void {
     const handler = () => {
       listener();
@@ -2198,6 +2168,22 @@ const automation: SerpentAutomationScriptApi = Object.freeze({
   },
 });
 
+const mcp: SerpentMcpSettingsApi = Object.freeze({
+  async request(input: McpSettingsRequest) {
+    return mcpSettingsResponseSchema.parse(
+      await ipcRenderer.invoke(MCP_SETTINGS_REQUEST_CHANNEL, input),
+    );
+  },
+  onChanged(listener: (snapshot: McpSettingsSnapshot) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = mcpSettingsSnapshotSchema.safeParse(input);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(MCP_SETTINGS_EVENT_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(MCP_SETTINGS_EVENT_CHANNEL, handler);
+  },
+});
+
 const plugins: SerpentPluginManagerApi = Object.freeze({
   async request(input: PluginManagerRequest): Promise<PluginManagerResponse> {
     const raw = await ipcRenderer.invoke(PLUGIN_MANAGER_CHANNEL, input);
@@ -2294,6 +2280,7 @@ contextBridge.exposeInMainWorld(
     library,
     shell,
     automation,
+    mcp,
     plugins,
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),

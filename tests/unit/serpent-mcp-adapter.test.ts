@@ -7,21 +7,28 @@ import {
   type AutomationExecutionResolver,
   type AutomationWorkerClient,
 } from '../../src/automation/command-gateway';
-import { callSerpentMcpTool } from '../../src/mcp/call-tool';
+import { callSerpentMcpTool, type SerpentMcpPluginToolBridge } from '../../src/mcp/call-tool';
 import { createSerpentMcpServer } from '../../src/mcp/create-serpent-mcp-server';
-import { listSerpentMcpTools, resolveSerpentMcpTool } from '../../src/mcp/tool-catalog';
+import { listSerpentMcpTools, resolveSerpentMcpTool, type SerpentMcpToolExposure } from '../../src/mcp/tool-catalog';
 import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
+import {
+  mcpContext,
+  readCapabilities,
+  readExposure,
+  writeExposure,
+} from './serpent-mcp-test-fixtures';
 
-const readCapabilities = [
-  'library.read',
-  'folder.read',
-  'asset.read',
-  'metadata.read',
-  'tag.read',
-  'collection.read',
-  'job.read',
-] as const;
+function backend(
+  exposure: SerpentMcpToolExposure = readExposure,
+  pluginTools?: SerpentMcpPluginToolBridge,
+) {
+  return {
+    getExecutionContext: () => mcpContext(exposure),
+    getToolExposure: () => exposure,
+    getPluginTools: () => pluginTools,
+  };
+}
 
 function resolver(): AutomationExecutionResolver {
   return {
@@ -29,6 +36,7 @@ function resolver(): AutomationExecutionResolver {
       ? {
           executionId: 'mcp-execution',
           source: 'mcp',
+          clientCredentialId: 'test-credential',
           libraryId: 'library-1',
           grantedCapabilities: [...readCapabilities],
         }
@@ -48,21 +56,26 @@ class RecordingWorker implements AutomationWorkerClient {
 }
 
 describe('Serpent MCP tool catalog', () => {
-  it('lists only public Registry tools when write access is not granted', () => {
-    const listed = listSerpentMcpTools({ writeAccessGranted: false });
+  it('lists requestable Registry tools even when ordinary write permissions are still ask-on-call', () => {
+    const listed = listSerpentMcpTools(readExposure);
     expect(listed.apiVersion).toBe(1);
     expect(listed.tools.length).toBeGreaterThan(0);
-    expect(listed.tools.every((tool) => tool.annotations.readOnlyHint)).toBe(true);
     expect(listed.tools.map((tool) => tool.name)).toContain('serpent_asset_search');
     expect(listed.tools.map((tool) => tool.name)).toContain('serpent_library_change_sequence');
     expect(listed.tools.map((tool) => tool.name)).toContain('serpent_asset_ai_content_get');
     expect(listed.tools.map((tool) => tool.name)).toContain('serpent_execution_status');
-    expect(listed.tools.map((tool) => tool.name)).not.toContain('serpent_tag_create');
-    expect(listed.tools.map((tool) => tool.name)).not.toContain('serpent_folder_create');
+    expect(listed.tools.map((tool) => tool.name)).toContain('serpent_ui_notify');
+    expect(listed.tools.map((tool) => tool.name)).toContain('serpent_tag_create');
+    expect(listed.tools.map((tool) => tool.name)).toContain('serpent_folder_create');
+    expect(listed.tools.find((tool) => tool.name === 'serpent_tag_create')).toMatchObject({
+      riskTier: 'controlled',
+      requestableCapabilities: ['tag.write'],
+      canPersistPermission: true,
+    });
   });
 
   it('exposes execution- and plan-approved write tools after local write access is granted', () => {
-    const listed = listSerpentMcpTools({ writeAccessGranted: true });
+    const listed = listSerpentMcpTools(writeExposure);
     const names = listed.tools.map((tool) => tool.name);
     expect(names).toContain('serpent_tag_create');
     expect(names).toContain('serpent_folder_create');
@@ -79,7 +92,7 @@ describe('Serpent MCP tool catalog', () => {
   });
 
   it('keeps MCP tool names Registry-owned and free of eval/shell/sql surfaces', () => {
-    const listed = listSerpentMcpTools({ writeAccessGranted: true });
+    const listed = listSerpentMcpTools(writeExposure);
     const forbidden = /(?:^|_)(?:eval|shell|sql|fetch|net|fs|process|exec)(?:_|$)/iu;
     for (const tool of listed.tools) {
       expect(tool.name).toMatch(/^serpent_[a-z0-9_]+$/u);
@@ -87,7 +100,16 @@ describe('Serpent MCP tool catalog', () => {
       expect(tool.inputSchema).toBeTypeOf('object');
       expect(tool.annotations.openWorldHint).toBe(false);
     }
-    expect(resolveSerpentMcpTool('serpent_eval_code')).toBeUndefined();
+    expect(resolveSerpentMcpTool('serpent_eval_code', writeExposure)).toBeUndefined();
+  });
+
+  it('exposes explicit filesystem paths and library targets to MCP clients', () => {
+    const listed = listSerpentMcpTools(writeExposure);
+    const libraryCreate = listed.tools.find((tool) => tool.name === 'serpent_library_create');
+    const fileImport = listed.tools.find((tool) => tool.name === 'serpent_file_import');
+    expect(libraryCreate?.inputSchema).toHaveProperty('properties.selectedParentPath');
+    expect(fileImport?.inputSchema).toHaveProperty('properties.sourcePaths');
+    expect(fileImport?.inputSchema).toHaveProperty('properties.libraryId');
   });
 });
 
@@ -104,9 +126,9 @@ describe('Serpent MCP tools/call → Gateway', () => {
     const gateway = createAutomationCommandGateway(worker, resolver());
     const result = await callSerpentMcpTool({
       toolName: 'serpent_library_inspect',
-      arguments: {},
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: false },
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
       gateway,
     });
     expect(result).toMatchObject({
@@ -122,6 +144,26 @@ describe('Serpent MCP tools/call → Gateway', () => {
       expect(result.result).not.toHaveProperty('libraryPath');
     }
     expect(worker.commands).toEqual([{ type: 'library.list' }]);
+  });
+
+  it('forwards an MCP request abort signal into the Gateway', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'library.list', libraries: [] });
+    const controller = new AbortController();
+    controller.abort();
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_library_inspect',
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'AUTOMATION_EXECUTION_CANCELLED',
+    });
+    expect(worker.commands).toHaveLength(0);
   });
 
   it('returns execution status through the Gateway without Worker dispatch', async () => {
@@ -151,8 +193,8 @@ describe('Serpent MCP tools/call → Gateway', () => {
     const result = await callSerpentMcpTool({
       toolName: 'serpent_execution_status',
       arguments: {},
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: false },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
       gateway,
     });
     expect(result).toMatchObject({
@@ -187,9 +229,9 @@ describe('Serpent MCP tools/call → Gateway', () => {
     });
     const result = await callSerpentMcpTool({
       toolName: 'serpent_asset_search',
-      arguments: { query: 'name:sunny', limit: 50 },
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: false },
+      arguments: { libraryId: 'library-1', query: 'name:sunny', limit: 50 },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
       gateway,
     });
     expect(result).toMatchObject({ ok: true, commandId: 'asset.search' });
@@ -205,19 +247,29 @@ describe('Serpent MCP tools/call → Gateway', () => {
     ]);
   });
 
-  it('rejects write tools until write access is configured', async () => {
-    // Worker result is unused: exposure gate rejects before Gateway dispatch.
-    const worker = new RecordingWorker({ ok: true, type: 'tag.list', tags: [] });
-    const gateway = createAutomationCommandGateway(worker, resolver());
+  it('allows ordinary Auto writes without a human permission prompt', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'tag.created',
+      tag: { tagId: 'tag-1', name: 'x', assetCount: 0 },
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver(), {
+      permissionBroker: {
+        authorize: async () => ({ allowed: true, scope: 'already-granted' as const }),
+        clearExecution: () => undefined,
+        clearCredential: () => undefined,
+        clearCapability: () => undefined,
+      },
+    });
     const result = await callSerpentMcpTool({
       toolName: 'serpent_tag_create',
-      arguments: { name: 'x' },
-      executionId: 'mcp-execution',
-      exposure: { writeAccessGranted: false },
+      arguments: { libraryId: 'library-1', name: 'x' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
       gateway,
     });
-    expect(result).toMatchObject({ ok: false, code: 'MCP_TOOL_NOT_EXPOSED' });
-    expect(worker.commands).toHaveLength(0);
+    expect(result).toMatchObject({ ok: true, commandId: 'tag.create' });
+    expect(worker.commands).toHaveLength(1);
   });
 
   it('requires a Main-bound executionId', async () => {
@@ -225,9 +277,9 @@ describe('Serpent MCP tools/call → Gateway', () => {
     const gateway = createAutomationCommandGateway(worker, resolver());
     const result = await callSerpentMcpTool({
       toolName: 'serpent_library_inspect',
-      arguments: {},
-      executionId: undefined,
-      exposure: { writeAccessGranted: false },
+      arguments: { libraryId: 'library-1' },
+      context: undefined,
+      exposure: readExposure,
       gateway,
     });
     expect(result).toMatchObject({ ok: false, code: 'MCP_EXECUTION_REQUIRED' });
@@ -238,11 +290,10 @@ describe('Serpent MCP tools/call → Gateway', () => {
     const gateway = createAutomationCommandGateway(worker, resolver());
     const server = createSerpentMcpServer({
       gateway,
-      getExecutionId: () => 'mcp-execution',
-      getExposure: () => ({ writeAccessGranted: false }),
+      backend: backend(readExposure),
     });
     expect(server).toBeTruthy();
-    expect(listSerpentMcpTools({ writeAccessGranted: false }).tools.map((tool) => tool.name))
+    expect(listSerpentMcpTools(readExposure).tools.map((tool) => tool.name))
       .toContain('serpent_asset_search');
   });
 
@@ -268,9 +319,7 @@ describe('Serpent MCP tools/call → Gateway', () => {
     };
     const readOnlyServer = createSerpentMcpServer({
       gateway,
-      getExecutionId: () => 'mcp-execution',
-      getExposure: () => ({ writeAccessGranted: false }),
-      getPluginTools: () => pluginTools,
+      backend: backend(readExposure, pluginTools),
     });
     const [readClientTransport, readServerTransport] = InMemoryTransport.createLinkedPair();
     const readClient = new Client({ name: 'plugin-read-only', version: '1.0.0' });
@@ -288,9 +337,7 @@ describe('Serpent MCP tools/call → Gateway', () => {
 
     const writeServer = createSerpentMcpServer({
       gateway,
-      getExecutionId: () => 'mcp-execution',
-      getExposure: () => ({ writeAccessGranted: true }),
-      getPluginTools: () => pluginTools,
+      backend: backend(writeExposure, pluginTools),
     });
     const [writeClientTransport, writeServerTransport] = InMemoryTransport.createLinkedPair();
     const writeClient = new Client({ name: 'plugin-write', version: '1.0.0' });

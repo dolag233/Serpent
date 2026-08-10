@@ -1,12 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { translateForLocale, type AppLocale } from "./i18n";
-import {
-  isDiskDeletePromptEnabled,
-  setDiskDeletePromptEnabled,
-} from "./disk-delete-confirm-preferences";
 import {
   isBrowseScopeAffectedByFolderTrash,
   type FolderParentNode,
@@ -53,9 +49,6 @@ export function useFolderDeleteActions({
   reloadCurrentContent,
   onDeletedCurrentScope,
 }: UseFolderDeleteActionsParams) {
-  const [diskDeleteTarget, setDiskDeleteTarget] =
-    useState<FolderDiskDeleteTarget | null>(null);
-
   const afterFolderMutation = useCallback(
     async (deletedFolderIds: readonly string[]) => {
       if (
@@ -107,10 +100,8 @@ export function useFolderDeleteActions({
   );
 
   const confirmDiskDelete = useCallback(
-    async (target: FolderDiskDeleteTarget, dontShowAgain: boolean) => {
+    async (target: FolderDiskDeleteTarget) => {
       if (!api || !libraryId) return;
-      if (dontShowAgain) setDiskDeletePromptEnabled(false);
-      setDiskDeleteTarget(null);
       await closePreview();
       setUiState("loading");
       try {
@@ -169,11 +160,7 @@ export function useFolderDeleteActions({
 
   const openDiskDelete = useCallback(
     (target: FolderDiskDeleteTarget) => {
-      if (!isDiskDeletePromptEnabled()) {
-        void confirmDiskDelete(target, false);
-        return;
-      }
-      setDiskDeleteTarget(target);
+      void confirmDiskDelete(target);
     },
     [confirmDiskDelete],
   );
@@ -264,12 +251,6 @@ export function useFolderDeleteActions({
   );
 
   return {
-    diskDeleteTarget,
-    cancelDiskDelete: () => setDiskDeleteTarget(null),
-    confirmDiskDelete: (dontShowAgain: boolean) => {
-      if (!diskDeleteTarget) return;
-      void confirmDiskDelete(diskDeleteTarget, dontShowAgain);
-    },
     trashManagedFolder,
     openDiskDelete,
     removeLinkedFolder,

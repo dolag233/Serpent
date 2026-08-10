@@ -1836,6 +1836,15 @@ describe('renderer lifecycle events', () => {
     expect(
       parseRendererLifecycleEvent({ type: 'library.opening', operation: 'create' }),
     ).toEqual({ type: 'library.opening', operation: 'create' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.opened',
+      source: 'mcp',
+      library: {
+        libraryId: 'mcp-library',
+        displayName: 'MCP Library',
+        displayPath: '/libraries/mcp-library',
+      },
+    })).toMatchObject({ type: 'library.opened', source: 'mcp' });
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();

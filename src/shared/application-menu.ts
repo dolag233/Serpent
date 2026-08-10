@@ -43,6 +43,32 @@ export type ApplicationMenuRole =
   | "zoom"
   | "front";
 
+/** Commands sent from the native macOS menu to the canonical renderer menu. */
+export type ApplicationMenuCommand =
+  | "invert-selection"
+  | "copy-selection"
+  | "file.import-files"
+  | "file.import-folder"
+  | "file.import-linked-folder"
+  | "edit.undo"
+  | "edit.paste"
+  | "edit.select-all"
+  | "edit.clear-selection"
+  | "library.create"
+  | "library.open"
+  | "library.close"
+  | "library.remove"
+  | "library.delete-from-disk"
+  | "library.import"
+  | "library.export"
+  | "library.settings"
+  | "window.background-jobs"
+  | "window.diagnostics"
+  | "about.serpent"
+  | "about.github"
+  | "about.open-source"
+  | "settings";
+
 export type ApplicationMenuItemTemplate = {
   readonly role?: ApplicationMenuRole;
   readonly type?: "separator" | "normal" | "submenu";

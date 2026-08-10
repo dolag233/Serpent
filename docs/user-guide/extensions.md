@@ -24,11 +24,11 @@ Serpent 提供三种扩展方式。本章讲**怎么用**；编写扩展见[扩�
 
 MCP（Model Context Protocol）让外部 Agent 或 MCP Host 接入 Serpent 执行操作。
 
-**接入方式**：默认附着当前 Serpent Desktop——启动 MCP 后，外部工具通过本地 stdio 与 Serpent 通信，复用桌面已打开的资源和权限。也支持无桌面的 headless 模式（独立启动，适合服务场景）。
+**接入方式**：在 Serpent 设置中允许并启动 MCP 后，外部 Agent 或 MCP Host 使用页面复制的 endpoint 和 credential，通过本机 loopback Streamable HTTP 与当前 Desktop 通信。客户端不需要安装 Node.js 或 npm。
 
 **能力**：与脚本共用同一套操作（搜索、标签、评分、文件夹、合集等），写操作受配置与高风险确认控制。
 
-**边界**：本地 stdio 集成，不是远程服务；不提供任意 Shell、SQL、文件系统或网络访问。
+**边界**：服务只绑定 `127.0.0.1`，不是远程服务；不提供任意 Shell、SQL、文件系统或网络访问。MCP 服务的启停、自动启动和 credential 撤销都由 Desktop 设置控制。
 
 ## 三种方式怎么选
 
@@ -46,5 +46,5 @@ flowchart TB
     Q -->|外部 Agent 或 MCP Host 调用| M[MCP]
     P --> P2[长期运行，使用沙箱与宿主贡献]
     S --> S2[Desktop Console，隔离运行]
-    M --> M2[本地 stdio，共享权限模型]
+    M --> M2[Loopback HTTP，共享权限模型]
 ```

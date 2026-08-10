@@ -23912,6 +23912,18 @@ export class LibraryService {
       });
     }
     const plan = this.prepareImport(input);
+    // An MCP/Desktop automation plan has already been shown to the user and
+    // fenced against the readonly preview above.  Resolve the staged batch
+    // with the same safe defaults as the normal no-conflict path so a
+    // confirmed import cannot stop at an unreachable conflict token:
+    // content duplicates are skipped and name collisions keep both files.
+    if (input.automationPlan !== undefined) {
+      return this.resolveImport({
+        importId: plan.importId,
+        suspectedDuplicate: 'skip',
+        nameConflict: 'keep-both',
+      });
+    }
     if (plan.suspectedDuplicateCount !== 0 || plan.nameConflictCount !== 0) return plan;
     return this.resolveImport({
       importId: plan.importId,

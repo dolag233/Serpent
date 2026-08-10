@@ -1,30 +1,36 @@
 import {
   AUTOMATION_API_VERSION,
+  automationCommandRegistry,
   type AutomationCommandId,
 } from '../automation/command-registry';
 import type {
   AutomationCommandEnvelope,
   AutomationCommandGateway,
   AutomationGatewayResult,
+  AutomationExecutionContext,
 } from '../automation/command-gateway';
+import type { AutomationGatewayErrorCode } from '../shared/automation-host-command-error';
+import type { PublicErrorCode } from '../shared/protocol/errors';
 import { normalizeAutomationAssetSearchInput } from '../main/normalize-automation-asset-search-input';
 import {
   parsePluginMcpToolArguments,
   type PluginMcpToolDefinition,
 } from './plugin-tool-catalog';
-import { resolveSerpentMcpTool, type SerpentMcpToolExposure } from './tool-catalog';
+import {
+  automationLibraryContextForMcpTool,
+  mcpExposureAllowsWrite,
+  resolveSerpentMcpTool,
+  type SerpentMcpToolExposure,
+} from './tool-catalog';
 
 export type SerpentMcpCallToolSuccess = {
   ok: true;
   toolName: string;
   commandId?: AutomationCommandId;
-  plugin?: {
-    pluginId: string;
-    commandId: string;
-  };
+  plugin?: { pluginId: string; commandId: string };
   result: unknown;
+  libraryId?: string;
   undoGroupId?: string;
-  truncated: boolean;
 };
 
 export type SerpentMcpCallToolFailure = {
@@ -33,22 +39,17 @@ export type SerpentMcpCallToolFailure = {
     | 'MCP_TOOL_NOT_FOUND'
     | 'MCP_TOOL_NOT_EXPOSED'
     | 'MCP_EXECUTION_REQUIRED'
+    | 'MCP_LIBRARY_TARGET_REQUIRED'
+    | 'MCP_LIBRARY_TARGET_INVALID'
+    | 'AUTOMATION_OUTPUT_LIMIT_EXCEEDED'
+    | AutomationGatewayErrorCode
+    | PublicErrorCode
     | 'MCP_GATEWAY_FAILURE';
   message: string;
   gateway?: AutomationGatewayResult;
 };
 
 export type SerpentMcpCallToolResult = SerpentMcpCallToolSuccess | SerpentMcpCallToolFailure;
-
-export type SerpentMcpCallToolInput = {
-  toolName: string;
-  arguments: unknown;
-  executionId: string | undefined;
-  libraryId?: string;
-  exposure: SerpentMcpToolExposure;
-  gateway: AutomationCommandGateway;
-  pluginTools?: SerpentMcpPluginToolBridge;
-};
 
 export type SerpentMcpPluginToolBridge = {
   list: (libraryId?: string) => readonly PluginMcpToolDefinition[];
@@ -59,120 +60,164 @@ export type SerpentMcpPluginToolBridge = {
     context: unknown;
     executionId: string;
     libraryId?: string;
+    signal?: AbortSignal;
   }) => Promise<unknown>;
 };
 
-/**
- * Maps one MCP tools/call into a Gateway envelope. The adapter never chooses
- * libraryId, source, or capabilities — those stay on the Main-owned execution.
- */
+export type SerpentMcpCallToolInput = {
+  toolName: string;
+  arguments: unknown;
+  context: AutomationExecutionContext | undefined;
+  exposure: SerpentMcpToolExposure;
+  gateway: AutomationCommandGateway;
+  pluginTools?: SerpentMcpPluginToolBridge;
+  signal?: AbortSignal;
+};
+
+function contextWithRequestSignal(
+  context: AutomationExecutionContext | undefined,
+  requestSignal: AbortSignal | undefined,
+): AutomationExecutionContext | undefined {
+  if (context === undefined || requestSignal === undefined) return context;
+  const executionSignal = context.abortSignal;
+  if (executionSignal === undefined) return { ...context, abortSignal: requestSignal };
+  if (executionSignal === requestSignal) return context;
+  return { ...context, abortSignal: AbortSignal.any([executionSignal, requestSignal]) };
+}
+
+function outputLimitFor(input: SerpentMcpCallToolInput): number {
+  return input.context?.resourceBudget?.maxOutputBytes ?? 1024 * 1024;
+}
+
+function outputWithinBudget(value: unknown, maxBytes: number): boolean {
+  const serialized = JSON.stringify(value) ?? 'null';
+  return Buffer.byteLength(serialized, 'utf8') <= maxBytes;
+}
+
+/** Maps one MCP tools/call into a Main-owned Gateway envelope. */
 export async function callSerpentMcpTool(
   input: SerpentMcpCallToolInput,
 ): Promise<SerpentMcpCallToolResult> {
+  const context = contextWithRequestSignal(input.context, input.signal);
+  const executionId = context?.executionId;
+  const libraryId = context?.libraryId ?? undefined;
   const tool = resolveSerpentMcpTool(input.toolName, input.exposure);
   if (!tool) {
-    const knownPluginTool = input.pluginTools?.isKnown(input.toolName, input.libraryId) === true;
-    if (knownPluginTool && !input.exposure.writeAccessGranted) {
-      return {
-        ok: false,
-        code: 'MCP_TOOL_NOT_EXPOSED',
-        message: `Plugin MCP tool ${input.toolName} requires local write access configuration.`,
-      };
-    }
-    const pluginTool = input.pluginTools?.list(input.libraryId).find((candidate) => candidate.name === input.toolName);
-    if (pluginTool) {
-      if (input.executionId === undefined || input.executionId.trim().length === 0) {
-        return {
-          ok: false,
-          code: 'MCP_EXECUTION_REQUIRED',
-          message: 'MCP tools/call requires a Main-bound automation executionId.',
-        };
+    const knownRegistryTool = automationCommandRegistry.some((descriptor) => descriptor.mcp.toolName === input.toolName);
+    const knownPluginTool = input.pluginTools?.isKnown(input.toolName, libraryId) === true;
+    const pluginTool = input.pluginTools?.list(libraryId).find((candidate) => candidate.name === input.toolName);
+    if (pluginTool !== undefined) {
+      if (!mcpExposureAllowsWrite(input.exposure)) {
+        return { ok: false, code: 'MCP_TOOL_NOT_EXPOSED', message: `Plugin MCP tool ${input.toolName} is not enabled.` };
+      }
+      if (executionId === undefined || executionId.trim().length === 0) {
+        return { ok: false, code: 'MCP_EXECUTION_REQUIRED', message: 'MCP tools/call requires a Main-bound automation execution.' };
       }
       try {
+        if (input.signal?.aborted) {
+          return {
+            ok: false,
+            code: 'AUTOMATION_EXECUTION_CANCELLED',
+            message: 'The MCP tool call was cancelled by the client.',
+          };
+        }
         const context = parsePluginMcpToolArguments(pluginTool, input.arguments ?? {});
-        const result = await input.pluginTools?.call({
+        const result = await input.pluginTools!.call({
           pluginId: pluginTool.pluginId,
           commandId: pluginTool.commandId,
           context,
-          executionId: input.executionId,
-          ...(input.libraryId === undefined ? {} : { libraryId: input.libraryId }),
+          executionId,
+          ...(libraryId === undefined ? {} : { libraryId }),
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
         });
+        if (input.signal?.aborted) {
+          return {
+            ok: false,
+            code: 'AUTOMATION_EXECUTION_CANCELLED',
+            message: 'The MCP tool call was cancelled by the client.',
+          };
+        }
+        if (!outputWithinBudget(result, outputLimitFor(input))) {
+          return { ok: false, code: 'AUTOMATION_OUTPUT_LIMIT_EXCEEDED', message: 'The MCP result exceeds the execution output budget.' };
+        }
         return {
           ok: true,
           toolName: pluginTool.name,
-          plugin: {
-            pluginId: pluginTool.pluginId,
-            commandId: pluginTool.commandId,
-          },
+          plugin: { pluginId: pluginTool.pluginId, commandId: pluginTool.commandId },
           result,
-          truncated: false,
         };
       } catch {
-        return {
-          ok: false,
-          code: 'MCP_GATEWAY_FAILURE',
-          message: 'Plugin command rejected the MCP tool call.',
-        };
+        return { ok: false, code: 'MCP_GATEWAY_FAILURE', message: 'Plugin command rejected the MCP tool call.' };
       }
     }
     if (knownPluginTool) {
-      return {
-        ok: false,
-        code: 'MCP_TOOL_NOT_EXPOSED',
-        message: `Plugin MCP tool ${input.toolName} is not enabled on this device.`,
-      };
+      return { ok: false, code: 'MCP_TOOL_NOT_EXPOSED', message: `Plugin MCP tool ${input.toolName} is not enabled.` };
     }
-    const knownWithoutWrite = resolveSerpentMcpTool(input.toolName, { writeAccessGranted: true });
-    if (knownWithoutWrite && !input.exposure.writeAccessGranted) {
-      return {
-        ok: false,
-        code: 'MCP_TOOL_NOT_EXPOSED',
-        message: `Tool ${input.toolName} requires local write access configuration.`,
-      };
+    if (knownRegistryTool) {
+      return { ok: false, code: 'MCP_TOOL_NOT_EXPOSED', message: `MCP tool ${input.toolName} is not enabled.` };
     }
-    return {
-      ok: false,
-      code: 'MCP_TOOL_NOT_FOUND',
-      message: `Unknown Serpent MCP tool: ${input.toolName}`,
-    };
+    return { ok: false, code: 'MCP_TOOL_NOT_FOUND', message: `Unknown Serpent MCP tool: ${input.toolName}` };
   }
 
-  if (input.executionId === undefined || input.executionId.trim().length === 0) {
-    return {
-      ok: false,
-      code: 'MCP_EXECUTION_REQUIRED',
-      message: 'MCP tools/call requires a Main-bound automation executionId.',
-    };
+  if (executionId === undefined || executionId.trim().length === 0) {
+    return { ok: false, code: 'MCP_EXECUTION_REQUIRED', message: 'MCP tools/call requires a Main-bound automation execution.' };
   }
-
   const rawArguments = input.arguments ?? {};
-  const commandInput = tool.commandId === 'asset.search'
-    ? (normalizeAutomationAssetSearchInput(rawArguments) ?? rawArguments)
+  const rawRecord = rawArguments !== null && typeof rawArguments === 'object' && !Array.isArray(rawArguments)
+    ? rawArguments as Record<string, unknown>
+    : {};
+  const libraryContext = automationLibraryContextForMcpTool(tool);
+  let explicitLibraryId: string | undefined;
+  if (libraryContext === 'active') {
+    // Stateless contract (Serpent-8b5b): every library-scoped call carries its
+    // own explicit target. Existence is validated by the Gateway/Worker
+    // (LIBRARY_NOT_FOUND); the MCP layer only rejects empty or non-string
+    // targets with a stable error, never a human prompt.
+    if (typeof rawRecord.libraryId !== 'string' || rawRecord.libraryId.trim().length === 0) {
+      return {
+        ok: false,
+        code: 'MCP_LIBRARY_TARGET_REQUIRED',
+        message: `MCP tool ${tool.name} requires an explicit libraryId. Use serpent_library_list_open or serpent_library_create first.`,
+      };
+    }
+    explicitLibraryId = rawRecord.libraryId.trim();
+  }
+  const commandArguments = libraryContext === 'active'
+    ? Object.fromEntries(Object.entries(rawRecord).filter(([key]) => key !== 'libraryId'))
     : rawArguments;
-
+  const commandInput = tool.commandId === 'asset.search'
+    ? (normalizeAutomationAssetSearchInput(commandArguments) ?? commandArguments)
+    : commandArguments;
   const envelope: AutomationCommandEnvelope = {
     apiVersion: AUTOMATION_API_VERSION,
     commandId: tool.commandId,
-    executionId: input.executionId,
+    executionId,
     input: commandInput,
   };
-
-  const gatewayResult = await input.gateway.execute(envelope);
+  const gatewayResult = await input.gateway.execute(envelope, {
+    signal: input.signal,
+    contextOverrides: {
+      ...(explicitLibraryId === undefined ? {} : { libraryId: explicitLibraryId }),
+      stateless: true,
+    },
+  });
   if (!gatewayResult.ok) {
     return {
       ok: false,
-      code: 'MCP_GATEWAY_FAILURE',
-      message: 'Automation Gateway rejected the MCP tool call.',
+      code: gatewayResult.error.code,
+      message: gatewayResult.error.message ?? gatewayResult.error.code,
       gateway: gatewayResult,
     };
   }
-
+  if (!outputWithinBudget(gatewayResult.result, outputLimitFor({ ...input, context }))) {
+    return { ok: false, code: 'AUTOMATION_OUTPUT_LIMIT_EXCEEDED', message: 'The MCP result exceeds the execution output budget.' };
+  }
   return {
     ok: true,
     toolName: tool.name,
     commandId: tool.commandId,
     result: gatewayResult.result,
+    ...(explicitLibraryId === undefined ? {} : { libraryId: explicitLibraryId }),
     ...(gatewayResult.undoGroupId === undefined ? {} : { undoGroupId: gatewayResult.undoGroupId }),
-    truncated: false,
   };
 }

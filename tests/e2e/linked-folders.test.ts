@@ -76,7 +76,19 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await assetCard(window, 'delete-me.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
     await window.getByLabel('同时删除磁盘源文件').check();
+    const windowCountBeforeCritical = application.windows().length;
     await window.getByRole('button', { name: '移入系统回收站并移除' }).click();
+    await expect
+      .poll(() => application.windows().length, { timeout: 5_000 })
+      .toBeGreaterThan(windowCountBeforeCritical);
+    const criticalWindow = application.windows().at(-1)!;
+    await expect(
+      criticalWindow.getByRole('heading', { name: '删除链接资产源文件？' }),
+    ).toBeVisible();
+    await criticalWindow
+      .getByRole('button', { name: '永久删除', exact: true })
+      .click()
+      .catch(() => undefined);
     await expect(window.getByText('delete-me.png', { exact: true })).toHaveCount(0);
     expect(existsSync(path.join(sourceRoot, 'delete-me.png'))).toBe(false);
 

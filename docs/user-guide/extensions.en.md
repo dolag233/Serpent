@@ -24,11 +24,11 @@ Scripts are one-shot batches that run in the Desktop Console. Good for repeated 
 
 MCP (Model Context Protocol) lets an external agent or MCP host drive Serpent.
 
-**Connect**: by default it attaches to the running Serpent Desktop — the external tool talks to Serpent over local stdio, reusing the desktop's open libraries and permissions. A headless mode (no desktop) is also available for service scenarios.
+**Connect**: enable and start MCP in Serpent Settings, then use the copied endpoint and credential to connect an external Agent or MCP Host over loopback Streamable HTTP. The client does not need Node.js or npm installed.
 
 **Capabilities**: the same operations as scripts (search, tags, ratings, folders, collections, …); writes are gated by configuration and high-risk confirmations.
 
-**Limits**: local stdio integration, not a remote service; no arbitrary shell, SQL, filesystem or network access.
+**Limits**: the service binds only to `127.0.0.1`, so it is not a remote service; it provides no arbitrary shell, SQL, filesystem, or network access. Desktop Settings controls startup, automatic startup, and credential revocation.
 
 ## Which one to use
 
@@ -46,5 +46,5 @@ flowchart TB
     Q -->|External agent or MCP host| M[MCP]
     P --> P2[Long-lived, sandboxed host contributions]
     S --> S2[Desktop Console, isolated run]
-    M --> M2[Local stdio, shared permissions]
+    M --> M2[Loopback HTTP, shared permissions]
 ```

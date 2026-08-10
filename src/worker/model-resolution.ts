@@ -81,12 +81,14 @@ export function resolveModelPreviewResolution(
 }
 
 /**
- * List every library asset inside the model's own directory (recursive),
- * excluding the model itself. OBJ/MTL and FBX external textures are resolved
- * by the renderer against this index using relative paths — the same directory
- * the DCC wrote them into. Only assets are returned; no absolute paths, no
- * ignored/trashed rows (deleted_at IS NULL), no out-of-directory entries
- * (the LIKE prefix guarantees containment).
+ * List every extension-bearing library asset inside the model's own directory
+ * (recursive), excluding the model itself. OBJ/MTL and FBX external textures
+ * are resolved by the renderer against this index using relative paths — the
+ * same directory the DCC wrote them into. Extensionless files cannot be
+ * resolved as texture/material resources and are intentionally omitted because
+ * the thumbnail wire contract requires a non-empty extension. No absolute
+ * paths, ignored/trashed rows (deleted_at IS NULL), or out-of-directory
+ * entries (the LIKE prefix guarantees containment) leave this function.
  */
 export function queryModelCompanionAssets(
   connection: ModelCompanionQueryConnection,
@@ -123,11 +125,13 @@ export function queryModelCompanionAssets(
   }>) {
     if (row.relative_file_path === modelRelativePath) continue;
     if (!row.current_revision_id) continue;
+    const extension = path.posix.extname(row.relative_file_path).toLowerCase();
+    if (!extension) continue;
     companions.push({
       relativeFilePath: row.relative_file_path,
       assetId: row.asset_id,
       revisionId: row.current_revision_id,
-      extension: path.posix.extname(row.relative_file_path).toLowerCase(),
+      extension,
     });
   }
   return companions;

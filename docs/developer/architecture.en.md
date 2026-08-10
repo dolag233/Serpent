@@ -72,7 +72,7 @@ docs/              # documentation (this tree, ADRs, specs, QA)
 
 ## Extension system
 
-Plugins (sandboxed UI + Host API), automation scripts (isolated QuickJS) and MCP (local stdio) — see the [extension author manual](../manual/README.md).
+Plugins (sandboxed UI + Host API), automation scripts (isolated QuickJS), and MCP (Desktop-embedded loopback Streamable HTTP) — see the [extension author manual](../manual/README.md).
 
 ## Key design decisions
 

@@ -49,12 +49,6 @@ import { parseSearchExpression, splitSearchHighlights } from "./search-expressio
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
-import { PermanentDeleteDialog } from "./PermanentDeleteDialog";
-import { DiskDeleteConfirmDialog } from "./DiskDeleteConfirmDialog";
-import {
-  isDiskDeletePromptEnabled,
-  setDiskDeletePromptEnabled,
-} from "./disk-delete-confirm-preferences";
 import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
@@ -94,6 +88,7 @@ import {
 import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
 import type { ApplicationMenuCommand } from "../shared/application-menu";
+import type { SerpentMcpSettingsApi } from "../shared/mcp";
 import type { SearchQuery } from "../shared/asset-types";
 import {
   createWorkspaceNavHistory,
@@ -156,6 +151,7 @@ import { AppSettingsDialog } from "./AppSettingsDialog";
 import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
+import { shouldApplyLibraryLifecycleEvent } from "./library-lifecycle-sync";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
@@ -188,8 +184,6 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
-import { useDesktopAutomationSelection } from "./use-desktop-automation-selection";
-import { useDesktopAutomationBrowse } from "./use-desktop-automation-browse";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -208,21 +202,6 @@ import {
 import { useExtensionActiveContext } from "./use-extension-active-context";
 import { useExtensionSaveReveal } from "./use-extension-save-reveal";
 import { usePendingAssetReveal } from "./use-pending-asset-reveal";
-import {
-  resolveDesktopReveal,
-} from "./desktop-browse-reveal";
-import type {
-  DesktopBrowseAction,
-  DesktopBrowseResult,
-  DesktopBrowseState,
-  DesktopDiscoveryFilterFields,
-  DesktopRevealPosition,
-  DesktopViewerNavigateDirection,
-} from "../shared/desktop-control";
-import {
-  applyDesktopDiscoveryFilterPatch,
-  resolveDesktopViewerNeighbor,
-} from "../shared/desktop-control";
 import {
   currentScopeShowsRevealAssets,
   pendingRevealFromAssets,
@@ -425,6 +404,7 @@ type RendererWindow = Window & {
     shell?: SerpentShellApi;
     automation?: SerpentAutomationScriptApi;
     plugins?: SerpentPluginManagerApi;
+    mcp?: SerpentMcpSettingsApi;
   };
 };
 type UiState =
@@ -436,6 +416,29 @@ type UiState =
   | "loading"
   | "importing"
   | "ready";
+type QueryNumericRangeState = {
+  min: string;
+  max: string;
+  exclude: boolean;
+};
+type QueryFilterSnapshot = {
+  formatFilter: string;
+  excludeFormatFilter: boolean;
+  tagFilter: string;
+  excludeTagFilter: boolean;
+  tagFilterMatch: "any" | "all";
+  ratingFilter: string;
+  excludeRatingFilter: boolean;
+  favoriteFilter: "any" | "yes" | "no";
+  sourceUrlFilter: "any" | "yes" | "no";
+  availabilityFilter: "any" | "available" | "missing";
+  excludeAvailabilityFilter: boolean;
+  widthRange: QueryNumericRangeState;
+  heightRange: QueryNumericRangeState;
+  aspectRatioRange: QueryNumericRangeState;
+  longEdgeRange: QueryNumericRangeState;
+  durationRange: QueryNumericRangeState;
+};
 // REQ-FOLDER-007 removed the "folder" kind: folder create/rename now happens
 // inline in the directory tree (use-inline-folder-edit), not in a dialog.
 type DialogKind = "library" | "tag" | "collection" | null;
@@ -1073,20 +1076,6 @@ function AppInner() {
     deleteSourceFile: boolean;
     canDeleteSourceFile: boolean;
   } | null>(null);
-  const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<
-    string[] | null
-  >(null);
-  /** Serpent-9zc: pending irreversible managed-asset disk delete. */
-  const [assetDiskDeleteIds, setAssetDiskDeleteIds] = useState<string[] | null>(
-    null,
-  );
-  /** Serpent-koy: pending disk delete for mixed/multi folder cards (+ assets). */
-  const [selectionDiskDelete, setSelectionDiskDelete] = useState<{
-    assetIds: string[];
-    folderIds: string[];
-  } | null>(null);
-  /** Serpent-9i8: pending irreversible library root deletion. */
-  const [libraryDiskDeletePending, setLibraryDiskDeletePending] = useState(false);
   const [restoreDialog, setRestoreDialog] = useState<{
     assetIds: string[];
     target: "original" | "root" | string;
@@ -1344,8 +1333,6 @@ function AppInner() {
   );
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
-  const importActivationPendingRef = useRef(false);
-  const [importActivationPending, setImportActivationPending] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importLibraryChooserOpen, setImportLibraryChooserOpen] =
     useState(false);
@@ -2048,344 +2035,6 @@ function AppInner() {
     selectionAnchorRef,
     setAssetSelectionAnchor,
     clearAssetSelection,
-  });
-
-  useDesktopAutomationSelection({
-    shellApi,
-    libraryId: library?.libraryId,
-    previewOpen: Boolean(previewAsset),
-    selectedAssetIds,
-    selectedAssetId,
-    setSelectedAssetIds,
-    setSelectedAssetId,
-    setAssetSelectionAnchor,
-    setSelectedFolderIds,
-  });
-
-  const applyDesktopBrowseDiscovery = async (
-    input: Omit<
-      Extract<DesktopBrowseAction, { type: "set-discovery" }>,
-      "type" | "requestId" | "libraryId"
-    >,
-  ) => {
-    if (!library || !desktopBrowseState) {
-      throw new Error("Desktop browse is unavailable without a library.");
-    }
-    const nextSearch = input.search === undefined ? searchValue : input.search ?? "";
-    const nextColorFilter =
-      input.colorFilter === undefined ? colorFilter : input.colorFilter ?? "";
-    const nextExcludeColorFilter =
-      input.excludeColorFilter ?? excludeColorFilter;
-    const nextIncludeSubfolders =
-      input.includeSubfolders ?? folderRecursive;
-    if (
-      input.includeSubfolders !== undefined
-      && desktopBrowseState.browseTarget !== "folder"
-    ) {
-      throw new Error("Subfolder scope is only available for a managed folder.");
-    }
-    const nextSortField = input.sortField ?? sortField;
-    const nextSortOrder = input.sortOrder ?? sortOrder;
-    const nextFilters = applyDesktopDiscoveryFilterPatch(
-      {
-        formatFilter,
-        excludeFormatFilter,
-        tagFilter,
-        excludeTagFilter,
-        tagFilterMatch,
-        ratingFilter,
-        excludeRatingFilter,
-        favoriteFilter,
-        sourceUrlFilter,
-        availabilityFilter,
-        excludeAvailabilityFilter,
-        widthRange,
-        heightRange,
-        aspectRatioRange,
-        longEdgeRange,
-        durationRange,
-      },
-      input,
-    );
-    setSearchValue(nextSearch);
-    setColorFilter(nextColorFilter);
-    setExcludeColorFilter(nextExcludeColorFilter);
-    setFormatFilter(nextFilters.formatFilter);
-    setExcludeFormatFilter(nextFilters.excludeFormatFilter);
-    setTagFilter(nextFilters.tagFilter);
-    setExcludeTagFilter(nextFilters.excludeTagFilter);
-    setTagFilterMatch(nextFilters.tagFilterMatch);
-    setRatingFilter(nextFilters.ratingFilter);
-    setExcludeRatingFilter(nextFilters.excludeRatingFilter);
-    setFavoriteFilter(nextFilters.favoriteFilter);
-    setSourceUrlFilter(nextFilters.sourceUrlFilter);
-    setAvailabilityFilter(nextFilters.availabilityFilter);
-    setExcludeAvailabilityFilter(nextFilters.excludeAvailabilityFilter);
-    setWidthRange(nextFilters.widthRange);
-    setHeightRange(nextFilters.heightRange);
-    setAspectRatioRange(nextFilters.aspectRatioRange);
-    setAspectRatioRanges([]);
-    setLongEdgeRange(nextFilters.longEdgeRange);
-    setDurationRange(nextFilters.durationRange);
-    if (desktopBrowseState.browseTarget === "folder") {
-      folderRecursiveRef.current = nextIncludeSubfolders;
-      setFolderRecursive(nextIncludeSubfolders);
-      const nextPrefs = withFolderRecursiveEnabled(
-        folderRecursivePrefs,
-        library.libraryId,
-        desktopBrowseState.folderId!,
-        nextIncludeSubfolders,
-      );
-      setFolderRecursivePrefs(nextPrefs);
-      saveFolderRecursivePreferences(nextPrefs);
-    }
-    setSortField(nextSortField);
-    setSortOrder(nextSortOrder);
-    setUiState("loading");
-    try {
-      await loadContent(library, assetScope, {
-        discovery: currentQueryDefinition({
-          searchValue: nextSearch,
-          colorFilter: nextColorFilter,
-          excludeColorFilter: nextExcludeColorFilter,
-          sortField: nextSortField,
-          sortOrder: nextSortOrder,
-          filtersSnapshot: nextFilters,
-        }),
-        searchScope:
-          desktopBrowseState.browseTarget === "folder"
-            ? {
-                kind: "folder",
-                folderId: desktopBrowseState.folderId,
-                recursive: nextIncludeSubfolders,
-              }
-            : currentSearchScope(),
-      });
-      return {
-        ...desktopBrowseState,
-        search: nextSearch,
-        colorFilter: nextColorFilter,
-        excludeColorFilter: nextExcludeColorFilter,
-        includeSubfolders: nextIncludeSubfolders,
-        sortField: nextSortField,
-        sortOrder: nextSortOrder,
-        ...nextFilters,
-      };
-    } finally {
-      setUiState("ready");
-    }
-  };
-
-  const revealDesktopAsset = async (
-    assetId: string,
-    position: DesktopRevealPosition,
-  ): Promise<Omit<
-    Extract<DesktopBrowseResult, { type: "reveal-applied" }>,
-    "type" | "requestId" | "ok"
-  >> => {
-    if (!api || !library || !desktopBrowseState) {
-      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop browse is unavailable.");
-    }
-    const listed = await api.listAssets({
-      libraryId: library.libraryId,
-      recursive: true,
-    });
-    if (!listed.ok) {
-      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset location is unavailable.");
-    }
-    const resolution = resolveDesktopReveal({
-      assetId,
-      currentBrowseTarget: desktopBrowseState.browseTarget,
-      currentFolderId: desktopBrowseState.folderId,
-      assets: listed.value.map((asset) => ({
-        assetId: asset.assetId,
-        locationKind: asset.locationKind,
-        managedFolderId: asset.managedFolderId,
-        available: asset.availability === "available",
-      })),
-    });
-    if (resolution.status === "not-found") {
-      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
-    }
-    if (resolution.status === "unavailable") {
-      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
-    }
-    if (resolution.status === "unsupported-scope") {
-      throw new Error(
-        "DESKTOP_BROWSE_ASSET_SCOPE_UNSUPPORTED: Asset scope is unsupported.",
-      );
-    }
-    if (resolution.status === "switch-folder") {
-      // chooseFolder clears selection and runs onSelectionCleared, which drops
-      // pendingRevealRef. Apply selection after the scope switch settles.
-      await chooseFolderRef.current(resolution.folderId);
-      setSelectedAssetIds([assetId]);
-      setSelectedAssetId(assetId);
-      setAssetSelectionAnchor(assetId);
-      pendingRestoredFocusRef.current = assetId;
-      return {
-        assetId,
-        position,
-        status: "switched-folder",
-        folderId: resolution.folderId,
-        state: {
-          ...desktopBrowseState,
-          browseTarget: "folder",
-          folderId: resolution.folderId,
-          organizationId: null,
-        },
-      };
-    }
-    setSelectedAssetIds([assetId]);
-    setSelectedAssetId(assetId);
-    setAssetSelectionAnchor(assetId);
-    pendingRestoredFocusRef.current = assetId;
-    return {
-      assetId,
-      position,
-      status: "visible",
-      folderId: desktopBrowseState.folderId,
-      state: desktopBrowseState,
-    };
-  };
-
-  const openDesktopViewer = async (assetId: string): Promise<DesktopBrowseState> => {
-    if (!api || !library || !desktopBrowseState) {
-      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
-    }
-    const listed = await api.listAssets({
-      libraryId: library.libraryId,
-      recursive: true,
-    });
-    if (!listed.ok) {
-      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Asset list is unavailable.");
-    }
-    const asset = listed.value.find((candidate) => candidate.assetId === assetId);
-    if (!asset) {
-      throw new Error("DESKTOP_BROWSE_ASSET_NOT_FOUND: Asset was not found.");
-    }
-    if (asset.availability !== "available" || asset.deletedAt !== null) {
-      throw new Error("DESKTOP_BROWSE_ASSET_UNAVAILABLE: Asset is unavailable.");
-    }
-    openAssetPreview(asset);
-    return {
-      ...desktopBrowseState,
-      viewerAssetId: assetId,
-      selectedAssetIds: [assetId],
-      primaryAssetId: assetId,
-    };
-  };
-
-  const closeDesktopViewer = async (): Promise<DesktopBrowseState> => {
-    if (!desktopBrowseState) {
-      throw new Error("DESKTOP_BROWSE_UNAVAILABLE: Desktop viewer is unavailable.");
-    }
-    await closeAssetPreview(false);
-    return {
-      ...desktopBrowseState,
-      viewerAssetId: null,
-    };
-  };
-
-  const navigateDesktopViewer = async (
-    direction: DesktopViewerNavigateDirection,
-  ): Promise<DesktopBrowseState> => {
-    if (!desktopBrowseState || !previewAsset) {
-      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
-    }
-    const resolution = resolveDesktopViewerNeighbor({
-      direction,
-      viewerAssetId: previewAsset.assetId,
-      visibleAssetIds: visibleAssets.map((asset) => asset.assetId),
-    });
-    if (resolution.status === "viewer-closed") {
-      throw new Error("DESKTOP_BROWSE_VIEWER_CLOSED: Desktop viewer is not open.");
-    }
-    if (resolution.status === "boundary") {
-      throw new Error(
-        "DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.",
-      );
-    }
-    const nextAsset = visibleAssets.find(
-      (asset) => asset.assetId === resolution.assetId,
-    );
-    if (!nextAsset) {
-      throw new Error("DESKTOP_BROWSE_VIEWER_BOUNDARY: Desktop viewer has no neighbor in that direction.");
-    }
-    navigateAssetPreview(nextAsset);
-    return {
-      ...desktopBrowseState,
-      viewerAssetId: nextAsset.assetId,
-      selectedAssetIds: [nextAsset.assetId],
-      primaryAssetId: nextAsset.assetId,
-    };
-  };
-
-  const desktopBrowseState = library === null
-    ? null
-    : {
-        libraryId: library.libraryId,
-        browseTarget: showTrash
-          ? ("trash" as const)
-          : activeSmartCollectionId
-            ? ("smart-collection" as const)
-            : activeCollectionId
-              ? ("collection" as const)
-              : activeTagId
-                ? ("tag" as const)
-                : assetScope === "all"
-                  ? ("all" as const)
-                  : assetScope === "root"
-                    ? ("root" as const)
-                    : ("folder" as const),
-        folderId:
-          assetScope !== "all" && assetScope !== "root" && !showTrash
-            ? assetScope
-            : null,
-        organizationId:
-          activeSmartCollectionId ??
-          activeCollectionId ??
-          activeTagId ??
-          null,
-        showTrash,
-        includeSubfolders: folderRecursive,
-        search: searchValue,
-        colorFilter,
-        excludeColorFilter,
-        formatFilter,
-        excludeFormatFilter,
-        tagFilter,
-        excludeTagFilter,
-        tagFilterMatch,
-        ratingFilter,
-        excludeRatingFilter,
-        favoriteFilter,
-        sourceUrlFilter,
-        availabilityFilter,
-        excludeAvailabilityFilter,
-        widthRange,
-        heightRange,
-        aspectRatioRange,
-        longEdgeRange,
-        durationRange,
-        sortField,
-        sortOrder,
-        viewMode: assetViewMode,
-        selectedAssetIds,
-        primaryAssetId: selectedAssetId ?? null,
-        viewerAssetId: previewAsset?.assetId ?? null,
-      };
-  useDesktopAutomationBrowse({
-    shellApi,
-    state: desktopBrowseState,
-    folderIds: folders.map((folder) => folder.folderId),
-    chooseFolder: chooseFolderRef.current,
-    setDiscovery: applyDesktopBrowseDiscovery,
-    revealAsset: revealDesktopAsset,
-    openViewer: openDesktopViewer,
-    closeViewer: closeDesktopViewer,
-    navigateViewer: navigateDesktopViewer,
-    previewOpen: Boolean(previewAsset),
   });
 
   useEffect(() => {
@@ -3206,13 +2855,18 @@ function AppInner() {
     }
     hadLibraryRef.current = true;
   }, [library, dialog]);
-  // A headless Console execution can create and bind a library without going
-  // through the renderer's library request pipeline. Consume that Main-owned
-  // lifecycle event so the welcome shell transitions into the opened library.
+  // MCP can switch the library behind an already-open renderer. Ordinary
+  // renderer requests still update state from their response, so only tagged
+  // MCP events (plus the legacy script-preview bootstrap path) are applied.
   useEffect(() => {
-    if (!api || !scriptSandboxPreviewOpen || library) return;
+    if (!api) return;
     return api.onLifecycle((event) => {
       if (event.type !== "library.opened") return;
+      if (!shouldApplyLibraryLifecycleEvent({
+        event,
+        currentLibraryId: library?.libraryId,
+        scriptSandboxPreviewOpen,
+      })) return;
       void (async () => {
         try {
           await closeAssetPreview(false);
@@ -3238,7 +2892,7 @@ function AppInner() {
   }, [
     api,
     closeAssetPreview,
-    library,
+    library?.libraryId,
     locale,
     refreshRecentLibraries,
     resetNavHistory,
@@ -4531,7 +4185,7 @@ function AppInner() {
       excludeColorFilter?: boolean;
       sortField?: SortDefinition["field"];
       sortOrder?: SortDefinition["order"];
-      filtersSnapshot?: DesktopDiscoveryFilterFields;
+      filtersSnapshot?: QueryFilterSnapshot;
     } = {},
   ): SearchDefinition {
     const filtersState = overrides.filtersSnapshot ?? {
@@ -4965,9 +4619,6 @@ function AppInner() {
   });
 
   const {
-    diskDeleteTarget,
-    cancelDiskDelete,
-    confirmDiskDelete,
     trashManagedFolder,
     openDiskDelete,
     removeLinkedFolder,
@@ -5863,17 +5514,11 @@ function AppInner() {
 
   function requestDeleteLibraryFromDisk() {
     if (!library) return;
-    if (!isDiskDeletePromptEnabled()) {
-      void confirmDeleteLibraryFromDisk(false);
-      return;
-    }
-    setLibraryDiskDeletePending(true);
+    void confirmDeleteLibraryFromDisk();
   }
 
-  async function confirmDeleteLibraryFromDisk(dontShowAgain: boolean) {
+  async function confirmDeleteLibraryFromDisk() {
     if (!api || !library) return;
-    if (dontShowAgain) setDiskDeletePromptEnabled(false);
-    setLibraryDiskDeletePending(false);
     const deletedName = library.displayName;
     setUiState("closing");
     let toreDown = false;
@@ -6148,10 +5793,8 @@ function AppInner() {
     await undoManagedMove(lastUndoableOp.operationId);
   }
 
-  async function deletePermanentFromTrash() {
-    if (!api || !library || !permanentDeleteDialog) return;
-    const assetIds = permanentDeleteDialog;
-    setPermanentDeleteDialog(null);
+  async function deletePermanentFromTrash(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
     setUiState("loading");
     try {
       const result = await api.deleteAssetsPermanent({
@@ -6190,11 +5833,7 @@ function AppInner() {
 
   function requestAssetDiskDelete(assetIds: string[]) {
     if (assetIds.length === 0) return;
-    if (!isDiskDeletePromptEnabled()) {
-      void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
-      return;
-    }
-    setAssetDiskDeleteIds(assetIds);
+    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
   }
 
   async function setIgnoreState(input: {
@@ -6257,14 +5896,6 @@ function AppInner() {
     });
   }
 
-  async function confirmAssetDiskDelete(dontShowAgain: boolean) {
-    if (!assetDiskDeleteIds) return;
-    if (dontShowAgain) setDiskDeletePromptEnabled(false);
-    const assetIds = assetDiskDeleteIds;
-    setAssetDiskDeleteIds(null);
-    await deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
-  }
-
   function requestSelectionDiskDelete(
     assetIds: string[],
     folderIds: readonly string[],
@@ -6284,19 +5915,7 @@ function AppInner() {
       openDiskDelete({ kind: "managed", folderId, name });
       return;
     }
-    if (!isDiskDeletePromptEnabled()) {
-      void executeSelectionDiskDelete(assetIds, folderIdList);
-      return;
-    }
-    setSelectionDiskDelete({ assetIds, folderIds: folderIdList });
-  }
-
-  async function confirmSelectionDiskDelete(dontShowAgain: boolean) {
-    if (!selectionDiskDelete) return;
-    if (dontShowAgain) setDiskDeletePromptEnabled(false);
-    const pending = selectionDiskDelete;
-    setSelectionDiskDelete(null);
-    await executeSelectionDiskDelete(pending.assetIds, pending.folderIds);
+    void executeSelectionDiskDelete(assetIds, folderIdList);
   }
 
   async function executeSelectionDiskDelete(
@@ -7000,12 +6619,6 @@ function AppInner() {
       assetRenameOpen: Boolean(assetRenameDialog),
       imageSequenceImportOpen: Boolean(imageSequenceImportOffer),
       imageSequenceDialogOpen: Boolean(imageSequenceDialog),
-      permanentDeleteOpen: Boolean(permanentDeleteDialog),
-      diskDeleteOpen:
-        Boolean(diskDeleteTarget) ||
-        libraryDiskDeletePending ||
-        Boolean(assetDiskDeleteIds) ||
-        Boolean(selectionDiskDelete),
       deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
@@ -7033,11 +6646,6 @@ function AppInner() {
     assetRenameDialog,
     imageSequenceImportOffer,
     imageSequenceDialog,
-    permanentDeleteDialog,
-    diskDeleteTarget,
-    libraryDiskDeletePending,
-    assetDiskDeleteIds,
-    selectionDiskDelete,
     deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
@@ -7074,12 +6682,6 @@ function AppInner() {
     },
     cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
-    setPermanentDeleteDialog,
-    cancelDiskDelete: () => {
-      cancelDiskDelete();
-      setLibraryDiskDeletePending(false);
-      setAssetDiskDeleteIds(null);
-    },
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
@@ -7122,11 +6724,6 @@ function AppInner() {
     dialog ||
       conflicts ||
       assetRenameDialog ||
-      permanentDeleteDialog ||
-      diskDeleteTarget ||
-      libraryDiskDeletePending ||
-      assetDiskDeleteIds ||
-      selectionDiskDelete ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -7194,7 +6791,7 @@ function AppInner() {
       requestSelectionDiskDelete([...assetIds], folderIds);
     },
     onPermanentDelete: (assetIds) => {
-      setPermanentDeleteDialog([...assetIds]);
+      void deletePermanentFromTrash([...assetIds]);
     },
     onRemoveFromCurrentCollection: (assetIds) => {
       if (activeCollectionId) {
@@ -7341,11 +6938,6 @@ function AppInner() {
     if (
       dialog ||
       conflicts ||
-      permanentDeleteDialog ||
-      diskDeleteTarget ||
-      libraryDiskDeletePending ||
-      assetDiskDeleteIds ||
-      selectionDiskDelete ||
       deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
@@ -7424,7 +7016,6 @@ function AppInner() {
     conflicts,
     deleteLinkedDialog,
     dialog,
-    permanentDeleteDialog,
     previewAsset,
     previewIndex,
     navigateAssetPreview,
@@ -7432,10 +7023,6 @@ function AppInner() {
     restoreDialog,
     selectedAsset,
     visibleAssets,
-    assetDiskDeleteIds,
-    diskDeleteTarget,
-    libraryDiskDeletePending,
-    selectionDiskDelete,
   ]);
 
   // macOS three-finger swipe while viewing → previous/next (same order as arrows).
@@ -8602,9 +8189,8 @@ function AppInner() {
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
         onInlineFolderEditCommit={(onCreateSuccess) =>
-          void commitInlineFolderEdit((folderId, parentFolderId) => {
-            onCreateSuccess?.(folderId, parentFolderId);
-            void chooseFolder(folderId);
+          void commitInlineFolderEdit((parentFolderId) => {
+            onCreateSuccess?.(parentFolderId);
           })
         }
         onInlineFolderEditCancel={cancelInlineFolderEdit}
@@ -8714,14 +8300,7 @@ function AppInner() {
                 <button
                   className="compact-action"
                   disabled={busy}
-                  onClick={() => {
-                    if (
-                      confirm(
-                        t("toast.emptyTrashConfirm"),
-                      )
-                    )
-                      void emptyTrash();
-                  }}
+                  onClick={() => void emptyTrash()}
                   type="button"
                 >
                   <Icon name="trash" size={14} />
@@ -10174,6 +9753,7 @@ function AppInner() {
         pluginApi={(window as RendererWindow).serpent?.plugins}
         pluginContributionRefreshKey={pluginContributionRefreshKey}
         libraryId={library?.libraryId}
+        mcpApi={(window as RendererWindow).serpent?.mcp}
         open={appSettingsOpen}
       />
       {pluginTrustPrompt.pending ? (
@@ -10393,53 +9973,6 @@ function AppInner() {
           }}
         />
       )}
-      {permanentDeleteDialog && (
-        <PermanentDeleteDialog
-          assetCount={permanentDeleteDialog.length}
-          onCancel={() => setPermanentDeleteDialog(null)}
-          onConfirm={() => void deletePermanentFromTrash()}
-        />
-      )}
-      {diskDeleteTarget && (
-        <DiskDeleteConfirmDialog
-          subjectName={diskDeleteTarget.name}
-          onCancel={cancelDiskDelete}
-          onConfirm={(dontShowAgain) => confirmDiskDelete(dontShowAgain)}
-        />
-      )}
-      {assetDiskDeleteIds && (
-        <DiskDeleteConfirmDialog
-          bodyKey="dialog.diskDelete.assetBody"
-          assetCount={assetDiskDeleteIds.length}
-          onCancel={() => setAssetDiskDeleteIds(null)}
-          onConfirm={(dontShowAgain) => {
-            void confirmAssetDiskDelete(dontShowAgain);
-          }}
-        />
-      )}
-      {selectionDiskDelete && (
-        <DiskDeleteConfirmDialog
-          bodyKey="dialog.diskDelete.selectionBody"
-          assetCount={
-            selectionDiskDelete.assetIds.length +
-            selectionDiskDelete.folderIds.length
-          }
-          onCancel={() => setSelectionDiskDelete(null)}
-          onConfirm={(dontShowAgain) => {
-            void confirmSelectionDiskDelete(dontShowAgain);
-          }}
-        />
-      )}
-      {libraryDiskDeletePending && library && (
-        <DiskDeleteConfirmDialog
-          bodyKey="dialog.diskDelete.libraryBody"
-          subjectName={library.displayName}
-          onCancel={() => setLibraryDiskDeletePending(false)}
-          onConfirm={(dontShowAgain) => {
-            void confirmDeleteLibraryFromDisk(dontShowAgain);
-          }}
-        />
-      )}
       {deleteLinkedDialog && (
         <DeleteLinkedDialog
           displayNames={deleteLinkedDialog.displayNames}
@@ -10619,7 +10152,9 @@ function AppInner() {
         onRestore={(assetIds) => {
           void requestRestoreTrashedAssets(assetIds);
         }}
-        onPermanentDelete={(assetIds) => setPermanentDeleteDialog(assetIds)}
+        onPermanentDelete={(assetIds) => {
+          void deletePermanentFromTrash(assetIds);
+        }}
         onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
         onDeleteLinked={(assetId, displayName, canDeleteSourceFile) =>
           setDeleteLinkedDialog({

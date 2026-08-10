@@ -122,17 +122,6 @@ if (missingDeclarationCommands.length > 0) {
   );
 }
 
-const packageManifest = JSON.parse(
-  readFileSync(path.join(projectRoot, 'package.json'), 'utf8'),
-);
-if (packageManifest.scripts?.mcp !== 'node scripts/run-mcp.mjs') {
-  throw new Error('Package manifest must retain the protocol-only `npm run mcp` launcher.');
-}
-const launcherPath = path.join(projectRoot, 'scripts', 'run-mcp.mjs');
-if (!existsSync(launcherPath)) {
-  throw new Error(`Workspace is missing the MCP protocol launcher: ${launcherPath}`);
-}
-
 const mainEntry = asarFiles.find((entry) => {
   const normalized = String(entry).replaceAll('\\', '/').replace(/^\.\//u, '');
   return normalized.endsWith('/main.js') || normalized === 'main.js';
