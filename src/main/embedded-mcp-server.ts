@@ -32,6 +32,7 @@ import {
   type McpServerPreferences,
 } from '../shared/mcp';
 import { McpClientCredentialStore } from './mcp-client-credentials';
+import { buildMcpClientConfigText } from '../shared/mcp-client-config';
 import type { McpPermissionPolicyStore } from './mcp-permission-policy-store';
 import type { McpPermissionBroker } from './mcp-permission-broker';
 import { McpSettingsStore } from './mcp-settings-store';
@@ -500,18 +501,7 @@ export class EmbeddedMcpServer {
   }
 
   #buildConfigText(format: McpConfigFormat, endpoint: string, token: string): string {
-    const authorization = `Bearer ${token}`;
-    return format === 'generic-json'
-      ? JSON.stringify({
-        mcpServers: {
-          serpent: {
-            type: 'streamable-http',
-            url: endpoint,
-            headers: { Authorization: authorization },
-          },
-        },
-      }, null, 2)
-      : `${endpoint}\nAuthorization: ${authorization}`;
+    return buildMcpClientConfigText(format, endpoint, token);
   }
 
   public async revokeCredential(credentialId: string): Promise<McpSettingsSnapshot> {

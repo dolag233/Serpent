@@ -93,6 +93,9 @@ export type McpSettingsSnapshot = z.infer<typeof mcpSettingsSnapshotSchema>;
 
 export const mcpConfigFormatSchema = z.enum([
   'generic-json',
+  'claude',
+  'cursor',
+  'codex',
   'endpoint-and-token',
 ]);
 export type McpConfigFormat = z.infer<typeof mcpConfigFormatSchema>;
