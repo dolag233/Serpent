@@ -54,6 +54,7 @@ export type IconName =
   | "sort-desc"
   | "star"
   | "tag"
+  | "copy"
   | "trash"
   | "upload"
   | "warning";
@@ -380,6 +381,12 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M8 6V4h8v2" />
       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
       <path d="M10 11v6M14 11v6" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
     </>
   ),
   upload: (

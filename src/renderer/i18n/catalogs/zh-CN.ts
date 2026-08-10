@@ -1158,7 +1158,7 @@ export const zhCN = {
     mcpAccessMode: "访问模式",
     mcpAccessModeReadOnly: "只读",
     mcpAccessModeReadWrite: "读写",
-    mcpAccessModeFull: "完全",
+    mcpAccessModeFull: "完全权限",
     mcpAccessModeReadOnlyHint: "只能读取和搜索；写入操作会在桌面弹出确认框。",
     mcpAccessModeReadWriteHint: "普通和可恢复操作直接执行；危险操作（如永久删除）需要 Agent 进行第二次确认。",
     mcpAccessModeFullHint: "所有 MCP 操作直接执行，包括危险操作（如永久删除）。开启前请确认你信任该客户端；Serpent 仍会执行路径、目标、版本和 Worker 安全校验。",

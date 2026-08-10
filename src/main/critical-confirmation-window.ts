@@ -26,12 +26,11 @@ const CRITICAL_CONFIRMATION_PAGE = `<!doctype html>
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: #17191c; }
-main { display: flex; flex-direction: column; min-height: 100vh; padding: 28px 30px 24px; }
-.eyebrow { color: #ff7b7b; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-h1 { margin: 8px 0 12px; font-size: 21px; line-height: 1.28; }
+main { display: flex; flex-direction: column; min-height: 100vh; padding: 24px 26px 20px; }
+h1 { margin: 0 0 14px; font-size: 20px; line-height: 1.3; }
 .message { margin: 0 0 10px; font-size: 14px; line-height: 1.55; }
 .detail { margin: 0; color: #b9bec5; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
-.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; padding-top: 26px; }
+.actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 button { min-width: 96px; min-height: 36px; padding: 7px 16px; border: 1px solid #555b63; border-radius: 7px; color: #f4f5f6; background: #292d32; font: inherit; font-size: 13px; cursor: pointer; }
 button:focus-visible { outline: 2px solid #7eb5ff; outline-offset: 2px; }
 button.confirm { border-color: #ff5c5c; background: #c73737; color: white; font-weight: 700; }
@@ -46,7 +45,6 @@ button:disabled { cursor: default; opacity: .65; }
 </head>
 <body>
 <main aria-labelledby="critical-heading" role="dialog" aria-modal="true">
-  <div class="eyebrow">Critical confirmation</div>
   <h1 id="critical-heading">正在加载…</h1>
   <p class="message" id="critical-message"></p>
   <p class="detail" id="critical-detail"></p>

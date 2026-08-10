@@ -384,6 +384,13 @@ export class EmbeddedMcpServer {
     return this.#publish();
   }
 
+  public renameCredential(credentialId: string, label: string): McpSettingsSnapshot {
+    if (!this.#credentials.rename(credentialId, label)) {
+      throw new EmbeddedMcpServerError('MCP_CLIENT_UNAUTHORIZED', 'The MCP client credential is unavailable.');
+    }
+    return this.#publish();
+  }
+
   public async setPort(port: number): Promise<McpSettingsSnapshot> {
     if (!Number.isInteger(port) || port < MCP_MIN_PORT || port > MCP_MAX_PORT) {
       throw new EmbeddedMcpServerError('MCP_SERVER_START_FAILED', 'The MCP port is invalid.');

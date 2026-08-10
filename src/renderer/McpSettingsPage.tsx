@@ -6,9 +6,49 @@ import {
   type McpSettingsSnapshot,
   type SerpentMcpSettingsApi,
 } from "../shared/mcp";
+import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { SettingsCard, SettingsDisclosure } from "./ui/patterns";
 import { Switch } from "./ui/primitives";
+
+function CredentialLabel({
+  label,
+  busy,
+  onRename,
+}: {
+  label: string;
+  busy: boolean;
+  onRename(next: string): void;
+}): ReactNode {
+  const [draft, setDraft] = useState(label);
+  // Keep the draft in sync when the snapshot refreshes (render-time state
+  // adjustment, not an effect).
+  const [committedLabel, setCommittedLabel] = useState(label);
+  if (committedLabel !== label) {
+    setCommittedLabel(label);
+    setDraft(label);
+  }
+  return (
+    <input
+      aria-label="客户端名称"
+      className="mcp-client-name"
+      disabled={busy}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const next = draft.trim();
+        if (next.length > 0 && next !== label) onRename(next);
+        else setDraft(label);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setDraft(label);
+      }}
+      title="点击重命名"
+      type="text"
+      value={draft}
+    />
+  );
+}
 
 export function McpSettingsPage({
   api,
@@ -230,7 +270,11 @@ export function McpSettingsPage({
                 <div className="app-settings-card-divider" />
                 <div className="app-settings-action-row">
                   <div className="app-settings-row-copy">
-                    <strong>{credential.label}</strong>
+                    <CredentialLabel
+                      busy={busy}
+                      label={credential.label}
+                      onRename={(next) => void request({ type: "rename-credential", credentialId: credential.credentialId, label: next })}
+                    />
                     <span>
                       {mode === "full-access"
                         ? t("settings.mcpAccessModeFullHint")
@@ -254,20 +298,24 @@ export function McpSettingsPage({
                       <option value="full-access">{t("settings.mcpAccessModeFull")}</option>
                     </select>
                     <button
-                      className="secondary-button"
+                      aria-label={t("settings.mcpCopyCredential")}
+                      className="mcp-client-action"
                       disabled={busy}
                       onClick={() => void request({ type: "duplicate-credential", credentialId: credential.credentialId, format })}
+                      title={t("settings.mcpCopyCredential")}
                       type="button"
                     >
-                      {t("settings.mcpCopyCredential")}
+                      <Icon name="copy" size={15} />
                     </button>
                     <button
-                      className="secondary-button"
+                      aria-label={t("settings.mcpDeleteCredential")}
+                      className="mcp-client-action"
                       disabled={busy}
                       onClick={() => void request({ type: "revoke-credential", credentialId: credential.credentialId })}
+                      title={t("settings.mcpDeleteCredential")}
                       type="button"
                     >
-                      {t("settings.mcpDeleteCredential")}
+                      <Icon name="trash" size={15} />
                     </button>
                   </div>
                 </div>

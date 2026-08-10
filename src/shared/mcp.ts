@@ -124,6 +124,11 @@ export const mcpSettingsRequestSchema = z.discriminatedUnion('type', [
     credentialId: z.string().uuid(),
     format: mcpConfigFormatSchema,
   }),
+  z.strictObject({
+    type: z.literal('rename-credential'),
+    credentialId: z.string().uuid(),
+    label: z.string().trim().min(1).max(255),
+  }),
   z.strictObject({ type: z.literal('revoke-credential'), credentialId: z.string().uuid() }),
 ]);
 export type McpSettingsRequest = z.infer<typeof mcpSettingsRequestSchema>;

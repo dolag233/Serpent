@@ -130,7 +130,8 @@ describe('Critical confirmation window', () => {
         preload: '/tmp/critical-confirmation.js',
       },
     });
-    expect(decodeURIComponent(criticalConfirmationPageUrl())).toContain('Critical confirmation');
+    expect(decodeURIComponent(criticalConfirmationPageUrl())).toContain('critical-heading');
+    expect(decodeURIComponent(criticalConfirmationPageUrl())).not.toContain('Critical confirmation');
 
     manager.dispose();
     void pending;

@@ -130,6 +130,17 @@ export class McpClientCredentialStore {
     return true;
   }
 
+  /** Rename a live credential's display label. */
+  rename(credentialId: string, label: string): boolean {
+    const record = this.#records.find((candidate) => candidate.credentialId === credentialId);
+    if (record === undefined || record.revokedAt !== null) return false;
+    const trimmed = label.trim();
+    if (trimmed.length === 0 || trimmed.length > 255) return false;
+    record.label = trimmed;
+    this.persist();
+    return true;
+  }
+
   private load(): void {
     try {
       const contents = readAtomicJsonFile(this.#filePath);

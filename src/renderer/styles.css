@@ -6301,6 +6301,76 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.5;
 }
 
+/* MCP credential rows: compact label + mode select + icon actions on one line. */
+.mcp-permission-client .app-settings-row-copy {
+  flex: 1 1 auto;
+  max-width: 42%;
+}
+
+.mcp-client-name {
+  width: 100%;
+  min-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 590;
+  line-height: 1.4;
+}
+
+.mcp-client-name:hover {
+  border-color: var(--divider);
+}
+
+.mcp-client-name:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.mcp-permission-client .app-settings-option-group {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  margin-top: 0;
+}
+
+.mcp-permission-client .settings-select {
+  width: 112px;
+}
+
+.mcp-client-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.mcp-client-action:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--pane) 55%, transparent);
+}
+
+.mcp-client-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.mcp-client-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+
 .app-settings-row-copy {
   display: flex;
   min-width: 0;

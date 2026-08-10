@@ -4189,16 +4189,16 @@ async function confirmEnableAllMcpPermissions(label: string): Promise<boolean> {
   if (manager === undefined) return false;
   const english = appLocale === 'en';
   return manager.request({
-    title: english ? 'Confirm permission expansion' : '确认扩大权限',
-    heading: english ? 'Enable Full Access for this MCP client?' : '为这个 MCP 客户端开启 Full Access？',
+    title: english ? 'Confirm full access' : '确认开启完全权限',
+    heading: english ? 'Enable Full Access for this MCP client?' : '为这个 MCP 客户端开启完全权限？',
     message: english
       ? `“${label}” will be allowed to execute every MCP operation, including dangerous operations, without asking again.`
-      : `客户端“${label}”将可以直接执行所有 MCP 操作，包括危险操作，后续不再要求人工或 Agent 二次确认。`,
+      : `客户端“${label}”将可以直接执行所有 MCP 操作，包括永久删除等危险操作，之后不再询问。`,
     detail: english
       ? 'This applies only to this client credential. Serpent still enforces exact targets, path boundaries, version checks, idempotency and worker safety checks. Disable Full Access or revoke the credential to stop it immediately.'
-      : '此设置只作用于当前客户端凭据。Serpent 仍会执行精确目标、路径边界、版本校验、幂等和 Worker 安全检查。关闭 Full Access 或撤销凭据即可立即停止。',
+      : '此设置只作用于当前客户端凭据。Serpent 仍会执行精确目标、路径边界、版本校验、幂等和 Worker 安全检查。关闭完全权限或删除凭据即可立即停止。',
     cancelLabel: english ? 'Cancel' : '取消',
-    confirmLabel: english ? 'Enable Full Access' : '开启 Full Access',
+    confirmLabel: english ? 'Enable Full Access' : '开启完全权限',
   });
 }
 
@@ -5327,6 +5327,9 @@ async function startApplication(): Promise<void> {
       if (request.type === 'enable') return response({ ok: true, snapshot: await server.setEnabled(request.enabled) });
       if (request.type === 'revoke-credential') {
         return response({ ok: true, snapshot: await server.revokeCredential(request.credentialId) });
+      }
+      if (request.type === 'rename-credential') {
+        return response({ ok: true, snapshot: server.renameCredential(request.credentialId, request.label) });
       }
       if (request.type === 'duplicate-credential') {
         const duplicated = await server.duplicateCredential(request.credentialId, request.format);
