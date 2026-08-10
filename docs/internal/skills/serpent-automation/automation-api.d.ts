@@ -27,6 +27,7 @@ declare global {
     | 'asset.paths.copy'
     | 'asset.trash'
     | 'asset.delete-permanent'
+    | 'media.jobs.cancel'
     | 'asset.content.replace'
     | 'asset.content.stage'
     | 'asset.content.replace-batch'

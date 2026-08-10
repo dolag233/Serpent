@@ -7,6 +7,7 @@ import {
   type AutomationExecutionResolver,
   type AutomationWorkerClient,
 } from '../../src/automation/command-gateway';
+import type { AutomationCapability, AutomationFileOperationPlanProof } from '../../src/automation/command-registry';
 import { callSerpentMcpTool, type SerpentMcpPluginToolBridge } from '../../src/mcp/call-tool';
 import { createSerpentMcpServer } from '../../src/mcp/create-serpent-mcp-server';
 import { listSerpentMcpTools, resolveSerpentMcpTool, type SerpentMcpToolExposure } from '../../src/mcp/tool-catalog';
@@ -549,7 +550,7 @@ describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)',
   });
 });
 
-function writeResolver(extraCapabilities: string[]): AutomationExecutionResolver {
+function writeResolver(extraCapabilities: readonly AutomationCapability[]): AutomationExecutionResolver {
   return {
     resolve: (executionId) => executionId === 'mcp-execution'
       ? {
@@ -632,7 +633,7 @@ describe('Serpent MCP jobs, idempotency and reconnect (Serpent-8b5b.4)', () => {
     });
     const gateway = createAutomationCommandGateway(worker, writeResolver(['file.import']), {
       filePlanApprovalHandler: {
-        prepareAndApprove: async () => ({ planHash: '0'.repeat(64) }),
+        prepareAndApprove: async () => ({ planHash: '0'.repeat(64) }) as AutomationFileOperationPlanProof,
       },
     });
     const input = {
