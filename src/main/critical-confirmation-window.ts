@@ -25,8 +25,8 @@ const CRITICAL_CONFIRMATION_PAGE = `<!doctype html>
   color: #f4f5f6;
 }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: #17191c; }
-main { display: flex; flex-direction: column; min-height: 100vh; padding: 24px 26px 20px; }
+body { margin: 0; background: #17191c; }
+main { display: flex; flex-direction: column; padding: 22px 26px 18px; }
 h1 { margin: 0 0 14px; font-size: 20px; line-height: 1.3; }
 .message { margin: 0 0 10px; font-size: 14px; line-height: 1.55; }
 .detail { margin: 0; color: #b9bec5; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
@@ -94,12 +94,14 @@ export interface CriticalConfirmationWindowLike {
     isDestroyed(): boolean;
     setWindowOpenHandler(handler: () => { action: 'deny' }): void;
     on(event: 'will-navigate', listener: (event: { preventDefault(): void }) => void): void;
+    executeJavaScript(code: string): Promise<unknown>;
   };
   loadURL(url: string): Promise<void>;
   show(): void;
   focus(): void;
   close(): void;
   isDestroyed(): boolean;
+  setSize(width: number, height: number): void;
   on(event: 'closed' | 'ready-to-show', listener: () => void): void;
   once(event: 'ready-to-show', listener: () => void): void;
   removeListener(event: 'closed' | 'ready-to-show', listener: () => void): void;
@@ -273,7 +275,21 @@ export class CriticalConfirmationWindowManager {
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());
-    void window.loadURL(criticalConfirmationPageUrl()).catch((error) => {
+    void window.loadURL(criticalConfirmationPageUrl()).then(() => {
+      // The page script fills the heading/message/detail right after load;
+      // give it a tick, then size the window to its content instead of a
+      // fixed height (a short confirmation must not leave a big blank).
+      setTimeout(() => {
+        if (this.#active?.window !== window || window.isDestroyed()) return;
+        void window.webContents.executeJavaScript(
+          'Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)',
+        ).then((value) => {
+          if (this.#active?.window !== window || window.isDestroyed()) return;
+          const contentHeight = Math.max(220, Math.min(560, Number(value) + 24));
+          window.setSize(540, contentHeight);
+        }).catch(() => {});
+      }, 120);
+    }).catch((error) => {
       this.#options.logger?.error('critical-confirmation.window-load', error);
       if (this.#active?.window === window) this.#finish(this.#active, false);
     });

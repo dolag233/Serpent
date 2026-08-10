@@ -30,13 +30,25 @@ const challengeRoots: string[] = [];
 afterEach(() => {
   for (const root of challengeRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
-function createTestPermissionBroker(): McpPermissionBroker {
+const profileCredentials = [
+  '00000000-0000-4000-8000-0000000000aa',
+  '00000000-0000-4000-8000-0000000000bb',
+  '00000000-0000-4000-8000-0000000000cc',
+];
+function createTestPermissionBroker(mode?: 'read-only' | 'read-write' | 'full-access'): McpPermissionBroker {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-mcp-challenge-'));
   challengeRoots.push(root);
-  return new McpPermissionBroker({
-    policyStore: new McpPermissionPolicyStore(root),
+  const store = new McpPermissionPolicyStore(root);
+  const broker = new McpPermissionBroker({
+    policyStore: store,
     challengeStore: new McpOperationChallengeStore(),
+    confirmOutOfScope: async () => true,
   });
+  if (mode !== undefined) {
+    const credentialId = profileCredentials[mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2];
+    store.setMode(credentialId, mode);
+  }
+  return broker;
 }
 
 function backend(
@@ -476,5 +488,63 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
     });
     expect(forged).toMatchObject({ ok: true, result: { status: 'confirmation-required' } });
     expect(worker.commands).toHaveLength(0);
+  });
+});
+
+describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)', () => {
+  function profileGateway(worker: RecordingWorker, mode: 'read-only' | 'read-write' | 'full-access') {
+    const index = mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2;
+    const credentialId = profileCredentials[index];
+    const profileResolver: AutomationExecutionResolver = {
+      resolve: (executionId) => executionId === 'mcp-execution'
+        ? {
+            executionId: 'mcp-execution',
+            source: 'mcp',
+            clientCredentialId: credentialId,
+            libraryId: 'library-1',
+            grantedCapabilities: [...readCapabilities],
+          }
+        : undefined,
+    };
+    return createAutomationCommandGateway(worker, profileResolver, {
+      permissionBroker: createTestPermissionBroker(mode),
+    });
+  }
+
+  it('runs a read-only credential write only after the desktop user approves', async () => {
+    const worker = new RecordingWorker({ ok: true, type: 'tag.created', tag: { tagId: 'tag-1', name: 'x', assetCount: 0 } });
+    const gateway = profileGateway(worker, 'read-only');
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_tag_create',
+      arguments: { libraryId: 'library-1', name: 'x' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(result).toMatchObject({ ok: true, commandId: 'tag.create' });
+    expect(worker.commands).toHaveLength(1);
+  });
+
+  it('executes a dangerous operation directly under full-access without a challenge', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.deleted-permanent',
+      deletedCount: 1,
+      skippedCount: 0,
+      skippedReasons: [],
+    });
+    const gateway = profileGateway(worker, 'full-access');
+    const fullAccessContext = mcpContext(readExposure, {
+      clientCredentialId: profileCredentials[2],
+    });
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_asset_delete_permanent',
+      arguments: { libraryId: 'library-1', assetIds: ['00000000-0000-4000-8000-000000000010'] },
+      context: fullAccessContext,
+      exposure: readExposure,
+      gateway,
+    });
+    expect(result).toMatchObject({ ok: true, commandId: 'asset.delete-permanent', result: { deletedCount: 1 } });
+    expect(worker.commands).toHaveLength(1);
   });
 });

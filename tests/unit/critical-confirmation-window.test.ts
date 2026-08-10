@@ -43,12 +43,18 @@ class FakeWindow implements CriticalConfirmationWindowLike {
     isDestroyed: () => this.destroyed,
     setWindowOpenHandler: () => undefined,
     on: () => undefined,
+    executeJavaScript: async () => 260,
   };
   readonly listeners = new Map<string, Set<() => void>>();
   destroyed = false;
   shown = false;
   focused = false;
   loadedUrl: string | undefined;
+  sizedTo: { width: number; height: number } | undefined;
+
+  setSize(width: number, height: number): void {
+    this.sizedTo = { width, height };
+  }
 
   loadURL(url: string): Promise<void> {
     this.loadedUrl = url;

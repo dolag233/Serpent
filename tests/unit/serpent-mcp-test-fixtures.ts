@@ -47,6 +47,7 @@ export const writeExposure: SerpentMcpToolExposure = {
 
 export function mcpContext(
   exposure: SerpentMcpToolExposure = readExposure,
+  overrides: Partial<AutomationExecutionContext> = {},
 ): AutomationExecutionContext {
   const libraryId = exposure.activeLibraryId ?? 'library-1';
   const grantedCapabilities = exposure.grantedCapabilities ?? readCapabilities;
@@ -71,5 +72,6 @@ export function mcpContext(
       maxConcurrentCommands: 4,
       maxPendingPromises: 32,
     },
+    ...overrides,
   };
 }
