@@ -45,7 +45,7 @@ function createTestPermissionBroker(mode?: 'read-only' | 'read-write' | 'full-ac
     confirmOutOfScope: async () => true,
   });
   if (mode !== undefined) {
-    const credentialId = profileCredentials[mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2];
+    const credentialId = profileCredentials[mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2]!;
     store.setMode(credentialId, mode);
   }
   return broker;
@@ -494,7 +494,7 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
 describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)', () => {
   function profileGateway(worker: RecordingWorker, mode: 'read-only' | 'read-write' | 'full-access') {
     const index = mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2;
-    const credentialId = profileCredentials[index];
+    const credentialId = profileCredentials[index]!;
     const profileResolver: AutomationExecutionResolver = {
       resolve: (executionId) => executionId === 'mcp-execution'
         ? {
