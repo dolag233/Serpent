@@ -20,6 +20,7 @@ import {
   LibraryServiceError,
   type ImportFailurePoint,
 } from '../../src/worker/library-service';
+import { normalizeAbsolutePath as normalizeLibraryAbsolutePath } from '../../src/worker/library-rules';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
@@ -1453,5 +1454,37 @@ describe('explicit path boundaries (Serpent-8b5b.3)', () => {
       'INVALID_LIBRARY_PATH',
     );
     service.closeAll();
+  });
+});
+
+describe('Windows path hardening (Serpent-8b5b.7 review)', () => {
+  it('rejects an over-long library parent path', () => {
+    const service = new LibraryService();
+    const longParent = path.join(temporaryRoot(), 'x'.repeat(260));
+    expectServiceCode(
+      () => service.createLibrary({ displayName: 'Long', selectedParentPath: longParent }),
+      'INVALID_LIBRARY_PATH',
+    );
+    service.closeAll();
+  });
+
+  it('rejects NTFS-forbidden characters in import relative paths', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Source');
+    mkdirSync(source);
+    // '|' is legal on APFS but illegal on NTFS — the portable relative-path
+    // guard must refuse it before enumeration proceeds.
+    writeFileSync(path.join(source, 'bad|name.png'), 'x');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary3', selectedParentPath: root });
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+
+  it.skipIf(process.platform !== 'win32')('strips the \\\\?\\ prefix for identity on Windows', () => {
+    expect(normalizeLibraryAbsolutePath('\\\\?\\C:\\data\\lib')).toBe('C:\\data\\lib');
   });
 });
