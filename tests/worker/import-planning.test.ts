@@ -1385,3 +1385,73 @@ describe('managed asset refresh', () => {
     service.closeAll();
   });
 });
+
+describe('explicit path boundaries (Serpent-8b5b.3)', () => {
+  it('rejects importing a filesystem root as a folder source', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'folder',
+        sourcePaths: [path.parse(root).root],
+      }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    try {
+      service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'folder',
+        sourcePaths: [path.parse(root).root],
+      });
+    } catch (error) {
+      expect(error).toMatchObject({ reason: 'ROOT_NOT_ALLOWED' });
+    }
+    service.closeAll();
+  });
+
+  it('rejects an empty or relative import source path', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary2', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [''] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['relative/path'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+
+  // Serpent-8b5b.3: Windows-only evidence — drive roots and UNC roots must be
+  // rejected the same way; executed on the Windows runner, skipped elsewhere.
+  it.skipIf(process.platform !== 'win32')('rejects Windows drive and UNC roots as import sources', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'WinBoundary', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['C:\\'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['\\\\server\\share'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+
+  it('rejects library creation whose parent is a filesystem root', () => {
+    const service = new LibraryService();
+    expectServiceCode(
+      () => service.createLibrary({ displayName: 'RootLib', selectedParentPath: path.parse(process.cwd()).root }),
+      'INVALID_LIBRARY_PATH',
+    );
+    service.closeAll();
+  });
+});

@@ -1766,6 +1766,7 @@ export const zhCN = {
       SOURCE_TRASH_FAILED: "操作系统拒绝将源文件移入系统回收站；源文件与 Serpent 记录均已保留。",
       SOURCE_TRASH_RECONCILIATION_REQUIRED: "源文件可能已进入系统回收站，但记录尚未完成清理；请重新打开资源库以自动对账，并查看日志。",
       SYMBOLIC_LINK_NOT_ALLOWED: "目录中包含当前切片不支持的符号链接。",
+      ROOT_NOT_ALLOWED: "不允许直接导入文件系统根目录。",
       UNSUPPORTED_FILE_ENTRY: "目录中包含普通文件和文件夹之外的项目。",
       MIME_TYPE_MISSING: "远程响应未声明媒体类型，为避免保存伪装文件已拒绝导入。",
       MIME_TYPE_UNSUPPORTED: "远程响应声明的媒体类型不受支持。",

@@ -6716,6 +6716,13 @@ export class LibraryService {
       } catch (error) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
+      // Serpent-8b5b.3: walking a filesystem root would import the whole disk
+      // (the folder branch recurses); reject '/' and 'C:\' explicitly.
+      if (sourcePath === path.parse(sourcePath).root) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+          reason: 'ROOT_NOT_ALLOWED',
+        });
+      }
       visitDirectory(
         sourcePath,
         path.posix.join(input.targetPrefix, path.basename(sourcePath)),

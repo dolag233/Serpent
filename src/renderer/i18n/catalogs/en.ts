@@ -1785,6 +1785,7 @@ export const en = {
       SOURCE_TRASH_FAILED: "The OS refused to move the source file to the system Trash; both the source file and the Serpent record were kept.",
       SOURCE_TRASH_RECONCILIATION_REQUIRED: "The source file may be in the system Trash, but record cleanup is incomplete. Reopen the library to reconcile, and check the logs.",
       SYMBOLIC_LINK_NOT_ALLOWED: "The directory contains symbolic links that this slice does not support.",
+      ROOT_NOT_ALLOWED: "Importing a filesystem root is not allowed.",
       UNSUPPORTED_FILE_ENTRY: "The directory contains entries other than regular files and folders.",
       MIME_TYPE_MISSING: "The remote response did not declare a media type; import was refused to avoid saving a disguised file.",
       MIME_TYPE_UNSUPPORTED: "The media type declared by the remote response is not supported.",

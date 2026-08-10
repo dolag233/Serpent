@@ -104,6 +104,12 @@ export function targetLibraryPath(selectedParentPath: string, displayName: strin
   if (path.dirname(targetPath) !== parentPath) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid library path.');
   }
+  // Serpent-8b5b.3: a library directly at a filesystem root ('/' or 'C:\')
+  // is never a legitimate managed-library parent; reject it explicitly so
+  // Windows drive roots are covered even when they are writable.
+  if (parentPath === path.parse(parentPath).root) {
+    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Library parent must not be a filesystem root.');
+  }
 
   return targetPath;
 }

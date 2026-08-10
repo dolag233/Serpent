@@ -33,7 +33,7 @@ import {
 } from '../shared/mcp';
 import { McpClientCredentialStore } from './mcp-client-credentials';
 import type { McpPermissionPolicyStore } from './mcp-permission-policy-store';
-import { McpPermissionBroker } from './mcp-permission-broker';
+import type { McpPermissionBroker } from './mcp-permission-broker';
 import { McpSettingsStore } from './mcp-settings-store';
 
 const MAX_HTTP_BODY_BYTES = 1 * 1024 * 1024;
