@@ -21,6 +21,16 @@ Serpent MCP 由 Desktop Main 进程内嵌提供，仅监听 `127.0.0.1` 的 Stre
 
 transport 可以为 MCP SDK 保存 session，但禁止把 active library、library authorization、capability grant、默认目标或动态核心工具目录放入 session。每个库级调用必须带显式 `libraryId`；`library.show-in-desktop` 只投影 UI。
 
+## 自动化与人类操作等价（产品原则）
+
+**MCP/脚本的操作与人类的操作没有不同**：`file.import` 导入 = 人类导入，`asset.trash` 删除 = 人类删除。含义：
+
+- 领域校验与安全边界不变（Schema、计划、版本、Worker），source 只影响审计标签；
+- 副作用必须与人类操作一致：自动 AI 分析入队（`onImportCompleted` → `enqueueAutoAnalyzeAfterImport`，与桌面导入 IPC 同一函数）、undo group、插件 will-hooks、桌面提示（同一套 toast，见 Serpent-fmbr）；
+- 不得为自动化单独造一套提示/入队/撤销机制；触发点放在统一完成点（Gateway 钩子 / 事件），而非 MCP transport 层。
+
+若发现某个人类操作的副作用在自动化路径缺失，视为 bug（Serpent-ihpx 即此类）。
+
 ## Registry 与请求处理
 
 `src/automation/command-registry.ts` 是 MCP 工具和输入/输出 Schema 的单一来源。`src/mcp/tool-catalog.ts` 为核心工具生成静态目录，`src/mcp/call-tool.ts` 对库级调用提取并校验显式 `libraryId`，再通过 Gateway 的 `contextOverrides` 做单次目标绑定。

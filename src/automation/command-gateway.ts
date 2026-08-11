@@ -293,6 +293,17 @@ export interface AutomationCommandGatewayOptions {
   uiNotifyHandler?: AutomationUiNotifyHandler;
   undoGroupHandler?: AutomationUndoGroupHandler;
   permissionBroker?: AutomationPermissionBroker;
+  /**
+   * Serpent-ihpx: an automation import (MCP/script/console) completed — the
+   * SAME side effects as a human import must fire (automatic AI analysis).
+   * Called synchronously with the projected asset IDs; a throwing hook must
+   * not fail the already-committed import.
+   */
+  onImportCompleted?: (input: {
+    libraryId: string;
+    importedAssetIds: string[];
+    source: AutomationSource;
+  }) => void;
 }
 
 export interface AutomationCommandGateway {
@@ -365,6 +376,7 @@ export function createAutomationCommandGateway(
     uiNotifyHandler,
     undoGroupHandler,
     permissionBroker,
+    onImportCompleted,
   } = options;
   const inFlightCommandCounts = new Map<string, number>();
   // Serpent-8b5b.4 review: cap idempotency retention so a chatty client with
@@ -963,6 +975,31 @@ export function createAutomationCommandGateway(
           return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('LIBRARY_NOT_OPEN') });
         }
         return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+      }
+
+      // Serpent-ihpx: an automation import must behave like a human import —
+      // same post-import side effects (automatic AI analysis). Fires only for
+      // a completed import with projected asset IDs (conflicts import
+      // nothing); a throwing hook must not fail the committed import.
+      if (descriptor.commandId === 'file.import' && onImportCompleted !== undefined && boundLibraryId !== undefined && boundLibraryId !== null) {
+        const importResult = result as { status?: unknown; completion?: { assets?: Array<{ assetId?: unknown }> } };
+        if (importResult.status === 'completed') {
+          const importedAssetIds = Array.isArray(importResult.completion?.assets)
+            ? importResult.completion.assets
+              .map((asset) => asset.assetId)
+              .filter((assetId): assetId is string => typeof assetId === 'string')
+            : [];
+          if (importedAssetIds.length > 0) {
+            try {
+              onImportCompleted({ libraryId: boundLibraryId, importedAssetIds, source: context.source });
+            } catch (error) {
+              auditLogger?.error('automation.import-completed-hook.failed', error, {
+                executionId,
+                commandId: descriptor.commandId,
+              });
+            }
+          }
+        }
       }
 
       if (descriptor.commandId === 'library.create' && !stateless) {

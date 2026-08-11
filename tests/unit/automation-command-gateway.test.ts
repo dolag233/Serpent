@@ -447,6 +447,256 @@ describe('Automation Command Gateway', () => {
     }]);
   });
 
+  it('fires the import-completed hook for a successful automation import (Serpent-ihpx)', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const asset = (assetId: string) => ({
+      assetId,
+      locationKind: 'managed' as const,
+      managedFolderId: null,
+      relativeFilePath: `${assetId}.png`,
+      displayName: `${assetId}.png`,
+      currentRevisionId: `revision-${assetId}`,
+      byteSize: 10,
+      modifiedAt: '2026-08-11T00:00:00.000Z',
+      availability: 'available' as const,
+      rating: 0,
+      favorite: false,
+      deletedAt: null,
+      trashedFromPath: null,
+      trashedFromTombstoneId: null,
+      remainingDays: null,
+      thumbnailStatus: 'pending' as const,
+      thumbnailArtifactId: `thumb-${assetId}`,
+      mediaType: 'image' as const,
+      width: 100,
+      height: 100,
+      durationMs: null,
+    });
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.completed',
+      completion: {
+        importedCount: 2,
+        fileCount: 2,
+        assetCount: 2,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [asset('asset-imported-1'), asset('asset-imported-2')],
+      },
+    });
+    const completed: Array<{ libraryId: string; importedAssetIds: string[]; source: string }> = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => plan,
+      },
+      onImportCompleted: (input) => completed.push(input),
+    });
+
+    await expect(commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png', '/tmp/b.png'],
+    }))).resolves.toMatchObject({ ok: true });
+    expect(completed).toEqual([{
+      libraryId: 'library-1',
+      importedAssetIds: ['asset-imported-1', 'asset-imported-2'],
+      source: 'test',
+    }]);
+  });
+
+  it('does not fire the import-completed hook when nothing was imported', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.completed',
+      completion: {
+        importedCount: 0,
+        fileCount: 0,
+        assetCount: 0,
+        skippedCount: 3,
+        replacedCount: 0,
+        assets: [],
+      },
+    });
+    const completed: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => plan,
+      },
+      onImportCompleted: (input) => completed.push(input),
+    });
+
+    await expect(commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/skipped.png'],
+    }))).resolves.toMatchObject({ ok: true });
+    expect(completed).toEqual([]);
+  });
+
+  it('keeps the import succeeded when the import-completed hook throws', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.completed',
+      completion: {
+        importedCount: 1,
+        fileCount: 1,
+        assetCount: 1,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [{
+          assetId: 'asset-imported-1',
+          locationKind: 'managed' as const,
+          managedFolderId: null,
+          relativeFilePath: 'a.png',
+          displayName: 'a.png',
+          currentRevisionId: 'revision-a',
+          byteSize: 10,
+          modifiedAt: '2026-08-11T00:00:00.000Z',
+          availability: 'available' as const,
+          rating: 0,
+          favorite: false,
+          deletedAt: null,
+          trashedFromPath: null,
+          trashedFromTombstoneId: null,
+          remainingDays: null,
+          thumbnailStatus: 'pending' as const,
+          thumbnailArtifactId: 'thumb-a',
+          mediaType: 'image' as const,
+          width: 100,
+          height: 100,
+          durationMs: null,
+        }],
+      },
+    });
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => plan,
+      },
+      onImportCompleted: () => {
+        throw new Error('post-import side effect exploded');
+      },
+    });
+
+    await expect(commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }))).resolves.toMatchObject({ ok: true });
+  });
+
+  it('does not fire the import-completed hook when the import reports conflicts', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.conflicts',
+      plan: {
+        importId: 'import-conflicts-1',
+        fileCount: 2,
+        totalBytes: 20,
+        suspectedDuplicateCount: 2,
+        libraryDuplicateCount: 0,
+        nameConflictCount: 0,
+        examples: [{ displayName: 'a.png', kind: 'suspected-duplicate' as const }],
+      },
+    });
+    const completed: unknown[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => plan,
+      },
+      onImportCompleted: (input) => completed.push(input),
+    });
+
+    await expect(commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png', '/tmp/b.png'],
+    }))).resolves.toMatchObject({ ok: true, result: { status: 'conflicts' } });
+    expect(completed).toEqual([]);
+  });
+
+  it('does not re-fire the import-completed hook for an idempotent replay', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'asset.import.completed',
+      completion: {
+        importedCount: 1,
+        fileCount: 1,
+        assetCount: 1,
+        skippedCount: 0,
+        replacedCount: 0,
+        assets: [{
+          assetId: 'asset-imported-1',
+          locationKind: 'managed' as const,
+          managedFolderId: null,
+          relativeFilePath: 'a.png',
+          displayName: 'a.png',
+          currentRevisionId: 'revision-a',
+          byteSize: 10,
+          modifiedAt: '2026-08-11T00:00:00.000Z',
+          availability: 'available' as const,
+          rating: 0,
+          favorite: false,
+          deletedAt: null,
+          trashedFromPath: null,
+          trashedFromTombstoneId: null,
+          remainingDays: null,
+          thumbnailStatus: 'pending' as const,
+          thumbnailArtifactId: 'thumb-a',
+          mediaType: 'image' as const,
+          width: 100,
+          height: 100,
+          durationMs: null,
+        }],
+      },
+    });
+    const completed: Array<{ importedAssetIds: string[] }> = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => plan,
+      },
+      onImportCompleted: (input) => completed.push(input),
+    });
+    const envelope = request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }, 'execution-1', 'import-key-1');
+
+    await expect(commandGateway.execute(envelope)).resolves.toMatchObject({ ok: true });
+    await expect(commandGateway.execute(envelope)).resolves.toMatchObject({ ok: true });
+    expect(worker.commands).toHaveLength(1);
+    expect(completed).toEqual([{ libraryId: 'library-1', importedAssetIds: ['asset-imported-1'], source: 'test' }]);
+  });
+
   it('rejects library-scoped commands before Worker dispatch when a headless execution is unbound', async () => {
     const worker = new RecordingWorker({
       ok: true,

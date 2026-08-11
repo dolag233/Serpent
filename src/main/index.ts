@@ -4626,6 +4626,13 @@ async function startApplication(): Promise<void> {
       libraryContextHandler: {
         execute: executeMcpLibraryContextCommand,
       },
+      // Serpent-ihpx: automation imports (MCP/scripts) are no different from
+      // human imports — the same automatic AI analysis side effect fires here,
+      // converging on the exact function the desktop import IPC uses.
+      onImportCompleted: ({ libraryId, importedAssetIds }) => {
+        if (importedAssetIds.length === 0) return;
+        void enqueueAutoAnalyzeAfterImport(libraryId, importedAssetIds);
+      },
       mcpInputNormalizer: normalizeMcpCommandInput,
       libraryBindingHandler: {
         onLibraryCreated: async ({ source, library }) => {
