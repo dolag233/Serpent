@@ -113,6 +113,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - **Agent 共享知识必须进仓库**：产品决定、事故复盘、质量门禁和切片状态不得只留在聊天、个人 memory 或本机忽略文件中。
 - **功能变更必须同步测试**：任何新增功能、行为变更或用户可见交互调整，都必须在同一变更中检查并同步更新受影响的单元、Worker、集成或 Electron E2E 测试。若测试因产品规格有意变化而失效，必须更新 fixture、断言和测试说明，并在开发日志中记录旧行为与新行为；不能把“测试落后于产品变化”当作完成状态，也不能通过删除测试来消除失败。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。
+- **标准化 UI（强制，2026-08-12 用户反馈）**：不同地方的同类 UI 必须使用同一套样式。新增/修改任何 UI 元素前，先查找并复用既有样式体系——主题变量（`--text`/`--secondary`/`--raised-2`/`--menu-item-hover-background` 等 token）、既有组件（`Tooltip`/`HoverTipHost`、`MenuSurface`、`DialogShell`、`Icon` 等）与既有 CSS 类。**禁止硬编码颜色/尺寸 fallback**（如 `#2b2d33`、`opacity: 0.62`）——会破坏亮/暗主题。hover 提示必须用标准 `data-hover-tip` / `<Tooltip>`（延迟与主题由 HoverTipHost 统一，~420ms），禁止自造 tooltip 浮层。样式审查是代码审查固定项：核对新样式只依赖主题 token 与既有类。
 
 ## 验收纪律（2026-07-14 复盘新增，强制生效）
 

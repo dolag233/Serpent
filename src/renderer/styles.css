@@ -1365,7 +1365,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 /* Serpent-s0oq: full library path shown as a secondary row in the switcher
-   recent list; dimmer than the name so it scans as metadata, not a label. */
+   recent list; themed with the standard secondary text token so it reads as
+   metadata in both light and dark themes. */
 .library-switcher-recent-path {
   display: block;
   width: 100%;
@@ -1373,28 +1374,8 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font-size: 10px;
-  opacity: 0.62;
-}
-
-/* Serpent-s0oq: floating path hint replacing the ~2s native title — the
-   tooltip appears after an 800ms hover so it stays out of the way during fast
-   menu scans, but well under the user's one-second expectation. */
-.library-switcher-path-tooltip {
-  position: fixed;
-  z-index: 2000;
-  max-width: min(560px, 70vw);
-  padding: 5px 9px;
-  border-radius: 6px;
-  background: var(--menu-bg, #2b2d33);
-  color: var(--text, #ececec);
-  font-size: 11px;
-  line-height: 1.4;
-  box-shadow: 0 3px 10px rgb(0 0 0 / 0.35);
-  pointer-events: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: var(--menu-item-font-size);
+  color: var(--secondary);
 }
 
 .scope-trace {
