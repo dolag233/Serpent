@@ -4418,10 +4418,9 @@ async function normalizeMcpCommandInput(input: {
 }
 
 async function startApplication(): Promise<void> {
-  // Serpent-tluf: dev mode otherwise reports the Electron defaults —
-  // app.getName() is "Electron" and the macOS app menu/dock/About fall back
-  // to it whenever a label is missing. Pin the product name everywhere.
-  app.setName("Serpent");
+  // Serpent-tluf: the macOS About panel is customized here (ready-late is
+  // fine for it); app.setName lives at module top level so the application
+  // menu's first item shows "Serpent" from the very first frame.
   if (process.platform === "darwin") {
     app.setAboutPanelOptions({
       applicationName: "Serpent",
@@ -6163,6 +6162,11 @@ async function startApplication(): Promise<void> {
 
   startupComplete = true;
 }
+
+// Serpent-tluf: must run before app ready — the macOS application menu's
+// first item always displays the application name, and a ready-late
+// setName is too late for it (dev otherwise shows "Electron").
+app.setName("Serpent");
 
 if (!hasSingleInstanceLock) {
   app.quit();
