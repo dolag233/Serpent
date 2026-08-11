@@ -378,6 +378,7 @@ import {
   type SearchGroup,
 } from './search-query';
 import {
+  GIF_GOOD_PAGE_SCORE_THRESHOLD,
   GIF_THUMBNAIL_PROBE_SIZE,
   pickBestGifPage,
   sampleGifPageIndices,
@@ -2849,7 +2850,11 @@ class AsyncSemaphore {
 // A Library Worker may own several open libraries. These module-level gates
 // therefore cap decoder pressure across all LibraryService instances and all
 // libraries in the process, not merely within one queue drain.
-const sharpDecoderSemaphore = new AsyncSemaphore(2);
+// Serpent-azf6: image decodes raised 2 → 4 so a 700+ asset import wave drains
+// in roughly half the wall time. libvips (Sharp) streams with lazy allocation,
+// so four bounded decodes stay within desktop memory; OIIO stays at 1 because
+// it handles very heavy EXR/HDR sources.
+const sharpDecoderSemaphore = new AsyncSemaphore(4);
 // Keep a bounded amount of decoder pressure while allowing a video import
 // batch to make progress on more than one asset. This covers both ffmpeg and
 // ffprobe because they contend for the same media decode resources.
@@ -13207,10 +13212,12 @@ export class LibraryService {
                 const sample = await toBufferFn.call(rawPipeline, {
                   resolveWithObject: true,
                 });
-                scored.push({
-                  page: candidate,
-                  score: scoreRawRgbFrame(sample.data, sample.info.channels),
-                });
+                const score = scoreRawRgbFrame(sample.data, sample.info.channels);
+                scored.push({ page: candidate, score });
+                // Serpent-azf6: a recognizable frame ends the probe early —
+                // bright meme GIFs usually need 1-3 decodes instead of the
+                // full sample spread; dark GIFs fall through to the cap.
+                if (score >= GIF_GOOD_PAGE_SCORE_THRESHOLD) break;
               } catch (error) {
                 this.diagnose('thumbnail.gif-page-probe', error, {
                   assetPath,
@@ -15169,6 +15176,54 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
+    // Serpent-azf6: animated GIFs play through their WebM proxy like videos —
+    // the proxy is a far lighter decode than the original multi-megabyte GIF.
+    // The fast still thumbnail stays the grid preview; the viewer/hover uses
+    // the proxy once ready, and a missing proxy is enqueued on demand here.
+    // (Static GIFs fall through to the plain image path.)
+    // Contrast with REQ-VIEW-002: videos keep the ORIGINAL source in the
+    // viewer when the container is natively playable (the WebM proxy was
+    // stealing playback from perfectly fine MP4s); GIFs are proxy-first on
+    // purpose — a raw GIF is an oversized animated container whose proxy
+    // decode is strictly cheaper, and the renderer renders it as <video>.
+    if (extension === '.gif') {
+      const extracted = this.getExtractedMetadata({ libraryId, assetId });
+      const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
+        && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
+        ? (extracted.metadata as { frameCount: number }).frameCount
+        : undefined;
+      if (frameCount !== undefined && frameCount > 1) {
+        const proxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
+        if (proxy?.status === 'ready') {
+          return {
+            mediaType,
+            status: 'ready',
+            kind: 'webm_proxy',
+            artifactId: proxy.artifactId,
+            mimeType: proxy.mimeType,
+            playbackMode: 'proxy',
+          };
+        }
+        const activeProxyJob = openLibrary.connection
+          .prepare(
+            `SELECT job_id FROM jobs
+              WHERE asset_id = ?
+                AND kind = 'generate_webm_proxy'
+                AND status IN ('queued', 'running', 'paused')
+              LIMIT 1`,
+          )
+          .get(assetId) as { job_id: string } | undefined;
+        if (!activeProxyJob && asset.current_revision_id) {
+          this.enqueueVideoDerivativeJob(
+            openLibrary,
+            assetId,
+            asset.current_revision_id,
+            'generate_webm_proxy',
+            300,
+          );
+        }
+      }
+    }
     if (mediaType === 'video' || mediaType === 'audio') {
       // REQ-VIEW-002: the viewer always plays the ORIGINAL source when the
       // container is natively playable — a ready proxy must never take over
@@ -16114,6 +16169,23 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate);
+    // Serpent-azf6: scenes scheduling with explicit ids (notably the visible
+    // browse wave) also BOOST already-queued preview jobs of those assets —
+    // the enqueue SQL below skips assets with an active job, so without this
+    // the current view would stay behind a mutation flood that queued first.
+    // Only raises priority (never lowers); dead/terminal jobs are untouched.
+    if (selectedIds.length > 0 && options.priority !== undefined) {
+      openLibrary.connection
+        .prepare(
+          `UPDATE jobs
+              SET priority = MAX(priority, ?), updated_at = ?
+            WHERE library_id = ?
+              AND asset_id IN (${selectedIds.map(() => '?').join(',')})
+              AND kind IN ('generate_thumbnail', 'generate_video_poster')
+              AND status = 'queued'`,
+        )
+        .run(options.priority, new Date().toISOString(), libraryId, ...selectedIds);
+    }
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
@@ -16502,6 +16574,20 @@ export class LibraryService {
           }
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'audio') {
             this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
+          }
+          // Serpent-azf6: animated GIFs are treated like videos — the fast
+          // still thumbnail IS the preview, the heavy WebM proxy drains
+          // behind it at low priority. frameCount comes from the GIF metadata
+          // the thumbnail job itself just persisted.
+          if (asset && asset.relative_file_path.toLowerCase().endsWith('.gif')) {
+            const extracted = this.getExtractedMetadata({ libraryId, assetId: job.asset_id });
+            const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
+              && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
+              ? (extracted.metadata as { frameCount: number }).frameCount
+              : undefined;
+            if (frameCount !== undefined && frameCount > 1) {
+              this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
+            }
           }
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
           // generated stays null when the offscreen renderer failed with a

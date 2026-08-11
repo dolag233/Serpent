@@ -520,7 +520,11 @@ function scheduleThumbnailScene(
   const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number }> = {
     startup: { limit: 50, priority: 100 },
     refresh: { limit: 50, priority: 150 },
-    visible: { limit: 50, priority: 200, maxIds: 50 },
+    // Serpent-azf6: the CURRENT VIEW must outrank the import flood — browsing
+    // a freshly imported library otherwise waits behind hundreds of priority-300
+    // mutation jobs. visible is the highest tier so the user always sees the
+    // assets in front of them appear first; the import wave fills in behind.
+    visible: { limit: 100, priority: 350, maxIds: 100 },
     linked: { limit: 50, priority: 250, maxIds: 50 },
     restore: { priority: 250, maxIds: 500 },
     mutation: { priority: 300, maxIds: 500 },

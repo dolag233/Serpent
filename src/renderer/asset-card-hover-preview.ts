@@ -71,16 +71,23 @@ export interface LivePreviewMedia {
  * resolution with a URL plays, and only images (GIFs) or videos are eligible
  * — anything else (including no active target, e.g. multi-selection) falls
  * back to the static cover/thumbnail.
+ *
+ * Serpent-azf6: an animated GIF resolved through its WebM proxy
+ * (kind "webm_proxy", mediaType still "image") must render in a `<video>`
+ * element — Chromium cannot decode video/webm inside `<img>` (crbug 791658
+ * wontfix), so the proxy URL must take the video branch.
  */
 export function resolveLivePreviewMedia(
   isActive: boolean,
   preview:
-    | Pick<PreviewResolution, "status" | "url" | "mediaType" | "posterUrl">
+    | (Pick<PreviewResolution, "status" | "url" | "mediaType" | "posterUrl">
+      & { kind?: PreviewResolution["kind"] })
     | null
     | undefined,
 ): LivePreviewMedia {
   const url = isActive && preview?.status === "ready" ? preview.url : undefined;
   if (!url) return { url: undefined, kind: null };
+  if (preview?.kind === "webm_proxy") return { url, kind: "video" };
   if (preview?.mediaType === "image") return { url, kind: "gif" };
   if (preview?.mediaType === "video") return { url, kind: "video" };
   return { url: undefined, kind: null };

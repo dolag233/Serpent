@@ -4,8 +4,21 @@
  * yields a pure-black grid card while the viewer plays the colored animation.
  */
 
-export const GIF_THUMBNAIL_MAX_PAGE_SAMPLES = 24;
+/**
+ * Serpent-azf6: probe budget halved 24 → 12 — the still preview must be FAST.
+ * The probe decodes a separate Sharp pass per sampled page, so this caps the
+ * worst-case GIF thumbnail cost at ~12 decodes; the early-exit below usually
+ * stops far earlier on bright meme GIFs, and dark GIFs still get a spread
+ * large enough to avoid the old pure-black-intro cards.
+ */
+export const GIF_THUMBNAIL_MAX_PAGE_SAMPLES = 12;
 export const GIF_THUMBNAIL_PROBE_SIZE = 64;
+/**
+ * A sampled page scoring at least this (mean RGB × non-black fraction, 0-255)
+ * is "recognizable" — probing stops there instead of sampling every page.
+ * Deliberately conservative so dark/artistic GIFs still get the full spread.
+ */
+export const GIF_GOOD_PAGE_SCORE_THRESHOLD = 50;
 
 /** Uniform sample of page indices across [0, pages). Always includes 0. */
 export function sampleGifPageIndices(
