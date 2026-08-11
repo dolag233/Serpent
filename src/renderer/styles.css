@@ -1352,6 +1352,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   white-space: nowrap;
 }
 
+/* Serpent-s0oq: full library path shown as a secondary row in the switcher
+   recent list; dimmer than the name so it scans as metadata, not a label. */
+.library-switcher-recent-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  opacity: 0.62;
+}
+
 .scope-trace {
   display: flex;
   min-width: 0;
@@ -3100,6 +3111,9 @@ input[type="range"] {
   margin: 0;
   padding: 0;
   list-style: none;
+  /* Serpent-s0oq: at most five rows visible; the rest scroll. */
+  max-height: 210px;
+  overflow-y: auto;
 }
 
 .empty-recent-row {

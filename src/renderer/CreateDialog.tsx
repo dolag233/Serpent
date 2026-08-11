@@ -65,6 +65,9 @@ export function CreateDialog({
 
   const showRecents =
     required && phase === "start" && recentLibraries.length > 0;
+  // Serpent-s0oq: the create dialog shows at most five most-recent libraries;
+  // the list container scrolls when the store holds more (cap is 8).
+  const visibleRecents = showRecents ? recentLibraries.slice(0, 5) : [];
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -171,7 +174,7 @@ export function CreateDialog({
               {t("empty.recentLibraries")}
             </div>
             <ul className="create-dialog-recent-list">
-              {recentLibraries.map((entry) => (
+              {visibleRecents.map((entry) => (
                 <li key={entry.path}>
                   <button
                     className="create-dialog-recent-open"

@@ -3243,6 +3243,10 @@ function AppInner() {
           : t("dialog.blockingError.libraryOpenFailed"),
         toMessage(caught, failureMessage),
       );
+      // Serpent-s0oq: opening an invalid library removes it from the recent
+      // store in Main — refresh so the switcher menu and the no-library
+      // create dialog both drop it immediately.
+      void refreshRecentLibraries();
     } finally {
       setUiState(opened ? "ready" : "idle");
     }

@@ -4018,6 +4018,27 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           operation,
           error: result.error,
         });
+        // Serpent-s0oq: an invalid recent library (folder gone, corrupt, or
+        // unmigratable) must disappear from every recent list — the switcher
+        // menu and the no-library create dialog share the same store. Only
+        // deterministic invalid-open codes remove the entry; transient
+        // failures (picker cancel, busy) keep it.
+        if (
+          operation === "open" &&
+          command.type === "library.open" &&
+          (result.error?.code === "LIBRARY_NOT_FOUND" ||
+            result.error?.code === "LIBRARY_CORRUPT" ||
+            result.error?.code === "LIBRARY_MIGRATION_FAILED" ||
+            result.error?.code === "LIBRARY_VERSION_TOO_NEW")
+        ) {
+          removeRecentLibrary(
+            recentLibraryPath(),
+            (command as { selectedLibraryPath: string }).selectedLibraryPath,
+            (error) => {
+              logger?.error("recent-library.remove-invalid", error);
+            },
+          );
+        }
       }
       return result;
     }

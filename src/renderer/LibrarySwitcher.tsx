@@ -337,6 +337,11 @@ export function LibrarySwitcher({
                       <span className="library-switcher-item-label">
                         {entry.name}
                       </span>
+                      {/* Serpent-s0oq: the full path is visible on the row so
+                          hovering/scanning distinguishes same-named libraries. */}
+                      <span className="library-switcher-recent-path">
+                        {entry.path}
+                      </span>
                     </button>
                     {onForgetRecent != null && (
                       <button
