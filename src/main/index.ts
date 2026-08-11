@@ -4600,6 +4600,7 @@ async function startApplication(): Promise<void> {
       },
       filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
         workerClient: automationWorkerAdapter,
+        audit: { info: (scope, message, context) => logger?.info(scope, message, context) },
         confirm: confirmDesktopAutomationFilePlan,
         runWillHooks: async ({ commandId, libraryId, commandInput, planSummary }) => {
           if (commandId !== 'asset.trash' || pluginActivationCoordinator === undefined) {

@@ -100,17 +100,15 @@ describe('Desktop automation file-plan approval', () => {
     }]);
   });
 
-  it('uses the Main permission decision for an MCP plan without a second prompt', async () => {
+  it('auto-approves an MCP plan without any desktop confirm or requestApproval hook', async () => {
     const worker = new RecordingWorker(plannedResult);
-    const requests: unknown[] = [];
     const handler = createDesktopAutomationFilePlanApprovalHandler({
       workerClient: worker,
       confirm: async () => {
         throw new Error('confirmation should be skipped');
       },
-      requestApproval: async (input) => {
-        requests.push(input);
-        return input.source === 'mcp';
+      requestApproval: async () => {
+        throw new Error('requestApproval should be skipped');
       },
     });
 
@@ -123,12 +121,6 @@ describe('Desktop automation file-plan approval', () => {
     });
 
     expect(proof).toMatchObject({ expectedChangeSequence: 17 });
-    expect(requests).toEqual([expect.objectContaining({
-      source: 'mcp',
-      commandId: 'asset.rename-file',
-      executionId: 'execution-mcp',
-      summary: expect.objectContaining({ operation: 'rename-file' }),
-    })]);
   });
 
   it('maps content replacement to a single-asset replace-content plan', async () => {
@@ -478,5 +470,58 @@ describe('Desktop automation file-plan approval', () => {
       commandInput: { assetIds: ['asset-1'] },
     })).rejects.toThrow('unexpected automation file-operation plan');
     expect(confirmCalls).toBe(0);
+  });
+});
+
+describe('MCP plan auto-approval (Serpent-8b5b.8 regression: asset_trash/file_import hang)', () => {
+  it('skips the desktop confirm and still builds the plan proof for MCP source', async () => {
+    const worker = new RecordingWorker(plannedResult);
+    let confirmCalls = 0;
+    const audits: string[] = [];
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+      audit: { info: (scope) => audits.push(scope) },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newBaseName: 'renamed' },
+      source: 'mcp',
+    });
+
+    expect(confirmCalls).toBe(0);
+    expect(audits).toContain('mcp.plan-auto-approved');
+    expect(proof).toMatchObject({ planHash: expect.any(String), expectedChangeSequence: 17 });
+    // The Worker preflight still ran and produced the opaque proof.
+    expect(worker.commands).toHaveLength(1);
+  });
+
+  it('still shows the desktop confirm for non-MCP sources', async () => {
+    const worker = new RecordingWorker(plannedResult);
+    let confirmCalls = 0;
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+
+    const proof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-1',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newBaseName: 'renamed' },
+      source: 'desktop-console',
+    });
+
+    expect(confirmCalls).toBe(1);
+    expect(proof).toBeTruthy();
   });
 });

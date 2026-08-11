@@ -28,6 +28,10 @@ export interface DesktopAutomationFilePlanSummary {
 
 export interface DesktopAutomationFilePlanApprovalOptions {
   workerClient: AutomationWorkerClient;
+  /** Audit hook for automatic MCP plan approvals. */
+  audit?: {
+    info?(scope: string, message: string, context?: Record<string, unknown>): void;
+  };
   confirm(
     summary: DesktopAutomationFilePlanSummary,
     context?: {
@@ -198,19 +202,27 @@ export function createDesktopAutomationFilePlanApprovalHandler(
           blockedCount: 0,
           undoSupported: false,
         };
-        const approved = options.requestApproval === undefined
-          ? await options.confirm(summary, approvalContext)
-          : await options.requestApproval({
-            commandId,
-            executionId,
-            libraryId,
-            commandInput,
-            source,
-            ...(clientName === undefined ? {} : { clientName }),
-            ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
-            summary,
+        // Serpent-8b5b.8: MCP runs plan commands directly (zero dialog);
+        // the Worker still validates the plan fence at write time.
+        if (source === 'mcp') {
+          options.audit?.info?.('mcp.plan-auto-approved', 'MCP library.create plan approved without a desktop prompt.', {
+            commandId, operation: 'create', targetCount: 1,
           });
-        if (!approved) return undefined;
+        } else {
+          const approved = options.requestApproval === undefined
+            ? await options.confirm(summary, approvalContext)
+            : await options.requestApproval({
+              commandId,
+              executionId,
+              libraryId,
+              commandInput,
+              source,
+              ...(clientName === undefined ? {} : { clientName }),
+              ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+              summary,
+            });
+          if (!approved) return undefined;
+        }
         return {
           planHash: createHash('sha256').update(JSON.stringify({
             executionId,
@@ -250,19 +262,25 @@ export function createDesktopAutomationFilePlanApprovalHandler(
           blockedCount,
           undoSupported: true,
         };
-        const approved = options.requestApproval === undefined
-          ? await options.confirm(summary, approvalContext)
-          : await options.requestApproval({
-            commandId,
-            executionId,
-            libraryId,
-            commandInput,
-            source,
-            ...(clientName === undefined ? {} : { clientName }),
-            ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
-            summary,
+        if (source === 'mcp') {
+          options.audit?.info?.('mcp.plan-auto-approved', 'MCP file.import plan approved without a desktop prompt.', {
+            commandId, operation: 'import', targetCount: summary.targetCount,
           });
-        if (!approved) return undefined;
+        } else {
+          const approved = options.requestApproval === undefined
+            ? await options.confirm(summary, approvalContext)
+            : await options.requestApproval({
+              commandId,
+              executionId,
+              libraryId,
+              commandInput,
+              source,
+              ...(clientName === undefined ? {} : { clientName }),
+              ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+              summary,
+            });
+          if (!approved) return undefined;
+        }
         const planHash = parsedPlan.planHash;
         return {
           planHash,
@@ -304,19 +322,25 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         ...planSummary,
         ...(hookWarnings.length > 0 ? { hookWarnings } : {}),
       };
-      const approved = options.requestApproval === undefined
-        ? await options.confirm(summaryWithHooks, approvalContext)
-        : await options.requestApproval({
-          commandId,
-          executionId,
-          libraryId,
-          commandInput,
-          source,
-          ...(clientName === undefined ? {} : { clientName }),
-          ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
-          summary: summaryWithHooks,
+      if (source === 'mcp') {
+        options.audit?.info?.('mcp.plan-auto-approved', 'MCP file-operation plan approved without a desktop prompt.', {
+          commandId, operation: planSummary.operation, targetCount: planSummary.targetCount,
         });
-      if (!approved) return undefined;
+      } else {
+        const approved = options.requestApproval === undefined
+          ? await options.confirm(summaryWithHooks, approvalContext)
+          : await options.requestApproval({
+            commandId,
+            executionId,
+            libraryId,
+            commandInput,
+            source,
+            ...(clientName === undefined ? {} : { clientName }),
+            ...(libraryDisplayName === undefined ? {} : { libraryDisplayName }),
+            summary: summaryWithHooks,
+          });
+        if (!approved) return undefined;
+      }
 
       if (planned.planHash === undefined) {
         throw new Error('Worker returned a file-operation plan without a plan hash.');
