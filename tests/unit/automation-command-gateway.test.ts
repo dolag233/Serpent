@@ -2165,3 +2165,101 @@ describe('AutomationLibraryWorkerAdapter', () => {
     resolveWorker?.({ ok: true, type: 'tag.list', tags: [] });
   });
 });
+
+describe('file.import VERSION_CONFLICT auto re-plan (Serpent-xdt8)', () => {
+  it('re-plans once and retries when the worker reports a stale plan', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const importCompletion = {
+      importedCount: 1,
+      fileCount: 1,
+      assetCount: 1,
+      skippedCount: 0,
+      replacedCount: 0,
+      assets: [{
+        assetId: 'asset-imported-1',
+        locationKind: 'managed' as const,
+        managedFolderId: null,
+        relativeFilePath: 'a.png',
+        displayName: 'a.png',
+        currentRevisionId: 'revision-a',
+        byteSize: 10,
+        modifiedAt: '2026-08-12T00:00:00.000Z',
+        availability: 'available' as const,
+        rating: 0,
+        favorite: false,
+        deletedAt: null,
+        trashedFromPath: null,
+        trashedFromTombstoneId: null,
+        remainingDays: null,
+        thumbnailStatus: 'pending' as const,
+        thumbnailArtifactId: 'thumb-a',
+        mediaType: 'image' as const,
+        width: 100,
+        height: 100,
+        durationMs: null,
+      }],
+    };
+    const calls: Array<WorkerResult> = [];
+    const worker = {
+      request: async (command: WorkerCommand): Promise<WorkerResult> => {
+        calls.push({ ok: true, type: 'asset.import.completed', completion: importCompletion });
+        return calls.length === 1
+          ? { ok: false, error: { code: 'VERSION_CONFLICT', message: 'Stale plan.' } }
+          : { ok: true, type: 'asset.import.completed', completion: importCompletion };
+      },
+    } satisfies AutomationWorkerClient;
+    const planApprovals: string[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => {
+          planApprovals.push('approve');
+          return plan;
+        },
+      },
+    });
+
+    const result = await commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }));
+    expect(result).toMatchObject({ ok: true });
+    // One stale-plan rejection, one successful retry.
+    expect(planApprovals).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not retry non-version failures', async () => {
+    const plan = {
+      planHash: 'a'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [],
+    };
+    const worker = {
+      request: async () => ({ ok: false, error: { code: 'LIBRARY_BUSY', message: 'busy' } }),
+    } satisfies AutomationWorkerClient;
+    const planApprovals: string[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => {
+          planApprovals.push('approve');
+          return plan;
+        },
+      },
+    });
+
+    const result = await commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }));
+    expect(result).toMatchObject({ ok: false, error: { code: 'LIBRARY_BUSY' } });
+    expect(planApprovals).toHaveLength(1);
+  });
+});
