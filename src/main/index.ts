@@ -100,7 +100,6 @@ import {
   createAutomationCommandGateway,
   type AutomationCommandGateway,
 } from '../automation/command-gateway';
-import { sanitizeShellNotifyTitle } from '../shared/shell-notify';
 import { PluginHostCommandError } from '../shared/plugin-host-command-error';
 import {
   APP_ASSET_HOST,
@@ -4590,15 +4589,13 @@ async function startApplication(): Promise<void> {
           if (!mainWindow || mainWindow.isDestroyed()) {
             throw new Error('The Serpent window is not available to show a notification.');
           }
-          const payload = {
+          // Serpent review: ui.notify is strictly non-blocking (toast only);
+          // the dialog mode was removed from the registry input schema.
+          mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
             severity: input.severity,
-            mode: input.mode,
+            mode: 'toast',
             message: input.message.trim().slice(0, 500),
-            ...(input.mode === 'dialog'
-              ? { title: sanitizeShellNotifyTitle(input.title, input.severity) }
-              : {}),
-          };
-          mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, payload);
+          });
         },
       },
       filePlanApprovalHandler: createDesktopAutomationFilePlanApprovalHandler({
@@ -5270,29 +5267,37 @@ async function startApplication(): Promise<void> {
   if (!automationExecutionJournal || !automationCommandGateway || !workerClient || !logger) {
     throw new Error('Embedded MCP server requires journal, gateway, worker, and logger.');
   }
-  embeddedMcpServer = new EmbeddedMcpServer({
-    userDataPath: app.getPath('userData'),
-    journal: automationExecutionJournal,
-    gateway: automationCommandGateway,
-    workerClient,
-    logger,
-    getPluginTools: () => pluginMcpToolProvider,
-    permissionPolicyStore: mcpPermissionPolicyStore,
-    permissionBroker: mcpPermissionBroker,
-    // Serpent-fmbr: MCP operations speak through the SAME human-facing toasts
-    // as manual operations — the renderer composes them from the structured
-    // result. No separate "MCP client completed X" notification system.
-    onCommandCompleted: ({ commandId, result }) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send(COMMAND_COMPLETED_CHANNEL, { commandId, result });
-    },
-  });
-  embeddedMcpServer.onSnapshot((snapshot) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      const validatedSnapshot = mcpSettingsSnapshotSchema.parse(snapshot);
-      mainWindow.webContents.send(MCP_SETTINGS_EVENT_CHANNEL, validatedSnapshot);
-    }
-  });
+  try {
+    embeddedMcpServer = new EmbeddedMcpServer({
+      userDataPath: app.getPath('userData'),
+      journal: automationExecutionJournal,
+      gateway: automationCommandGateway,
+      workerClient,
+      logger,
+      getPluginTools: () => pluginMcpToolProvider,
+      permissionPolicyStore: mcpPermissionPolicyStore,
+      permissionBroker: mcpPermissionBroker,
+      // Serpent-fmbr: MCP operations speak through the SAME human-facing toasts
+      // as manual operations — the renderer composes them from the structured
+      // result. No separate "MCP client completed X" notification system.
+      onCommandCompleted: ({ commandId, result }) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send(COMMAND_COMPLETED_CHANNEL, { commandId, result });
+      },
+    });
+    embeddedMcpServer.onSnapshot((snapshot) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const validatedSnapshot = mcpSettingsSnapshotSchema.parse(snapshot);
+        mainWindow.webContents.send(MCP_SETTINGS_EVENT_CHANNEL, validatedSnapshot);
+      }
+    });
+  } catch (error) {
+    // Serpent review: an unrecoverable MCP construction failure (e.g. the
+    // credential pepper ACL cannot be restricted on Windows) must disable the
+    // MCP service, never the whole app — the settings IPC answers
+    // MCP_SETTINGS_UNAVAILABLE while embeddedMcpServer stays undefined.
+    logger?.error('mcp.embedded-server.construction-failed', error);
+  }
   ipcMain.handle(MCP_SETTINGS_REQUEST_CHANNEL, async (event, input: unknown) => {
     const server = embeddedMcpServer;
     const response = (value: unknown) => mcpSettingsResponseSchema.parse(value);

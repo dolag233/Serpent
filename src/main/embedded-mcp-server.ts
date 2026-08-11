@@ -291,6 +291,8 @@ export class EmbeddedMcpServer {
   readonly #snapshotListeners = new Set<(snapshot: McpSettingsSnapshot) => void>();
   readonly #journalUnsubscribe: () => void;
   readonly #workerUnsubscribe: () => void;
+  /** Last known per-library change sequence (ADR-0031 §2 response echo). */
+  readonly #libraryChangeSequences = new Map<string, number>();
   #runtime: McpRuntimeState = { status: 'stopped' };
   #httpServer: HttpServer | undefined;
   #startPromise: Promise<McpSettingsSnapshot> | undefined;
@@ -315,6 +317,10 @@ export class EmbeddedMcpServer {
       this.#logContextChange(event);
     });
     this.#workerUnsubscribe = this.#workerClient.onLibraryChanged((event) => {
+      // The library.changed stream is the freshness source for the response
+      // echo; the mutating call may report the sequence one event behind,
+      // the following call and library.change-sequence carry the fresh value.
+      this.#libraryChangeSequences.set(event.libraryId, event.changeSequence);
       this.#notifySessions({ type: 'library-changed', ...event });
     });
   }
@@ -753,6 +759,9 @@ export class EmbeddedMcpServer {
         };
       },
       getPluginTools: (): SerpentMcpPluginToolBridge | undefined => this.#getPluginTools(),
+      getLibraryChangeSequence: (libraryId: string): number | undefined => {
+        return this.#libraryChangeSequences.get(libraryId);
+      },
       subscribe: (listener: (event: SerpentMcpSessionEvent) => void) => {
         const onContext = (): void => listener({ type: 'context-changed' });
         const unsubscribe = this.#journal.onContextChanged(onContext);
@@ -837,7 +846,10 @@ export class EmbeddedMcpServer {
       if (typeof oldest !== 'string') break;
       this.#closedSessionIds.delete(oldest);
     }
-    this.#journal.endSession(session.executionId);
+    // Serpent review: endSession matches on the record's sessionId, not the
+    // executionId — the previous call passed the execution id and silently
+    // leaked every session's execution as permanently 'running'.
+    this.#journal.endSession(session.sessionId);
     this.#permissionBroker?.clearExecution(session.executionId);
     try {
       await session.server.close();

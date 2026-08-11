@@ -78,14 +78,17 @@ function readOrCreatePepper(filename: string): Buffer {
   // Windows review: POSIX mode bits are ignored on NTFS — the pepper (the
   // secret keying every token hash) must get an explicit ACL restricted to
   // the current user, otherwise it inherits the userData directory ACL.
+  // Fail-closed: an unreachable/unsuccessful ACL means the token-hash secret
+  // may be readable by other local users, so the store refuses to proceed.
   if (process.platform === 'win32') {
-    try {
-      spawnSync('icacls', buildPepperFileAclArgs(
-        filename,
-        process.env.USERNAME ?? process.env.USER ?? 'Users',
-      ), { stdio: 'ignore', windowsHide: true });
-    } catch {
-      // Best effort — the pepper file still inherits userData protection.
+    const result = spawnSync('icacls', buildPepperFileAclArgs(
+      filename,
+      process.env.USERNAME ?? process.env.USER ?? 'Users',
+    ), { stdio: 'ignore', windowsHide: true });
+    if (result.error !== undefined || result.status !== 0) {
+      throw new Error('Failed to restrict the MCP credential pepper ACL to the current user.', {
+        cause: result.error,
+      });
     }
   }
   return pepper;

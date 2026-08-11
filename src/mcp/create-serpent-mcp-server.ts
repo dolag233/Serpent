@@ -20,6 +20,8 @@ export interface SerpentMcpSessionBackend {
   getExecutionContext(): AutomationExecutionContext | undefined;
   getToolExposure(): SerpentMcpToolExposure;
   getPluginTools(): SerpentMcpPluginToolBridge | undefined;
+  /** Last known library change sequence for the response echo (ADR-0031 §2). */
+  getLibraryChangeSequence?(libraryId: string): number | undefined;
   subscribe?(listener: (event: SerpentMcpSessionEvent) => void): () => void;
 }
 
@@ -131,6 +133,9 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       exposure: currentExposure(),
       gateway,
       pluginTools: backend.getPluginTools(),
+      ...(backend.getLibraryChangeSequence === undefined
+        ? {}
+        : { getLibraryChangeSequence: backend.getLibraryChangeSequence }),
       signal: extra.signal,
     });
     await reportProgress?.(1, 1, result.ok ? 'Serpent completed the tool.' : 'Serpent rejected the tool call.');
@@ -153,6 +158,9 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       commandId: result.commandId,
       ...(result.plugin === undefined ? {} : { plugin: result.plugin }),
       ...(result.libraryId === undefined ? {} : { libraryId: result.libraryId }),
+      ...(result.libraryChangeSequence === undefined
+        ? {}
+        : { libraryChangeSequence: result.libraryChangeSequence }),
       result: result.result,
       ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
     });

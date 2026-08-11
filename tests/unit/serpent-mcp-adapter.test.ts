@@ -179,6 +179,83 @@ describe('Serpent MCP tools/call → Gateway', () => {
     expect(worker.commands).toEqual([{ type: 'library.list' }]);
   });
 
+  it('echoes the last known library change sequence on library-scoped responses (ADR-0031 §2)', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.list',
+      libraries: [
+        { libraryId: 'library-1', displayName: 'Selected', libraryPath: '/libraries/selected' },
+      ],
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_library_inspect',
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+      getLibraryChangeSequence: (libraryId) => libraryId === 'library-1' ? 42 : undefined,
+    });
+    expect(result).toMatchObject({ ok: true, libraryId: 'library-1', libraryChangeSequence: 42 });
+  });
+
+  it('omits the change-sequence echo when the sequence is unknown', async () => {
+    const worker = new RecordingWorker({
+      ok: true,
+      type: 'library.list',
+      libraries: [{ libraryId: 'library-1', displayName: 'Selected', libraryPath: '/libraries/selected' }],
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_library_inspect',
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+      getLibraryChangeSequence: () => undefined,
+    });
+    expect(result).toMatchObject({ ok: true, libraryId: 'library-1' });
+    if (result.ok) expect(result).not.toHaveProperty('libraryChangeSequence');
+  });
+
+  it('flags transient failures as retryable in the structured error (§10)', async () => {
+    const worker = new RecordingWorker({
+      ok: false,
+      error: { code: 'LIBRARY_BUSY', message: 'The library is busy.' },
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_library_inspect',
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'LIBRARY_BUSY', retryable: true, libraryId: 'library-1' });
+  });
+
+  it('carries the current entity version on VERSION_CONFLICT failures', async () => {
+    const worker = new RecordingWorker({
+      ok: false,
+      error: { code: 'VERSION_CONFLICT', message: 'Stale metadata.', currentEntityVersion: 5 },
+    });
+    const gateway = createAutomationCommandGateway(worker, resolver());
+    const result = await callSerpentMcpTool({
+      toolName: 'serpent_library_inspect',
+      arguments: { libraryId: 'library-1' },
+      context: mcpContext(readExposure),
+      exposure: readExposure,
+      gateway,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'VERSION_CONFLICT',
+      currentVersion: 5,
+      libraryId: 'library-1',
+    });
+    if (!result.ok) expect(result).not.toHaveProperty('retryable');
+  });
+
   it('forwards an MCP request abort signal into the Gateway', async () => {
     const worker = new RecordingWorker({ ok: true, type: 'library.list', libraries: [] });
     const controller = new AbortController();

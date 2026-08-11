@@ -470,7 +470,9 @@ export const automationCommandInputSchemas = {
   'ui.notify': z.strictObject({
     severity: z.enum(['info', 'warning', 'error']),
     message: z.string().min(1).max(500),
-    mode: z.enum(['toast', 'dialog']).default('toast'),
+    // Serpent review: the accepted stateless design keeps ui.notify strictly
+    // non-blocking — the old dialog mode (blocking error window) was removed.
+    mode: z.literal('toast').default('toast'),
     title: z.string().min(1).max(120).optional(),
   }),
   'folder.list': paginatedInputSchema({}),
@@ -1058,7 +1060,7 @@ export const automationCommandResultSchemas = {
   }),
   'ui.notify': z.strictObject({
     shown: z.literal(true),
-    mode: z.enum(['toast', 'dialog']),
+    mode: z.literal('toast'),
     severity: z.enum(['info', 'warning', 'error']),
   }),
   'folder.list': paginatedResultSchema(managedFolderSummarySchema),
@@ -1478,7 +1480,7 @@ export const automationCommandRegistry = [
   }),
   readDescriptor({
     commandId: 'ui.notify',
-    summary: '向桌面用户显示 info/warning/error 提示条，或阻塞确认弹窗（冷静文案，不含绝对路径）。',
+    summary: '向桌面用户显示非阻塞 info/warning/error 提示条（冷静文案，不含绝对路径）。',
     inputSchema: automationCommandInputSchemas['ui.notify'],
     resultSchema: automationCommandResultSchemas['ui.notify'],
     workerResultSchema: z.never(),

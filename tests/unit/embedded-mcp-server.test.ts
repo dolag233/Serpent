@@ -13,7 +13,7 @@ import {
   createJsonFileAutomationExecutionStore,
   type AutomationExecutionAuditLogger,
 } from '../../src/main/automation-execution-journal';
-import { EmbeddedMcpServer } from '../../src/main/embedded-mcp-server';
+import { EmbeddedMcpServer, type EmbeddedMcpWorkerClient } from '../../src/main/embedded-mcp-server';
 import { McpClientCredentialStore } from '../../src/main/mcp-client-credentials';
 import { McpSettingsStore } from '../../src/main/mcp-settings-store';
 
@@ -92,6 +92,7 @@ function createGateway(): AutomationCommandGateway {
 async function createServerHarness(options: {
   initializeTimeoutMs?: number;
   sessionIdleTimeoutMs?: number;
+  gateway?: AutomationCommandGateway;
 } = {}) {
   const userDataPath = mkdtempSync(path.join(tmpdir(), 'serpent-mcp-http-'));
   roots.push(userDataPath);
@@ -102,7 +103,7 @@ async function createServerHarness(options: {
     store: createJsonFileAutomationExecutionStore(path.join(userDataPath, 'executions.json')),
     logger,
   });
-  const workerClient = {
+  const workerClient: EmbeddedMcpWorkerClient = {
     request: vi.fn(async () => ({ ok: true as const, type: 'library.list' as const, libraries: [] })),
     onLibraryChanged: vi.fn(() => () => undefined),
   };
@@ -111,7 +112,7 @@ async function createServerHarness(options: {
     settingsStore: settings,
     credentialStore: new McpClientCredentialStore(userDataPath),
     journal,
-    gateway: createGateway(),
+    gateway: options.gateway ?? createGateway(),
     workerClient,
     logger,
     getPluginTools: () => undefined,
@@ -128,6 +129,7 @@ async function createServerHarness(options: {
     endpoint: clientConfig.url,
     token: clientConfig.headers.Authorization.replace(/^Bearer /u, ''),
     journal,
+    workerClient,
   };
 }
 
@@ -169,6 +171,65 @@ describe('Embedded MCP Streamable HTTP server', () => {
       { onprogress: progress },
     );
     expect(progress).toHaveBeenCalled();
+    await client.close();
+    await harness.server.close();
+  });
+
+  it('terminates the session execution when the client disconnects', async () => {
+    // Serpent review regression: closeSession used to call
+    // journal.endSession(executionId) although it matches on sessionId, so
+    // every session's execution leaked as permanently 'running'.
+    const harness = await createServerHarness();
+    const client = new Client({ name: 'http-sdk-test', version: '1.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(harness.endpoint), {
+      requestInit: { headers: { Authorization: `Bearer ${harness.token}` } },
+    });
+    await client.connect(transport);
+    expect(harness.journal.list()).toHaveLength(1);
+    expect(harness.journal.list()[0]!.status).toBe('running');
+    await client.close();
+    await vi.waitFor(() => {
+      const records = harness.journal.list();
+      expect(records).toHaveLength(1);
+      expect(records[0]!.status).toBe('cancelled');
+      expect(records[0]!.failureCode).toBe('AUTOMATION_SESSION_ENDED');
+    });
+    await harness.server.close();
+  });
+
+  it('echoes the last known library change sequence on library-scoped responses', async () => {
+    const targetLibraryId = '00000000-0000-4000-8000-000000000001';
+    const gateway: AutomationCommandGateway = {
+      execute: vi.fn(async (envelope: unknown) => ({
+        ok: true as const,
+        apiVersion: 1 as const,
+        commandId: (envelope as { commandId: 'library.list-open' }).commandId,
+        executionId: (envelope as { executionId: string }).executionId,
+        result: {
+          libraries: [{ libraryId: targetLibraryId, displayName: 'Selected', active: false }],
+          activeLibraryId: null,
+          contextRevision: 0,
+        },
+      })),
+    };
+    const harness = await createServerHarness({ gateway });
+    const libraryChangedListener = vi.mocked(harness.workerClient.onLibraryChanged).mock.calls[0]?.[0];
+    expect(libraryChangedListener).toBeDefined();
+    libraryChangedListener!({ libraryId: targetLibraryId, changeSequence: 42 });
+    const client = new Client({ name: 'http-sdk-test', version: '1.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(harness.endpoint), {
+      requestInit: { headers: { Authorization: `Bearer ${harness.token}` } },
+    });
+    await client.connect(transport);
+    const response = await client.callTool({
+      name: 'serpent_library_inspect',
+      arguments: { libraryId: targetLibraryId },
+    });
+    expect(response.structuredContent).toMatchObject({
+      ok: true,
+      libraryId: targetLibraryId,
+      libraryChangeSequence: 42,
+    });
     await client.close();
     await harness.server.close();
   });

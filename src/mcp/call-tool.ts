@@ -30,6 +30,8 @@ export type SerpentMcpCallToolSuccess = {
   plugin?: { pluginId: string; commandId: string };
   result: unknown;
   libraryId?: string;
+  /** ADR-0031 §2: the last known library change sequence echoed on responses. */
+  libraryChangeSequence?: number;
   undoGroupId?: string;
 };
 
@@ -46,6 +48,10 @@ export type SerpentMcpCallToolFailure = {
     | PublicErrorCode
     | 'MCP_GATEWAY_FAILURE';
   message: string;
+  /** Serpent review: structured error contract (§10) — retryable + version. */
+  retryable?: boolean;
+  currentVersion?: number;
+  libraryId?: string;
   gateway?: AutomationGatewayResult;
 };
 
@@ -71,8 +77,16 @@ export type SerpentMcpCallToolInput = {
   exposure: SerpentMcpToolExposure;
   gateway: AutomationCommandGateway;
   pluginTools?: SerpentMcpPluginToolBridge;
+  /** ADR-0031 §2: last known library change sequence for the response echo. */
+  getLibraryChangeSequence?: (libraryId: string) => number | undefined;
   signal?: AbortSignal;
 };
+
+/** Transient gateway codes a client may reasonably retry unchanged (§10). */
+const RETRYABLE_GATEWAY_CODES = new Set([
+  'LIBRARY_BUSY',
+  'AUTOMATION_LIBRARY_CONTEXT_BUSY',
+]);
 
 function contextWithRequestSignal(
   context: AutomationExecutionContext | undefined,
@@ -212,23 +226,35 @@ export async function callSerpentMcpTool(
         result: gatewayResult.challenge,
       };
     }
-    const gatewayError = (gatewayResult as { error: { code: string; message?: string } }).error;
+    const gatewayError = (gatewayResult as { error: { code: string; message?: string; currentEntityVersion?: number } }).error;
     return {
       ok: false,
       code: gatewayError.code as SerpentMcpCallToolFailure['code'],
       message: gatewayError.message ?? gatewayError.code,
+      // Serpent review: structured error contract (§10) — transient codes are
+      // flagged retryable, entity-version conflicts carry the current version.
+      ...(RETRYABLE_GATEWAY_CODES.has(gatewayError.code) ? { retryable: true } : {}),
+      ...(gatewayError.currentEntityVersion === undefined
+        ? {}
+        : { currentVersion: gatewayError.currentEntityVersion }),
+      ...(explicitLibraryId === undefined ? {} : { libraryId: explicitLibraryId }),
       gateway: gatewayResult,
     };
   }
   if (!outputWithinBudget(gatewayResult.result, outputLimitFor({ ...input, context }))) {
     return { ok: false, code: 'AUTOMATION_OUTPUT_LIMIT_EXCEEDED', message: 'The MCP result exceeds the execution output budget.' };
   }
+  const libraryChangeSequence = explicitLibraryId === undefined
+    || input.getLibraryChangeSequence === undefined
+    ? undefined
+    : input.getLibraryChangeSequence(explicitLibraryId);
   return {
     ok: true,
     toolName: tool.name,
     commandId: tool.commandId,
     result: gatewayResult.result,
     ...(explicitLibraryId === undefined ? {} : { libraryId: explicitLibraryId }),
+    ...(libraryChangeSequence === undefined ? {} : { libraryChangeSequence }),
     ...(gatewayResult.undoGroupId === undefined ? {} : { undoGroupId: gatewayResult.undoGroupId }),
   };
 }

@@ -66,7 +66,7 @@ Windows 路径必须按 Windows 语义传递：盘符、反斜杠、UNC、长路
 
 ## Desktop 信息投影
 
-Desktop 是 Agent 工作的非阻塞投影。需要向用户解释阶段、目标或进度时，Agent 可以调用 `serpent_ui_notify`；它只显示 info/progress/success/warning，不承担批准。
+Desktop 是 Agent 工作的非阻塞投影。需要向用户解释阶段、目标或进度时，Agent 可以调用 `serpent_ui_notify`；它只显示非阻塞 info/progress/success/warning toast（不接受 `dialog` 模式），不承担批准，也不阻塞 Agent 调用。
 
 资源库变化通过标准 logging notification：
 
