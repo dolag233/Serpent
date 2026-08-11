@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -105,6 +106,47 @@ export function LibrarySwitcher({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  // Serpent-s0oq: the native title tooltip waits ~2s — the path hint must
+  // appear within ~1s, so a custom floating tooltip (800ms delay) replaces it
+  // on the recent rows. Position is fixed viewport coordinates from the row
+  // rect; cleared on leave/blur and whenever the menu closes.
+  const [pathTooltip, setPathTooltip] = useState<{
+    path: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const pathTooltipTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  function cancelPathTooltip() {
+    if (pathTooltipTimer.current !== undefined) {
+      clearTimeout(pathTooltipTimer.current);
+      pathTooltipTimer.current = undefined;
+    }
+    setPathTooltip(null);
+  }
+
+  function schedulePathTooltip(path: string, element: HTMLElement) {
+    cancelPathTooltip();
+    pathTooltipTimer.current = setTimeout(() => {
+      pathTooltipTimer.current = undefined;
+      const rect = element.getBoundingClientRect();
+      setPathTooltip({ path, x: rect.right + 8, y: rect.top });
+    }, 800);
+  }
+  // Names that appear more than once in the recent list: only those rows show
+  // the inline path line; every row still reveals its full path on hover.
+  const duplicateRecentNames = useMemo(
+    () => {
+      const counts = new Map<string, number>();
+      for (const entry of recentLibraries) {
+        counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
+      }
+      return new Set(
+        [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
+      );
+    },
+    [recentLibraries],
+  );
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
   const transferCopy = importMenuCopy ?? resolveImportMenuCopy("folder");
@@ -127,6 +169,7 @@ export function LibrarySwitcher({
   const showTransferSection = transferMenuItems.length > 0;
 
   function closeMenu(restoreTriggerFocus: boolean) {
+    cancelPathTooltip();
     setOpen(false);
     setKeyboardNav(false);
     if (restoreTriggerFocus) {
@@ -138,7 +181,11 @@ export function LibrarySwitcher({
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
-        closeMenu(false);
+        // Inlined closeMenu(false): the effect must not depend on the
+        // re-created per-render closeMenu identity.
+        cancelPathTooltip();
+        setOpen(false);
+        setKeyboardNav(false);
       }
     }
     document.addEventListener("pointerdown", onPointerDown);
@@ -329,19 +376,25 @@ export function LibrarySwitcher({
                         closeMenu(true);
                         onOpenRecent?.(entry.path);
                       }}
+                      onBlur={cancelPathTooltip}
+                      onFocus={(event) => schedulePathTooltip(entry.path, event.currentTarget)}
+                      onMouseEnter={(event) => schedulePathTooltip(entry.path, event.currentTarget)}
+                      onMouseLeave={cancelPathTooltip}
                       role="menuitem"
                       tabIndex={-1}
-                      title={entry.path}
                       type="button"
                     >
                       <span className="library-switcher-item-label">
                         {entry.name}
                       </span>
-                      {/* Serpent-s0oq: the full path is visible on the row so
-                          hovering/scanning distinguishes same-named libraries. */}
-                      <span className="library-switcher-recent-path">
-                        {entry.path}
-                      </span>
+                      {/* Serpent-s0oq: the inline path line only appears when
+                          another recent library shares the name; hover always
+                          reveals the full path via the floating tooltip. */}
+                      {duplicateRecentNames.has(entry.name) ? (
+                        <span className="library-switcher-recent-path">
+                          {entry.path}
+                        </span>
+                      ) : null}
                     </button>
                     {onForgetRecent != null && (
                       <button
@@ -367,6 +420,15 @@ export function LibrarySwitcher({
           )}
         />
       )}
+      {pathTooltip ? (
+        <div
+          className="library-switcher-path-tooltip"
+          role="tooltip"
+          style={{ left: pathTooltip.x, top: pathTooltip.y }}
+        >
+          {pathTooltip.path}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -66,8 +66,15 @@ export function CreateDialog({
   const showRecents =
     required && phase === "start" && recentLibraries.length > 0;
   // Serpent-s0oq: the create dialog shows at most five most-recent libraries;
-  // the list container scrolls when the store holds more (cap is 8).
+  // the list container scrolls when the store holds more (cap is 8). The
+  // inline path line appears only for names that repeat in the list; every
+  // row still reveals its full path through the native title on hover.
   const visibleRecents = showRecents ? recentLibraries.slice(0, 5) : [];
+  const duplicateRecentNames = new Set(
+    recentLibraries
+      .map((entry) => entry.name)
+      .filter((name, index, names) => names.indexOf(name) !== index),
+  );
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -186,9 +193,11 @@ export function CreateDialog({
                     <span className="create-dialog-recent-name">
                       {entry.name}
                     </span>
-                    <span className="create-dialog-recent-path">
-                      {entry.path}
-                    </span>
+                    {duplicateRecentNames.has(entry.name) ? (
+                      <span className="create-dialog-recent-path">
+                        {entry.path}
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               ))}
