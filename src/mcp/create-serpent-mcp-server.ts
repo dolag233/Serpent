@@ -7,6 +7,7 @@ import {
 import type { AutomationCommandGateway, AutomationExecutionContext } from '../automation/command-gateway';
 import { AUTOMATION_API_VERSION } from '../automation/command-registry';
 import { callSerpentMcpTool, type SerpentMcpPluginToolBridge } from './call-tool';
+import { shouldEmitCommandCompleted } from './command-completed-filter';
 import type { PluginMcpToolDefinition } from './plugin-tool-catalog';
 import { listSerpentMcpTools, mcpExposureAllowsWrite, type SerpentMcpToolExposure } from './tool-catalog';
 
@@ -27,12 +28,15 @@ export type SerpentMcpServerOptions = {
   gateway: AutomationCommandGateway;
   serverName?: string;
   serverVersion?: string;
-  /** Desktop feedback for MCP tool results (progress/success/failure toasts). */
+  /**
+   * Desktop feedback for MCP tool results (Serpent-fmbr): fired only when a
+   * non-read command actually executed (two-phase challenge reports excluded),
+   * with the structured result so the renderer can show the same toast as the
+   * manual operation. Read-only and failed calls deliberately emit nothing.
+   */
   onCommandCompleted?: (input: {
-    clientName?: string;
-    toolName: string;
-    commandId?: string;
-    ok: boolean;
+    commandId: string;
+    result: unknown;
   }) => void;
 };
 
@@ -130,12 +134,13 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       signal: extra.signal,
     });
     await reportProgress?.(1, 1, result.ok ? 'Serpent completed the tool.' : 'Serpent rejected the tool call.');
-    options.onCommandCompleted?.({
-      clientName: backend.getExecutionContext()?.clientName,
-      toolName: request.params.name,
-      ...(result.ok && result.commandId !== undefined ? { commandId: result.commandId } : {}),
-      ok: result.ok,
-    });
+    if (result.ok && result.commandId !== undefined && result.plugin === undefined) {
+      // Serpent-fmbr: only executed non-read commands surface on the desktop;
+      // read calls and phase-1 challenge reports (nothing executed yet) stay quiet.
+      if (shouldEmitCommandCompleted(result.commandId, result.result)) {
+        options.onCommandCompleted?.({ commandId: result.commandId, result: result.result });
+      }
+    }
     if (!result.ok) {
       return {
         ...toolResultText({ ok: false, code: result.code, message: result.message, gateway: result.gateway }),

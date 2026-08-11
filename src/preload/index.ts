@@ -36,6 +36,7 @@ import {
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_NOTIFY_CHANNEL,
+  COMMAND_COMPLETED_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   INVERT_SELECTION_CHANNEL,
@@ -108,6 +109,10 @@ import {
   type ShellSwipeDirection,
 } from '../shared/external-url';
 import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
+import {
+  commandCompletedPayloadSchema,
+  type CommandCompletedPayload,
+} from '../shared/command-completed';
 import {
   appLogAutomationCorrelationIdSchema,
   parseAppLogEntry,
@@ -2021,6 +2026,17 @@ const shell: SerpentShellApi = Object.freeze({
     ipcRenderer.on(SHELL_NOTIFY_CHANNEL, handler);
     return () => {
       ipcRenderer.removeListener(SHELL_NOTIFY_CHANNEL, handler);
+    };
+  },
+  onCommandCompleted(listener: (payload: CommandCompletedPayload) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, input: unknown) => {
+      const parsed = commandCompletedPayloadSchema.safeParse(input);
+      if (!parsed.success) return;
+      listener(parsed.data);
+    };
+    ipcRenderer.on(COMMAND_COMPLETED_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(COMMAND_COMPLETED_CHANNEL, handler);
     };
   },
   onCopySelection(listener: () => void): () => void {

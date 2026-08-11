@@ -62,7 +62,7 @@ Windows 路径必须按 Windows 语义传递：盘符、反斜杠、UNC、长路
 
 权限档不能由 MCP 参数、环境变量或配置文件覆盖。撤销 credential 或停止服务会立即阻断后续调用。
 
-危险工具（当前为 `serpent_asset_delete_permanent`）在**只读/读写**档下采用 Agent 二阶段确认：第一次调用绝不执行，只返回绑定本次精确调用的风险报告（challengeId、影响对象、数量、可恢复性、过期时间）；Agent 评估后以**同一工具**再次调用并回传 `challengeId`、`planHash` 和 `acknowledged: true`，只有完全匹配且未过期、未消费过的 challenge 才会执行，且只执行一次。篡改参数、跨客户端复用、重放、状态变化都会拒绝并签发新风险报告。**完全**档直接执行（用户在启用时已确认责任），但仍不能跳过领域边界和 Worker 校验。
+危险工具（当前为 `serpent_asset_delete_permanent`）：**只读**档下与普通写入同等对待——桌面弹出确认框，由用户当场决定允许或拒绝，Agent 无法自行确认；**读写**档下采用 Agent 二阶段确认：第一次调用绝不执行，只返回绑定本次精确调用的风险报告（challengeId、影响对象、数量、可恢复性、过期时间）；Agent 评估后以**同一工具**再次调用并回传 `challengeId`、`planHash` 和 `acknowledged: true`，只有完全匹配且未过期、未消费过的 challenge 才会执行，且只执行一次。篡改参数、跨客户端复用、重放、状态变化都会拒绝并签发新风险报告。**完全**档直接执行（用户在启用时已确认责任），但仍不能跳过领域边界和 Worker 校验。
 
 ## Desktop 信息投影
 

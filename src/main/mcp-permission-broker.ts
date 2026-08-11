@@ -75,24 +75,12 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
     }
     const mode = this.#policyStore.getMode(credentialId);
 
-    // Dangerous operations: full-access runs them directly (the user accepted
-    // the responsibility); every other profile still needs the two-phase
-    // agent challenge.
-    if (descriptor.criticalOperation === true) {
-      if (mode === 'full-access') {
-        this.#audit?.info(
-          'mcp.permission.full-access-critical',
-          'Dangerous MCP operation executed under the full-access profile.',
-          { credentialId, commandId: descriptor.commandId },
-        );
-        return { allowed: true, scope: 'always-allow' };
-      }
-      return this.authorizeCritical(input);
-    }
-
-    // Serpent-8b5b.8 review: the read-only gate applies to EVERY write,
-    // including allow-policy writes (e.g. library.create) that have no
-    // askable capabilities and would otherwise short-circuit below.
+    // Serpent-8b5b.8 + sonnet review: the read-only gate applies to EVERY
+    // write — including dangerous critical operations that would otherwise
+    // fall through to the agent-confirmable two-phase challenge below and
+    // permanently delete assets with zero human participation. A read-only
+    // credential only ever writes when the desktop user approves the
+    // out-of-scope confirmation right here.
     if (mode === 'read-only' && descriptor.impact !== 'read') {
       const targetCount = this.deriveTargets(input.commandInput).length;
       if (this.#confirmOutOfScope !== undefined) {
@@ -118,6 +106,21 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
         { credentialId, commandId: descriptor.commandId, targetCount },
       );
       return { allowed: false, reason: 'denied' };
+    }
+
+    // Dangerous operations: full-access runs them directly (the user accepted
+    // the responsibility when enabling it); read-write still needs the
+    // two-phase agent challenge.
+    if (descriptor.criticalOperation === true) {
+      if (mode === 'full-access') {
+        this.#audit?.info(
+          'mcp.permission.full-access-critical',
+          'Dangerous MCP operation executed under the full-access profile.',
+          { credentialId, commandId: descriptor.commandId },
+        );
+        return { allowed: true, scope: 'always-allow' };
+      }
+      return this.authorizeCritical(input);
     }
 
     const requested = getAutomationCommandPermissionMetadata(descriptor).requestableCapabilities;

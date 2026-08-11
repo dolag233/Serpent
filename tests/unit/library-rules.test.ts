@@ -6,9 +6,11 @@ import {
   LibraryInputError,
   copyNameForIndex,
   normalizeAbsolutePath,
+  normalizeAssetFileBaseName,
   normalizeLibraryName,
   normalizeRelativeAssetPath,
   portablePathIdentity,
+  stripWindowsExtendedPathPrefix,
   targetLibraryPath,
 } from '../../src/worker/library-rules';
 
@@ -55,6 +57,24 @@ describe('library path rules', () => {
       expect(() => normalizeAbsolutePath(selectedPath)).toThrow(LibraryInputError);
     },
   );
+
+  it('rejects a library whose full target path exceeds 240 UTF-8 bytes (Windows long-path guard)', () => {
+    // 80 CJK code points pass the name gate but are 240 bytes alone; with the
+    // parent prefix the full path crosses the guard — on every platform.
+    const longName = '资'.repeat(80);
+    expect(() => targetLibraryPath(path.resolve('/tmp', 'p'), longName))
+      .toThrow(LibraryInputError);
+  });
+
+  it('strips the Windows extended-length path prefix for identity (pure guard)', () => {
+    expect(stripWindowsExtendedPathPrefix('\\\\?\\C:\\Library\\Concept Art')).toBe(
+      'C:\\Library\\Concept Art',
+    );
+    expect(stripWindowsExtendedPathPrefix('C:\\Library\\Concept Art')).toBe(
+      'C:\\Library\\Concept Art',
+    );
+    expect(stripWindowsExtendedPathPrefix('/plain/posix/path')).toBe('/plain/posix/path');
+  });
 });
 
 describe('managed asset path rules', () => {
@@ -71,6 +91,18 @@ describe('managed asset path rules', () => {
     },
   );
 
+  it.each([
+    'a<b.png',
+    'a>b.png',
+    'a:b.png',
+    'a?b.png',
+    'a*b.png',
+    'a|b.png',
+    'a"b.png',
+  ])('rejects NTFS-illegal characters in relative asset paths %j', (relativePath) => {
+    expect(() => normalizeRelativeAssetPath(relativePath)).toThrow(LibraryInputError);
+  });
+
   it('adds a deterministic copy suffix before the final extension', () => {
     expect(copyNameForIndex('button.png', 2)).toBe('button (2).png');
     expect(copyNameForIndex('archive.tar.gz', 3)).toBe('archive.tar (3).gz');
@@ -85,5 +117,45 @@ describe('managed asset path rules', () => {
     expect(portablePathIdentity('Straße/ς.txt')).toBe(
       portablePathIdentity('STRASSE/Σ.TXT'),
     );
+  });
+});
+
+describe('asset file base-name gate (Windows portability)', () => {
+  it.each([
+    'con',
+    'con.txt',
+    'COM9',
+    'LPT1.backup',
+    'nul',
+    'a<b',
+    'a>b',
+    'a:b',
+    'a?b',
+    'a*b',
+    'a|b',
+    'a"b',
+    'tab\tname',
+    'newline\nname',
+  ])('rejects the Windows-unsafe base name %j', (baseName) => {
+    expect(() => normalizeAssetFileBaseName(baseName)).toThrow(LibraryInputError);
+  });
+
+  it('rejects a base name over 255 UTF-8 bytes', () => {
+    // 86 × 3 bytes = 258 bytes > 255 — rejected.
+    expect(() => normalizeAssetFileBaseName('资'.repeat(86))).toThrow(LibraryInputError);
+  });
+
+  it('accepts a portable Unicode base name at the byte limit', () => {
+    // 85 × 3 bytes = 255 bytes — the gate is strict (`> 255`), so it passes;
+    // the extension is caller-owned.
+    expect(normalizeAssetFileBaseName('资'.repeat(85))).toBe('资'.repeat(85));
+    expect(normalizeAssetFileBaseName('资'.repeat(84))).toBe('资'.repeat(84));
+  });
+
+  it('rejects separator, relative and trailing-dot spellings', () => {
+    expect(() => normalizeAssetFileBaseName('a/b')).toThrow(LibraryInputError);
+    expect(() => normalizeAssetFileBaseName('a\\b')).toThrow(LibraryInputError);
+    expect(() => normalizeAssetFileBaseName('..')).toThrow(LibraryInputError);
+    expect(() => normalizeAssetFileBaseName('trailing.')).toThrow(LibraryInputError);
   });
 });

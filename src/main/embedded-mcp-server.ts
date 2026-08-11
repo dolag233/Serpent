@@ -75,10 +75,8 @@ export interface EmbeddedMcpServerOptions {
   sessionIdleTimeoutMs?: number;
   onSnapshotChanged?: (snapshot: McpSettingsSnapshot) => void;
   onCommandCompleted?: (input: {
-    clientName?: string;
-    toolName: string;
-    commandId?: string;
-    ok: boolean;
+    commandId: string;
+    result: unknown;
   }) => void;
 }
 

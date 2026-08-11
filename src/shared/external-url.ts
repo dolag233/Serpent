@@ -12,6 +12,7 @@ import type {
   PluginInputCaptureRendererSession,
 } from './plugin-input-capture-renderer';
 import type { ShellNotifyPayload } from './shell-notify';
+import type { CommandCompletedPayload } from './command-completed';
 import type { ApplicationMenuCommand } from './application-menu';
 
 /**
@@ -141,6 +142,10 @@ export interface SerpentShellApi {
   onInvertSelection(listener: () => void): () => void;
   /** Main → Renderer: script/MCP/plugin toast or blocking dialog (`ui.notify`). */
   onShellNotify(listener: (payload: ShellNotifyPayload) => void): () => void;
+  /** Main → Renderer: a successful automation (MCP) write command finished
+   * (Serpent-fmbr). The renderer shows the same toast as the manual
+   * operation — not a separate MCP notification. */
+  onCommandCompleted(listener: (payload: CommandCompletedPayload) => void): () => void;
   /** macOS Edit 菜单「复制」（Serpent-166q）。有选中资产时复制文件到系统剪贴板；
    * 否则回退为原生文本复制。
    */

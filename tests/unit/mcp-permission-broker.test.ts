@@ -360,4 +360,39 @@ describe('MCP read-only profile and full-access dangerous bypass (permission pro
     });
     expect(authorization).toEqual({ allowed: true, scope: 'always-allow' });
   });
+
+  it('never lets a read-only credential confirm a dangerous operation by itself (desktop user must approve)', async () => {
+    // Sonnet review regression: the critical branch used to run before the
+    // read-only gate, so a read-only credential could delete assets forever
+    // through the agent-confirmable two-phase challenge with no human at all.
+    const store = policyStore();
+    store.setMode(credentialId, 'read-only');
+    const decisions: Array<{ commandId: string; targetCount: number }> = [];
+    const broker = createBroker({
+      policyStore: store,
+      confirmOutOfScope: async (input) => {
+        decisions.push({ commandId: input.commandId, targetCount: input.targetCount });
+        return true;
+      },
+    });
+    const authorization = await broker.authorize({
+      context: context({ clientCredentialId: credentialId, libraryId: 'library-1', contextRevision: 3 }),
+      descriptor: descriptor('asset.delete-permanent'),
+      commandInput: { libraryId: 'library-1', assetIds: ['asset-1', 'asset-2'] },
+    });
+    expect(authorization).toEqual({ allowed: true, scope: 'already-granted' });
+    expect(decisions).toEqual([{ commandId: 'asset.delete-permanent', targetCount: 2 }]);
+  });
+
+  it('denies a read-only dangerous operation when no confirmation handler exists', async () => {
+    const store = policyStore();
+    store.setMode(credentialId, 'read-only');
+    const broker = createBroker({ policyStore: store });
+    const authorization = await broker.authorize({
+      context: context({ clientCredentialId: credentialId, libraryId: 'library-1', contextRevision: 3 }),
+      descriptor: descriptor('asset.delete-permanent'),
+      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'] },
+    });
+    expect(authorization).toEqual({ allowed: false, reason: 'denied' });
+  });
 });

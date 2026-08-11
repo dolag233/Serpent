@@ -237,6 +237,7 @@ import {
   resolveDraggedFolderIds,
 } from "./folder-drag-drop";
 import { importSummaryMessage } from "./import-summary";
+import { automationCommandToast } from "./automation-command-toast";
 import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
 import { useAssetRename } from "./useAssetRename";
 import { useInlineFolderEdit } from "./use-inline-folder-edit";
@@ -2075,6 +2076,16 @@ function AppInner() {
       else setNotice(payload.message);
     });
   }, [shellApi, setError, setWarning, setNotice, showBlockingError, t]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onCommandCompleted((payload) => {
+      // Serpent-fmbr: MCP operations show the same toasts as manual ones —
+      // composed here from the structured result, never MCP-specific wording.
+      const toast = automationCommandToast(payload, locale);
+      if (toast !== undefined) setNotice(toast.message);
+    });
+  }, [shellApi, locale, setNotice]);
 
   // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
   // browse parent is a managed folder or the managed root; cleared for

@@ -88,6 +88,15 @@ export function normalizeAssetFileBaseName(input: string): string {
   return baseName;
 }
 
+/**
+ * Strip the Windows '\\?\' extended-length spelling from a normalized path
+ * ('\\?\C:\...' → 'C:\...'). Pure string logic so the guard is testable on
+ * any platform; the caller keeps the win32 gate.
+ */
+export function stripWindowsExtendedPathPrefix(normalized: string): string {
+  return /^\\\\?\\/u.test(normalized) ? normalized.slice(4) : normalized;
+}
+
 export function normalizeAbsolutePath(input: string): string {
   if (input.includes('\0') || input.trim() !== input || !path.isAbsolute(input)) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid library path.');
@@ -98,8 +107,8 @@ export function normalizeAbsolutePath(input: string): string {
   // for the same location and bypass root/identity checks; strip the prefix
   // for identity and reject overly long library parents (paths beyond ~260
   // chars fail later with ENOENT on Windows).
-  if (process.platform === 'win32' && /^\\\\?\\/u.test(normalized)) {
-    return normalized.slice(4);
+  if (process.platform === 'win32') {
+    return stripWindowsExtendedPathPrefix(normalized);
   }
   return normalized;
 }

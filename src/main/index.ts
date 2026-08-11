@@ -82,6 +82,7 @@ import {
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_NOTIFY_CHANNEL,
+  COMMAND_COMPLETED_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
@@ -4539,7 +4540,9 @@ async function startApplication(): Promise<void> {
           ? `Credential ${input.credentialId.slice(0, 8)} is read-only. This operation affects ${input.targetCount} target(s).`
           : `凭据 ${input.credentialId.slice(0, 8)} 是只读权限。此操作涉及 ${input.targetCount} 个目标。`,
         cancelLabel: english ? 'Deny' : '拒绝',
-        confirmLabel: english ? 'Allow once' : '允许一次',
+        // Serpent review: the stateless model has no allow-once grants — this
+        // approves exactly this one call, so the label must not promise one.
+        confirmLabel: english ? 'Allow write' : '允许写入',
       });
     },
   });
@@ -5276,21 +5279,12 @@ async function startApplication(): Promise<void> {
     getPluginTools: () => pluginMcpToolProvider,
     permissionPolicyStore: mcpPermissionPolicyStore,
     permissionBroker: mcpPermissionBroker,
-    // Serpent feedback: MCP operations must be visible on the desktop —
-    // show a non-blocking toast per completed tool call (the grid refresh
-    // itself flows through the existing asset-changed events).
-    onCommandCompleted: ({ clientName, commandId, ok }) => {
+    // Serpent-fmbr: MCP operations speak through the SAME human-facing toasts
+    // as manual operations — the renderer composes them from the structured
+    // result. No separate "MCP client completed X" notification system.
+    onCommandCompleted: ({ commandId, result }) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      const english = appLocale === 'en';
-      const actor = clientName?.trim() || (english ? 'MCP client' : 'MCP 客户端');
-      const operation = commandId === undefined ? (english ? 'operation' : '操作') : commandId;
-      mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
-        severity: ok ? 'info' : 'warning',
-        mode: 'toast',
-        message: ok
-          ? english ? `${actor} completed ${operation}.` : `${actor} 完成了 ${operation}。`
-          : english ? `${actor} failed ${operation}.` : `${actor} 的 ${operation} 失败。`,
-      });
+      mainWindow.webContents.send(COMMAND_COMPLETED_CHANNEL, { commandId, result });
     },
   });
   embeddedMcpServer.onSnapshot((snapshot) => {

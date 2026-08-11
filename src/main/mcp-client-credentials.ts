@@ -38,6 +38,16 @@ export type IssuedMcpClientCredential = {
 
 export type McpCredentialAuthenticationState = 'valid' | 'unknown' | 'revoked';
 
+/**
+ * Pure command shape for the pepper-file ACL: replace inheritance and grant
+ * full control to the current user only. Kept as a pure builder so the
+ * Windows hardening intent is unit-testable on every platform; the win32
+ * spawnSync site stays platform-gated (verified on the Windows runner).
+ */
+export function buildPepperFileAclArgs(filename: string, user: string): string[] {
+  return [filename, '/inheritance:r', '/grant:r', `${user}:F`];
+}
+
 function hashToken(token: string, pepper: Buffer): string {
   return createHash('sha256').update(pepper).update(token, 'utf8').digest('hex');
 }
@@ -70,12 +80,10 @@ function readOrCreatePepper(filename: string): Buffer {
   // the current user, otherwise it inherits the userData directory ACL.
   if (process.platform === 'win32') {
     try {
-      spawnSync('icacls', [
+      spawnSync('icacls', buildPepperFileAclArgs(
         filename,
-        '/inheritance:r',
-        '/grant:r',
-        `${process.env.USERNAME ?? process.env.USER ?? 'Users'}:F`,
-      ], { stdio: 'ignore', windowsHide: true });
+        process.env.USERNAME ?? process.env.USER ?? 'Users',
+      ), { stdio: 'ignore', windowsHide: true });
     } catch {
       // Best effort — the pepper file still inherits userData protection.
     }

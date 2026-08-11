@@ -25,6 +25,8 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 
 `src/automation/command-registry.ts` 是 MCP 工具和输入/输出 Schema 的单一来源。`src/mcp/tool-catalog.ts` 为核心工具生成静态目录，`src/mcp/call-tool.ts` 对库级调用提取并校验显式 `libraryId`，再通过 Gateway 的 `contextOverrides` 做单次目标绑定。
 
+过渡约束：插件 MCP 工具当前只在 `full-access` 档暴露（`tool-catalog.ts` 的 exposure 判断）；read-write/read-only 客户端拿不到插件工具列表。与 ADR-0025“插件与脚本/MCP 同一 Action 面”的完全对齐留待插件权限投影设计。
+
 全局命令（列库、建库、查看 Job）不要求 `libraryId`。库级命令（资产、文件夹、标签、合集、导入、AI 和任务）要求 `libraryId`。不要从 Desktop 当前库或 HTTP session 填充缺省目标。
 
 路径输入必须在 MCP Schema 中声明并直接传给 Main：
@@ -44,7 +46,7 @@ MCP 路径请求绝不调用 Electron 原生文件选择器。Windows 需要独�
 
 Permission Broker 只读取 credential 权限档，不保存 transport session grant。只读档的写入请求由桌面确认框决定（调用方等待用户决定）；读写档的普通操作不弹窗；完全档一切直接执行。普通计划型文件操作仍执行 Worker 的只读计划、状态 token、change sequence 和幂等校验。
 
-危险命令（如永久删除）在只读/读写档下使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行。完全档直接执行（启用时用户已确认责任），但不能跳过领域校验。
+危险命令（如永久删除）在只读档下与普通写入同等对待——必须由桌面用户当场确认或拒绝，Agent 无法自行确认（sonnet 审查回归：read-only 不得存在任何绕过桌面确认的危险执行路径）。读写档下使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行。完全档直接执行（启用时用户已确认责任），但不能跳过领域校验。
 
 ## Desktop 通知
 
