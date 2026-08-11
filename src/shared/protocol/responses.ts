@@ -552,6 +552,11 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('folder.empty-deleted'),
+    deletedFolderIds: z.array(nonBlankString),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('linked-folder.removed'),
     folderId: nonBlankString,
     removedAssetCount: z.number().int().nonnegative(),
@@ -802,6 +807,11 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.metadata.updated'),
     metadata: assetMetadataResultSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.metadata.updated-many'),
+    metadata: z.array(assetMetadataResultSchema).min(1),
   }),
   z.strictObject({
     ok: z.literal(true),

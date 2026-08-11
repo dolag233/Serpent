@@ -140,7 +140,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(46);
+    expect(automationCommandRegistry).toHaveLength(81);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -148,18 +148,22 @@ describe('Automation Command Registry', () => {
       expect(registryIds).toContain(commandId);
     }
     const descriptor = (commandId: string) => automationCommandRegistry.find((command) => command.commandId === commandId)!;
+    // Serpent-10lo: folder/collection parent ids are strict UUIDs — non-UUID
+    // values are rejected by the schema (this is the intended contract).
+    const PARENT_FOLDER_ID = '00000000-0000-4000-8000-0000000000f1';
+    const PARENT_COLLECTION_ID = '00000000-0000-4000-8000-0000000000c1';
     expect(descriptor('folder.create').toWorkerCommand('library-1', descriptor('folder.create').inputSchema.parse({
       name: 'Child',
-      parentFolderId: 'parent-folder',
-    }) as never)).toMatchObject({ type: 'folder.create', parentFolderId: 'parent-folder' });
+      parentFolderId: PARENT_FOLDER_ID,
+    }) as never)).toMatchObject({ type: 'folder.create', parentFolderId: PARENT_FOLDER_ID });
     expect(descriptor('collection.create').toWorkerCommand('library-1', descriptor('collection.create').inputSchema.parse({
       name: 'Child',
-      parentId: 'parent-collection',
-    }) as never)).toMatchObject({ type: 'collection.create', parentId: 'parent-collection' });
+      parentId: PARENT_COLLECTION_ID,
+    }) as never)).toMatchObject({ type: 'collection.create', parentId: PARENT_COLLECTION_ID });
     expect(descriptor('collection.update').toWorkerCommand('library-1', descriptor('collection.update').inputSchema.parse({
       collectionId: 'child-collection',
-      parentId: 'parent-collection',
-    }) as never)).toMatchObject({ type: 'collection.update', parentId: 'parent-collection' });
+      parentId: PARENT_COLLECTION_ID,
+    }) as never)).toMatchObject({ type: 'collection.update', parentId: PARENT_COLLECTION_ID });
     for (const command of automationCommandRegistry) {
       expect(command.apiVersion).toBe(1);
       if (command.commandId === 'asset.rating.set'
@@ -206,6 +210,17 @@ describe('Automation Command Registry', () => {
         expect(command.impact).toBe('destructive');
         expect(command.approvalPolicy).toBe('none');
         expect(command.mcp.public).toBe(false);
+      } else if ([
+        'library.close', 'library.rename', 'library.delete-from-disk', 'library.export', 'library.import-folder', 'library.import-zip',
+        'folder.rename', 'folder.move', 'folder.delete-empty',
+        'linked-folder.create', 'linked-folder.relink', 'linked-folder.remove', 'linked-folder.rules.set', 'linked-folder.refresh',
+        'asset.copy', 'asset.preview.get', 'asset.refresh', 'asset.metadata.set-many',
+        'tag.rename', 'tag.delete', 'tag.delete-many', 'tag.merge',
+        'collection.update', 'collection.reorder', 'collection.delete', 'collection.assets.reorder',
+        'smart-collection.create', 'smart-collection.update', 'smart-collection.delete',
+      ].includes(command.commandId)) {
+        expect(command.impact).not.toBe('read');
+        expect(command.approvalPolicy).toBe(command.commandId === 'library.delete-from-disk' ? 'none' : 'execution');
       } else {
         expect(command.impact).toBe('read');
         expect(command.approvalPolicy).toBe('none');
@@ -241,7 +256,7 @@ describe('Automation Command Registry', () => {
       if (command.commandId === 'library.create' || command.commandId === 'file.import') {
         expect(command.supportsIdempotencyKey).toBe(true);
       }
-      if (!['execution.status', 'library.list-open', 'library.open', 'library.show-in-desktop', 'ui.notify'].includes(command.commandId)) {
+      if (!['execution.status', 'library.list-open', 'library.list-recent', 'library.open', 'library.show-in-desktop', 'ui.notify', 'library.delete-from-disk'].includes(command.commandId)) {
         expect(command.requiredCapabilities.length).toBeGreaterThan(0);
       }
       expect(command.mcp.toolName).toMatch(/^serpent_/u);
@@ -310,7 +325,8 @@ describe('Automation Command Registry', () => {
       expect(operation).toMatchObject({
         riskTier: 'critical',
         canPersist: false,
-        exposedToMcp: false,
+        exposedToMcp: operation.operation === 'library.delete-from-disk'
+          || operation.operation === 'asset.delete-permanent',
       });
     }
 
@@ -708,6 +724,57 @@ describe('Automation Command Gateway', () => {
     await expect(commandGateway.execute(envelope)).resolves.toMatchObject({ ok: true });
     expect(worker.commands).toHaveLength(1);
     expect(completed).toEqual([{ libraryId: 'library-1', importedAssetIds: ['asset-imported-1'], source: 'test' }]);
+  });
+
+  it('re-plans one stale MCP import instead of surfacing a transient VERSION_CONFLICT', async () => {
+    const worker: AutomationWorkerClient & { commands: WorkerCommand[] } = {
+      commands: [],
+      request: vi.fn(async (command: WorkerCommand): Promise<WorkerResult> => {
+        worker.commands.push(command);
+        if (worker.commands.length === 1) {
+          return { ok: false, error: createPublicError('VERSION_CONFLICT', undefined, 2) };
+        }
+        return {
+          ok: true,
+          type: 'asset.import.completed',
+          completion: {
+            importedCount: 1,
+            fileCount: 1,
+            assetCount: 1,
+            skippedCount: 0,
+            replacedCount: 0,
+            assets: [asset('asset-retried')],
+          },
+        };
+      }),
+    };
+    const plans = [0, 1].map((index) => ({
+      planHash: `${index}`.repeat(64),
+      expectedChangeSequence: index,
+      assetStates: [],
+      importPlan: {
+        planHash: `${index}`.repeat(64),
+        expectedChangeSequence: index,
+        sourceStates: [],
+      },
+    }));
+    let approvals = 0;
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      source: 'mcp',
+      clientCredentialId: '00000000-0000-4000-8000-000000000004',
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: { prepareAndApprove: async () => plans[approvals++]! },
+    });
+
+    await expect(commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/retry.png'],
+    }))).resolves.toMatchObject({ ok: true, result: { status: 'completed' } });
+    expect(approvals).toBe(2);
+    expect(worker.commands).toHaveLength(2);
+    expect(worker.commands[0]).toMatchObject({ type: 'asset.import.prepare', automationPlan: plans[0]!.importPlan });
+    expect(worker.commands[1]).toMatchObject({ type: 'asset.import.prepare', automationPlan: plans[1]!.importPlan });
   });
 
   it('rejects library-scoped commands before Worker dispatch when a headless execution is unbound', async () => {

@@ -7548,6 +7548,85 @@ export class LibraryService {
   }
 
   /**
+   * Delete only genuinely empty managed folders.  This intentionally does not
+   * recurse and does not enter the application trash: automation callers use
+   * it for cleanup after an import, so an asset row, child folder, or even an
+   * unmanaged file left on disk makes the whole request fail safely.
+   */
+  deleteEmptyManagedFolders(input: {
+    libraryId: string;
+    folderIds: string[];
+  }): { deletedFolderIds: string[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const folderIds = [...new Set(input.folderIds)];
+    if (folderIds.length === 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const rows = openLibrary.connection.prepare(
+      `SELECT folder_id, relative_path
+         FROM managed_folders
+        WHERE library_id = ?
+          AND folder_id IN (${folderIds.map(() => '?').join(',')})`,
+    ).all(input.libraryId, ...folderIds) as Array<{
+      folder_id: string;
+      relative_path: string;
+    }>;
+    if (rows.length !== folderIds.length) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+
+    const childCount = openLibrary.connection.prepare(
+      'SELECT COUNT(*) AS count FROM managed_folders WHERE parent_folder_id = ?',
+    );
+    const assetCount = openLibrary.connection.prepare(
+      `SELECT COUNT(*) AS count FROM assets
+         WHERE managed_folder_id = ? AND location_kind = 'managed'`,
+    );
+
+    // Validate every target before changing either the database or disk. This
+    // makes a batch cleanup all-or-nothing and prevents partial MCP cleanup.
+    for (const row of rows) {
+      const children = childCount.get(row.folder_id) as { count: number };
+      const assets = assetCount.get(row.folder_id) as { count: number };
+      const directoryPath = this.folderPath(openLibrary, row.relative_path);
+      if (children.count !== 0 || assets.count !== 0 || !realDirectoryExists(directoryPath)) {
+        throw new LibraryServiceError(
+          !realDirectoryExists(directoryPath) ? 'FOLDER_NOT_FOUND' : 'FOLDER_NOT_EMPTY',
+        );
+      }
+      try {
+        // rmdir, rather than recursive rm, is the final guard against files
+        // created by an external process between the database check and now.
+        rmdirSync(directoryPath);
+      } catch (error) {
+        if (isMissingPathError(error)) throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+        const code = typeof error === 'object' && error !== null && 'code' in error
+          ? (error as { code?: unknown }).code
+          : undefined;
+        if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+          throw new LibraryServiceError('FOLDER_NOT_EMPTY', { cause: error });
+        }
+        throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      }
+    }
+
+    try {
+      openLibrary.connection.transaction(() => {
+        const remove = openLibrary.connection.prepare(
+          'DELETE FROM managed_folders WHERE folder_id = ?',
+        );
+        for (const folderId of folderIds) {
+          if (remove.run(folderId).changes !== 1) {
+            throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          }
+        }
+      })();
+    } catch (error) {
+      // A database failure after rmdir leaves only empty directories absent;
+      // refresh can reconcile the index. Preserve the primary typed error.
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    return { deletedFolderIds: folderIds };
+  }
+
+  /**
    * Clarification #7: remove a linked folder root from the library index.
    * Source files on disk are never touched. Linked child paths use
    * trashLinkedFolderSubtree / deleteLinkedFolderSubtreeFromDisk instead.
@@ -10068,6 +10147,7 @@ export class LibraryService {
     libraryId: string;
     collectionId: string;
     name?: string;
+    parentId?: string | null;
     description?: string | null;
     coverAssetId?: string | null;
     position?: number;
@@ -10091,6 +10171,25 @@ export class LibraryService {
     const newName =
       input.name !== undefined ? input.name.trim() : existing.name;
     if (newName.length === 0) throw new LibraryServiceError('INVALID_FOLDER_NAME');
+    const newParentId = input.parentId !== undefined ? input.parentId : existing.parent_id;
+    if (newParentId !== null) {
+      const parent = openLibrary.connection
+        .prepare('SELECT parent_id FROM collections WHERE collection_id = ? AND library_id = ?')
+        .get(newParentId, openLibrary.summary.libraryId) as { parent_id: string | null } | undefined;
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      if (newParentId === input.collectionId) throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+      const visited = new Set<string>([input.collectionId]);
+      let ancestorId: string | null = newParentId;
+      while (ancestorId !== null) {
+        if (visited.has(ancestorId)) throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+        visited.add(ancestorId);
+        const ancestor = openLibrary.connection
+          .prepare('SELECT parent_id FROM collections WHERE collection_id = ? AND library_id = ?')
+          .get(ancestorId, openLibrary.summary.libraryId) as { parent_id: string | null } | undefined;
+        if (!ancestor) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        ancestorId = ancestor.parent_id;
+      }
+    }
     const newDescription =
       input.description !== undefined ? input.description : existing.description;
     const newCoverAssetId =
@@ -10101,10 +10200,11 @@ export class LibraryService {
     openLibrary.connection
       .prepare(
         `UPDATE collections
-            SET name = ?, description = ?, cover_asset_id = ?, position = ?, updated_at = ?
+            SET parent_id = ?, name = ?, description = ?, cover_asset_id = ?, position = ?, updated_at = ?
           WHERE collection_id = ?`,
       )
       .run(
+        newParentId,
         newName,
         newDescription,
         newCoverAssetId,
@@ -10122,7 +10222,7 @@ export class LibraryService {
 
     return {
       collectionId: input.collectionId,
-      parentId: existing.parent_id,
+      parentId: newParentId,
       name: newName,
       description: newDescription,
       coverAssetId: newCoverAssetId,
@@ -10963,6 +11063,37 @@ export class LibraryService {
       entityVersion: newEntityVersion,
       updatedAt: now,
     };
+  }
+
+  /**
+   * Apply optimistic-lock metadata updates as one bounded write. The whole
+   * batch is atomic: a stale entity version or invalid asset rolls back every
+   * item, so an agent never has to guess which subset was committed.
+   */
+  setAssetsMetadata(input: {
+    libraryId: string;
+    items: Array<{
+      assetId: string;
+      expectedVersion: number;
+      description?: string;
+      rating?: number;
+      favorite?: boolean;
+      palette?: string[];
+      sourcePageUrl?: string;
+      author?: string;
+    }>;
+  }): AssetMetadataResult[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.items.length === 0 || new Set(input.items.map((item) => item.assetId)).size !== input.items.length) {
+      throw new LibraryServiceError('INVALID_ASSET_METADATA');
+    }
+    // Keep the transaction boundary owned by runBoundedWrite. Calling the
+    // single-item implementation here reuses all validation and version
+    // conflict semantics without introducing a second mutation path.
+    return input.items.map((item) => this.setAssetMetadata({
+      libraryId: openLibrary.summary.libraryId,
+      ...item,
+    }));
   }
 
   backfillAssetMetadata(libraryId: string): { backfilledCount: number } {

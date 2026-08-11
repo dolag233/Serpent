@@ -229,11 +229,15 @@ export interface AutomationLibraryBindingHandler {
   }): void | Promise<{ contextRevision?: number } | void>;
   /** Used by existing script/worker integration until all callers migrate. */
   bindLibrary?(input: { executionId: string; libraryId: string }): void | Promise<void>;
+  onLibraryClosed?(input: { executionId: string; source: AutomationSource; libraryId: string }): void | Promise<void>;
+  onLibraryRenamed?(input: { executionId: string; source: AutomationSource; library: { libraryId: string; displayName: string; libraryPath: string } }): void | Promise<void>;
+  onLibraryDeleted?(input: { executionId: string; source: AutomationSource; libraryId: string; displayName: string; libraryPath: string }): void | Promise<void>;
+  onLibraryImported?(input: { executionId: string; source: AutomationSource; libraryId: string; displayName: string; libraryPath: string }): void | Promise<void>;
 }
 
 export interface AutomationLibraryContextHandler {
   execute(input: {
-    commandId: 'library.list-open' | 'library.open' | 'library.show-in-desktop';
+    commandId: 'library.list-open' | 'library.list-recent' | 'library.open' | 'library.show-in-desktop';
     executionId: string;
     context: AutomationExecutionContext;
     commandInput: unknown;
@@ -641,7 +645,7 @@ export function createAutomationCommandGateway(
             : 'AUTOMATION_LIBRARY_CONTEXT_REQUIRED',
         ));
       }
-      if ((commandId === 'library.list-open' || commandId === 'library.open' || commandId === 'library.show-in-desktop')
+      if ((commandId === 'library.list-open' || commandId === 'library.list-recent' || commandId === 'library.open' || commandId === 'library.show-in-desktop')
         && libraryContextHandler !== undefined) {
         try {
           const result = await libraryContextHandler.execute({
@@ -925,14 +929,54 @@ export function createAutomationCommandGateway(
       };
 
       let workerResult: WorkerResult;
-      try {
-        workerResult = await workerClient.request(
-          descriptor.toWorkerCommand(boundLibraryId ?? '', parsedInput.data, approvedPlan),
+      const requestWorker = async (plan: AutomationFileOperationPlanProof | undefined): Promise<WorkerResult> =>
+        workerClient.request(
+          descriptor.toWorkerCommand(boundLibraryId ?? '', parsedInput.data, plan),
           { signal: context.abortSignal, readonly: descriptor.impact === 'read' },
         );
+      try {
+        workerResult = await requestWorker(approvedPlan);
       } catch (error) {
         if (context.abortSignal?.aborted) return recordOutcomeAndReleaseSlot(cancellationFailure(context.abortSignal));
         return recordOutcomeAndReleaseSlot({ ok: false, error: toPublicError(error) });
+      }
+
+      // Thumbnail jobs and concurrent imports can advance the library
+      // sequence after planning but before apply. Re-plan at most once for the
+      // explicit stale-plan error; never retry an unknown or post-commit error.
+      if (descriptor.commandId === 'file.import'
+        && !workerResult.ok
+        && workerResult.error.code === 'VERSION_CONFLICT'
+        && filePlanApprovalHandler !== undefined) {
+        try {
+          approvedPlan = await filePlanApprovalHandler.prepareAndApprove({
+            commandId: descriptor.commandId,
+            executionId,
+            libraryId: boundLibraryId,
+            commandInput: parsedInput.data,
+            source: context.source,
+            ...(context.clientName === undefined ? {} : { clientName: context.clientName }),
+            ...(context.activeLibrary?.displayName === undefined ? {} : { libraryDisplayName: context.activeLibrary.displayName }),
+            ...(context.source === 'mcp' && permissionBroker !== undefined
+              ? {
+                requestApproval: async ({ summary }) => {
+                  const authorization = await permissionBroker.authorize({
+                    context,
+                    descriptor,
+                    commandInput: parsedInput.data,
+                    planSummary: summary,
+                    signal: context.abortSignal,
+                  });
+                  return authorization.allowed;
+                },
+              }
+              : {}),
+          });
+          if (approvedPlan !== undefined) workerResult = await requestWorker(approvedPlan);
+        } catch (error) {
+          auditLogger?.error('automation.file-plan.retry-failed', error, { executionId, commandId: descriptor.commandId });
+          return recordOutcomeAndReleaseSlot({ ok: false, error: toPublicError(error) });
+        }
       }
 
       if (context.abortSignal?.aborted) return recordOutcomeAndReleaseSlot(cancellationFailure(context.abortSignal));
@@ -1057,6 +1101,43 @@ export function createAutomationCommandGateway(
         } catch (error) {
           auditLogger?.error('automation.library-create.side-effects-failed', error, { executionId });
           return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('INTERNAL_ERROR') });
+        }
+      }
+
+      // Keep MCP lifecycle mutations observable in Desktop as well. These
+      // callbacks are Main-owned side effects only; failure to publish a UI
+      // event must not turn a committed Worker mutation into an error.
+      if (libraryBindingHandler !== undefined && workerResult.ok) {
+        try {
+          if (descriptor.commandId === 'library.close'
+            && workerResult.type === 'library.closed'
+            && libraryBindingHandler.onLibraryClosed !== undefined) {
+            await libraryBindingHandler.onLibraryClosed({
+              executionId, source: context.source, libraryId: workerResult.libraryId,
+            });
+          } else if (descriptor.commandId === 'library.rename'
+            && workerResult.type === 'library.renamed'
+            && libraryBindingHandler.onLibraryRenamed !== undefined) {
+            await libraryBindingHandler.onLibraryRenamed({ executionId, source: context.source, library: workerResult.library });
+          } else if (descriptor.commandId === 'library.delete-from-disk'
+            && workerResult.type === 'library.deleted'
+            && libraryBindingHandler.onLibraryDeleted !== undefined) {
+            await libraryBindingHandler.onLibraryDeleted({
+              executionId, source: context.source, libraryId: workerResult.libraryId,
+              displayName: workerResult.displayName, libraryPath: workerResult.libraryPath,
+            });
+          } else if ((descriptor.commandId === 'library.import-folder' || descriptor.commandId === 'library.import-zip')
+            && workerResult.type === 'library.imported'
+            && libraryBindingHandler.onLibraryImported !== undefined) {
+            await libraryBindingHandler.onLibraryImported({
+              executionId, source: context.source, libraryId: workerResult.libraryId,
+              displayName: workerResult.displayName, libraryPath: workerResult.libraryPath,
+            });
+          }
+        } catch (error) {
+          auditLogger?.error('automation.library-lifecycle.side-effects-failed', error, {
+            executionId, commandId: descriptor.commandId,
+          });
         }
       }
 

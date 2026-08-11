@@ -187,13 +187,29 @@ describe('Embedded MCP Streamable HTTP server', () => {
     await client.connect(transport);
     expect(harness.journal.list()).toHaveLength(1);
     expect(harness.journal.list()[0]!.status).toBe('running');
-    await client.close();
+    // Serpent review: the SDK transport's close() only aborts its streams —
+    // it does NOT send the protocol DELETE — so the server-side session
+    // teardown must be driven explicitly (this is what a well-behaved MCP
+    // client does on disconnect).
+    const sessionId = (transport as unknown as { _sessionId?: string })._sessionId;
+    expect(sessionId).toBeDefined();
+    const target = new URL(harness.endpoint);
+    const deleteResponse = await sendHttp(harness.endpoint, {
+      method: 'DELETE',
+      headers: {
+        Host: target.host,
+        Authorization: `Bearer ${harness.token}`,
+        'mcp-session-id': sessionId!,
+      },
+    });
+    expect(deleteResponse.statusCode).toBe(200);
     await vi.waitFor(() => {
       const records = harness.journal.list();
-      expect(records).toHaveLength(1);
+      expect(records, `journal after DELETE: ${JSON.stringify(records.map((r) => ({ status: r.status, failureCode: r.failureCode })))}`).toHaveLength(1);
       expect(records[0]!.status).toBe('cancelled');
       expect(records[0]!.failureCode).toBe('AUTOMATION_SESSION_ENDED');
     });
+    await client.close();
     await harness.server.close();
   });
 

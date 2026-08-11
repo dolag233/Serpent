@@ -773,6 +773,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         ...result,
       };
     }
+    case 'folder.delete-empty': {
+      const result = libraryService.deleteEmptyManagedFolders(request.command);
+      return { ok: true, type: 'folder.empty-deleted', ...result };
+    }
     case 'linked-folder.remove': {
       const result = libraryService.removeLinkedFolder(request.command);
       return {
@@ -1062,6 +1066,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.metadata.set':
       throw new Error('Bounded asset.metadata.set write was not dispatched through its transaction fence.');
+    case 'asset.metadata.set-many':
+      throw new Error('Bounded asset.metadata.set-many write was not dispatched through its transaction fence.');
     case 'asset.metadata.backfill': {
       const { backfilledCount } = libraryService.backfillAssetMetadata(request.command.libraryId);
       return { ok: true, type: 'asset.metadata.backfilled', backfilledCount };

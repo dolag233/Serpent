@@ -1,3 +1,4 @@
+import { createPublicError } from '../shared/protocol/errors';
 import type { WorkerCommand } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 import type { LibraryService } from './library-service';
@@ -23,7 +24,10 @@ export const AUTOMATION_READ_ONLY_WORKER_COMMAND_TYPES = [
   'tag.list',
   'collection.list',
   'collection.assets.memberships',
+  'collection.assets.list',
   'smart-collection.list',
+  'smart-collection.execute',
+  'media.get-thumbnail-artifact',
   'media.list-jobs',
   'ai.status',
   'ai.content.get',
@@ -152,12 +156,40 @@ export function executeAutomationReadOnlyWorkerCommand(
         type: 'collection.assets.memberships',
         memberships: libraryService.listAssetCollectionMemberships(command),
       };
+    case 'collection.assets.list':
+      return {
+        ok: true,
+        type: 'collection.assets.list',
+        assets: libraryService.listCollectionAssets(command),
+      };
     case 'smart-collection.list':
       return {
         ok: true,
         type: 'smart-collection.list',
         collections: libraryService.listSmartCollections(command.libraryId),
       };
+    case 'smart-collection.execute': {
+      const result = libraryService.executeSmartCollection(command);
+      return {
+        ok: true,
+        type: 'smart-collection.executed',
+        items: result.items,
+        total: result.total,
+        offset: result.offset,
+      };
+    }
+    case 'media.get-thumbnail-artifact': {
+      const info = libraryService.getThumbnailArtifact(command.libraryId, command.assetId);
+      if (!info) return { ok: false, error: createPublicError('ASSET_NOT_FOUND') };
+      return {
+        ok: true,
+        type: 'media.thumbnail-artifact',
+        artifactId: info.artifactId,
+        filePath: info.filePath,
+        width: info.width,
+        height: info.height,
+      };
+    }
     case 'media.list-jobs':
       return {
         ok: true,

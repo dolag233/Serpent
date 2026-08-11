@@ -496,6 +496,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
+    parentId: identifierSchema.nullable().optional(),
     description: nonBlankString.max(10_000).nullable().optional(),
     coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
@@ -1100,6 +1101,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('folder.delete-empty'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+  }),
+  z.strictObject({
     type: z.literal('linked-folder.remove'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -1304,6 +1310,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
+    parentId: identifierSchema.nullable().optional(),
     description: nonBlankString.max(10_000).nullable().optional(),
     coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
@@ -1375,6 +1382,20 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     palette: manualPaletteSchema.optional(),
     sourcePageUrl: sourcePageUrlSchema.optional(),
     author: assetAuthorSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.metadata.set-many'),
+    libraryId: identifierSchema,
+    items: z.array(z.strictObject({
+      assetId: identifierSchema,
+      expectedVersion: z.number().int().min(0),
+      description: optionalClearableDescriptionSchema,
+      rating: z.number().int().min(0).max(5).optional(),
+      favorite: z.boolean().optional(),
+      palette: manualPaletteSchema.optional(),
+      sourcePageUrl: sourcePageUrlSchema.optional(),
+      author: assetAuthorSchema.optional(),
+    })).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill'),

@@ -28,9 +28,14 @@ MCP transport 仍可能有协议层 `Mcp-Session-Id`，但它只用于请求关�
 | MCP 工具 | 作用 |
 | --- | --- |
 | `serpent_library_list_open` | 列出当前可访问的资源库；空列表是正常结果，不建立默认资源库。 |
+| `serpent_library_list_recent` | 列出最近使用过的资源库（只返回 ID 和名称，不返回路径）。没有资源库时也可调用。 |
 | `serpent_library_create` | 根据显式 `displayName` 和 `selectedParentPath` 创建资源库，返回新的 `libraryId`。不打开文件夹选择器。 |
 | `serpent_library_open` | 根据显式 `libraryId` 打开已知资源库；没有目标时返回结构化错误，不打开选择器。 |
 | `serpent_library_show_in_desktop` | 让 Desktop 显示显式 `libraryId`；只改变可见 UI，不改变任何后续 MCP 调用目标。 |
+| `serpent_library_close` / `serpent_library_rename` | 关闭或重命名当前目标资源库。 |
+| `serpent_library_export` | 按显式 `destinationPath` 导出 folder/zip；不会打开保存对话框。 |
+| `serpent_library_import_folder` / `serpent_library_import_zip` | 从显式路径导入已导出的资源库；导入完成后可用返回的 ID 调用 `library.open`。 |
+| `serpent_library_delete_from_disk` | 从磁盘永久删除资源库；仅危险操作确认后执行。链接源目录不删除。 |
 
 创建或打开后，Agent 从结果中取得 `libraryId`，之后每个库级请求都把它放回参数中。多个客户端可以同时操作不同资源库；Desktop 焦点切换不会影响 MCP 请求。
 
@@ -62,7 +67,7 @@ Windows 路径必须按 Windows 语义传递：盘符、反斜杠、UNC、长路
 
 权限档不能由 MCP 参数、环境变量或配置文件覆盖。撤销 credential 或停止服务会立即阻断后续调用。
 
-危险工具（当前为 `serpent_asset_delete_permanent`）：**只读**档下与普通写入同等对待——桌面弹出确认框，由用户当场决定允许或拒绝，Agent 无法自行确认；**读写**档下采用 Agent 二阶段确认：第一次调用绝不执行，只返回绑定本次精确调用的风险报告（challengeId、影响对象、数量、可恢复性、过期时间）；Agent 评估后以**同一工具**再次调用并回传 `challengeId`、`planHash` 和 `acknowledged: true`，只有完全匹配且未过期、未消费过的 challenge 才会执行，且只执行一次。篡改参数、跨客户端复用、重放、状态变化都会拒绝并签发新风险报告。**完全**档直接执行（用户在启用时已确认责任），但仍不能跳过领域边界和 Worker 校验。
+危险工具包括 `serpent_asset_delete_permanent` 和 `serpent_library_delete_from_disk`：**只读**档下与普通写入同等对待——桌面弹出确认框，由用户当场决定允许或拒绝，Agent 无法自行确认；**读写**档下采用 Agent 二阶段确认：第一次调用绝不执行，只返回绑定本次精确调用的风险报告（challengeId、影响对象、数量、可恢复性、过期时间）；Agent 评估后以**同一工具**再次调用并回传 `challengeId`、`planHash` 和 `acknowledged: true`，只有完全匹配且未过期、未消费过的 challenge 才会执行，且只执行一次。篡改参数、跨客户端复用、重放、状态变化都会拒绝并签发新风险报告。**完全**档直接执行（用户在启用时已确认责任），但仍不能跳过领域边界和 Worker 校验。`tools/list` 会明确标注 `risk=critical`、`approval=agent-challenge` 和 `requiresCriticalConfirmation=true`。
 
 ## Desktop 信息投影
 
@@ -103,6 +108,8 @@ Desktop 是 Agent 工作的非阻塞投影。需要向用户解释阶段、目�
 - `AUTOMATION_EXECUTION_CANCELLED`、`AUTOMATION_EXECUTION_TIMED_OUT`。
 
 超时后不要盲目重复文件操作。对支持幂等的命令复用原 `idempotencyKey`，并先查询状态、资源库变更序号和目标状态。
+
+文件导入遇到一次 `VERSION_CONFLICT` 时，Gateway 会自动重新生成一次新计划并重试；第二次仍失败会原样返回可诊断错误，不会无限重试或重复导入。
 
 ## 配置、停止与撤销
 

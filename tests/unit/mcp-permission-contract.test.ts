@@ -43,6 +43,8 @@ describe('MCP permission contract', () => {
     expect(dangerousTool).toBeDefined();
     expect(dangerousTool?.riskTier).toBe('critical');
     expect(dangerousTool?.annotations.destructiveHint).toBe(true);
+    expect(dangerousTool?.requiresCriticalConfirmation).toBe(true);
+    expect(dangerousTool?.description).toContain('approval=agent-challenge');
     expect(dangerousTool?.inputSchema).toMatchObject({
       properties: expect.objectContaining({
         challengeId: expect.anything(),
@@ -50,7 +52,8 @@ describe('MCP permission contract', () => {
       }),
     });
     for (const operation of automationCriticalOperationRegistry) {
-      if ((operation.operation as string) === 'asset.delete-permanent') continue;
+      if ((operation.operation as string) === 'asset.delete-permanent'
+        || (operation.operation as string) === 'library.delete-from-disk') continue;
       expect(tools.some((tool) => tool.commandId === operation.operation)).toBe(false);
     }
 

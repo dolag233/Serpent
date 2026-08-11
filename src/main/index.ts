@@ -4297,11 +4297,19 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
 }
 
 async function executeMcpLibraryContextCommand(input: {
-  commandId: 'library.list-open' | 'library.open' | 'library.show-in-desktop';
+  commandId: 'library.list-open' | 'library.list-recent' | 'library.open' | 'library.show-in-desktop';
   executionId: string;
   context: AutomationExecutionContext;
   commandInput: unknown;
 }): Promise<unknown> {
+  if (input.commandId === 'library.list-recent') {
+    return readRecentLibraryEntries(recentLibraryPath(), (error) => {
+      logger?.error('recent-library.read', error);
+    }).map((entry) => ({
+      libraryId: entry.libraryId ?? null,
+      displayName: entry.name,
+    }));
+  }
   const journal = automationExecutionJournal;
   const client = workerClient;
   if (!journal || !client) {
@@ -4667,6 +4675,13 @@ async function startApplication(): Promise<void> {
       // converging on the exact function the desktop import IPC uses.
       onImportCompleted: ({ libraryId, importedAssetIds }) => {
         if (importedAssetIds.length === 0) return;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
+            severity: 'info',
+            mode: 'toast',
+            message: `已导入 ${importedAssetIds.length} 项资源`,
+          });
+        }
         void enqueueAutoAnalyzeAfterImport(libraryId, importedAssetIds);
       },
       mcpInputNormalizer: normalizeMcpCommandInput,
@@ -4686,6 +4701,76 @@ async function startApplication(): Promise<void> {
               displayPath: library.libraryPath,
             },
           });
+        },
+        onLibraryClosed: async ({ source, libraryId }) => {
+          pluginActivationCoordinator?.onLibraryClosed(libraryId);
+          for (const [executionId, context] of pluginAutomationContexts) {
+            if (context.libraryId === libraryId) pluginAutomationContexts.delete(executionId);
+          }
+          clearActiveRecentLibrary(recentLibraryPath(), (error) => {
+            logger?.error('recent-library.clear', error);
+          });
+          publishLifecycle({
+            type: 'library.closed',
+            libraryId,
+            ...(source === 'mcp' ? { source } : {}),
+          });
+        },
+        onLibraryRenamed: async ({ source, library }) => {
+          rememberOpenedLibrary(library.libraryPath, library.displayName, library.libraryId);
+          publishLifecycle({
+            type: 'library.opened',
+            ...(source === 'mcp' ? { source } : {}),
+            library: {
+              libraryId: library.libraryId,
+              displayName: library.displayName,
+              displayPath: library.libraryPath,
+            },
+          });
+        },
+        onLibraryDeleted: async ({ source, libraryId, displayName, libraryPath }) => {
+          pluginActivationCoordinator?.onLibraryClosed(libraryId);
+          for (const [executionId, context] of pluginAutomationContexts) {
+            if (context.libraryId === libraryId) pluginAutomationContexts.delete(executionId);
+          }
+          removeRecentLibrary(recentLibraryPath(), libraryPath, (error) => {
+            logger?.error('recent-library.remove', error);
+          });
+          publishLifecycle({
+            type: 'library.closed',
+            libraryId,
+            ...(source === 'mcp' ? { source } : {}),
+          });
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
+              severity: 'info',
+              mode: 'toast',
+              message: `已删除资源库“${displayName}”`,
+            });
+          }
+        },
+        onLibraryImported: async ({ source, libraryId, displayName, libraryPath }) => {
+          rememberOpenedLibrary(libraryPath, displayName, libraryId);
+          await notifyLibraryOpenedSideEffects({
+            libraryId,
+            libraryDirectory: libraryPath,
+          });
+          publishLifecycle({
+            type: 'library.opened',
+            ...(source === 'mcp' ? { source } : {}),
+            library: {
+              libraryId,
+              displayName,
+              displayPath: libraryPath,
+            },
+          });
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
+              severity: 'info',
+              mode: 'toast',
+              message: `资源库“${displayName}”已导入`,
+            });
+          }
         },
         transitionLibraryContext: async ({ executionId, source, libraryId, displayName, expectedRevision, authorizationSource }) => {
           const libraries = await activeWorkerClient.request({ type: 'library.list' });

@@ -8,6 +8,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   INVALID_FOLDER_NAME: 'Choose a folder name that is safe on macOS and Windows.',
   FOLDER_ALREADY_EXISTS: 'A folder with this name already exists in the selected location.',
   FOLDER_NAME_CONFLICT: 'A folder or file with this name already exists in the selected location.',
+  FOLDER_NOT_EMPTY: 'Only folders with no assets, child folders, or unmanaged files can be deleted by this operation.',
   FOLDER_NOT_FOUND: 'The selected library folder could not be found.',
   INVALID_IMPORT_SOURCE: 'Choose readable local files or a folder without symbolic links.',
   INVALID_DROP_SELECTION: 'Drop either one local folder or one or more local files.',

@@ -37,7 +37,7 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 
 过渡约束：插件 MCP 工具当前只在 `full-access` 档暴露（`tool-catalog.ts` 的 exposure 判断）；read-write/read-only 客户端拿不到插件工具列表。与 ADR-0025“插件与脚本/MCP 同一 Action 面”的完全对齐留待插件权限投影设计。
 
-全局命令（列库、建库、查看 Job）不要求 `libraryId`。库级命令（资产、文件夹、标签、合集、导入、AI 和任务）要求 `libraryId`。不要从 Desktop 当前库或 HTTP session 填充缺省目标。
+全局命令（列出最近资源库、列出已打开资源库、建库、导入已导出的库）不要求 `libraryId`。库级命令（资产、文件夹、标签、合集、导入资产、AI 和任务）要求 `libraryId`。不要从 Desktop 当前库或 HTTP session 填充缺省目标。库级调用的目标由 Gateway 单次绑定，不会写回 MCP session。
 
 路径输入必须在 MCP Schema 中声明并直接传给 Main：
 
@@ -64,7 +64,11 @@ Permission Broker 只读取 credential 权限档，不保存 transport session g
 
 库级调用的成功响应回显 `libraryId` 与 `libraryChangeSequence`（最近已知变更序号，ADR-0031 §2）；写命令自身可能滞后一个事件，后续调用与 `library.change-sequence` 提供新值。失败响应携带稳定 `code`/`message`，并按错误契约附加 `retryable`（瞬时错误）、`currentVersion`（实体版本冲突）与 `libraryId`。
 
-资源库变化只发送 `notifications/message` logging notification，并携带 `libraryId` 与 `changeSequence`。上下文变化不得触发核心 `tools/list_changed`；只有实际工具贡献变化才刷新工具列表。
+资源库变化只发送 `notifications/message` logging notification，并携带 `libraryId` 与 `changeSequence`。MCP 发起的关闭、重命名、删除和资源库导入会通过同一 Main 生命周期投影同步 Desktop，并显示非阻塞 info toast；上下文变化不得触发核心 `tools/list_changed`，只有实际工具贡献变化才刷新工具列表。
+
+当前完整的整理面包含：托管文件夹重命名、移动和受保护的空文件夹批量删除；链接文件夹创建、重连、解除、规则更新和刷新；普通/智能合集的创建、修改、排序、删除、成员列表与规则执行；标签重命名、删除、批量删除、合并和共现查询；资产批量复制、缩略图/预览状态读取和整库刷新。空文件夹删除只接受无资产、无子文件夹且磁盘目录确实为空的目标，任何不满足条件的批次会整体拒绝。
+
+危险的“从磁盘删除资源库”也走与回收站永久删除一致的二阶段 challenge；它不是普通 capability，也不能由 session、配置字段或 Full Access 之外的普通授权绕过。
 
 ## 测试与验收
 

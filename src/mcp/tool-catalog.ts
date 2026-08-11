@@ -1,5 +1,6 @@
 import {
   AUTOMATION_API_VERSION,
+  automationCriticalOperationRegistry,
   automationCommandRegistry,
   getAutomationCommandPermissionMetadata,
   type AutomationCapability,
@@ -38,6 +39,8 @@ export type SerpentMcpToolDefinition = {
   requestableCapabilities: readonly AutomationCapability[];
   riskTier: ReturnType<typeof getAutomationCommandPermissionMetadata>['riskTier'];
   canPersistPermission: boolean;
+  /** The first call returns a challenge; the exact second call executes it. */
+  requiresCriticalConfirmation: boolean;
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
@@ -68,6 +71,12 @@ function shouldExpose(
   exposure: SerpentMcpToolExposure,
 ): boolean {
   if (!isMcpEligible(descriptor)) return false;
+  if (descriptor.criticalOperation === true) {
+    const critical = automationCriticalOperationRegistry.find(
+      (operation) => operation.operation === descriptor.commandId,
+    );
+    if (critical?.exposedToMcp !== true) return false;
+  }
   if (descriptor.hostCapabilities !== undefined) {
     const available = new Set(exposure.hostCapabilities ?? []);
     if (descriptor.hostCapabilities.some((capability) => !available.has(capability))) return false;
@@ -168,7 +177,7 @@ export function listSerpentMcpTools(
         `commandId=${descriptor.commandId}`,
         `impact=${descriptor.impact}`,
         `risk=${permission.riskTier}`,
-        `approval=${descriptor.approvalPolicy}`,
+        `approval=${descriptor.criticalOperation === true ? 'agent-challenge' : descriptor.approvalPolicy}`,
         `outputLimit=${descriptor.mcp.outputLimit}`,
       ].join(' · '),
       inputSchema: descriptor.criticalOperation === true
@@ -181,6 +190,7 @@ export function listSerpentMcpTools(
       requestableCapabilities: permission.requestableCapabilities,
       riskTier: permission.riskTier,
       canPersistPermission: permission.canPersist,
+      requiresCriticalConfirmation: permission.requiresCriticalConfirmation,
       annotations: {
         readOnlyHint: descriptor.impact === 'read',
         destructiveHint: descriptor.impact === 'destructive',
