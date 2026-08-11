@@ -74,6 +74,12 @@ export interface EmbeddedMcpServerOptions {
   initializeTimeoutMs?: number;
   sessionIdleTimeoutMs?: number;
   onSnapshotChanged?: (snapshot: McpSettingsSnapshot) => void;
+  onCommandCompleted?: (input: {
+    clientName?: string;
+    toolName: string;
+    commandId?: string;
+    ok: boolean;
+  }) => void;
 }
 
 export class EmbeddedMcpServerError extends Error {
@@ -276,6 +282,7 @@ export class EmbeddedMcpServer {
   readonly #workerClient: EmbeddedMcpWorkerClient;
   readonly #logger: EmbeddedMcpLogger;
   readonly #getPluginTools: () => SerpentMcpPluginToolBridge | undefined;
+  readonly #onCommandCompleted: EmbeddedMcpServerOptions['onCommandCompleted'];
   readonly #permissionPolicyStore?: McpPermissionPolicyStore;
   readonly #permissionBroker?: AutomationPermissionBroker;
   readonly #initializeTimeoutMs: number;
@@ -298,6 +305,7 @@ export class EmbeddedMcpServer {
     this.#workerClient = options.workerClient;
     this.#logger = options.logger;
     this.#getPluginTools = options.getPluginTools;
+    this.#onCommandCompleted = options.onCommandCompleted;
     this.#permissionPolicyStore = options.permissionPolicyStore;
     this.#permissionBroker = options.permissionBroker;
     this.#initializeTimeoutMs = Math.max(1, options.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS);
@@ -758,6 +766,7 @@ export class EmbeddedMcpServer {
       gateway: this.#gateway,
       serverName: 'serpent',
       serverVersion: String(AUTOMATION_API_VERSION),
+      ...(this.#onCommandCompleted === undefined ? {} : { onCommandCompleted: this.#onCommandCompleted }),
     });
     const currentSession: EmbeddedSession = {
       sessionId: generatedSessionId,

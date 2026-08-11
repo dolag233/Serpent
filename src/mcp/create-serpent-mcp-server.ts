@@ -27,6 +27,13 @@ export type SerpentMcpServerOptions = {
   gateway: AutomationCommandGateway;
   serverName?: string;
   serverVersion?: string;
+  /** Desktop feedback for MCP tool results (progress/success/failure toasts). */
+  onCommandCompleted?: (input: {
+    clientName?: string;
+    toolName: string;
+    commandId?: string;
+    ok: boolean;
+  }) => void;
 };
 
 function toolResultText(payload: unknown): {
@@ -123,6 +130,12 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       signal: extra.signal,
     });
     await reportProgress?.(1, 1, result.ok ? 'Serpent completed the tool.' : 'Serpent rejected the tool call.');
+    options.onCommandCompleted?.({
+      clientName: backend.getExecutionContext()?.clientName,
+      toolName: request.params.name,
+      ...(result.ok && result.commandId !== undefined ? { commandId: result.commandId } : {}),
+      ok: result.ok,
+    });
     if (!result.ok) {
       return {
         ...toolResultText({ ok: false, code: result.code, message: result.message, gateway: result.gateway }),

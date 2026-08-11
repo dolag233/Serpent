@@ -5276,6 +5276,22 @@ async function startApplication(): Promise<void> {
     getPluginTools: () => pluginMcpToolProvider,
     permissionPolicyStore: mcpPermissionPolicyStore,
     permissionBroker: mcpPermissionBroker,
+    // Serpent feedback: MCP operations must be visible on the desktop —
+    // show a non-blocking toast per completed tool call (the grid refresh
+    // itself flows through the existing asset-changed events).
+    onCommandCompleted: ({ clientName, commandId, ok }) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      const english = appLocale === 'en';
+      const actor = clientName?.trim() || (english ? 'MCP client' : 'MCP 客户端');
+      const operation = commandId === undefined ? (english ? 'operation' : '操作') : commandId;
+      mainWindow.webContents.send(SHELL_NOTIFY_CHANNEL, {
+        severity: ok ? 'info' : 'warning',
+        mode: 'toast',
+        message: ok
+          ? english ? `${actor} completed ${operation}.` : `${actor} 完成了 ${operation}。`
+          : english ? `${actor} failed ${operation}.` : `${actor} 的 ${operation} 失败。`,
+      });
+    },
   });
   embeddedMcpServer.onSnapshot((snapshot) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
