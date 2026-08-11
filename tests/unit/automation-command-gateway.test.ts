@@ -147,6 +147,19 @@ describe('Automation Command Registry', () => {
     for (const commandId of automationScriptCommandIdSchema.options) {
       expect(registryIds).toContain(commandId);
     }
+    const descriptor = (commandId: string) => automationCommandRegistry.find((command) => command.commandId === commandId)!;
+    expect(descriptor('folder.create').toWorkerCommand('library-1', descriptor('folder.create').inputSchema.parse({
+      name: 'Child',
+      parentFolderId: 'parent-folder',
+    }) as never)).toMatchObject({ type: 'folder.create', parentFolderId: 'parent-folder' });
+    expect(descriptor('collection.create').toWorkerCommand('library-1', descriptor('collection.create').inputSchema.parse({
+      name: 'Child',
+      parentId: 'parent-collection',
+    }) as never)).toMatchObject({ type: 'collection.create', parentId: 'parent-collection' });
+    expect(descriptor('collection.update').toWorkerCommand('library-1', descriptor('collection.update').inputSchema.parse({
+      collectionId: 'child-collection',
+      parentId: 'parent-collection',
+    }) as never)).toMatchObject({ type: 'collection.update', parentId: 'parent-collection' });
     for (const command of automationCommandRegistry) {
       expect(command.apiVersion).toBe(1);
       if (command.commandId === 'asset.rating.set'

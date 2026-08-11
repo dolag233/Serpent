@@ -35,6 +35,9 @@ export const COPY_SELECTION_CHANNEL = 'serpent:shell:copy-selection' as const;
 /** Main → Renderer: dispatch a native menu command through the app menu model. */
 export const APPLICATION_MENU_COMMAND_CHANNEL =
   'serpent:shell:application-menu-command' as const;
+/** Renderer → Main: sync a native menu item's enabled state (Serpent-q0b1). */
+export const APPLICATION_MENU_ITEM_STATE_CHANNEL =
+  'serpent:shell:application-menu-item-state' as const;
 /** Renderer → Main: fall back to Chromium text copy when no asset file copy. */
 export const NATIVE_EDIT_COPY_CHANNEL = 'serpent:shell:native-edit-copy' as const;
 export const WINDOW_MAXIMIZED_CHANNEL =

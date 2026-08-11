@@ -7,6 +7,9 @@ import {
   shouldInstallApplicationMenu,
   type ApplicationMenuItemTemplate,
 } from "../../src/shared/application-menu";
+import { lookupMessage } from "../../src/renderer/i18n/types";
+import { zhCN } from "../../src/renderer/i18n/catalogs/zh-CN";
+import { en } from "../../src/renderer/i18n/catalogs/en";
 
 describe("shouldInstallApplicationMenu (Serpent-r7gu)", () => {
   it("keeps the macOS application menu and hides Windows", () => {
@@ -34,7 +37,9 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       expect(roles).toContain("toggleDevTools");
       if (platform === "darwin") {
         expect(roles).not.toContain("editMenu");
-        expect(roles).toContain("undo");
+        // Serpent-q0b1: undo/redo are business commands, not text-editing roles.
+        expect(roles).not.toContain("undo");
+        expect(roles).not.toContain("redo");
       } else {
         expect(roles).toContain("editMenu");
       }
@@ -59,18 +64,17 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
         showDevTools: false,
       }),
     );
-    const win = collectApplicationMenuRoles(
+    expect(mac).toContain("about");
+    const nonMac = collectApplicationMenuRoles(
       buildApplicationMenuTemplate({
-        platform: "win32",
+        platform: "linux",
         showDevTools: false,
       }),
     );
-    expect(mac).toContain("about");
-    expect(mac).toContain("quit");
-    expect(win).not.toContain("about");
+    expect(nonMac).not.toContain("about");
   });
 
-  it("adds macOS Edit invert selection with locale label (Serpent-te8p)", () => {
+  it("adds macOS Edit invert selection via i18n label key (Serpent-te8p/q0b1)", () => {
     function findCommand(
       items: readonly ApplicationMenuItemTemplate[],
       command: "invert-selection" | "copy-selection",
@@ -92,7 +96,7 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       }),
       "invert-selection",
     );
-    const en = findCommand(
+    const enCmd = findCommand(
       buildApplicationMenuTemplate({
         platform: "darwin",
         showDevTools: false,
@@ -100,8 +104,8 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       }),
       "invert-selection",
     );
-    expect(zh?.label).toBe("反选");
-    expect(en?.label).toBe("Invert Selection");
+    expect(zh?.labelKey).toBe("shell.mainMenuInvertSelection");
+    expect(enCmd?.labelKey).toBe("shell.mainMenuInvertSelection");
 
     // Serpent-166q: Copy is a custom command (not role:copy) so ⌘C can copy files.
     const zhCopy = findCommand(
@@ -112,14 +116,87 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
       }),
       "copy-selection",
     );
-    const roles = collectApplicationMenuRoles(
-      buildApplicationMenuTemplate({
-        platform: "darwin",
+    expect(zhCopy?.labelKey).toBe("shell.mainMenuCopySelection");
+  });
+});
+
+describe("macOS product menu mirror (Serpent-q0b1)", () => {
+  function commandsOf(items: readonly ApplicationMenuItemTemplate[]): string[] {
+    const commands: string[] = [];
+    for (const item of items) {
+      if (item.command) commands.push(item.command);
+      if (item.submenu) commands.push(...commandsOf(item.submenu));
+    }
+    return commands;
+  }
+
+  it("mirrors every Windows MainMenu section command on macOS", () => {
+    const template = buildApplicationMenuTemplate({
+      platform: "darwin",
+      showDevTools: false,
+      locale: "zh-CN",
+    });
+    const commands = commandsOf(template);
+    expect(commands).toEqual(expect.arrayContaining([
+      "edit.undo",
+      "edit.redo",
+      "file.import-files",
+      "file.import-folder",
+      "file.import-linked-folder",
+      "library.create",
+      "library.open",
+      "library.close",
+      "library.remove",
+      "library.delete-from-disk",
+      "library.import",
+      "library.export",
+      "library.settings",
+      "window.background-jobs",
+      "window.diagnostics",
+      "about.serpent",
+      "about.github",
+      "about.open-source",
+      "settings",
+    ]));
+    // invert/copy stay on their dedicated channels via the edit menu.
+    expect(commands).toContain("invert-selection");
+    expect(commands).toContain("copy-selection");
+  });
+
+  it("uses i18n catalog keys for every custom label (no inline locale strings)", () => {
+    const template = buildApplicationMenuTemplate({
+      platform: "darwin",
+      showDevTools: false,
+      locale: "zh-CN",
+    });
+    const keys: string[] = [];
+    const walk = (items: readonly ApplicationMenuItemTemplate[]): void => {
+      for (const item of items) {
+        if (item.labelKey) keys.push(item.labelKey);
+        if (item.submenu) walk(item.submenu);
+      }
+    };
+    walk(template);
+    expect(keys.length).toBeGreaterThan(0);
+    // No custom item may carry a hardcoded display label — the Serpent app
+    // menu name is the only hardcoded label (brand name is not localized).
+    const hardcodedLabels = template.filter((item) => typeof item.label === "string");
+    expect(hardcodedLabels.map((item) => item.label)).toEqual(["Serpent"]);
+    // Every key resolves in BOTH catalogs (zh primary, en fallback).
+    for (const key of keys) {
+      expect(lookupMessage(zhCN, key), `zh key ${key}`).toBeDefined();
+      expect(lookupMessage(en, key), `en key ${key}`).toBeDefined();
+    }
+  });
+
+  it("keeps the non-macOS template free of product commands", () => {
+    for (const platform of ["win32", "linux"] as const) {
+      const template = buildApplicationMenuTemplate({
+        platform,
         showDevTools: false,
-      }),
-    );
-    expect(zhCopy?.label).toBe("复制");
-    expect(roles).not.toContain("copy");
+      });
+      expect(commandsOf(template)).toEqual([]);
+    }
   });
 });
 

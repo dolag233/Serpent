@@ -154,6 +154,12 @@ export interface SerpentShellApi {
   onApplicationMenuCommand(
     listener: (command: ApplicationMenuCommand) => void,
   ): () => void;
+  /** Renderer → Main: sync a native menu item's enabled state (Serpent-q0b1,
+   * e.g. business undo is only enabled while an undoable operation exists). */
+  setApplicationMenuCommandEnabled(
+    command: ApplicationMenuCommand,
+    enabled: boolean,
+  ): void;
   /** 请求 Main 对当前 webContents 执行原生 copy（文本框 ⌘C）。 */
   nativeEditCopy(): Promise<void>;
   /**

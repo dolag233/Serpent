@@ -42,6 +42,7 @@ import {
   INVERT_SELECTION_CHANNEL,
   COPY_SELECTION_CHANNEL,
   APPLICATION_MENU_COMMAND_CHANNEL,
+  APPLICATION_MENU_ITEM_STATE_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_MAXIMIZED_CHANNEL,
@@ -2054,7 +2055,7 @@ const shell: SerpentShellApi = Object.freeze({
       const commands: readonly ApplicationMenuCommand[] = [
         'invert-selection', 'copy-selection',
         'file.import-files', 'file.import-folder', 'file.import-linked-folder',
-        'edit.undo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
+        'edit.undo', 'edit.redo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
         'library.create', 'library.open', 'library.close', 'library.remove',
         'library.delete-from-disk', 'library.import', 'library.export', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
@@ -2068,6 +2069,11 @@ const shell: SerpentShellApi = Object.freeze({
     return () => {
       ipcRenderer.removeListener(APPLICATION_MENU_COMMAND_CHANNEL, handler);
     };
+  },
+  setApplicationMenuCommandEnabled(command: ApplicationMenuCommand, enabled: boolean): void {
+    // Best-effort: the native menu may be absent (Windows hides it).
+    void ipcRenderer.invoke(APPLICATION_MENU_ITEM_STATE_CHANNEL, { command, enabled })
+      .catch(() => undefined);
   },
   async nativeEditCopy(): Promise<void> {
     await ipcRenderer.invoke(NATIVE_EDIT_COPY_CHANNEL);

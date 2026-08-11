@@ -10,6 +10,10 @@
  * Serpent-r7gu: Windows has no native menu bar — capabilities live in-app
  * (library menu, context menus, commands). macOS keeps the system menu.
  *
+ * Serpent-q0b1: the macOS menu mirrors the Windows in-app MainMenu commands
+ * and every custom label is an i18n catalog key (`labelKey`) resolved by Main
+ * at install time — the shared layer never inlines locale strings.
+ *
  * Pure data — Main installs via Menu.buildFromTemplate; unit tests assert
  * the zoom roles stay absent and Windows stays menu-less.
  */
@@ -51,6 +55,7 @@ export type ApplicationMenuCommand =
   | "file.import-folder"
   | "file.import-linked-folder"
   | "edit.undo"
+  | "edit.redo"
   | "edit.paste"
   | "edit.select-all"
   | "edit.clear-selection"
@@ -73,9 +78,15 @@ export type ApplicationMenuItemTemplate = {
   readonly role?: ApplicationMenuRole;
   readonly type?: "separator" | "normal" | "submenu";
   readonly label?: string;
+  /**
+   * i18n catalog key (renderer/i18n/catalogs) resolved to the display label
+   * by Main at install time using the effective app locale — the shared layer
+   * never inlines locale strings (Serpent-q0b1).
+   */
+  readonly labelKey?: string;
   readonly submenu?: readonly ApplicationMenuItemTemplate[];
   /** Custom Serpent command (wired in Main when installing the menu). */
-  readonly command?: "invert-selection" | "copy-selection";
+  readonly command?: ApplicationMenuCommand;
 };
 
 export type ApplicationMenuTemplateOptions = {
@@ -123,73 +134,136 @@ export function buildApplicationMenuTemplate(
   options: ApplicationMenuTemplateOptions,
 ): ApplicationMenuItemTemplate[] {
   const isMac = options.platform === "darwin";
+  const zh = options.locale === "zh-CN";
 
   const viewSubmenu: ApplicationMenuItemTemplate[] = [
-    { role: "reload" },
-    { role: "forceReload" },
+    { role: "reload", labelKey: "shell.mainMenuReload" },
+    { role: "forceReload", labelKey: "shell.mainMenuForceReload" },
     ...(options.showDevTools
-      ? ([{ role: "toggleDevTools" }] as const)
+      ? ([{ role: "toggleDevTools", labelKey: "shell.mainMenuToggleDevTools" }] as const)
       : []),
     { type: "separator" },
     // Serpent-46i9: do NOT include zoomIn / zoomOut / resetZoom.
-    { role: "togglefullscreen" },
+    { role: "togglefullscreen", labelKey: "shell.mainMenuToggleFullscreen" },
   ];
 
   const macAppMenu: ApplicationMenuItemTemplate = {
     label: "Serpent",
     submenu: [
-      { role: "about" },
+      { role: "about", labelKey: "shell.mainMenuAboutSerpent" },
       { type: "separator" },
-      { role: "services" },
+      { role: "services", labelKey: "shell.mainMenuServices" },
       { type: "separator" },
-      { role: "hide" },
-      { role: "hideOthers" },
-      { role: "unhide" },
+      { role: "hide", labelKey: "shell.mainMenuHide" },
+      { role: "hideOthers", labelKey: "shell.mainMenuHideOthers" },
+      { role: "unhide", labelKey: "shell.mainMenuUnhide" },
       { type: "separator" },
-      { role: "quit" },
+      { role: "quit", labelKey: "shell.mainMenuQuit" },
     ],
   };
 
   const windowSubmenu: ApplicationMenuItemTemplate[] = isMac
     ? [
-        { role: "close" },
-        { role: "minimize" },
-        { role: "zoom" },
+        { role: "close", labelKey: "shell.mainMenuCloseWindow" },
+        { role: "minimize", labelKey: "shell.mainMenuMinimize" },
+        { role: "zoom", labelKey: "shell.mainMenuZoom" },
         { type: "separator" },
-        { role: "front" },
+        { role: "front", labelKey: "shell.mainMenuFront" },
       ]
-    : [{ role: "minimize" }, { role: "close" }];
-
-  const invertLabel =
-    options.locale === "zh-CN" ? "反选" : "Invert Selection";
-  const copyLabel = options.locale === "zh-CN" ? "复制" : "Copy";
+    : [
+        { role: "minimize", labelKey: "shell.mainMenuMinimize" },
+        { role: "close", labelKey: "shell.mainMenuCloseWindow" },
+      ];
 
   const editSubmenu: ApplicationMenuItemTemplate[] = isMac
     ? [
-        { role: "undo" },
-        { role: "redo" },
+        // Serpent-q0b1: business undo/redo (not the always-available text
+        // editing roles) — enabled state mirrors the renderer's undoable
+        // operation state; redo stays disabled until the redo system lands.
+        { labelKey: "shell.mainMenuUndo", command: "edit.undo" },
+        { labelKey: "shell.mainMenuRedo", command: "edit.redo" },
         { type: "separator" },
-        { role: "cut" },
+        { role: "cut", labelKey: "shell.mainMenuCut" },
         // Serpent-166q: do not use role:copy — it steals ⌘C from asset file copy.
-        { label: copyLabel, command: "copy-selection" },
-        { role: "paste" },
-        { role: "pasteAndMatchStyle" },
-        { role: "delete" },
-        { role: "selectAll" },
+        { labelKey: "shell.mainMenuCopySelection", command: "copy-selection" },
+        { role: "paste", labelKey: "shell.mainMenuPaste" },
+        { role: "pasteAndMatchStyle", labelKey: "shell.mainMenuPasteMatchStyle" },
+        { role: "delete", labelKey: "shell.mainMenuDelete" },
+        { role: "selectAll", labelKey: "shell.mainMenuSelectAll" },
         { type: "separator" },
-        { label: invertLabel, command: "invert-selection" },
+        { labelKey: "shell.mainMenuInvertSelection", command: "invert-selection" },
       ]
     : [{ role: "editMenu" }];
 
-  return [
-    ...(isMac ? [macAppMenu] : []),
-    { role: "fileMenu" },
-    isMac
-      ? { label: "Edit", submenu: editSubmenu }
-      : { role: "editMenu" },
-    { label: "View", submenu: viewSubmenu },
-    isMac
-      ? { role: "window", submenu: windowSubmenu }
-      : { label: "Window", submenu: windowSubmenu },
-  ];
+  // Serpent-q0b1: macOS keeps a real application menu, so the product
+  // functionality the Windows in-app MainMenu button carries must be mirrored
+  // here — same command ids, routed to the same renderer actions. Every label
+  // is an i18n catalog key resolved by Main at install time; the shared layer
+  // never inlines locale strings.
+  const commandItem = (
+    command: ApplicationMenuCommand,
+    labelKey: string,
+  ): ApplicationMenuItemTemplate => ({ labelKey, command });
+
+  const fileSubmenu: ApplicationMenuItemTemplate[] = isMac
+    ? [
+        commandItem("file.import-files", "toolbar.importFiles"),
+        commandItem("file.import-folder", "toolbar.importFolder"),
+        commandItem("file.import-linked-folder", "toolbar.importLinkedFolder"),
+      ]
+    : [];
+
+  const librarySubmenu: ApplicationMenuItemTemplate[] = isMac
+    ? [
+        commandItem("library.create", "shell.createLibraryEllipsis"),
+        commandItem("library.open", "shell.openLibraryEllipsis"),
+        { type: "separator" },
+        commandItem("library.close", "shell.closeLibrary"),
+        commandItem("library.remove", "shell.removeLibrary"),
+        commandItem("library.delete-from-disk", "shell.deleteLibraryFromDisk"),
+        { type: "separator" },
+        commandItem("library.import", "toolbar.importLibrary"),
+        commandItem("library.export", "toolbar.exportLibrary"),
+        { type: "separator" },
+        commandItem("library.settings", "settings.librarySettings"),
+      ]
+    : [];
+
+  const windowBusinessSubmenu: ApplicationMenuItemTemplate[] = isMac
+    ? [
+        { type: "separator" },
+        commandItem("window.background-jobs", "toolbar.backgroundJobs"),
+        commandItem("window.diagnostics", "settings.viewDiagnostics"),
+      ]
+    : [];
+
+  const helpSubmenu: ApplicationMenuItemTemplate[] = isMac
+    ? [
+        commandItem("about.serpent", "shell.mainMenuAboutSerpent"),
+        commandItem("about.github", "shell.mainMenuVisitGitHub"),
+        commandItem("about.open-source", "shell.mainMenuOpenSource"),
+        { type: "separator" },
+        commandItem("settings", "shell.mainMenuSettings"),
+      ]
+    : [];
+
+  return isMac
+    ? [
+        macAppMenu,
+        { labelKey: "shell.mainMenuFile", submenu: fileSubmenu },
+        { labelKey: "shell.mainMenuEdit", submenu: editSubmenu },
+        { labelKey: "shell.mainMenuView", submenu: viewSubmenu },
+        { labelKey: "shell.mainMenuLibrary", submenu: librarySubmenu },
+        {
+          labelKey: "shell.mainMenuWindow",
+          submenu: [...windowSubmenu, ...windowBusinessSubmenu],
+        },
+        { labelKey: "shell.mainMenuHelp", submenu: helpSubmenu },
+      ]
+    : [
+        { role: "fileMenu" },
+        { role: "editMenu" },
+        { labelKey: "shell.mainMenuView", submenu: viewSubmenu },
+        { labelKey: "shell.mainMenuWindow", submenu: windowSubmenu },
+      ];
 }

@@ -6757,9 +6757,9 @@ export class LibraryService {
     if (input.parentFolderId) {
       parent = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ? AND library_id = ?',
         )
-        .get(input.parentFolderId) as ManagedFolderRow | undefined;
+        .get(input.parentFolderId, openLibrary.summary.libraryId) as ManagedFolderRow | undefined;
       if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
 

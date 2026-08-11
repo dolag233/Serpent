@@ -7920,7 +7920,9 @@ function AppInner() {
       const item = mainMenuSections
         .flatMap((section) => section.items ?? [])
         .find((candidate) => candidate.id === command);
-      item?.onSelect();
+      // Serpent-q0b1: honor the same disabled state the Windows in-app menu
+      // renders greyed out — a native macOS item stays clickable otherwise.
+      if (item && !item.disabled) item.onSelect();
     });
   }, [mainMenuSections, shellApi]);
 

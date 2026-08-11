@@ -15,6 +15,7 @@ import type { LibraryService } from './library-service';
 const BOUNDED_WRITE_COMMAND_TYPES = new Set<string>([
   'asset.rating.set',
   'asset.metadata.set',
+  'asset.metadata.set-many',
   'tag.create',
   'tag.assign',
   'tag.remove',
@@ -49,6 +50,10 @@ export function executeBoundedWriteWorkerCommand(
     case 'asset.metadata.set': {
       const metadata = libraryService.setAssetMetadata(command);
       return { ok: true, type: 'asset.metadata.updated', metadata };
+    }
+    case 'asset.metadata.set-many': {
+      const metadata = libraryService.setAssetsMetadata(command);
+      return { ok: true, type: 'asset.metadata.updated-many', metadata };
     }
     case 'tag.create': {
       const tag = libraryService.createTag(command);

@@ -145,6 +145,14 @@ export function buildMainMenuSections({
           onSelect: actions.undo,
         },
         {
+          // Serpent-q0b1: macOS 顶部菜单同步此命令；redo 系统尚未落地，
+          // 恒禁用，接入 undo/redo 系统时启用。
+          id: "edit.redo",
+          label: label(locale, "shell.mainMenuRedo"),
+          disabled: true,
+          onSelect: () => undefined,
+        },
+        {
           id: "edit.copy-selection",
           label: label(locale, "shell.mainMenuCopySelection"),
           shortcut: shortcut(platform, "⌘C", "Ctrl+C"),
