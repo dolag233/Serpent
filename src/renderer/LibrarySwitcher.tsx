@@ -1,7 +1,6 @@
 import {
   useEffect,
   useId,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -107,22 +106,6 @@ export function LibrarySwitcher({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
-  // Names that appear more than once in the recent list: only those rows show
-  // the inline path line; every row still reveals its full path on hover via
-  // the standard document-level HoverTipHost (data-hover-tip, ~420ms delay —
-  // the UI-standard tooltip, themed for light and dark alike).
-  const duplicateRecentNames = useMemo(
-    () => {
-      const counts = new Map<string, number>();
-      for (const entry of recentLibraries) {
-        counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1);
-      }
-      return new Set(
-        [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name),
-      );
-    },
-    [recentLibraries],
-  );
   const label = libraryName ?? t("shell.chooseLibrary");
   const libraryScopedDisabled = !libraryOpen || busy;
   const transferCopy = importMenuCopy ?? resolveImportMenuCopy("folder");
@@ -156,8 +139,7 @@ export function LibrarySwitcher({
     if (!open) return;
     function onPointerDown(event: PointerEvent) {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setKeyboardNav(false);
+        closeMenu(false);
       }
     }
     document.addEventListener("pointerdown", onPointerDown);
@@ -342,6 +324,9 @@ export function LibrarySwitcher({
                 </div>
                 {recentLibraries.map((entry) => (
                   <div className="library-switcher-recent-row" key={entry.path}>
+                    {/* Serpent-s0oq: hovering a recent library reveals its full
+                        path via the standard document-level hover tip (420ms,
+                        themed) — no inline path line. */}
                     <Tooltip label={entry.path}>
                       <button
                         className="library-switcher-item library-switcher-recent-open"
@@ -356,14 +341,6 @@ export function LibrarySwitcher({
                         <span className="library-switcher-item-label">
                           {entry.name}
                         </span>
-                        {/* Serpent-s0oq: the inline path line only appears when
-                            another recent library shares the name; hover always
-                            reveals the full path via the standard tooltip. */}
-                        {duplicateRecentNames.has(entry.name) ? (
-                          <span className="library-switcher-recent-path">
-                            {entry.path}
-                          </span>
-                        ) : null}
                       </button>
                     </Tooltip>
                     {onForgetRecent != null && (

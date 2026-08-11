@@ -1247,10 +1247,6 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
   box-shadow: var(--menu-surface-shadow);
   backdrop-filter: blur(14px) saturate(120%);
-  /* Serpent-s0oq: two-line recent rows grow the menu past short screens;
-     cap it at the viewport and scroll instead of clipping off-screen. */
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
 }
 
 .library-switcher-item {
@@ -1310,21 +1306,6 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .library-switcher-recent-open {
   flex: 1 1 auto;
   min-width: 0;
-  /* Serpent-s0oq: name on line one, full path on line two — never side by
-     side, which would widen the whole menu to the longest path. The path
-     ellipsizes and the standard tooltip (data-hover-tip) shows the full path.
-     Left-aligned explicitly: the base menu item centers its content. The
-     uniform height must equal the REAL two-line content height
-     (12.5px * 1.4 * 2 lines + 1px gap + 12px vertical padding = 48px) —
-     any smaller value lets the two-line row grow past the single-line rows
-     and the names misalign again. */
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  text-align: left;
-  gap: 1px;
-  min-height: 48px;
 }
 
 .library-switcher-recent-forget {
@@ -1340,10 +1321,6 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: transparent;
   color: var(--tertiary);
   cursor: pointer;
-  /* Serpent-s0oq: recent rows are two lines tall; pin the dismiss button to
-     the first (name) line instead of the row center so it aligns with the
-     library name (top margin 1px + half the 28px button ≈ name-line center). */
-  align-self: flex-start;
 }
 
 .library-switcher-recent-forget:hover {
@@ -1370,25 +1347,9 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .library-switcher-item-label {
   display: block;
-  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: left;
-}
-
-/* Serpent-s0oq: full library path shown as a secondary row in the switcher
-   recent list; themed with the standard secondary text token so it reads as
-   metadata in both light and dark themes. */
-.library-switcher-recent-path {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-  font-size: var(--menu-item-font-size);
-  color: var(--secondary);
 }
 
 .scope-trace {
