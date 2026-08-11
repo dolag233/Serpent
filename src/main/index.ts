@@ -24,7 +24,7 @@ import {
 } from "electron";
 import type { MessageBoxOptions } from "electron";
 
-import { installApplicationMenu } from "./application-menu";
+import { installApplicationMenu, setApplicationMenuCommandEnabled } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
 import {
   clearViewerVideoShortcutCapture,
@@ -83,6 +83,7 @@ import {
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
   SHELL_NOTIFY_CHANNEL,
   COMMAND_COMPLETED_CHANNEL,
+  APPLICATION_MENU_ITEM_STATE_CHANNEL,
   SHELL_SWIPE_CHANNEL,
   WINDOW_FOCUS_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
@@ -825,6 +826,11 @@ async function createMainWindow(): Promise<void> {
   });
 
   const devIcon = appIconImage();
+  // Serpent-tluf: the macOS dock otherwise shows the default Electron icon
+  // in dev builds (packaged apps ship the real .icns).
+  if (process.platform === "darwin" && devIcon) {
+    app.dock?.setIcon(devIcon);
+  }
 
   const window = new BrowserWindow({
     width: isolatedPlacement?.width ?? defaultWidth,
@@ -4412,6 +4418,16 @@ async function normalizeMcpCommandInput(input: {
 }
 
 async function startApplication(): Promise<void> {
+  // Serpent-tluf: dev mode otherwise reports the Electron defaults —
+  // app.getName() is "Electron" and the macOS app menu/dock/About fall back
+  // to it whenever a label is missing. Pin the product name everywhere.
+  app.setName("Serpent");
+  if (process.platform === "darwin") {
+    app.setAboutPanelOptions({
+      applicationName: "Serpent",
+      applicationVersion: app.getVersion(),
+    });
+  }
   // Windows: taskbar/start-pin grouping requires the AppUserModelID to match
   // the shortcuts created by the installer (WiX/Squirrel both set one). Without
   // this, the taskbar shows the default Electron icon and pinning breaks.
