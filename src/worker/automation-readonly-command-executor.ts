@@ -22,6 +22,8 @@ export const AUTOMATION_READ_ONLY_WORKER_COMMAND_TYPES = [
   'asset.content.read',
   'automation.file-operation-plan',
   'tag.list',
+  'tag.cooccurrence',
+  'linked-folder.rules.get',
   'collection.list',
   'collection.assets.memberships',
   'collection.assets.list',

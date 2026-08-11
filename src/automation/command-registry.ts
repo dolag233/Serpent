@@ -2557,7 +2557,7 @@ export const automationCommandRegistry = [
     commandId: 'asset.copy', apiVersion: AUTOMATION_API_VERSION, summary: '把一批托管资产复制到目标文件夹。', deprecated: false,
     inputSchema: automationCommandInputSchemas['asset.copy'], resultSchema: automationCommandResultSchemas['asset.copy'], workerResultSchema: assetCopyWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'folder.write'], allowedSources: allInteractiveSources, impact: 'file-write', targetScope: 'asset-set', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: true, supportsUndo: true, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: true, supportsUndo: false, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_asset_copy', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.copy'>) => ({ type: 'asset.copy', libraryId, assetIds: input.assetIds, targetFolderId: input.targetFolderId, ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }) }),
     projectResult: (result) => { const parsed = assetCopyWorkerResultSchema.safeParse(result); return parsed.success ? { copiedCount: parsed.data.copiedCount, skippedCount: parsed.data.skippedCount, operationId: parsed.data.operationId, assets: parsed.data.assets } : undefined; },

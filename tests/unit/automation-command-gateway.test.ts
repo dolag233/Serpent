@@ -155,15 +155,15 @@ describe('Automation Command Registry', () => {
     expect(descriptor('folder.create').toWorkerCommand('library-1', descriptor('folder.create').inputSchema.parse({
       name: 'Child',
       parentFolderId: PARENT_FOLDER_ID,
-    }) as never)).toMatchObject({ type: 'folder.create', parentFolderId: PARENT_FOLDER_ID });
+    }) as never, undefined)).toMatchObject({ type: 'folder.create', parentFolderId: PARENT_FOLDER_ID });
     expect(descriptor('collection.create').toWorkerCommand('library-1', descriptor('collection.create').inputSchema.parse({
       name: 'Child',
       parentId: PARENT_COLLECTION_ID,
-    }) as never)).toMatchObject({ type: 'collection.create', parentId: PARENT_COLLECTION_ID });
+    }) as never, undefined)).toMatchObject({ type: 'collection.create', parentId: PARENT_COLLECTION_ID });
     expect(descriptor('collection.update').toWorkerCommand('library-1', descriptor('collection.update').inputSchema.parse({
       collectionId: 'child-collection',
       parentId: PARENT_COLLECTION_ID,
-    }) as never)).toMatchObject({ type: 'collection.update', parentId: PARENT_COLLECTION_ID });
+    }) as never, undefined)).toMatchObject({ type: 'collection.update', parentId: PARENT_COLLECTION_ID });
     for (const command of automationCommandRegistry) {
       expect(command.apiVersion).toBe(1);
       if (command.commandId === 'asset.rating.set'
@@ -2261,5 +2261,89 @@ describe('file.import VERSION_CONFLICT auto re-plan (Serpent-xdt8)', () => {
     }));
     expect(result).toMatchObject({ ok: false, error: { code: 'LIBRARY_BUSY' } });
     expect(planApprovals).toHaveLength(1);
+  });
+});
+
+describe('file.import VERSION_CONFLICT retry negative paths (Serpent-xdt8)', () => {
+  const plan = {
+    planHash: 'a'.repeat(64),
+    expectedChangeSequence: 0,
+    assetStates: [],
+  };
+  const stalePlan = {
+    planHash: 'b'.repeat(64),
+    expectedChangeSequence: 1,
+    assetStates: [],
+  };
+
+  function importWorker(sequence: WorkerResult[]): AutomationWorkerClient {
+    let index = 0;
+    return {
+      request: async (): Promise<WorkerResult> => sequence[Math.min(index++, sequence.length - 1)]!,
+    };
+  }
+
+  it('propagates the second VERSION_CONFLICT instead of retrying forever', async () => {
+    const worker = importWorker([
+      { ok: false, error: { code: 'VERSION_CONFLICT', message: 'stale' } },
+      { ok: false, error: { code: 'VERSION_CONFLICT', message: 'stale again' } },
+    ]);
+    const approvals: Array<typeof plan | typeof stalePlan> = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => {
+          approvals.push(approvals.length === 0 ? plan : stalePlan);
+          return approvals.at(-1);
+        },
+      },
+    });
+
+    const result = await commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }));
+    expect(result).toMatchObject({ ok: false, error: { code: 'VERSION_CONFLICT' } });
+    expect(approvals).toHaveLength(2);
+    expect(approvals[1]).toEqual(stalePlan);
+  });
+
+  it('aborts without dispatch when the user rejects the re-plan', async () => {
+    const worker = importWorker([
+      { ok: false, error: { code: 'VERSION_CONFLICT', message: 'stale' } },
+      { ok: true, type: 'asset.import.completed', completion: { importedCount: 0, fileCount: 0, assetCount: 0, skippedCount: 0, replacedCount: 0, assets: [] } },
+    ]);
+    const approve: Array<boolean> = [true, false];
+    let requestCount = 0;
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'file.import'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async (input) => {
+          const accepted = approve.shift() ?? false;
+          if (!accepted) return undefined;
+          requestCount += 1;
+          await input.requestApproval?.({
+            commandId: 'file.import',
+            executionId: 'execution-1',
+            libraryId: 'library-1',
+            commandInput: input.commandInput,
+            source: 'test',
+            summary: { operation: 'import', targetCount: 1, executableCount: 1, blockedCount: 0, undoSupported: false },
+          });
+          return plan;
+        },
+      },
+    });
+
+    const result = await commandGateway.execute(request('file.import', {
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    }));
+    // First attempt executes with the approved plan, hits VERSION_CONFLICT;
+    // the re-plan is rejected → the command fails without a second dispatch.
+    expect(result).toMatchObject({ ok: false });
+    expect(requestCount).toBe(1);
   });
 });

@@ -7564,11 +7564,12 @@ export class LibraryService {
     if (folderIds.length === 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     const rows = openLibrary.connection.prepare(
+      // Serpent review: managed_folders lives inside the per-library DB —
+      // there is no library_id column (the table is already library-scoped).
       `SELECT folder_id, relative_path
          FROM managed_folders
-        WHERE library_id = ?
-          AND folder_id IN (${folderIds.map(() => '?').join(',')})`,
-    ).all(input.libraryId, ...folderIds) as Array<{
+        WHERE folder_id IN (${folderIds.map(() => '?').join(',')})`,
+    ).all(...folderIds) as Array<{
       folder_id: string;
       relative_path: string;
     }>;
