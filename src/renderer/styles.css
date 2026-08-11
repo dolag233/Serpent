@@ -1306,6 +1306,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .library-switcher-recent-open {
   flex: 1 1 auto;
   min-width: 0;
+  /* Serpent-s0oq: name on line one, full path on line two — never side by
+     side, which would widen the whole menu to the longest path. The path
+     ellipsizes and the native title (full path) shows on hover. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
 }
 
 .library-switcher-recent-forget {
