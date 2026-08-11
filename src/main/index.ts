@@ -6033,6 +6033,18 @@ async function startApplication(): Promise<void> {
     windowsTray?.updateLocale(appLocale);
   });
 
+  // Serpent-q0b1: the renderer syncs native menu item enabled-state (business
+  // undo/redo availability). Only commands from the real window are accepted.
+  ipcMain.handle(APPLICATION_MENU_ITEM_STATE_CHANNEL, (event, input: unknown) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      return;
+    }
+    const record = input as { command?: unknown; enabled?: unknown } | null;
+    if (record === null || typeof record !== "object") return;
+    if (typeof record.command !== "string" || typeof record.enabled !== "boolean") return;
+    setApplicationMenuCommandEnabled(record.command, record.enabled);
+  });
+
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       logger?.info("ipc.active-context", "Rejected active-context update.", {
