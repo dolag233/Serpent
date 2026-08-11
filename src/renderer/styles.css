@@ -1308,14 +1308,18 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   min-width: 0;
   /* Serpent-s0oq: name on line one, full path on line two — never side by
      side, which would widen the whole menu to the longest path. The path
-     ellipsizes and the native title (full path) shows on hover. Left-aligned
-     explicitly: the base menu item centers its content. */
+     ellipsizes and the standard tooltip (data-hover-tip) shows the full path.
+     Left-aligned explicitly: the base menu item centers its content. The
+     uniform two-line height (46px) keeps rows aligned whether or not the
+     path line is rendered — a single-line row would otherwise sit lower and
+     break the column alignment. */
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
   text-align: left;
   gap: 1px;
+  min-height: 46px;
 }
 
 .library-switcher-recent-forget {
@@ -1331,6 +1335,11 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   background: transparent;
   color: var(--tertiary);
   cursor: pointer;
+  /* Serpent-s0oq: recent rows are two lines tall (46px); pin the dismiss
+     button to the first (name) line instead of the row center so it aligns
+     with the library name. */
+  align-self: flex-start;
+  margin-top: 7px;
 }
 
 .library-switcher-recent-forget:hover {
