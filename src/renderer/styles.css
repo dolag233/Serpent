@@ -1308,10 +1308,13 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   min-width: 0;
   /* Serpent-s0oq: name on line one, full path on line two — never side by
      side, which would widen the whole menu to the longest path. The path
-     ellipsizes and the native title (full path) shows on hover. */
+     ellipsizes and the native title (full path) shows on hover. Left-aligned
+     explicitly: the base menu item centers its content. */
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 1px;
 }
 
@@ -1354,18 +1357,22 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 .library-switcher-item-label {
   display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
 /* Serpent-s0oq: full library path shown as a secondary row in the switcher
    recent list; dimmer than the name so it scans as metadata, not a label. */
 .library-switcher-recent-path {
   display: block;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
   font-size: 10px;
   opacity: 0.62;
 }
