@@ -97,6 +97,8 @@ export type ApplicationMenuTemplateOptions = {
   readonly showDevTools: boolean;
   /** App UI locale for custom menu labels (Serpent-te8p). */
   readonly locale?: "zh-CN" | "en";
+  /** Current app version for the native About submenu. */
+  readonly version?: string;
 };
 
 const PAGE_ZOOM_ROLES = new Set(["zoomIn", "zoomOut", "resetZoom"]);

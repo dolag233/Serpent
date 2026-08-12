@@ -8284,8 +8284,8 @@ function AppInner() {
         inlineFolderEdit={inlineFolderEdit}
         onInlineFolderEditChange={changeInlineFolderEdit}
         onInlineFolderEditCommit={(onCreateSuccess) =>
-          void commitInlineFolderEdit((parentFolderId) => {
-            onCreateSuccess?.(parentFolderId);
+          void commitInlineFolderEdit((folderId, parentFolderId) => {
+            onCreateSuccess?.(folderId, parentFolderId);
           })
         }
         onInlineFolderEditCancel={cancelInlineFolderEdit}
