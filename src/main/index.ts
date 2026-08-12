@@ -2689,6 +2689,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           libraryId: request.libraryId,
           assetIds: request.assetIds,
           resumePaused: true,
+          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
+          forceExisting: true,
         });
         if (enqueueResult.ok && enqueueResult.type === "ai.jobs.enqueued") {
           const jobIds = [
@@ -2741,6 +2743,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           type: "ai.enqueue-analysis",
           libraryId: request.libraryId,
           assetIds: [request.assetId],
+          // 手动分析可覆盖已有 AI 结果（8-09 WIP 恢复：worker 已支持）
+          forceExisting: true,
         });
         if (
           enqueueResult.ok &&
@@ -5559,6 +5563,12 @@ async function startApplication(): Promise<void> {
   workerClient.onAiProgress(publishAiProgress);
   workerClient.onAiAnalysisCompleted(publishAiCompleted);
   workerClient.onAiContentCleared(publishAiCleared);
+  // 视频 contact sheet / 模型缩略图就绪 = 自动分析的视觉输入边界；导入时
+  // 入队可能与该媒体队列竞争，输入就绪时重入队该资产（worker 去重已排队/
+  // 运行中/已分析）。8-09 WIP 恢复：worker 解析事件但此前 main 无消费者。
+  workerClient.onAiInputReady((event) => {
+    void enqueueAutoAnalyzeAfterImport(event.libraryId, [event.assetId]);
+  });
 
   const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
     logger?.error("recent-library.read", error);

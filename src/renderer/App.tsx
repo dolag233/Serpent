@@ -7517,12 +7517,8 @@ function AppInner() {
       const skippedCount = result.value.skippedAssetIds.length;
       if (jobIds.length === 0) {
         if (skippedCount > 0) {
-          setNotice(
-            t("toast.aiAnalyzeDoneBatch", {
-              succeeded: 0,
-              failed: skippedCount,
-            }),
-          );
+          // 全部跳过（已有分析结果）——8-09 WIP 恢复：跳过不是失败
+          setNotice(t("toast.aiAnalyzeSkippedBatch", { count: skippedCount }));
         } else {
           setError(t("toast.aiAnalyzeFailed"));
         }
@@ -7677,7 +7673,7 @@ function AppInner() {
         );
       };
 
-      const failedOutcomes = progress.failed + progress.skipped;
+      const failedOutcomes = progress.failed;
       if (failedOutcomes > 0) {
         if (progress.succeeded === 0 && progress.cancelled === 0) {
           if (pendingAssetId && batchSize <= 1) showSingleFailure();
@@ -7687,7 +7683,11 @@ function AppInner() {
             t("toast.aiAnalyzeDoneBatch", {
               succeeded: progress.succeeded,
               failed: failedOutcomes,
-            }) + (detail ? ` ${detail}` : ""),
+            }) +
+              (progress.skipped > 0
+                ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+                : "") +
+              (detail ? ` ${detail}` : ""),
           );
         }
       } else if (progress.cancelled > 0) {
@@ -7697,7 +7697,10 @@ function AppInner() {
           t("toast.aiAnalyzeDoneBatch", {
             succeeded: progress.succeeded,
             failed: 0,
-          }),
+          }) +
+            (progress.skipped > 0
+              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+              : ""),
         );
       } else if (batchSize > 0) {
         setNotice(t("toast.aiAnalyzeDone"));

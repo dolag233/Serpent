@@ -4,7 +4,7 @@
 // prebuilt Electron.app's Info.plist — app.setName() only changes the
 // internal name. Patch the dev bundle's plist (superset's approach) and
 // re-register with LaunchServices so dev shows "Serpent" everywhere.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
