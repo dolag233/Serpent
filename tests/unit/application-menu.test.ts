@@ -118,6 +118,30 @@ describe("buildApplicationMenuTemplate (Serpent-46i9)", () => {
     );
     expect(zhCopy?.labelKey).toBe("shell.mainMenuCopySelection");
   });
+
+  it("declares native accelerators for business undo and redo", () => {
+    const template = buildApplicationMenuTemplate({
+      platform: "darwin",
+      showDevTools: false,
+      locale: "zh-CN",
+    });
+    const findCommand = (
+      items: readonly ApplicationMenuItemTemplate[],
+      command: "edit.undo" | "edit.redo",
+    ): ApplicationMenuItemTemplate | undefined => {
+      for (const item of items) {
+        if (item.command === command) return item;
+        if (item.submenu) {
+          const nested = findCommand(item.submenu, command);
+          if (nested) return nested;
+        }
+      }
+      return undefined;
+    };
+
+    expect(findCommand(template, "edit.undo")?.accelerator).toBe("Cmd+Z");
+    expect(findCommand(template, "edit.redo")?.accelerator).toBe("Cmd+Shift+Z");
+  });
 });
 
 describe("macOS product menu mirror (Serpent-q0b1)", () => {

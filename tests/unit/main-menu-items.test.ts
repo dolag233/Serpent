@@ -75,6 +75,19 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(sections[1]?.items?.find((item) => item.id === "edit.select-all")?.shortcut).toBe(
       "Ctrl+A",
     );
+    expect(sections[1]?.items?.find((item) => item.id === "edit.undo")?.shortcut).toBe(
+      "Ctrl+Z",
+    );
+    expect(sections[1]?.items?.find((item) => item.id === "edit.redo")?.shortcut).toBe(
+      "Ctrl+Shift+Z",
+    );
+  });
+
+  it("uses the macOS undo and redo shortcut labels", () => {
+    const { sections } = build({ platform: "mac" });
+    const edit = sections.find((section) => section.id === "edit");
+    expect(edit?.items?.find((item) => item.id === "edit.undo")?.shortcut).toBe("⌘Z");
+    expect(edit?.items?.find((item) => item.id === "edit.redo")?.shortcut).toBe("⌘⇧Z");
   });
 
   it("gates library and selection actions from the shared state", () => {

@@ -76,8 +76,8 @@ export function setApplicationMenuCommandLabel(
  * Every template item with a `command` is wired here: the focused window's
  * renderer receives the command over APPLICATION_MENU_COMMAND_CHANNEL and
  * runs the SAME canonical action the Windows in-app MainMenu button uses
- * (Serpent-q0b1) — invert/copy keep their platform accelerators; the rest are
- * plain clicks routed identically.
+ * (Serpent-q0b1). Commands with an explicit native accelerator retain it;
+ * all commands are routed to the same renderer action.
  */
 function enrichMenuTemplate(
   items: readonly ApplicationMenuItemTemplate[],
@@ -106,6 +106,7 @@ function enrichMenuTemplate(
       return {
         id: command,
         label: resolvedLabel,
+        ...(item.accelerator ? { accelerator: item.accelerator } : {}),
         click: (_menuItem, window) => {
           const target = window as BrowserWindow | undefined;
           target?.webContents.send(APPLICATION_MENU_COMMAND_CHANNEL, command);

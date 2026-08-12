@@ -10,6 +10,7 @@ import type { WorkerCommand } from '../../src/shared/protocol/requests';
 import type { WorkerResult } from '../../src/shared/protocol/responses';
 import { executeBoundedWriteWorkerCommand } from '../../src/worker/bounded-write-command';
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as importFile } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
 const services: LibraryService[] = [];
@@ -35,6 +36,7 @@ function createLibraryWithAsset(): {
   libraryId: string;
   libraryPath: string;
   assetId: string;
+  managedFolderId: string;
 } {
   const service = new LibraryService();
   services.push(service);
@@ -79,6 +81,7 @@ function createLibraryWithAsset(): {
     libraryId: library.libraryId,
     libraryPath: library.libraryPath,
     assetId,
+    managedFolderId: managedFolder.folderId,
   };
 }
 
@@ -247,6 +250,82 @@ describe('durable operation history', () => {
     await undo(service, libraryId, restoreEntryId);
     await redo(service, libraryId, restoreEntryId);
     expect(service.listTrash(libraryId).map((asset) => asset.assetId)).not.toContain(assetId);
+  });
+
+  it('restores the complete folder subtree when undoing folder trash', async () => {
+    const { service, libraryId, assetId, managedFolderId } = createLibraryWithAsset();
+    const nested = service.createManagedFolder({
+      libraryId,
+      name: 'Nested',
+      parentFolderId: managedFolderId,
+    });
+    const nestedSourcePath = path.join(temporaryRoot(), 'nested-history-test.png');
+    writeFileSync(nestedSourcePath, 'nested history test');
+    const nestedAsset = importFile(service, libraryId, nestedSourcePath, nested.folderId).assets[0]!;
+    const before = service.getManagedFolderHistorySnapshot({
+      libraryId,
+      folderIds: [managedFolderId],
+    });
+    expect(before.map((folder) => folder.folderId)).toEqual(
+      expect.arrayContaining([managedFolderId, nested.folderId]),
+    );
+
+    const trashed = service.trashManagedFolder({ libraryId, folderId: managedFolderId });
+    expect(trashed.tombstoneIds).toHaveLength(2);
+    const history = service.recordOperationHistory({
+      libraryId,
+      source: 'desktop',
+      sourceReference: null,
+      commandId: 'folder.trash',
+      labelKey: 'history.folder.trash',
+      labelArgs: { count: trashed.removedFolderCount },
+      affectedCount: trashed.removedFolderCount,
+      affectedEntities: [managedFolderId],
+      forwardRecipe: {
+        kind: 'managed-folder-trash',
+        version: 1,
+        payload: { folderId: managedFolderId },
+      },
+      inverseRecipe: {
+        kind: 'managed-folder-restore',
+        version: 1,
+        payload: { tombstoneId: trashed.rootTombstoneId },
+      },
+    });
+
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).toEqual(
+      expect.arrayContaining([assetId, nestedAsset.assetId]),
+    );
+    await undo(service, libraryId, history.historyEntryId);
+
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).not.toEqual(
+      expect.arrayContaining([assetId, nestedAsset.assetId]),
+    );
+    expect(service.getManagedFolderHistorySnapshot({
+      libraryId,
+      folderIds: [managedFolderId],
+    }).map((folder) => folder.folderId)).toEqual(
+      expect.arrayContaining([managedFolderId, nested.folderId]),
+    );
+    expect(service.listAssets({ libraryId, folderId: managedFolderId, recursive: true })
+      .map((asset) => asset.assetId)).toEqual(
+      expect.arrayContaining([assetId, nestedAsset.assetId]),
+    );
+
+    await redo(service, libraryId, history.historyEntryId);
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).toEqual(
+      expect.arrayContaining([assetId, nestedAsset.assetId]),
+    );
+    await undo(service, libraryId, history.historyEntryId);
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).not.toEqual(
+      expect.arrayContaining([assetId, nestedAsset.assetId]),
+    );
+    expect(service.getManagedFolderHistorySnapshot({
+      libraryId,
+      folderIds: [managedFolderId],
+    }).map((folder) => folder.folderId)).toEqual(
+      expect.arrayContaining([managedFolderId, nested.folderId]),
+    );
   });
 
   it('round-trips tag creation and assignment as separate linear entries', async () => {
@@ -434,5 +513,136 @@ describe('durable operation history', () => {
       description: 'external value',
       entityVersion: 2,
     });
+  });
+
+  it('treats a repeated undo and redo request as a safe no-op', async () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const updated = await runBounded(service, {
+      type: 'asset.metadata.set',
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      description: 'idempotent history request',
+    });
+    const entryId = historyEntryId(updated);
+
+    await undo(service, libraryId, entryId);
+    const repeatedUndo = await service.undoOperationHistory({
+      libraryId,
+      expectedHistoryEntryId: entryId,
+    });
+    expect(repeatedUndo).toMatchObject({
+      historyEntryId: entryId,
+      direction: 'undo',
+      affectedCount: 0,
+    });
+
+    await redo(service, libraryId, entryId);
+    const repeatedRedo = await service.redoOperationHistory({
+      libraryId,
+      expectedHistoryEntryId: entryId,
+    });
+    expect(repeatedRedo).toMatchObject({
+      historyEntryId: entryId,
+      direction: 'redo',
+      affectedCount: 0,
+    });
+  });
+
+  it('does not partially restore a multi-asset trash history entry', async () => {
+    const { service, libraryId, libraryPath, assetId, managedFolderId } = createLibraryWithAsset();
+    const secondSource = path.join(temporaryRoot(), 'second-history.png');
+    writeFileSync(secondSource, 'second history');
+    const second = importFile(service, libraryId, secondSource, managedFolderId).assets[0]!;
+    const trashed = service.trashAssets({
+      libraryId,
+      assetIds: [assetId, second.assetId],
+    });
+    if (!trashed.operationId) throw new Error('Expected a trash operation receipt.');
+    const entry = service.recordOperationHistory({
+      libraryId,
+      source: 'desktop',
+      sourceReference: null,
+      commandId: 'asset.trash',
+      labelKey: 'history.asset.trash',
+      labelArgs: { count: trashed.trashedCount },
+      affectedCount: trashed.trashedCount,
+      affectedEntities: [assetId, second.assetId],
+      forwardRecipe: { kind: 'asset-trash', version: 1, payload: { assetIds: [assetId, second.assetId] } },
+      inverseRecipe: { kind: 'asset-trash-undo', version: 1, payload: { operationId: trashed.operationId } },
+    });
+
+    // Occupy only one original path after the trash operation. The other
+    // asset is still restorable, so a partial implementation would silently
+    // restore one asset and mark the whole history entry undone.
+    writeFileSync(path.join(libraryPath, 'Assets', 'Assets', 'history-test.png'), 'new conflicting file');
+
+    await expect(service.undoOperationHistory({
+      libraryId,
+      expectedHistoryEntryId: entry.historyEntryId,
+    })).rejects.toMatchObject({ code: 'HISTORY_STALE' });
+    expect(service.listTrash(libraryId).map((item) => item.assetId)).toEqual(
+      expect.arrayContaining([assetId, second.assetId]),
+    );
+    expect(service.getOperationHistoryStatus(libraryId)).toMatchObject({
+      staleTop: {
+        historyEntryId: entry.historyEntryId,
+        staleCode: 'ASSET_MOVE_CONFLICT',
+      },
+      transitionInProgress: false,
+    });
+  });
+
+  it('reuses the same copied asset identity across redo cycles', async () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const copied = service.copyAssets({
+      libraryId,
+      assetIds: [assetId],
+      targetFolderId: null,
+      conflictStrategy: 'keep-both',
+    });
+    const copiedAsset = copied.assets[0];
+    if (!copied.operationId || !copiedAsset) throw new Error('Expected a copy operation receipt.');
+    const entry = service.recordOperationHistory({
+      libraryId,
+      source: 'desktop',
+      sourceReference: null,
+      commandId: 'asset.copy',
+      labelKey: 'history.asset.copy',
+      labelArgs: { count: copied.copiedCount },
+      affectedCount: copied.copiedCount,
+      affectedEntities: [assetId, copiedAsset.assetId],
+      forwardRecipe: {
+        kind: 'managed-asset-copy',
+        version: 1,
+        payload: {
+          assetIds: [assetId],
+          outputAssetIds: copied.outputAssetIdsBySource,
+          targetFolderId: null,
+          conflictStrategy: 'keep-both',
+        },
+      },
+      inverseRecipe: {
+        kind: 'managed-asset-copy-undo',
+        version: 1,
+        payload: { operationId: copied.operationId },
+      },
+    });
+
+    const allManagedAssetIds = () => service.listAssets({
+      libraryId,
+      recursive: true,
+    }).map((asset) => asset.assetId);
+    expect(allManagedAssetIds()).toContain(copiedAsset.assetId);
+
+    await undo(service, libraryId, entry.historyEntryId);
+    expect(allManagedAssetIds()).not.toContain(copiedAsset.assetId);
+    await redo(service, libraryId, entry.historyEntryId);
+    expect(allManagedAssetIds()).toContain(copiedAsset.assetId);
+
+    await undo(service, libraryId, entry.historyEntryId);
+    await redo(service, libraryId, entry.historyEntryId);
+    expect(allManagedAssetIds()).toContain(copiedAsset.assetId);
+    expect(allManagedAssetIds().filter((id) => id === copiedAsset.assetId)).toHaveLength(1);
   });
 });

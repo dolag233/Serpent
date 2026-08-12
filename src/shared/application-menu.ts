@@ -78,6 +78,8 @@ export type ApplicationMenuItemTemplate = {
   readonly role?: ApplicationMenuRole;
   readonly type?: "separator" | "normal" | "submenu";
   readonly label?: string;
+  /** Native accelerator for custom commands, when the platform has one. */
+  readonly accelerator?: string;
   /**
    * i18n catalog key (renderer/i18n/catalogs) resolved to the display label
    * by Main at install time using the effective app locale — the shared layer
@@ -178,9 +180,9 @@ export function buildApplicationMenuTemplate(
     ? [
         // Serpent-q0b1: business undo/redo (not the always-available text
         // editing roles) — enabled state mirrors the renderer's undoable
-        // operation state; redo stays disabled until the redo system lands.
-        { labelKey: "shell.mainMenuUndo", command: "edit.undo" },
-        { labelKey: "shell.mainMenuRedo", command: "edit.redo" },
+        // operation state, including the redo stack.
+        { labelKey: "shell.mainMenuUndo", command: "edit.undo", accelerator: "Cmd+Z" },
+        { labelKey: "shell.mainMenuRedo", command: "edit.redo", accelerator: "Cmd+Shift+Z" },
         { type: "separator" },
         { role: "cut", labelKey: "shell.mainMenuCut" },
         // Serpent-166q: do not use role:copy — it steals ⌘C from asset file copy.

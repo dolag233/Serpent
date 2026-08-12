@@ -111,6 +111,10 @@ const recipePayloadSchemas: ReadonlyMap<string, z.ZodType> = new Map<string, z.Z
   ['managed-asset-move-undo', z.strictObject({ operationId: identifierSchema })],
   ['managed-asset-copy', z.strictObject({
     assetIds: z.array(identifierSchema).min(1),
+    outputAssetIds: z.array(z.strictObject({
+      sourceAssetId: identifierSchema,
+      newAssetId: identifierSchema,
+    })).min(1).optional(),
     targetFolderId: identifierSchema.nullable(),
     conflictStrategy: conflictStrategySchema.optional(),
   })],

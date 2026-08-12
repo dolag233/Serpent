@@ -145,12 +145,14 @@ export function buildMainMenuSections({
         {
           id: "edit.undo",
           label: state.undoLabel ?? label(locale, "shell.mainMenuUndo"),
+          shortcut: shortcut(platform, "⌘Z", "Ctrl+Z"),
           disabled: !state.hasUndoableOperation || state.busy,
           onSelect: actions.undo,
         },
         {
           id: "edit.redo",
           label: state.redoLabel ?? label(locale, "shell.mainMenuRedo"),
+          shortcut: shortcut(platform, "⌘⇧Z", "Ctrl+Shift+Z"),
           disabled: !state.hasRedoableOperation || state.busy,
           onSelect: actions.redo,
         },

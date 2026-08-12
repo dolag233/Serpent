@@ -296,12 +296,32 @@ test("managed folder rows can be dragged into Trash", async () => {
       "已移入回收站",
       { timeout: 15_000 },
     );
+    await expect(window.getByRole("button", { name: "撤销" })).toBeVisible({
+      timeout: 5_000,
+    });
     await expect(folderRow).toHaveCount(0);
     await trashRow.click();
     await expect(window.locator(".folder-card.is-trashed-folder")).toHaveCount(
       1,
       { timeout: 15_000 },
     );
+
+    // The folder trash route must publish the same history receipt as asset
+    // trash, so the visible toast Undo restores both the folder and its asset.
+    await window.getByRole("button", { name: "撤销" }).click();
+    await expect(window.locator(".workspace-notice")).toContainText(
+      "已撤回上一步操作",
+      { timeout: 15_000 },
+    );
+    const restoredFolderRow = sidebarFolderRow(window, "待回收文件夹");
+    await expect(restoredFolderRow).toBeVisible({ timeout: 15_000 });
+    await restoredFolderRow.click();
+    await expect(window.locator('[data-asset-id][title="inside-folder.txt"]')).toBeVisible({
+      timeout: 15_000,
+    });
+    expect(
+      existsSync(path.join(libraryPath, "Assets", "待回收文件夹", "inside-folder.txt")),
+    ).toBe(true);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

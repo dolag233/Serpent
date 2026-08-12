@@ -7347,6 +7347,9 @@ export class LibraryService {
         const result = this.withHistoryReplay(() => this.copyAssets({
           libraryId: openLibrary.summary.libraryId,
           assetIds: payload.assetIds as string[],
+          outputAssetIds: Array.isArray(payload.outputAssetIds)
+            ? payload.outputAssetIds as Array<{ sourceAssetId: string; newAssetId: string }>
+            : undefined,
           targetFolderId: payload.targetFolderId as string | null,
           conflictStrategy: payload.conflictStrategy as 'keep-both' | 'replace' | 'skip' | undefined,
         }));
@@ -7371,6 +7374,7 @@ export class LibraryService {
         const result = this.withHistoryReplay(() => this.undoTrashAssets({
           libraryId: openLibrary.summary.libraryId,
           operationId: payload.operationId as string,
+          requireAll: true,
         }));
         return { affectedCount: result.restoredCount };
       }
@@ -7609,7 +7613,7 @@ export class LibraryService {
         }));
         return {
           affectedCount: result.removedFolderCount,
-          operationId: result.tombstoneIds[0],
+          operationId: result.rootTombstoneId,
         };
       }
       case 'managed-folder-restore': {
@@ -7665,6 +7669,14 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
     }
     const machine = new OperationHistoryStateMachine(entries);
+    if (machine.isCompleted(direction, expectedHistoryEntryId)) {
+      return {
+        historyEntryId: expectedHistoryEntryId,
+        direction,
+        affectedCount: 0,
+        status: this.getOperationHistoryStatus(libraryId),
+      };
+    }
     const started = machine.begin(direction, expectedHistoryEntryId);
     const now = new Date().toISOString();
     const attemptId = randomUUID();
@@ -9392,7 +9404,12 @@ export class LibraryService {
   trashManagedFolder(input: {
     libraryId: string;
     folderId: string;
-  }): { trashedAssetCount: number; removedFolderCount: number; tombstoneIds: string[] } {
+  }): {
+    trashedAssetCount: number;
+    removedFolderCount: number;
+    tombstoneIds: string[];
+    rootTombstoneId: string;
+  } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const { folder, descendantFolders, assetIds } =
       this.collectManagedFolderSubtree(openLibrary, input.folderId);
@@ -9411,6 +9428,7 @@ export class LibraryService {
     const tombstoneFolders = [...descendantFolders, folder];
     const folderIds = tombstoneFolders.map((row) => row.folder_id);
     const tombstoneIds: string[] = [];
+    let rootTombstoneId: string | undefined;
     const countPlaceholders = folderIds.map(() => '?').join(', ');
     const countRows =
       folderIds.length === 0
@@ -9439,6 +9457,7 @@ export class LibraryService {
         const parentRelative = path.posix.dirname(row.relative_path);
         const tombstoneId = randomUUID();
         tombstoneIds.push(tombstoneId);
+        if (row.folder_id === folder.folder_id) rootTombstoneId = tombstoneId;
         insert.run(
           tombstoneId,
           row.folder_id,
@@ -9465,7 +9484,8 @@ export class LibraryService {
       folder,
       descendantFolders,
     );
-    return { trashedAssetCount, removedFolderCount, tombstoneIds };
+    if (!rootTombstoneId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return { trashedAssetCount, removedFolderCount, tombstoneIds, rootTombstoneId };
   }
 
   /**
@@ -20888,7 +20908,15 @@ export class LibraryService {
     assetIds: string[];
     targetFolderId: string | null;
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
-  }): { copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] } {
+    /** Internal history replay mapping; ordinary callers leave this unset. */
+    outputAssetIds?: ReadonlyArray<{ sourceAssetId: string; newAssetId: string }>;
+  }): {
+    copiedCount: number;
+    skippedCount: number;
+    operationId: string | null;
+    assets: AssetSummary[];
+    outputAssetIdsBySource: Array<{ sourceAssetId: string; newAssetId: string }>;
+  } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
@@ -20918,6 +20946,30 @@ export class LibraryService {
 
     const operationId = randomUUID();
     const selectedIds = new Set(input.assetIds);
+    const outputAssetIds = new Map<string, string>();
+    for (const mapping of input.outputAssetIds ?? []) {
+      if (
+        !UUID.test(mapping.sourceAssetId)
+        || !UUID.test(mapping.newAssetId)
+        || !selectedIds.has(mapping.sourceAssetId)
+        || outputAssetIds.has(mapping.sourceAssetId)
+        || [...outputAssetIds.values()].includes(mapping.newAssetId)
+      ) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      outputAssetIds.set(mapping.sourceAssetId, mapping.newAssetId);
+    }
+    if (outputAssetIds.size > 0) {
+      const existingOutputIds = openLibrary.connection
+        .prepare(
+          `SELECT asset_id FROM assets
+             WHERE asset_id IN (${[...outputAssetIds.values()].map(() => '?').join(', ')})`,
+        )
+        .all(...outputAssetIds.values()) as Array<{ asset_id: string }>;
+      if (existingOutputIds.length > 0) {
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
+    }
     const planned = new Set<string>();
     const strategy = input.conflictStrategy ?? 'keep-both';
     const files: ManagedCopyOperationManifest['files'] = [];
@@ -20965,7 +21017,7 @@ export class LibraryService {
       planned.add(identity);
       files.push({
         sourceAssetId: assetId,
-        newAssetId: randomUUID(),
+        newAssetId: outputAssetIds.get(assetId) ?? randomUUID(),
         destinationConflict: strategy === 'replace' && !sameAsSource ? conflict : null,
         destinationFolderId: targetFolder?.folder_id ?? null,
         destinationRelativePath,
@@ -20974,7 +21026,7 @@ export class LibraryService {
     }
 
     if (files.length === 0) {
-      return { copiedCount: 0, skippedCount, operationId: null, assets: [] };
+      return { copiedCount: 0, skippedCount, operationId: null, assets: [], outputAssetIdsBySource: [] };
     }
     const manifest: ManagedCopyOperationManifest = {
       files,
@@ -20992,6 +21044,10 @@ export class LibraryService {
         openLibrary,
         files.map((file) => file.newAssetId),
       ),
+      outputAssetIdsBySource: files.map((file) => ({
+        sourceAssetId: file.sourceAssetId,
+        newAssetId: file.newAssetId,
+      })),
     };
   }
 
@@ -22827,7 +22883,8 @@ export class LibraryService {
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.relative_file_path, a.deleted_at,
-                a.trashed_from_relative_path, a.trashed_from_folder_id, a.current_revision_id,
+                a.trashed_from_relative_path, a.trashed_from_folder_id,
+                a.trashed_from_tombstone_id, a.current_revision_id,
                 r.byte_size, r.modified_at
            FROM assets a
            JOIN revisions r ON r.revision_id = a.current_revision_id
@@ -22838,9 +22895,10 @@ export class LibraryService {
         asset_id: string;
         relative_file_path: string;
         deleted_at: string;
-        trashed_from_relative_path: string;
-        trashed_from_folder_id: string | null;
-        current_revision_id: string;
+      trashed_from_relative_path: string;
+      trashed_from_folder_id: string | null;
+      trashed_from_tombstone_id: string | null;
+      current_revision_id: string;
         byte_size: number;
         modified_at: string;
       }>;
@@ -22906,13 +22964,34 @@ export class LibraryService {
         if (targetFolder) {
           targetFolderPath = targetFolder.relative_path;
           resolvedFolderId = targetFolder.folder_id;
-        } else if (!hasExplicitTarget && row.trashed_from_folder_id) {
-          const origFolder = openLibrary.connection
-            .prepare('SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?')
-            .get(row.trashed_from_folder_id) as { folder_id: string; relative_path: string } | undefined;
-          if (origFolder) {
-            targetFolderPath = origFolder.relative_path;
-            resolvedFolderId = origFolder.folder_id;
+        } else if (!hasExplicitTarget) {
+          if (row.trashed_from_folder_id) {
+            const origFolder = openLibrary.connection
+              .prepare('SELECT folder_id, relative_path FROM managed_folders WHERE folder_id = ?')
+              .get(row.trashed_from_folder_id) as { folder_id: string; relative_path: string } | undefined;
+            if (origFolder) {
+              targetFolderPath = origFolder.relative_path;
+              resolvedFolderId = origFolder.folder_id;
+            }
+          }
+          if (resolvedFolderId === null && row.trashed_from_tombstone_id) {
+            // Deleting a managed folder intentionally removes its row, so the
+            // `trashed_from_folder_id` FK may be nulled.  The tombstone binding
+            // is the durable identity chain for a folder-trash restore; use it
+            // only after the folder rows have been recreated and verify the
+            // target still exists before assigning the asset.
+            const tombstoneFolder = openLibrary.connection
+              .prepare(
+                `SELECT f.folder_id, f.relative_path
+                   FROM trashed_managed_folders t
+                   JOIN managed_folders f ON f.folder_id = t.folder_id
+                  WHERE t.tombstone_id = ?`,
+              )
+              .get(row.trashed_from_tombstone_id) as { folder_id: string; relative_path: string } | undefined;
+            if (tombstoneFolder) {
+              targetFolderPath = tombstoneFolder.relative_path;
+              resolvedFolderId = tombstoneFolder.folder_id;
+            }
           }
         }
 
@@ -23210,6 +23289,8 @@ export class LibraryService {
   undoTrashAssets(input: {
     libraryId: string;
     operationId: string;
+    /** History replay must never acknowledge a partially restored batch. */
+    requireAll?: boolean;
   }): {
     restoredCount: number;
     skippedCount: number;
@@ -23247,6 +23328,7 @@ export class LibraryService {
     const restored = this.restoreAssetsIfOriginalVacant({
       libraryId: input.libraryId,
       assetIds: assetIds as string[],
+      requireAll: input.requireAll === true,
     });
     if (restored.skippedCount === 0) {
       openLibrary.connection.prepare(
@@ -23269,6 +23351,8 @@ export class LibraryService {
   restoreAssetsIfOriginalVacant(input: {
     libraryId: string;
     assetIds: string[];
+    /** Reject before mutation when any requested asset cannot be restored. */
+    requireAll?: boolean;
   }): {
     restoredCount: number;
     skippedCount: number;
@@ -23357,7 +23441,13 @@ export class LibraryService {
     }
 
     if (accepted.length === 0) {
+      if (input.requireAll && skipped.length > 0) {
+        throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
+      }
       return { restoredCount: 0, skippedCount: skipped.length, skipped, assets: [] };
+    }
+    if (input.requireAll && skipped.length > 0) {
+      throw new LibraryServiceError('ASSET_MOVE_CONFLICT', { reason: 'SOURCE_CHANGED' });
     }
     const restored = this.restoreAssets({
       libraryId: input.libraryId,

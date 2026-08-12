@@ -662,6 +662,7 @@ function recordDesktopAssetHistory(
   result: {
     count: number;
     operationId: string | null;
+    outputAssetIdsBySource?: ReadonlyArray<{ sourceAssetId: string; newAssetId: string }>;
   },
   historyContext?: WorkerRequest['historyContext'],
 ): string | undefined {
@@ -686,6 +687,9 @@ function recordDesktopAssetHistory(
         assetIds: command.assetIds,
         targetFolderId: command.targetFolderId,
         conflictStrategy: command.conflictStrategy,
+        ...(result.outputAssetIdsBySource && result.outputAssetIdsBySource.length > 0
+          ? { outputAssetIds: result.outputAssetIdsBySource }
+          : {}),
       };
       break;
     case 'asset.trash':
@@ -995,7 +999,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'folder.trash': {
       const result = libraryService.trashManagedFolder(request.command);
-      const historyEntryId = result.tombstoneIds[0] ? libraryService.recordOperationHistory({
+      const historyEntryId = result.rootTombstoneId ? libraryService.recordOperationHistory({
         libraryId: request.command.libraryId,
         source: request.historyContext?.source ?? 'desktop',
         sourceReference: request.historyContext?.sourceReference ?? null,
@@ -1012,14 +1016,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         inverseRecipe: {
           kind: 'managed-folder-restore',
           version: 1,
-          payload: { tombstoneId: result.tombstoneIds[0] },
+          payload: { tombstoneId: result.rootTombstoneId },
         },
       }).historyEntryId : undefined;
+      const { rootTombstoneId: internalRootTombstoneId, ...publicResult } = result;
+      void internalRootTombstoneId;
       return {
         ok: true,
         type: 'folder.trashed',
         folderId: request.command.folderId,
-        ...result,
+        ...publicResult,
         ...(historyEntryId ? { historyEntryId } : {}),
       };
     }
@@ -1592,10 +1598,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'asset.trash-undone', restoredCount, skippedCount, assets };
     }
     case 'asset.copy': {
-      const { copiedCount, skippedCount, operationId, assets } = libraryService.copyAssets(request.command);
+      const { copiedCount, skippedCount, operationId, assets, outputAssetIdsBySource } = libraryService.copyAssets(request.command);
       const historyEntryId = recordDesktopAssetHistory(request.command, {
         count: copiedCount,
         operationId,
+        outputAssetIdsBySource,
       }, request.historyContext);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
       return {

@@ -430,6 +430,11 @@ describe('restoreTrashedManagedFolder (Serpent-qufh)', () => {
     expect(result.restoredFolderCount).toBeGreaterThanOrEqual(2);
     expect(result.restoredAssetCount).toBe(1);
     expect(service.listTrash(library.libraryId)).toEqual([]);
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      folderId: nested.folderId,
+      recursive: true,
+    }).map((item) => item.assetId)).toContain(asset.assetId);
     expect(
       existsSync(path.join(library.libraryPath, 'Assets', 'filled', 'nested')),
     ).toBe(true);

@@ -985,6 +985,12 @@ function AppInner() {
   // Auto-search requests can resolve out of order while the user is still
   // typing. Only the newest first-page request may replace the canvas.
   const searchRequestGenerationRef = useRef(0);
+  // Browse loads can overlap a destructive folder mutation. An older request
+  // may then reject with FOLDER_NOT_FOUND after the UI has already navigated
+  // away from that scope. Ignore every result (including errors) from a load
+  // generation that is no longer current so stale reads cannot cover the
+  // undoable mutation receipt with a misleading error toast.
+  const contentLoadGenerationRef = useRef(0);
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
@@ -2673,17 +2679,8 @@ function AppInner() {
           ? { kind: "trash" }
           : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
-      const [
-        folderResult,
-        assetResult,
-        allResult,
-        trashCountResult,
-        linkedResult,
-        tagResult,
-        collectionResult,
-        smartResult,
-        trashedFoldersResult,
-      ] = await Promise.all([
+      const generation = ++contentLoadGenerationRef.current;
+      const results = await Promise.all([
         api.listFolders({ ...libId, showIgnored: includeIgnored }),
         api.searchAssets({
           ...libId,
@@ -2712,7 +2709,24 @@ function AppInner() {
         trashMode
           ? api.listTrashedFolders(libId)
           : Promise.resolve(null),
-      ]);
+      ]).catch((caught: unknown) => {
+        if (generation !== contentLoadGenerationRef.current) return null;
+        throw caught;
+      });
+      if (results === null || generation !== contentLoadGenerationRef.current) {
+        return;
+      }
+      const [
+        folderResult,
+        assetResult,
+        allResult,
+        trashCountResult,
+        linkedResult,
+        tagResult,
+        collectionResult,
+        smartResult,
+        trashedFoldersResult,
+      ] = results;
       if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
       if (allResult && !allResult.ok)
@@ -5733,7 +5747,7 @@ function AppInner() {
     }
   }
 
-  async function undoLastFileOp(expectedHistoryEntryId?: string) {
+  const undoLastFileOp = useCallback(async (expectedHistoryEntryId?: string) => {
     if (isEditableTextTarget(document.activeElement)) {
       document.execCommand("undo");
       return;
@@ -5753,16 +5767,16 @@ function AppInner() {
       setNotice(
         t("toast.historyUndoDone", { count: current?.affectedCount ?? 1 }),
       );
-      await reloadCurrentContent();
+      await reloadCurrentContentRef.current();
     } catch (caught) {
       setError(toMessage(caught, t("toast.historyUndoFailed"), locale));
       await refreshOperationHistory();
     } finally {
       setUiState("ready");
     }
-  }
+  }, [api, library, locale, operationHistory, refreshOperationHistory, setError, setNotice, t]);
 
-  async function redoLastOperation() {
+  const redoLastOperation = useCallback(async () => {
     if (isEditableTextTarget(document.activeElement)) {
       document.execCommand("redo");
       return;
@@ -5779,14 +5793,14 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setOperationHistory(result.value);
       setNotice(t("toast.historyRedoDone", { count: current.affectedCount }));
-      await reloadCurrentContent();
+      await reloadCurrentContentRef.current();
     } catch (caught) {
       setError(toMessage(caught, t("toast.historyRedoFailed"), locale));
       await refreshOperationHistory();
     } finally {
       setUiState("ready");
     }
-  }
+  }, [api, library, locale, operationHistory, refreshOperationHistory, setError, setNotice, t]);
 
   async function deletePermanentFromTrash(assetIds: string[]) {
     if (!api || !library || assetIds.length === 0) return;

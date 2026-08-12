@@ -185,6 +185,19 @@ export class OperationHistoryStateMachine {
     this.#entries.push(entry);
   }
 
+  /**
+   * A retried transition may arrive after its first request committed.  It is
+   * safe to acknowledge that terminal state without re-running the recipe;
+   * callers still use `begin()` for all new transitions and fencing checks.
+   */
+  isCompleted(direction: HistoryDirection, expectedEntryId: string): boolean {
+    const entry = this.#entries.find((candidate) => candidate.historyEntryId === expectedEntryId);
+    if (!entry || entry.policy !== 'reversible') return false;
+    return direction === 'undo'
+      ? entry.state === 'undone'
+      : entry.state === 'applied';
+  }
+
   begin(direction: HistoryDirection, expectedEntryId: string): HistoryStackEntry {
     if (this.#transition) {
       throw new HistoryTransitionError('A history transition is already in progress.', 'HISTORY_TRANSITION_IN_PROGRESS');
