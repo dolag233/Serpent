@@ -6,6 +6,16 @@ import {
   type BrowseSelectionAnchor,
 } from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
+import {
+  canvasViewportFromMetrics,
+  clientPointToContent,
+  clipRectToViewport,
+  contentRectFromPoints,
+  contentRectToViewport,
+  rectsIntersect,
+  type MarqueeRect,
+  viewportRectToContent,
+} from "./marquee-geometry";
 import { computeMarqueeSelection, isMarqueeAdditive } from "./marquee-selection";
 import { resolveMasonryCenterRange } from "./masonry-selection-range";
 import {
@@ -127,16 +137,15 @@ export function useAssetSelection({
     left: number; top: number; width: number; height: number;
   } | null>(null);
   const marqueeStartRef = useRef({ x: 0, y: 0 });
+  const marqueeStartContentRef = useRef({ x: 0, y: 0 });
+  const marqueePointerClientRef = useRef({ x: 0, y: 0 });
   const marqueeHitIdsRef = useRef<string[]>([]);
-  const marqueeAccumulatedHitIdsRef = useRef<Set<string>>(new Set());
   const marqueeInitialSelectionRef = useRef<string[]>([]);
   const marqueeFolderHitIdsRef = useRef<string[]>([]);
-  const marqueeFolderAccumulatedHitIdsRef = useRef<Set<string>>(new Set());
   const marqueeInitialFolderSelectionRef = useRef<string[]>([]);
   const marqueeActiveRef = useRef(false);
   const autoScrollRef = useRef<{ direction: number; speed: number }>({ direction: 0, speed: 0 });
   const autoScrollRafRef = useRef<number | null>(null);
-  const marqueeBoxRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
   const marqueeModifiersRef = useRef<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>({ metaKey: false, ctrlKey: false, shiftKey: false });
 
   // ── clearAssetSelection ────────────────────────────────────────────────
@@ -365,10 +374,19 @@ export function useAssetSelection({
       e.preventDefault();
 
       marqueeStartRef.current = { x: e.clientX, y: e.clientY };
+      marqueePointerClientRef.current = { x: e.clientX, y: e.clientY };
+      const canvas = workspaceCanvasRef.current ?? e.currentTarget;
+      const canvasViewport = canvasViewportFromMetrics(
+        canvas.getBoundingClientRect(),
+        canvas,
+      );
+      marqueeStartContentRef.current = clientPointToContent(
+        { x: e.clientX, y: e.clientY },
+        canvasViewport,
+        { left: canvas.scrollLeft, top: canvas.scrollTop },
+      );
       marqueeHitIdsRef.current = [];
-      marqueeAccumulatedHitIdsRef.current = new Set();
       marqueeFolderHitIdsRef.current = [];
-      marqueeFolderAccumulatedHitIdsRef.current = new Set();
       // Modifier snapshot is taken once here and frozen for the whole drag
       // (REQ-SELECT-001 rule 5) — it must not be re-derived from later events.
       const modifierSnapshot = {
@@ -397,7 +415,15 @@ export function useAssetSelection({
       });
       marqueeActiveRef.current = true;
     },
-    [previewAsset, draggedMemberId, draggedCollectionId, selectedAssetIds, selectedFolderIds, selectionPlatform],
+    [
+      previewAsset,
+      draggedMemberId,
+      draggedCollectionId,
+      selectedAssetIds,
+      selectedFolderIds,
+      selectionPlatform,
+      workspaceCanvasRef,
+    ],
   );
 
   // ── Marquee document-level mousemove + mouseup when active ─────────────
@@ -408,28 +434,41 @@ export function useAssetSelection({
     const AUTO_SCROLL_ZONE = 40; // px from top/bottom edge
     const MAX_SCROLL_SPEED = 8; // px per frame at edge
 
+    const readCanvasViewport = () =>
+      canvasViewportFromMetrics(canvas.getBoundingClientRect(), canvas);
+
+    const readCanvasScroll = () => ({
+      left: canvas.scrollLeft,
+      top: canvas.scrollTop,
+    });
+
     // REQ-FOLDER-010: the marquee scans both asset and folder cards in one
     // DOM pass and returns their hits separately so each keeps its own
     // selection array, while sharing the same modifier snapshot/semantics.
-    const collectHits = (box: {
-      left: number;
-      top: number;
-      right: number;
-      bottom: number;
-    }) => {
+    // The selection box is kept in canvas-content coordinates. DOMRects are
+    // converted into that same space before intersection, so scrolling cannot
+    // make the hit set diverge from the visible marquee.
+    const collectHits = (box: MarqueeRect) => {
       const assetHitIds: string[] = [];
       const folderHitIds: string[] = [];
+      const viewport = readCanvasViewport();
+      const scroll = readCanvasScroll();
       const cards = canvas.querySelectorAll<HTMLElement>(
         "[data-asset-id], [data-folder-id]",
       );
       for (const card of cards) {
         const rect = card.getBoundingClientRect();
-        if (
-          rect.left < box.right &&
-          rect.right > box.left &&
-          rect.top < box.bottom &&
-          rect.bottom > box.top
-        ) {
+        const cardContentRect = viewportRectToContent(
+          {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+          },
+          viewport,
+          scroll,
+        );
+        if (rectsIntersect(cardContentRect, box)) {
           const assetId = card.dataset.assetId;
           const folderId = card.dataset.folderId;
           if (assetId) assetHitIds.push(assetId);
@@ -439,38 +478,18 @@ export function useAssetSelection({
       return { assetHitIds, folderHitIds };
     };
 
-    const applyMarqueeHits = (
-      hits: { assetHitIds: string[]; folderHitIds: string[] },
-      accumulate: boolean,
-    ) => {
-      if (accumulate) {
-        for (const assetId of hits.assetHitIds) {
-          marqueeAccumulatedHitIdsRef.current.add(assetId);
-        }
-        for (const folderId of hits.folderHitIds) {
-          marqueeFolderAccumulatedHitIdsRef.current.add(folderId);
-        }
-      }
-      const effectiveHitIds = [
-        ...new Set([
-          ...marqueeAccumulatedHitIdsRef.current,
-          ...hits.assetHitIds,
-        ]),
-      ];
-      const effectiveFolderHitIds = [
-        ...new Set([
-          ...marqueeFolderAccumulatedHitIdsRef.current,
-          ...hits.folderHitIds,
-        ]),
-      ];
-      marqueeHitIdsRef.current = effectiveHitIds;
-      marqueeFolderHitIdsRef.current = effectiveFolderHitIds;
+    const applyMarqueeHits = (hits: {
+      assetHitIds: string[];
+      folderHitIds: string[];
+    }) => {
+      marqueeHitIdsRef.current = hits.assetHitIds;
+      marqueeFolderHitIdsRef.current = hits.folderHitIds;
 
       // Always read the mousedown-time snapshot, never the live event
       // modifiers — the operation must not change mid-drag.
       const nextSelection = computeMarqueeSelection(
         marqueeInitialSelectionRef.current,
-        effectiveHitIds,
+        hits.assetHitIds,
         marqueeModifiersRef.current,
         selectionPlatform,
       );
@@ -480,7 +499,7 @@ export function useAssetSelection({
         setSelectedFolderIds(
           computeMarqueeSelection(
             marqueeInitialFolderSelectionRef.current,
-            effectiveFolderHitIds,
+            hits.folderHitIds,
             marqueeModifiersRef.current,
             selectionPlatform,
           ),
@@ -488,75 +507,71 @@ export function useAssetSelection({
       }
     };
 
+    const updateMarquee = (pointer: { x: number; y: number }) => {
+      const viewport = readCanvasViewport();
+      const scroll = readCanvasScroll();
+      const contentPoint = clientPointToContent(
+        pointer,
+        viewport,
+        scroll,
+      );
+      const contentRect = contentRectFromPoints(
+        marqueeStartContentRef.current,
+        contentPoint,
+      );
+      const viewportRect = contentRectToViewport(
+        contentRect,
+        viewport,
+        scroll,
+      );
+      const clippedRect = clipRectToViewport(viewportRect, viewport);
+      if (clippedRect) {
+        setMarqueeBox({
+          left: clippedRect.left,
+          top: clippedRect.top,
+          width: clippedRect.right - clippedRect.left,
+          height: clippedRect.bottom - clippedRect.top,
+        });
+      } else {
+        // Pointer is entirely outside the canvas — keep the box hidden while
+        // retaining the content-space rectangle for hit testing.
+        setMarqueeBox({
+          left: viewport.left,
+          top: viewport.top,
+          width: 0,
+          height: 0,
+        });
+      }
+      applyMarqueeHits(collectHits(contentRect));
+    };
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!marqueeActiveRef.current) return;
 
-      const start = marqueeStartRef.current;
-      const canvasRect = canvas.getBoundingClientRect();
+      const pointer = { x: e.clientX, y: e.clientY };
+      marqueePointerClientRef.current = pointer;
+      updateMarquee(pointer);
 
-      // Compute raw marquee rect from pointer movement
-      let left = Math.min(start.x, e.clientX);
-      let top = Math.min(start.y, e.clientY);
-      let width = Math.abs(e.clientX - start.x);
-      let height = Math.abs(e.clientY - start.y);
-
-      // Clip to canvas visible bounds so the box never extends over nav/inspector
-      const boxRight = left + width;
-      const boxBottom = top + height;
-      const clippedLeft = Math.max(left, canvasRect.left);
-      const clippedTop = Math.max(top, canvasRect.top);
-      const clippedRight = Math.min(boxRight, canvasRect.right);
-      const clippedBottom = Math.min(boxBottom, canvasRect.bottom);
-
-      if (clippedRight > clippedLeft && clippedBottom > clippedTop) {
-        left = clippedLeft;
-        top = clippedTop;
-        width = clippedRight - clippedLeft;
-        height = clippedBottom - clippedTop;
-      } else {
-        // Pointer is entirely outside the canvas — hide the box
-        width = 0;
-        height = 0;
-      }
-
-      setMarqueeBox({ left, top, width, height });
-
-      // Store for RAF-driven auto-scroll hit detection
-      const currentMarqueeRect = {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-      };
-      marqueeBoxRef.current = currentMarqueeRect;
-
-      // Intersect marquee box with visible asset cards
-      const marqueeRect = {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-      };
-      applyMarqueeHits(collectHits(marqueeRect), false);
+      const canvasViewport = readCanvasViewport();
 
       // Auto-scroll when pointer is near canvas top/bottom edges
       let scrollDirection = 0;
       let scrollSpeed = 0;
       if (
-        e.clientY >= canvasRect.top &&
-        e.clientY <= canvasRect.bottom
+        e.clientY >= canvasViewport.top &&
+        e.clientY <= canvasViewport.bottom
       ) {
-        if (e.clientY < canvasRect.top + AUTO_SCROLL_ZONE) {
-          const dist = canvasRect.top + AUTO_SCROLL_ZONE - e.clientY;
+        if (e.clientY < canvasViewport.top + AUTO_SCROLL_ZONE) {
+          const dist = canvasViewport.top + AUTO_SCROLL_ZONE - e.clientY;
           scrollSpeed = Math.round(
             (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
           );
           scrollDirection = -1;
         } else if (
-          e.clientY > canvasRect.bottom - AUTO_SCROLL_ZONE
+          e.clientY > canvasViewport.bottom - AUTO_SCROLL_ZONE
         ) {
           const dist =
-            e.clientY - (canvasRect.bottom - AUTO_SCROLL_ZONE);
+            e.clientY - (canvasViewport.bottom - AUTO_SCROLL_ZONE);
           scrollSpeed = Math.round(
             (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
           );
@@ -573,21 +588,36 @@ export function useAssetSelection({
             autoScrollRafRef.current = null;
             return;
           }
-          canvas.scrollTop += direction * speed;
-
-          // Re-run hit detection with current marquee box position
-          const currentBox = marqueeBoxRef.current;
-          if (currentBox) {
-            applyMarqueeHits(collectHits(currentBox), true);
+          const previousScrollTop = canvas.scrollTop;
+          const maxScrollTop = Math.max(
+            0,
+            canvas.scrollHeight - canvas.clientHeight,
+          );
+          canvas.scrollTop = Math.min(
+            maxScrollTop,
+            Math.max(0, previousScrollTop + direction * speed),
+          );
+          if (canvas.scrollTop === previousScrollTop) {
+            autoScrollRef.current = { direction: 0, speed: 0 };
+            autoScrollRafRef.current = null;
+            return;
           }
+          updateMarquee(marqueePointerClientRef.current);
           autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
         };
         autoScrollRafRef.current = requestAnimationFrame(autoScrollLoop);
       }
     };
 
+    const handleCanvasScroll = () => {
+      if (!marqueeActiveRef.current) return;
+      updateMarquee(marqueePointerClientRef.current);
+    };
+
     const handleMouseUp = (e: MouseEvent) => {
       if (!marqueeActiveRef.current) return;
+      marqueePointerClientRef.current = { x: e.clientX, y: e.clientY };
+      updateMarquee(marqueePointerClientRef.current);
       marqueeActiveRef.current = false;
       autoScrollRef.current = { direction: 0, speed: 0 };
       if (autoScrollRafRef.current !== null) {
@@ -643,9 +673,11 @@ export function useAssetSelection({
 
     document.addEventListener("mousemove", handleMouseMove);
     document.addEventListener("mouseup", handleMouseUp);
+    canvas.addEventListener("scroll", handleCanvasScroll, { passive: true });
     return () => {
       document.removeEventListener("mousemove", handleMouseMove);
       document.removeEventListener("mouseup", handleMouseUp);
+      canvas.removeEventListener("scroll", handleCanvasScroll);
       marqueeActiveRef.current = false;
       autoScrollRef.current = { direction: 0, speed: 0 };
       if (autoScrollRafRef.current !== null) {

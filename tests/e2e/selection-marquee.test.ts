@@ -207,6 +207,242 @@ test("marquee-selects multiple cards in grid mode", async () => {
   }
 });
 
+test("marquee keeps its viewport range aligned after the canvas is scrolled", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "滚动后框选坐标验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      canvas.scrollTop = Math.min(360, canvas.scrollHeight - canvas.clientHeight);
+      const canvasRect = canvas.getBoundingClientRect();
+      const cards = Array.from(
+        canvas.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]"),
+      )
+        .map((card) => {
+          const rect = card.getBoundingClientRect();
+          return {
+            id: card.dataset.assetId ?? "",
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+          };
+        })
+        .filter(
+          (card) =>
+            card.id &&
+            card.top > canvasRect.top + 50 &&
+            card.bottom < canvasRect.bottom - 50,
+        );
+      const first = cards[0];
+      if (!first) throw new Error("No fully visible card after scrolling");
+      const second = cards.find(
+        (card) => Math.abs(card.top - first.top) < 2 && card.left > first.right,
+      );
+      if (!second) throw new Error("No second card in the visible row");
+      const start = { x: first.left - 8, y: first.top - 8 };
+      const end = { x: second.right + 8, y: second.bottom + 8 };
+      const expected = cards
+        .filter(
+          (card) =>
+            card.left < end.x &&
+            card.right > start.x &&
+            card.top < end.y &&
+            card.bottom > start.y,
+        )
+        .map((card) => card.id);
+      return {
+        canvas: {
+          left: canvasRect.left,
+          top: canvasRect.top,
+          right: canvasRect.right,
+          bottom: canvasRect.bottom,
+        },
+        start,
+        end,
+        expected,
+        scrollTop: canvas.scrollTop,
+      };
+    });
+    expect(geometry.scrollTop).toBeGreaterThan(0);
+    expect(geometry.start.x).toBeGreaterThan(geometry.canvas.left);
+    expect(geometry.start.y).toBeGreaterThan(geometry.canvas.top);
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 12 });
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const marqueeBox = await marquee.boundingBox();
+    expect(marqueeBox).not.toBeNull();
+    expect(marqueeBox!.x).toBeCloseTo(geometry.start.x, 0);
+    expect(marqueeBox!.y).toBeCloseTo(geometry.start.y, 0);
+    expect(marqueeBox!.width).toBeCloseTo(geometry.end.x - geometry.start.x, 0);
+    expect(marqueeBox!.height).toBeCloseTo(geometry.end.y - geometry.start.y, 0);
+
+    await window.mouse.up();
+    const selectedIds = await window.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>(".asset-card.is-selected"))
+        .map((card) => card.dataset.assetId ?? "")
+        .filter(Boolean),
+    );
+    expect(selectedIds.sort()).toEqual([...geometry.expected].sort());
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee keeps its anchor attached while auto-scroll moves the canvas", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "滚动中框选锚点验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const maxScrollTop = canvas.scrollHeight - canvas.clientHeight;
+      canvas.scrollTop = Math.min(300, maxScrollTop);
+      const rect = canvas.getBoundingClientRect();
+      return {
+        canvas: {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+        },
+        initialScrollTop: canvas.scrollTop,
+        start: {
+          x: rect.left + 5,
+          y: rect.top + rect.height / 2,
+        },
+        end: {
+          x: rect.right - 24,
+          y: rect.bottom - 5,
+        },
+      };
+    });
+    expect(geometry.initialScrollTop).toBeGreaterThan(0);
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 20 });
+
+    await expect
+      .poll(
+        () =>
+          window.evaluate(() => {
+            const canvas = document.querySelector<HTMLElement>(
+              ".workspace-canvas",
+            );
+            if (!canvas) return false;
+            return (
+              canvas.scrollTop >=
+              canvas.scrollHeight - canvas.clientHeight - 2
+            );
+          }),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+
+    const finalScrollTop = await window.evaluate(
+      () => document.querySelector<HTMLElement>(".workspace-canvas")?.scrollTop ?? 0,
+    );
+    expect(finalScrollTop).toBeGreaterThan(geometry.initialScrollTop);
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const marqueeBox = await marquee.boundingBox();
+    expect(marqueeBox).not.toBeNull();
+
+    // The drag anchor is content-local. Once scrolling moves it above the
+    // viewport, the visible marquee must be clipped to the canvas top rather
+    // than remaining at the anchor's old clientY.
+    expect(marqueeBox!.y).toBeCloseTo(geometry.canvas.top, 0);
+
+    await window.mouse.up();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee refreshes its visible range when the canvas scrolls during a drag", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "拖拽中滚动画布验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const maxScrollTop = canvas.scrollHeight - canvas.clientHeight;
+      canvas.scrollTop = Math.min(250, maxScrollTop);
+      const rect = canvas.getBoundingClientRect();
+      const start = {
+        x: rect.left + 5,
+        y: rect.top + rect.height * 0.35,
+      };
+      const end = {
+        x: rect.right - 24,
+        y: rect.top + rect.height * 0.65,
+      };
+      return {
+        start,
+        end,
+        initialScrollTop: canvas.scrollTop,
+      };
+    });
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 12 });
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const beforeScrollBox = await marquee.boundingBox();
+    expect(beforeScrollBox).not.toBeNull();
+
+    const scrollDelta = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const previous = canvas.scrollTop;
+      canvas.scrollTop = Math.min(
+        previous + 120,
+        canvas.scrollHeight - canvas.clientHeight,
+      );
+      return canvas.scrollTop - previous;
+    });
+    expect(scrollDelta).toBeGreaterThan(0);
+
+    await expect
+      .poll(async () => (await marquee.boundingBox())?.y ?? null)
+      .toBeCloseTo(beforeScrollBox!.y - scrollDelta, 0);
+
+    await window.mouse.up();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Test 1b — Plain marquee (no modifier) replaces an existing selection
 // ---------------------------------------------------------------------------
