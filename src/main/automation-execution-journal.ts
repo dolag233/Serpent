@@ -392,6 +392,8 @@ export interface CreateAutomationExecutionInput {
   scriptSource?: string;
   sessionId?: string;
   declaredCapabilities: readonly AutomationCapability[];
+  /** Main-owned initial grant for stateless MCP; never accepted from a tool payload. */
+  initialGrantedCapabilities?: readonly AutomationCapability[];
 }
 
 export interface AuthorizeAutomationExecutionInput {
@@ -498,8 +500,8 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     if ((source === 'desktop-console' || source === 'script') && typeof scriptSource !== 'string') {
       throw new Error('Desktop Console and saved scripts must provide script source.');
     }
-    if ((source === 'desktop-console' || source === 'mcp') && input.sessionId === undefined) {
-      throw new Error('Desktop Console and MCP executions must bind a session.');
+    if (source === 'desktop-console' && input.sessionId === undefined) {
+      throw new Error('Desktop Console executions must bind a session.');
     }
     const sessionId = input.sessionId === undefined ? null : automationSessionIdSchema.parse(input.sessionId);
     if (this.#activeExecutionCount() >= this.#maxActiveExecutions) {
@@ -517,6 +519,12 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     const resourceBudget = source === 'mcp'
       ? { ...this.#resourceBudget, maxWallTimeMs: MCP_EXECUTION_MAX_WALL_TIME_MS }
       : { ...this.#resourceBudget };
+    const initialGrantedCapabilities = normalizeCapabilities(z.array(automationCapabilitySchema).max(64).parse(
+      input.initialGrantedCapabilities ?? [],
+    ));
+    if (initialGrantedCapabilities.some((capability) => !declaredCapabilities.includes(capability))) {
+      throw new Error('Initial automation capabilities must be declared by the owner.');
+    }
     const record: AutomationExecutionRecord = {
       executionId: this.#nextUniqueId('execution'),
       logId: this.#nextUniqueId('log'),
@@ -537,7 +545,7 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
       deadlineAt: new Date(nowDate.getTime() + resourceBudget.maxWallTimeMs).toISOString(),
       resourceBudget,
       declaredCapabilities,
-      grantedCapabilities: [],
+      grantedCapabilities: initialGrantedCapabilities,
       status: 'created',
       commandCount: 0,
       succeededCommandCount: 0,
@@ -577,11 +585,14 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
   finishValidation(executionId: string): AutomationExecutionRecord | undefined {
     const record = this.#find(executionId);
     if (!record || record.status !== 'validating') return record === undefined ? undefined : safeRecord(record);
-    const preAuthorized = record.source === 'script'
+    const preAuthorized = record.source === 'mcp'
+      || (record.source === 'script'
       && record.scriptHash !== null
       && record.libraryId !== null
-      && this.#hasPersistentGrant(record.scriptHash, record.libraryId, record.declaredCapabilities);
-    record.grantedCapabilities = preAuthorized ? [...record.declaredCapabilities] : [];
+      && this.#hasPersistentGrant(record.scriptHash, record.libraryId, record.declaredCapabilities));
+    if (record.source !== 'mcp') {
+      record.grantedCapabilities = preAuthorized ? [...record.declaredCapabilities] : [];
+    }
     record.status = preAuthorized ? 'running' : 'awaiting-authorization';
     record.updatedAt = this.#now();
     this.#persist();
@@ -1027,6 +1038,18 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
       this.#info('cancelled', record, 'Automation session ended.');
     }
     this.#persist();
+  }
+
+  /** Detach a transport without cancelling the business execution it started. */
+  detachSession(sessionId: string): void {
+    let changed = false;
+    for (const record of this.#snapshot.executions) {
+      if (record.sessionId !== sessionId || terminalStatus(record.status)) continue;
+      record.sessionId = null;
+      record.updatedAt = this.#now();
+      changed = true;
+    }
+    if (changed) this.#persist();
   }
 
   recordCommandResult(

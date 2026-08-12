@@ -736,20 +736,10 @@ export class EmbeddedMcpServer {
       libraryId: null,
       clientCredentialId: credential.credentialId,
       ...(clientName === undefined ? {} : { clientName }),
-      sessionId: generatedSessionId,
       declaredCapabilities: DEFAULT_MCP_CAPABILITIES,
+      initialGrantedCapabilities: grantedCapabilities,
     });
     this.#journal.start(execution.executionId);
-    const authorization = this.#journal.authorizeFromDesktop({
-      executionId: execution.executionId,
-      persistence: 'session',
-      grantedCapabilities,
-    });
-    if (!authorization.ok) {
-      this.#journal.cancel(execution.executionId);
-      writeJson(response, 500, { error: 'MCP execution authorization failed.' });
-      return;
-    }
     const backend = {
       getExecutionContext: (): AutomationExecutionContext | undefined => this.#journal.resolve(execution.executionId),
       getToolExposure: () => {
@@ -849,7 +839,9 @@ export class EmbeddedMcpServer {
     // Serpent review: endSession matches on the record's sessionId, not the
     // executionId — the previous call passed the execution id and silently
     // leaked every session's execution as permanently 'running'.
-    this.#journal.endSession(session.sessionId);
+    // The HTTP transport is disposable; the Main-owned execution and any
+    // durable job/idempotency record must outlive this connection.
+    this.#journal.detachSession(session.sessionId);
     this.#permissionBroker?.clearExecution(session.executionId);
     try {
       await session.server.close();

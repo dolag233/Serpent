@@ -1076,6 +1076,15 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     expectedHistoryEntryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('history.group.begin'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.group.complete'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.create'),
     libraryId: identifierSchema,
     parentFolderId: optionalIdentifierSchema,
@@ -2164,6 +2173,8 @@ export const workerRequestSchema = z.strictObject({
   historyContext: z.strictObject({
     source: z.enum(['desktop', 'script', 'mcp', 'plugin']),
     sourceReference: identifierSchema.nullable().optional(),
+    /** Worker-issued history group used by one automation execution. */
+    historyGroupId: identifierSchema.optional(),
   }).optional(),
   /**
    * Automation reads share the Worker protocol but must not inherit desktop

@@ -29,6 +29,7 @@ import {
   stripMcpChallengeConfirmationFields,
   type McpDangerousOperationChallenge,
 } from './mcp-challenge';
+import type { AutomationIdempotencyStore } from '../main/automation-idempotency-store';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -112,6 +113,7 @@ export interface AutomationWorkerClient {
       historyContext?: {
         source: 'desktop' | 'script' | 'mcp' | 'plugin';
         sourceReference?: string | null;
+        historyGroupId?: string;
       };
     },
   ): Promise<WorkerResult>;
@@ -305,6 +307,8 @@ export interface AutomationHistoryEntryHandler {
 }
 
 export interface AutomationCommandGatewayOptions {
+  /** Durable only for completed stateless calls; in-flight coordination stays in memory. */
+  idempotencyStore?: AutomationIdempotencyStore;
   auditSink?: AutomationExecutionAuditSink;
   auditLogger?: AutomationGatewayAuditLogger;
   externalEffectHandler?: AutomationExternalEffectHandler;
@@ -347,6 +351,8 @@ export interface AutomationCommandGateway {
       stateless?: boolean;
     };
   }): Promise<AutomationGatewayResult>;
+  /** Complete the Worker-owned group opened for one script/console execution. */
+  completeExecutionHistoryGroup(executionId: string): Promise<boolean>;
 }
 
 function gatewayFailure(code: AutomationGatewayErrorCode): AutomationGatewayFailure {
@@ -417,8 +423,17 @@ export function createAutomationCommandGateway(
     historyEntryHandler,
     permissionBroker,
     onImportCompleted,
+    idempotencyStore,
   } = options;
   const inFlightCommandCounts = new Map<string, number>();
+  type ExecutionHistoryGroup = {
+    libraryId: string;
+    historyEntryId: string;
+    source: 'script' | 'desktop';
+  };
+  const executionHistoryGroups = new Map<string, ExecutionHistoryGroup>();
+  /** Serialize the first group handshake when a script dispatches commands concurrently. */
+  const pendingHistoryGroupBegins = new Map<string, Promise<ExecutionHistoryGroup | undefined>>();
   // Serpent-8b5b.4 review: cap idempotency retention so a chatty client with
   // unique keys cannot grow the map without bound; oldest entries evict first.
   const IDEMPOTENCY_ENTRY_LIMIT = 4096;
@@ -447,7 +462,89 @@ export function createAutomationCommandGateway(
     else inFlightCommandCounts.set(context.executionId, inFlight - 1);
   };
 
+  const beginExecutionHistoryGroup = async (
+    executionId: string,
+    libraryId: string,
+    source: 'script' | 'desktop',
+  ): Promise<ExecutionHistoryGroup | undefined> => {
+    const existing = executionHistoryGroups.get(executionId);
+    if (existing !== undefined) return existing;
+    const pending = pendingHistoryGroupBegins.get(executionId);
+    if (pending !== undefined) return pending;
+
+    const start = (async (): Promise<ExecutionHistoryGroup | undefined> => {
+      try {
+        const result = await workerClient.request({ type: 'history.group.begin', libraryId }, {
+          historyContext: {
+            source,
+            sourceReference: executionId,
+          },
+        });
+        if (!result.ok || result.type !== 'history.group.begun') {
+          auditLogger?.error('automation.history-group.begin-invalid', new Error('Worker returned an invalid history group start.'), {
+            executionId,
+            libraryId,
+          });
+          return undefined;
+        }
+        const group: ExecutionHistoryGroup = {
+          libraryId,
+          historyEntryId: result.historyEntryId,
+          source,
+        };
+        executionHistoryGroups.set(executionId, group);
+        return group;
+      } catch (error) {
+        auditLogger?.error('automation.history-group.begin-failed', error, { executionId, libraryId });
+        return undefined;
+      } finally {
+        pendingHistoryGroupBegins.delete(executionId);
+      }
+    })();
+    pendingHistoryGroupBegins.set(executionId, start);
+    return start;
+  };
+
+  const completeExecutionHistoryGroup = async (executionId: string): Promise<boolean> => {
+    const pending = pendingHistoryGroupBegins.get(executionId);
+    if (pending !== undefined) await pending;
+    const group = executionHistoryGroups.get(executionId);
+    if (group === undefined) return true;
+    try {
+      const result = await workerClient.request({
+        type: 'history.group.complete',
+        libraryId: group.libraryId,
+        expectedHistoryEntryId: group.historyEntryId,
+      }, {
+        historyContext: {
+          source: group.source,
+          sourceReference: executionId,
+          historyGroupId: group.historyEntryId,
+        },
+      });
+      if (!result.ok || result.type !== 'history.group.completed'
+        || result.historyEntryId !== group.historyEntryId) {
+        auditLogger?.error('automation.history-group.complete-invalid', new Error('Worker returned an invalid history group completion.'), {
+          executionId,
+          historyEntryId: group.historyEntryId,
+        });
+        return false;
+      }
+      executionHistoryGroups.delete(executionId);
+      return true;
+    } catch (error) {
+      auditLogger?.error('automation.history-group.complete-failed', error, {
+        executionId,
+        historyEntryId: group.historyEntryId,
+      });
+      return false;
+    }
+  };
+
   return {
+    async completeExecutionHistoryGroup(executionId: string): Promise<boolean> {
+      return completeExecutionHistoryGroup(executionId);
+    },
     async execute(
       envelope: unknown,
       options?: {
@@ -744,7 +841,7 @@ export function createAutomationCommandGateway(
         : executionId;
       const idempotencyEntryKey = idempotencyKey === undefined
         ? undefined
-        : `${idempotencyOwner}\u0000${context.libraryId ?? ''}\u0000${context.contextRevision ?? 0}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
+        : `${idempotencyOwner}\u0000${context.libraryId ?? ''}\u0000${descriptor.commandId}\u0000${idempotencyKey}`;
       if (descriptor.commandId === 'library.create'
         && libraryBindingHandler?.transitionLibraryContext === undefined
         && libraryBindingHandler?.bindLibrary === undefined) {
@@ -758,6 +855,13 @@ export function createAutomationCommandGateway(
       } | undefined;
       if (idempotencyEntryKey !== undefined) {
         const fingerprint = idempotencyFingerprint(idempotencyPayload);
+        const durable = idempotencyStore?.get(idempotencyEntryKey);
+        if (durable !== undefined) {
+          if (durable.fingerprint !== fingerprint) {
+            return recordOutcome(gatewayFailure('AUTOMATION_INVALID_REQUEST'));
+          }
+          return durable.result as AutomationGatewayResult;
+        }
         const existing = idempotencyEntries.get(idempotencyEntryKey);
         if (existing !== undefined) {
           if (existing.fingerprint !== fingerprint) {
@@ -801,6 +905,19 @@ export function createAutomationCommandGateway(
       const completeIdempotency = (result: AutomationGatewayResult): void => {
         if (idempotencyEntry === undefined || idempotencyEntryKey === undefined) return;
         if (!result.ok) idempotencyEntries.delete(idempotencyEntryKey);
+        else {
+          try {
+            idempotencyStore?.put(idempotencyEntryKey, {
+              fingerprint: idempotencyEntry.fingerprint,
+              result,
+              completedAt: new Date().toISOString(),
+            });
+          } catch (error) {
+            auditLogger?.error('automation.idempotency.persist-failed', error, {
+              commandId: descriptor.commandId,
+            });
+          }
+        }
         idempotencyEntry.resolve(result);
       };
       const recordIdempotentOutcome = async (result: AutomationGatewayResult): Promise<AutomationGatewayResult> => {
@@ -809,6 +926,11 @@ export function createAutomationCommandGateway(
         return completed;
       };
       const boundLibraryId = context.libraryId;
+
+      const shouldGroupHistory = (context.source === 'script' || context.source === 'desktop-console')
+        && descriptor.history?.policy === 'reversible'
+        && boundLibraryId !== null;
+      let historyGroup = shouldGroupHistory ? executionHistoryGroups.get(executionId) : undefined;
 
       if (descriptor.commandId === 'ui.notify') {
         if (!uiNotifyHandler) {
@@ -981,9 +1103,23 @@ export function createAutomationCommandGateway(
                 ? 'desktop'
                 : context.source,
               sourceReference: executionId,
+              ...(historyGroup === undefined ? {} : { historyGroupId: historyGroup.historyEntryId }),
             },
           },
+      );
+      if (shouldGroupHistory && historyGroup === undefined) {
+        historyGroup = await beginExecutionHistoryGroup(
+          executionId,
+          boundLibraryId,
+          context.source === 'desktop-console' ? 'desktop' : 'script',
         );
+        if (historyGroup === undefined) {
+          return recordOutcomeAndReleaseSlot({
+            ok: false,
+            error: createPublicError('INTERNAL_ERROR'),
+          });
+        }
+      }
       try {
         workerResult = await requestWorker(approvedPlan);
       } catch (error) {

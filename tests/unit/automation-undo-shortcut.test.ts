@@ -51,7 +51,7 @@ describe('application automation undo entrypoint', () => {
       isAuthorizedSender: () => true,
       workerClient: () => worker as never,
       journal: () => journal,
-      gateway: () => ({}) as never,
+      gateway: () => ({ completeExecutionHistoryGroup: async () => true }) as never,
       runtime: () => ({}) as never,
       confirmDesktopWrite: async () => true,
       logger: () => undefined,

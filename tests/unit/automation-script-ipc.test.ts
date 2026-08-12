@@ -37,6 +37,23 @@ class FakeAutomationWorker implements AutomationWorkerClient {
 
   async request(command: WorkerCommand): Promise<WorkerResult> {
     this.commands.push(command);
+    if (command.type === 'history.group.begin') {
+      return { ok: true, type: 'history.group.begun', historyEntryId: 'history-group-1' };
+    }
+    if (command.type === 'history.group.complete') {
+      return {
+        ok: true,
+        type: 'history.group.completed',
+        historyEntryId: command.expectedHistoryEntryId,
+        status: {
+          libraryId,
+          undoTop: null,
+          redoTop: null,
+          staleTop: null,
+          transitionInProgress: false,
+        },
+      };
+    }
     if (command.type === 'library.list') {
       return {
         ok: true,
@@ -127,10 +144,12 @@ describe('Desktop Console automation IPC', () => {
       value: { updated: { updatedCount: 1, skipped: [] } },
       output: ['Updated 1 asset.'],
     });
-    expect(worker.commands.slice(-2)).toEqual([
-      expect.objectContaining({ type: 'asset.search', libraryId }),
-      { type: 'asset.rating.set', libraryId, assetIds: ['asset-1'], rating: 4 },
+    expect(worker.commands.map((command) => command.type)).toEqual([
+      'library.list', 'asset.search', 'history.group.begin', 'asset.rating.set', 'history.group.complete',
     ]);
+    expect(worker.commands[3]).toEqual({
+      type: 'asset.rating.set', libraryId, assetIds: ['asset-1'], rating: 4,
+    });
     expect(journal.get('execution-1')).toMatchObject({
       status: 'partially-succeeded', commandCount: 3, succeededCommandCount: 2, failedCommandCount: 1,
     });

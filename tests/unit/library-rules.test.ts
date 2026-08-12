@@ -9,6 +9,7 @@ import {
   normalizeAssetFileBaseName,
   normalizeLibraryName,
   normalizeRelativeAssetPath,
+  isPortablePathEqualOrDescendant,
   portablePathIdentity,
   stripWindowsExtendedPathPrefix,
   targetLibraryPath,
@@ -118,6 +119,12 @@ describe('managed asset path rules', () => {
     expect(portablePathIdentity('Straße/ς.txt')).toBe(
       portablePathIdentity('STRASSE/Σ.TXT'),
     );
+  });
+
+  it('matches folder descendants using portable path identity', () => {
+    expect(isPortablePathEqualOrDescendant('UI/Cafe\u0301/Buttons', 'ui/café')).toBe(true);
+    expect(isPortablePathEqualOrDescendant('ui/café', 'UI/Café')).toBe(true);
+    expect(isPortablePathEqualOrDescendant('ui/cafeteria', 'ui/café')).toBe(false);
   });
 });
 

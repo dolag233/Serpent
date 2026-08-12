@@ -635,6 +635,36 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
   if (automationResult) return automationResult;
 
+  if (request.command.type === 'history.group.begin' || request.command.type === 'history.group.complete') {
+    const lease = await libraryService.acquireWriteLease(request.command.libraryId);
+    try {
+      const historyContext = request.historyContext;
+      if (historyContext?.sourceReference === undefined || historyContext.sourceReference === null) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      if (request.command.type === 'history.group.begin') {
+        const result = libraryService.beginOperationHistoryGroup({
+          libraryId: request.command.libraryId,
+          source: historyContext.source,
+          sourceReference: historyContext.sourceReference,
+        });
+        return { ok: true, type: 'history.group.begun', historyEntryId: result.historyEntryId };
+      }
+      const result = libraryService.completeOperationHistoryGroup(
+        request.command.libraryId,
+        request.command.expectedHistoryEntryId,
+      );
+      return {
+        ok: true,
+        type: 'history.group.completed',
+        historyEntryId: result.historyEntryId,
+        status: libraryService.getOperationHistoryStatus(request.command.libraryId),
+      };
+    } finally {
+      lease.release();
+    }
+  }
+
   // Mixed desktop trash is a filesystem batch, so it cannot run inside the
   // synchronous SQLite transaction used by bounded metadata writes. It still
   // owns the same durable per-library writer lease for the entire
@@ -642,7 +672,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   if (request.command.type === 'selection.trash') {
     const lease = await libraryService.acquireWriteLease(request.command.libraryId);
     try {
-      const result = libraryService.trashSelection({
+      const result = await libraryService.trashSelectionAsync({
         libraryId: request.command.libraryId,
         assetIds: request.command.assetIds,
         folderIds: request.command.folderIds,
@@ -818,6 +848,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'history.status',
         status: libraryService.getOperationHistoryStatus(request.command.libraryId),
       };
+    case 'history.group.begin':
+    case 'history.group.complete':
+      throw new Error('History group control was not dispatched through its write lease.');
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
       scheduleThumbnailScene(library.libraryId, 'startup');
@@ -1024,7 +1057,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'folder.restored-trashed', ...result, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'folder.trash': {
-      const result = libraryService.trashManagedFolder(request.command);
+      const result = await libraryService.trashManagedFolderAsync(request.command);
       const historyEntryId = result.rootTombstoneId ? libraryService.recordOperationHistory({
         libraryId: request.command.libraryId,
         source: request.historyContext?.source ?? 'desktop',

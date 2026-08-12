@@ -66,17 +66,14 @@ describe('AutomationExecutionJournal', () => {
       libraryId: null as never,
       sessionId: mcpSessionOne,
       declaredCapabilities: ['asset.read'],
+      initialGrantedCapabilities: ['asset.read'],
     });
 
     expect(execution).toMatchObject({ libraryId: null, status: 'created' });
     expect(journal.start(execution.executionId)).toMatchObject({
-      status: 'awaiting-authorization',
+      status: 'running',
       libraryId: null,
     });
-    expect(journal.authorizeFromDesktop({
-      executionId: execution.executionId,
-      persistence: 'session',
-    })).toMatchObject({ ok: true, execution: { status: 'running', libraryId: null } });
     expect(journal.resolve(execution.executionId)).toMatchObject({
       executionId: execution.executionId,
       libraryId: null,
@@ -354,42 +351,35 @@ describe('AutomationExecutionJournal', () => {
     expect(reloaded.start(changedCapabilities.executionId)).toMatchObject({ status: 'awaiting-authorization' });
   });
 
-  it('does not expose a caller-supplied actor field that an MCP client could forge into a Desktop grant', () => {
+  it('starts stateless MCP executions with only the Main-owned initial grant', () => {
     const journal = createJournal();
     const execution = journal.create({
       source: 'mcp',
       libraryId: libraryOne,
-      sessionId: mcpSessionOne,
       declaredCapabilities: ['asset.read'],
+      initialGrantedCapabilities: ['asset.read'],
     });
 
     journal.start(execution.executionId);
-    expect(Object.getOwnPropertyNames(Object.getPrototypeOf(journal))).not.toContain('authorize');
-    expect(journal.authorizeFromDesktop({
-      executionId: execution.executionId,
-      persistence: 'saved-script',
-    })).toEqual({ ok: false, code: 'AUTOMATION_GRANT_NOT_ALLOWED' });
-    expect(journal.resolve(execution.executionId)).toBeUndefined();
+    expect(journal.resolve(execution.executionId)).toMatchObject({
+      libraryId: libraryOne,
+      grantedCapabilities: ['asset.read'],
+    });
   });
 
-  it('allows a Desktop user to issue only a session-scoped MCP grant', () => {
+  it('detaches an MCP execution without cancelling it', () => {
     const journal = createJournal();
     const execution = journal.create({
       source: 'mcp',
       libraryId: libraryOne,
       sessionId: mcpSessionOne,
       declaredCapabilities: ['asset.read'],
+      initialGrantedCapabilities: ['asset.read'],
     });
 
     journal.start(execution.executionId);
-    expect(journal.authorizeFromDesktop({
-      executionId: execution.executionId,
-      persistence: 'session',
-    })).toMatchObject({ ok: true, execution: { status: 'running' } });
-    expect(journal.authorizeFromDesktop({
-      executionId: execution.executionId,
-      persistence: 'saved-script',
-    })).toEqual({ ok: false, code: 'AUTOMATION_GRANT_NOT_ALLOWED' });
+    journal.detachSession(mcpSessionOne);
+    expect(journal.get(execution.executionId)).toMatchObject({ status: 'running', sessionId: null });
   });
 
   it('recovers interrupted executions after restart without persisting script text or secrets', () => {

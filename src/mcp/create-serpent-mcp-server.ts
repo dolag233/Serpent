@@ -136,7 +136,6 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       ...(backend.getLibraryChangeSequence === undefined
         ? {}
         : { getLibraryChangeSequence: backend.getLibraryChangeSequence }),
-      signal: extra.signal,
     });
     await reportProgress?.(1, 1, result.ok ? 'Serpent completed the tool.' : 'Serpent rejected the tool call.');
     if (result.ok && result.commandId !== undefined && result.plugin === undefined) {

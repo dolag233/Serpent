@@ -1641,7 +1641,8 @@ export interface AutomationCommandDescriptor<Id extends AutomationCommandId = Au
 }
 
 function readDescriptor<Id extends AutomationCommandId>(
-  descriptor: Omit<AutomationCommandDescriptor<Id>, 'apiVersion' | 'deprecated' | 'impact' | 'supportsDryRun' | 'supportsIdempotencyKey' | 'supportsCancellation' | 'supportsDetach' | 'supportsUndo' | 'atomicity' | 'approvalPolicy' | 'history'>,
+  descriptor: Omit<AutomationCommandDescriptor<Id>, 'apiVersion' | 'deprecated' | 'impact' | 'supportsDryRun' | 'supportsIdempotencyKey' | 'supportsCancellation' | 'supportsDetach' | 'supportsUndo' | 'atomicity' | 'approvalPolicy' | 'history'>
+    & { supportsDetach?: boolean },
 ): AutomationCommandDescriptor<Id> {
   return {
     ...descriptor,
@@ -1651,7 +1652,7 @@ function readDescriptor<Id extends AutomationCommandId>(
     supportsDryRun: false,
     supportsIdempotencyKey: false,
     supportsCancellation: false,
-    supportsDetach: false,
+    supportsDetach: descriptor.supportsDetach ?? false,
     supportsUndo: false,
     history: { policy: 'none' },
     atomicity: 'single-transaction',
@@ -3315,6 +3316,7 @@ export const automationCommandRegistry = [
     allowedSources: allReadSources,
     targetScope: 'library',
     supportsBatch: true,
+    supportsDetach: true,
     mcp: { public: true, toolName: 'serpent_media_jobs_list', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId) => ({ type: 'media.list-jobs', libraryId }),
     projectResult: (result, _libraryId, input) => {
@@ -3341,6 +3343,7 @@ export const automationCommandRegistry = [
     allowedSources: ['mcp'],
     targetScope: 'library',
     supportsBatch: true,
+    supportsDetach: true,
     mcp: { public: true, toolName: 'serpent_media_jobs_cancel', outputLimit: 1 },
     toWorkerCommand: (libraryId, input) => ({
       type: 'media.cancel-jobs',
@@ -3362,6 +3365,7 @@ export const automationCommandRegistry = [
     allowedSources: allReadSources,
     targetScope: 'job-set',
     supportsBatch: true,
+    supportsDetach: true,
     mcp: { public: true, toolName: 'serpent_ai_jobs_status', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input) => ({ type: 'ai.status', libraryId, jobIds: input.jobIds }),
     projectResult: (result, _libraryId, input) => {

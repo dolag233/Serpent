@@ -188,6 +188,20 @@ export function portablePathIdentity(relativePath: string): string {
   return normalized.split('/').map(portablePathSegmentIdentity).join('/');
 }
 
+/**
+ * Compare portable library paths by their filesystem identity rather than by
+ * their display spelling. NTFS treats path segments case-insensitively while
+ * APFS may preserve case, so raw startsWith/equality checks are not portable.
+ */
+export function isPortablePathEqualOrDescendant(
+  candidatePath: string,
+  ancestorPath: string,
+): boolean {
+  const candidate = portablePathIdentity(candidatePath);
+  const ancestor = portablePathIdentity(ancestorPath);
+  return candidate === ancestor || candidate.startsWith(`${ancestor}/`);
+}
+
 export function copyNameForIndex(fileName: string, index: number): string {
   if (!Number.isSafeInteger(index) || index < 2) {
     throw new RangeError('Copy indexes start at 2.');

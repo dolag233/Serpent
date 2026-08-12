@@ -97,6 +97,8 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     for (const [executionId, owner] of owners) {
       if (owner.senderId !== senderId) continue;
       journal?.cancel(executionId);
+      const gateway = options.gateway();
+      if (gateway) void gateway.completeExecutionHistoryGroup(executionId);
       owners.delete(executionId);
     }
     for (const [executionId, ownerSenderId] of completedOwners) {
@@ -204,6 +206,19 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       ...(result.historyEntryId === undefined ? {} : { historyEntryId: result.historyEntryId }),
       ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
     };
+  };
+
+  const completeHistoryGroup = async (executionId: string): Promise<void> => {
+    const gateway = options.gateway();
+    if (!gateway) return;
+    const completed = await gateway.completeExecutionHistoryGroup(executionId);
+    if (completed === false) {
+      options.logger()?.error(
+        'automation.history-group.complete-failed',
+        new Error('The Worker-owned script history group could not be completed.'),
+        { executionId },
+      );
+    }
   };
 
   options.ipcMain.handle(AUTOMATION_SCRIPT_START_CHANNEL, async (event, input: unknown): Promise<AutomationScriptStartResult> => {
@@ -339,19 +354,24 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       const record = journal.get(executionId);
       if (record?.status === 'running' || record?.status === 'awaiting-approval') {
         if (result.ok) {
+          const status = record.failedCommandCount > 0 ? 'partially-succeeded' : 'succeeded';
+          await completeHistoryGroup(executionId);
           journal.complete(executionId, {
-            status: record.failedCommandCount > 0 ? 'partially-succeeded' : 'succeeded',
+            status,
             summary: { succeeded: record.succeededCommandCount, failed: record.failedCommandCount },
           });
         } else if (result.error.code === 'CANCELLED') {
+          await completeHistoryGroup(executionId);
           journal.cancel(executionId);
         } else if (result.error.code === 'WALL_TIMEOUT') {
+          await completeHistoryGroup(executionId);
           journal.complete(executionId, {
             status: 'timed-out',
             failureCode: 'AUTOMATION_TIMED_OUT',
             summary: { succeeded: record.succeededCommandCount, failed: record.failedCommandCount },
           });
         } else {
+          await completeHistoryGroup(executionId);
           journal.complete(executionId, {
             status: 'failed',
             summary: { succeeded: record.succeededCommandCount, failed: record.failedCommandCount },
@@ -365,6 +385,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       options.logger()?.error('automation.script.runtime-failed', error, { executionId });
       const record = journal.get(executionId);
       if (record?.status === 'running' || record?.status === 'awaiting-approval') {
+        await completeHistoryGroup(executionId);
         journal.complete(executionId, {
           status: 'failed',
           summary: { succeeded: record.succeededCommandCount, failed: record.failedCommandCount },
@@ -387,7 +408,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     return executeOwnedCommand(parsed.data.executionId, parsed.data.commandId, parsed.data.input);
   });
 
-  options.ipcMain.handle(AUTOMATION_SCRIPT_COMPLETE_CHANNEL, (event, input: unknown): void => {
+  options.ipcMain.handle(AUTOMATION_SCRIPT_COMPLETE_CHANNEL, async (event, input: unknown): Promise<void> => {
     if (!options.isAuthorizedSender(event.sender)) return;
     const parsed = automationScriptCompleteInputSchema.safeParse(input);
     const journal = options.journal();
@@ -395,6 +416,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       || runningRuntimeExecutionIds.has(parsed.data.executionId)) return;
     const record = journal.get(parsed.data.executionId);
     if (!record) return;
+    await completeHistoryGroup(parsed.data.executionId);
     journal.complete(parsed.data.executionId, {
       status: parsed.data.cancelled ? 'cancelled' : (parsed.data.succeeded ? 'succeeded' : 'failed'),
       summary: {
@@ -406,11 +428,12 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     owners.delete(parsed.data.executionId);
   });
 
-  options.ipcMain.handle(AUTOMATION_SCRIPT_CANCEL_CHANNEL, (event, input: unknown): void => {
+  options.ipcMain.handle(AUTOMATION_SCRIPT_CANCEL_CHANNEL, async (event, input: unknown): Promise<void> => {
     if (!options.isAuthorizedSender(event.sender)) return;
     const parsed = automationScriptCancelInputSchema.safeParse(input);
     const journal = options.journal();
     if (!parsed.success || !journal || !owned(parsed.data.executionId, event.sender.id)) return;
+    await completeHistoryGroup(parsed.data.executionId);
     journal.cancel(parsed.data.executionId);
     owners.delete(parsed.data.executionId);
   });
@@ -435,41 +458,41 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
 
       // Unified history is the primary route.  A script execution records
       // only Worker-owned receipts in Main; undoing them goes back through the
-      // same public history command used by Desktop and MCP, in reverse
-      // commit order.  The legacy UndoGroup branch below remains solely for
+      // same public history command used by Desktop and MCP.  The legacy
+      // UndoGroup branch below remains solely for
       // persisted executions created before the Worker history migration.
-      const historyEntryIds = journal.listHistoryEntryIds(parsed.data.executionId);
+      const historyEntryIds = [...new Set(journal.listHistoryEntryIds(parsed.data.executionId))];
       if (parsed.data.undoGroupId === undefined && historyEntryIds.length > 0) {
         const record = journal.get(parsed.data.executionId);
         if (!worker || record?.libraryId === null || record?.libraryId === undefined) {
           return { ok: false, error: createPublicError('AUTOMATION_UNDO_NOT_AVAILABLE') };
         }
-        const undoneHistoryEntryIds: string[] = [];
-        let undoneCount = 0;
+        if (historyEntryIds.length !== 1) {
+          // A current execution has exactly one Worker-owned group receipt.
+          // Multiple receipts only describe a legacy execution; never replay
+          // inverse operations from Main to approximate grouped undo.
+          return { ok: false, error: createPublicError('AUTOMATION_UNDO_NOT_AVAILABLE') };
+        }
+        const historyEntryId = historyEntryIds[0]!;
         try {
-          for (const historyEntryId of [...historyEntryIds].reverse()) {
-            const result = await worker.request({
-              type: 'history.undo',
-              libraryId: record.libraryId,
-              expectedHistoryEntryId: historyEntryId,
-            });
-            if (!result.ok || result.type !== 'history.undone') {
-              throw new Error('The Worker could not undo the next script history entry.');
-            }
-            undoneHistoryEntryIds.push(historyEntryId);
-            undoneCount += result.affectedCount;
-            journal.consumeHistoryEntry(parsed.data.executionId, historyEntryId);
+          const result = await worker.request({
+            type: 'history.undo',
+            libraryId: record.libraryId,
+            expectedHistoryEntryId: historyEntryId,
+          });
+          if (!result.ok || result.type !== 'history.undone') {
+            throw new Error('The Worker could not undo the script history group.');
           }
+          journal.consumeHistoryEntry(parsed.data.executionId, historyEntryId);
           return {
             ok: true,
-            historyEntryIds: undoneHistoryEntryIds,
-            undoneCount,
+            historyEntryIds: [historyEntryId],
+            undoneCount: result.affectedCount,
             skippedCount: 0,
           };
         } catch (error) {
           options.logger()?.error('automation.history-undo.failed', error, {
             executionId: parsed.data.executionId,
-            undoneCount,
             requestedCount: historyEntryIds.length,
           });
           return { ok: false, error: createPublicError('AUTOMATION_UNDO_STALE') };

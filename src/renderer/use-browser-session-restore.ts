@@ -312,6 +312,29 @@ export function usePendingRestoredAssetFocus(
     const assetId = pendingRestoredFocusRef.current;
     if (!assetId) return;
     const frame = window.requestAnimationFrame(() => {
+      // A context menu owns focus while it is open. An import reveal may have
+      // queued this card focus before the user opened the menu; applying it
+      // now would close the menu's focus invariant a few frames later. Treat
+      // the explicit menu interaction as consuming the pending reveal focus.
+      const openMenu = document.querySelector<HTMLElement>('[role="menu"]');
+      if (openMenu && openMenu.getBoundingClientRect().width > 0) {
+        pendingRestoredFocusRef.current = null;
+        return;
+      }
+      // The reveal focus is a best-effort default for an idle canvas, not a
+      // mandate that can override a later user action. In particular, the
+      // sidebar's inline folder editor focuses an input immediately after it
+      // mounts; moving focus to the card here would blur that input and its
+      // blur handler would submit/cancel the edit unexpectedly.
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement
+      ) {
+        pendingRestoredFocusRef.current = null;
+        return;
+      }
       const card = Array.from(
         workspaceCanvasRef.current?.querySelectorAll<HTMLElement>(
           "[data-asset-id]",

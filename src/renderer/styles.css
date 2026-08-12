@@ -3702,7 +3702,9 @@ body.serpent-modal-open .app-shell {
 
 .context-menu.is-keyboard-navigation .context-menu-item:focus {
   background: var(--menu-item-focus-background);
-  box-shadow: inset 1px 0 var(--secondary);
+  /* Keep the focus marker renderable during the brief theme/bootstrap window
+     before the secondary token has been installed on :root. */
+  box-shadow: inset 1px 0 var(--secondary, currentColor);
 }
 
 .context-menu-item.is-danger:hover,

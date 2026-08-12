@@ -1,4 +1,5 @@
-import type { MediaJob, SerpentLibraryApi } from "../shared/library-api";
+import type { SerpentLibraryApi } from "../shared/library-api";
+import type { MediaJob } from "../shared/protocol/responses";
 
 const TERMINAL_MEDIA_JOB_STATUSES = new Set<MediaJob["status"]>([
   "succeeded",

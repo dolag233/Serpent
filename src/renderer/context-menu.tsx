@@ -237,6 +237,7 @@ export function ContextMenu({
   const menuId = useId();
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
   const initialFocusPendingRef = useRef(true);
+  const pointerFocusFrameRef = useRef<number | null>(null);
 
   // Start hidden + off-screen so we can measure before painting
   const [style, setStyle] = useState<CSSProperties>({
@@ -276,12 +277,12 @@ export function ContextMenu({
     // Ensure not above viewport
     if (top < gap) top = gap;
 
-    // This is a layout effect, so commit the measured position before the
-    // browser can paint. Delaying visibility by one animation frame leaves a
-    // newly opened menu at -9999px long enough for a fast pointer action to
-    // miss it and hit the underlying canvas instead.
+    // This is a layout effect, so commit both the measured position and
+    // visibility before the browser can paint. The bootstrap box stays hidden
+    // until it is positioned, so a fast pointer cannot target the canvas while
+    // the menu is still at -9999px.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- layout measurement must commit before paint
-    setStyle({ position: "fixed", left, top });
+    setStyle({ position: "fixed", left, top, visibility: "visible" });
   }, [menuId, position]);
 
   // Keep the single focused highlight aligned with the pointer from the
@@ -323,10 +324,27 @@ export function ContextMenu({
     return () => cancelAnimationFrame(raf);
   }, [menuId, position]);
 
+  useEffect(
+    () => () => {
+      if (pointerFocusFrameRef.current !== null) {
+        cancelAnimationFrame(pointerFocusFrameRef.current);
+        pointerFocusFrameRef.current = null;
+      }
+    },
+    [],
+  );
+
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const menu = e.currentTarget;
     initialFocusPendingRef.current = false;
+    // A pointer hover may have queued a post-commit focus reassertion. Once
+    // the user presses a navigation key, that queued pointer action is stale
+    // and must not steal focus back from the keyboard target.
+    if (pointerFocusFrameRef.current !== null) {
+      cancelAnimationFrame(pointerFocusFrameRef.current);
+      pointerFocusFrameRef.current = null;
+    }
 
     const items = Array.from(
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -359,6 +377,26 @@ export function ContextMenu({
     }
   };
 
+  const schedulePointerFocus = (clientX: number, clientY: number, fallback: HTMLElement | null) => {
+    // Focus synchronously for the event that caused the hover. The animation
+    // frame below is only a post-commit reassertion; relying on the frame alone
+    // lets a React commit or a native menu focus transition win the race.
+    if (fallback?.isConnected) fallback.focus({ preventScroll: true });
+    if (pointerFocusFrameRef.current !== null) {
+      cancelAnimationFrame(pointerFocusFrameRef.current);
+    }
+    pointerFocusFrameRef.current = requestAnimationFrame(() => {
+      pointerFocusFrameRef.current = null;
+      const menu = document.getElementById(menuId);
+      if (!(menu instanceof HTMLDivElement)) return;
+      const pointed = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"])',
+      );
+      const item = pointed && menu.contains(pointed) ? pointed : fallback;
+      if (item?.isConnected && menu.contains(item)) item.focus({ preventScroll: true });
+    });
+  };
+
   return (
     <MenuSurface
       className={`context-menu${keyboardNavigationActive ? " is-keyboard-navigation" : ""}`}
@@ -367,10 +405,59 @@ export function ContextMenu({
       nodes={CONTEXT_MENU_SURFACE_NODES}
       renderNode={() => <>{children}</>}
       style={style}
-      onKeyDown={handleMenuKeyDown}
-      onPointerMove={() => {
+      // Capture navigation before a menu item or nested control can stop the
+      // event, keeping keyboard mode deterministic after pointer focus.
+      onKeyDownCapture={handleMenuKeyDown}
+      onPointerMoveCapture={(event) => {
+        const target = event.target;
+        const item = target instanceof Element
+          ? target.closest<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')
+          : null;
+        if (!item || !event.currentTarget.contains(item)) return;
         initialFocusPendingRef.current = false;
         setKeyboardNavigationActive(false);
+        if (pointerFocusFrameRef.current !== null) {
+          cancelAnimationFrame(pointerFocusFrameRef.current);
+          pointerFocusFrameRef.current = null;
+        }
+        item.focus({ preventScroll: true });
+      }}
+      onMouseMoveCapture={(event) => {
+        const target = event.target;
+        const item = target instanceof Element
+          ? target.closest<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')
+          : null;
+        if (!item || !event.currentTarget.contains(item)) return;
+        initialFocusPendingRef.current = false;
+        setKeyboardNavigationActive(false);
+        if (pointerFocusFrameRef.current !== null) {
+          cancelAnimationFrame(pointerFocusFrameRef.current);
+          pointerFocusFrameRef.current = null;
+        }
+        item.focus({ preventScroll: true });
+      }}
+      onPointerMove={(event) => {
+        initialFocusPendingRef.current = false;
+        setKeyboardNavigationActive(false);
+
+        // Pointer movement out of keyboard mode updates the menu class. That
+        // React commit can happen after the child button's synchronous focus
+        // handler; restore focus on the next frame so the class transition
+        // cannot leave the hovered item unfocused (notably after ArrowDown).
+        const target = event.target;
+        const item = target instanceof Element
+          ? target.closest<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')
+          : null;
+        if (!item || !event.currentTarget.contains(item)) return;
+        schedulePointerFocus(event.clientX, event.clientY, item);
+      }}
+      onMouseMove={(event) => {
+        const target = event.target;
+        const item = target instanceof Element
+          ? target.closest<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])')
+          : null;
+        if (!item || !event.currentTarget.contains(item)) return;
+        schedulePointerFocus(event.clientX, event.clientY, item);
       }}
     />
   );
@@ -412,6 +499,12 @@ export function ContextMenuItem({
   const handleMouseEnter = () => {
     if (!disabled) buttonRef.current?.focus();
   };
+  const handleMouseOver = () => {
+    // Chromium/Electron can deliver Playwright/native hover as mouseover
+    // without a mouseenter when the pointer crosses a nested label/span.
+    // Keep the row focus invariant on both paths.
+    if (!disabled) buttonRef.current?.focus({ preventScroll: true });
+  };
   const handlePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!disabled && event.currentTarget !== document.activeElement) {
       event.currentTarget.focus();
@@ -435,6 +528,7 @@ export function ContextMenuItem({
       title={disabled && disabledReason ? disabledReason : undefined}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      onMouseOver={handleMouseOver}
       onPointerEnter={handlePointerMove}
       onPointerMove={handlePointerMove}
     >

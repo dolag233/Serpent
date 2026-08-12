@@ -342,7 +342,7 @@ serpent.ui.notify({
 
 默认宿主预算：CPU 10 秒、墙钟 60 秒、内存 64 MiB、输出 1 MiB、最多 4 个并发命令、最多 128 个未完成 Promise。停止按钮、关闭 Console 或 Renderer 销毁会取消执行；取消不会把未完成命令伪装成成功。
 
-文件计划确认只在 Desktop/Main 完成。脚本正文不能消费内部 plan hash、state token、recipe 或文件恢复引用；Console 宿主可按 `executionId` 撤回本次执行记录的全部 Worker `historyEntryId`，按提交的逆序调用统一 `history.undo`，并返回已撤回计数。遇到栈顶变化或前置条件冲突时会安全停止并返回 stale 错误，不会跳过冲突条目继续撤回更早操作。
+文件计划确认只在 Desktop/Main 完成。脚本正文不能消费内部 plan hash、state token、recipe 或文件恢复引用；Console 宿主会在一次 execution 的第一次可撤回 mutation 前请求 Worker 开启 history group，后续 mutation 追加到同一 Worker-owned group，execution 结束时由宿主完成 group。宿主只保留一个 `historyEntryId`，一次 `history.undo` / `history.redo` 覆盖整组；Main 不保存 inverse payload，也不逐 entry 重放。遇到栈顶变化或前置条件冲突时会安全停止并返回 stale 错误。
 
 ## Console 宿主控制 API（不是脚本正文 API）
 

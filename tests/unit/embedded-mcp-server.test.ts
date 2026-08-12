@@ -86,6 +86,7 @@ function createGateway(): AutomationCommandGateway {
         contextRevision: 0,
       },
     })),
+    completeExecutionHistoryGroup: vi.fn(async () => true),
   };
 }
 
@@ -175,10 +176,7 @@ describe('Embedded MCP Streamable HTTP server', () => {
     await harness.server.close();
   });
 
-  it('terminates the session execution when the client disconnects', async () => {
-    // Serpent review regression: closeSession used to call
-    // journal.endSession(executionId) although it matches on sessionId, so
-    // every session's execution leaked as permanently 'running'.
+  it('detaches the protocol session without cancelling the business execution', async () => {
     const harness = await createServerHarness();
     const client = new Client({ name: 'http-sdk-test', version: '1.0.0' });
     const transport = new StreamableHTTPClientTransport(new URL(harness.endpoint), {
@@ -206,8 +204,9 @@ describe('Embedded MCP Streamable HTTP server', () => {
     await vi.waitFor(() => {
       const records = harness.journal.list();
       expect(records, `journal after DELETE: ${JSON.stringify(records.map((r) => ({ status: r.status, failureCode: r.failureCode })))}`).toHaveLength(1);
-      expect(records[0]!.status).toBe('cancelled');
-      expect(records[0]!.failureCode).toBe('AUTOMATION_SESSION_ENDED');
+      expect(records[0]!.status).toBe('running');
+      expect(records[0]!.failureCode).toBeNull();
+      expect(records[0]!.sessionId).toBeNull();
     });
     await client.close();
     await harness.server.close();
@@ -227,6 +226,7 @@ describe('Embedded MCP Streamable HTTP server', () => {
           contextRevision: 0,
         },
       })),
+      completeExecutionHistoryGroup: vi.fn(async () => true),
     };
     const harness = await createServerHarness({ gateway });
     const libraryChangedListener = vi.mocked(harness.workerClient.onLibraryChanged).mock.calls[0]?.[0];

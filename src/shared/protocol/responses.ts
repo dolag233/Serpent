@@ -1385,6 +1385,17 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('history.group.begun'),
+    historyEntryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.group.completed'),
+    historyEntryId: nonBlankString,
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.opened'),
     library: internalLibrarySummarySchema,
   }),
@@ -1673,6 +1684,17 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('history.redone'),
     historyEntryId: nonBlankString,
     affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.group.begun'),
+    historyEntryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.group.completed'),
+    historyEntryId: nonBlankString,
     status: historyStatusSchema,
   }),
   z.strictObject({

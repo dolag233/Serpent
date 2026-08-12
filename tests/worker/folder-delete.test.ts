@@ -144,6 +144,39 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
     });
     expect(service.listTrash(library.libraryId).map((row) => row.assetId)).toEqual([asset.assetId]);
   });
+
+  it('reconciles a folder-trash journal after a Worker restart', () => {
+    const temp = root();
+    const setup = newService();
+    const library = setup.createLibrary({ displayName: 'FolderTrashRecovery', selectedParentPath: temp });
+    const folder = setup.createManagedFolder({ libraryId: library.libraryId, name: 'recover-me' });
+    const source = path.join(temp, 'recover.png');
+    writeFileSync(source, 'recoverable-asset');
+    const asset = importFile(setup, library.libraryId, source, folder.folderId).assets[0]!;
+    setup.closeAll();
+
+    const crashing = newService({ failAt: 'crash-folder-trash-after-tombstones' });
+    crashing.openLibrary(library.libraryPath);
+    expect(() => crashing.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+    })).toThrow();
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(true);
+    crashing.closeAll();
+
+    const recovered = newService();
+    recovered.openLibrary(library.libraryPath);
+    expect(recovered.listTrash(library.libraryId).map((row) => row.assetId)).toEqual([asset.assetId]);
+    expect(recovered.listTrashedFolders(library.libraryId).map((row) => row.name)).toContain('recover-me');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'recover-me'))).toBe(false);
+    const db = database(library.libraryPath);
+    try {
+      expect(db.prepare("SELECT status FROM file_operations WHERE kind = 'folder-trash' ORDER BY created_at DESC LIMIT 1").get())
+        .toEqual({ status: 'committed' });
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe('deleteAssetsFromDisk (clarification #7 / Serpent-9zc)', () => {
@@ -501,6 +534,64 @@ describe('restoreTrashedManagedFolder (Serpent-qufh)', () => {
     });
     expect(result.restoredAssetCount).toBe(1);
     expect(service.listTrash(library.libraryId)).toEqual([]);
+  });
+
+  it('compensates recreated folders when restoring their assets fails', () => {
+    const temp = root();
+    const setup = newService();
+    const library = setup.createLibrary({
+      displayName: 'FolderRestoreCompensation',
+      selectedParentPath: temp,
+    });
+    const folder = setup.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'restore-me',
+    });
+    const nested = setup.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'nested',
+      parentFolderId: folder.folderId,
+    });
+    const source = path.join(temp, 'restore-failure.png');
+    writeFileSync(source, 'restore-failure-bytes');
+    const asset = importFile(setup, library.libraryId, source, nested.folderId).assets[0]!;
+
+    setup.trashManagedFolder({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+    });
+    const tombstone = setup
+      .listTrashedFolders(library.libraryId)
+      .find((row) => row.folderId === folder.folderId);
+    expect(tombstone).toBeDefined();
+    setup.closeAll();
+
+    const failing = newService({ failAt: 'crash-restore-before-filesystem' });
+    failing.openLibrary(library.libraryPath);
+    expect(() => failing.restoreTrashedManagedFolder({
+      libraryId: library.libraryId,
+      tombstoneId: tombstone!.tombstoneId,
+    })).toThrow();
+
+    expect(failing.listTrash(library.libraryId).map((row) => row.assetId)).toEqual([asset.assetId]);
+    const remainingTombstoneIds = failing
+      .listTrashedFolders(library.libraryId)
+      .map((row) => row.tombstoneId);
+    expect(remainingTombstoneIds).toHaveLength(2);
+    expect(remainingTombstoneIds).toEqual(expect.arrayContaining([
+      tombstone!.tombstoneId,
+    ]));
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'restore-me'))).toBe(false);
+
+    const db = database(library.libraryPath);
+    try {
+      const restoredRows = db
+        .prepare('SELECT folder_id FROM managed_folders WHERE folder_id IN (?, ?)')
+        .all(folder.folderId, nested.folderId);
+      expect(restoredRows).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
 

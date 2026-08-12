@@ -121,6 +121,7 @@ import {
   createJsonFileAutomationExecutionStore,
   projectAutomationExecutionStatus,
 } from './automation-execution-journal';
+import { createJsonFileAutomationIdempotencyStore } from './automation-idempotency-store';
 import { EmbeddedMcpServer, EmbeddedMcpServerError } from './embedded-mcp-server';
 import { McpPermissionBroker } from './mcp-permission-broker';
 import { McpPermissionPolicyStore } from './mcp-permission-policy-store';
@@ -4585,6 +4586,9 @@ async function startApplication(): Promise<void> {
     ),
     logger,
   });
+  const automationIdempotencyStore = createJsonFileAutomationIdempotencyStore(
+    path.join(app.getPath('userData'), 'automation-idempotency.json'),
+  );
   mcpPermissionPolicyStore = new McpPermissionPolicyStore(app.getPath('userData'));
   mcpOperationChallengeStore = new McpOperationChallengeStore();
   mcpPermissionBroker = new McpPermissionBroker({
@@ -4640,6 +4644,7 @@ async function startApplication(): Promise<void> {
     {
       auditSink: automationExecutionJournal,
       auditLogger: logger,
+      idempotencyStore: automationIdempotencyStore,
       externalEffectHandler: {
         apply: ({ commandId, workerResult }) => {
           // The only current external automation effect is intentionally
@@ -4691,7 +4696,19 @@ async function startApplication(): Promise<void> {
         },
       }),
       permissionBroker: mcpPermissionBroker,
-      contextBarrier: automationExecutionJournal,
+      // Plugin executions are library-scoped Host calls, not Automation
+      // Executions owned by the journal. They still use the Gateway for
+      // domain access, but must not enter the journal's active-context CAS;
+      // doing so rejects every plugin command because no journal record exists
+      // for the plugin instance execution id.
+      contextBarrier: {
+        beginCommand: (executionId, contextRevision) => {
+          if (pluginAutomationContexts.has(executionId)) {
+            return { release: () => undefined };
+          }
+          return automationExecutionJournal!.beginCommand(executionId, contextRevision);
+        },
+      },
       libraryContextHandler: {
         execute: executeMcpLibraryContextCommand,
       },

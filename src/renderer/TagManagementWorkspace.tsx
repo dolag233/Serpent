@@ -68,6 +68,7 @@ export function TagManagementWorkspace({
   const [sortKey, setSortKey] = useState<TagSortKey>("name");
   const [sortDirection, setSortDirection] = useState<TagSortDirection>("asc");
   const [draftName, setDraftName] = useState("");
+  const draftRevisionRef = useRef(0);
   const [selection, setSelection] = useState<TagSelectionState>({
     selectedIds: [],
     anchorId: null,
@@ -131,7 +132,14 @@ export function TagManagementWorkspace({
   async function submitCreate() {
     const name = draftName.trim();
     if (!name || busy) return;
-    if (await onCreate(name)) setDraftName("");
+    const submittedRevision = draftRevisionRef.current;
+    // Clear before awaiting the IPC round trip so a user can start the next
+    // tag immediately. A late completion must not erase that newer draft.
+    setDraftName("");
+    if (!(await onCreate(name)) && draftRevisionRef.current === submittedRevision) {
+      // Preserve the failed name when the user has not started another draft.
+      setDraftName(name);
+    }
   }
 
   function beginRename(tagId: string) {
@@ -293,7 +301,10 @@ export function TagManagementWorkspace({
             className="text-field"
             disabled={busy}
             maxLength={80}
-            onChange={(event) => setDraftName(event.target.value)}
+            onChange={(event) => {
+              draftRevisionRef.current += 1;
+              setDraftName(event.target.value);
+            }}
             placeholder={t("tagMgmt.newTagPlaceholder")}
             type="text"
             value={draftName}

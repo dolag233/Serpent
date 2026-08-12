@@ -134,6 +134,42 @@ afterEach(() => {
 });
 
 describe('durable operation history', () => {
+  it('does not let an empty automation-group handshake invalidate a file plan fence', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
+    const before = service.getChangeSequence(libraryId);
+    const begun = service.beginOperationHistoryGroup({
+      libraryId,
+      source: 'script',
+      sourceReference: 'execution-plan-fence',
+    });
+
+    expect(service.getChangeSequence(libraryId)).toBe(before);
+    const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      expect(database.prepare('SELECT COUNT(*) AS count FROM operation_history').get())
+        .toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+
+    const trashed = service.trashAssets({ libraryId, assetIds: [assetId] });
+    const recorded = service.recordOperationHistory({
+      libraryId,
+      source: 'script',
+      sourceReference: 'execution-plan-fence',
+      commandId: 'asset.trash',
+      labelKey: 'history.asset.trash',
+      labelArgs: { count: trashed.trashedCount },
+      affectedCount: trashed.trashedCount,
+      affectedEntities: [assetId],
+      forwardRecipe: { kind: 'asset-trash', version: 1, payload: { assetIds: [assetId] } },
+      inverseRecipe: { kind: 'asset-trash-undo', version: 1, payload: { operationId: trashed.operationId } },
+    });
+    expect(recorded.historyEntryId).toBe(begun.historyEntryId);
+    expect(service.completeOperationHistoryGroup(libraryId, begun.historyEntryId).historyEntryId)
+      .toBe(begun.historyEntryId);
+  });
+
   it('round-trips asset metadata through undo and redo', async () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
     const updated = await runBounded(service, {

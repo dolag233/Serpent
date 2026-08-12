@@ -16,7 +16,7 @@ function writeCompatiblePlugin(directory: string): void {
   };
   mkdirSync(path.join(directory, 'dist', 'ui'), { recursive: true });
   writeFileSync(path.join(directory, 'serpent-plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync(path.join(directory, 'dist', 'main.js'), 'export const plugin = true;\n');
+  writeFileSync(path.join(directory, 'dist', 'main.js'), 'export async function setup() {}\n');
   writeFileSync(path.join(directory, 'dist', 'ui', 'index.html'), '<main>plugin</main>\n');
   writeFileSync(path.join(directory, 'README.md'), '# Palette Tools\n');
   writeFileSync(path.join(directory, 'LICENSE'), 'MIT\n');

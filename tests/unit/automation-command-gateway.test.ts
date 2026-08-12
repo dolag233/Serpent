@@ -971,6 +971,54 @@ describe('Automation Command Gateway', () => {
     }]);
   });
 
+  it('serializes the first script history-group handshake for concurrent commands', async () => {
+    let releaseGroupBegin: (() => void) | undefined;
+    const calls: Array<{ command: WorkerCommand; historyGroupId?: string }> = [];
+    const worker: AutomationWorkerClient = {
+      request: async (command, options) => {
+        calls.push({ command, historyGroupId: options?.historyContext?.historyGroupId });
+        if (command.type === 'history.group.begin') {
+          await new Promise<void>((resolve) => {
+            releaseGroupBegin = resolve;
+          });
+          return { ok: true, type: 'history.group.begun', historyEntryId: 'history-group-1' };
+        }
+        if (command.type === 'history.group.complete') {
+          return {
+            ok: true,
+            type: 'history.group.completed',
+            historyEntryId: command.expectedHistoryEntryId,
+            status: emptyHistoryStatus,
+          };
+        }
+        return {
+          ok: true,
+          type: 'asset.rating.updated',
+          updatedCount: command.type === 'asset.rating.set' ? command.assetIds.length : 0,
+          skipped: [],
+        };
+      },
+    };
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      source: 'script',
+      grantedCapabilities: [...allReadCapabilities, 'metadata.write'],
+    }));
+
+    const first = commandGateway.execute(request('asset.rating.set', { assetIds: ['asset-1'], rating: 4 }));
+    const second = commandGateway.execute(request('asset.rating.set', { assetIds: ['asset-2'], rating: 3 }));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(calls.filter(({ command }) => command.type === 'history.group.begin')).toHaveLength(1);
+
+    releaseGroupBegin?.();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(calls.filter(({ command }) => command.type === 'history.group.begin')).toHaveLength(1);
+    expect(calls
+      .filter(({ command }) => command.type === 'asset.rating.set')
+      .map(({ historyGroupId }) => historyGroupId))
+      .toEqual(['history-group-1', 'history-group-1']);
+    await expect(commandGateway.completeExecutionHistoryGroup('execution-1')).resolves.toBe(true);
+  });
+
   it('routes tag create/assign and folder create through metadata/file-write Gateway contracts', async () => {
     const tagWorker = new RecordingWorker({
       ok: true,
