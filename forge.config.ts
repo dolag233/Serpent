@@ -97,6 +97,9 @@ const config: ForgeConfig = {
       'assets/icons/app.png',
       'assets/icons/app.ico',
       'assets/icons/app.icns',
+      // Third-party attribution ships inside the package next to the LICENSE.
+      'THIRD_PARTY_NOTICES.md',
+      'LICENSE',
     ],
     // Forge's Vite plugin otherwise excludes all node_modules. Keep them in the
     // copy set so Packager can prune to production dependencies and the native

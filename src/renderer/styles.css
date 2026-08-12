@@ -3405,7 +3405,7 @@ input[type="range"] {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--divider));
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 9%, var(--pane));
-  color: color-mix(in srgb, var(--accent) 82%, white);
+  color: var(--accent-soft-fg);
   font-family: "IBM Plex Mono", monospace;
   font-size: 13px;
 }
@@ -10578,6 +10578,12 @@ select.ai-config-input.ai-config-languages {
     .inspector-badge
   ) {
   color: var(--accent-soft-fg);
+}
+
+[data-theme="light"] .inspector-badge {
+  /* light palette 的 --ui-content-accent（#5b7cf0）在浅底对比度仅 2.8；
+     图标改用深色 accent（accent 60%+black）保证 ≥4.5。 */
+  color: color-mix(in srgb, var(--accent) 60%, black);
 }
 
 :root[data-platform="windows"] .inspector-identity strong {

@@ -55,11 +55,22 @@ npm run release:local                    # verify → media → package → e2e 
 产物：`out/Serpent-<platform>-<arch>/`、`out/make/`（dmg / zip /
 SerpentSetup.exe）、`SHA256SUMS-<platform>.txt`。
 
+## 发布步骤（主仓库，无 GA 后）
+
+1. `npm version patch|minor|major`（版本提升 + git tag）
+2. 各平台跑 `npm run release:local`（产物在 `out/make/`）
+3. 在 GitHub 手动创建 Release（tag 对应）并上传产物：
+   `out/make/` 下的 dmg / zip / SerpentSetup.exe + `SHA256SUMS-<platform>.txt`
+   （参照 Serpent-Build 的 media 上传先例 `scripts/release/publish-media-bundle.mjs`）
+
 ## 与 Serpent-Extension 的关系
 
 浏览器扩展（`dolag233/Serpent-Extension`）仍用 GitHub Actions：
 - `ci.yml`：main/PR 的 lint/typecheck/build
 - `release.yml`：打 `v*` tag → 构建 zip → 上传 Release
+
+主仓库原 `.github/workflows/release.yml`（tag 驱动发布）已随 GA 一并移除，
+发布走上面的本地流程。
 
 ## 历史（档案）
 
