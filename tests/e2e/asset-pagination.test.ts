@@ -61,22 +61,35 @@ test("ordinary browsing continuously appends every asset without page controls",
       .first()
       .click();
 
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    const workspaceCanvas = window.locator(".workspace-canvas");
+    const loadEveryAssetInCurrentScope = async () => {
+      await expect
+        .poll(async () => {
+          await workspaceCanvas.evaluate((element) =>
+            element.scrollTo({ top: element.scrollHeight }),
+          );
+          return window.locator(".asset-card").count();
+        })
+        .toBe(assetCount);
+    };
+
+    // Loading the tail is driven by the canvas scroll path, so wait for the
+    // complete scope instead of assuming the first render contains every row.
+    await expect(window.locator(".asset-card").first()).toBeVisible();
     await expect(window.getByRole("button", { name: "上一页" })).toHaveCount(0);
     await expect(window.getByRole("button", { name: "下一页" })).toHaveCount(0);
-    await window
-      .locator(".workspace-canvas")
-      .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await loadEveryAssetInCurrentScope();
     await expect(
       window.getByText("asset-050.txt", { exact: true }),
     ).toBeVisible();
     await expect(
-      window.getByText("asset-000.txt", { exact: true }),
+      window.locator(".asset-card").filter({ hasText: "asset-000.txt" }),
     ).toHaveCount(1);
 
     const sizeControl = window.getByLabel("资产缩略图大小");
-    await sizeControl.fill("3");
+    const maxSizeIndex = Number(await sizeControl.getAttribute("max"));
+    const middleSizeIndex = Math.min(3, maxSizeIndex);
+    await sizeControl.fill(String(middleSizeIndex));
     const anchorCard = window.locator(".asset-card").nth(30);
     await anchorCard.scrollIntoViewIfNeeded();
     const anchorAssetId = await anchorCard.getAttribute("data-asset-id");
@@ -103,7 +116,6 @@ test("ordinary browsing continuously appends every asset without page controls",
     const firstCard = window.locator(".asset-card").first();
     await sizeControl.fill("0");
     const initialWidth = (await firstCard.boundingBox())!.width;
-    const maxSizeIndex = Number(await sizeControl.getAttribute("max"));
     await sizeControl.fill(String(maxSizeIndex));
     await expect
       .poll(async () => (await firstCard.boundingBox())!.width)
@@ -159,17 +171,6 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: "平铺视图" }).click();
     await expect(window.locator(".asset-grid")).toHaveClass(/is-grid/);
 
-    const workspaceCanvas = window.locator(".workspace-canvas");
-    const loadEveryAssetInCurrentScope = async () => {
-      await expect
-        .poll(async () => {
-          await workspaceCanvas.evaluate((element) =>
-            element.scrollTo(0, element.scrollHeight),
-          );
-          return window.locator(".asset-card").count();
-        })
-        .toBe(assetCount);
-    };
     const viewerMatrix = [
       { button: "平铺视图", className: "is-grid" },
       { button: "瀑布流视图", className: "is-masonry" },
@@ -260,18 +261,18 @@ test("ordinary browsing continuously appends every asset without page controls",
           );
           expect(scrollTopBeforeViewer).toBeGreaterThan(0);
           await assetCard.dblclick();
-          const unsupportedViewer = window.getByRole("region", {
+          const textViewer = window.getByRole("region", {
             name: `${visibleAsset!.displayName} 查看页面`,
           });
-          // Text assets now have a built-in read-only editor; this used to be
+          // Text assets have a built-in read-only editor; they no longer use
           // the unsupported-format placeholder.
-          await expect(unsupportedViewer).toHaveClass(/is-text-viewer/);
-          await expect(unsupportedViewer.locator(".preview-text-stage")).toBeVisible();
+          await expect(textViewer).toHaveClass(/is-text-viewer/);
+          await expect(textViewer.locator(".preview-text-stage")).toBeVisible();
           await expect(
-            unsupportedViewer.getByRole("textbox", { name: "文本内容" }),
-          ).toBeVisible();
+            textViewer.getByRole("textbox", { name: "文本内容" }),
+          ).toHaveValue(/asset \d+/);
           const [viewerBox, workspaceBox] = await Promise.all([
-            unsupportedViewer.boundingBox(),
+            textViewer.boundingBox(),
             window.locator(".workspace").boundingBox(),
           ]);
           expect(viewerBox).not.toBeNull();
@@ -290,12 +291,12 @@ test("ordinary browsing continuously appends every asset without page controls",
             Math.abs(viewerBox!.height - workspaceBox!.height),
           ).toBeLessThanOrEqual(1);
           await expect(
-            unsupportedViewer.getByRole("button", { name: "重试生成" }),
+            textViewer.getByRole("button", { name: "重试生成" }),
           ).toHaveCount(0);
-          await unsupportedViewer
+          await textViewer
             .getByRole("button", { name: "关闭", exact: true })
             .click();
-          await expect(unsupportedViewer).toBeHidden();
+          await expect(textViewer).toBeHidden();
           await expect(workspaceCanvas).toBeVisible();
           // Reflow may slightly adjust the raw offset after the text viewer
           // closes; the user-visible contract is that browsing does not jump
@@ -306,7 +307,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     }
 
     // Switching to a browse scope explicitly clears lingering discovery
-    // controls, so page 1 and subsequent pages cannot use different queries.
+    // controls, so the loaded scope cannot use a stale query.
     await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
