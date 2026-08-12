@@ -13,6 +13,17 @@ export interface SaveIntent {
   targetFolderId?: string | null;
 }
 
+/** Uploads whose bytes were produced by the content script (for example a
+ * local `file://` image rendered into a canvas). They intentionally carry no
+ * URL metadata because the desktop import contract only needs it for remote
+ * media diagnostics. */
+export interface LocalUploadIntent {
+  kind: SaveIntent['kind'];
+  sourcePageUrl?: string;
+  mediaUrl?: string;
+  targetFolderId?: string | null;
+}
+
 export interface ContextMenuMediaInfo {
   mediaType?: 'image' | 'video' | 'audio';
   pageUrl?: string;
@@ -374,7 +385,7 @@ export async function fetchMediaInBrowser(
 }
 
 export async function deliverSaveUpload(
-  intent: SaveIntent,
+  intent: SaveIntent | LocalUploadIntent,
   media: FetchedMedia,
   behavior: ExtensionSaveBehavior,
   fetchFn: FetchFunction = fetch,
@@ -383,13 +394,20 @@ export async function deliverSaveUpload(
     'Content-Type': 'application/octet-stream',
     'Content-Length': String(media.body.byteLength),
     'X-Serpent-Kind': intent.kind,
-    'X-Serpent-Source-Page-Url': encodeURIComponent(intent.sourcePageUrl),
-    'X-Serpent-Media-Url': encodeURIComponent(intent.mediaUrl),
     'X-Serpent-Content-Type': media.contentType,
     'X-Serpent-Filename': encodeURIComponent(media.filename),
     'X-Serpent-Focus-App-After-Save': String(behavior.focusAppAfterSave),
     'X-Serpent-Reveal-In-Library': String(behavior.revealInLibraryAfterSave),
   };
+  if (intent.sourcePageUrl) {
+    headers['X-Serpent-Source-Page-Url'] = encodeURIComponent(intent.sourcePageUrl);
+  }
+  if (intent.mediaUrl) {
+    headers['X-Serpent-Media-Url'] = encodeURIComponent(intent.mediaUrl);
+  }
+  if (!intent.sourcePageUrl && !intent.mediaUrl) {
+    headers['X-Serpent-Local-File'] = 'true';
+  }
   if (intent.targetFolderId !== undefined) {
     headers['X-Serpent-Target-Folder-Id'] =
       intent.targetFolderId === null ? 'null' : encodeURIComponent(intent.targetFolderId);

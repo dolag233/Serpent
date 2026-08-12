@@ -1,7 +1,8 @@
-import { Menu, app, type BrowserWindow } from "electron";
+import { BrowserWindow, Menu, app } from "electron";
 
 import {
   buildApplicationMenuTemplate,
+  type ApplicationMenuCommand,
   type ApplicationMenuItemTemplate,
   type ApplicationMenuPlatform,
 } from "../shared/application-menu";
@@ -113,6 +114,18 @@ function enrichMenuTemplate(
         },
       };
     }
+    if (item.command) {
+      const command = item.command as ApplicationMenuCommand;
+      return {
+        label: item.label,
+        click: (_menuItem, window) => {
+          const target = (window as BrowserWindow | undefined)
+            ?? BrowserWindow.getFocusedWindow();
+          if (!target || target.isDestroyed()) return;
+          target.webContents.send(APPLICATION_MENU_COMMAND_CHANNEL, command);
+        },
+      };
+    }
     if (item.submenu) {
       return {
         ...item,
@@ -155,6 +168,7 @@ export function installApplicationMenu(options?: {
     platform,
     showDevTools,
     locale: options?.locale,
+    version: app.getVersion(),
   });
   Menu.setApplicationMenu(
     Menu.buildFromTemplate(enrichMenuTemplate(template, options?.locale)),

@@ -2,7 +2,11 @@ import {
   buildSaveMenuFolderHints,
   type ExtensionFolderOption,
 } from './folder-menu';
-import { findMediaElementAtPoint, type MediaTarget } from './media-target';
+import {
+  findMediaElementAtPoint,
+  isFileUrl,
+  type MediaTarget,
+} from './media-target';
 import {
   DEFAULT_TREE_GEOMETRY,
   TREE_NAV_DWELL_MS,
@@ -77,6 +81,103 @@ function sendRuntimeMessage<T>(message: Record<string, unknown>): Promise<T> {
       resolve(response as T);
     });
   });
+}
+
+const MAX_LOCAL_CANVAS_BYTES = 32 * 1024 * 1024;
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export async function encodeLocalImage(
+  source: HTMLImageElement | HTMLVideoElement,
+  mediaUrl: string,
+  sourceFile?: File,
+): Promise<{
+  kind: 'image';
+  bodyBase64: string;
+  contentType: string;
+  filename: string;
+} | null> {
+  if (!(source instanceof HTMLImageElement)) return null;
+
+  if (sourceFile) {
+    if (sourceFile.size <= 0 || sourceFile.size > MAX_LOCAL_CANVAS_BYTES) return null;
+    const directMime = sourceFile.type.toLowerCase();
+    const canKeepOriginal = new Set([
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+    ]).has(directMime);
+    if (!canKeepOriginal) return encodeLocalImage(source, mediaUrl);
+    let sourceBody: ArrayBuffer;
+    try {
+      sourceBody = await sourceFile.arrayBuffer();
+    } catch {
+      sourceBody = new ArrayBuffer(0);
+    }
+    if (sourceBody.byteLength > 0) {
+      return {
+        kind: 'image',
+        bodyBase64: arrayBufferToBase64(sourceBody),
+        contentType: directMime,
+        filename: sourceFile.name || 'image.png',
+      };
+    }
+  }
+
+  const width = source.naturalWidth;
+  const height = source.naturalHeight;
+  if (width <= 0 || height <= 0) return null;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  try {
+    context.drawImage(source, 0, 0, width, height);
+  } catch {
+    return null;
+  }
+
+  let blob: Blob | null;
+  try {
+    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  } catch {
+    return null;
+  }
+  if (!blob || blob.size <= 0 || blob.size > MAX_LOCAL_CANVAS_BYTES) return null;
+
+  let body: ArrayBuffer;
+  try {
+    body = await blob.arrayBuffer();
+  } catch {
+    return null;
+  }
+
+  let filename = 'image.png';
+  try {
+    const pathName = new URL(mediaUrl).pathname;
+    const candidate = pathName.split('/').filter(Boolean).pop();
+    if (candidate) filename = decodeURIComponent(candidate);
+  } catch {
+    // Keep a safe fallback filename.
+  }
+  return {
+    kind: 'image',
+    bodyBase64: arrayBufferToBase64(body),
+    contentType: 'image/png',
+    filename,
+  };
 }
 
 const STYLE_TEXT = `
@@ -708,6 +809,30 @@ async function requestSave(
   bubbleX: number,
   bubbleY: number,
 ): Promise<void> {
+  if (media.sourceElement && isFileUrl(media.mediaUrl)) {
+    const localUpload = await encodeLocalImage(
+      media.sourceElement,
+      media.mediaUrl,
+      media.sourceFile,
+    );
+    if (!localUpload) {
+      showSaveBubble(
+        bubbleX,
+        bubbleY,
+        '无法读取本地图片',
+        '请在扩展设置中允许访问本地文件，或改用系统导入。',
+      );
+      return;
+    }
+    const response = await sendRuntimeMessage<SaveResponse>({
+      type: 'serpent-local-save-request',
+      ...localUpload,
+      targetFolderId,
+    });
+    showSaveBubble(bubbleX, bubbleY, response.notification.title, response.notification.message);
+    return;
+  }
+
   const intent: SaveIntent = {
     kind: media.kind,
     sourcePageUrl: window.location.href,
@@ -944,10 +1069,13 @@ const DRAG_GHOST_MAX_SIZE = 96;
  * 自定义拖拽幽灵：把指针下的媒体元素画进 ≤96px 画布缩略图，锚点固定在光标
  * 左上角。必须在 dragstart 内同步调用。
  */
-export function applyDragGhostThumbnail(event: DragEvent): void {
+export function applyDragGhostThumbnail(
+  event: DragEvent,
+  sourceOverride?: HTMLImageElement | HTMLVideoElement,
+): void {
   const { dataTransfer } = event;
   if (!dataTransfer) return;
-  const source = findMediaElementAtPoint(
+  const source = sourceOverride ?? findMediaElementAtPoint(
     document,
     event.clientX,
     event.clientY,

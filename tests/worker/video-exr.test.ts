@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   LibraryService,
   defaultSpawnFn,
+  escapeFfmpegFilterPath,
   type LibraryServiceDiagnostic,
   type SpawnFunction,
   type SpawnResult,
@@ -44,6 +45,13 @@ const VALID_1X1_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
   'base64',
 );
+
+it('escapes Windows paths embedded in FFmpeg filtergraphs', () => {
+  expect(escapeFfmpegFilterPath(String.raw`C:\Serpent\fonts\DejaVuSans.ttf`))
+    .toBe(String.raw`C\:/Serpent/fonts/DejaVuSans.ttf`);
+  expect(escapeFfmpegFilterPath("/tmp/Serpent's font.ttf"))
+    .toBe("/tmp/Serpent\\'s font.ttf");
+});
 
 function createTestImage(destPath: string): void {
   mkdirSync(path.dirname(destPath), { recursive: true });
@@ -2219,14 +2227,19 @@ describe('independent video derivative jobs', () => {
     service.enqueueThumbnailJobs(created.libraryId);
     let posterReady!: () => void;
     const ready = new Promise<void>((resolve) => { posterReady = resolve; });
+    let eventDimensions: { width?: number; height?: number; durationMs?: number } | undefined;
     const processing = service.processThumbnailQueue(created.libraryId, {
       maxJobs: 4,
-      onResult: ({ assetId, artifactId }) => {
-        if (assetId === asset.assetId && artifactId) posterReady();
+      onResult: ({ assetId, artifactId, width, height, durationMs }) => {
+        if (assetId === asset.assetId && artifactId) {
+          eventDimensions = { width, height, durationMs };
+          posterReady();
+        }
       },
     });
 
     await ready;
+    expect(eventDimensions).toMatchObject({ width: 1920, height: 1080, durationMs: 30050 });
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
       .toMatchObject({ thumbnailStatus: 'ready' });
     const db = assertDb(created.libraryPath);

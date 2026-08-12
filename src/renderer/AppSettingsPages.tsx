@@ -65,7 +65,13 @@ function SettingsToggleRow({
   );
 }
 
-export function GeneralSettingsPage({ onOpenAppLog }: { onOpenAppLog?: () => void } = {}): ReactNode {
+export function GeneralSettingsPage({
+  onOpenAppLog,
+  onOpenExtensionReleases,
+}: {
+  onOpenAppLog?: () => void;
+  onOpenExtensionReleases?: () => void;
+} = {}): ReactNode {
   const { t, preference: localePreference, setLocale } = useLocale();
   return (
     <>
@@ -114,10 +120,19 @@ export function GeneralSettingsPage({ onOpenAppLog }: { onOpenAppLog?: () => voi
             <strong>{t("settings.browserExtensionTitle")}</strong>
             <span>{t("settings.browserExtensionIntro")}</span>
           </div>
+          {onOpenExtensionReleases ? (
+            <button
+              className="secondary-button app-settings-download-button"
+              onClick={onOpenExtensionReleases}
+              type="button"
+            >
+              {t("settings.browserExtensionDownload")}
+            </button>
+          ) : null}
           <ol className="app-settings-help-list">
-            <li>{t("settings.browserExtensionStepBuild")}</li>
+            <li>{t("settings.browserExtensionStepDownload")}</li>
+            <li>{t("settings.browserExtensionStepExtract")}</li>
             <li>{t("settings.browserExtensionStepLoad")}</li>
-            <li>{t("settings.browserExtensionStepUse")}</li>
           </ol>
           <p className="app-settings-help-note">
             {t("settings.browserExtensionNote")}

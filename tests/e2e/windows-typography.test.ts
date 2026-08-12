@@ -135,7 +135,7 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
     // E2E 主题解析走系统偏好（preload 的 __SERPENT_E2E_THEME__ 注入在隔离
     // world，主 world 读不到）——按系统断言，而非写死 dark。
     const expectedTheme = await window.evaluate(() =>
-      window.matchMedia("(prefers-color-scheme: light)").matches
+      globalThis.matchMedia("(prefers-color-scheme: light)").matches
         ? "light"
         : "dark",
     );

@@ -896,11 +896,7 @@ export const zhCN = {
       closeAria: "关闭开源组件与许可",
       close: "关闭",
       intro: "各组件按其各自的开源许可证提供，完整依赖清单随项目源码发布。",
-      electron: "桌面应用运行时",
-      react: "界面渲染框架",
-      sqlite: "本地资源库数据库",
-      media: "媒体解码与图像处理",
-      license: "许可证文本和第三方声明位于项目仓库的 LICENSE 与 resources/media-binaries/licenses 目录。"
+      license: "许可证文本和第三方声明位于项目仓库的 THIRD_PARTY_NOTICES.md、LICENSE 与 resources/media-binaries/licenses 目录。"
     },
     relinkPreview: {
       title: "批量重新定位预览",
@@ -1157,15 +1153,16 @@ export const zhCN = {
     languageHint: "控制界面文案语言，立即生效。",
     browserExtensionTitle: "浏览器扩展",
     browserExtensionIntro:
-      "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。保持本应用运行并打开资源库即可。",
-    browserExtensionStepBuild:
-      "开发阶段：在项目根目录运行 npm run extension:build，生成 dist/extension。",
+      "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。媒体由浏览器侧下载（携带 Cookie 与页面 Referer）再上传到本机应用，可绕过多数防盗链限制。保持本应用运行并打开资源库即可。",
+    browserExtensionDownload: "前往下载",
+    browserExtensionStepDownload:
+      "点击「前往下载」打开扩展发布页，下载最新的 serpent-extension-<版本>.zip。",
+    browserExtensionStepExtract:
+      "解压到固定文件夹（如「文档/Serpent-extension」），文件夹内需直接包含 manifest.json。",
     browserExtensionStepLoad:
-      "打开 chrome://extensions 或 edge://extensions，开启开发者模式，加载已解压的 dist/extension。",
-    browserExtensionStepUse:
-      "扩展图标变为彩色后，在网页图片或视频上右键选择「保存到 Serpent」。",
+      "打开 chrome://extensions 或 edge://extensions，开启「开发者模式」，点击「加载已解压的扩展程序」并选择解压出的文件夹。",
     browserExtensionNote:
-      "正式发布前会改为商店或安装包说明（见工单 Serpent-999o）。代码更新后需重新构建并在扩展管理页点击重新加载。",
+      "扩展尚未上架浏览器商店，安装后不会自动更新——新版本发布后重新下载 zip，并在扩展管理页点击「刷新」即可。",
     diagnosticsTitle: "诊断日志",
     mcpIntroTitle: "内嵌 MCP 服务",
     mcpIntroHint: "允许 MCP 客户端通过仅限本机回环地址的 Streamable HTTP 服务控制当前 Serpent 桌面实例。",
@@ -1687,11 +1684,14 @@ export const zhCN = {
     extensionCopyFailed: "（已废弃）",
     aiConfigSaveFailed: "AI 配置保存失败。",
     aiConfigSaved: "AI 配置已保存。",
-    aiAnalyzeFailed: "AI 分析失败。",
+    aiAnalyzeFailed: "AI 分析未完成：服务暂时不可用或分析输入尚未就绪，请稍后重试。",
     aiAnalyzeFailedDetail: "AI 分析失败：{detail}",
     aiAnalyzeUnavailable: "AI 分析暂不可用：{reason}",
     aiAnalyzeDone: "AI 分析完成。",
     aiAnalyzeDoneBatch: "AI 分析完成：成功 {succeeded} 项、失败 {failed} 项。",
+    aiAnalyzeDoneBatchWithSkipped: "AI 分析完成：成功 {succeeded} 项，跳过 {skipped} 项（已有分析结果）。",
+    aiAnalyzeSkippedBatch: "未执行 AI 分析：{count} 项资产已有分析结果，已跳过。",
+    aiAnalyzeSkippedSuffix: "另有 {count} 项资产已有分析结果，已跳过。",
     aiAnalyzeStarted: "正在进行 AI 分析…",
     aiAnalyzeStartedBatch: "正在对 {count} 项资产进行 AI 分析…",
     aiAnalyzeProgress: "AI 分析进行中（运行 {running} / 排队 {queued}）",

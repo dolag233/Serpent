@@ -9819,6 +9819,11 @@ function AppInner() {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
         onOpenAppLog={openAppLog}
+        onOpenExtensionReleases={() => {
+          void shellApi?.openExternalUrl(
+            "https://github.com/dolag233/Serpent-Extension/releases/latest",
+          );
+        }}
         pluginApi={(window as RendererWindow).serpent?.plugins}
         pluginContributionRefreshKey={pluginContributionRefreshKey}
         libraryId={library?.libraryId}

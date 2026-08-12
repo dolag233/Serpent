@@ -4,8 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   extractHttpUrlFromCssBackgroundImage,
+  findMediaElementFromDragEvent,
+  isFileUrl,
   isHttpUrl,
   pickLargestSrcsetUrl,
+  resolveMediaTargetFromDragEvent,
   resolveMediaTargetFromHitElements,
 } from '../../extension/media-target';
 import { isOverlayHostHostname } from '../../extension/overlay-hosts';
@@ -16,6 +19,12 @@ describe('extension media target helpers', () => {
     expect(isHttpUrl('http://127.0.0.1/image.png')).toBe(true);
     expect(isHttpUrl('data:image/png;base64,abc')).toBe(false);
     expect(isHttpUrl('blob:https://example.com/uuid')).toBe(false);
+  });
+
+  it('recognizes local file media without weakening the HTTP URL guard', () => {
+    expect(isFileUrl('file:///C:/Pictures/shot.png')).toBe(true);
+    expect(isFileUrl('https://cdn.example.com/shot.png')).toBe(false);
+    expect(isHttpUrl('file:///C:/Pictures/shot.png')).toBe(false);
   });
 
   it('picks the largest width from srcset descriptors', () => {
@@ -121,5 +130,105 @@ describe('resolveMediaTargetFromHitElements', () => {
     });
 
     tile.remove();
+  });
+});
+
+describe('resolveMediaTargetFromDragEvent', () => {
+  it('prefers the actual image under a draggable link over its wrapper', () => {
+    const link = document.createElement('a');
+    link.href = 'https://example.com/gallery';
+    const image = document.createElement('img');
+    image.src = 'https://cdn.example.com/asset.webp';
+    link.append(image);
+    document.body.append(link);
+
+    const event = {
+      composedPath: () => [image, link, document.body, document.documentElement, document],
+      dataTransfer: null,
+      clientX: 0,
+      clientY: 0,
+    } as unknown as DragEvent;
+
+    expect(resolveMediaTargetFromDragEvent(document, event)).toEqual({
+      kind: 'image',
+      mediaUrl: 'https://cdn.example.com/asset.webp',
+    });
+    expect(findMediaElementFromDragEvent(document, event)).toBe(image);
+    link.remove();
+  });
+
+  it('uses uri-list drag data when the site drags a proxy element', () => {
+    const event = {
+      composedPath: () => [document.body, document.documentElement, document],
+      dataTransfer: {
+        getData: (type: string) => type === 'text/uri-list'
+          ? '# browser metadata\nhttps://cdn.example.com/video.mp4\n'
+          : '',
+      },
+      clientX: Number.NaN,
+      clientY: Number.NaN,
+    } as unknown as DragEvent;
+
+    expect(resolveMediaTargetFromDragEvent(document, event)).toEqual({
+      kind: 'video',
+      mediaUrl: 'https://cdn.example.com/video.mp4',
+    });
+  });
+
+  it('does not treat an anchor page URL as an image', () => {
+    const event = {
+      composedPath: () => [document.body, document.documentElement, document],
+      dataTransfer: {
+        getData: (type: string) => type === 'text/uri-list'
+          ? 'https://example.com/article/42'
+          : type === 'text/html'
+            ? '<a href="https://example.com/article/42">article</a>'
+            : 'https://example.com/article/42',
+      },
+      clientX: Number.NaN,
+      clientY: Number.NaN,
+    } as unknown as DragEvent;
+
+    expect(resolveMediaTargetFromDragEvent(document, event)).toBeNull();
+  });
+
+  it('recognizes an SVG image element used by canvas-like galleries', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const image = document.createElementNS('http://www.w3.org/2000/svg', 'image');
+    image.setAttribute('href', 'https://cdn.example.com/vector-preview.png');
+    svg.append(image);
+    document.body.append(svg);
+
+    const event = {
+      composedPath: () => [image, svg, document.body, document.documentElement, document],
+      dataTransfer: null,
+      clientX: 0,
+      clientY: 0,
+    } as unknown as DragEvent;
+
+    expect(resolveMediaTargetFromDragEvent(document, event)).toEqual({
+      kind: 'image',
+      mediaUrl: 'https://cdn.example.com/vector-preview.png',
+    });
+    svg.remove();
+  });
+
+  it('keeps the local image element for the file-page upload fallback', () => {
+    const image = document.createElement('img');
+    image.src = 'file:///C:/Pictures/shot.png';
+    document.body.append(image);
+
+    const event = {
+      composedPath: () => [image, document.body, document.documentElement, document],
+      dataTransfer: null,
+      clientX: 0,
+      clientY: 0,
+    } as unknown as DragEvent;
+
+    const media = resolveMediaTargetFromDragEvent(document, event);
+    expect(media?.kind).toBe('image');
+    expect(media?.mediaUrl).toBe('file:///C:/Pictures/shot.png');
+    expect(media?.sourceElement).toBe(image);
+    image.remove();
   });
 });

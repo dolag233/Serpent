@@ -39,6 +39,7 @@ export interface AppSettingsDialogProps {
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
   onOpenAppLog?: () => void;
+  onOpenExtensionReleases?: () => void;
   pluginApi?: SerpentPluginManagerApi;
   pluginContributionRefreshKey?: string | null;
   libraryId?: string;
@@ -62,6 +63,7 @@ export function AppSettingsDialog({
   aiConfigPanel,
   onToggleShowAiBadges,
   onOpenAppLog,
+  onOpenExtensionReleases,
   pluginApi,
   pluginContributionRefreshKey,
   libraryId,
@@ -161,7 +163,10 @@ export function AppSettingsDialog({
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "general" ? (
-              <GeneralSettingsPage onOpenAppLog={onOpenAppLog} />
+              <GeneralSettingsPage
+                onOpenAppLog={onOpenAppLog}
+                onOpenExtensionReleases={onOpenExtensionReleases}
+              />
             ) : null}
             {!showingPluginSettings && activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}
             {!showingPluginSettings && activeCategory === "browse" ? (

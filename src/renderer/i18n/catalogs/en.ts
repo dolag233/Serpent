@@ -909,11 +909,7 @@ export const en = {
       closeAria: "Close open-source components and licenses",
       close: "Close",
       intro: "Each component is provided under its own open-source license; the complete dependency inventory ships with the source tree.",
-      electron: "Desktop application runtime",
-      react: "UI rendering framework",
-      sqlite: "Local library database",
-      media: "Media decoding and image processing",
-      license: "License texts and third-party notices are in LICENSE and resources/media-binaries/licenses in the repository."
+      license: "License texts and third-party notices are in THIRD_PARTY_NOTICES.md, LICENSE, and resources/media-binaries/licenses in the repository."
     },
     relinkPreview: {
       title: "Batch relink preview",
@@ -1173,15 +1169,16 @@ export const en = {
     languageHint: "Controls the interface language. Changes apply immediately.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:
-      "Save web images and videos into the active library with the Chrome / Edge extension. Keep Serpent running with a library open.",
-    browserExtensionStepBuild:
-      "During development: run npm run extension:build in the repo root to produce dist/extension.",
+      "Save web images and videos into the active library with the Chrome / Edge extension. Media is downloaded by the browser (with cookies and the page Referer) and uploaded to this machine, bypassing most hotlink protections. Keep Serpent running with a library open.",
+    browserExtensionDownload: "Go to downloads",
+    browserExtensionStepDownload:
+      "Click “Go to downloads” to open the extension release page and download the latest serpent-extension-<version>.zip.",
+    browserExtensionStepExtract:
+      "Extract to a fixed folder (e.g. Documents/Serpent-extension). The folder must directly contain manifest.json.",
     browserExtensionStepLoad:
-      "Open chrome://extensions or edge://extensions, enable Developer mode, and load unpacked dist/extension.",
-    browserExtensionStepUse:
-      "When the toolbar icon turns color, right-click an image or video and choose Save to Serpent.",
+      "Open chrome://extensions or edge://extensions, enable Developer mode, click “Load unpacked” and select the extracted folder.",
     browserExtensionNote:
-      "Install copy will be formalized before release (see Serpent-999o). After code changes, rebuild and reload the extension.",
+      "The extension is not on a browser store yet and will not update automatically — after a new release, download the zip again and click Refresh on the extension card.",
     diagnosticsTitle: "Diagnostics",
     mcpIntroTitle: "Embedded MCP server",
     mcpIntroHint: "Allow MCP clients to control this running Serpent desktop through a loopback-only Streamable HTTP endpoint.",
@@ -1705,11 +1702,14 @@ export const en = {
     extensionCopyFailed: "(unused)",
     aiConfigSaveFailed: "Failed to save AI settings.",
     aiConfigSaved: "AI settings saved.",
-    aiAnalyzeFailed: "AI analysis failed.",
+    aiAnalyzeFailed: "AI analysis did not finish: the service may be unavailable or the analysis input is not ready. Try again later.",
     aiAnalyzeFailedDetail: "AI analysis failed: {detail}",
     aiAnalyzeUnavailable: "AI analysis unavailable: {reason}",
     aiAnalyzeDone: "AI analysis finished.",
     aiAnalyzeDoneBatch: "AI analysis finished: {succeeded} succeeded, {failed} failed.",
+    aiAnalyzeDoneBatchWithSkipped: "AI analysis finished: {succeeded} succeeded, {skipped} skipped (already analyzed).",
+    aiAnalyzeSkippedBatch: "AI analysis was not run: {count} assets already have results and were skipped.",
+    aiAnalyzeSkippedSuffix: "{count} assets already had results and were skipped.",
     aiAnalyzeStarted: "AI analysis in progress…",
     aiAnalyzeStartedBatch: "AI analysis started for {count} assets…",
     aiAnalyzeProgress: "AI analysis running ({running} active / {queued} queued)",

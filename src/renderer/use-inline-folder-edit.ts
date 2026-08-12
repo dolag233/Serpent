@@ -53,7 +53,10 @@ export interface UseInlineFolderEditResult {
    * succeeds, before the inline row is removed.
    */
   commitInlineFolderEdit: (
-    onCreateSuccess?: (parentFolderId: string | null) => void,
+    onCreateSuccess?: (
+      folderId: string,
+      parentFolderId: string | null,
+    ) => void,
   ) => Promise<void>;
 }
 
@@ -95,7 +98,10 @@ export function useInlineFolderEdit({
   }, []);
 
   const commitInlineFolderEdit = useCallback(async (
-    onCreateSuccess?: (parentFolderId: string | null) => void,
+    onCreateSuccess?: (
+      folderId: string,
+      parentFolderId: string | null,
+    ) => void,
   ) => {
     const session = inlineFolderEdit;
     if (!session) return;
@@ -151,7 +157,7 @@ export function useInlineFolderEdit({
         return;
       }
       if (session.kind === "create") {
-        onCreateSuccess?.(session.parentFolderId);
+        onCreateSuccess?.(result.value.folderId, session.parentFolderId);
       }
       setInlineFolderEdit((current) =>
         current && isSameInlineFolderEditSession(current, session)

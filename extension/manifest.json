@@ -9,12 +9,14 @@
     "http://127.0.0.1:19877/*",
     "http://127.0.0.1:19878/*",
     "http://*/*",
-    "https://*/*"
+    "https://*/*",
+    "file:///*"
   ],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
       "js": ["content-script.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ],

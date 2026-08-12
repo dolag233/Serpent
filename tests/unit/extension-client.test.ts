@@ -165,6 +165,24 @@ describe('browser extension save client', () => {
     expect(firstCall?.[1]?.headers).not.toHaveProperty('Authorization');
   });
 
+  it('omits remote URL metadata for local-file uploads', async () => {
+    const mediaBody = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
+    const fetchFn = vi.fn(async () => mockFetchResponse({ status: 202 }));
+
+    await expect(
+      deliverSaveUpload(
+        { kind: 'image', targetFolderId: null },
+        { body: mediaBody, contentType: 'image/png', filename: 'shot.png' },
+        defaultSaveBehavior,
+        fetchFn,
+      ),
+    ).resolves.toEqual({ kind: 'accepted' });
+
+    const request = (fetchFn.mock.calls[0] as unknown as [string, { headers?: Record<string, string> }])?.[1];
+    expect(request.headers).not.toHaveProperty('X-Serpent-Source-Page-Url');
+    expect(request.headers).not.toHaveProperty('X-Serpent-Media-Url');
+  });
+
   it('tries fallback ports after connection failures', async () => {
     const mediaBody = new Uint8Array([1]).buffer;
     const fetchFn = vi

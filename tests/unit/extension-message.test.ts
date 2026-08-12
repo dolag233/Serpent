@@ -759,6 +759,39 @@ describe('createExtensionServer', () => {
       expect(res.body).toEqual({ status: 'rejected', reason: 'invalid source page url' });
     });
 
+    it('accepts a local-file upload without URL metadata', async () => {
+      const uploads: SaveUploadRequest[] = [];
+      const stagingRoot = path.join(os.tmpdir(), `serpent-ext-test-${randomUUID()}`);
+      await mkdir(stagingRoot, { recursive: true });
+      try {
+        server = await startServer({
+          port: TEST_PORT,
+          uploadStagingRoot: stagingRoot,
+          onSaveUpload: async (upload) => {
+            uploads.push(upload);
+            return { accepted: true };
+          },
+        });
+        const res = await postUpload(server.port, Buffer.from('local-png'), {
+          'X-Serpent-Kind': 'image',
+          'X-Serpent-Local-File': 'true',
+          'X-Serpent-Content-Type': 'image/png',
+          'X-Serpent-Filename': 'shot.png',
+        });
+        expect(res.status).toBe(202);
+        expect(uploads[0]).toMatchObject({
+          kind: 'image',
+          contentType: 'image/png',
+          filename: 'shot.png',
+        });
+        expect(uploads[0]).not.toHaveProperty('sourcePageUrl');
+        expect(uploads[0]).not.toHaveProperty('mediaUrl');
+        await rm(uploads[0]!.stagingDirectory, { recursive: true, force: true });
+      } finally {
+        await rm(stagingRoot, { recursive: true, force: true });
+      }
+    });
+
     it('returns 413 when Content-Length exceeds the upload cap', async () => {
       server = await startServer({ port: TEST_PORT });
 

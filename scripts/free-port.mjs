@@ -13,19 +13,44 @@ export function findFreeTcpPort(
   return new Promise((resolve, reject) => {
     let port = Math.max(1, Math.floor(start));
     const last = port + Math.max(1, maxAttempts) - 1;
+    let lastError;
+
+    const tryEphemeral = () => {
+      const server = net.createServer();
+      server.unref();
+      server.once("error", (error) => reject(error));
+      server.listen({ port: 0, host, exclusive: true }, () => {
+        const bound = /** @type {import('node:net').AddressInfo} */ (
+          server.address()
+        );
+        server.close((closeError) => {
+          if (closeError) {
+            reject(closeError);
+            return;
+          }
+          resolve(bound.port);
+        });
+      });
+    };
 
     const tryListen = () => {
       if (port > last) {
+        if (lastError?.code === "EACCES") {
+          tryEphemeral();
+          return;
+        }
         reject(
-          new Error(
-            `No free TCP port on ${host} in range ${start}–${last}.`,
-          ),
+          lastError ??
+            new Error(
+              `No free TCP port on ${host} in range ${start}–${last}.`,
+            ),
         );
         return;
       }
       const server = net.createServer();
       server.unref();
-      server.once("error", () => {
+      server.once("error", (error) => {
+        lastError = error;
         port += 1;
         tryListen();
       });

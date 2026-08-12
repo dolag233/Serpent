@@ -14446,6 +14446,7 @@ export class LibraryService {
     assetIds?: string[];
     folderId?: string;
     resumePaused?: boolean;
+    forceExisting?: boolean;
   }): {
     enqueued: number;
     jobIds: string[];
@@ -14508,7 +14509,7 @@ export class LibraryService {
     const videoExts = new Set([
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
     ]);
-    const modelExts = new Set(['.fbx', '.obj', '.glb', '.gltf', '.stl']);
+    const modelExts = new Set<string>(MODEL_EXTENSIONS);
     const videoContactSheetReady = conn.prepare(
       `SELECT COUNT(*) AS ready_count
          FROM assets a
@@ -14569,14 +14570,17 @@ export class LibraryService {
           continue;
         }
 
-        // 「AI分析未分析项」语义：已有 AI 生成数据的资产跳过（运行时判断：
-        // ai_content 存在至少一条记录即视为已分析——不动数据库字段）。
-        const hasAiContent = conn
-          .prepare('SELECT 1 FROM ai_content WHERE asset_id = ? LIMIT 1')
-          .get(assetId);
-        if (hasAiContent) {
-          skippedAssetIds.push(assetId);
-          continue;
+        // Automatic reconciliation and the explicit “unanalysed only” path
+        // skip assets that already have AI content. Manual analysis passes
+        // forceExisting so a user can deliberately replace an old result.
+        if (!input.forceExisting) {
+          const hasAiContent = conn
+            .prepare('SELECT 1 FROM ai_content WHERE asset_id = ? LIMIT 1')
+            .get(assetId);
+          if (hasAiContent) {
+            skippedAssetIds.push(assetId);
+            continue;
+          }
         }
 
         const jobId = randomUUID();
@@ -19174,7 +19178,7 @@ export class LibraryService {
         height?: number;
         durationMs?: number;
       }) => void;
-      /** Fired once a durable visual input is ready for automatic video AI. */
+      /** Fired once a durable visual input is ready for automatic AI. */
       onAiInputReady?: (event: { assetId: string; artifactId: string }) => void;
       pluginMediaProvider?: (input: {
         assetId: string;
@@ -19440,6 +19444,23 @@ export class LibraryService {
               assetId: job.asset_id,
               artifactId: contactSheet.artifactId,
             });
+          }
+        } else if (job.kind === 'generate_thumbnail') {
+          // Model AI uses a four-view render rather than the browse thumbnail,
+          // but a successful model thumbnail proves that the offscreen model
+          // renderer is initialized. Re-trigger the import-time AI enqueue at
+          // this boundary so a race cannot leave the model job unprocessed.
+          const asset = openLibrary.connection
+            .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+            .get(job.asset_id) as { relative_file_path: string } | undefined;
+          if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'model') {
+            const thumbnail = this.getCurrentArtifact(libraryId, job.asset_id, 'thumbnail');
+            if (thumbnail?.status === 'ready') {
+              options.onAiInputReady?.({
+                assetId: job.asset_id,
+                artifactId: thumbnail.artifactId,
+              });
+            }
           }
         }
       } catch (error) {
@@ -29016,6 +29037,11 @@ export class LibraryService {
     // boundary above. From this point on, give it the same source shape as a
     // normal file import so destination naming, duplicate decisions, the
     // operation journal, leases, rollback and metadata all share one kernel.
+    // Remote filenames are the only input that can exceed the filesystem
+    // component limit (local sources are already bounded by the filesystem
+    // itself); assert before copying so both platforms surface the same
+    // PATH_LIMIT_EXCEEDED instead of an OS error misread as a missing source.
+    assertNameWithinFsLimit(filename);
     const sourceDirectory = path.join(tmpdir(), `serpent-extension-import-${randomUUID()}`);
     const sourcePath = path.join(sourceDirectory, filename);
     try {

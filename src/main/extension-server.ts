@@ -47,8 +47,8 @@ export type ListFoldersDisposition =
 /** Metadata for browser-fetched binary uploads (Serpent-1jyi). */
 export interface SaveUploadRequest {
   kind: 'image' | 'video';
-  sourcePageUrl: string;
-  mediaUrl: string;
+  sourcePageUrl?: string;
+  mediaUrl?: string;
   contentType: string;
   filename: string;
   stagedFilePath: string;
@@ -164,8 +164,8 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
   | {
     ok: true;
     kind: 'image' | 'video';
-    sourcePageUrl: string;
-    mediaUrl: string;
+    sourcePageUrl?: string;
+    mediaUrl?: string;
     contentType: string;
     filename: string;
     targetFolderId?: string | null;
@@ -176,6 +176,7 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
   const kindRaw = headerValue(headers, 'x-serpent-kind');
   const sourcePageUrl = decodeHeaderText(headerValue(headers, 'x-serpent-source-page-url'));
   const mediaUrl = decodeHeaderText(headerValue(headers, 'x-serpent-media-url'));
+  const localFileUpload = headerValue(headers, 'x-serpent-local-file') === 'true';
   const contentType = normalizeContentType(
     headerValue(headers, 'x-serpent-content-type') ?? headerValue(headers, 'content-type'),
   );
@@ -185,11 +186,14 @@ function parseUploadMetadata(headers: http.IncomingHttpHeaders):
   if (kindRaw !== 'image' && kindRaw !== 'video') {
     return { ok: false, reason: 'invalid kind' };
   }
-  if (!sourcePageUrl || !/^https?:\/\//.test(sourcePageUrl)) {
+  if (!localFileUpload && (!sourcePageUrl || !/^https?:\/\//.test(sourcePageUrl))) {
     return { ok: false, reason: 'invalid source page url' };
   }
-  if (!mediaUrl || !/^https?:\/\//.test(mediaUrl)) {
+  if (!localFileUpload && (!mediaUrl || !/^https?:\/\//.test(mediaUrl))) {
     return { ok: false, reason: 'invalid media url' };
+  }
+  if (localFileUpload && (sourcePageUrl !== undefined || mediaUrl !== undefined)) {
+    return { ok: false, reason: 'invalid local file metadata' };
   }
   if (!contentType || contentType === 'application/octet-stream') {
     // octet-stream alone is too vague; require an explicit media content-type header.
@@ -372,8 +376,6 @@ export async function createExtensionServer(
 
           const disposition = await options.onSaveUpload({
             kind: metadata.kind,
-            sourcePageUrl: metadata.sourcePageUrl,
-            mediaUrl: metadata.mediaUrl,
             contentType: metadata.contentType,
             filename: safeName,
             stagedFilePath,
@@ -382,6 +384,10 @@ export async function createExtensionServer(
             byteLength,
             focusAppAfterSave: metadata.focusAppAfterSave,
             revealInLibrary: metadata.revealInLibrary,
+            ...(metadata.sourcePageUrl === undefined
+              ? {}
+              : { sourcePageUrl: metadata.sourcePageUrl }),
+            ...(metadata.mediaUrl === undefined ? {} : { mediaUrl: metadata.mediaUrl }),
           });
 
           if (

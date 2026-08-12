@@ -12,14 +12,17 @@ import {
   type SaveMenuTreeFolder,
 } from './folder-menu';
 import { saveMenuTitle } from './connection-ui';
+import { isFileUrl } from './media-target';
 import { readExtensionSaveBehavior } from './preferences';
 import {
   fetchSerpentFolders,
+  deliverSaveUpload,
   notificationForOutcome,
   probeSerpentConnection,
   saveIntentFromContextMenu,
   saveMediaViaBrowser,
   type SaveIntent,
+  type LocalUploadIntent,
   type UserNotification,
 } from './save-client';
 
@@ -332,6 +335,72 @@ async function saveIntentAndNotify(intent: SaveIntent): Promise<UserNotification
   return notification;
 }
 
+const MAX_LOCAL_UPLOAD_BYTES = 32 * 1024 * 1024;
+
+function decodeBase64Payload(value: string): ArrayBuffer | undefined {
+  if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value) || value.length % 4 !== 0) {
+    return undefined;
+  }
+  try {
+    const binary = atob(value);
+    if (binary.length === 0 || binary.length > MAX_LOCAL_UPLOAD_BYTES) return undefined;
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes.buffer;
+  } catch {
+    return undefined;
+  }
+}
+
+async function saveLocalUploadAndNotify(input: {
+  kind: LocalUploadIntent['kind'];
+  bodyBase64: string;
+  contentType: string;
+  filename: string;
+  targetFolderId?: string | null;
+}): Promise<UserNotification> {
+  const body = decodeBase64Payload(input.bodyBase64);
+  if (!body) {
+    const notification = {
+      title: '无法保存本地图片',
+      message: '本地图片过大或无法读取，请改用网页图片或系统导入。',
+    };
+    showNotification(notification);
+    return notification;
+  }
+
+  const behavior = await readExtensionSaveBehavior();
+  const outcome = await deliverSaveUpload(
+    {
+      kind: input.kind,
+      ...(input.targetFolderId === undefined ? {} : { targetFolderId: input.targetFolderId }),
+    },
+    {
+      body,
+      contentType: input.contentType,
+      filename: input.filename,
+    },
+    behavior,
+  );
+
+  if (outcome.kind === 'accepted') {
+    const foldersOutcome = await fetchSerpentFolders();
+    if (foldersOutcome.kind === 'ok') {
+      await rememberRecentFolder(
+        typeof input.targetFolderId === 'string' ? input.targetFolderId : null,
+        foldersOutcome.folders,
+      );
+      await refreshFolderMenus();
+    }
+  }
+
+  const notification = notificationForOutcome(outcome);
+  showNotification(notification);
+  return notification;
+}
+
 /** 把保存进度/结果气泡发送到当前标签页（无 content script 时静默忽略）。 */
 function notifySaveFeedback(
   tab: { id?: number } | undefined,
@@ -374,6 +443,22 @@ async function handleContextMenuClick(
     srcUrl: info.srcUrl,
   });
   if (!intent) {
+    if (info.tab?.id !== undefined && isFileUrl(info.srcUrl)) {
+      notifySaveFeedback(info.tab, { state: 'saving' });
+      chrome.tabs.sendMessage(
+        info.tab.id,
+        {
+          type: 'serpent-local-context-save-request',
+          mediaUrl: info.srcUrl,
+          kind: info.mediaType === 'video' ? 'video' : 'image',
+          targetFolderId,
+        },
+        () => {
+          void chrome.runtime.lastError;
+        },
+      );
+      return;
+    }
     showNotification({
       title: '无法保存到 Serpent',
       message: '这个媒体或页面不是可下载的 HTTP(S) 地址。',
@@ -504,6 +589,53 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             : undefined,
       };
       const notification = await saveIntentAndNotify(saveIntent);
+      sendResponse({ notification });
+    })();
+    return true;
+  }
+
+  if (type === 'serpent-local-save-request') {
+    void (async () => {
+      if (connectionState !== 'connected') {
+        const notification = {
+          title: '无法保存到 Serpent',
+          message: '请先启动 Serpent 桌面应用并打开资源库。',
+        };
+        showNotification(notification);
+        sendResponse({ notification });
+        return;
+      }
+
+      const kind = Reflect.get(message, 'kind');
+      const bodyBase64 = Reflect.get(message, 'bodyBase64');
+      const contentType = Reflect.get(message, 'contentType');
+      const filename = Reflect.get(message, 'filename');
+      const targetFolderId = Reflect.get(message, 'targetFolderId');
+      if (
+        (kind !== 'image' && kind !== 'video') ||
+        typeof bodyBase64 !== 'string' ||
+        typeof contentType !== 'string' ||
+        typeof filename !== 'string' ||
+        (targetFolderId !== undefined &&
+          targetFolderId !== null &&
+          typeof targetFolderId !== 'string')
+      ) {
+        sendResponse({
+          notification: {
+            title: '无法保存到 Serpent',
+            message: '本地媒体保存请求无效。',
+          },
+        });
+        return;
+      }
+
+      const notification = await saveLocalUploadAndNotify({
+        kind,
+        bodyBase64,
+        contentType,
+        filename,
+        ...(targetFolderId === undefined ? {} : { targetFolderId }),
+      });
       sendResponse({ notification });
     })();
     return true;

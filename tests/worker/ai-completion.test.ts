@@ -718,6 +718,47 @@ describe('enqueueAiAnalysisJobs', () => {
     service.closeAll();
   });
 
+  it('reconciles every ready video input when no asset ids are supplied', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Reconcile', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+
+    for (const name of ['one.mp4', 'two.mp4', 'three.mp4']) {
+      const videoPath = path.join(sourceDir, name);
+      writeFileSync(videoPath, Buffer.alloc(128));
+      importNoConflict(service, libraryId, videoPath);
+      const asset = service.listAssets({ libraryId, recursive: true }).find(
+        (candidate) => candidate.displayName === name,
+      );
+      expect(asset).toBeDefined();
+      service.writeDerivedArtifact({
+        libraryId,
+        assetId: asset!.assetId,
+        kind: 'contact_sheet',
+        mimeType: 'image/jpeg',
+        bytes: Buffer.from(`contact-sheet-${name}`),
+        generatorVersion: 'test',
+        maxBytes: 1024,
+      });
+    }
+
+    // This is the durable library-open reconciliation call used after a
+    // worker restart; it must discover all ready videos without import IDs.
+    const first = service.enqueueAiAnalysisJobs({ libraryId });
+    expect(first.enqueued).toBe(3);
+    expect(first.skippedAssetIds).toHaveLength(0);
+
+    // Re-opening/reconciling is idempotent and must not duplicate jobs.
+    const second = service.enqueueAiAnalysisJobs({ libraryId });
+    expect(second.enqueued).toBe(0);
+    expect(second.alreadyPendingJobIds).toHaveLength(3);
+
+    service.closeAll();
+  });
+
   it('does not enqueue duplicate jobs for same asset', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -737,6 +778,44 @@ describe('enqueueAiAnalysisJobs', () => {
     const r2 = service.enqueueAiAnalysisJobs({ libraryId });
     expect(r2.enqueued).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('treats an asset with existing AI content as an idempotent skip', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Existing', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    const imported = importNoConflict(service, libraryId, createPngFile(sourceDir, 'img.png'));
+    const assetId = imported.assets[0]!.assetId;
+
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'already analyzed',
+      modelId: 'test-model',
+      modelVersion: 'test-version',
+      enabledFields: { description: true, tags: false, rating: false },
+    });
+
+    const result = service.enqueueAiAnalysisJobs({ libraryId, assetIds: [assetId] });
+    expect(result).toEqual({
+      enqueued: 0,
+      jobIds: [],
+      alreadyPendingJobIds: [],
+      skippedAssetIds: [assetId],
+    });
+    expect(service.getAiJobStatus(libraryId).jobs).toHaveLength(0);
+
+    const manual = service.enqueueAiAnalysisJobs({
+      libraryId,
+      assetIds: [assetId],
+      forceExisting: true,
+    });
+    expect(manual.enqueued).toBe(1);
+    expect(manual.skippedAssetIds).toHaveLength(0);
     service.closeAll();
   });
 

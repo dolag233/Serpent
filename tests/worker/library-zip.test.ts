@@ -6,6 +6,7 @@ import {
   createWriteStream,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -619,6 +620,25 @@ describe('LibraryService ZIP import', () => {
     // Check assets.
     const assets = service.listAssets({ libraryId: result.libraryId, recursive: true });
     expect(assets.length).toBe(1);
+
+    // Cross-platform ZIP extraction must restore the source mtime recorded in
+    // the revision row. Otherwise opening the imported copy invalidates all
+    // ready thumbnails as if every file had been externally edited.
+    const Database = require('better-sqlite3') as new (filename: string, options?: { readonly?: boolean }) => {
+      prepare(sql: string): { get(...params: unknown[]): unknown };
+      close(): void;
+    };
+    const importedDb = new Database(path.join(result.libraryPath, '.serpent', 'library.db'), { readonly: true });
+    const revision = importedDb.prepare(
+      `SELECT r.modified_at
+         FROM assets a
+         JOIN revisions r ON r.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL
+        LIMIT 1`,
+    ).get() as { modified_at: string };
+    const extractedStat = statSync(path.join(result.libraryPath, 'Assets', 'test.txt'));
+    expect(Math.abs(extractedStat.mtimeMs - Date.parse(revision.modified_at))).toBeLessThanOrEqual(1);
+    importedDb.close();
 
     service.closeAll();
   });

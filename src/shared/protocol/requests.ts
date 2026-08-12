@@ -2093,6 +2093,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema.optional(),
     /** Manual analysis may resume jobs intentionally paused by the user. */
     resumePaused: z.boolean().optional(),
+    /** Manual analysis may intentionally replace an existing AI result. */
+    forceExisting: z.boolean().optional(),
   }),
   z.strictObject({
     // 多选菜单「AI分析未分析项」：返回选中里没有任何 AI 生成数据的资产。

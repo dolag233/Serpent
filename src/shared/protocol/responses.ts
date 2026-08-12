@@ -1189,7 +1189,10 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('assets.analyze-queued'),
     assetIds: z.array(nonBlankString).min(1),
-    jobIds: z.array(nonBlankString).min(1),
+    // A batch containing only assets that already have AI content is a valid
+    // no-op.  Keep the response successful so the renderer can report the
+    // skipped assets without turning an idempotent request into a failure.
+    jobIds: z.array(nonBlankString),
     skippedAssetIds: z.array(nonBlankString),
     enqueued: z.number().int().nonnegative(),
   }),

@@ -1613,6 +1613,17 @@ describe('worker request protocol', () => {
     })).toMatchObject({ jobIds: ['job-1', 'job-2'] });
   });
 
+  it('accepts an atomic AI batch response with only skipped assets', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'assets.analyze-queued',
+      assetIds: ['asset-1'],
+      jobIds: [],
+      skippedAssetIds: ['asset-1'],
+      enqueued: 0,
+    })).toMatchObject({ jobIds: [], skippedAssetIds: ['asset-1'] });
+  });
+
   it('validates AI progress and completion events before Main forwards them', () => {
     expect(parseAiProgressEvent({
       type: 'ai.progress',

@@ -582,7 +582,10 @@ export interface NavigationSidebarProps {
   inlineFolderEdit: InlineFolderEditState | null;
   onInlineFolderEditChange: (value: string) => void;
   onInlineFolderEditCommit: (
-    onCreateSuccess?: (parentFolderId: string | null) => void,
+    onCreateSuccess?: (
+      folderId: string,
+      parentFolderId: string | null,
+    ) => void,
   ) => void;
   onInlineFolderEditCancel: () => void;
 
@@ -735,7 +738,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     saveNavTreePreferences(next);
   }
 
-  function revealCreatedFolderParent(parentId: string | null) {
+  function revealCreatedFolderParent(
+    _folderId: string,
+    parentId: string | null,
+  ) {
     if (!parentId) return;
     setNavTreePrefs((current) => {
       if (!current.collapsedFolderIds.includes(parentId)) return current;
