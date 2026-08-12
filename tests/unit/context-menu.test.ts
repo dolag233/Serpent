@@ -1,0 +1,84 @@
+// @vitest-environment happy-dom
+import { act, createElement, Fragment } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuProvider,
+} from "../../src/renderer/context-menu";
+import { LocaleProvider } from "../../src/renderer/i18n";
+
+describe("ContextMenu focus lifecycle", () => {
+  let root: Root | undefined;
+  let container: HTMLDivElement | undefined;
+
+  afterEach(() => {
+    root?.unmount();
+    root = undefined;
+    container?.remove();
+    container = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("does not overwrite a menu-item focus received before initial focus settles", async () => {
+    const animationFrames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      animationFrames.push(callback);
+      return animationFrames.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(
+            ContextMenuProvider,
+            null,
+            createElement(
+              ContextMenu,
+              {
+                ariaLabel: "Asset actions",
+                position: { x: 20, y: 20 },
+                children: createElement(
+                  Fragment,
+                  null,
+                  createElement(ContextMenuItem, {
+                    label: "First",
+                    onAction: () => undefined,
+                  }),
+                  createElement(ContextMenuItem, {
+                    label: "Hovered",
+                    onAction: () => undefined,
+                  }),
+                ),
+              },
+            ),
+          ),
+        ),
+      );
+    });
+
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    );
+    expect(items).toHaveLength(2);
+
+    // Model mouseenter focusing an item before ContextMenu's post-mount frame.
+    items[1]?.focus();
+    expect(document.activeElement).toBe(items[1]);
+
+    await act(async () => {
+      animationFrames.forEach((callback) => callback(performance.now()));
+    });
+
+    expect(document.activeElement).toBe(items[1]);
+  });
+});

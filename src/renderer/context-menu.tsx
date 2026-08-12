@@ -299,6 +299,20 @@ export function ContextMenu({
       const first = items[0];
       if (!first) return;
       if (!initialFocusPendingRef.current) return;
+
+      // Pointer/mouse focus can arrive before this post-mount frame. Keep the
+      // user's menu-item focus instead of treating the menu as untouched and
+      // moving focus back to the item under the opening point.
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        menu.contains(activeElement) &&
+        activeElement.matches('[role="menuitem"]:not([aria-disabled="true"])')
+      ) {
+        initialFocusPendingRef.current = false;
+        return;
+      }
+
       initialFocusPendingRef.current = false;
       const underPointer = document.elementFromPoint(position.x, position.y);
       const pointedItem = underPointer?.closest<HTMLElement>(
@@ -421,6 +435,7 @@ export function ContextMenuItem({
       title={disabled && disabledReason ? disabledReason : undefined}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      onPointerEnter={handlePointerMove}
       onPointerMove={handlePointerMove}
     >
       {icon && <span className="context-menu-item-icon">{icon}</span>}
