@@ -24,7 +24,11 @@ import {
 } from "electron";
 import type { MessageBoxOptions } from "electron";
 
-import { installApplicationMenu, setApplicationMenuCommandEnabled } from "./application-menu";
+import {
+  installApplicationMenu,
+  setApplicationMenuCommandEnabled,
+  setApplicationMenuCommandLabel,
+} from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
 import {
   clearViewerVideoShortcutCapture,
@@ -1592,6 +1596,20 @@ async function commandFor(
       return { type: "library.delete-from-disk", libraryId: request.libraryId };
     case "library.list.request":
       return { type: "library.list" };
+    case "history.status.request":
+      return { type: "history.status", libraryId: request.libraryId };
+    case "history.undo.request":
+      return {
+        type: "history.undo",
+        libraryId: request.libraryId,
+        expectedHistoryEntryId: request.expectedHistoryEntryId,
+      };
+    case "history.redo.request":
+      return {
+        type: "history.redo",
+        libraryId: request.libraryId,
+        expectedHistoryEntryId: request.expectedHistoryEntryId,
+      };
     case "library.list-recent.request":
     case "library.open-recent.request":
     case "library.forget-recent.request":
@@ -4684,6 +4702,15 @@ async function startApplication(): Promise<void> {
         }
         void enqueueAutoAnalyzeAfterImport(libraryId, importedAssetIds);
       },
+      historyEntryHandler: {
+        onCommitted: ({ executionId, historyEntryId }) => {
+          // The Worker owns the executable history.  Main keeps only the
+          // path-free receipt so the script compatibility route can undo all
+          // mutations made by one execution without maintaining a second
+          // inverse-operation journal.
+          automationExecutionJournal?.appendHistoryEntry(executionId, historyEntryId);
+        },
+      },
       mcpInputNormalizer: normalizeMcpCommandInput,
       libraryBindingHandler: {
         onLibraryCreated: async ({ source, library }) => {
@@ -6123,10 +6150,15 @@ async function startApplication(): Promise<void> {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       return;
     }
-    const record = input as { command?: unknown; enabled?: unknown } | null;
+    const record = input as { command?: unknown; enabled?: unknown; label?: unknown } | null;
     if (record === null || typeof record !== "object") return;
-    if (typeof record.command !== "string" || typeof record.enabled !== "boolean") return;
-    setApplicationMenuCommandEnabled(record.command, record.enabled);
+    if (typeof record.command !== "string") return;
+    if (typeof record.enabled === "boolean") {
+      setApplicationMenuCommandEnabled(record.command, record.enabled);
+    }
+    if (typeof record.label === "string" && record.label.length > 0 && record.label.length <= 200) {
+      setApplicationMenuCommandLabel(record.command, record.label);
+    }
   });
 
   ipcMain.on(ACTIVE_CONTEXT_CHANNEL, (event, input: unknown) => {

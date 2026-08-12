@@ -62,6 +62,16 @@ export function setApplicationMenuCommandEnabled(
   if (item) item.enabled = enabled;
 }
 
+/** Keep native macOS menu labels in step with the renderer's history summary. */
+export function setApplicationMenuCommandLabel(
+  command: string,
+  label: string,
+): void {
+  const menu = Menu.getApplicationMenu();
+  const item = menu?.getMenuItemById(command);
+  if (item) item.label = label;
+}
+
 /**
  * Every template item with a `command` is wired here: the focused window's
  * renderer receives the command over APPLICATION_MENU_COMMAND_CHANNEL and

@@ -29,6 +29,7 @@ export type SerpentMcpCallToolSuccess = {
   commandId?: AutomationCommandId;
   plugin?: { pluginId: string; commandId: string };
   result: unknown;
+  historyEntryId?: string;
   libraryId?: string;
   /** ADR-0031 §2: the last known library change sequence echoed on responses. */
   libraryChangeSequence?: number;
@@ -253,6 +254,7 @@ export async function callSerpentMcpTool(
     toolName: tool.name,
     commandId: tool.commandId,
     result: gatewayResult.result,
+    ...(gatewayResult.historyEntryId === undefined ? {} : { historyEntryId: gatewayResult.historyEntryId }),
     ...(explicitLibraryId === undefined ? {} : { libraryId: explicitLibraryId }),
     ...(libraryChangeSequence === undefined ? {} : { libraryChangeSequence }),
     ...(gatewayResult.undoGroupId === undefined ? {} : { undoGroupId: gatewayResult.undoGroupId }),

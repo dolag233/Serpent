@@ -114,6 +114,20 @@ import type {
   PluginJobRecoveryStrategy,
 } from '../plugins/plugin-jobs';
 import type { PluginProviderFieldType } from '../plugins/plugin-providers';
+import {
+  HistoryTransitionError,
+  OperationHistoryStateMachine,
+  historyRecipeSchema,
+  type HistoryDirection,
+  type HistoryEntryState,
+  type HistoryOperationReceipt,
+  type HistoryPolicy,
+  type HistoryRecipe,
+  type HistorySource,
+  type HistoryStackEntry,
+  type HistoryStatus,
+} from './operation-history';
+import { assertRegisteredHistoryRecipePair, assertRegisteredHistoryRecipe } from './operation-history-recipes';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -2246,6 +2260,102 @@ const GITIGNORE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(GITIGNORE_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v35 (Serpent-5n4z.1 / ADR-0032): one durable, per-library
+// operation history shared by Desktop, scripts, MCP and plugins. The payloads
+// are typed recipe JSON owned by the Worker; they are never exposed through
+// the renderer or automation protocol as executable recovery instructions.
+const OPERATION_HISTORY_SCHEMA_SQL = `
+  CREATE TABLE operation_history (
+    history_entry_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL CHECK (source IN ('desktop', 'script', 'mcp', 'plugin')),
+    source_reference TEXT,
+    label_key TEXT NOT NULL,
+    label_args_json TEXT NOT NULL,
+    policy TEXT NOT NULL CHECK (policy IN ('reversible', 'barrier')),
+    state TEXT NOT NULL CHECK (state IN ('open', 'applied', 'undoing', 'undone', 'redoing', 'stale')),
+    applied_sequence INTEGER NOT NULL UNIQUE,
+    stale_code TEXT,
+    affected_count INTEGER NOT NULL DEFAULT 0 CHECK (affected_count >= 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE operation_history_steps (
+    history_step_id TEXT PRIMARY KEY,
+    history_entry_id TEXT NOT NULL REFERENCES operation_history(history_entry_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    command_id TEXT NOT NULL,
+    recipe_kind TEXT NOT NULL,
+    recipe_version INTEGER NOT NULL CHECK (recipe_version > 0),
+    forward_payload_json TEXT NOT NULL,
+    inverse_payload_json TEXT NOT NULL,
+    affected_entities_json TEXT NOT NULL,
+    current_direction TEXT NOT NULL CHECK (current_direction IN ('forward', 'inverse')),
+    UNIQUE(history_entry_id, ordinal)
+  );
+
+  CREATE TABLE operation_history_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    history_entry_id TEXT NOT NULL REFERENCES operation_history(history_entry_id) ON DELETE CASCADE,
+    direction TEXT NOT NULL CHECK (direction IN ('undo', 'redo')),
+    status TEXT NOT NULL CHECK (status IN ('preparing', 'applying', 'committed', 'rolled_back', 'failed')),
+    next_step_ordinal INTEGER NOT NULL DEFAULT 0 CHECK (next_step_ordinal >= 0),
+    error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX operation_history_state_sequence_idx
+    ON operation_history(state, applied_sequence);
+  CREATE INDEX operation_history_steps_entry_idx
+    ON operation_history_steps(history_entry_id, ordinal);
+  CREATE INDEX operation_history_attempts_entry_idx
+    ON operation_history_attempts(history_entry_id, created_at);
+
+  -- History is a user-visible projection.  Treat its append/state changes as
+  -- ordinary library mutations so another open Worker refreshes menus and
+  -- automation projections even when the underlying operation was performed
+  -- by a different process.
+  CREATE TRIGGER library_change_on_operation_history_insert
+    AFTER INSERT ON operation_history BEGIN
+      UPDATE library_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER library_change_on_operation_history_update
+    AFTER UPDATE ON operation_history BEGIN
+      UPDATE library_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER library_change_on_operation_history_delete
+    AFTER DELETE ON operation_history BEGIN
+      UPDATE library_change_sequence SET sequence = sequence + 1;
+    END;
+`;
+const OPERATION_HISTORY_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(OPERATION_HISTORY_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v36: redo is a LIFO stack. The original forward commit order is
+// not enough to identify the next redo after undoing several entries, so keep
+// a durable sequence assigned when each undo commits.
+const OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL = `
+  ALTER TABLE operation_history
+    ADD COLUMN redo_sequence INTEGER NOT NULL DEFAULT 0;
+  UPDATE operation_history
+     SET redo_sequence = applied_sequence
+   WHERE state = 'undone';
+  CREATE INDEX operation_history_redo_sequence_idx
+    ON operation_history(state, redo_sequence);
+`;
+const OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL)
+  .digest('hex');
+
+// Keep individual recipes bounded so a DB-only mutation cannot turn the
+// library database into an unbounded snapshot store. Large-content/history
+// operations remain a separate phase with explicit byte retention policy.
+const OPERATION_HISTORY_MAX_RECIPE_BYTES = 4 * 1024 * 1024;
+const OPERATION_HISTORY_MAX_AUDIT_ENTRIES = 2_000;
+const OPERATION_HISTORY_STALE_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+
 // Exported for schema-compatibility tests that replay migrations
 // version-by-version (Serpent-verg.4/6).
 export const MIGRATIONS = [
@@ -2330,6 +2440,16 @@ export const MIGRATIONS = [
     version: 34,
     sql: CONTENT_FINGERPRINT_SCHEMA_SQL,
     checksum: CONTENT_FINGERPRINT_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 35,
+    sql: OPERATION_HISTORY_SCHEMA_SQL,
+    checksum: OPERATION_HISTORY_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 36,
+    sql: OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL,
+    checksum: OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -2582,6 +2702,107 @@ interface OperationRow {
   manifest_json: string;
   operation_id: string;
   status: string;
+}
+
+interface OperationHistoryRow {
+  affected_count: number;
+  applied_sequence: number;
+  created_at: string;
+  history_entry_id: string;
+  label_args_json: string;
+  label_key: string;
+  policy: HistoryPolicy;
+  source: HistorySource;
+  source_reference: string | null;
+  stale_code: string | null;
+  state: HistoryEntryState;
+  redo_sequence: number;
+  updated_at: string;
+}
+
+interface OperationHistoryStepRow {
+  affected_entities_json: string;
+  command_id: string;
+  current_direction: 'forward' | 'inverse';
+  forward_payload_json: string;
+  history_entry_id: string;
+  history_step_id: string;
+  inverse_payload_json: string;
+  ordinal: number;
+  recipe_kind: string;
+  recipe_version: number;
+}
+
+export interface RecordOperationHistoryInput {
+  affectedCount: number;
+  affectedEntities?: readonly string[];
+  commandId: string;
+  forwardRecipe: HistoryRecipe;
+  inverseRecipe: HistoryRecipe;
+  labelArgs?: Readonly<Record<string, string | number>>;
+  labelKey: string;
+  libraryId: string;
+  policy?: HistoryPolicy;
+  source?: HistorySource;
+  sourceReference?: string | null;
+}
+
+export interface OperationHistoryTransitionResult {
+  affectedCount: number;
+  direction: HistoryDirection;
+  historyEntryId: string;
+  status: HistoryStatus;
+}
+
+interface AssetMetadataHistorySnapshot {
+  assetId: string;
+  author: string | null;
+  description: string | null;
+  entityVersion: number;
+  favorite: boolean;
+  palette: string | null;
+  rating: number;
+  sourcePageUrl: string | null;
+  updatedAt: string;
+}
+
+interface ManagedFolderHistorySnapshot {
+  folderId: string;
+  parentFolderId: string | null;
+  name: string;
+  relativePath: string;
+  pathIdentity: string;
+}
+
+interface CollectionHistorySnapshot {
+  collectionId: string;
+  libraryId: string;
+  parentId: string | null;
+  name: string;
+  description: string | null;
+  coverAssetId: string | null;
+  position: number;
+}
+
+interface CollectionMembershipHistorySnapshot {
+  collectionId: string;
+  assetId: string;
+  position: number;
+}
+
+interface SmartCollectionHistorySnapshot {
+  collectionId: string;
+  libraryId: string;
+  name: string;
+  queryDefinitionJson: string;
+  position: number;
+}
+
+interface TagHistorySnapshot {
+  tagId: string;
+  libraryId: string;
+  name: string;
+  humanRelations: Array<{ assetId: string; tagId: string }>;
 }
 
 export type ImportFailurePoint =
@@ -4311,6 +4532,8 @@ export class LibraryService {
   private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
   /** Cache the first H.264-capable encoder discovered for each FFmpeg binary. */
   private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
+  /** Prevent a replayed history recipe from creating a second history entry. */
+  private historyReplayDepth = 0;
   /**
    * After in-app filesystem mutations (text save, copy, move, import…), watcher
    * refreshes still update DB but must not surface a "disk synced" toast — that
@@ -5836,6 +6059,1755 @@ export class LibraryService {
     } catch (error) {
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }
+  }
+
+  private operationHistoryEntries(openLibrary: OpenLibrary): HistoryStackEntry[] {
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT history_entry_id, source, source_reference, label_key,
+                label_args_json, policy, state, stale_code, affected_count,
+                applied_sequence, redo_sequence, created_at, updated_at
+           FROM operation_history
+          ORDER BY applied_sequence`,
+      )
+      .all() as OperationHistoryRow[];
+    return rows.map((row) => {
+      let labelArgs: Record<string, string | number>;
+      try {
+        const parsed: unknown = JSON.parse(row.label_args_json);
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          throw new Error('History label arguments must be an object.');
+        }
+        labelArgs = Object.fromEntries(
+          Object.entries(parsed).filter(([, value]) =>
+            typeof value === 'string' || typeof value === 'number',
+          ),
+        ) as Record<string, string | number>;
+      } catch (error) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+      return {
+        historyEntryId: row.history_entry_id,
+        source: row.source,
+        sourceReference: row.source_reference,
+        labelKey: row.label_key,
+        labelArgs,
+        policy: row.policy,
+        state: row.state,
+        staleCode: row.stale_code,
+        affectedCount: row.affected_count,
+        appliedSequence: row.applied_sequence,
+        redoSequence: row.redo_sequence,
+      } satisfies HistoryStackEntry;
+    });
+  }
+
+  getOperationHistoryStatus(libraryId: string): HistoryStatus {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    return new OperationHistoryStateMachine(this.operationHistoryEntries(openLibrary)).status(libraryId);
+  }
+
+  /**
+   * Retain the active linear stack, but discard audit rows that are no longer
+   * reachable after a newer barrier or have been stale past the retention
+   * window.  Current applied/undone entries and in-flight attempts are never
+   * eligible; large snapshot operations have a separate admission limit.
+   */
+  private pruneOperationHistory(openLibrary: OpenLibrary): void {
+    const rows = openLibrary.connection.prepare(
+      `SELECT history_entry_id, policy, state, applied_sequence, updated_at
+         FROM operation_history
+        ORDER BY applied_sequence`,
+    ).all() as Array<{
+      history_entry_id: string;
+      policy: HistoryPolicy;
+      state: HistoryEntryState;
+      applied_sequence: number;
+      updated_at: string;
+    }>;
+    if (rows.length <= OPERATION_HISTORY_MAX_AUDIT_ENTRIES) {
+      const cutoff = Date.now() - OPERATION_HISTORY_STALE_RETENTION_MS;
+      if (!rows.some((row) => row.state === 'stale' && Date.parse(row.updated_at) < cutoff)) return;
+    }
+    const latestBarrierSequence = rows
+      .filter((row) => row.policy === 'barrier' && row.state === 'applied')
+      .at(-1)?.applied_sequence ?? -Infinity;
+    const cutoff = Date.now() - OPERATION_HISTORY_STALE_RETENTION_MS;
+    const deletable = rows.filter((row) =>
+      (row.policy === 'barrier' && row.applied_sequence < latestBarrierSequence)
+      || (row.state === 'stale' && Date.parse(row.updated_at) < cutoff),
+    );
+    const excess = Math.max(0, rows.length - OPERATION_HISTORY_MAX_AUDIT_ENTRIES);
+    const candidates = deletable
+      .slice(0, Math.max(excess, deletable.length > 0 ? 1 : 0));
+    if (candidates.length === 0) return;
+    openLibrary.connection.transaction(() => {
+      const remove = openLibrary.connection.prepare(
+        'DELETE FROM operation_history WHERE history_entry_id = ?',
+      );
+      for (const row of candidates) remove.run(row.history_entry_id);
+    })();
+  }
+
+  /**
+   * Persist a semantic mutation as one history group. Callers provide only
+   * versioned recipe payloads; arbitrary SQL, filesystem paths and functions
+   * are intentionally not accepted by this boundary.
+   */
+  recordOperationHistory(input: RecordOperationHistoryInput): HistoryOperationReceipt {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (this.historyReplayDepth > 0) {
+      return {
+        historyEntryId: input.sourceReference ?? 'history-replay',
+        undoable: false,
+        redoable: false,
+        policy: input.policy ?? 'reversible',
+      };
+    }
+    if (!Number.isSafeInteger(input.affectedCount) || input.affectedCount < 0) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const forward = historyRecipeSchema.parse(input.forwardRecipe);
+    const inverse = historyRecipeSchema.parse(input.inverseRecipe);
+    try {
+      assertRegisteredHistoryRecipePair(forward, inverse);
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+    const historyEntryId = randomUUID();
+    const historyStepId = randomUUID();
+    const now = new Date().toISOString();
+    const appliedSequence = ((openLibrary.connection
+      .prepare('SELECT COALESCE(MAX(applied_sequence), 0) AS sequence FROM operation_history')
+      .get() as { sequence: number }).sequence) + 1;
+    const policy = input.policy ?? 'reversible';
+    const source = input.source ?? 'desktop';
+    const labelArgs = input.labelArgs ?? {};
+    const affectedEntities = input.affectedEntities ?? [];
+    const forwardJson = JSON.stringify(forward);
+    const inverseJson = JSON.stringify(inverse);
+    const labelArgsJson = JSON.stringify(labelArgs);
+    const affectedEntitiesJson = JSON.stringify(affectedEntities);
+    if (
+      Buffer.byteLength(forwardJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
+      || Buffer.byteLength(inverseJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
+      || Buffer.byteLength(labelArgsJson, 'utf8') + Buffer.byteLength(affectedEntitiesJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
+    ) {
+      throw new LibraryServiceError('HISTORY_TOO_LARGE');
+    }
+    openLibrary.connection.transaction(() => {
+      // A new forward mutation starts a new branch after undo. Keeping the
+      // branch out of the table also prevents it from being mistaken for a
+      // redo target after restart.
+      openLibrary.connection.prepare("DELETE FROM operation_history WHERE state = 'undone'").run();
+      openLibrary.connection.prepare(
+        `INSERT INTO operation_history
+           (history_entry_id, source, source_reference, label_key, label_args_json,
+            policy, state, applied_sequence, redo_sequence, stale_code,
+            affected_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'applied', ?, 0, NULL, ?, ?, ?)`,
+      ).run(
+        historyEntryId,
+        source,
+        input.sourceReference ?? null,
+        input.labelKey,
+        labelArgsJson,
+        policy,
+        appliedSequence,
+        input.affectedCount,
+        now,
+        now,
+      );
+      openLibrary.connection.prepare(
+        `INSERT INTO operation_history_steps
+           (history_step_id, history_entry_id, ordinal, command_id, recipe_kind,
+            recipe_version, forward_payload_json, inverse_payload_json,
+            affected_entities_json, current_direction)
+         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, 'forward')`,
+      ).run(
+        historyStepId,
+        historyEntryId,
+        input.commandId,
+        forward.kind,
+        forward.version,
+        // Persist the complete versioned recipe, not only its payload. Undo
+        // and redo both validate the kind/version against the Worker-owned
+        // registry before executing it.
+        forwardJson,
+        inverseJson,
+        affectedEntitiesJson,
+      );
+    })();
+    try {
+      this.pruneOperationHistory(openLibrary);
+    } catch (error) {
+      // Retention is best-effort housekeeping; it must not turn a committed
+      // user mutation into an apparent failure.
+      this.diagnose('operation-history.retention', error, {
+        libraryId: input.libraryId,
+      });
+    }
+    const status = this.getOperationHistoryStatus(input.libraryId);
+    return {
+      historyEntryId,
+      undoable: status.undoTop?.historyEntryId === historyEntryId,
+      redoable: false,
+      policy,
+    };
+  }
+
+  recordOperationHistoryBarrier(input: {
+    affectedCount: number;
+    affectedEntities?: readonly string[];
+    commandId: string;
+    libraryId: string;
+    labelKey: string;
+    reason: string;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.commandId,
+      labelKey: input.labelKey,
+      labelArgs: { count: input.affectedCount },
+      affectedCount: input.affectedCount,
+      affectedEntities: input.affectedEntities,
+      policy: 'barrier',
+      forwardRecipe: {
+        kind: 'history-barrier',
+        version: 1,
+        payload: { reason: input.reason },
+      },
+      inverseRecipe: {
+        kind: 'history-barrier',
+        version: 1,
+        payload: { reason: input.reason },
+      },
+    });
+  }
+
+  private metadataHistorySnapshot(metadata: AssetMetadataResult): AssetMetadataHistorySnapshot {
+    return {
+      assetId: metadata.assetId,
+      description: metadata.description,
+      rating: metadata.rating,
+      favorite: metadata.favorite,
+      palette: metadata.palette,
+      sourcePageUrl: metadata.sourcePageUrl,
+      author: metadata.author,
+      entityVersion: metadata.entityVersion,
+      updatedAt: metadata.updatedAt,
+    };
+  }
+
+  private assertMetadataHistorySnapshot(value: unknown): AssetMetadataHistorySnapshot {
+    if (typeof value !== 'object' || value === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    const candidate = value as Partial<AssetMetadataHistorySnapshot>;
+    if (
+      typeof candidate.assetId !== 'string'
+      || (candidate.description !== null && typeof candidate.description !== 'string')
+      || typeof candidate.rating !== 'number'
+      || typeof candidate.favorite !== 'boolean'
+      || (candidate.palette !== null && typeof candidate.palette !== 'string')
+      || (candidate.sourcePageUrl !== null && typeof candidate.sourcePageUrl !== 'string')
+      || (candidate.author !== null && typeof candidate.author !== 'string')
+      || !Number.isInteger(candidate.entityVersion)
+      || typeof candidate.updatedAt !== 'string'
+    ) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    return candidate as AssetMetadataHistorySnapshot;
+  }
+
+  private metadataHistoryMatches(
+    current: AssetMetadataResult,
+    expected: AssetMetadataHistorySnapshot,
+  ): boolean {
+    const snapshot = this.metadataHistorySnapshot(current);
+    return snapshot.assetId === expected.assetId
+      && snapshot.description === expected.description
+      && snapshot.rating === expected.rating
+      && snapshot.favorite === expected.favorite
+      && snapshot.palette === expected.palette
+      && snapshot.sourcePageUrl === expected.sourcePageUrl
+      && snapshot.author === expected.author
+      && snapshot.entityVersion === expected.entityVersion;
+  }
+
+  private applyAssetMetadataHistorySnapshot(
+    openLibrary: OpenLibrary,
+    expected: AssetMetadataHistorySnapshot,
+    restore: AssetMetadataHistorySnapshot,
+  ): void {
+    const current = this.getAssetMetadata({
+      libraryId: openLibrary.summary.libraryId,
+      assetId: expected.assetId,
+    });
+    if (!this.metadataHistoryMatches(current, expected)) {
+      throw new LibraryServiceError('VERSION_CONFLICT', {
+        currentEntityVersion: current.entityVersion,
+      });
+    }
+    const now = new Date().toISOString();
+    if (restore.entityVersion === 0) {
+      openLibrary.connection.prepare('DELETE FROM asset_metadata WHERE asset_id = ?').run(restore.assetId);
+    } else {
+      openLibrary.connection.prepare(
+        `INSERT INTO asset_metadata
+           (asset_id, description, rating, favorite, palette,
+            source_page_url, author, entity_version, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET
+           description = excluded.description,
+           rating = excluded.rating,
+           favorite = excluded.favorite,
+           palette = excluded.palette,
+           source_page_url = excluded.source_page_url,
+           author = excluded.author,
+           entity_version = excluded.entity_version,
+           updated_at = excluded.updated_at`,
+      ).run(
+        restore.assetId,
+        restore.description,
+        restore.rating,
+        restore.favorite ? 1 : 0,
+        restore.palette,
+        restore.sourcePageUrl,
+        restore.author,
+        restore.entityVersion,
+        // The operation itself is the new write; preserve the logical
+        // snapshot version but refresh its wall-clock timestamp.
+        now,
+      );
+    }
+    this.syncAssetSearchContent(openLibrary.connection, restore.assetId);
+  }
+
+  recordAssetMetadataHistory(input: {
+    after: AssetMetadataResult;
+    before: AssetMetadataResult;
+    libraryId: string;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    const before = this.metadataHistorySnapshot(input.before);
+    const after = this.metadataHistorySnapshot(input.after);
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: 'asset.metadata.set',
+      labelKey: 'history.asset.metadata.set',
+      labelArgs: { count: 1 },
+      affectedCount: 1,
+      affectedEntities: [after.assetId],
+      forwardRecipe: {
+        kind: 'asset-metadata-snapshot',
+        version: 1,
+        payload: { assetId: after.assetId, expected: before, restore: after },
+      },
+      inverseRecipe: {
+        kind: 'asset-metadata-snapshot',
+        version: 1,
+        payload: { assetId: after.assetId, expected: after, restore: before },
+      },
+    });
+  }
+
+  recordAssetMetadataBatchHistory(input: {
+    after: AssetMetadataResult[];
+    before: AssetMetadataResult[];
+    libraryId: string;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt | null {
+    if (input.after.length === 0) return null;
+    const before = input.before.map((item) => this.metadataHistorySnapshot(item));
+    const after = input.after.map((item) => this.metadataHistorySnapshot(item));
+    const recipe = (expected: AssetMetadataHistorySnapshot[], restore: AssetMetadataHistorySnapshot[]): HistoryRecipe => ({
+      kind: 'asset-metadata-batch-snapshot',
+      version: 1,
+      payload: { expected, restore },
+    });
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: 'asset.metadata.set-many',
+      labelKey: 'history.asset.metadata.set-many',
+      labelArgs: { count: after.length },
+      affectedCount: after.length,
+      affectedEntities: after.map((item) => item.assetId),
+      forwardRecipe: recipe(before, after),
+      inverseRecipe: recipe(after, before),
+    });
+  }
+
+  getHumanTagRelations(input: {
+    assetIds: readonly string[];
+    libraryId: string;
+    tagIds: readonly string[];
+  }): Array<{ assetId: string; tagId: string }> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0 || input.tagIds.length === 0) return [];
+    const assetPlaceholders = input.assetIds.map(() => '?').join(',');
+    const tagPlaceholders = input.tagIds.map(() => '?').join(',');
+    const rows = openLibrary.connection.prepare(
+      `SELECT hat.asset_id, hat.tag_id
+         FROM human_asset_tags hat
+         JOIN tags t ON t.tag_id = hat.tag_id
+        WHERE hat.asset_id IN (${assetPlaceholders})
+          AND hat.tag_id IN (${tagPlaceholders})
+          AND t.library_id = ?`,
+    ).all(...input.assetIds, ...input.tagIds, input.libraryId) as Array<{
+      asset_id: string;
+      tag_id: string;
+    }>;
+    return rows.map((row) => ({ assetId: row.asset_id, tagId: row.tag_id }));
+  }
+
+  private assertHistoryRelations(value: unknown): Array<{ assetId: string; tagId: string }> {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const relation = item as { assetId?: unknown; tagId?: unknown };
+      if (typeof relation.assetId !== 'string' || typeof relation.tagId !== 'string') {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+      return { assetId: relation.assetId, tagId: relation.tagId };
+    });
+  }
+
+  private applyTagRelations(
+    openLibrary: OpenLibrary,
+    relations: readonly { assetId: string; tagId: string }[],
+    direction: 'add' | 'remove',
+    expectedPresent?: boolean,
+  ): void {
+    if (expectedPresent !== undefined) {
+      const current = this.getHumanTagRelations({
+        libraryId: openLibrary.summary.libraryId,
+        assetIds: [...new Set(relations.map((relation) => relation.assetId))],
+        tagIds: [...new Set(relations.map((relation) => relation.tagId))],
+      });
+      const currentKeys = new Set(current.map((relation) => `${relation.assetId}\u0000${relation.tagId}`));
+      const mismatched = relations.some((relation) =>
+        currentKeys.has(`${relation.assetId}\u0000${relation.tagId}`) !== expectedPresent,
+      );
+      if (mismatched) throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+    const statement = direction === 'add'
+      ? openLibrary.connection.prepare('INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)')
+      : openLibrary.connection.prepare('DELETE FROM human_asset_tags WHERE asset_id = ? AND tag_id = ?');
+    openLibrary.connection.transaction(() => {
+      for (const relation of relations) statement.run(relation.assetId, relation.tagId);
+    })();
+    for (const assetId of new Set(relations.map((relation) => relation.assetId))) {
+      this.syncAssetSearchContent(openLibrary.connection, assetId);
+    }
+  }
+
+  recordTagRelationsHistory(input: {
+    assetIds: readonly string[];
+    changedRelations: readonly { assetId: string; tagId: string }[];
+    direction: 'add' | 'remove';
+    libraryId: string;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt | null {
+    if (input.changedRelations.length === 0) return null;
+    const forwardKind = input.direction === 'add' ? 'tag-relations-add' : 'tag-relations-remove';
+    const inverseKind = input.direction === 'add' ? 'tag-relations-remove' : 'tag-relations-add';
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.direction === 'add' ? 'tag.assign' : 'tag.remove',
+      labelKey: input.direction === 'add' ? 'history.tag.assign' : 'history.tag.remove',
+      labelArgs: { count: input.changedRelations.length },
+      affectedCount: input.changedRelations.length,
+      affectedEntities: input.assetIds,
+      forwardRecipe: {
+        kind: forwardKind,
+        version: 1,
+        payload: { relations: input.changedRelations, expectedPresent: input.direction === 'remove' },
+      },
+      inverseRecipe: {
+        kind: inverseKind,
+        version: 1,
+        payload: { relations: input.changedRelations, expectedPresent: input.direction === 'add' },
+      },
+    });
+  }
+
+  getCollectionAssetMemberships(input: {
+    assetIds: readonly string[];
+    collectionId: string;
+    libraryId: string;
+  }): string[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    if (input.assetIds.length === 0) return [];
+    const placeholders = input.assetIds.map(() => '?').join(',');
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id FROM collection_assets
+        WHERE collection_id = ? AND asset_id IN (${placeholders})`,
+    ).all(input.collectionId, ...input.assetIds) as Array<{ asset_id: string }>;
+    return rows.map((row) => row.asset_id);
+  }
+
+  private assertCollectionMembershipPrecondition(
+    openLibrary: OpenLibrary,
+    payload: Record<string, unknown>,
+  ): void {
+    if (typeof payload.expectedPresent !== 'boolean') return;
+    if (typeof payload.collectionId !== 'string' || !Array.isArray(payload.assetIds)) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const assetIds = payload.assetIds.filter((assetId): assetId is string => typeof assetId === 'string');
+    if (assetIds.length !== payload.assetIds.length) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    const current = new Set(this.getCollectionAssetMemberships({
+      libraryId: openLibrary.summary.libraryId,
+      collectionId: payload.collectionId,
+      assetIds,
+    }));
+    if (assetIds.some((assetId) => current.has(assetId) !== payload.expectedPresent)) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+  }
+
+  recordCollectionMembershipHistory(input: {
+    assetIds: readonly string[];
+    collectionId: string;
+    direction: 'add' | 'remove';
+    libraryId: string;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt | null {
+    if (input.assetIds.length === 0) return null;
+    const forwardKind = input.direction === 'add' ? 'collection-assets-add' : 'collection-assets-remove';
+    const inverseKind = input.direction === 'add' ? 'collection-assets-remove' : 'collection-assets-add';
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.direction === 'add' ? 'collection.assets.add' : 'collection.assets.remove',
+      labelKey: input.direction === 'add' ? 'history.collection.assets.add' : 'history.collection.assets.remove',
+      labelArgs: { count: input.assetIds.length },
+      affectedCount: input.assetIds.length,
+      affectedEntities: input.assetIds,
+      forwardRecipe: {
+        kind: forwardKind,
+        version: 1,
+        payload: {
+          collectionId: input.collectionId,
+          assetIds: input.assetIds,
+          expectedPresent: input.direction === 'remove',
+        },
+      },
+      inverseRecipe: {
+        kind: inverseKind,
+        version: 1,
+        payload: {
+          collectionId: input.collectionId,
+          assetIds: input.assetIds,
+          expectedPresent: input.direction === 'add',
+        },
+      },
+    });
+  }
+
+  /** Stable folder rows used by create/delete and as preconditions for moves. */
+  getManagedFolderHistorySnapshot(input: {
+    folderIds: readonly string[];
+    libraryId: string;
+    allowMissing?: boolean;
+  }): ManagedFolderHistorySnapshot[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const roots = [...new Set(input.folderIds)];
+    if (roots.length === 0) return [];
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, parent_folder_id, name, relative_path, path_identity
+           FROM managed_folders
+          ORDER BY length(relative_path), relative_path`,
+      )
+      .all() as ManagedFolderRow[];
+    const rootPaths = rows
+      .filter((row) => roots.includes(row.folder_id))
+      .map((row) => row.relative_path);
+    if (rootPaths.length !== roots.length && !input.allowMissing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return rows
+      .filter((row) => rootPaths.some((root) =>
+        row.relative_path === root || row.relative_path.startsWith(`${root}/`)))
+      .map((row) => ({
+        folderId: row.folder_id,
+        parentFolderId: row.parent_folder_id,
+        name: row.name,
+        relativePath: row.relative_path,
+        pathIdentity: row.path_identity,
+      }));
+  }
+
+  private assertManagedFolderHistorySnapshots(value: unknown): ManagedFolderHistorySnapshot[] {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const candidate = item as Partial<ManagedFolderHistorySnapshot>;
+      if (
+        typeof candidate.folderId !== 'string'
+        || (candidate.parentFolderId !== null && typeof candidate.parentFolderId !== 'string')
+        || typeof candidate.name !== 'string'
+        || typeof candidate.relativePath !== 'string'
+        || typeof candidate.pathIdentity !== 'string'
+      ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return candidate as ManagedFolderHistorySnapshot;
+    });
+  }
+
+  private applyManagedFolderCreateHistorySnapshot(
+    openLibrary: OpenLibrary,
+    snapshot: ManagedFolderHistorySnapshot,
+  ): void {
+    const existing = openLibrary.connection
+      .prepare('SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?')
+      .get(snapshot.folderId) as ManagedFolderRow | undefined;
+    if (existing) {
+      if (
+        existing.parent_folder_id !== snapshot.parentFolderId
+        || existing.name !== snapshot.name
+        || existing.relative_path !== snapshot.relativePath
+        || existing.path_identity !== snapshot.pathIdentity
+      ) throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+      return;
+    }
+    if (snapshot.parentFolderId !== null) {
+      const parent = openLibrary.connection
+        .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
+        .get(snapshot.parentFolderId);
+      if (!parent) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    const conflict = openLibrary.connection
+      .prepare('SELECT folder_id FROM managed_folders WHERE path_identity = ?')
+      .get(snapshot.pathIdentity)
+      ?? openLibrary.connection
+        .prepare("SELECT asset_id FROM assets WHERE path_identity = ? AND location_kind = 'managed' AND deleted_at IS NULL")
+        .get(snapshot.pathIdentity);
+    if (conflict || this.portableDiskDestination(openLibrary, snapshot.relativePath)) {
+      throw new LibraryServiceError('FOLDER_ALREADY_EXISTS');
+    }
+    const directoryPath = this.folderPath(openLibrary, snapshot.relativePath);
+    try {
+      mkdirSync(directoryPath);
+      openLibrary.connection.prepare(
+        `INSERT INTO managed_folders
+           (folder_id, parent_folder_id, name, relative_path, path_identity, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        snapshot.folderId,
+        snapshot.parentFolderId,
+        snapshot.name,
+        snapshot.relativePath,
+        snapshot.pathIdentity,
+        new Date().toISOString(),
+      );
+    } catch (error) {
+      try {
+        if (directoryExists(directoryPath)) rmdirSync(directoryPath);
+      } catch { /* preserve the primary failure */ }
+      if (error instanceof LibraryServiceError) throw error;
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  private applyManagedFolderDeleteHistorySnapshot(
+    openLibrary: OpenLibrary,
+    snapshots: readonly ManagedFolderHistorySnapshot[],
+  ): void {
+    if (snapshots.length === 0) return;
+    // Create/delete recipes are only emitted for empty folders.  Keep this
+    // guard here as a second line of defence against a corrupted recipe.
+    const rootIds = snapshots
+      .filter((snapshot) => !snapshots.some((candidate) =>
+        candidate.folderId !== snapshot.folderId
+        && candidate.relativePath.startsWith(`${snapshot.relativePath}/`)))
+      .map((snapshot) => snapshot.folderId);
+    this.deleteEmptyManagedFolders({
+      libraryId: openLibrary.summary.libraryId,
+      folderIds: rootIds,
+    });
+  }
+
+  recordManagedFolderSnapshotHistory(input: {
+    after: readonly ManagedFolderHistorySnapshot[];
+    before: readonly ManagedFolderHistorySnapshot[];
+    commandId: string;
+    libraryId: string;
+    labelKey: string;
+    affectedCount: number;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.commandId,
+      labelKey: input.labelKey,
+      labelArgs: { count: input.affectedCount },
+      affectedCount: input.affectedCount,
+      affectedEntities: input.after.map((item) => item.folderId),
+      forwardRecipe: {
+        kind: 'managed-folder-snapshot',
+        version: 1,
+        payload: { expected: input.before, restore: input.after },
+      },
+      inverseRecipe: {
+        kind: 'managed-folder-snapshot',
+        version: 1,
+        payload: { expected: input.after, restore: input.before },
+      },
+    });
+  }
+
+  getCollectionHistorySnapshot(input: {
+    collectionIds: readonly string[];
+    libraryId: string;
+    allowMissing?: boolean;
+  }): CollectionHistorySnapshot[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const roots = [...new Set(input.collectionIds)];
+    if (roots.length === 0) return [];
+    const rows = openLibrary.connection.prepare(
+      `SELECT collection_id, library_id, parent_id, name, description,
+              cover_asset_id, position
+         FROM collections
+        WHERE library_id = ?`,
+    ).all(input.libraryId) as Array<{
+      collection_id: string;
+      library_id: string;
+      parent_id: string | null;
+      name: string;
+      description: string | null;
+      cover_asset_id: string | null;
+      position: number;
+    }>;
+    const rootSet = new Set(roots);
+    if (rows.some((row) => rootSet.has(row.collection_id)) === false && !input.allowMissing) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    const selected = new Set<string>(rows
+      .filter((row) => rootSet.has(row.collection_id))
+      .map((row) => row.collection_id));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const row of rows) {
+        if (row.parent_id && selected.has(row.parent_id) && !selected.has(row.collection_id)) {
+          selected.add(row.collection_id);
+          changed = true;
+        }
+      }
+    }
+    if (selected.size !== roots.length && !input.allowMissing) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    return rows
+      .filter((row) => selected.has(row.collection_id))
+      .sort((left, right) => left.position - right.position || left.collection_id.localeCompare(right.collection_id))
+      .map((row) => ({
+        collectionId: row.collection_id,
+        libraryId: row.library_id,
+        parentId: row.parent_id,
+        name: row.name,
+        description: row.description,
+        coverAssetId: row.cover_asset_id,
+        position: row.position,
+      }));
+  }
+
+  getCollectionMembershipHistorySnapshot(input: {
+    collectionIds: readonly string[];
+    libraryId: string;
+  }): CollectionMembershipHistorySnapshot[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const ids = [...new Set(input.collectionIds)];
+    if (ids.length === 0) return [];
+    return (openLibrary.connection.prepare(
+      `SELECT collection_id, asset_id, position
+         FROM collection_assets
+        WHERE collection_id IN (${ids.map(() => '?').join(',')})
+        ORDER BY collection_id, position, asset_id`,
+    ).all(...ids) as Array<{ collection_id: string; asset_id: string; position: number }>).map((row) => ({
+      collectionId: row.collection_id,
+      assetId: row.asset_id,
+      position: row.position,
+    }));
+  }
+
+  private assertCollectionHistorySnapshots(value: unknown): CollectionHistorySnapshot[] {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const candidate = item as Partial<CollectionHistorySnapshot>;
+      if (
+        typeof candidate.collectionId !== 'string'
+        || typeof candidate.libraryId !== 'string'
+        || (candidate.parentId !== null && typeof candidate.parentId !== 'string')
+        || typeof candidate.name !== 'string'
+        || (candidate.description !== null && typeof candidate.description !== 'string')
+        || (candidate.coverAssetId !== null && typeof candidate.coverAssetId !== 'string')
+        || !Number.isInteger(candidate.position)
+      ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return candidate as CollectionHistorySnapshot;
+    });
+  }
+
+  private assertCollectionMembershipHistorySnapshots(value: unknown): CollectionMembershipHistorySnapshot[] {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const candidate = item as Partial<CollectionMembershipHistorySnapshot>;
+      if (
+        typeof candidate.collectionId !== 'string'
+        || typeof candidate.assetId !== 'string'
+        || !Number.isInteger(candidate.position)
+      ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return candidate as CollectionMembershipHistorySnapshot;
+    });
+  }
+
+  private collectionHistoryRowsEqual(
+    left: readonly CollectionHistorySnapshot[],
+    right: readonly CollectionHistorySnapshot[],
+  ): boolean {
+    const normalize = (items: readonly CollectionHistorySnapshot[]) => items
+      .map((item) => JSON.stringify(item))
+      .sort();
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  }
+
+  private collectionMembershipHistoryRowsEqual(
+    left: readonly CollectionMembershipHistorySnapshot[],
+    right: readonly CollectionMembershipHistorySnapshot[],
+  ): boolean {
+    const normalize = (items: readonly CollectionMembershipHistorySnapshot[]) => items
+      .map((item) => JSON.stringify(item))
+      .sort();
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+  }
+
+  private applyCollectionHistorySnapshot(
+    openLibrary: OpenLibrary,
+    expected: readonly CollectionHistorySnapshot[],
+    restore: readonly CollectionHistorySnapshot[],
+    expectedMemberships: readonly CollectionMembershipHistorySnapshot[],
+    restoreMemberships: readonly CollectionMembershipHistorySnapshot[],
+  ): void {
+    const affectedIds = [...new Set([...expected, ...restore].map((item) => item.collectionId))];
+    const current = affectedIds.length === 0
+      ? []
+      : this.getCollectionHistorySnapshot({ libraryId: openLibrary.summary.libraryId, collectionIds: affectedIds, allowMissing: true });
+    const currentMemberships = this.getCollectionMembershipHistorySnapshot({
+      libraryId: openLibrary.summary.libraryId,
+      collectionIds: affectedIds,
+    });
+    if (!this.collectionHistoryRowsEqual(current, expected)
+      || !this.collectionMembershipHistoryRowsEqual(currentMemberships, expectedMemberships)) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+
+    const restoreIds = new Set(restore.map((item) => item.collectionId));
+    openLibrary.connection.transaction(() => {
+      // Delete deepest rows first so foreign keys and ON DELETE CASCADE do not
+      // leave a parent snapshot partially restored.
+      for (const item of [...current].sort((left, right) => right.collectionId.localeCompare(left.collectionId))) {
+        if (!restoreIds.has(item.collectionId)) {
+          openLibrary.connection.prepare('DELETE FROM collections WHERE collection_id = ? AND library_id = ?')
+            .run(item.collectionId, openLibrary.summary.libraryId);
+        }
+      }
+      const pending = [...restore];
+      while (pending.length > 0) {
+        const index = pending.findIndex((item) => item.parentId === null || restoreIds.has(item.parentId));
+        if (index < 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        const [item] = pending.splice(index, 1);
+        if (!item) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        openLibrary.connection.prepare(
+          `INSERT INTO collections
+             (collection_id, library_id, parent_id, name, description, cover_asset_id, position, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(collection_id) DO UPDATE SET
+             library_id = excluded.library_id,
+             parent_id = excluded.parent_id,
+             name = excluded.name,
+             description = excluded.description,
+             cover_asset_id = excluded.cover_asset_id,
+             position = excluded.position,
+             updated_at = excluded.updated_at`,
+        ).run(
+          item.collectionId,
+          item.libraryId,
+          item.parentId,
+          item.name,
+          item.description,
+          item.coverAssetId,
+          item.position,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        );
+      }
+      if (affectedIds.length > 0) {
+        openLibrary.connection.prepare(
+          `DELETE FROM collection_assets WHERE collection_id IN (${affectedIds.map(() => '?').join(',')})`,
+        ).run(...affectedIds);
+      }
+      const insertMembership = openLibrary.connection.prepare(
+        'INSERT INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
+      );
+      for (const item of restoreMemberships) insertMembership.run(item.collectionId, item.assetId, item.position);
+    })();
+  }
+
+  recordCollectionSnapshotHistory(input: {
+    after: readonly CollectionHistorySnapshot[];
+    before: readonly CollectionHistorySnapshot[];
+    afterMemberships?: readonly CollectionMembershipHistorySnapshot[];
+    beforeMemberships?: readonly CollectionMembershipHistorySnapshot[];
+    commandId: string;
+    libraryId: string;
+    labelKey: string;
+    affectedCount: number;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    const afterMemberships = input.afterMemberships ?? [];
+    const beforeMemberships = input.beforeMemberships ?? [];
+    const recipe = (expected: readonly CollectionHistorySnapshot[], restore: readonly CollectionHistorySnapshot[], expectedMemberships: readonly CollectionMembershipHistorySnapshot[], restoreMemberships: readonly CollectionMembershipHistorySnapshot[]): HistoryRecipe => ({
+      kind: 'collection-snapshot',
+      version: 1,
+      payload: { expected, restore, expectedMemberships, restoreMemberships },
+    });
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.commandId,
+      labelKey: input.labelKey,
+      labelArgs: { count: input.affectedCount },
+      affectedCount: input.affectedCount,
+      affectedEntities: input.after.map((item) => item.collectionId),
+      forwardRecipe: recipe(input.before, input.after, beforeMemberships, afterMemberships),
+      inverseRecipe: recipe(input.after, input.before, afterMemberships, beforeMemberships),
+    });
+  }
+
+  getSmartCollectionHistorySnapshot(input: {
+    collectionIds: readonly string[];
+    libraryId: string;
+    allowMissing?: boolean;
+  }): SmartCollectionHistorySnapshot[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const ids = [...new Set(input.collectionIds)];
+    if (ids.length === 0) return [];
+    const rows = openLibrary.connection.prepare(
+      `SELECT collection_id, library_id, name, query_definition_json, position
+         FROM smart_collections
+        WHERE library_id = ? AND collection_id IN (${ids.map(() => '?').join(',')})`,
+    ).all(input.libraryId, ...ids) as Array<{
+      collection_id: string;
+      library_id: string;
+      name: string;
+      query_definition_json: string;
+      position: number;
+    }>;
+    if (rows.length !== ids.length && !input.allowMissing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return rows.map((row) => ({
+      collectionId: row.collection_id,
+      libraryId: row.library_id,
+      name: row.name,
+      queryDefinitionJson: row.query_definition_json,
+      position: row.position,
+    }));
+  }
+
+  private assertSmartCollectionHistorySnapshots(value: unknown): SmartCollectionHistorySnapshot[] {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const candidate = item as Partial<SmartCollectionHistorySnapshot>;
+      if (
+        typeof candidate.collectionId !== 'string'
+        || typeof candidate.libraryId !== 'string'
+        || typeof candidate.name !== 'string'
+        || typeof candidate.queryDefinitionJson !== 'string'
+        || !Number.isInteger(candidate.position)
+      ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return candidate as SmartCollectionHistorySnapshot;
+    });
+  }
+
+  private applySmartCollectionHistorySnapshot(
+    openLibrary: OpenLibrary,
+    expected: readonly SmartCollectionHistorySnapshot[],
+    restore: readonly SmartCollectionHistorySnapshot[],
+  ): void {
+    const ids = [...new Set([...expected, ...restore].map((item) => item.collectionId))];
+    const current = ids.length === 0 ? [] : this.getSmartCollectionHistorySnapshot({
+      libraryId: openLibrary.summary.libraryId,
+      collectionIds: ids,
+      allowMissing: true,
+    });
+    const normalized = (items: readonly SmartCollectionHistorySnapshot[]) => items
+      .map((item) => JSON.stringify(item)).sort();
+    if (JSON.stringify(normalized(current)) !== JSON.stringify(normalized(expected))) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+    const restoreIds = new Set(restore.map((item) => item.collectionId));
+    openLibrary.connection.transaction(() => {
+      for (const item of current) {
+        if (!restoreIds.has(item.collectionId)) {
+          openLibrary.connection.prepare('DELETE FROM smart_collections WHERE collection_id = ? AND library_id = ?')
+            .run(item.collectionId, openLibrary.summary.libraryId);
+        }
+      }
+      for (const item of restore) {
+        openLibrary.connection.prepare(
+          `INSERT INTO smart_collections
+             (collection_id, library_id, name, query_definition_json, position, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(collection_id) DO UPDATE SET
+             library_id = excluded.library_id,
+             name = excluded.name,
+             query_definition_json = excluded.query_definition_json,
+             position = excluded.position,
+             updated_at = excluded.updated_at`,
+        ).run(
+          item.collectionId,
+          item.libraryId,
+          item.name,
+          item.queryDefinitionJson,
+          item.position,
+          new Date().toISOString(),
+          new Date().toISOString(),
+        );
+      }
+    })();
+  }
+
+  recordSmartCollectionSnapshotHistory(input: {
+    after: readonly SmartCollectionHistorySnapshot[];
+    before: readonly SmartCollectionHistorySnapshot[];
+    commandId: string;
+    libraryId: string;
+    labelKey: string;
+    affectedCount: number;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    const recipe = (expected: readonly SmartCollectionHistorySnapshot[], restore: readonly SmartCollectionHistorySnapshot[]): HistoryRecipe => ({
+      kind: 'smart-collection-snapshot',
+      version: 1,
+      payload: { expected, restore },
+    });
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.commandId,
+      labelKey: input.labelKey,
+      labelArgs: { count: input.affectedCount },
+      affectedCount: input.affectedCount,
+      affectedEntities: input.after.map((item) => item.collectionId),
+      forwardRecipe: recipe(input.before, input.after),
+      inverseRecipe: recipe(input.after, input.before),
+    });
+  }
+
+  getTagHistorySnapshot(input: {
+    tagIds: readonly string[];
+    libraryId: string;
+    allowMissing?: boolean;
+  }): TagHistorySnapshot[] {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const ids = [...new Set(input.tagIds)];
+    if (ids.length === 0) return [];
+    const rows = openLibrary.connection.prepare(
+      `SELECT tag_id, library_id, name FROM tags
+        WHERE library_id = ? AND tag_id IN (${ids.map(() => '?').join(',')})`,
+    ).all(input.libraryId, ...ids) as Array<{ tag_id: string; library_id: string; name: string }>;
+    if (rows.length !== ids.length && !input.allowMissing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    const relations = openLibrary.connection.prepare(
+      `SELECT asset_id, tag_id FROM human_asset_tags
+        WHERE tag_id IN (${ids.map(() => '?').join(',')})`,
+    ).all(...ids) as Array<{ asset_id: string; tag_id: string }>;
+    return rows.map((row) => ({
+      tagId: row.tag_id,
+      libraryId: row.library_id,
+      name: row.name,
+      humanRelations: relations
+        .filter((relation) => relation.tag_id === row.tag_id)
+        .map((relation) => ({ assetId: relation.asset_id, tagId: relation.tag_id })),
+    }));
+  }
+
+  private assertTagHistorySnapshots(value: unknown): TagHistorySnapshot[] {
+    if (!Array.isArray(value)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    return value.map((item) => {
+      if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const candidate = item as Partial<TagHistorySnapshot>;
+      if (
+        typeof candidate.tagId !== 'string'
+        || typeof candidate.libraryId !== 'string'
+        || typeof candidate.name !== 'string'
+        || !Array.isArray(candidate.humanRelations)
+      ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return {
+        tagId: candidate.tagId,
+        libraryId: candidate.libraryId,
+        name: candidate.name,
+        humanRelations: this.assertHistoryRelations(candidate.humanRelations),
+      };
+    });
+  }
+
+  private applyTagHistorySnapshot(
+    openLibrary: OpenLibrary,
+    expected: readonly TagHistorySnapshot[],
+    restore: readonly TagHistorySnapshot[],
+  ): void {
+    const ids = [...new Set([...expected, ...restore].map((item) => item.tagId))];
+    const current = ids.length === 0 ? [] : this.getTagHistorySnapshot({
+      libraryId: openLibrary.summary.libraryId,
+      tagIds: ids,
+      allowMissing: true,
+    });
+    const normalized = (items: readonly TagHistorySnapshot[]) => items
+      .map((item) => JSON.stringify({ ...item, humanRelations: [...item.humanRelations].sort((a, b) => `${a.assetId}:${a.tagId}`.localeCompare(`${b.assetId}:${b.tagId}`)) }))
+      .sort();
+    if (JSON.stringify(normalized(current)) !== JSON.stringify(normalized(expected))) {
+      throw new LibraryServiceError('VERSION_CONFLICT');
+    }
+    const restoreIds = new Set(restore.map((item) => item.tagId));
+    openLibrary.connection.transaction(() => {
+      for (const item of current) {
+        if (!restoreIds.has(item.tagId)) {
+          openLibrary.connection.prepare('DELETE FROM tags WHERE tag_id = ? AND library_id = ?')
+            .run(item.tagId, openLibrary.summary.libraryId);
+        }
+      }
+      for (const item of restore) {
+        openLibrary.connection.prepare(
+          `INSERT INTO tags (tag_id, library_id, name, created_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(tag_id) DO UPDATE SET library_id = excluded.library_id, name = excluded.name`,
+        ).run(item.tagId, item.libraryId, item.name, new Date().toISOString());
+        openLibrary.connection.prepare('DELETE FROM human_asset_tags WHERE tag_id = ?').run(item.tagId);
+        const insertRelation = openLibrary.connection.prepare(
+          'INSERT INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
+        );
+        for (const relation of item.humanRelations) insertRelation.run(relation.assetId, relation.tagId);
+      }
+    })();
+    for (const item of [...expected, ...restore]) {
+      for (const relation of item.humanRelations) this.syncAssetSearchContent(openLibrary.connection, relation.assetId);
+    }
+  }
+
+  recordTagSnapshotHistory(input: {
+    after: readonly TagHistorySnapshot[];
+    before: readonly TagHistorySnapshot[];
+    commandId: string;
+    libraryId: string;
+    labelKey: string;
+    affectedCount: number;
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): HistoryOperationReceipt {
+    const recipe = (expected: readonly TagHistorySnapshot[], restore: readonly TagHistorySnapshot[]): HistoryRecipe => ({
+      kind: 'tag-snapshot',
+      version: 1,
+      payload: { expected, restore },
+    });
+    return this.recordOperationHistory({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: input.commandId,
+      labelKey: input.labelKey,
+      labelArgs: { count: input.affectedCount },
+      affectedCount: input.affectedCount,
+      affectedEntities: input.after.map((item) => item.tagId),
+      forwardRecipe: recipe(input.before, input.after),
+      inverseRecipe: recipe(input.after, input.before),
+    });
+  }
+
+  private historyRecipeFromRow(
+    row: OperationHistoryStepRow,
+    direction: HistoryDirection,
+  ): HistoryRecipe {
+    try {
+      const parsed: unknown = JSON.parse(
+        direction === 'undo' ? row.inverse_payload_json : row.forward_payload_json,
+      );
+      const recipe = historyRecipeSchema.parse(parsed);
+      assertRegisteredHistoryRecipe(recipe);
+      return recipe;
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+  }
+
+  private historyTransitionErrorCode(error: unknown): string | null {
+    if (error instanceof LibraryServiceError) {
+      return error.code === 'ASSET_MOVE_CONFLICT'
+        || error.code === 'FOLDER_NAME_CONFLICT'
+        || error.code === 'ASSET_NOT_FOUND'
+        || error.code === 'VERSION_CONFLICT'
+        ? error.code
+        : null;
+    }
+    return null;
+  }
+
+  /**
+   * File/folder transitions allocate a fresh durable journal/tombstone id on
+   * every replay.  Persist the newly allocated counterpart on the opposite
+   * side of the step; otherwise a second undo after redo would point at a
+   * consumed operation from the original forward commit.
+   */
+  private historyCounterpartRecipe(
+    recipe: HistoryRecipe,
+    operationId: string,
+    direction: HistoryDirection,
+  ): HistoryRecipe | null {
+    // A fresh file-operation/tombstone identifier is only a counterpart for
+    // the direction that just executed.  In particular, undoing an
+    // asset-restore runs `asset-trash`; that new trash operation must not
+    // replace the original `asset-restore` forward recipe.  The original
+    // asset IDs are enough to find the newly-created tombstone on redo.
+    if (direction === 'undo') {
+      return recipe.kind === 'managed-folder-trash'
+        ? { kind: 'managed-folder-restore', version: 1, payload: { tombstoneId: operationId } }
+        : null;
+    }
+
+    const kind = recipe.kind === 'managed-asset-move' || recipe.kind === 'managed-asset-move-undo'
+      ? 'managed-asset-move-undo'
+      : recipe.kind === 'managed-asset-copy' || recipe.kind === 'managed-asset-copy-undo'
+        ? 'managed-asset-copy-undo'
+        : recipe.kind === 'asset-trash' || recipe.kind === 'asset-trash-undo'
+          ? 'asset-trash-undo'
+          : recipe.kind === 'managed-folder-trash' || recipe.kind === 'managed-folder-restore'
+            ? 'managed-folder-restore'
+            : null;
+    return kind === null
+      ? null
+      : { kind, version: 1, payload: kind === 'managed-folder-restore'
+        ? { tombstoneId: operationId }
+        : { operationId } };
+  }
+
+  private withHistoryReplay<T>(operation: () => T): T {
+    this.historyReplayDepth += 1;
+    try {
+      return operation();
+    } finally {
+      this.historyReplayDepth -= 1;
+    }
+  }
+
+  private executeHistoryRecipe(
+    openLibrary: OpenLibrary,
+    recipe: HistoryRecipe,
+  ): { affectedCount: number; operationId?: string } {
+    const payload = recipe.payload;
+    switch (recipe.kind) {
+      case 'managed-asset-move': {
+        const result = this.withHistoryReplay(() => this.moveAssets({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+          targetFolderId: payload.targetFolderId as string | null,
+          conflictStrategy: payload.conflictStrategy as 'keep-both' | 'replace' | 'skip' | undefined,
+        }));
+        return { affectedCount: result.movedCount, operationId: result.operationId ?? undefined };
+      }
+      case 'managed-asset-move-undo': {
+        const result = this.withHistoryReplay(() => this.undoMoveAssets({
+          libraryId: openLibrary.summary.libraryId,
+          operationId: payload.operationId as string,
+          conflictStrategy: payload.conflictStrategy as 'error' | 'keep-both' | 'replace' | 'skip' | undefined,
+        }));
+        return { affectedCount: result.undoneCount };
+      }
+      case 'managed-asset-copy': {
+        const result = this.withHistoryReplay(() => this.copyAssets({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+          targetFolderId: payload.targetFolderId as string | null,
+          conflictStrategy: payload.conflictStrategy as 'keep-both' | 'replace' | 'skip' | undefined,
+        }));
+        return { affectedCount: result.copiedCount, operationId: result.operationId ?? undefined };
+      }
+      case 'managed-asset-copy-undo': {
+        const result = this.withHistoryReplay(() => this.undoCopyAssets({
+          libraryId: openLibrary.summary.libraryId,
+          operationId: payload.operationId as string,
+          conflictStrategy: payload.conflictStrategy as 'error' | 'keep-both' | 'replace' | 'skip' | undefined,
+        }));
+        return { affectedCount: result.undoneCount };
+      }
+      case 'asset-trash': {
+        const result = this.withHistoryReplay(() => this.trashAssets({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+        }));
+        return { affectedCount: result.trashedCount, operationId: result.operationId ?? undefined };
+      }
+      case 'asset-trash-undo': {
+        const result = this.withHistoryReplay(() => this.undoTrashAssets({
+          libraryId: openLibrary.summary.libraryId,
+          operationId: payload.operationId as string,
+        }));
+        return { affectedCount: result.restoredCount };
+      }
+      case 'asset-restore': {
+        if (!Array.isArray(payload.assetIds) || payload.assetIds.some((assetId) => typeof assetId !== 'string')) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const result = this.withHistoryReplay(() => this.restoreAssets({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+          targetFolderId: typeof payload.targetFolderId === 'string' || payload.targetFolderId === null
+            ? payload.targetFolderId
+            : undefined,
+          conflictStrategy: payload.conflictStrategy === 'keep-both'
+            || payload.conflictStrategy === 'replace'
+            || payload.conflictStrategy === 'skip'
+            ? payload.conflictStrategy
+            : undefined,
+        }));
+        return { affectedCount: result.restoredCount, operationId: result.operationId };
+      }
+      case 'asset-rename': {
+        if (Array.isArray(payload.items)) {
+          let renamedCount = 0;
+          for (const item of payload.items) {
+            if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+            const candidate = item as { assetId?: unknown; newBaseName?: unknown };
+            if (typeof candidate.assetId !== 'string' || typeof candidate.newBaseName !== 'string') {
+              throw new LibraryServiceError('LIBRARY_CORRUPT');
+            }
+            const assetId = candidate.assetId;
+            const newBaseName = candidate.newBaseName;
+            if (typeof (item as { expectedBaseName?: unknown }).expectedBaseName === 'string'
+              && this.getAssetFileBaseName({
+                libraryId: openLibrary.summary.libraryId,
+                assetId,
+              }) !== (item as { expectedBaseName: string }).expectedBaseName) {
+              throw new LibraryServiceError('VERSION_CONFLICT');
+            }
+            this.withHistoryReplay(() => this.renameAssetFile({
+              libraryId: openLibrary.summary.libraryId,
+              assetId,
+              newBaseName,
+            }));
+            renamedCount += 1;
+          }
+          return { affectedCount: renamedCount };
+        }
+        if (typeof payload.assetId !== 'string' || typeof payload.newBaseName !== 'string') {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const assetId = payload.assetId;
+        const newBaseName = payload.newBaseName;
+        if (typeof payload.expectedBaseName === 'string'
+          && this.getAssetFileBaseName({
+            libraryId: openLibrary.summary.libraryId,
+            assetId,
+          }) !== payload.expectedBaseName) {
+          throw new LibraryServiceError('VERSION_CONFLICT');
+        }
+        const result = this.withHistoryReplay(() => this.renameAssetFile({
+          libraryId: openLibrary.summary.libraryId,
+          assetId,
+          newBaseName,
+        }));
+        return { affectedCount: result.asset ? 1 : 0 };
+      }
+      case 'asset-metadata-snapshot': {
+        const expected = this.assertMetadataHistorySnapshot(payload.expected);
+        const restore = this.assertMetadataHistorySnapshot(payload.restore);
+        this.applyAssetMetadataHistorySnapshot(openLibrary, expected, restore);
+        return { affectedCount: 1 };
+      }
+      case 'asset-metadata-batch-snapshot': {
+        if (!Array.isArray(payload.expected) || !Array.isArray(payload.restore)) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const expected = payload.expected.map((item) => this.assertMetadataHistorySnapshot(item));
+        const restore = payload.restore.map((item) => this.assertMetadataHistorySnapshot(item));
+        if (expected.length !== restore.length) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        for (let index = 0; index < expected.length; index += 1) {
+          this.applyAssetMetadataHistorySnapshot(openLibrary, expected[index]!, restore[index]!);
+        }
+        return { affectedCount: expected.length };
+      }
+      case 'tag-assign': {
+        const result = this.withHistoryReplay(() => this.assignTags({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+          tagIds: payload.tagIds as string[],
+        }));
+        return { affectedCount: result.assignedCount };
+      }
+      case 'tag-remove': {
+        const result = this.withHistoryReplay(() => this.removeTags({
+          libraryId: openLibrary.summary.libraryId,
+          assetIds: payload.assetIds as string[],
+          tagIds: payload.tagIds as string[],
+        }));
+        return { affectedCount: result.removedCount };
+      }
+      case 'tag-relations-add': {
+        const relations = this.assertHistoryRelations(payload.relations);
+        this.applyTagRelations(openLibrary, relations, 'add', typeof payload.expectedPresent === 'boolean' ? payload.expectedPresent : undefined);
+        return { affectedCount: relations.length };
+      }
+      case 'tag-relations-remove': {
+        const relations = this.assertHistoryRelations(payload.relations);
+        this.applyTagRelations(openLibrary, relations, 'remove', typeof payload.expectedPresent === 'boolean' ? payload.expectedPresent : undefined);
+        return { affectedCount: relations.length };
+      }
+      case 'collection-assets-add': {
+        this.assertCollectionMembershipPrecondition(openLibrary, payload);
+        this.withHistoryReplay(() => this.addCollectionAssets({
+          libraryId: openLibrary.summary.libraryId,
+          collectionId: payload.collectionId as string,
+          assetIds: payload.assetIds as string[],
+        }));
+        return { affectedCount: (payload.assetIds as string[]).length };
+      }
+      case 'collection-assets-remove': {
+        this.assertCollectionMembershipPrecondition(openLibrary, payload);
+        this.withHistoryReplay(() => this.removeCollectionAssets({
+          libraryId: openLibrary.summary.libraryId,
+          collectionId: payload.collectionId as string,
+          assetIds: payload.assetIds as string[],
+        }));
+        return { affectedCount: (payload.assetIds as string[]).length };
+      }
+      case 'managed-folder-snapshot': {
+        const expected = this.assertManagedFolderHistorySnapshots(payload.expected);
+        const restore = this.assertManagedFolderHistorySnapshots(payload.restore);
+        const current = this.getManagedFolderHistorySnapshot({
+          libraryId: openLibrary.summary.libraryId,
+          folderIds: [...new Set([...expected, ...restore].map((item) => item.folderId))],
+          allowMissing: true,
+        });
+        const normalize = (items: readonly ManagedFolderHistorySnapshot[]) => items
+          .map((item) => JSON.stringify(item)).sort();
+        if (JSON.stringify(normalize(current)) !== JSON.stringify(normalize(expected))) {
+          throw new LibraryServiceError('VERSION_CONFLICT');
+        }
+        const expectedIds = new Set(expected.map((item) => item.folderId));
+        const restoreIds = new Set(restore.map((item) => item.folderId));
+        for (const item of expected
+          .filter((candidate) => !restoreIds.has(candidate.folderId))
+          .sort((left, right) => right.relativePath.length - left.relativePath.length)) {
+          this.applyManagedFolderDeleteHistorySnapshot(openLibrary, [item]);
+        }
+        for (const item of restore
+          .filter((candidate) => !expectedIds.has(candidate.folderId))
+          .sort((left, right) => left.relativePath.length - right.relativePath.length)) {
+          this.applyManagedFolderCreateHistorySnapshot(openLibrary, item);
+        }
+        return { affectedCount: restore.length };
+      }
+      case 'managed-folder-rename': {
+        if (typeof payload.folderId !== 'string' || typeof payload.newName !== 'string') {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        const folderId = payload.folderId;
+        const newName = payload.newName;
+        if (typeof payload.expectedName === 'string') {
+          const current = this.getManagedFolderHistorySnapshot({
+            libraryId: openLibrary.summary.libraryId,
+            folderIds: [folderId],
+          }).find((item) => item.folderId === folderId);
+          if (!current || current.name !== payload.expectedName) {
+            throw new LibraryServiceError('VERSION_CONFLICT');
+          }
+        }
+        const folder = this.withHistoryReplay(() => this.renameManagedFolder({
+          libraryId: openLibrary.summary.libraryId,
+          folderId,
+          newName,
+        }));
+        return { affectedCount: folder.folderId ? 1 : 0 };
+      }
+      case 'managed-folder-move': {
+        if (!Array.isArray(payload.moves)) throw new LibraryServiceError('LIBRARY_CORRUPT');
+        let movedCount = 0;
+        for (const item of payload.moves) {
+          if (typeof item !== 'object' || item === null) throw new LibraryServiceError('LIBRARY_CORRUPT');
+          const move = item as {
+            folderId?: unknown;
+            expectedName?: unknown;
+            expectedParentFolderId?: unknown;
+            targetParentFolderId?: unknown;
+            targetName?: unknown;
+          };
+          if (
+            typeof move.folderId !== 'string'
+            || (move.targetParentFolderId !== null && typeof move.targetParentFolderId !== 'string')
+            || typeof move.targetName !== 'string'
+          ) throw new LibraryServiceError('LIBRARY_CORRUPT');
+          const folderId = move.folderId;
+          const targetName = move.targetName;
+          if (typeof move.expectedName === 'string' || move.expectedParentFolderId === null || typeof move.expectedParentFolderId === 'string') {
+            const current = this.getManagedFolderHistorySnapshot({
+              libraryId: openLibrary.summary.libraryId,
+              folderIds: [folderId],
+            }).find((item) => item.folderId === folderId);
+            if (!current
+              || (typeof move.expectedName === 'string' && current.name !== move.expectedName)
+              || ((move.expectedParentFolderId === null || typeof move.expectedParentFolderId === 'string')
+                && current.parentFolderId !== move.expectedParentFolderId)) {
+              throw new LibraryServiceError('VERSION_CONFLICT');
+            }
+          }
+          const result = this.withHistoryReplay(() => this.moveManagedFolders({
+            libraryId: openLibrary.summary.libraryId,
+            folderIds: [folderId],
+            targetParentFolderId: move.targetParentFolderId as string | null,
+            conflictStrategy: 'skip',
+          }));
+          if (result.movedCount === 0) throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+          const moved = result.folders[0];
+          if (!moved) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          if (moved.name !== move.targetName) {
+            this.withHistoryReplay(() => this.renameManagedFolder({
+              libraryId: openLibrary.summary.libraryId,
+              folderId,
+              newName: targetName,
+            }));
+          }
+          movedCount += 1;
+        }
+        return { affectedCount: movedCount };
+      }
+      case 'managed-folder-trash': {
+        if (typeof payload.folderId !== 'string') throw new LibraryServiceError('LIBRARY_CORRUPT');
+        const folderId = payload.folderId;
+        const result = this.withHistoryReplay(() => this.trashManagedFolder({
+          libraryId: openLibrary.summary.libraryId,
+          folderId,
+        }));
+        return {
+          affectedCount: result.removedFolderCount,
+          operationId: result.tombstoneIds[0],
+        };
+      }
+      case 'managed-folder-restore': {
+        if (typeof payload.tombstoneId !== 'string') throw new LibraryServiceError('LIBRARY_CORRUPT');
+        const tombstoneId = payload.tombstoneId;
+        const result = this.withHistoryReplay(() => this.restoreTrashedManagedFolder({
+          libraryId: openLibrary.summary.libraryId,
+          tombstoneId,
+        }));
+        return { affectedCount: result.restoredFolderCount };
+      }
+      case 'collection-snapshot': {
+        const expected = this.assertCollectionHistorySnapshots(payload.expected);
+        const restore = this.assertCollectionHistorySnapshots(payload.restore);
+        const expectedMemberships = this.assertCollectionMembershipHistorySnapshots(payload.expectedMemberships);
+        const restoreMemberships = this.assertCollectionMembershipHistorySnapshots(payload.restoreMemberships);
+        this.applyCollectionHistorySnapshot(
+          openLibrary,
+          expected,
+          restore,
+          expectedMemberships,
+          restoreMemberships,
+        );
+        return { affectedCount: restore.length };
+      }
+      case 'smart-collection-snapshot': {
+        const expected = this.assertSmartCollectionHistorySnapshots(payload.expected);
+        const restore = this.assertSmartCollectionHistorySnapshots(payload.restore);
+        this.applySmartCollectionHistorySnapshot(openLibrary, expected, restore);
+        return { affectedCount: restore.length };
+      }
+      case 'tag-snapshot': {
+        const expected = this.assertTagHistorySnapshots(payload.expected);
+        const restore = this.assertTagHistorySnapshots(payload.restore);
+        this.applyTagHistorySnapshot(openLibrary, expected, restore);
+        return { affectedCount: restore.length };
+      }
+      case 'history-barrier':
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      default:
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+  }
+
+  private transitionOperationHistory(
+    libraryId: string,
+    direction: HistoryDirection,
+    expectedHistoryEntryId: string,
+  ): OperationHistoryTransitionResult {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const entries = this.operationHistoryEntries(openLibrary);
+    if (entries.some((entry) => entry.state === 'undoing' || entry.state === 'redoing')) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
+    }
+    const machine = new OperationHistoryStateMachine(entries);
+    const started = machine.begin(direction, expectedHistoryEntryId);
+    const now = new Date().toISOString();
+    const attemptId = randomUUID();
+    const steps = openLibrary.connection.prepare(
+      `SELECT history_step_id, history_entry_id, ordinal, command_id, recipe_kind,
+              recipe_version, forward_payload_json, inverse_payload_json,
+              affected_entities_json, current_direction
+         FROM operation_history_steps
+        WHERE history_entry_id = ?
+        ORDER BY ordinal`,
+    ).all(expectedHistoryEntryId) as OperationHistoryStepRow[];
+    if (steps.length === 0) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    openLibrary.connection.transaction(() => {
+      openLibrary.connection.prepare(
+        `INSERT INTO operation_history_attempts
+           (attempt_id, history_entry_id, direction, status, next_step_ordinal,
+            error_code, created_at, updated_at)
+         VALUES (?, ?, ?, 'preparing', 0, NULL, ?, ?)`,
+      ).run(attemptId, expectedHistoryEntryId, direction, now, now);
+      openLibrary.connection.prepare(
+        'UPDATE operation_history SET state = ?, updated_at = ? WHERE history_entry_id = ?',
+      ).run(started.state, now, expectedHistoryEntryId);
+      openLibrary.connection.prepare(
+        "UPDATE operation_history_attempts SET status = 'applying', updated_at = ? WHERE attempt_id = ?",
+      ).run(now, attemptId);
+    })();
+
+    try {
+      const orderedSteps = direction === 'undo' ? [...steps].reverse() : steps;
+      let affectedCount = 0;
+      for (const [index, step] of orderedSteps.entries()) {
+        const recipe = this.historyRecipeFromRow(step, direction);
+        const executed = this.executeHistoryRecipe(openLibrary, recipe);
+        affectedCount += executed.affectedCount;
+        const counterpart = executed.operationId
+          ? this.historyCounterpartRecipe(recipe, executed.operationId, direction)
+          : null;
+        const nowForStep = new Date().toISOString();
+        openLibrary.connection.transaction(() => {
+          if (counterpart) {
+            const column = direction === 'undo' ? 'forward_payload_json' : 'inverse_payload_json';
+            openLibrary.connection.prepare(
+              `UPDATE operation_history_steps
+                  SET ${column} = ?, current_direction = ?
+                WHERE history_step_id = ?`,
+            ).run(
+              JSON.stringify(counterpart),
+              direction === 'undo' ? 'inverse' : 'forward',
+              step.history_step_id,
+            );
+          } else {
+            openLibrary.connection.prepare(
+              'UPDATE operation_history_steps SET current_direction = ? WHERE history_step_id = ?',
+            ).run(direction === 'undo' ? 'inverse' : 'forward', step.history_step_id);
+          }
+          openLibrary.connection.prepare(
+            'UPDATE operation_history_attempts SET next_step_ordinal = ?, updated_at = ? WHERE attempt_id = ?',
+          ).run(index + 1, nowForStep, attemptId);
+        })();
+      }
+      const stableState = direction === 'undo' ? 'undone' : 'applied';
+      const updatedAt = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        const redoSequence = direction === 'undo'
+          ? ((openLibrary.connection
+            .prepare('SELECT COALESCE(MAX(redo_sequence), 0) AS sequence FROM operation_history')
+            .get() as { sequence: number }).sequence + 1)
+          : 0;
+        openLibrary.connection.prepare(
+          `UPDATE operation_history
+              SET state = ?, redo_sequence = ?, updated_at = ?, stale_code = NULL
+            WHERE history_entry_id = ?`,
+        ).run(stableState, redoSequence, updatedAt, expectedHistoryEntryId);
+        openLibrary.connection.prepare(
+          "UPDATE operation_history_attempts SET status = 'committed', next_step_ordinal = ?, updated_at = ? WHERE attempt_id = ?",
+        ).run(steps.length, updatedAt, attemptId);
+      })();
+      return {
+          historyEntryId: expectedHistoryEntryId,
+          direction,
+          affectedCount,
+          status: this.getOperationHistoryStatus(libraryId),
+        };
+    } catch (error) {
+      // A recipe can touch both SQLite and the managed file tree.  Without a
+      // durable compensation pass we cannot prove that an unexpected error
+      // left every step untouched, so never advertise the entry as safely
+      // reversible again.  Known precondition conflicts retain their precise
+      // code; unknown failures are conservatively surfaced as stale.
+      const staleCode = this.historyTransitionErrorCode(error) ?? 'HISTORY_TRANSITION_FAILED';
+      const failedState = 'stale';
+      const updatedAt = new Date().toISOString();
+      try {
+          openLibrary.connection.transaction(() => {
+            openLibrary.connection.prepare(
+              `UPDATE operation_history
+                  SET state = ?, redo_sequence = 0, stale_code = ?, updated_at = ?
+                WHERE history_entry_id = ?`,
+            ).run(failedState, staleCode, updatedAt, expectedHistoryEntryId);
+          openLibrary.connection.prepare(
+            "UPDATE operation_history_attempts SET status = 'failed', error_code = ?, updated_at = ? WHERE attempt_id = ?",
+          ).run(staleCode ?? 'HISTORY_TRANSITION_FAILED', updatedAt, attemptId);
+        })();
+      } catch (recoveryError) {
+        this.diagnose('operation-history.transition-finalize', recoveryError, {
+          libraryId,
+          historyEntryId: expectedHistoryEntryId,
+          direction,
+        });
+      }
+      if (error instanceof HistoryTransitionError) throw error;
+      throw new HistoryTransitionError(
+        'The history entry became stale while Serpent was applying the transition.',
+        'HISTORY_STALE',
+      );
+    }
+  }
+
+  private async transitionOperationHistoryWithLease(
+    input: { libraryId: string; expectedHistoryEntryId: string },
+    direction: HistoryDirection,
+  ): Promise<OperationHistoryTransitionResult> {
+    const lease = await this.acquireWriteLease(input.libraryId);
+    try {
+      return this.transitionOperationHistory(input.libraryId, direction, input.expectedHistoryEntryId);
+    } finally {
+      try {
+        lease.release();
+      } catch (error) {
+        this.diagnose('operation-history.lease-release', error, {
+          libraryId: input.libraryId,
+          direction,
+        });
+      }
+    }
+  }
+
+  undoOperationHistory(input: { libraryId: string; expectedHistoryEntryId: string }): Promise<OperationHistoryTransitionResult> {
+    return this.transitionOperationHistoryWithLease(input, 'undo');
+  }
+
+  redoOperationHistory(input: { libraryId: string; expectedHistoryEntryId: string }): Promise<OperationHistoryTransitionResult> {
+    return this.transitionOperationHistoryWithLease(input, 'redo');
   }
 
   /**
@@ -7420,7 +9392,7 @@ export class LibraryService {
   trashManagedFolder(input: {
     libraryId: string;
     folderId: string;
-  }): { trashedAssetCount: number; removedFolderCount: number } {
+  }): { trashedAssetCount: number; removedFolderCount: number; tombstoneIds: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const { folder, descendantFolders, assetIds } =
       this.collectManagedFolderSubtree(openLibrary, input.folderId);
@@ -7438,6 +9410,7 @@ export class LibraryService {
     const trashedAt = new Date().toISOString();
     const tombstoneFolders = [...descendantFolders, folder];
     const folderIds = tombstoneFolders.map((row) => row.folder_id);
+    const tombstoneIds: string[] = [];
     const countPlaceholders = folderIds.map(() => '?').join(', ');
     const countRows =
       folderIds.length === 0
@@ -7465,6 +9438,7 @@ export class LibraryService {
       for (const row of tombstoneFolders) {
         const parentRelative = path.posix.dirname(row.relative_path);
         const tombstoneId = randomUUID();
+        tombstoneIds.push(tombstoneId);
         insert.run(
           tombstoneId,
           row.folder_id,
@@ -7491,7 +9465,7 @@ export class LibraryService {
       folder,
       descendantFolders,
     );
-    return { trashedAssetCount, removedFolderCount };
+    return { trashedAssetCount, removedFolderCount, tombstoneIds };
   }
 
   /**
@@ -7583,8 +9557,10 @@ export class LibraryService {
          WHERE managed_folder_id = ? AND location_kind = 'managed'`,
     );
 
-    // Validate every target before changing either the database or disk. This
-    // makes a batch cleanup all-or-nothing and prevents partial MCP cleanup.
+    // Phase 1: validate EVERY target (children / assets / directory present
+    // and empty) before touching anything — a batch with one non-empty folder
+    // is rejected wholesale, nothing is deleted.
+    const targetPaths: Array<{ folderId: string; directoryPath: string }> = [];
     for (const row of rows) {
       const children = childCount.get(row.folder_id) as { count: number };
       const assets = assetCount.get(row.folder_id) as { count: number };
@@ -7594,11 +9570,26 @@ export class LibraryService {
           !realDirectoryExists(directoryPath) ? 'FOLDER_NOT_FOUND' : 'FOLDER_NOT_EMPTY',
         );
       }
+      targetPaths.push({ folderId: row.folder_id, directoryPath });
+    }
+
+    // Phase 2: delete. rmdir (not recursive rm) is the final guard against
+    // files created by an external process after validation; each rmdir is
+    // paired with its DB row delete so a mid-batch failure leaves removed
+    // folders consistent on disk and in the DB (refresh reconciles the rest).
+    const removed: Array<{ folderId: string; directoryPath: string }> = [];
+    for (const target of targetPaths) {
       try {
-        // rmdir, rather than recursive rm, is the final guard against files
-        // created by an external process between the database check and now.
-        rmdirSync(directoryPath);
+        rmdirSync(target.directoryPath);
+        removed.push(target);
       } catch (error) {
+        for (const done of removed) {
+          try {
+            mkdirSync(done.directoryPath);
+          } catch {
+            // Disk restore is best-effort; the DB row is kept below.
+          }
+        }
         if (isMissingPathError(error)) throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
         const code = typeof error === 'object' && error !== null && 'code' in error
           ? (error as { code?: unknown }).code
@@ -20442,6 +22433,18 @@ export class LibraryService {
     return { asset };
   }
 
+  /** Worker-only precondition value for the reversible file-name recipe. */
+  getAssetFileBaseName(input: { libraryId: string; assetId: string }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection.prepare(
+      'SELECT relative_file_path FROM assets WHERE asset_id = ?',
+    ).get(input.assetId) as { relative_file_path: string } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    const fileName = path.posix.basename(row.relative_file_path);
+    const extension = path.posix.extname(fileName);
+    return extension.length === 0 ? fileName : fileName.slice(0, -extension.length);
+  }
+
   /**
    * Batch convenience over the crash-safe single-file rename primitive.
    * Every successful item has the same disk-first / DB-rollback protection as
@@ -21939,6 +23942,22 @@ export class LibraryService {
       libraryId,
       rows.map((row) => row.asset_id),
     );
+
+    // Expiry cleanup is an irreversible mutation even though it is not
+    // initiated from a visible command.  Add a barrier so an older user
+    // operation cannot later be replayed across assets that no longer exist.
+    if (result.purgedCount > 0) {
+      this.recordOperationHistoryBarrier({
+        libraryId,
+        source: 'desktop',
+        sourceReference: 'trash-expiration',
+        commandId: 'trash.purge-expired',
+        labelKey: 'history.trash.purge-expired',
+        reason: 'expired-trash-purge',
+        affectedCount: result.purgedCount,
+        affectedEntities: rows.map((row) => row.asset_id),
+      });
+    }
 
     openLibrary.connection
       .prepare('DELETE FROM trashed_managed_folders WHERE trashed_at < ?')
@@ -25318,6 +27337,45 @@ export class LibraryService {
     })();
   }
 
+  /**
+   * A Worker can disappear after a recipe changed the filesystem but before
+   * the history attempt was finalized. The file-operation recovery pass owns
+   * those byte-level journals; this pass keeps the user-facing history honest
+   * by making an unfinished transition explicitly stale until a future
+   * conflict-resolution flow can inspect it.
+   */
+  private recoverOperationHistoryTransitions(openLibrary: OpenLibrary): void {
+    const unfinished = openLibrary.connection.prepare(
+      `SELECT attempt_id, history_entry_id
+         FROM operation_history_attempts
+        WHERE status IN ('preparing', 'applying')`,
+    ).all() as Array<{ attempt_id: string; history_entry_id: string }>;
+    if (unfinished.length === 0) return;
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      const markEntry = openLibrary.connection.prepare(
+        `UPDATE operation_history
+            SET state = 'stale', stale_code = 'WORKER_RESTART_DURING_TRANSITION', updated_at = ?
+          WHERE history_entry_id = ? AND state IN ('undoing', 'redoing')`,
+      );
+      const markAttempt = openLibrary.connection.prepare(
+        `UPDATE operation_history_attempts
+            SET status = 'failed', error_code = 'WORKER_RESTART_DURING_TRANSITION', updated_at = ?
+          WHERE attempt_id = ?`,
+      );
+      for (const attempt of unfinished) {
+        markEntry.run(now, attempt.history_entry_id);
+        markAttempt.run(now, attempt.attempt_id);
+      }
+    })();
+    this.diagnose('operation-history.recovered-stale-transition', new Error(
+      'An unfinished history transition was marked stale after Worker restart.',
+    ), {
+      libraryId: openLibrary.summary.libraryId,
+      attemptCount: unfinished.length,
+    });
+  }
+
   openLibrary(selectedLibraryPath: string): InternalLibrarySummary {
     let selectedPath: string;
     try {
@@ -25469,6 +27527,7 @@ export class LibraryService {
       this.openIdByPath.set(canonicalPath, summary.libraryId);
       this.reconcileLinkedFolderStatuses(openLibrary);
       this.recoverFileOperations(openLibrary);
+      this.recoverOperationHistoryTransitions(openLibrary);
       this.recoverInterruptedAiJobs(openLibrary);
       this.recoverInterruptedThumbnailJobs(openLibrary);
       interruptUnfinishedPluginJobs(

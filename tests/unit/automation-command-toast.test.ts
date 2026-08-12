@@ -52,6 +52,14 @@ describe('automationCommandToast (Serpent-fmbr)', () => {
     expect(toast!.message).toContain('回收站');
   });
 
+  it('keeps the committed history id so the desktop undo action targets this MCP operation', () => {
+    const toast = automationCommandToast(payload('asset.trash', {
+      trashedCount: 1,
+      historyEntryId: 'history-mcp-1',
+    }), zh);
+    expect(toast?.historyEntryId).toBe('history-mcp-1');
+  });
+
   it('maps asset.delete-permanent onto the manual disk-delete toast', () => {
     const toast = automationCommandToast(payload('asset.delete-permanent', {
       deletedCount: 2,

@@ -140,7 +140,7 @@ class RecordingWorker implements AutomationWorkerClient {
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
-    expect(automationCommandRegistry).toHaveLength(81);
+    expect(automationCommandRegistry).toHaveLength(84);
     expect(new Set(automationCommandRegistry.map((command) => command.commandId)).size)
       .toBe(automationCommandRegistry.length);
     const registryIds = new Set(automationCommandRegistry.map((command) => command.commandId));
@@ -218,6 +218,7 @@ describe('Automation Command Registry', () => {
         'tag.rename', 'tag.delete', 'tag.delete-many', 'tag.merge',
         'collection.update', 'collection.reorder', 'collection.delete', 'collection.assets.reorder',
         'smart-collection.create', 'smart-collection.update', 'smart-collection.delete',
+        'history.undo', 'history.redo',
       ].includes(command.commandId)) {
         expect(command.impact).not.toBe('read');
         expect(command.approvalPolicy).toBe(command.commandId === 'library.delete-from-disk' ? 'none' : 'execution');
@@ -1280,7 +1281,7 @@ describe('Automation Command Gateway', () => {
     }]);
   });
 
-  it('records a recovery reference in an undo group for a successful trash command', async () => {
+  it('does not create a legacy undo group for a Worker-history trash command', async () => {
     const worker = new RecordingWorker({
       ok: true,
       type: 'asset.trashed',
@@ -1310,25 +1311,12 @@ describe('Automation Command Gateway', () => {
 
     await expect(commandGateway.execute(request('asset.trash', { assetIds: ['asset-1'] }))).resolves.toMatchObject({
       ok: true,
-      undoGroupId: 'undo-group-1',
       result: { trashedCount: 1, operationId: 'operation-trash-1' },
     });
-    expect(undoEvents).toEqual([
-      ['create', { executionId: 'execution-1', libraryId: 'library-1' }],
-      ['append', {
-        undoGroupId: 'undo-group-1',
-        item: {
-          itemId: 'operation-trash-1',
-          kind: 'asset.trash',
-          reference: 'operation-trash-1',
-          reversible: true,
-        },
-      }],
-      ['complete', { undoGroupId: 'undo-group-1', status: 'succeeded' }],
-    ]);
+    expect(undoEvents).toEqual([]);
   });
 
-  it('surfaces INTERNAL_ERROR when undo group finalization fails after a successful Worker write', async () => {
+  it('does not let a legacy undo handler failure affect a migrated Worker-history write', async () => {
     const worker = new RecordingWorker({
       ok: true,
       type: 'asset.trashed',
@@ -1355,8 +1343,8 @@ describe('Automation Command Gateway', () => {
     });
 
     await expect(commandGateway.execute(request('asset.trash', { assetIds: ['asset-1'] }))).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'INTERNAL_ERROR' },
+      ok: true,
+      result: { trashedCount: 1, operationId: 'operation-trash-1' },
     });
   });
 
@@ -2134,7 +2122,7 @@ describe('AutomationLibraryWorkerAdapter', () => {
       },
       {
         command: { type: 'asset.rating.set', libraryId: 'library-1', assetIds: ['asset-1'], rating: 4 },
-        options: undefined,
+        options: {},
       },
     ]);
   });
@@ -2205,7 +2193,7 @@ describe('file.import VERSION_CONFLICT auto re-plan (Serpent-xdt8)', () => {
     };
     const calls: Array<WorkerResult> = [];
     const worker = {
-      request: async (command: WorkerCommand): Promise<WorkerResult> => {
+      request: async (): Promise<WorkerResult> => {
         calls.push({ ok: true, type: 'asset.import.completed', completion: importCompletion });
         return calls.length === 1
           ? { ok: false, error: { code: 'VERSION_CONFLICT', message: 'Stale plan.' } }

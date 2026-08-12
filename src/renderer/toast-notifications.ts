@@ -34,6 +34,12 @@ export const TOAST_SEVERITY_RANK: Record<ToastSeverity, number> = {
 export interface ToastMessage {
   kind: ToastKind;
   text: string;
+  /**
+   * The reversible operation that produced this notice, when there is one.
+   * Keeping the id on the notice makes the inline Undo action race-safe: it
+   * must never guess from a possibly stale history snapshot.
+   */
+  historyEntryId?: string;
 }
 
 export interface ToastStackMessage extends ToastMessage {
@@ -68,7 +74,7 @@ export interface ToastNotifications {
   subscribe(listener: () => void): () => void;
   setError(text: string | null): void;
   setWarning(text: string | null): void;
-  setNotice(text: string | null): void;
+  setNotice(text: string | null, historyEntryId?: string): void;
   setFatal(text: string | null): void;
   /** Start closing the highest-severity visible toast. */
   dismissVisible(): void;
@@ -123,7 +129,15 @@ export function createToastNotifications(): ToastNotifications {
   function legacyRenderedMessage(): ToastMessage | null {
     const visible = entries.filter((entry) => !entry.closing);
     const candidate = highestMessage(visible.length > 0 ? visible : entries);
-    return candidate ? { kind: candidate.kind, text: candidate.text } : null;
+    return candidate
+      ? {
+          kind: candidate.kind,
+          text: candidate.text,
+          ...(candidate.historyEntryId
+            ? { historyEntryId: candidate.historyEntryId }
+            : {}),
+        }
+      : null;
   }
 
   function commit(): void {
@@ -186,7 +200,11 @@ export function createToastNotifications(): ToastNotifications {
     }
   }
 
-  function setToast(kind: ToastKind, text: string | null): void {
+  function setToast(
+    kind: ToastKind,
+    text: string | null,
+    historyEntryId?: string,
+  ): void {
     if (text === null) {
       // Preserve the existing channel-reset contract: null closes every
       // pending entry of this severity, while dismissToast(id) closes one.
@@ -201,14 +219,24 @@ export function createToastNotifications(): ToastNotifications {
         : kind === "warning"
           ? TOAST_WARNING_DURATION_MS
           : TOAST_ERROR_DURATION_MS;
-    entries = [{ id, kind, text, closing: false }, ...entries];
+    entries = [
+      {
+        id,
+        kind,
+        text,
+        closing: false,
+        ...(historyEntryId ? { historyEntryId } : {}),
+      },
+      ...entries,
+    ];
     dismissTimers.set(id, setTimeout(() => startClosing(id), duration));
     commit();
   }
 
   const setError = (text: string | null) => setToast("error", text);
   const setWarning = (text: string | null) => setToast("warning", text);
-  const setNotice = (text: string | null) => setToast("notice", text);
+  const setNotice = (text: string | null, historyEntryId?: string) =>
+    setToast("notice", text, historyEntryId);
 
   function setFatal(text: string | null): void {
     // Fatal never auto-dismisses; lower toast channels cannot clear it.

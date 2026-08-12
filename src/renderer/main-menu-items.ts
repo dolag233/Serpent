@@ -49,6 +49,7 @@ export type MainMenuActions = {
   readonly exportLibrary: () => void;
   readonly openLibrarySettings?: () => void;
   readonly undo: () => void;
+  readonly redo: () => void;
   readonly copySelection: () => void;
   readonly paste: () => void;
   readonly selectAll: () => void;
@@ -66,6 +67,9 @@ export type MainMenuState = {
   readonly libraryOpen: boolean;
   readonly busy: boolean;
   readonly hasUndoableOperation: boolean;
+  readonly hasRedoableOperation: boolean;
+  readonly undoLabel?: string;
+  readonly redoLabel?: string;
   readonly hasSelectedAssets: boolean;
   readonly hasPasteTarget: boolean;
   readonly hasBrowseAssets: boolean;
@@ -140,17 +144,15 @@ export function buildMainMenuSections({
       items: [
         {
           id: "edit.undo",
-          label: label(locale, "shell.mainMenuUndo"),
+          label: state.undoLabel ?? label(locale, "shell.mainMenuUndo"),
           disabled: !state.hasUndoableOperation || state.busy,
           onSelect: actions.undo,
         },
         {
-          // Serpent-q0b1: macOS 顶部菜单同步此命令；redo 系统尚未落地，
-          // 恒禁用，接入 undo/redo 系统时启用。
           id: "edit.redo",
-          label: label(locale, "shell.mainMenuRedo"),
-          disabled: true,
-          onSelect: () => undefined,
+          label: state.redoLabel ?? label(locale, "shell.mainMenuRedo"),
+          disabled: !state.hasRedoableOperation || state.busy,
+          onSelect: actions.redo,
         },
         {
           id: "edit.copy-selection",

@@ -16,7 +16,7 @@ export type UseFolderDragDropHandlersParams = {
   libraryId: string | null;
   assetScope: string;
   folders: readonly ManagedFolderSummary[];
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: 'loading' | 'ready') => void;
   reloadCurrentContent: () => Promise<void>;
@@ -80,10 +80,12 @@ export function useFolderDragDropHandlers({
                 moved: result.value.movedCount,
                 skipped: result.value.skippedCount,
               }),
+              result.value.historyEntryId,
             );
           } else {
             setNotice(
               t('toast.folderMoveDone', { count: result.value.movedCount }),
+              result.value.historyEntryId,
             );
           }
           await reloadCurrentContent();
@@ -121,17 +123,20 @@ export function useFolderDragDropHandlers({
         try {
           let trashedAssets = 0;
           let trashedFolders = 0;
+          let historyEntryId: string | undefined;
           for (const folderId of folderIds) {
             const result = await api.trashFolder({ libraryId, folderId });
             if (!result.ok) throw new LibraryOperationError(result.error);
             trashedFolders += 1;
             trashedAssets += result.value.trashedAssetCount;
+            historyEntryId = result.value.historyEntryId;
           }
           setNotice(
             t('toast.selectionTrashed', {
               folders: trashedFolders,
               assets: trashedAssets,
             }),
+            historyEntryId,
           );
           if (
             isBrowseScopeAffectedByFolderTrash(assetScope, folderIds, folders)

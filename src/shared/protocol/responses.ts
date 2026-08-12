@@ -72,6 +72,30 @@ export const rendererLibrarySummarySchema = z.strictObject({
 
 export type RendererLibrarySummary = z.infer<typeof rendererLibrarySummarySchema>;
 
+export const historyEntrySummarySchema = z.strictObject({
+  historyEntryId: nonBlankString,
+  source: z.enum(['desktop', 'script', 'mcp', 'plugin']),
+  sourceReference: nonBlankString.nullable(),
+  labelKey: nonBlankString,
+  labelArgs: z.record(z.string(), z.union([z.string(), z.number()])),
+  policy: z.enum(['reversible', 'barrier']),
+  state: z.enum(['open', 'applied', 'undoing', 'undone', 'redoing', 'stale']),
+  staleCode: nonBlankString.nullable(),
+  affectedCount: z.number().int().nonnegative(),
+});
+
+export type HistoryEntrySummary = z.infer<typeof historyEntrySummarySchema>;
+
+export const historyStatusSchema = z.strictObject({
+  libraryId: nonBlankString,
+  undoTop: historyEntrySummarySchema.nullable(),
+  redoTop: historyEntrySummarySchema.nullable(),
+  staleTop: historyEntrySummarySchema.nullable(),
+  transitionInProgress: z.boolean(),
+});
+
+export type HistoryStatus = z.infer<typeof historyStatusSchema>;
+
 export const importConflictPlanSchema = z.strictObject({
   importId: nonBlankString,
   fileCount: z.number().int().nonnegative(),
@@ -494,11 +518,13 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('folder.created'),
     folder: managedFolderSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('folder.renamed'),
     folder: managedFolderSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -513,6 +539,7 @@ const assetOperationSuccessSchemas = [
     movedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
     folders: z.array(managedFolderSummarySchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -535,6 +562,7 @@ const assetOperationSuccessSchemas = [
     restoredFolderCount: z.number().int().nonnegative(),
     restoredAssetCount: z.number().int().nonnegative(),
     folders: z.array(managedFolderSummarySchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -542,6 +570,8 @@ const assetOperationSuccessSchemas = [
     folderId: nonBlankString,
     trashedAssetCount: z.number().int().nonnegative(),
     removedFolderCount: z.number().int().nonnegative(),
+    tombstoneIds: z.array(nonBlankString).optional(),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -554,6 +584,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('folder.empty-deleted'),
     deletedFolderIds: z.array(nonBlankString),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -693,27 +724,32 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('tag.created'),
     tag: tagSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.renamed'),
     tag: tagSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.deleted'),
     tagId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.deleted-many'),
     deletedTagIds: z.array(nonBlankString),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.merged'),
     tag: tagSummarySchema,
     mergedTagIds: z.array(nonBlankString),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -725,12 +761,14 @@ const assetOperationSuccessSchemas = [
     type: z.literal('tag.assigned'),
     assignedCount: z.number().int().nonnegative(),
     skipped: z.array(tagOperationSkipSchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('tag.removed'),
     removedCount: z.number().int().nonnegative(),
     skipped: z.array(tagOperationSkipSchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -741,36 +779,43 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('collection.created'),
     collection: collectionSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.updated'),
     collection: collectionSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.reordered'),
     orderedCollectionIds: z.array(nonBlankString),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.deleted'),
     collectionId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.assets.added'),
     collectionId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.assets.removed'),
     collectionId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('collection.assets.reordered'),
     collectionId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -807,11 +852,13 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.metadata.updated'),
     metadata: assetMetadataResultSchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('asset.metadata.updated-many'),
     metadata: z.array(assetMetadataResultSchema).min(1),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -825,6 +872,7 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.rating.updated'),
     updatedCount: z.number().int().nonnegative(),
     skipped: z.array(tagOperationSkipSchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -835,16 +883,19 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('smart-collection.created'),
     collection: smartCollectionSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.updated'),
     collection: smartCollectionSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('smart-collection.deleted'),
     collectionId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -871,6 +922,7 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.trashed'),
     trashedCount: z.number().int().nonnegative(),
     operationId: nonBlankString,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -912,6 +964,7 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.restored'),
     restoredCount: z.number().int().nonnegative(),
     assets: z.array(assetSummarySchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -924,6 +977,7 @@ const assetOperationSuccessSchemas = [
     movedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
     operationId: nonBlankString.nullable(),
+    historyEntryId: nonBlankString.optional(),
     assets: z.array(assetSummarySchema),
   }),
   z.strictObject({
@@ -946,6 +1000,7 @@ const assetOperationSuccessSchemas = [
     copiedCount: z.number().int().nonnegative(),
     skippedCount: z.number().int().nonnegative(),
     operationId: nonBlankString.nullable(),
+    historyEntryId: nonBlankString.optional(),
     assets: z.array(assetSummarySchema),
   }),
   z.strictObject({
@@ -959,6 +1014,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.file-renamed'),
     asset: assetSummarySchema,
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -969,6 +1025,7 @@ const assetOperationSuccessSchemas = [
       reason: z.enum(['asset_not_found', 'asset_unavailable', 'name_conflict', 'invalid_name']),
     })),
     assets: z.array(assetSummarySchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -980,6 +1037,7 @@ const assetOperationSuccessSchemas = [
       reason: z.enum(['original_folder_missing', 'name_conflict', 'trash_file_missing']),
     })),
     assets: z.array(assetSummarySchema),
+    historyEntryId: nonBlankString.optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1300,6 +1358,25 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('history.status'),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.undone'),
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.redone'),
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.opened'),
     library: internalLibrarySummarySchema,
   }),
@@ -1570,6 +1647,25 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.list'),
     libraries: z.array(rendererLibrarySummarySchema),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.status'),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.undone'),
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('history.redone'),
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

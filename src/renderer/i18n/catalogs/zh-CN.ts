@@ -95,7 +95,9 @@ export const zhCN = {
     mainMenuHelp: "帮助",
     mainMenuSettings: "设置",
     mainMenuUndo: "撤销上次操作",
+    mainMenuUndoCount: "撤回操作（{count} 项）",
     mainMenuRedo: "重做",
+    mainMenuRedoCount: "重做操作（{count} 项）",
     mainMenuCut: "剪切",
     mainMenuCopySelection: "复制所选资产",
     mainMenuPaste: "粘贴",
@@ -1636,6 +1638,10 @@ export const zhCN = {
     undoMoveFailed: "撤销移动失败。",
     undoCopyDone: "已撤销复制 {count} 项资产",
     undoCopyFailed: "撤销复制失败。",
+    historyUndoDone: "已撤回上一步操作（{count} 项）。",
+    historyUndoFailed: "无法撤回上一步操作。",
+    historyRedoDone: "已重做该操作（{count} 项）。",
+    historyRedoFailed: "无法重做该操作。",
     permanentDeleted: "已永久删除 {count} 项。",
     permanentDeleteItem: "{name}（{reason}）",
     selectedAsset: "所选资产",
@@ -1792,7 +1798,12 @@ export const zhCN = {
       AI_SEARCH_FAILED: "AI 服务未能转换这次搜索。",
       VERSION_CONFLICT: "元数据已被其他操作修改。请刷新后重新编辑。",
       ZIP_TOO_LARGE: "资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。",
-      TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。"
+      TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
+      HISTORY_ENTRY_NOT_FOUND: "当前没有可执行的撤回或重做操作。",
+      HISTORY_NOT_TOP: "该操作已不是当前的撤回或重做目标。",
+      HISTORY_NOT_REVERSIBLE: "该操作不能撤回或重做。",
+      HISTORY_TRANSITION_IN_PROGRESS: "已有另一个撤回或重做操作正在进行。",
+      HISTORY_STALE: "文件或记录已经变化，无法安全撤回或重做该操作。"
     },
     reason: {
       PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
@@ -1848,7 +1859,9 @@ export const zhCN = {
     undoMove: "撤销移动",
     undoCopy: "撤销复制",
     undoTrash: "撤销",
-    undoTagDelete: "撤销"
+    undoTagDelete: "撤销",
+    undo: "撤销",
+    redo: "重做"
   }
 } as const satisfies MessageTree;
 

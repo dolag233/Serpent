@@ -89,6 +89,8 @@ import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
 import type { AiApiFormat } from "../shared/ai-endpoints";
 import type { ApplicationMenuCommand } from "../shared/application-menu";
 import type { SerpentMcpSettingsApi } from "../shared/mcp";
+import type { HistoryStatus } from "../shared/protocol/responses";
+import { isEditableTextTarget } from "../shared/edit-context-menu";
 import type { SearchQuery } from "../shared/asset-types";
 import {
   createWorkspaceNavHistory,
@@ -102,7 +104,6 @@ import {
 } from "./RelinkPreview";
 import { MoveDialog } from "./MoveDialog";
 import { RestoreDialog } from "./RestoreDialog";
-import { UndoMoveDialog } from "./UndoMoveDialog";
 import { ImageSequenceDialog } from "./ImageSequenceDialog";
 import { ImageSequenceImportDialog } from "./ImageSequenceImportDialog";
 import {
@@ -214,7 +215,7 @@ import { useShellFileActions } from "./use-shell-file-actions";
 import { useInspectorMultiEdit } from "./use-inspector-multi-edit";
 import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
-import { useAssetDragDropHandlers, type UndoableFileOp } from "./use-asset-drag-drop-handlers";
+import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
 import { PluginTrustPromptDialog } from "./PluginTrustPromptDialog";
 import { usePluginTrustPrompt } from "./use-plugin-trust-prompt";
@@ -1088,13 +1089,31 @@ function AppInner() {
     targetFolderId: string | null;
     conflictStrategy: "keep-both" | "replace" | "skip";
   } | null>(null);
-  const [lastUndoableOp, setLastUndoableOp] = useState<UndoableFileOp | null>(
-    null,
-  );
-  const [undoMoveDialog, setUndoMoveDialog] = useState<{
-    operationId: string;
-    conflictStrategy: "keep-both" | "replace" | "skip";
-  } | null>(null);
+  const [operationHistory, setOperationHistory] = useState<HistoryStatus | null>(null);
+  const [editableTextFocused, setEditableTextFocused] = useState(false);
+  useEffect(() => {
+    const update = (target: EventTarget | null) => {
+      setEditableTextFocused(isEditableTextTarget(target));
+    };
+    const onFocusIn = (event: FocusEvent) => update(event.target);
+    update(document.activeElement);
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  const refreshOperationHistory = useCallback(async () => {
+    if (!api || !library) {
+      setOperationHistory(null);
+      return;
+    }
+    const result = await api.getOperationHistoryStatus({ libraryId: library.libraryId });
+    if (result.ok) setOperationHistory(result.value);
+  }, [api, library]);
+  useEffect(() => {
+    const refreshTimer = window.setTimeout(() => {
+      void refreshOperationHistory();
+    }, 0);
+    return () => window.clearTimeout(refreshTimer);
+  }, [refreshOperationHistory]);
   const [imageSequenceDialog, setImageSequenceDialog] = useState<{
     assetIds: string[];
     mode: "create" | "update";
@@ -2083,7 +2102,7 @@ function AppInner() {
       // Serpent-fmbr: MCP operations show the same toasts as manual ones —
       // composed here from the structured result, never MCP-specific wording.
       const toast = automationCommandToast(payload, locale);
-      if (toast !== undefined) setNotice(toast.message);
+      if (toast !== undefined) setNotice(toast.message, toast.historyEntryId);
     });
   }, [shellApi, locale, setNotice]);
 
@@ -3502,7 +3521,7 @@ function AppInner() {
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       setTags(tagResult.value);
-      setNotice(t("toast.tagCreated", { name }));
+      setNotice(t("toast.tagCreated", { name }), result.value.historyEntryId);
       return true;
     } catch (caught) {
       setError(toMessage(caught, t("toast.createTagFailed"), locale));
@@ -3525,7 +3544,7 @@ function AppInner() {
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       setTags(tagResult.value);
-      setNotice(t("toast.tagRenamed", { name }));
+      setNotice(t("toast.tagRenamed", { name }), result.value.historyEntryId);
       return true;
     } catch (caught) {
       setError(toMessage(caught, t("toast.renameTagFailed"), locale));
@@ -3553,6 +3572,7 @@ function AppInner() {
         tagIds.length === 1
           ? t("toast.tagDeleted")
           : t("toast.tagsDeleted", { count: tagIds.length }),
+        result.value.historyEntryId,
       );
       return true;
     } catch (caught) {
@@ -3576,7 +3596,7 @@ function AppInner() {
       const tagResult = await api.listTags({ libraryId: library.libraryId });
       if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
       setTags(tagResult.value);
-      setNotice(t("toast.tagMerged", { name: name.trim() }));
+      setNotice(t("toast.tagMerged", { name: name.trim() }), result.value.historyEntryId);
       return true;
     } catch (caught) {
       setError(toMessage(caught, t("toast.mergeTagsFailed"), locale));
@@ -3681,7 +3701,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await refreshTagAndMetadataState(assetId);
-      setNotice(t("toast.tagAdded"));
+      setNotice(t("toast.tagAdded"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.addTagFailed"), locale));
     }
@@ -3698,7 +3718,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       await refreshTagAndMetadataState(targetAssetId);
-      setNotice(t("toast.tagRemoved"));
+      setNotice(t("toast.tagRemoved"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.removeTagFailed"), locale));
     }
@@ -3720,7 +3740,10 @@ function AppInner() {
       });
       if (!assignResult.ok) throw new LibraryOperationError(assignResult.error);
       await refreshTagAndMetadataState(targetAssetId);
-      setNotice(t("toast.tagCreatedAssigned", { name: tagName.trim() }));
+      setNotice(
+        t("toast.tagCreatedAssigned", { name: tagName.trim() }),
+        assignResult.value.historyEntryId,
+      );
     } catch (caught) {
       setError(toMessage(caught, t("toast.createTagFailed"), locale));
     }
@@ -3888,7 +3911,7 @@ function AppInner() {
         setCollections(colResult.value);
       }
       setError(null);
-      setNotice(t("toast.collectionDeleted"));
+      setNotice(t("toast.collectionDeleted"), result.value.historyEntryId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "delete", locale));
     } finally {
@@ -3922,7 +3945,7 @@ function AppInner() {
       );
       setRenameTarget(null);
       setError(null);
-      setNotice(t("toast.collectionRenamed"));
+      setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
@@ -3957,7 +3980,7 @@ function AppInner() {
         ),
       );
       setCollectionEditor(null);
-      setNotice(t("toast.collectionDetailsUpdated"));
+      setNotice(t("toast.collectionDetailsUpdated"), result.value.historyEntryId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
@@ -4002,7 +4025,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setCollections(result.value);
-      setNotice(t("toast.collectionOrderUpdated"));
+      setNotice(t("toast.collectionOrderUpdated"), reordered.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
     } finally {
@@ -4050,7 +4073,7 @@ function AppInner() {
         next.splice(currentTargetIndex, 0, currentMoved);
         return next;
       });
-      setNotice(t("toast.collectionMemberOrderUpdated"));
+      setNotice(t("toast.collectionMemberOrderUpdated"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.collectionMemberReorderFailed"), locale));
     } finally {
@@ -4125,7 +4148,7 @@ function AppInner() {
         libraryId: library.libraryId,
       });
       if (collectionResult.ok) setCollections(collectionResult.value);
-      setNotice(t("toast.addedToCollection"));
+      setNotice(t("toast.addedToCollection"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
     }
@@ -4183,7 +4206,7 @@ function AppInner() {
       }
       clearAssetSelection();
       setError(null);
-      setNotice(t("toast.removedFromCollection"));
+      setNotice(t("toast.removedFromCollection"), result.value.historyEntryId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "removeAsset", locale));
     } finally {
@@ -4466,7 +4489,7 @@ function AppInner() {
       );
       setInlineCollectionRename(null);
       setError(null);
-      setNotice(t("toast.collectionRenamed"));
+      setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
       setError(toOrganizationMessage(caught, "collection", "rename", locale));
     }
@@ -4630,7 +4653,6 @@ function AppInner() {
     clearAssetSelection,
     activeTagId,
     activeCollectionId,
-    setLastUndoableOp,
   });
 
   const {
@@ -4724,7 +4746,6 @@ function AppInner() {
     trashManagedAssets,
     reloadCurrentContentRef,
     setCollections,
-    setLastUndoableOp,
   });
 
   const {
@@ -5046,7 +5067,7 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice(t("toast.smartCollectionRenamed"));
+      setNotice(t("toast.smartCollectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRenameFailed"), locale));
     }
@@ -5071,7 +5092,7 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice(t("toast.smartCollectionUpdated"));
+      setNotice(t("toast.smartCollectionUpdated"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionUpdateFailed"), locale));
     }
@@ -5095,7 +5116,7 @@ function AppInner() {
         setActiveSmartCollectionId(null);
         await loadContent(library, "all");
       }
-      setNotice(t("toast.smartCollectionDeleted"));
+      setNotice(t("toast.smartCollectionDeleted"), result.value.historyEntryId);
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionDeleteFailed"), locale));
     }
@@ -5521,8 +5542,6 @@ function AppInner() {
     setSearchTotal(null);
     setSearchSnippets(new Map());
     setMoveDialog(null);
-    setUndoMoveDialog(null);
-    setLastUndoableOp(null);
     resetNavHistory({ kind: "all" });
     api?.setActiveContext(null);
   }
@@ -5600,7 +5619,6 @@ function AppInner() {
         conflictStrategy,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setLastUndoableOp(null);
       const skippedCount = assetIds.length - result.value.restoredCount;
       setNotice(
         t("toast.restoredCount", { count: result.value.restoredCount }) +
@@ -5608,6 +5626,7 @@ function AppInner() {
             ? t("toast.conflictAssetsSkippedSuffix", { count: skippedCount })
             : "") +
           t("common.sentenceEnd"),
+        result.value.historyEntryId,
       );
       clearAssetSelection();
       await refreshCollectionSummaries();
@@ -5642,6 +5661,7 @@ function AppInner() {
           folders: result.value.restoredFolderCount,
           assets: result.value.restoredAssetCount,
         }) + t("common.sentenceEnd"),
+        result.value.historyEntryId,
       );
       clearAssetSelection();
       await refreshCollectionSummaries();
@@ -5667,20 +5687,13 @@ function AppInner() {
           conflictStrategy,
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
-        if (result.value.operationId) {
-          setLastUndoableOp({
-            kind: "move",
-            operationId: result.value.operationId,
-          });
-        } else {
-          setLastUndoableOp(null);
-        }
         setNotice(
           t("toast.movedCountDetail", { count: result.value.movedCount }) +
             (result.value.skippedCount
               ? t("toast.skippedSuffix", { count: result.value.skippedCount })
               : "") +
             t("common.sentenceEnd"),
+          result.value.historyEntryId,
         );
       }
       if (folderIds.length > 0) {
@@ -5699,12 +5712,14 @@ function AppInner() {
                 moved: folderResult.value.movedCount,
                 skipped: folderResult.value.skippedCount,
               }),
+              folderResult.value.historyEntryId,
             );
           } else {
             setNotice(
               t("toast.folderMoveDone", {
                 count: folderResult.value.movedCount,
               }),
+              folderResult.value.historyEntryId,
             );
           }
         }
@@ -5718,94 +5733,59 @@ function AppInner() {
     }
   }
 
-  async function undoManagedMove(
-    operationId: string,
-    conflictStrategy: "error" | "keep-both" | "replace" | "skip" = "error",
-  ) {
-    if (!api || !library) return;
-    setUndoMoveDialog(null);
-    setUiState("loading");
-    try {
-      const result = await api.undoMoveAssets({
-        libraryId: library.libraryId,
-        operationId,
-        conflictStrategy,
-      });
-      if (!result.ok) {
-        if (result.error.code === "ASSET_MOVE_CONFLICT") {
-          // Keep the conflict decision available when the filesystem changed
-          // again between the initial prompt and the retry. Previously the
-          // dialog was closed first and the retry degraded into a generic
-          // “move failed” toast, leaving the operation neither undone nor
-          // actionable.
-          setUndoMoveDialog({
-            operationId,
-            conflictStrategy:
-              conflictStrategy === "error" ? "keep-both" : conflictStrategy,
-          });
-        }
-        throw new LibraryOperationError(result.error);
-      }
-      setLastUndoableOp(null);
-      setNotice(
-        t("toast.undoMoveDone", { count: result.value.undoneCount }) +
-          (result.value.skippedCount
-            ? t("toast.conflictAssetsSkippedSuffix", {
-                count: result.value.skippedCount,
-              })
-            : "") +
-          t("common.sentenceEnd"),
-      );
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.undoMoveFailed"), locale));
-    } finally {
-      setUiState("ready");
+  async function undoLastFileOp(expectedHistoryEntryId?: string) {
+    if (isEditableTextTarget(document.activeElement)) {
+      document.execCommand("undo");
+      return;
     }
-  }
-
-  async function undoManagedCopy(
-    operationId: string,
-    conflictStrategy: "error" | "keep-both" | "replace" | "skip" = "error",
-  ) {
     if (!api || !library) return;
+    const current = operationHistory?.undoTop;
+    const historyEntryId = expectedHistoryEntryId ?? current?.historyEntryId;
+    if (!historyEntryId) return;
     setUiState("loading");
     try {
-      const result = await api.undoCopyAssets({
+      const result = await api.undoOperationHistory({
         libraryId: library.libraryId,
-        operationId,
-        conflictStrategy,
+        expectedHistoryEntryId: historyEntryId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setLastUndoableOp(null);
+      setOperationHistory(result.value);
       setNotice(
-        t("toast.undoCopyDone", { count: result.value.undoneCount }) +
-          (result.value.skippedCount
-            ? t("toast.conflictAssetsSkippedSuffix", {
-                count: result.value.skippedCount,
-              })
-            : "") +
-          t("common.sentenceEnd"),
+        t("toast.historyUndoDone", { count: current?.affectedCount ?? 1 }),
       );
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, t("toast.undoCopyFailed"), locale));
+      setError(toMessage(caught, t("toast.historyUndoFailed"), locale));
+      await refreshOperationHistory();
     } finally {
       setUiState("ready");
     }
   }
 
-  async function undoLastFileOp() {
-    if (!lastUndoableOp) return;
-    if (lastUndoableOp.kind === "trash") {
-      await requestRestoreTrashedAssets([...lastUndoableOp.assetIds]);
+  async function redoLastOperation() {
+    if (isEditableTextTarget(document.activeElement)) {
+      document.execCommand("redo");
       return;
     }
-    if (lastUndoableOp.kind === "copy") {
-      await undoManagedCopy(lastUndoableOp.operationId);
-      return;
+    if (!api || !library) return;
+    const current = operationHistory?.redoTop;
+    if (!current) return;
+    setUiState("loading");
+    try {
+      const result = await api.redoOperationHistory({
+        libraryId: library.libraryId,
+        expectedHistoryEntryId: current.historyEntryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setOperationHistory(result.value);
+      setNotice(t("toast.historyRedoDone", { count: current.affectedCount }));
+      await reloadCurrentContent();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.historyRedoFailed"), locale));
+      await refreshOperationHistory();
+    } finally {
+      setUiState("ready");
     }
-    await undoManagedMove(lastUndoableOp.operationId);
   }
 
   async function deletePermanentFromTrash(assetIds: string[]) {
@@ -5994,6 +5974,7 @@ function AppInner() {
     try {
       let trashedAssets = 0;
       let trashedFolders = 0;
+      let historyEntryId: string | undefined;
       if (assetIds.length > 0) {
         const result = await api.trashAssets({
           libraryId: library.libraryId,
@@ -6001,6 +5982,7 @@ function AppInner() {
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedAssets = result.value.trashedCount;
+        historyEntryId = result.value.historyEntryId;
         const collectionResult = await api.listCollections({
           libraryId: library.libraryId,
         });
@@ -6014,12 +5996,14 @@ function AppInner() {
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedFolders += 1;
         trashedAssets += result.value.trashedAssetCount;
+        historyEntryId = result.value.historyEntryId;
       }
       setNotice(
         t("toast.selectionTrashed", {
           folders: trashedFolders,
           assets: trashedAssets,
         }),
+        historyEntryId,
       );
       clearAssetSelection();
       if (
@@ -6547,6 +6531,7 @@ function AppInner() {
     };
     const unsubscribe = api.onAssetsChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
+      void refreshOperationHistory();
       // Serpent-yqrl: while a user import is applying, each committed asset
       // triggers a silent canvas refresh so cards appear one-by-one.
       if (uiStateRef.current === "importing") {
@@ -6586,6 +6571,7 @@ function AppInner() {
     });
     const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
+      void refreshOperationHistory();
       // Cross-process change-sequence bumps are not asset mutation counts.
       // Refresh silently without forging an asset.changed payload.
       if (uiStateRef.current === "importing") {
@@ -6603,7 +6589,7 @@ function AppInner() {
       unsubscribe();
       unsubscribeLibraryChanged();
     };
-  }, [api, applyLoadedMetadata, library, locale, selectedAssetId, setError, setNotice, t]);
+  }, [api, applyLoadedMetadata, library, locale, refreshOperationHistory, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -6638,7 +6624,6 @@ function AppInner() {
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
       moveOpen: Boolean(moveDialog),
-      undoMoveOpen: Boolean(undoMoveDialog),
       collectionEditorOpen: Boolean(collectionEditor),
       exportDialogOpen,
       importLibraryChooserOpen,
@@ -6665,7 +6650,6 @@ function AppInner() {
     batchRelinkPreview,
     restoreDialog,
     moveDialog,
-    undoMoveDialog,
     collectionEditor,
     exportDialogOpen,
     importLibraryChooserOpen,
@@ -6700,7 +6684,6 @@ function AppInner() {
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
-    setUndoMoveDialog,
     setCollectionEditor,
     setExportDialogOpen,
     setImportLibraryChooserOpen,
@@ -6743,7 +6726,6 @@ function AppInner() {
       batchRelinkPreview ||
       restoreDialog ||
       moveDialog ||
-      undoMoveDialog ||
       collectionEditor ||
       exportDialogOpen ||
       importLibraryChooserOpen ||
@@ -7845,7 +7827,16 @@ function AppInner() {
     state: {
       libraryOpen: Boolean(library),
       busy,
-      hasUndoableOperation: lastUndoableOp !== null,
+      hasUndoableOperation: editableTextFocused
+        || (operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined),
+      hasRedoableOperation: editableTextFocused
+        || (operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined),
+      undoLabel: operationHistory?.undoTop === null || operationHistory?.undoTop === undefined
+        ? undefined
+        : t("shell.mainMenuUndoCount", { count: operationHistory.undoTop.affectedCount }),
+      redoLabel: operationHistory?.redoTop === null || operationHistory?.redoTop === undefined
+        ? undefined
+        : t("shell.mainMenuRedoCount", { count: operationHistory.redoTop.affectedCount }),
       hasSelectedAssets: selectedAssetIds.length > 0,
       hasPasteTarget: browsePasteDestination !== undefined,
       hasBrowseAssets: browseScopeAssetIds.length > 0,
@@ -7870,6 +7861,7 @@ function AppInner() {
         setLibrarySettingsOpen(true);
       },
       undo: () => void undoLastFileOp(),
+      redo: () => void redoLastOperation(),
       copySelection: () => {
         const copyIds = selectedAssets
           .filter((asset) => asset.availability === "available" && !asset.deletedAt)
@@ -8650,22 +8642,18 @@ function AppInner() {
                         onDismiss={() => dismissToast(message.id)}
                         onTransitionEnd={handleToastTransitionEnd}
                         onUndo={
-                          lastUndoableOp &&
                           message.kind === "notice" &&
-                          isUndoTarget
-                            ? () => void undoLastFileOp()
+                          isUndoTarget &&
+                          message.historyEntryId
+                            ? () => void undoLastFileOp(message.historyEntryId)
                             : undefined
                         }
                         toastId={message.id}
                         undoLabel={
-                          lastUndoableOp &&
                           message.kind === "notice" &&
-                          isUndoTarget
-                            ? lastUndoableOp.kind === "copy"
-                              ? t("action.undoCopy")
-                              : lastUndoableOp.kind === "move"
-                                ? t("action.undoMove")
-                                : t("action.undoTrash")
+                          isUndoTarget &&
+                          message.historyEntryId
+                            ? t("action.undo")
                             : undefined
                         }
                       />
@@ -9691,23 +9679,6 @@ function AppInner() {
           onCancel={() => setMoveDialog(null)}
         />
       )}
-      <UndoMoveDialog
-        open={undoMoveDialog !== null}
-        conflictStrategy={undoMoveDialog?.conflictStrategy ?? "keep-both"}
-        onConflictStrategyChange={(strategy) =>
-          setUndoMoveDialog((current) =>
-            current ? { ...current, conflictStrategy: strategy } : current,
-          )
-        }
-        onConfirm={() =>
-          undoMoveDialog &&
-          void undoManagedMove(
-            undoMoveDialog.operationId,
-            undoMoveDialog.conflictStrategy,
-          )
-        }
-        onCancel={() => setUndoMoveDialog(null)}
-      />
       <CollectionEditorDialog
         open={collectionEditor !== null}
         description={collectionEditor?.description ?? ""}

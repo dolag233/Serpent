@@ -1,11 +1,11 @@
 import type { AutomationWorkerClient } from '../automation/command-gateway';
-import type { WorkerCommand } from '../shared/protocol/requests';
+import type { WorkerCommand, WorkerHistoryContext } from '../shared/protocol/requests';
 import type { WorkerResult } from '../shared/protocol/responses';
 
 export interface AutomationWorkerRequester {
   request(
     command: WorkerCommand,
-    options?: { dispatch?: 'automation-readonly' },
+    options?: { dispatch?: 'automation-readonly'; historyContext?: WorkerHistoryContext },
   ): Promise<WorkerResult>;
 }
 
@@ -71,12 +71,17 @@ export class AutomationLibraryWorkerAdapter implements AutomationWorkerClient {
 
   request(
     command: WorkerCommand,
-    options: { signal?: AbortSignal; readonly?: boolean } = {},
+    options: { signal?: AbortSignal; readonly?: boolean; historyContext?: WorkerHistoryContext } = {},
   ): Promise<WorkerResult> {
     if (options.signal?.aborted) return Promise.reject(new Error('Automation execution cancelled before Worker dispatch.'));
     const request = options.readonly
-      ? this.workerClient.request(command, { dispatch: 'automation-readonly' })
-      : this.workerClient.request(command);
+      ? this.workerClient.request(command, {
+        dispatch: 'automation-readonly',
+        ...(options.historyContext === undefined ? {} : { historyContext: options.historyContext }),
+      })
+      : this.workerClient.request(command, {
+        ...(options.historyContext === undefined ? {} : { historyContext: options.historyContext }),
+      });
     if (options.signal === undefined) {
       return request.then((result) => {
         this.observeAiEnqueue(command, result, options);

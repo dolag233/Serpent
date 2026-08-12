@@ -56,6 +56,12 @@ export const PUBLIC_ERROR_MESSAGES = {
   AUTOMATION_UNDO_NOT_AVAILABLE: 'This automation result cannot be undone.',
   AUTOMATION_UNDO_STALE: 'The files changed, so this automation result can no longer be undone safely.',
   PLUGIN_HOOK_BLOCKED: 'A plugin blocked this operation before it could run.',
+  HISTORY_ENTRY_NOT_FOUND: 'No reversible operation is available for this request.',
+  HISTORY_NOT_TOP: 'The requested operation is no longer the current undo or redo target.',
+  HISTORY_NOT_REVERSIBLE: 'This operation cannot be undone or redone.',
+  HISTORY_TRANSITION_IN_PROGRESS: 'Another undo or redo operation is already in progress.',
+  HISTORY_STALE: 'The files or records changed, so this operation cannot be reversed safely.',
+  HISTORY_TOO_LARGE: 'This operation is too large to retain in the undo history.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

@@ -43,7 +43,7 @@ export type UseInspectorMultiEditParams = {
   setAssetMetadata: Dispatch<SetStateAction<AssetMetadataResult | null>>;
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setTrashedAssets: Dispatch<SetStateAction<AssetSummary[]>>;
-  setNotice: (message: string | null) => void;
+  setNotice: (message: string | null, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
 };
 
@@ -186,6 +186,7 @@ export function useInspectorMultiEdit({
       const targetLibraryId = library.libraryId;
       let updated = 0;
       let conflicts = 0;
+      let lastHistoryEntryId: string | undefined;
       for (const assetId of assetIds) {
         let current = metadataByAssetRef.current.get(assetId);
         if (!current) {
@@ -218,6 +219,7 @@ export function useInspectorMultiEdit({
           }
           metadataByAssetRef.current.set(assetId, result.value);
           updated += 1;
+          lastHistoryEntryId = result.value.historyEntryId;
           if ("favorite" in fields && fields.favorite !== undefined) {
             const favorite = fields.favorite;
             const updateSummary = (asset: AssetSummary): AssetSummary =>
@@ -239,7 +241,7 @@ export function useInspectorMultiEdit({
       if (conflicts > 0) {
         setNotice(t("toast.metadataVersionConflict"));
       } else if (updated > 0) {
-        setNotice(t("toast.metadataSaved"));
+        setNotice(t("toast.metadataSaved"), lastHistoryEntryId);
       }
     },
     [
@@ -301,6 +303,7 @@ export function useInspectorMultiEdit({
             result.value.skipped,
             locale,
           ),
+          result.value.historyEntryId,
         );
       } catch (caught) {
         setError(toMessage(caught, t("toast.batchRatingFailed"), locale));

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { utilityProcess, type UtilityProcess } from 'electron';
 
-import type { WorkerCommand } from '../shared/protocol/requests';
+import type { WorkerCommand, WorkerHistoryContext } from '../shared/protocol/requests';
 import type { AppLogger } from './app-logger';
 import { mediaBinaryWorkerEnv } from './media-binary-env';
 import {
@@ -202,7 +202,7 @@ export class LibraryWorkerClient {
 
   request(
     command: WorkerCommand,
-    options: { dispatch?: 'automation-readonly' } = {},
+    options: { dispatch?: 'automation-readonly'; historyContext?: WorkerHistoryContext } = {},
   ): Promise<WorkerResult> {
     const child = this.#child;
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
@@ -226,6 +226,7 @@ export class LibraryWorkerClient {
         requestId,
         command,
         ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
+        ...(options.historyContext === undefined ? {} : { historyContext: options.historyContext }),
       });
     });
   }

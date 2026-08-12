@@ -51,7 +51,7 @@ export type UseInspectorAssetMetadataParams = {
   setAiContent: Dispatch<SetStateAction<InspectorAiContent | null>>;
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setTrashedAssets: Dispatch<SetStateAction<AssetSummary[]>>;
-  setNotice: (message: string | null) => void;
+  setNotice: (message: string | null, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
 };
 
@@ -326,7 +326,7 @@ export function useInspectorAssetMetadata({
           if (selectedAssetIdRef.current === targetAssetId) {
             setAssetMetadata(result.value);
           }
-          setNotice(t("toast.metadataSaved"));
+          setNotice(t("toast.metadataSaved"), result.value.historyEntryId);
         } catch (caught) {
           setError(toMessage(caught, t("toast.metadataSaveFailed"), locale));
         }

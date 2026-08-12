@@ -190,6 +190,8 @@ const automationExecutionRecordSchema = z.strictObject({
   lastCommandId: nonBlankString.nullable(),
   failureCode: automationExecutionFailureCodeSchema.nullable(),
   summary: executionSummarySchema.nullable(),
+  /** Worker-owned history receipts produced by successful mutations in this execution. */
+  historyEntryIds: z.array(nonBlankString).max(10_000).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   finishedAt: z.string().datetime().nullable(),
@@ -297,6 +299,7 @@ function safeRecord(record: AutomationExecutionRecord): AutomationExecutionRecor
       : { authorizedLibraryIds: [...record.authorizedLibraryIds] }),
     resourceBudget: { ...record.resourceBudget },
     summary: record.summary === null ? null : { ...record.summary },
+    historyEntryIds: [...record.historyEntryIds],
   };
 }
 
@@ -542,6 +545,7 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
       lastCommandId: null,
       failureCode: null,
       summary: null,
+      historyEntryIds: [],
       createdAt: now,
       updatedAt: now,
       finishedAt: null,
@@ -807,6 +811,52 @@ export class AutomationExecutionJournal implements AutomationExecutionResolver {
     return this.#snapshot.executions
       .filter((record) => libraryId === undefined || record.libraryId === libraryId)
       .map(safeRecord);
+  }
+
+  /**
+   * Main-owned projection of Worker history receipts.  The journal stores IDs
+   * only; it never accepts or persists a recipe, path, SQL fragment, or
+   * transport payload.  This lets the script adapter undo the mutations made
+   * by one execution without creating a second recovery authority.
+   */
+  appendHistoryEntry(executionId: string, historyEntryId: string): AutomationExecutionRecord | undefined {
+    const record = this.#find(executionId);
+    if (!record) return undefined;
+    const parsedHistoryEntryId = nonBlankString.parse(historyEntryId);
+    if (record.historyEntryIds.includes(parsedHistoryEntryId)) return safeRecord(record);
+    if (record.historyEntryIds.length >= 10_000) {
+      this.#logger.error('automation.history.receipt-limit', new Error('Automation history receipt limit reached.'), {
+        executionId,
+      });
+      return safeRecord(record);
+    }
+    record.historyEntryIds.push(parsedHistoryEntryId);
+    record.updatedAt = this.#now();
+    this.#persist();
+    this.#info('history-receipt', record, 'Worker history receipt attached to automation execution.', {
+      historyEntryId: parsedHistoryEntryId,
+    });
+    return safeRecord(record);
+  }
+
+  listHistoryEntryIds(executionId: string): string[] {
+    const record = this.#find(executionId);
+    return record === undefined ? [] : [...record.historyEntryIds];
+  }
+
+  /** Remove a receipt after the script compatibility undo route consumes it. */
+  consumeHistoryEntry(executionId: string, historyEntryId: string): AutomationExecutionRecord | undefined {
+    const record = this.#find(executionId);
+    if (!record) return undefined;
+    const index = record.historyEntryIds.indexOf(nonBlankString.parse(historyEntryId));
+    if (index < 0) return safeRecord(record);
+    record.historyEntryIds.splice(index, 1);
+    record.updatedAt = this.#now();
+    this.#persist();
+    this.#info('history-receipt.consumed', record, 'Automation history receipt was consumed by script undo.', {
+      historyEntryId,
+    });
+    return safeRecord(record);
   }
 
   createUndoGroup(input: CreateAutomationUndoGroupInput): AutomationUndoGroup {

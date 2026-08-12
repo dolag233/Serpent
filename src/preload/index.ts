@@ -282,26 +282,73 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.libraries };
   },
 
+  async getOperationHistoryStatus({ libraryId }: { libraryId: string }) {
+    const result = await request({ type: 'history.status.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.status') throw new Error('Unexpected history-status response.');
+    return { ok: true as const, value: result.status };
+  },
+
+  async undoOperationHistory({ libraryId, expectedHistoryEntryId }: {
+    libraryId: string;
+    expectedHistoryEntryId: string;
+  }) {
+    const result = await request({
+      type: 'history.undo.request',
+      libraryId,
+      expectedHistoryEntryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.undone') throw new Error('Unexpected history-undo response.');
+    return { ok: true as const, value: result.status };
+  },
+
+  async redoOperationHistory({ libraryId, expectedHistoryEntryId }: {
+    libraryId: string;
+    expectedHistoryEntryId: string;
+  }) {
+    const result = await request({
+      type: 'history.redo.request',
+      libraryId,
+      expectedHistoryEntryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'history.redone') throw new Error('Unexpected history-redo response.');
+    return { ok: true as const, value: result.status };
+  },
+
   async createFolder(input: {
     libraryId: string;
     parentFolderId?: string;
     name: string;
-  }): Promise<LibraryApiResult<ManagedFolderSummary>> {
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'folder.create.request', ...input });
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.created') throw new Error('Unexpected create-folder response.');
-    return { ok: true, value: result.folder };
+    return {
+      ok: true,
+      value: {
+        ...result.folder,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
   async renameFolder(input: {
     libraryId: string;
     folderId: string;
     newName: string;
-  }): Promise<LibraryApiResult<ManagedFolderSummary>> {
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'folder.rename.request', ...input });
     if (!result.ok) return failure(result);
     if (result.type !== 'folder.renamed') throw new Error('Unexpected rename-folder response.');
-    return { ok: true, value: result.folder };
+    return {
+      ok: true,
+      value: {
+        ...result.folder,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
   async copyFolder({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
@@ -357,6 +404,7 @@ const library: SerpentLibraryApi = Object.freeze({
       movedCount: number;
       skippedCount: number;
       folders: ManagedFolderSummary[];
+      historyEntryId?: string;
     }>
   > {
     const result = await request({
@@ -374,6 +422,7 @@ const library: SerpentLibraryApi = Object.freeze({
         movedCount: result.movedCount,
         skippedCount: result.skippedCount,
         folders: result.folders,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
       },
     };
   },
@@ -416,6 +465,7 @@ const library: SerpentLibraryApi = Object.freeze({
         folderId: result.folderId,
         trashedAssetCount: result.trashedAssetCount,
         removedFolderCount: result.removedFolderCount,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
       },
     };
   },
@@ -774,39 +824,39 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.tags };
   },
 
-  async createTag({ libraryId, name }: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary>> {
+  async createTag({ libraryId, name }: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'tag.create.request', libraryId, name });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.created') throw new Error('Unexpected create-tag response.');
-    return { ok: true, value: result.tag };
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async renameTag({ libraryId, tagId, name }: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary>> {
+  async renameTag({ libraryId, tagId, name }: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'tag.rename.request', libraryId, tagId, name });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.renamed') throw new Error('Unexpected rename-tag response.');
-    return { ok: true, value: result.tag };
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async deleteTag({ libraryId, tagId }: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string }>> {
+  async deleteTag({ libraryId, tagId }: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'tag.delete.request', libraryId, tagId });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.deleted') throw new Error('Unexpected delete-tag response.');
-    return { ok: true, value: { tagId: result.tagId } };
+    return { ok: true, value: { tagId: result.tagId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async deleteTags({ libraryId, tagIds }: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[] }>> {
+  async deleteTags({ libraryId, tagIds }: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[]; historyEntryId?: string }>> {
     const result = await request({ type: 'tag.delete-many.request', libraryId, tagIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.deleted-many') throw new Error('Unexpected delete-tags response.');
-    return { ok: true, value: { deletedTagIds: result.deletedTagIds } };
+    return { ok: true, value: { deletedTagIds: result.deletedTagIds, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async mergeTags({ libraryId, sourceTagIds, name }: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary>> {
+  async mergeTags({ libraryId, sourceTagIds, name }: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'tag.merge.request', libraryId, sourceTagIds, name });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.merged') throw new Error('Unexpected merge-tags response.');
-    return { ok: true, value: result.tag };
+    return { ok: true, value: { ...result.tag, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
   async getTagCooccurrenceGraph({ libraryId, minWeight, maxNodes, maxEdges }: { libraryId: string; minWeight?: number; maxNodes?: number; maxEdges?: number }): Promise<LibraryApiResult<TagCooccurrenceGraph>> {
@@ -816,18 +866,18 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.graph };
   },
 
-  async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>> {
+  async assignTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
     const result = await request({ type: 'tag.assign.request', libraryId, assetIds, tagIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.assigned') throw new Error('Unexpected assign-tags response.');
-    return { ok: true, value: { assignedCount: result.assignedCount, skipped: result.skipped } };
+    return { ok: true, value: { assignedCount: result.assignedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async removeTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[] }>> {
+  async removeTags({ libraryId, assetIds, tagIds }: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
     const result = await request({ type: 'tag.remove.request', libraryId, assetIds, tagIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'tag.removed') throw new Error('Unexpected remove-tags response.');
-    return { ok: true, value: { removedCount: result.removedCount, skipped: result.skipped } };
+    return { ok: true, value: { removedCount: result.removedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
   async listCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>> {
@@ -837,53 +887,53 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.collections };
   },
 
-  async createCollection({ libraryId, parentId, name }: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary>> {
+  async createCollection({ libraryId, parentId, name }: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'collection.create.request', libraryId, parentId, name });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.created') throw new Error('Unexpected create-collection response.');
-    return { ok: true, value: result.collection };
+    return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async updateCollection({ libraryId, collectionId, name, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary>> {
+  async updateCollection({ libraryId, collectionId, name, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'collection.update.request', libraryId, collectionId, name, description, coverAssetId, position });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.updated') throw new Error('Unexpected update-collection response.');
-    return { ok: true, value: result.collection };
+    return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async reorderCollections({ libraryId, orderedCollectionIds }: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[] }>> {
+  async reorderCollections({ libraryId, orderedCollectionIds }: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[]; historyEntryId?: string }>> {
     const result = await request({ type: 'collection.reorder.request', libraryId, orderedCollectionIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.reordered') throw new Error('Unexpected reorder-collections response.');
-    return { ok: true, value: { orderedCollectionIds: result.orderedCollectionIds } };
+    return { ok: true, value: { orderedCollectionIds: result.orderedCollectionIds, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async deleteCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>> {
+  async deleteCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'collection.delete.request', libraryId, collectionId });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.deleted') throw new Error('Unexpected delete-collection response.');
-    return { ok: true, value: { collectionId: result.collectionId } };
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async addCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>> {
+  async addCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'collection.assets.add.request', libraryId, collectionId, assetIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.assets.added') throw new Error('Unexpected add-collection-assets response.');
-    return { ok: true, value: { collectionId: result.collectionId } };
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async removeCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>> {
+  async removeCollectionAssets({ libraryId, collectionId, assetIds }: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'collection.assets.remove.request', libraryId, collectionId, assetIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.assets.removed') throw new Error('Unexpected remove-collection-assets response.');
-    return { ok: true, value: { collectionId: result.collectionId } };
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async reorderCollectionAssets({ libraryId, collectionId, orderedAssetIds }: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>> {
+  async reorderCollectionAssets({ libraryId, collectionId, orderedAssetIds }: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'collection.assets.reorder.request', libraryId, collectionId, orderedAssetIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.assets.reordered') throw new Error('Unexpected reorder-collection-assets response.');
-    return { ok: true, value: { collectionId: result.collectionId } };
+    return { ok: true, value: { collectionId: result.collectionId, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
   async listCollectionAssets({ libraryId, collectionId, recursive }: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>> {
@@ -921,11 +971,17 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { assetId: result.assetId, colorSpaceOverride: result.colorSpaceOverride } };
   },
 
-  async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult>> {
+  async setAssetMetadata({ libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author }: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult & { historyEntryId?: string }>> {
     const result = await request({ type: 'asset.metadata.set.request', libraryId, assetId, expectedVersion, description, rating, favorite, palette, sourcePageUrl, author });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.metadata.updated') throw new Error('Unexpected set-metadata response.');
-    return { ok: true, value: result.metadata };
+    return {
+      ok: true,
+      value: {
+        ...result.metadata,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
   async backfillAssetMetadata({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>> {
@@ -935,11 +991,11 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { backfilledCount: result.backfilledCount } };
   },
 
-  async setAssetsRating({ libraryId, assetIds, rating }: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>> {
+  async setAssetsRating({ libraryId, assetIds, rating }: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>> {
     const result = await request({ type: 'asset.rating.set.request', libraryId, assetIds, rating });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.rating.updated') throw new Error('Unexpected set-assets-rating response.');
-    return { ok: true, value: { updatedCount: result.updatedCount, skipped: result.skipped } };
+    return { ok: true, value: { updatedCount: result.updatedCount, skipped: result.skipped, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
   async listSmartCollections({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>> {
@@ -949,25 +1005,43 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: result.collections };
   },
 
-  async createSmartCollection({ libraryId, name, queryDefinitionJson }: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary>> {
+  async createSmartCollection({ libraryId, name, queryDefinitionJson }: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'smart-collection.create.request', libraryId, name, queryDefinitionJson });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.created') throw new Error('Unexpected create-smart-collection response.');
-    return { ok: true, value: result.collection };
+    return {
+      ok: true,
+      value: {
+        ...result.collection,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
-  async updateSmartCollection({ libraryId, collectionId, name, queryDefinitionJson, position }: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary>> {
+  async updateSmartCollection({ libraryId, collectionId, name, queryDefinitionJson, position }: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'smart-collection.update.request', libraryId, collectionId, name, queryDefinitionJson, position });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.updated') throw new Error('Unexpected update-smart-collection response.');
-    return { ok: true, value: result.collection };
+    return {
+      ok: true,
+      value: {
+        ...result.collection,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
-  async deleteSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>> {
+  async deleteSmartCollection({ libraryId, collectionId }: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>> {
     const result = await request({ type: 'smart-collection.delete.request', libraryId, collectionId });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.deleted') throw new Error('Unexpected delete-smart-collection response.');
-    return { ok: true, value: { collectionId: result.collectionId } };
+    return {
+      ok: true,
+      value: {
+        collectionId: result.collectionId,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
   async executeSmartCollection({ libraryId, collectionId, scopeMode, limit, offset }: { libraryId: string; collectionId: string; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>> {
@@ -995,18 +1069,31 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { plan: result.plan, apiFormat: result.apiFormat, model: result.model } };
   },
 
-  async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>> {
+  async trashAssets({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number; historyEntryId?: string }>> {
     const result = await request({ type: 'asset.trash.request', libraryId, assetIds });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.trashed') throw new Error('Unexpected trash response.');
-    return { ok: true, value: { trashedCount: result.trashedCount } };
+    return {
+      ok: true,
+      value: {
+        trashedCount: result.trashedCount,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
 
-  async restoreAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>> {
+  async restoreAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[]; historyEntryId?: string }>> {
     const result = await request({ type: 'asset.restore.request', libraryId, assetIds, targetFolderId, conflictStrategy });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.restored') throw new Error('Unexpected restore response.');
-    return { ok: true, value: { restoredCount: result.restoredCount, assets: result.assets } };
+    return {
+      ok: true,
+      value: {
+        restoredCount: result.restoredCount,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
   async previewRestoreAssets({ libraryId, assetIds, targetFolderId }: { libraryId: string; assetIds: string[]; targetFolderId?: string | null }): Promise<LibraryApiResult<{ hasNameConflicts: boolean }>> {
     const result = await request({ type: 'asset.restore-preview.request', libraryId, assetIds, targetFolderId });
@@ -1014,11 +1101,20 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'asset.restore-previewed') throw new Error('Unexpected restore-preview response.');
     return { ok: true, value: { hasNameConflicts: result.hasNameConflicts } };
   },
-  async moveAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>> {
+  async moveAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>> {
     const result = await request({ type: 'asset.move.request', libraryId, assetIds, targetFolderId, conflictStrategy });
     if (!result.ok) return result;
     if (result.type !== 'asset.moved') throw new Error('Unexpected move-assets response.');
-    return { ok: true, value: { movedCount: result.movedCount, skippedCount: result.skippedCount, operationId: result.operationId, assets: result.assets } };
+    return {
+      ok: true,
+      value: {
+        movedCount: result.movedCount,
+        skippedCount: result.skippedCount,
+        operationId: result.operationId,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
   async undoMoveAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
     const result = await request({ type: 'asset.move-undo.request', libraryId, operationId, conflictStrategy });
@@ -1026,11 +1122,20 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'asset.move-undone') throw new Error('Unexpected undo-move response.');
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
-  async copyAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>> {
+  async copyAssets({ libraryId, assetIds, targetFolderId, conflictStrategy }: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>> {
     const result = await request({ type: 'asset.copy.request', libraryId, assetIds, targetFolderId, conflictStrategy });
     if (!result.ok) return result;
     if (result.type !== 'asset.copied') throw new Error('Unexpected copy-assets response.');
-    return { ok: true, value: { copiedCount: result.copiedCount, skippedCount: result.skippedCount, operationId: result.operationId, assets: result.assets } };
+    return {
+      ok: true,
+      value: {
+        copiedCount: result.copiedCount,
+        skippedCount: result.skippedCount,
+        operationId: result.operationId,
+        assets: result.assets,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
+      },
+    };
   },
   async undoCopyAssets({ libraryId, operationId, conflictStrategy }: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>> {
     const result = await request({ type: 'asset.copy-undo.request', libraryId, operationId, conflictStrategy });
@@ -1039,11 +1144,17 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
-  async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary>> {
+  async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
     const result = await request({ type: 'asset.rename-file.request', libraryId, assetId, newBaseName });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.file-renamed') throw new Error('Unexpected rename-asset-file response.');
-    return { ok: true, value: result.asset };
+    return {
+      ok: true,
+      value: {
+        ...result.asset,
+        ...(result.historyEntryId === undefined ? {} : { historyEntryId: result.historyEntryId }),
+      },
+    };
   },
 
   async readTextAsset({ libraryId, assetId, maxBytes }: { libraryId: string; assetId: string; maxBytes?: number }) {
@@ -1118,6 +1229,7 @@ const library: SerpentLibraryApi = Object.freeze({
     restoredFolderCount: number;
     restoredAssetCount: number;
     folders: ManagedFolderSummary[];
+    historyEntryId?: string;
   }>> {
     const result = await request({
       type: 'trash.restore-folder.request',
@@ -1134,6 +1246,7 @@ const library: SerpentLibraryApi = Object.freeze({
         restoredFolderCount: result.restoredFolderCount,
         restoredAssetCount: result.restoredAssetCount,
         folders: result.folders,
+        ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
       },
     };
   },
@@ -2073,6 +2186,11 @@ const shell: SerpentShellApi = Object.freeze({
   setApplicationMenuCommandEnabled(command: ApplicationMenuCommand, enabled: boolean): void {
     // Best-effort: the native menu may be absent (Windows hides it).
     void ipcRenderer.invoke(APPLICATION_MENU_ITEM_STATE_CHANNEL, { command, enabled })
+      .catch(() => undefined);
+  },
+  setApplicationMenuCommandLabel(command: ApplicationMenuCommand, label: string): void {
+    if (label.length === 0 || label.length > 200) return;
+    void ipcRenderer.invoke(APPLICATION_MENU_ITEM_STATE_CHANNEL, { command, label })
       .catch(() => undefined);
   },
   async nativeEditCopy(): Promise<void> {

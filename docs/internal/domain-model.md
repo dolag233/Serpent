@@ -1,7 +1,7 @@
 # Serpent 领域模型
 
 > 状态：生效，持续演进
-> 日期：2026-07-11；最后校准：2026-08-10
+> 日期：2026-07-11；最后校准：2026-08-12
 
 ## 核心关系
 
@@ -32,6 +32,10 @@ Automation Capability 是稳定权限单位，不是风险等级。MCP Permissio
 不可逆、低频或可能造成大范围数据损失的操作属于 dangerous。危险 MCP 命令第一次调用只生成精确风险报告和一次性 challenge，不产生写入；Agent 以绑定同一 credential、命令、参数、目标库和前置版本的第二次调用确认后才可执行。challenge 过期、篡改、重放或前提变化均不执行。它防止 Agent 单次误调用，不替代 credential 信任和能力禁用；全程不要求人类接管。
 
 MCP Server 是正式 Desktop Main 内嵌、由设置管理的 loopback 服务，只负责标准 Streamable HTTP transport、客户端认证和 Automation Command 的协议适配。核心工具目录静态可发现，资源库目标显式，Desktop 只是非阻塞投影。端口可达和客户端已认证不能绕过权限策略、危险 challenge 或领域校验。
+
+所有入口产生的可撤回领域修改进入同一个、每资源库独立的 Operation History。Library Worker 原子记录版本化的 forward/inverse recipe、受影响实体和前置条件，并且是撤回/重做执行的唯一所有者；Main 只建立用户意图组并把状态投影到窗口。Automation Execution 可以引用 History Group，但自动化执行日志不拥有恢复 payload。`file_operations` 继续只负责单次文件转换的崩溃恢复，不充当用户 Undo 栈。完整语义见 ADR-0032。
+
+Operation History 是线性的：撤回后发生新修改会清空 redo 分支；只有当前栈顶可转换。永久磁盘删除等不可逆修改是 History Barrier，会使相关旧条目失效，但不会被伪装为可撤回。历史随资源库跨应用重启保留；Worker 重开库时先收口未完成的 HistoryAttempt，再重新验证恢复材料和实体前置条件，不能因记录存在就盲目承诺可撤回。
 
 插件 Contribution（菜单、Hook、UI、输入捕获、Provider）不属于脚本/MCP Action 面。
 

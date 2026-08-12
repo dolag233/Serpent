@@ -276,7 +276,7 @@ serpent.assets.moveToFolder(assetIds, targetFolderId, {
 
 ### `assets.moveToTrash(assetIds)`
 
-返回 `{ trashedCount: number; operationId: string }`。需要计划确认；这是移入 Serpent 回收站，不是永久删除。恢复/撤销必须通过 Desktop/Main 的恢复入口。
+返回 `{ trashedCount: number; operationId: string }`。需要计划确认；这是移入 Serpent 回收站，不是永久删除。命令提交后，Console 宿主会同时收到 Worker 生成的 `historyEntryId`，撤回/重做走资源库统一操作历史；`operationId` 只是文件转换恢复日志引用，脚本正文不能拿它重放操作。
 
 ## `trash`
 
@@ -342,7 +342,7 @@ serpent.ui.notify({
 
 默认宿主预算：CPU 10 秒、墙钟 60 秒、内存 64 MiB、输出 1 MiB、最多 4 个并发命令、最多 128 个未完成 Promise。停止按钮、关闭 Console 或 Renderer 销毁会取消执行；取消不会把未完成命令伪装成成功。
 
-文件计划确认只在 Desktop/Main 完成。脚本没有 `undo()` 方法，也不能消费内部 plan hash/state token；Console 可对本次执行显示的 Undo Group 发起撤销，并返回已撤销/跳过计数。
+文件计划确认只在 Desktop/Main 完成。脚本正文不能消费内部 plan hash、state token、recipe 或文件恢复引用；Console 宿主可按 `executionId` 撤回本次执行记录的全部 Worker `historyEntryId`，按提交的逆序调用统一 `history.undo`，并返回已撤回计数。遇到栈顶变化或前置条件冲突时会安全停止并返回 stale 错误，不会跳过冲突条目继续撤回更早操作。
 
 ## Console 宿主控制 API（不是脚本正文 API）
 
@@ -364,7 +364,7 @@ interface SerpentAutomationScriptApi {
 }
 ```
 
-`scriptId`、`handle`、`executionId` 和 `undoGroupId` 都是由 Main 签发的 opaque ID，不是路径、授权凭据或可自行生成的替代值。文件 API 只处理 `.serpent.js` / `.serpent.ts`，源文本上限 64 KiB；结果中的文件名和错误码可供 UI 展示，但绝对路径不会返回给 Renderer 或脚本正文。
+`scriptId`、`handle` 和 `executionId` 都是由 Main 签发的 opaque ID，不是路径、授权凭据或可自行生成的替代值。`undoGroupId` 仅为旧版本执行记录保留的兼容参数；新执行不把 Main JSON Undo Group 当作恢复权威，统一使用资源库 Worker 的 `historyEntryId`。文件 API 只处理 `.serpent.js` / `.serpent.ts`，源文本上限 64 KiB；结果中的文件名和错误码可供 UI 展示，但绝对路径不会返回给 Renderer 或脚本正文。
 
 ## 不是当前脚本 API 的东西
 

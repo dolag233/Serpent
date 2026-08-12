@@ -1,6 +1,10 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parseWorkerRequest, type WorkerRequest } from '../shared/protocol/requests';
+import {
+  parseWorkerRequest,
+  type WorkerCommand,
+  type WorkerRequest,
+} from '../shared/protocol/requests';
 import {
   parseWorkerControlMessage,
   type WorkerResponse,
@@ -637,7 +641,7 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   try {
     const result = await libraryService.runBoundedWrite(
       libraryId,
-      () => executeBoundedWriteWorkerCommand(libraryService, request.command),
+      () => executeBoundedWriteWorkerCommand(libraryService, request.command, request.historyContext),
     );
     if (result === undefined) {
       throw new Error(`Bounded write command ${request.command.type} has no executor.`);
@@ -652,6 +656,121 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   }
 }
 
+function recordDesktopAssetHistory(
+  command: Extract<WorkerCommand,
+    { type: 'asset.move' | 'asset.copy' | 'asset.trash' }>,
+  result: {
+    count: number;
+    operationId: string | null;
+  },
+  historyContext?: WorkerRequest['historyContext'],
+): string | undefined {
+  if (result.count <= 0 || !result.operationId) return undefined;
+  let kind: string;
+  let inverseKind: string;
+  let forwardPayload: Record<string, unknown>;
+  switch (command.type) {
+    case 'asset.move':
+      kind = 'managed-asset-move';
+      inverseKind = 'managed-asset-move-undo';
+      forwardPayload = {
+        assetIds: command.assetIds,
+        targetFolderId: command.targetFolderId,
+        conflictStrategy: command.conflictStrategy,
+      };
+      break;
+    case 'asset.copy':
+      kind = 'managed-asset-copy';
+      inverseKind = 'managed-asset-copy-undo';
+      forwardPayload = {
+        assetIds: command.assetIds,
+        targetFolderId: command.targetFolderId,
+        conflictStrategy: command.conflictStrategy,
+      };
+      break;
+    case 'asset.trash':
+      kind = 'asset-trash';
+      inverseKind = 'asset-trash-undo';
+      forwardPayload = { assetIds: command.assetIds };
+      break;
+  }
+  return libraryService.recordOperationHistory({
+    libraryId: command.libraryId,
+    source: historyContext?.source ?? 'desktop',
+    sourceReference: historyContext?.sourceReference ?? null,
+    commandId: command.type,
+    labelKey: `history.${command.type}`,
+    labelArgs: { count: result.count },
+    affectedCount: result.count,
+    affectedEntities: command.assetIds,
+    forwardRecipe: { kind, version: 1, payload: forwardPayload },
+    inverseRecipe: {
+      kind: inverseKind,
+      version: 1,
+      payload: { operationId: result.operationId },
+    },
+  }).historyEntryId;
+}
+
+function recordPermanentDeleteBarrier(
+  input: {
+    affectedCount: number;
+    affectedEntities?: readonly string[];
+    commandId: string;
+    labelKey: string;
+    libraryId: string;
+    reason: string;
+    historyContext?: WorkerRequest['historyContext'];
+  },
+): void {
+  if (input.affectedCount <= 0) return;
+  libraryService.recordOperationHistoryBarrier({
+    libraryId: input.libraryId,
+    source: input.historyContext?.source ?? 'desktop',
+    sourceReference: input.historyContext?.sourceReference ?? null,
+    commandId: input.commandId,
+    labelKey: input.labelKey,
+    reason: input.reason,
+    affectedCount: input.affectedCount,
+    affectedEntities: input.affectedEntities,
+  });
+}
+
+function recordDesktopAssetRenameHistory(
+  command: Extract<WorkerCommand, { type: 'asset.rename-file' }>,
+  beforeBaseName: string,
+  historyContext?: WorkerRequest['historyContext'],
+): string {
+  return libraryService.recordOperationHistory({
+    libraryId: command.libraryId,
+    source: historyContext?.source ?? 'desktop',
+    sourceReference: historyContext?.sourceReference ?? null,
+    commandId: command.type,
+    labelKey: 'history.asset.rename',
+    labelArgs: { count: 1 },
+    affectedCount: 1,
+    affectedEntities: [command.assetId],
+    forwardRecipe: {
+      kind: 'asset-rename',
+      version: 1,
+      payload: {
+        assetId: command.assetId,
+        expectedBaseName: beforeBaseName,
+        newBaseName: command.newBaseName,
+      },
+    },
+    inverseRecipe: {
+      kind: 'asset-rename',
+      version: 1,
+      payload: {
+        assetId: command.assetId,
+        expectedBaseName: command.newBaseName,
+        newBaseName: beforeBaseName,
+      },
+    },
+  }).historyEntryId;
+}
+
 async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
@@ -662,6 +781,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'library.change-sequence',
         libraryId: request.command.libraryId,
         changeSequence: libraryService.getChangeSequence(request.command.libraryId),
+      };
+    case 'history.status':
+      return {
+        ok: true,
+        type: 'history.status',
+        status: libraryService.getOperationHistoryStatus(request.command.libraryId),
       };
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
@@ -700,8 +825,48 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // Routed through runBoundedWrite / executeBoundedWriteWorkerCommand.
       throw new Error('Bounded folder.create write was not dispatched through its transaction fence.');
     case 'folder.rename': {
-      const folder = libraryService.renameManagedFolder(request.command);
-      return { ok: true, type: 'folder.renamed', folder };
+      const command = request.command;
+      const before = libraryService.getManagedFolderHistorySnapshot({
+        libraryId: command.libraryId,
+        folderIds: [command.folderId],
+      });
+      const folder = libraryService.renameManagedFolder(command);
+      const after = libraryService.getManagedFolderHistorySnapshot({
+        libraryId: command.libraryId,
+        folderIds: [command.folderId],
+      });
+      const beforeRoot = before.find((item) => item.folderId === command.folderId);
+      const afterRoot = after.find((item) => item.folderId === command.folderId);
+      if (!beforeRoot || !afterRoot) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      const historyEntryId = libraryService.recordOperationHistory({
+        libraryId: command.libraryId,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+        commandId: command.type,
+        labelKey: 'history.folder.rename',
+        labelArgs: { count: 1 },
+        affectedCount: 1,
+        affectedEntities: [command.folderId],
+        forwardRecipe: {
+          kind: 'managed-folder-rename',
+          version: 1,
+          payload: {
+            folderId: command.folderId,
+            expectedName: beforeRoot.name,
+            newName: afterRoot.name,
+          },
+        },
+        inverseRecipe: {
+          kind: 'managed-folder-rename',
+          version: 1,
+          payload: {
+            folderId: command.folderId,
+            expectedName: afterRoot.name,
+            newName: beforeRoot.name,
+          },
+        },
+      }).historyEntryId;
+      return { ok: true, type: 'folder.renamed', folder, historyEntryId };
     }
     case 'folder.clone': {
       const result = libraryService.cloneManagedFolder(request.command);
@@ -714,13 +879,65 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'folder.move': {
+      const before = libraryService.getManagedFolderHistorySnapshot({
+        libraryId: request.command.libraryId,
+        folderIds: request.command.folderIds,
+      });
       const result = libraryService.moveManagedFolders(request.command);
+      const after = result.folders.length === 0
+        ? []
+        : libraryService.getManagedFolderHistorySnapshot({
+          libraryId: request.command.libraryId,
+          folderIds: result.folders.map((folder) => folder.folderId),
+        });
+      const beforeById = new Map(before.map((item) => [item.folderId, item]));
+      const afterById = new Map(after.map((item) => [item.folderId, item]));
+      const movedRoots = result.folders
+        .map((folder) => ({ before: beforeById.get(folder.folderId), after: afterById.get(folder.folderId) }))
+        .filter((item): item is { before: NonNullable<typeof item.before>; after: NonNullable<typeof item.after> } => item.before !== undefined && item.after !== undefined);
+      const historyEntryId = movedRoots.length === 0 ? undefined : libraryService.recordOperationHistory({
+        libraryId: request.command.libraryId,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+        commandId: request.command.type,
+        labelKey: 'history.folder.move',
+        labelArgs: { count: movedRoots.length },
+        affectedCount: movedRoots.length,
+        affectedEntities: movedRoots.map((item) => item.after.folderId),
+        forwardRecipe: {
+          kind: 'managed-folder-move',
+          version: 1,
+          payload: {
+            moves: movedRoots.map((item) => ({
+              folderId: item.after.folderId,
+              expectedName: item.before.name,
+              expectedParentFolderId: item.before.parentFolderId,
+              targetParentFolderId: item.after.parentFolderId,
+              targetName: item.after.name,
+            })),
+          },
+        },
+        inverseRecipe: {
+          kind: 'managed-folder-move',
+          version: 1,
+          payload: {
+            moves: movedRoots.map((item) => ({
+              folderId: item.before.folderId,
+              expectedName: item.after.name,
+              expectedParentFolderId: item.after.parentFolderId,
+              targetParentFolderId: item.before.parentFolderId,
+              targetName: item.before.name,
+            })),
+          },
+        },
+      }).historyEntryId;
       return {
         ok: true,
         type: 'folder.moved',
         movedCount: result.movedCount,
         skippedCount: result.skippedCount,
         folders: result.folders,
+        ...(historyEntryId ? { historyEntryId } : {}),
       };
     }
     case 'folder.get-path': {
@@ -753,19 +970,70 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'folder.restore-trashed': {
       const result = libraryService.restoreTrashedManagedFolder(request.command);
-      return { ok: true, type: 'folder.restored-trashed', ...result };
+      const restoredRoot = result.folders[0];
+      const historyEntryId = restoredRoot ? libraryService.recordOperationHistory({
+        libraryId: request.command.libraryId,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+        commandId: request.command.type,
+        labelKey: 'history.folder.restore',
+        labelArgs: { count: result.restoredFolderCount },
+        affectedCount: result.restoredFolderCount,
+        affectedEntities: result.folders.map((folder) => folder.folderId),
+        forwardRecipe: {
+          kind: 'managed-folder-restore',
+          version: 1,
+          payload: { tombstoneId: request.command.tombstoneId },
+        },
+        inverseRecipe: {
+          kind: 'managed-folder-trash',
+          version: 1,
+          payload: { folderId: restoredRoot.folderId },
+        },
+      }).historyEntryId : undefined;
+      return { ok: true, type: 'folder.restored-trashed', ...result, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'folder.trash': {
       const result = libraryService.trashManagedFolder(request.command);
+      const historyEntryId = result.tombstoneIds[0] ? libraryService.recordOperationHistory({
+        libraryId: request.command.libraryId,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+        commandId: request.command.type,
+        labelKey: 'history.folder.trash',
+        labelArgs: { count: result.removedFolderCount },
+        affectedCount: result.removedFolderCount,
+        affectedEntities: [request.command.folderId],
+        forwardRecipe: {
+          kind: 'managed-folder-trash',
+          version: 1,
+          payload: { folderId: request.command.folderId },
+        },
+        inverseRecipe: {
+          kind: 'managed-folder-restore',
+          version: 1,
+          payload: { tombstoneId: result.tombstoneIds[0] },
+        },
+      }).historyEntryId : undefined;
       return {
         ok: true,
         type: 'folder.trashed',
         folderId: request.command.folderId,
         ...result,
+        ...(historyEntryId ? { historyEntryId } : {}),
       };
     }
     case 'folder.delete-from-disk': {
       const result = await libraryService.deleteManagedFolderFromDiskAsync(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.folder.delete-from-disk',
+        reason: 'managed-folder-permanent-delete',
+        affectedCount: result.deletedAssetCount + result.removedFolderCount,
+        affectedEntities: [request.command.folderId],
+        historyContext: request.historyContext,
+      });
       return {
         ok: true,
         type: 'folder.deleted-from-disk',
@@ -774,11 +1042,43 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'folder.delete-empty': {
+      const before = libraryService.getManagedFolderHistorySnapshot({
+        libraryId: request.command.libraryId,
+        folderIds: request.command.folderIds,
+      });
       const result = libraryService.deleteEmptyManagedFolders(request.command);
-      return { ok: true, type: 'folder.empty-deleted', ...result };
+      const deletedIds = new Set(result.deletedFolderIds);
+      const deletedBefore = before.filter((folder) => deletedIds.has(folder.folderId));
+      const historyEntryId = deletedBefore.length === 0
+        ? undefined
+        : libraryService.recordManagedFolderSnapshotHistory({
+          libraryId: request.command.libraryId,
+          before: deletedBefore,
+          after: [],
+          commandId: request.command.type,
+          labelKey: 'history.folder.delete-empty',
+          affectedCount: deletedBefore.length,
+          source: request.historyContext?.source ?? 'desktop',
+          sourceReference: request.historyContext?.sourceReference ?? null,
+        }).historyEntryId;
+      return {
+        ok: true,
+        type: 'folder.empty-deleted',
+        ...result,
+        ...(historyEntryId ? { historyEntryId } : {}),
+      };
     }
     case 'linked-folder.remove': {
       const result = libraryService.removeLinkedFolder(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.linked-folder.remove',
+        reason: 'linked-folder-index-remove',
+        affectedCount: Math.max(1, result.removedAssetCount),
+        affectedEntities: [request.command.folderId],
+        historyContext: request.historyContext,
+      });
       return {
         ok: true,
         type: 'linked-folder.removed',
@@ -788,6 +1088,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'linked-folder.delete-subtree': {
       const result = await libraryService.deleteLinkedFolderSubtree(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.linked-folder.delete-subtree',
+        reason: request.command.deleteFromDisk
+          ? 'linked-folder-source-permanent-delete'
+          : 'linked-folder-source-os-trash-and-index-remove',
+        affectedCount: Math.max(1, result.deletedAssetCount),
+        affectedEntities: [request.command.linkedFolderId],
+        historyContext: request.historyContext,
+      });
       return {
         ok: true,
         type: 'linked-folder.subtree-deleted',
@@ -1152,7 +1463,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         });
       }
       const { trashedCount, operationId } = libraryService.trashAssets(request.command);
-      return { ok: true, type: 'asset.trashed', trashedCount, operationId };
+      const historyEntryId = recordDesktopAssetHistory(request.command, {
+        count: trashedCount,
+        operationId,
+      }, request.historyContext);
+      return {
+        ok: true,
+        type: 'asset.trashed',
+        trashedCount,
+        operationId,
+        ...(historyEntryId ? { historyEntryId } : {}),
+      };
     }
     case 'asset.content.replace': {
       if (request.command.automationPlan) {
@@ -1198,8 +1519,32 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.restore': {
       const { restoredCount, assets } = libraryService.restoreAssets(request.command);
+      const historyEntryId = restoredCount > 0 ? libraryService.recordOperationHistory({
+        libraryId: request.command.libraryId,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+        commandId: request.command.type,
+        labelKey: 'history.asset.restore',
+        labelArgs: { count: restoredCount },
+        affectedCount: restoredCount,
+        affectedEntities: assets.map((asset) => asset.assetId),
+        forwardRecipe: {
+          kind: 'asset-restore',
+          version: 1,
+          payload: {
+            assetIds: assets.map((asset) => asset.assetId),
+            targetFolderId: request.command.targetFolderId ?? undefined,
+            conflictStrategy: request.command.conflictStrategy,
+          },
+        },
+        inverseRecipe: {
+          kind: 'asset-trash',
+          version: 1,
+          payload: { assetIds: assets.map((asset) => asset.assetId) },
+        },
+      }).historyEntryId : undefined;
       scheduleThumbnailScene(request.command.libraryId, 'restore', assets.map((asset) => asset.assetId));
-      return { ok: true, type: 'asset.restored', restoredCount, assets };
+      return { ok: true, type: 'asset.restored', restoredCount, assets, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'asset.restore-preview': {
       const preview = libraryService.previewRestoreAssets(request.command);
@@ -1221,8 +1566,20 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         });
       }
       const { movedCount, skippedCount, operationId, assets } = libraryService.moveAssets(request.command);
+      const historyEntryId = recordDesktopAssetHistory(request.command, {
+        count: movedCount,
+        operationId,
+      }, request.historyContext);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
-      return { ok: true, type: 'asset.moved', movedCount, skippedCount, operationId, assets };
+      return {
+        ok: true,
+        type: 'asset.moved',
+        movedCount,
+        skippedCount,
+        operationId,
+        assets,
+        ...(historyEntryId ? { historyEntryId } : {}),
+      };
     }
     case 'asset.move-undo': {
       const { undoneCount, skippedCount, assets } = libraryService.undoMoveAssets(request.command);
@@ -1236,8 +1593,20 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.copy': {
       const { copiedCount, skippedCount, operationId, assets } = libraryService.copyAssets(request.command);
+      const historyEntryId = recordDesktopAssetHistory(request.command, {
+        count: copiedCount,
+        operationId,
+      }, request.historyContext);
       scheduleThumbnailScene(request.command.libraryId, 'visible', assets.map((asset) => asset.assetId));
-      return { ok: true, type: 'asset.copied', copiedCount, skippedCount, operationId, assets };
+      return {
+        ok: true,
+        type: 'asset.copied',
+        copiedCount,
+        skippedCount,
+        operationId,
+        assets,
+        ...(historyEntryId ? { historyEntryId } : {}),
+      };
     }
     case 'asset.copy-undo': {
       const { undoneCount, skippedCount, assets } = libraryService.undoCopyAssets(request.command);
@@ -1256,23 +1625,65 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           assetStates: request.command.automationPlan.assetStates,
         });
       }
+      const beforeBaseName = libraryService.getAssetFileBaseName(request.command);
       const { asset } = libraryService.renameAssetFile(request.command);
-      return { ok: true, type: 'asset.file-renamed', asset };
+      const historyEntryId = beforeBaseName === request.command.newBaseName
+        ? undefined
+        : recordDesktopAssetRenameHistory(request.command, beforeBaseName, request.historyContext);
+      return { ok: true, type: 'asset.file-renamed', asset, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'asset.rename-files': {
-      if (request.command.automationPlan) {
+      const command = request.command;
+      if (command.automationPlan) {
         libraryService.validateAutomationFileOperationPlan({
-          libraryId: request.command.libraryId,
+          libraryId: command.libraryId,
           operation: 'rename-files',
-          assetIds: request.command.items.map((item) => item.assetId),
-          renameItems: request.command.items,
-          planHash: request.command.automationPlan.planHash,
-          expectedChangeSequence: request.command.automationPlan.expectedChangeSequence,
-          assetStates: request.command.automationPlan.assetStates,
+          assetIds: command.items.map((item) => item.assetId),
+          renameItems: command.items,
+          planHash: command.automationPlan.planHash,
+          expectedChangeSequence: command.automationPlan.expectedChangeSequence,
+          assetStates: command.automationPlan.assetStates,
         });
       }
-      const result = libraryService.renameAssetFiles(request.command);
-      return { ok: true, type: 'asset.files-renamed', ...result };
+      const before = new Map(command.items.map((item) => [item.assetId, libraryService.getAssetFileBaseName({ libraryId: command.libraryId, assetId: item.assetId })]));
+      const result = libraryService.renameAssetFiles(command);
+      const successful = command.items.filter((item) => result.assets.some((asset) => asset.assetId === item.assetId));
+      let historyEntryId: string | undefined;
+      if (successful.length > 0) {
+        historyEntryId = libraryService.recordOperationHistory({
+          libraryId: command.libraryId,
+          source: request.historyContext?.source ?? 'desktop',
+          sourceReference: request.historyContext?.sourceReference ?? null,
+          commandId: command.type,
+          labelKey: 'history.asset.rename-many',
+          labelArgs: { count: successful.length },
+          affectedCount: successful.length,
+          affectedEntities: successful.map((item) => item.assetId),
+          forwardRecipe: {
+            kind: 'asset-rename',
+            version: 1,
+            payload: {
+              items: successful.map((item) => ({
+                assetId: item.assetId,
+                expectedBaseName: before.get(item.assetId),
+                newBaseName: item.newBaseName,
+              })),
+            },
+          },
+          inverseRecipe: {
+            kind: 'asset-rename',
+            version: 1,
+            payload: {
+              items: successful.map((item) => ({
+                assetId: item.assetId,
+                expectedBaseName: item.newBaseName,
+                newBaseName: before.get(item.assetId),
+              })),
+            },
+          },
+        }).historyEntryId;
+      }
+      return { ok: true, type: 'asset.files-renamed', ...result, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'asset.restore-if-original-vacant': {
       if (request.command.automationPlan) {
@@ -1303,14 +1714,43 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.delete-permanent': {
       const { deletedCount, skippedCount, skippedReasons } = libraryService.deleteAssetsPermanent(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.asset.delete-permanent',
+        reason: 'trash-asset-permanent-delete',
+        affectedCount: deletedCount,
+        affectedEntities: request.command.assetIds,
+        historyContext: request.historyContext,
+      });
       return { ok: true, type: 'asset.deleted-permanent', deletedCount, skippedCount, skippedReasons };
     }
     case 'asset.delete-from-disk': {
       const { deletedCount } = await libraryService.deleteAssetsFromDiskAsync(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.asset.delete-from-disk',
+        reason: 'managed-asset-permanent-delete',
+        affectedCount: deletedCount,
+        affectedEntities: request.command.assetIds,
+        historyContext: request.historyContext,
+      });
       return { ok: true, type: 'asset.deleted-from-disk', deletedCount };
     }
     case 'asset.delete-linked': {
       const { deletedCount, failedCount, failures } = await libraryService.deleteLinkedAssets(request.command);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.asset.delete-linked',
+        reason: request.command.deleteSourceFile
+          ? 'linked-asset-source-os-trash-and-index-remove'
+          : 'linked-asset-index-remove',
+        affectedCount: deletedCount,
+        affectedEntities: request.command.assetIds,
+        historyContext: request.historyContext,
+      });
       return { ok: true, type: 'asset.deleted-linked', deletedCount, failedCount, failures };
     }
     case 'asset.list-trash': {
@@ -1319,6 +1759,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.purge-trash': {
       const { purgedCount, skippedCount, failures } = libraryService.emptyTrash(request.command.libraryId);
+      recordPermanentDeleteBarrier({
+        libraryId: request.command.libraryId,
+        commandId: request.command.type,
+        labelKey: 'history.asset.purge-trash',
+        reason: 'trash-purge',
+        affectedCount: purgedCount,
+        historyContext: request.historyContext,
+      });
       return { ok: true, type: 'asset.purge-trash', purgedCount, skippedCount, failures };
     }
     case 'asset.relink': {
@@ -2424,6 +2872,27 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       throw new Error('Automation file-operation planning requires automation-readonly dispatch.');
     case 'automation.file-import-plan':
       throw new Error('Automation import planning requires automation-readonly dispatch.');
+    case 'history.undo':
+      {
+        const result = await libraryService.undoOperationHistory(request.command);
+        return {
+          ok: true,
+          type: 'history.undone',
+          historyEntryId: result.historyEntryId,
+          affectedCount: result.affectedCount,
+          status: result.status,
+        };
+      }
+    case 'history.redo': {
+      const result = await libraryService.redoOperationHistory(request.command);
+      return {
+        ok: true,
+        type: 'history.redone',
+        historyEntryId: result.historyEntryId,
+        affectedCount: result.affectedCount,
+        status: result.status,
+      };
+    }
     default:
       return assertNever(request.command);
   }

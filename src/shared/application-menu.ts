@@ -134,7 +134,6 @@ export function buildApplicationMenuTemplate(
   options: ApplicationMenuTemplateOptions,
 ): ApplicationMenuItemTemplate[] {
   const isMac = options.platform === "darwin";
-  const zh = options.locale === "zh-CN";
 
   const viewSubmenu: ApplicationMenuItemTemplate[] = [
     { role: "reload", labelKey: "shell.mainMenuReload" },

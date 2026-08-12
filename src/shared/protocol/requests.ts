@@ -157,6 +157,20 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.list.request'),
   }),
   z.strictObject({
+    type: z.literal('history.status.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.undo.request'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.redo.request'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.list-recent.request'),
   }),
   // The renderer may only name a library path that Main itself recorded in the
@@ -1038,6 +1052,20 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.change-sequence'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.status'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.undo'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.redo'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('folder.create'),
@@ -2116,6 +2144,11 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /** Origin metadata is non-secret and only affects the history projection. */
+  historyContext: z.strictObject({
+    source: z.enum(['desktop', 'script', 'mcp', 'plugin']),
+    sourceReference: identifierSchema.nullable().optional(),
+  }).optional(),
   /**
    * Automation reads share the Worker protocol but must not inherit desktop
    * side effects such as thumbnail scheduling. Only Main-owned transports can
@@ -2125,6 +2158,7 @@ export const workerRequestSchema = z.strictObject({
 });
 
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;
+export type WorkerHistoryContext = NonNullable<WorkerRequest['historyContext']>;
 
 export function parseWorkerRequest(input: unknown): WorkerRequest {
   return workerRequestSchema.parse(input);

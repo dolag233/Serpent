@@ -4,7 +4,6 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { formatBatchTagNotice } from "./batch-tag-notice";
 import { translateForLocale, useLocale } from "./i18n";
-import type { UndoableFileOp } from "./use-asset-drag-drop-handlers";
 
 export interface UseBatchActionsParams {
   api: SerpentLibraryApi | null;
@@ -12,7 +11,7 @@ export interface UseBatchActionsParams {
   setUiState: (state: "loading" | "importing" | "ready") => void;
   setTags: (tags: TagSummary[]) => void;
   setCollections: (collections: CollectionSummary[]) => void;
-  setNotice: (msg: string) => void;
+  setNotice: (msg: string, historyEntryId?: string) => void;
   setError: (msg: string | null) => void;
   reloadCurrentContent: () => Promise<void>;
   chooseTag: (tagId: string) => Promise<void>;
@@ -20,7 +19,6 @@ export interface UseBatchActionsParams {
   clearAssetSelection: () => void;
   activeTagId: string | null;
   activeCollectionId: string | null;
-  setLastUndoableOp: (op: UndoableFileOp | null) => void;
 }
 
 export interface UseBatchActionsResult {
@@ -28,7 +26,7 @@ export interface UseBatchActionsResult {
   batchRemoveTagFromSelection: (tagId: string, assetIds: string[]) => Promise<void>;
   batchAddSelectionToCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
   batchRemoveSelectionFromCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
-  trashManagedAssets: (assetIds: string[]) => Promise<void>;
+  trashManagedAssets: (assetIds: string[]) => Promise<string | undefined>;
   deleteManagedAssetsFromDisk: (assetIds: string[]) => Promise<void>;
   copyManagedSelectionToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => Promise<void>;
 }
@@ -47,7 +45,6 @@ export function useBatchActions({
   clearAssetSelection,
   activeTagId,
   activeCollectionId,
-  setLastUndoableOp,
 }: UseBatchActionsParams): UseBatchActionsResult {
   const { locale } = useLocale();
 
@@ -76,6 +73,7 @@ export function useBatchActions({
           result.value.skipped,
           locale,
         ),
+        result.value.historyEntryId,
       );
     } catch (caught) {
       setError(
@@ -112,6 +110,7 @@ export function useBatchActions({
           result.value.skipped,
           locale,
         ),
+        result.value.historyEntryId,
       );
     } catch (caught) {
       setError(
@@ -144,6 +143,7 @@ export function useBatchActions({
         translateForLocale(locale, "toast.batchAddToCollection", {
           count: assetIds.length,
         }),
+        result.value.historyEntryId,
       );
     } catch (caught) {
       setError(
@@ -201,6 +201,7 @@ export function useBatchActions({
           : translateForLocale(locale, "toast.batchRemoveDone", {
               count: affectedAssetIds.length,
             }),
+        result.value.historyEntryId,
       );
     } catch (caught) {
       setError(
@@ -216,7 +217,7 @@ export function useBatchActions({
   }
 
   async function trashManagedAssets(assetIds: string[]) {
-    if (!api || !library) return;
+    if (!api || !library) return undefined;
     setUiState("loading");
     try {
       const result = await api.trashAssets({
@@ -224,15 +225,16 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setLastUndoableOp({ kind: "trash", assetIds: [...assetIds] });
       setNotice(
         translateForLocale(locale, "toast.batchTrashed", {
           count: result.value.trashedCount,
         }),
+        result.value.historyEntryId,
       );
       await refreshCollections();
       clearAssetSelection();
       await reloadCurrentContent();
+      return result.value.historyEntryId;
     } catch (caught) {
       setError(
         toMessage(
@@ -241,6 +243,7 @@ export function useBatchActions({
           locale,
         ),
       );
+      return undefined;
     } finally {
       setUiState("ready");
     }
@@ -255,8 +258,6 @@ export function useBatchActions({
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      // Disk deletion is irreversible, so it must invalidate any prior undo.
-      setLastUndoableOp(null);
       setNotice(
         translateForLocale(locale, "toast.assetsDeletedFromDisk", {
           count: result.value.deletedCount,

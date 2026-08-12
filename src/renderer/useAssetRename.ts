@@ -51,7 +51,7 @@ export interface UseAssetRenameParams {
   library: RendererLibrarySummary | null;
   visibleAssets: AssetSummary[];
   reloadCurrentContent: () => Promise<void>;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   setSelectedAssetId: (assetId: string) => void;
   setSelectedAssetIds: (assetIds: string[]) => void;
 }
@@ -255,6 +255,7 @@ export function useAssetRename({
         translateForLocale(locale, "assetRename.success", {
           name: result.value.displayName,
         }),
+        result.value.historyEntryId,
       );
       await reloadCurrentContent();
       // The rename keeps the asset id, so re-assert selection after refresh.

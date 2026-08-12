@@ -25,6 +25,7 @@ import type {
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
   LibraryChangedEvent,
+  HistoryStatus,
   RendererLibrarySummary,
   RendererLifecycleEvent,
   ExportProgressEvent,
@@ -170,16 +171,19 @@ export interface SerpentLibraryApi {
     libraryId: string;
   }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>>;
   listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>>;
+  getOperationHistoryStatus(input: { libraryId: string }): Promise<LibraryApiResult<HistoryStatus>>;
+  undoOperationHistory(input: { libraryId: string; expectedHistoryEntryId: string }): Promise<LibraryApiResult<HistoryStatus>>;
+  redoOperationHistory(input: { libraryId: string; expectedHistoryEntryId: string }): Promise<LibraryApiResult<HistoryStatus>>;
   createFolder(input: {
     libraryId: string;
     parentFolderId?: string;
     name: string;
-  }): Promise<LibraryApiResult<ManagedFolderSummary>>;
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
   renameFolder(input: {
     libraryId: string;
     folderId: string;
     newName: string;
-  }): Promise<LibraryApiResult<ManagedFolderSummary>>;
+  }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
   copyFolder(input: {
     libraryId: string;
@@ -212,6 +216,7 @@ export interface SerpentLibraryApi {
       movedCount: number;
       skippedCount: number;
       folders: ManagedFolderSummary[];
+      historyEntryId?: string;
     }>
   >;
   listFolders(input: { libraryId: string; showIgnored?: boolean }): Promise<LibraryApiResult<ManagedFolderSummary[]>>;
@@ -228,6 +233,7 @@ export interface SerpentLibraryApi {
       folderId: string;
       trashedAssetCount: number;
       removedFolderCount: number;
+      historyEntryId?: string;
     }>
   >;
   deleteFolderFromDisk(input: {
@@ -350,50 +356,50 @@ export interface SerpentLibraryApi {
   ): () => void;
   // Tags
   listTags(input: { libraryId: string }): Promise<LibraryApiResult<TagSummary[]>>;
-  createTag(input: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
-  renameTag(input: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary>>;
-  deleteTag(input: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string }>>;
-  deleteTags(input: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[] }>>;
-  mergeTags(input: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary>>;
+  createTag(input: { libraryId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>>;
+  renameTag(input: { libraryId: string; tagId: string; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>>;
+  deleteTag(input: { libraryId: string; tagId: string }): Promise<LibraryApiResult<{ tagId: string; historyEntryId?: string }>>;
+  deleteTags(input: { libraryId: string; tagIds: string[] }): Promise<LibraryApiResult<{ deletedTagIds: string[]; historyEntryId?: string }>>;
+  mergeTags(input: { libraryId: string; sourceTagIds: string[]; name: string }): Promise<LibraryApiResult<TagSummary & { historyEntryId?: string }>>;
   getTagCooccurrenceGraph(input: { libraryId: string; minWeight?: number; maxNodes?: number; maxEdges?: number }): Promise<LibraryApiResult<TagCooccurrenceGraph>>;
-  assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[] }>>;
-  removeTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[] }>>;
+  assignTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ assignedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>>;
+  removeTags(input: { libraryId: string; assetIds: string[]; tagIds: string[] }): Promise<LibraryApiResult<{ removedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>>;
   // Collections
   listCollections(input: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>>;
-  createCollection(input: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary>>;
-  updateCollection(input: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary>>;
-  reorderCollections(input: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[] }>>;
-  deleteCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
-  addCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
-  removeCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
-  reorderCollectionAssets(input: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string }>>;
+  createCollection(input: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>>;
+  updateCollection(input: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>>;
+  reorderCollections(input: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[]; historyEntryId?: string }>>;
+  deleteCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
+  addCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
+  removeCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
+  reorderCollectionAssets(input: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
   listCollectionAssets(input: { libraryId: string; collectionId: string; recursive: boolean }): Promise<LibraryApiResult<AssetSummary[]>>;
   listAssetCollectionMemberships(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<Array<{ assetId: string; collectionId: string }>>>;
   // Asset Metadata
   getAssetMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
   getExtractedMetadata(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<ExtractedMetadataResult>>;
   setAssetColorSpaceOverride(input: { libraryId: string; assetId: string; colorSpace: string | null }): Promise<LibraryApiResult<{ assetId: string; colorSpaceOverride: string | null }>>;
-  setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult>>;
-  setAssetsRating(input: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[] }>>;
+  setAssetMetadata(input: { libraryId: string; assetId: string; expectedVersion: number; description?: string; rating?: number; favorite?: boolean; palette?: string[]; sourcePageUrl?: string; author?: string }): Promise<LibraryApiResult<AssetMetadataResult & { historyEntryId?: string }>>;
+  setAssetsRating(input: { libraryId: string; assetIds: string[]; rating: number }): Promise<LibraryApiResult<{ updatedCount: number; skipped: TagOperationSkip[]; historyEntryId?: string }>>;
   backfillAssetMetadata(input: { libraryId: string }): Promise<LibraryApiResult<{ backfilledCount: number }>>;
   // Smart Collections
   listSmartCollections(input: { libraryId: string }): Promise<LibraryApiResult<SmartCollectionSummary[]>>;
-  createSmartCollection(input: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary>>;
-  updateSmartCollection(input: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary>>;
-  deleteSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string }>>;
+  createSmartCollection(input: { libraryId: string; name: string; queryDefinitionJson: string }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>>;
+  updateSmartCollection(input: { libraryId: string; collectionId: string; name?: string; queryDefinitionJson?: string; position?: number }): Promise<LibraryApiResult<SmartCollectionSummary & { historyEntryId?: string }>>;
+  deleteSmartCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
   executeSmartCollection(input: { libraryId: string; collectionId: string; scopeMode?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number }>>;
   // Search
   searchAssets(input: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; limit?: number; offset?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[] }>>;
   planAiSearch(input: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>>;
   // Trash / Delete
-  trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number }>>;
-  restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[] }>>;
+  trashAssets(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ trashedCount: number; historyEntryId?: string }>>;
+  restoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ restoredCount: number; assets: AssetSummary[]; historyEntryId?: string }>>;
   previewRestoreAssets(input: { libraryId: string; assetIds: string[]; targetFolderId?: string | null }): Promise<LibraryApiResult<{ hasNameConflicts: boolean }>>;
-  moveAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>>;
+  moveAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>>;
   undoMoveAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
-  copyAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] }>>;
+  copyAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>>;
   undoCopyAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
-  renameAssetFile(input: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary>>;
+  renameAssetFile(input: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>>;
   readTextAsset(input: { libraryId: string; assetId: string; maxBytes?: number }): Promise<LibraryApiResult<{
     assetId: string;
     revisionId: string;
@@ -427,6 +433,7 @@ export interface SerpentLibraryApi {
     restoredFolderCount: number;
     restoredAssetCount: number;
     folders: ManagedFolderSummary[];
+    historyEntryId?: string;
   }>>;
   purgeTrash(input: { libraryId: string }): Promise<LibraryApiResult<{ purgedCount: number; skippedCount: number; failures: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
   // Linked delete

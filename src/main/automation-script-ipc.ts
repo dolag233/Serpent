@@ -201,6 +201,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     return {
       ok: true,
       result: result.result,
+      ...(result.historyEntryId === undefined ? {} : { historyEntryId: result.historyEntryId }),
       ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
     };
   };
@@ -421,13 +422,61 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       }
       const parsed = automationScriptUndoInputSchema.safeParse(input);
       const journal = options.journal();
-      const recovery = options.undoGroup?.();
-      if (!parsed.success || !journal || !recovery) {
+      const worker = options.workerClient();
+      if (!parsed.success || !journal) {
         return { ok: false, error: createPublicError('INTERNAL_ERROR') };
       }
       const senderId = owners.get(parsed.data.executionId)?.senderId
         ?? completedOwners.get(parsed.data.executionId);
       if (senderId !== event.sender.id) {
+        return { ok: false, error: createPublicError('AUTOMATION_UNDO_GROUP_NOT_FOUND') };
+      }
+
+      // Unified history is the primary route.  A script execution records
+      // only Worker-owned receipts in Main; undoing them goes back through the
+      // same public history command used by Desktop and MCP, in reverse
+      // commit order.  The legacy UndoGroup branch below remains solely for
+      // persisted executions created before the Worker history migration.
+      const historyEntryIds = journal.listHistoryEntryIds(parsed.data.executionId);
+      if (parsed.data.undoGroupId === undefined && historyEntryIds.length > 0) {
+        const record = journal.get(parsed.data.executionId);
+        if (!worker || record?.libraryId === null || record?.libraryId === undefined) {
+          return { ok: false, error: createPublicError('AUTOMATION_UNDO_NOT_AVAILABLE') };
+        }
+        const undoneHistoryEntryIds: string[] = [];
+        let undoneCount = 0;
+        try {
+          for (const historyEntryId of [...historyEntryIds].reverse()) {
+            const result = await worker.request({
+              type: 'history.undo',
+              libraryId: record.libraryId,
+              expectedHistoryEntryId: historyEntryId,
+            });
+            if (!result.ok || result.type !== 'history.undone') {
+              throw new Error('The Worker could not undo the next script history entry.');
+            }
+            undoneHistoryEntryIds.push(historyEntryId);
+            undoneCount += result.affectedCount;
+            journal.consumeHistoryEntry(parsed.data.executionId, historyEntryId);
+          }
+          return {
+            ok: true,
+            historyEntryIds: undoneHistoryEntryIds,
+            undoneCount,
+            skippedCount: 0,
+          };
+        } catch (error) {
+          options.logger()?.error('automation.history-undo.failed', error, {
+            executionId: parsed.data.executionId,
+            undoneCount,
+            requestedCount: historyEntryIds.length,
+          });
+          return { ok: false, error: createPublicError('AUTOMATION_UNDO_STALE') };
+        }
+      }
+
+      const recovery = options.undoGroup?.();
+      if (!recovery) {
         return { ok: false, error: createPublicError('AUTOMATION_UNDO_GROUP_NOT_FOUND') };
       }
       const group = parsed.data.undoGroupId === undefined

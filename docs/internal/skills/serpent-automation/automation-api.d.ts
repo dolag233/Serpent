@@ -14,6 +14,9 @@ declare global {
     | 'library.inspect'
     | 'library.change-sequence'
     | 'execution.status'
+    | 'history.status'
+    | 'history.undo'
+    | 'history.redo'
     | 'ui.notify'
     | 'folder.list'
     | 'linked-folder.list'
@@ -156,6 +159,26 @@ declare global {
     };
   }
 
+  interface SerpentHistoryEntry {
+    readonly historyEntryId: string;
+    readonly source: 'desktop' | 'script' | 'mcp' | 'plugin';
+    readonly sourceReference: string | null;
+    readonly labelKey: string;
+    readonly labelArgs: Readonly<Record<string, string | number>>;
+    readonly policy: 'reversible' | 'barrier';
+    readonly state: 'open' | 'applied' | 'undoing' | 'undone' | 'redoing' | 'stale';
+    readonly staleCode: string | null;
+    readonly affectedCount: number;
+  }
+
+  interface SerpentHistoryStatus {
+    readonly libraryId: string;
+    readonly undoTop: SerpentHistoryEntry | null;
+    readonly redoTop: SerpentHistoryEntry | null;
+    readonly staleTop: SerpentHistoryEntry | null;
+    readonly transitionInProgress: boolean;
+  }
+
   interface SerpentAutomationApi {
     readonly library: {
       inspect(): Promise<SerpentLibrary>;
@@ -261,6 +284,19 @@ declare global {
         status(input?: { readonly jobIds?: readonly string[]; readonly limit?: number; readonly offset?: number }): Promise<unknown>;
         enqueue(input?: { readonly assetIds?: readonly string[]; readonly folderId?: string; readonly resumePaused?: boolean }): Promise<unknown>;
       };
+    };
+    readonly history: {
+      status(): Promise<SerpentHistoryStatus>;
+      undo(expectedHistoryEntryId: string): Promise<{
+        readonly historyEntryId: string;
+        readonly affectedCount: number;
+        readonly status: SerpentHistoryStatus;
+      }>;
+      redo(expectedHistoryEntryId: string): Promise<{
+        readonly historyEntryId: string;
+        readonly affectedCount: number;
+        readonly status: SerpentHistoryStatus;
+      }>;
     };
     readonly trash: {
       list(input?: { readonly limit?: number; readonly offset?: number }): Promise<SerpentPage<SerpentAsset>>;

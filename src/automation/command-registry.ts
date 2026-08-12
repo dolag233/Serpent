@@ -31,6 +31,7 @@ import {
   internalLibrarySummarySchema,
   tagOperationSkipSchema,
   mediaJobSchema,
+  historyStatusSchema,
   workerResultSchema,
   type WorkerResult,
 } from '../shared/protocol/responses';
@@ -441,6 +442,19 @@ export interface AutomationFileOperationPlanProof {
 export type AutomationImpact = 'read' | 'metadata-write' | 'file-write' | 'destructive' | 'external-effect';
 export type AutomationApprovalPolicy = 'none' | 'execution' | 'plan' | 'forbidden';
 export type AutomationAtomicity = 'single-transaction' | 'recoverable-file-operation' | 'best-effort';
+export type AutomationHistoryPolicy = 'none' | 'reversible' | 'barrier';
+export type AutomationHistoryGroup = 'single-command' | 'execution';
+
+/**
+ * History is declared beside the command instead of being inferred from an
+ * old boolean.  The Worker still owns the recipe and receipt; this metadata
+ * only describes the public capability catalogue and grouping policy.
+ */
+export interface AutomationHistoryDescriptor {
+  policy: AutomationHistoryPolicy;
+  recipeKind?: string;
+  group?: AutomationHistoryGroup;
+}
 
 export const automationCommandInputSchemas = {
   'library.create': z.strictObject({
@@ -485,6 +499,9 @@ export const automationCommandInputSchemas = {
   'execution.status': z.strictObject({
     executionId: nonBlankString.optional(),
   }),
+  'history.status': noInputSchema,
+  'history.undo': z.strictObject({ expectedHistoryEntryId: nonBlankString }),
+  'history.redo': z.strictObject({ expectedHistoryEntryId: nonBlankString }),
   'ui.notify': z.strictObject({
     severity: z.enum(['info', 'warning', 'error']),
     message: z.string().min(1).max(500),
@@ -807,6 +824,26 @@ const libraryChangeSequenceWorkerResultSchema = z.strictObject({
   changeSequence: z.number().int().nonnegative(),
 });
 
+const historyStatusWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('history.status'),
+  status: historyStatusSchema,
+});
+const historyUndoneWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('history.undone'),
+  historyEntryId: nonBlankString,
+  affectedCount: z.number().int().nonnegative(),
+  status: historyStatusSchema,
+});
+const historyRedoneWorkerResultSchema = z.strictObject({
+  ok: z.literal(true),
+  type: z.literal('history.redone'),
+  historyEntryId: nonBlankString,
+  affectedCount: z.number().int().nonnegative(),
+  status: historyStatusSchema,
+});
+
 const folderListWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('folder.list'),
@@ -897,6 +934,7 @@ const assetRatingWorkerResultSchema = z.strictObject({
   type: z.literal('asset.rating.updated'),
   updatedCount: z.number().int().nonnegative(),
   skipped: z.array(tagOperationSkipSchema),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const mediaAssetPathsWorkerResultSchema = z.strictObject({
@@ -911,6 +949,7 @@ const assetTrashWorkerResultSchema = z.strictObject({
   type: z.literal('asset.trashed'),
   trashedCount: z.number().int().nonnegative(),
   operationId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const assetDeletePermanentWorkerResultSchema = z.strictObject({
@@ -964,12 +1003,14 @@ const assetMoveWorkerResultSchema = z.strictObject({
   skippedCount: z.number().int().nonnegative(),
   operationId: nonBlankString.nullable(),
   assets: z.array(assetSummarySchema),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const assetRenameWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('asset.file-renamed'),
   asset: assetSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const assetRenameFilesWorkerResultSchema = z.strictObject({
@@ -981,6 +1022,7 @@ const assetRenameFilesWorkerResultSchema = z.strictObject({
     reason: z.enum(['asset_not_found', 'asset_unavailable', 'name_conflict', 'invalid_name']),
   })),
   assets: z.array(assetSummarySchema),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const assetListTrashWorkerResultSchema = z.strictObject({
@@ -1072,6 +1114,7 @@ const tagCreateWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('tag.created'),
   tag: tagSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const tagAssignWorkerResultSchema = z.strictObject({
@@ -1079,6 +1122,7 @@ const tagAssignWorkerResultSchema = z.strictObject({
   type: z.literal('tag.assigned'),
   assignedCount: z.number().int().nonnegative(),
   skipped: z.array(tagOperationSkipSchema),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const tagRemoveWorkerResultSchema = z.strictObject({
@@ -1086,24 +1130,29 @@ const tagRemoveWorkerResultSchema = z.strictObject({
   type: z.literal('tag.removed'),
   removedCount: z.number().int().nonnegative(),
   skipped: z.array(tagOperationSkipSchema),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const folderCreateWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('folder.created'),
   folder: managedFolderSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const folderRenamedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('folder.renamed'), folder: managedFolderSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const folderMovedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('folder.moved'),
   movedCount: z.number().int().nonnegative(), skippedCount: z.number().int().nonnegative(),
   folders: z.array(managedFolderSummarySchema),
+  historyEntryId: nonBlankString.optional(),
 });
 const folderEmptyDeletedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('folder.empty-deleted'), deletedFolderIds: z.array(nonBlankString),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const linkedFolderCreatedWorkerResultSchema = z.strictObject({
@@ -1132,29 +1181,36 @@ const assetMetadataSetWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('asset.metadata.updated'),
   metadata: assetMetadataResultSchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const assetMetadataBatchSetWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('asset.metadata.updated-many'),
   metadata: z.array(assetMetadataResultSchema).min(1),
+  historyEntryId: nonBlankString.optional(),
 });
 
 const collectionCreateWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('collection.created'),
   collection: collectionSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const collectionUpdatedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('collection.updated'), collection: collectionSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const collectionReorderedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('collection.reordered'), orderedCollectionIds: z.array(nonBlankString),
+  historyEntryId: nonBlankString.optional(),
 });
 const collectionDeletedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('collection.deleted'), collectionId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 const collectionAssetsReorderedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('collection.assets.reordered'), collectionId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 const collectionAssetsListWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('collection.assets.list'), assets: z.array(assetSummarySchema),
@@ -1162,15 +1218,19 @@ const collectionAssetsListWorkerResultSchema = z.strictObject({
 
 const tagRenamedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('tag.renamed'), tag: tagSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const tagDeletedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('tag.deleted'), tagId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 const tagDeletedManyWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('tag.deleted-many'), deletedTagIds: z.array(nonBlankString),
+  historyEntryId: nonBlankString.optional(),
 });
 const tagMergedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('tag.merged'), tag: tagSummarySchema, mergedTagIds: z.array(nonBlankString),
+  historyEntryId: nonBlankString.optional(),
 });
 const tagCooccurrenceWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('tag.cooccurrence'), graph: z.unknown(),
@@ -1178,12 +1238,15 @@ const tagCooccurrenceWorkerResultSchema = z.strictObject({
 
 const smartCollectionCreatedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('smart-collection.created'), collection: smartCollectionSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const smartCollectionUpdatedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('smart-collection.updated'), collection: smartCollectionSummarySchema,
+  historyEntryId: nonBlankString.optional(),
 });
 const smartCollectionDeletedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('smart-collection.deleted'), collectionId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 const smartCollectionExecutedWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('smart-collection.executed'),
@@ -1193,6 +1256,7 @@ const assetCopyWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('asset.copied'),
   copiedCount: z.number().int().nonnegative(), skippedCount: z.number().int().nonnegative(),
   operationId: nonBlankString.nullable(), assets: z.array(assetSummarySchema),
+  historyEntryId: nonBlankString.optional(),
 });
 const mediaThumbnailArtifactWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('media.thumbnail-artifact'), artifactId: nonBlankString,
@@ -1212,12 +1276,14 @@ const collectionAssetsAddWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('collection.assets.added'),
   collectionId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const collectionAssetsRemoveWorkerResultSchema = z.strictObject({
   ok: z.literal(true),
   type: z.literal('collection.assets.removed'),
   collectionId: nonBlankString,
+  historyEntryId: nonBlankString.optional(),
 });
 
 const aiEnqueueWorkerResultSchema = z.strictObject({
@@ -1331,6 +1397,17 @@ export const automationCommandResultSchemas = {
       skipped: z.number().int().nonnegative().optional(),
       jobs: z.number().int().nonnegative().optional(),
     }).nullable(),
+  }),
+  'history.status': historyStatusSchema,
+  'history.undo': z.strictObject({
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
+  }),
+  'history.redo': z.strictObject({
+    historyEntryId: nonBlankString,
+    affectedCount: z.number().int().nonnegative(),
+    status: historyStatusSchema,
   }),
   'ui.notify': z.strictObject({
     shown: z.literal(true),
@@ -1532,7 +1609,9 @@ export interface AutomationCommandDescriptor<Id extends AutomationCommandId = Au
   supportsIdempotencyKey: boolean;
   supportsCancellation: boolean;
   supportsDetach: boolean;
+  /** @deprecated Use `history.policy`; retained for older host descriptions. */
   supportsUndo: boolean;
+  history?: AutomationHistoryDescriptor;
   atomicity: AutomationAtomicity;
   approvalPolicy: AutomationApprovalPolicy;
   /** Serpent-8b5b.2: the command is dangerous — MCP calls require the two-phase agent challenge. */
@@ -1553,7 +1632,7 @@ export interface AutomationCommandDescriptor<Id extends AutomationCommandId = Au
 }
 
 function readDescriptor<Id extends AutomationCommandId>(
-  descriptor: Omit<AutomationCommandDescriptor<Id>, 'apiVersion' | 'deprecated' | 'impact' | 'supportsDryRun' | 'supportsIdempotencyKey' | 'supportsCancellation' | 'supportsDetach' | 'supportsUndo' | 'atomicity' | 'approvalPolicy'>,
+  descriptor: Omit<AutomationCommandDescriptor<Id>, 'apiVersion' | 'deprecated' | 'impact' | 'supportsDryRun' | 'supportsIdempotencyKey' | 'supportsCancellation' | 'supportsDetach' | 'supportsUndo' | 'atomicity' | 'approvalPolicy' | 'history'>,
 ): AutomationCommandDescriptor<Id> {
   return {
     ...descriptor,
@@ -1565,6 +1644,7 @@ function readDescriptor<Id extends AutomationCommandId>(
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'none' },
     atomicity: 'single-transaction',
     approvalPolicy: 'none',
   };
@@ -1636,6 +1716,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'asset-metadata-batch-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_asset_metadata_set_many', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
@@ -1744,6 +1825,7 @@ export const automationCommandRegistry = [
     inputSchema: automationCommandInputSchemas['library.delete-from-disk'], resultSchema: automationCommandResultSchemas['library.delete-from-disk'], workerResultSchema: libraryDeletedWorkerResultSchema,
     requiredCapabilities: [], allowedSources: ['mcp'], impact: 'destructive', targetScope: 'library', supportsBatch: false,
     supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false,
+    history: { policy: 'barrier' },
     atomicity: 'best-effort', approvalPolicy: 'none', criticalOperation: true, mcp: { public: true, toolName: 'serpent_library_delete_from_disk', outputLimit: 1 },
     toWorkerCommand: (libraryId) => ({ type: 'library.delete-from-disk', libraryId }),
     projectResult: (result) => { const parsed = libraryDeletedWorkerResultSchema.safeParse(result); return parsed.success ? { libraryId: parsed.data.libraryId, deleted: true as const } : undefined; },
@@ -1887,6 +1969,90 @@ export const automationCommandRegistry = [
     projectResult: () => undefined,
   }),
   readDescriptor({
+    commandId: 'history.status',
+    summary: '读取当前资源库的撤回/重做栈顶状态；不返回路径或内部配方。',
+    inputSchema: automationCommandInputSchemas['history.status'],
+    resultSchema: automationCommandResultSchemas['history.status'],
+    workerResultSchema: historyStatusWorkerResultSchema,
+    requiredCapabilities: ['library.read'],
+    allowedSources: allReadSources,
+    targetScope: 'library',
+    supportsBatch: false,
+    mcp: { public: true, toolName: 'serpent_history_status', outputLimit: 1 },
+    libraryContext: 'active',
+    toWorkerCommand: (libraryId) => ({ type: 'history.status', libraryId }),
+    projectResult: (result) => {
+      const parsed = historyStatusWorkerResultSchema.safeParse(result);
+      return parsed.success ? parsed.data.status : undefined;
+    },
+  }),
+  {
+    commandId: 'history.undo',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '撤回当前资源库指定的栈顶历史条目；必须显式提供 historyEntryId。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['history.undo'],
+    resultSchema: automationCommandResultSchemas['history.undo'],
+    workerResultSchema: historyUndoneWorkerResultSchema,
+    requiredCapabilities: ['library.read'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'library',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    history: { policy: 'none' },
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'execution',
+    mcp: { public: true, toolName: 'serpent_history_undo', outputLimit: 1 },
+    libraryContext: 'active',
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'history.undo'>) => ({
+      type: 'history.undo', libraryId, expectedHistoryEntryId: input.expectedHistoryEntryId,
+    }),
+    projectResult: (result) => {
+      const parsed = historyUndoneWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? { historyEntryId: parsed.data.historyEntryId, affectedCount: parsed.data.affectedCount, status: parsed.data.status }
+        : undefined;
+    },
+  },
+  {
+    commandId: 'history.redo',
+    apiVersion: AUTOMATION_API_VERSION,
+    summary: '重做当前资源库指定的栈顶历史条目；必须显式提供 historyEntryId。',
+    deprecated: false,
+    inputSchema: automationCommandInputSchemas['history.redo'],
+    resultSchema: automationCommandResultSchemas['history.redo'],
+    workerResultSchema: historyRedoneWorkerResultSchema,
+    requiredCapabilities: ['library.read'],
+    allowedSources: allInteractiveSources,
+    impact: 'file-write',
+    targetScope: 'library',
+    supportsBatch: false,
+    supportsDryRun: false,
+    supportsIdempotencyKey: false,
+    supportsCancellation: false,
+    supportsDetach: false,
+    supportsUndo: false,
+    history: { policy: 'none' },
+    atomicity: 'recoverable-file-operation',
+    approvalPolicy: 'execution',
+    mcp: { public: true, toolName: 'serpent_history_redo', outputLimit: 1 },
+    libraryContext: 'active',
+    toWorkerCommand: (libraryId, input: AutomationCommandInput<'history.redo'>) => ({
+      type: 'history.redo', libraryId, expectedHistoryEntryId: input.expectedHistoryEntryId,
+    }),
+    projectResult: (result) => {
+      const parsed = historyRedoneWorkerResultSchema.safeParse(result);
+      return parsed.success
+        ? { historyEntryId: parsed.data.historyEntryId, affectedCount: parsed.data.affectedCount, status: parsed.data.status }
+        : undefined;
+    },
+  },
+  readDescriptor({
     commandId: 'ui.notify',
     summary: '向桌面用户显示非阻塞 info/warning/error 提示条（冷静文案，不含绝对路径）。',
     inputSchema: automationCommandInputSchemas['ui.notify'],
@@ -1924,6 +2090,10 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    // Rating is persisted through the same metadata snapshot recipe as the
+    // bounded Worker implementation, so the registry must advertise the
+    // actual Worker recipe rather than inventing a parallel inverse kind.
+    history: { policy: 'reversible', recipeKind: 'asset-metadata-batch-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_asset_rating_set', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
@@ -1987,6 +2157,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: true,
+    history: { policy: 'reversible', recipeKind: 'asset-trash', group: 'single-command' },
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
     mcp: { public: false, toolName: 'serpent_asset_trash', outputLimit: 1 },
@@ -2025,6 +2196,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'barrier' },
     atomicity: 'best-effort',
     approvalPolicy: 'none',
     criticalOperation: true,
@@ -2209,6 +2381,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: true,
+    history: { policy: 'reversible', recipeKind: 'managed-asset-move', group: 'single-command' },
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
     mcp: { public: false, toolName: 'serpent_asset_move', outputLimit: 1 },
@@ -2249,6 +2422,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'asset-rename', group: 'single-command' },
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
     mcp: { public: false, toolName: 'serpent_asset_rename_file', outputLimit: 1 },
@@ -2281,6 +2455,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'asset-rename', group: 'single-command' },
     atomicity: 'recoverable-file-operation',
     approvalPolicy: 'plan',
     mcp: { public: false, toolName: 'serpent_asset_rename_files', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
@@ -2411,6 +2586,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'managed-folder-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_folder_create', outputLimit: 1 },
@@ -2437,7 +2613,7 @@ export const automationCommandRegistry = [
     commandId: 'folder.rename', apiVersion: AUTOMATION_API_VERSION, summary: '重命名托管文件夹并同步其子树路径。', deprecated: false,
     inputSchema: automationCommandInputSchemas['folder.rename'], resultSchema: automationCommandResultSchemas['folder.rename'], workerResultSchema: folderRenamedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'folder.write'], allowedSources: allInteractiveSources, impact: 'file-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'managed-folder-rename', group: 'single-command' }, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_folder_rename', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'folder.rename'>) => ({ type: 'folder.rename', libraryId, folderId: input.folderId, newName: input.newName }),
     projectResult: (result) => { const parsed = folderRenamedWorkerResultSchema.safeParse(result); return parsed.success ? parsed.data.folder : undefined; },
@@ -2446,7 +2622,7 @@ export const automationCommandRegistry = [
     commandId: 'folder.move', apiVersion: AUTOMATION_API_VERSION, summary: '批量移动托管文件夹并更新父级关系。', deprecated: false,
     inputSchema: automationCommandInputSchemas['folder.move'], resultSchema: automationCommandResultSchemas['folder.move'], workerResultSchema: folderMovedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'folder.write'], allowedSources: allInteractiveSources, impact: 'file-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'managed-folder-move', group: 'single-command' }, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_folder_move', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'folder.move'>) => ({ type: 'folder.move', libraryId, folderIds: input.folderIds, targetParentFolderId: input.targetParentFolderId, conflictStrategy: input.conflictStrategy }),
     projectResult: (result) => { const parsed = folderMovedWorkerResultSchema.safeParse(result); return parsed.success ? { movedCount: parsed.data.movedCount, skippedCount: parsed.data.skippedCount, folders: parsed.data.folders } : undefined; },
@@ -2455,7 +2631,7 @@ export const automationCommandRegistry = [
     commandId: 'folder.delete-empty', apiVersion: AUTOMATION_API_VERSION, summary: '删除空托管文件夹；含资产、子文件夹或磁盘文件时安全拒绝。', deprecated: false,
     inputSchema: automationCommandInputSchemas['folder.delete-empty'], resultSchema: automationCommandResultSchemas['folder.delete-empty'], workerResultSchema: folderEmptyDeletedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'folder.write'], allowedSources: allInteractiveSources, impact: 'file-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'managed-folder-snapshot', group: 'single-command' }, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_folder_delete_empty', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'folder.delete-empty'>) => ({ type: 'folder.delete-empty', libraryId, folderIds: input.folderIds }),
     projectResult: (result) => { const parsed = folderEmptyDeletedWorkerResultSchema.safeParse(result); return parsed.success ? { deletedFolderIds: parsed.data.deletedFolderIds } : undefined; },
@@ -2557,7 +2733,7 @@ export const automationCommandRegistry = [
     commandId: 'asset.copy', apiVersion: AUTOMATION_API_VERSION, summary: '把一批托管资产复制到目标文件夹。', deprecated: false,
     inputSchema: automationCommandInputSchemas['asset.copy'], resultSchema: automationCommandResultSchemas['asset.copy'], workerResultSchema: assetCopyWorkerResultSchema,
     requiredCapabilities: ['library.read', 'asset.read', 'folder.write'], allowedSources: allInteractiveSources, impact: 'file-write', targetScope: 'asset-set', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: true, supportsUndo: false, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: true, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'managed-asset-copy', group: 'single-command' }, atomicity: 'recoverable-file-operation', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_asset_copy', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'asset.copy'>) => ({ type: 'asset.copy', libraryId, assetIds: input.assetIds, targetFolderId: input.targetFolderId, ...(input.conflictStrategy === undefined ? {} : { conflictStrategy: input.conflictStrategy }) }),
     projectResult: (result) => { const parsed = assetCopyWorkerResultSchema.safeParse(result); return parsed.success ? { copiedCount: parsed.data.copiedCount, skippedCount: parsed.data.skippedCount, operationId: parsed.data.operationId, assets: parsed.data.assets } : undefined; },
@@ -2633,6 +2809,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'asset-metadata-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_asset_metadata_set', outputLimit: 1 },
@@ -2746,6 +2923,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'tag-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_tag_create', outputLimit: 1 },
@@ -2769,7 +2947,7 @@ export const automationCommandRegistry = [
     commandId: 'tag.rename', apiVersion: AUTOMATION_API_VERSION, summary: '重命名标签。', deprecated: false,
     inputSchema: automationCommandInputSchemas['tag.rename'], resultSchema: automationCommandResultSchemas['tag.rename'], workerResultSchema: tagRenamedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'tag.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'tag-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_tag_rename', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'tag.rename'>) => ({ type: 'tag.rename', libraryId, tagId: input.tagId, name: input.name }),
     projectResult: (result) => { const parsed = tagRenamedWorkerResultSchema.safeParse(result); return parsed.success ? { id: parsed.data.tag.tagId, name: parsed.data.tag.name, assetCount: parsed.data.tag.assetCount } : undefined; },
@@ -2778,7 +2956,7 @@ export const automationCommandRegistry = [
     commandId: 'tag.delete', apiVersion: AUTOMATION_API_VERSION, summary: '删除一个标签并解除其资产关系。', deprecated: false,
     inputSchema: automationCommandInputSchemas['tag.delete'], resultSchema: automationCommandResultSchemas['tag.delete'], workerResultSchema: tagDeletedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'tag.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'tag-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_tag_delete', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'tag.delete'>) => ({ type: 'tag.delete', libraryId, tagId: input.tagId }),
     projectResult: (result) => { const parsed = tagDeletedWorkerResultSchema.safeParse(result); return parsed.success ? { tagId: parsed.data.tagId } : undefined; },
@@ -2787,7 +2965,7 @@ export const automationCommandRegistry = [
     commandId: 'tag.delete-many', apiVersion: AUTOMATION_API_VERSION, summary: '批量删除标签并解除其资产关系。', deprecated: false,
     inputSchema: automationCommandInputSchemas['tag.delete-many'], resultSchema: automationCommandResultSchemas['tag.delete-many'], workerResultSchema: tagDeletedManyWorkerResultSchema,
     requiredCapabilities: ['library.read', 'tag.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'tag-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_tag_delete_many', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'tag.delete-many'>) => ({ type: 'tag.delete-many', libraryId, tagIds: input.tagIds }),
     projectResult: (result) => { const parsed = tagDeletedManyWorkerResultSchema.safeParse(result); return parsed.success ? { deletedTagIds: parsed.data.deletedTagIds } : undefined; },
@@ -2796,7 +2974,7 @@ export const automationCommandRegistry = [
     commandId: 'tag.merge', apiVersion: AUTOMATION_API_VERSION, summary: '将多个标签合并为一个标签。', deprecated: false,
     inputSchema: automationCommandInputSchemas['tag.merge'], resultSchema: automationCommandResultSchemas['tag.merge'], workerResultSchema: tagMergedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'tag.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'tag-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_tag_merge', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'tag.merge'>) => ({ type: 'tag.merge', libraryId, sourceTagIds: input.sourceTagIds, name: input.name }),
     projectResult: (result) => { const parsed = tagMergedWorkerResultSchema.safeParse(result); return parsed.success ? { id: parsed.data.tag.tagId, name: parsed.data.tag.name, assetCount: parsed.data.tag.assetCount, mergedTagIds: parsed.data.mergedTagIds } : undefined; },
@@ -2826,6 +3004,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'tag-relations-add', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_tag_assign', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
@@ -2860,6 +3039,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'tag-relations-remove', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_tag_remove', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
@@ -2911,6 +3091,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'collection-snapshot', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_collection_create', outputLimit: 1 },
@@ -2938,7 +3119,7 @@ export const automationCommandRegistry = [
     commandId: 'collection.update', apiVersion: AUTOMATION_API_VERSION, summary: '更新合集名称、描述、封面或位置。', deprecated: false,
     inputSchema: automationCommandInputSchemas['collection.update'], resultSchema: automationCommandResultSchemas['collection.update'], workerResultSchema: collectionUpdatedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_collection_update', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.update'>) => ({ type: 'collection.update', libraryId, collectionId: input.collectionId, ...(input.name === undefined ? {} : { name: input.name }), ...(input.parentId === undefined ? {} : { parentId: input.parentId }), ...(input.description === undefined ? {} : { description: input.description }), ...(input.coverAssetId === undefined ? {} : { coverAssetId: input.coverAssetId }), ...(input.position === undefined ? {} : { position: input.position }) }),
     projectResult: (result) => { const parsed = collectionUpdatedWorkerResultSchema.safeParse(result); return parsed.success ? parsed.data.collection : undefined; },
@@ -2947,7 +3128,7 @@ export const automationCommandRegistry = [
     commandId: 'collection.reorder', apiVersion: AUTOMATION_API_VERSION, summary: '按给定顺序重排合集。', deprecated: false,
     inputSchema: automationCommandInputSchemas['collection.reorder'], resultSchema: automationCommandResultSchemas['collection.reorder'], workerResultSchema: collectionReorderedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_collection_reorder', outputLimit: AUTOMATION_MAX_PAGE_SIZE },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.reorder'>) => ({ type: 'collection.reorder', libraryId, orderedCollectionIds: input.orderedCollectionIds }),
     projectResult: (result) => { const parsed = collectionReorderedWorkerResultSchema.safeParse(result); return parsed.success ? { orderedCollectionIds: parsed.data.orderedCollectionIds } : undefined; },
@@ -2956,7 +3137,7 @@ export const automationCommandRegistry = [
     commandId: 'collection.delete', apiVersion: AUTOMATION_API_VERSION, summary: '删除一个合集；资产本身不会被删除。', deprecated: false,
     inputSchema: automationCommandInputSchemas['collection.delete'], resultSchema: automationCommandResultSchemas['collection.delete'], workerResultSchema: collectionDeletedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_collection_delete', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.delete'>) => ({ type: 'collection.delete', libraryId, collectionId: input.collectionId }),
     projectResult: (result) => { const parsed = collectionDeletedWorkerResultSchema.safeParse(result); return parsed.success ? { collectionId: parsed.data.collectionId } : undefined; },
@@ -2979,6 +3160,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'collection-assets-add', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_collection_assets_add', outputLimit: 1 },
@@ -3011,6 +3193,7 @@ export const automationCommandRegistry = [
     supportsCancellation: false,
     supportsDetach: false,
     supportsUndo: false,
+    history: { policy: 'reversible', recipeKind: 'collection-assets-remove', group: 'single-command' },
     atomicity: 'single-transaction',
     approvalPolicy: 'execution',
     mcp: { public: false, toolName: 'serpent_collection_assets_remove', outputLimit: 1 },
@@ -3029,7 +3212,7 @@ export const automationCommandRegistry = [
     commandId: 'collection.assets.reorder', apiVersion: AUTOMATION_API_VERSION, summary: '重排合集中的资产。', deprecated: false,
     inputSchema: automationCommandInputSchemas['collection.assets.reorder'], resultSchema: automationCommandResultSchemas['collection.assets.reorder'], workerResultSchema: collectionAssetsReorderedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: true,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_collection_assets_reorder', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'collection.assets.reorder'>) => ({ type: 'collection.assets.reorder', libraryId, collectionId: input.collectionId, orderedAssetIds: input.orderedAssetIds }),
     projectResult: (result) => { const parsed = collectionAssetsReorderedWorkerResultSchema.safeParse(result); return parsed.success ? { collectionId: parsed.data.collectionId } : undefined; },
@@ -3083,7 +3266,7 @@ export const automationCommandRegistry = [
     commandId: 'smart-collection.create', apiVersion: AUTOMATION_API_VERSION, summary: '创建按结构化查询自动维护的智能合集。', deprecated: false,
     inputSchema: automationCommandInputSchemas['smart-collection.create'], resultSchema: automationCommandResultSchemas['smart-collection.create'], workerResultSchema: smartCollectionCreatedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'smart-collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_smart_collection_create', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'smart-collection.create'>) => ({ type: 'smart-collection.create', libraryId, name: input.name, queryDefinitionJson: input.queryDefinitionJson }),
     projectResult: (result) => { const parsed = smartCollectionCreatedWorkerResultSchema.safeParse(result); return parsed.success ? parsed.data.collection : undefined; },
@@ -3092,7 +3275,7 @@ export const automationCommandRegistry = [
     commandId: 'smart-collection.update', apiVersion: AUTOMATION_API_VERSION, summary: '更新智能合集名称、规则或排序位置。', deprecated: false,
     inputSchema: automationCommandInputSchemas['smart-collection.update'], resultSchema: automationCommandResultSchemas['smart-collection.update'], workerResultSchema: smartCollectionUpdatedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'smart-collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_smart_collection_update', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'smart-collection.update'>) => ({ type: 'smart-collection.update', libraryId, collectionId: input.collectionId, ...(input.name === undefined ? {} : { name: input.name }), ...(input.queryDefinitionJson === undefined ? {} : { queryDefinitionJson: input.queryDefinitionJson }), ...(input.position === undefined ? {} : { position: input.position }) }),
     projectResult: (result) => { const parsed = smartCollectionUpdatedWorkerResultSchema.safeParse(result); return parsed.success ? parsed.data.collection : undefined; },
@@ -3101,7 +3284,7 @@ export const automationCommandRegistry = [
     commandId: 'smart-collection.delete', apiVersion: AUTOMATION_API_VERSION, summary: '删除智能合集。', deprecated: false,
     inputSchema: automationCommandInputSchemas['smart-collection.delete'], resultSchema: automationCommandResultSchemas['smart-collection.delete'], workerResultSchema: smartCollectionDeletedWorkerResultSchema,
     requiredCapabilities: ['library.read', 'collection.write'], allowedSources: allInteractiveSources, impact: 'metadata-write', targetScope: 'library', supportsBatch: false,
-    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, atomicity: 'single-transaction', approvalPolicy: 'execution',
+    supportsDryRun: false, supportsIdempotencyKey: false, supportsCancellation: false, supportsDetach: false, supportsUndo: false, history: { policy: 'reversible', recipeKind: 'smart-collection-snapshot', group: 'single-command' }, atomicity: 'single-transaction', approvalPolicy: 'execution',
     mcp: { public: true, toolName: 'serpent_smart_collection_delete', outputLimit: 1 },
     toWorkerCommand: (libraryId, input: AutomationCommandInput<'smart-collection.delete'>) => ({ type: 'smart-collection.delete', libraryId, collectionId: input.collectionId }),
     projectResult: (result) => { const parsed = smartCollectionDeletedWorkerResultSchema.safeParse(result); return parsed.success ? { collectionId: parsed.data.collectionId } : undefined; },
@@ -3294,6 +3477,7 @@ export function describeAutomationCommands(): {
     supportsCancellation: boolean;
     supportsDetach: boolean;
     supportsUndo: boolean;
+    history: AutomationHistoryDescriptor;
     atomicity: AutomationAtomicity;
     approvalPolicy: AutomationApprovalPolicy;
     mcp: AutomationMcpMetadata;
@@ -3317,7 +3501,8 @@ export function describeAutomationCommands(): {
       supportsIdempotencyKey: descriptor.supportsIdempotencyKey,
       supportsCancellation: descriptor.supportsCancellation,
       supportsDetach: descriptor.supportsDetach,
-      supportsUndo: descriptor.supportsUndo,
+      supportsUndo: descriptor.history?.policy === 'reversible' || descriptor.supportsUndo,
+      history: descriptor.history ?? { policy: 'none' },
       atomicity: descriptor.atomicity,
       approvalPolicy: descriptor.approvalPolicy,
       mcp: descriptor.mcp,

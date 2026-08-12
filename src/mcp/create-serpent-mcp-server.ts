@@ -143,7 +143,13 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       // Serpent-fmbr: only executed non-read commands surface on the desktop;
       // read calls and phase-1 challenge reports (nothing executed yet) stay quiet.
       if (shouldEmitCommandCompleted(result.commandId, result.result)) {
-        options.onCommandCompleted?.({ commandId: result.commandId, result: result.result });
+        const completedResult = result.result !== null
+          && typeof result.result === 'object'
+          && !Array.isArray(result.result)
+          && result.historyEntryId !== undefined
+          ? { ...(result.result as Record<string, unknown>), historyEntryId: result.historyEntryId }
+          : result.result;
+        options.onCommandCompleted?.({ commandId: result.commandId, result: completedResult });
       }
     }
     if (!result.ok) {
@@ -162,6 +168,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
         ? {}
         : { libraryChangeSequence: result.libraryChangeSequence }),
       result: result.result,
+      ...(result.historyEntryId === undefined ? {} : { historyEntryId: result.historyEntryId }),
       ...(result.undoGroupId === undefined ? {} : { undoGroupId: result.undoGroupId }),
     });
   });

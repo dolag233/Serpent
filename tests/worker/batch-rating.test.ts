@@ -298,7 +298,8 @@ describe('batch asset rating', () => {
       assetIds,
       rating: 4,
     });
-    expect(updated).toEqual({ ok: true, type: 'asset.rating.updated', updatedCount: 1, skipped: [] });
+    expect(updated).toMatchObject({ ok: true, type: 'asset.rating.updated', updatedCount: 1, skipped: [] });
+    expect((updated as { historyEntryId?: unknown }).historyEntryId).toEqual(expect.any(String));
     expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: matchedAssetId }).rating).toBe(4);
 
     service.closeAll();

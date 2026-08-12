@@ -75,7 +75,8 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
       libraryId: library.libraryId,
       folderId: empty.folderId,
     });
-    expect(emptyResult).toEqual({ trashedAssetCount: 0, removedFolderCount: 1 });
+    expect(emptyResult).toMatchObject({ trashedAssetCount: 0, removedFolderCount: 1 });
+    expect(emptyResult.tombstoneIds).toHaveLength(1);
     expect(
       existsSync(path.join(library.libraryPath, 'Assets', 'empty')),
     ).toBe(false);
@@ -84,7 +85,8 @@ describe('trashManagedFolder (clarification #7 / Serpent-ekj)', () => {
       libraryId: library.libraryId,
       folderId: filled.folderId,
     });
-    expect(filledResult).toEqual({ trashedAssetCount: 1, removedFolderCount: 2 });
+    expect(filledResult).toMatchObject({ trashedAssetCount: 1, removedFolderCount: 2 });
+    expect(filledResult.tombstoneIds).toHaveLength(2);
     expect(
       existsSync(path.join(library.libraryPath, 'Assets', 'filled')),
     ).toBe(false);

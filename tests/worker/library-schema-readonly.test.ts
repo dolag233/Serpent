@@ -44,13 +44,13 @@ function temporaryRoot(): string {
   return root;
 }
 
-/** Bump a v33 library to a fake "newer" v34 (structure untouched). */
-function markLibraryAsV35(libraryPath: string): void {
+/** Bump a current library to a fake newer v37 (structure untouched). */
+function markLibraryAsV37(libraryPath: string): void {
   const db = new Database(path.join(libraryPath, '.serpent', 'library.db'));
-  db.pragma('user_version = 35');
+  db.pragma('user_version = 37');
   db.prepare(
     'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
-  ).run(35, 'f'.repeat(64), new Date().toISOString());
+  ).run(37, 'f'.repeat(64), new Date().toISOString());
   db.close();
 }
 
@@ -69,12 +69,12 @@ describe('read-only degrade for newer-schema libraries', () => {
     // createLibrary already opened the library; drop the handle so the
     // reopen below exercises the version probe from scratch.
     service.closeAll();
-    markLibraryAsV35(created.libraryPath);
+    markLibraryAsV37(created.libraryPath);
 
     const summary: InternalLibrarySummary = service.openLibrary(created.libraryPath);
     expect(summary.readOnly).toBe(true);
-    expect(summary.libraryVersion).toBe(35);
-    expect(summary.supportedSchemaVersion).toBe(34);
+    expect(summary.libraryVersion).toBe(37);
+    expect(summary.supportedSchemaVersion).toBe(36);
 
     // Read paths still work.
     expect(service.listLibraries()).toHaveLength(1);
@@ -85,7 +85,7 @@ describe('read-only degrade for newer-schema libraries', () => {
     const service = newService();
     const created = service.createLibrary({ displayName: '只读库', selectedParentPath: root });
     service.closeAll();
-    markLibraryAsV35(created.libraryPath);
+    markLibraryAsV37(created.libraryPath);
     const summary = service.openLibrary(created.libraryPath);
     expect(summary.readOnly).toBe(true);
 

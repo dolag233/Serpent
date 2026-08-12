@@ -160,6 +160,11 @@ export interface SerpentShellApi {
     command: ApplicationMenuCommand,
     enabled: boolean,
   ): void;
+  /** Renderer → Main: sync a native menu item's current label. */
+  setApplicationMenuCommandLabel(
+    command: ApplicationMenuCommand,
+    label: string,
+  ): void;
   /** 请求 Main 对当前 webContents 执行原生 copy（文本框 ⌘C）。 */
   nativeEditCopy(): Promise<void>;
   /**

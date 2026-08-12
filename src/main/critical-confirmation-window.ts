@@ -70,6 +70,7 @@ button:disabled { cursor: default; opacity: .65; }
     detail.textContent = request.detail;
     cancel.textContent = request.cancelLabel;
     confirm.textContent = request.confirmLabel;
+    document.body.dataset.criticalConfirmationReady = 'true';
     cancel.addEventListener('click', cancelAndClose);
     confirm.addEventListener('click', () => { void api.decide('confirm'); });
     window.addEventListener('keydown', (event) => {
@@ -87,6 +88,12 @@ button:disabled { cursor: default; opacity: .65; }
 </body>
 </html>`;
 
+const CRITICAL_CONFIRMATION_WIDTH = 540;
+const CRITICAL_CONFIRMATION_MIN_HEIGHT = 220;
+const CRITICAL_CONFIRMATION_MAX_HEIGHT = 560;
+const CRITICAL_CONFIRMATION_SIZE_POLL_INTERVAL_MS = 16;
+const CRITICAL_CONFIRMATION_SIZE_POLL_ATTEMPTS = 60;
+
 export interface CriticalConfirmationWindowLike {
   readonly id: number;
   readonly webContents: {
@@ -101,7 +108,7 @@ export interface CriticalConfirmationWindowLike {
   focus(): void;
   close(): void;
   isDestroyed(): boolean;
-  setSize(width: number, height: number): void;
+  setContentSize(width: number, height: number): void;
   on(event: 'closed' | 'ready-to-show', listener: () => void): void;
   once(event: 'ready-to-show', listener: () => void): void;
   removeListener(event: 'closed' | 'ready-to-show', listener: () => void): void;
@@ -150,12 +157,12 @@ export function criticalConfirmationWindowOptions(input: {
   preloadPath: string;
 }): BrowserWindowConstructorOptions {
   return {
-    width: 540,
-    height: 360,
+    width: CRITICAL_CONFIRMATION_WIDTH,
+    height: CRITICAL_CONFIRMATION_MIN_HEIGHT,
     minWidth: 460,
-    minHeight: 320,
+    minHeight: CRITICAL_CONFIRMATION_MIN_HEIGHT,
     maxWidth: 760,
-    maxHeight: 560,
+    maxHeight: CRITICAL_CONFIRMATION_MAX_HEIGHT,
     show: false,
     modal: true,
     parent: input.parent as unknown as BrowserWindowConstructorOptions['parent'],
@@ -261,6 +268,13 @@ export class CriticalConfirmationWindowManager {
       if (this.#active !== undefined && this.#active.window === window) this.#finish(this.#active, false);
     };
     this.#active = { ...pending, window, settled: false, onParentClosed, onWindowClosed };
+    let readyToShow = false;
+    let contentSizeSet = false;
+    const showWhenReady = (): void => {
+      if (!readyToShow || !contentSizeSet || this.#active?.window !== window || window.isDestroyed()) return;
+      window.show();
+      window.focus();
+    };
     this.#options.logger?.info?.(
       'critical-confirmation.window-created',
       'Created a critical confirmation window.',
@@ -269,26 +283,52 @@ export class CriticalConfirmationWindowManager {
     pending.parent.on('closed', onParentClosed);
     window.on('closed', onWindowClosed);
     window.once('ready-to-show', () => {
-      if (this.#active?.window !== window || window.isDestroyed()) return;
-      window.show();
-      window.focus();
+      readyToShow = true;
+      showWhenReady();
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());
     void window.loadURL(criticalConfirmationPageUrl()).then(() => {
-      // The page script fills the heading/message/detail right after load;
-      // give it a tick, then size the window to its content instead of a
-      // fixed height (a short confirmation must not leave a big blank).
-      setTimeout(() => {
+      // The request arrives through a preload IPC call after the page loads.
+      // Wait until the page has rendered that payload before measuring; a
+      // one-shot measurement can otherwise size the window to the loading
+      // placeholder and leave the real content in a badly sized window.
+      const sizeToContent = (attempt: number): void => {
         if (this.#active?.window !== window || window.isDestroyed()) return;
         void window.webContents.executeJavaScript(
-          'Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)',
+          `(() => {
+            const main = document.querySelector('main');
+            return {
+              ready: document.body.dataset.criticalConfirmationReady === 'true',
+              height: main instanceof HTMLElement ? main.scrollHeight : 0,
+            };
+          })()`,
         ).then((value) => {
           if (this.#active?.window !== window || window.isDestroyed()) return;
-          const contentHeight = Math.max(220, Math.min(560, Number(value) + 24));
-          window.setSize(540, contentHeight);
-        }).catch(() => {});
-      }, 120);
+          const metrics = value as { ready?: unknown; height?: unknown };
+          if (metrics.ready !== true && attempt < CRITICAL_CONFIRMATION_SIZE_POLL_ATTEMPTS) {
+            setTimeout(
+              () => sizeToContent(attempt + 1),
+              CRITICAL_CONFIRMATION_SIZE_POLL_INTERVAL_MS,
+            );
+            return;
+          }
+          const measuredHeight = Number(metrics.height);
+          const contentHeight = Number.isFinite(measuredHeight)
+            ? Math.max(CRITICAL_CONFIRMATION_MIN_HEIGHT, Math.min(CRITICAL_CONFIRMATION_MAX_HEIGHT, Math.ceil(measuredHeight)))
+            : CRITICAL_CONFIRMATION_MIN_HEIGHT;
+          window.setContentSize(CRITICAL_CONFIRMATION_WIDTH, contentHeight);
+          contentSizeSet = true;
+          showWhenReady();
+        }).catch(() => {
+          if (this.#active?.window === window && !window.isDestroyed()) {
+            window.setContentSize(CRITICAL_CONFIRMATION_WIDTH, CRITICAL_CONFIRMATION_MIN_HEIGHT);
+            contentSizeSet = true;
+            showWhenReady();
+          }
+        });
+      };
+      sizeToContent(0);
     }).catch((error) => {
       this.#options.logger?.error('critical-confirmation.window-load', error);
       if (this.#active?.window === window) this.#finish(this.#active, false);

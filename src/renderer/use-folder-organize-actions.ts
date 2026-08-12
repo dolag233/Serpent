@@ -18,7 +18,7 @@ export type UseFolderOrganizeActionsParams = {
   api: SerpentLibraryApi | null;
   libraryId: string | null;
   locale: AppLocale;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: "ready" | "loading") => void;
   reloadCurrentContent: () => Promise<void>;
@@ -151,10 +151,12 @@ export function useFolderOrganizeActions({
               moved: result.value.movedCount,
               skipped: result.value.skippedCount,
             }),
+            result.value.historyEntryId,
           );
         } else {
           setNotice(
             t("toast.folderMoveDone", { count: result.value.movedCount }),
+            result.value.historyEntryId,
           );
         }
         await reloadCurrentContent();

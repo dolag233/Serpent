@@ -448,6 +448,12 @@
 | AUT-034 | MCP/桌面关键危险操作确认 | 自动化证据不足 | 对托管资产、文件夹、链接源文件、清空回收站和整库从磁盘删除分别触发操作；观察独立窗口后测试取消、Escape、关闭窗口和红色确认。 | 每次独立确认；默认焦点为取消；取消/关闭不产生磁盘变化；确认按钮红色；没有「不再显示」「本会话总是通过」或 MCP 权限绕过。 | [关键窗口](../../../src/main/critical-confirmation-window.ts) / [共享协议](../../../src/shared/critical-confirmation.ts) / [窗口单测](../../../tests/unit/critical-confirmation-window.test.ts) / [Electron E2E](../../../tests/e2e/critical-confirmation.test.ts) / [链接/回收站 E2E](../../../tests/e2e/linked-folders.test.ts) / 工单 `Serpent-9rbn.8` | `critical-confirmation.test.ts`：1 passed；`linked-folders.test.ts` 的链接源文件 critical 路径：3 passed；回收站 critical 焦点/红色确认：1 passed。覆盖独立窗口、取消/Escape、红色确认和磁盘结果。真实桌面视觉、packaged/Windows 尚未执行；Computer Use 因 macOS 锁屏未执行。 |
 | AUT-035 | MCP 文档与 Registry/权限事实对齐 | 自动化证据不足 | 对照 Registry、设置页、`tools/list` 和 MCP 手册中的权限名称、普通/关键分类与配置步骤。 | 不再出现 `skipApproval`、旧 stdio/headless 假设或整包读写授权描述；新增普通能力默认询问；关键操作不暴露为 MCP 工具。 | [Registry](../../../src/automation/command-registry.ts) / [MCP 手册](../../manual/mcp/api-reference.md) / [开发指南](../../manual/mcp/development.md) / [设计](../superpowers/specs/2026-08-10-mcp-permission-policy-and-critical-confirmation-design.md) | 当前手册、Registry、设置矩阵与 critical 清单已同步；`typecheck`、`lint` 和定向权限测试通过。文档契约自动化检查、packaged/Windows 证据待补。 |
 
+#### 统一撤回/重做
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| HISTORY-001 | Desktop、脚本、MCP 共用资源库撤回/重做历史 | 待人类验收 | 在隔离资源库创建文件夹或准备资产：执行一次移动/重命名/元数据修改；在非文本输入焦点按 Cmd/Ctrl+Z，再按菜单或 Cmd/Ctrl+Shift+Z 重做；切换/重新打开资源库后重复；再从脚本或 MCP 执行一项可逆修改，观察 Desktop 菜单和提示。 | 每次成功修改进入同一资源库历史；Undo/Redo 菜单标签、可用状态和 toast 与实际栈顶一致；新修改清除 redo；文本输入焦点仍是文字撤回；外部变化显示可理解的 stale 原因，不覆盖外部值；结果不泄露绝对路径。 | [顶层设计](../superpowers/specs/2026-08-12-unified-undo-redo-design.md) / [开发日志](../development/2026-08-12-unified-undo-redo-development-log.md) / [QA](2026-08-12-unified-undo-redo-qa-report.md) / [历史集成测试](../../../tests/worker/operation-history.integration.test.ts) / [菜单单测](../../../tests/unit/main-menu-items.test.ts) / 工单 `Serpent-5n4z` | 2026-08-12：Worker/协议/菜单/通知竞态定向自动化通过；Unit 314 files/2421 passed、Worker 61 files/1009 passed，当前 macOS packaged 已重建并通过 runtime 校验；最终 `verify:mainline` 的 Electron E2E 为 62 通过、12 失败、3 跳过，组合运行中的 managed-move 撤回通过；真实窗口 Computer Use、Windows 仍未执行，继续待验收。 |
+
 #### 历史自动化快照（不再作为当前 MCP 规范）
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -20,7 +20,6 @@ export type UseDialogEscapeDismissParams = {
   setDeleteLinkedDialog: (value: null) => void;
   setRestoreDialog: (value: null) => void;
   setMoveDialog: (value: null) => void;
-  setUndoMoveDialog: (value: null) => void;
   setCollectionEditor: (value: null) => void;
   setExportDialogOpen: (open: boolean) => void;
   setImportLibraryChooserOpen: (open: boolean) => void;
@@ -59,7 +58,6 @@ export function useDialogEscapeDismiss({
   setDeleteLinkedDialog,
   setRestoreDialog,
   setMoveDialog,
-  setUndoMoveDialog,
   setCollectionEditor,
   setExportDialogOpen,
   setImportLibraryChooserOpen,
@@ -123,9 +121,6 @@ export function useDialogEscapeDismiss({
           return;
         case "close-move":
           setMoveDialog(null);
-          return;
-        case "close-undo-move":
-          setUndoMoveDialog(null);
           return;
         case "close-collection-editor":
           setCollectionEditor(null);
@@ -201,7 +196,6 @@ export function useDialogEscapeDismiss({
     setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
-    setUndoMoveDialog,
     setCollectionEditor,
     setExportDialogOpen,
     setImportLibraryChooserOpen,

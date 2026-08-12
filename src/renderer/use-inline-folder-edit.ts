@@ -36,7 +36,7 @@ import {
 export interface UseInlineFolderEditParams {
   api: SerpentLibraryApi | null;
   library: RendererLibrarySummary | null;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   reloadCurrentContent: () => Promise<void>;
 }
 
@@ -162,6 +162,7 @@ export function useInlineFolderEdit({
         session.kind === "create"
           ? t("folderEdit.created", { name: result.value.name })
           : t("folderEdit.renamed", { name: result.value.name }),
+        result.value.historyEntryId,
       );
       // A rename keeps the folderId, so the current selection survives the
       // refresh; a create lands under the already-selected parent. Neither

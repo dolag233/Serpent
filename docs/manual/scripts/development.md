@@ -51,7 +51,7 @@ return { ids, hasMore: page.hasMore };
 1. 先用 `search`/`list` 查询并分页，确认目标 ID 和数量。
 2. 读取需要写入的当前状态；元数据写入保存 `entityVersion`，文件内容写入保存 `currentRevisionId`。
 3. 用最小批量执行写入，检查 `updatedCount`、`movedCount`、`skippedCount` 或逐项 `skipped`。
-4. 文件类操作完成后保存返回的 Undo 信息，并在 Console 中使用“撤销自动化操作”复核；脚本不能自行重放文件操作。
+4. 文件类操作完成后在 Console 中使用“撤销自动化操作”复核；宿主会消费本次 execution 记录的 Worker 历史回执，脚本不能自行重放文件操作。
 5. 对关键结果重新查询，或读取 `library.changeSequence()` 验证资源库已发生预期变化。
 
 ```ts
@@ -98,7 +98,7 @@ Console 的脚本源最多 64 KiB；脚本输出逐行收集，单行最多 16 K
 
 计划摘要只显示目标数量、可执行/阻塞数量、冲突和是否可撤销，不把绝对路径交给脚本或输出。资源库变更序号、资产状态 token 和计划哈希绑定在 Main/Worker 侧；确认前后前提变化会使计划失效，操作不会继续写旧目标。取消确认会以取消/失败结果结束，文件不会因此被部分“暗中”执行。
 
-文件移动、重命名、导入、回收站等可能返回 `operationId` 或 Undo Group 信息。不要把 `operationId` 当作文件路径，也不要假设批量操作全成功；始终检查计数和跳过项。
+文件移动、重命名、导入、回收站等可能返回内部 `operationId` 和宿主侧 `historyEntryId`。不要把 `operationId` 当作文件路径，也不要假设批量操作全成功；始终检查计数和跳过项。撤回/重做由 Worker 的统一历史栈执行，新的资源库写入会清空 redo 分支，前置条件冲突会将条目标记为 stale。
 
 ## 幂等、变更序号和长操作
 

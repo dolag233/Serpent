@@ -84,6 +84,9 @@ export type AutomationGatewaySuccess<Id extends AutomationCommandId = Automation
   commandId: Id;
   executionId: string;
   result: AutomationCommandResult<Id>;
+  /** Worker-owned durable history receipt; recipes never cross this boundary. */
+  historyEntryId?: string;
+  /** @deprecated Legacy automation journal projection; new commands use historyEntryId. */
   undoGroupId?: string;
 };
 
@@ -103,7 +106,14 @@ export type AutomationGatewayResult = AutomationGatewaySuccess | AutomationGatew
 export interface AutomationWorkerClient {
   request(
     command: WorkerCommand,
-    options?: { signal?: AbortSignal; readonly?: boolean },
+    options?: {
+      signal?: AbortSignal;
+      readonly?: boolean;
+      historyContext?: {
+        source: 'desktop' | 'script' | 'mcp' | 'plugin';
+        sourceReference?: string | null;
+      };
+    },
   ): Promise<WorkerResult>;
 }
 
@@ -278,6 +288,22 @@ export interface AutomationUndoGroupHandler {
   }): void;
 }
 
+/**
+ * Main-owned projection hook for the Worker history receipt.  The callback is
+ * deliberately advisory: the Worker has already committed the mutation and
+ * the Gateway must not turn a successful business operation into a failure if
+ * an execution journal or Desktop notification is temporarily unavailable.
+ */
+export interface AutomationHistoryEntryHandler {
+  onCommitted(input: {
+    executionId: string;
+    commandId: AutomationCommandId;
+    libraryId: string;
+    historyEntryId: string;
+    source: AutomationSource;
+  }): void | Promise<void>;
+}
+
 export interface AutomationCommandGatewayOptions {
   auditSink?: AutomationExecutionAuditSink;
   auditLogger?: AutomationGatewayAuditLogger;
@@ -296,6 +322,7 @@ export interface AutomationCommandGatewayOptions {
   executionStatusHandler?: AutomationExecutionStatusHandler;
   uiNotifyHandler?: AutomationUiNotifyHandler;
   undoGroupHandler?: AutomationUndoGroupHandler;
+  historyEntryHandler?: AutomationHistoryEntryHandler;
   permissionBroker?: AutomationPermissionBroker;
   /**
    * Serpent-ihpx: an automation import (MCP/script/console) completed — the
@@ -362,6 +389,14 @@ function idempotencyFingerprint(input: unknown): string {
   return createHash('sha256').update(canonicalJson(input), 'utf8').digest('hex');
 }
 
+function historyEntryIdFromWorkerResult(result: WorkerResult): string | undefined {
+  if (typeof result !== 'object' || result === null || !('historyEntryId' in result)) return undefined;
+  const historyEntryId = (result as { historyEntryId?: unknown }).historyEntryId;
+  return typeof historyEntryId === 'string' && historyEntryId.trim().length > 0
+    ? historyEntryId
+    : undefined;
+}
+
 export function createAutomationCommandGateway(
   workerClient: AutomationWorkerClient,
   executionResolver: AutomationExecutionResolver,
@@ -379,6 +414,7 @@ export function createAutomationCommandGateway(
     executionStatusHandler,
     uiNotifyHandler,
     undoGroupHandler,
+    historyEntryHandler,
     permissionBroker,
     onImportCompleted,
   } = options;
@@ -857,7 +893,12 @@ export function createAutomationCommandGateway(
         return recordIdempotentOutcome(gatewayFailure('AUTOMATION_CONCURRENCY_LIMIT_REACHED'));
       }
       let undoGroupId: string | undefined;
-      if (descriptor.supportsUndo && undoGroupHandler !== undefined) {
+      // Unified history is owned by the Worker. Keep the old journal bridge
+      // only for descriptors that have not migrated yet; migrated commands
+      // must never create a second executable undo authority.
+      const usesUnifiedHistory = descriptor.history?.policy !== undefined
+        && descriptor.history.policy !== 'none';
+      if (!usesUnifiedHistory && descriptor.supportsUndo && undoGroupHandler !== undefined) {
         if (boundLibraryId === null) {
           releaseCommandSlot(context);
           return recordIdempotentOutcome(gatewayFailure('AUTOMATION_LIBRARY_NOT_BOUND'));
@@ -932,7 +973,16 @@ export function createAutomationCommandGateway(
       const requestWorker = async (plan: AutomationFileOperationPlanProof | undefined): Promise<WorkerResult> =>
         workerClient.request(
           descriptor.toWorkerCommand(boundLibraryId ?? '', parsedInput.data, plan),
-          { signal: context.abortSignal, readonly: descriptor.impact === 'read' },
+          {
+            signal: context.abortSignal,
+            readonly: descriptor.impact === 'read',
+            historyContext: {
+              source: context.source === 'desktop-console' || context.source === 'test'
+                ? 'desktop'
+                : context.source,
+              sourceReference: executionId,
+            },
+          },
         );
       try {
         workerResult = await requestWorker(approvedPlan);
@@ -1019,6 +1069,29 @@ export function createAutomationCommandGateway(
           return recordOutcomeAndReleaseSlot({ ok: false, error: createPublicError('LIBRARY_NOT_OPEN') });
         }
         return recordOutcomeAndReleaseSlot(gatewayFailure('AUTOMATION_RESULT_INVALID'));
+      }
+
+      const historyEntryId = historyEntryIdFromWorkerResult(workerResult);
+
+      if (historyEntryId !== undefined && historyEntryHandler !== undefined && boundLibraryId !== null) {
+        try {
+          await historyEntryHandler.onCommitted({
+            executionId,
+            commandId: descriptor.commandId,
+            libraryId: boundLibraryId,
+            historyEntryId,
+            source: context.source,
+          });
+        } catch (error) {
+          // History is authoritative in the Worker.  This is only the
+          // Main-side execution/UI projection and must never roll back a
+          // committed mutation or make the command appear to have failed.
+          auditLogger?.error('automation.history-projection.failed', error, {
+            executionId,
+            commandId: descriptor.commandId,
+            historyEntryId,
+          });
+        }
       }
 
       // Serpent-ihpx: an automation import must behave like a human import —
@@ -1147,6 +1220,7 @@ export function createAutomationCommandGateway(
         commandId: descriptor.commandId,
         executionId,
         result,
+        ...(historyEntryId === undefined ? {} : { historyEntryId }),
         ...(undoGroupId === undefined ? {} : { undoGroupId }),
       });
     },

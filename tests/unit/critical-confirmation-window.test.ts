@@ -43,18 +43,15 @@ class FakeWindow implements CriticalConfirmationWindowLike {
     isDestroyed: () => this.destroyed,
     setWindowOpenHandler: () => undefined,
     on: () => undefined,
-    executeJavaScript: async () => 260,
+    executeJavaScript: async () => ({ ready: true, height: 260 }),
   };
   readonly listeners = new Map<string, Set<() => void>>();
   destroyed = false;
   shown = false;
   focused = false;
   loadedUrl: string | undefined;
-  sizedTo: { width: number; height: number } | undefined;
 
-  setSize(width: number, height: number): void {
-    this.sizedTo = { width, height };
-  }
+  setContentSize(): void {}
 
   loadURL(url: string): Promise<void> {
     this.loadedUrl = url;
@@ -117,8 +114,8 @@ describe('Critical confirmation window', () => {
     const window = windows[0]!;
     window.emit('ready-to-show');
 
-    expect(window.shown).toBe(true);
-    expect(window.focused).toBe(true);
+    expect(window.shown).toBe(false);
+    expect(window.focused).toBe(false);
     expect(window.loadedUrl).toBe(criticalConfirmationPageUrl());
     const options = criticalConfirmationWindowOptions({
       parent: window,
@@ -138,6 +135,10 @@ describe('Critical confirmation window', () => {
     });
     expect(decodeURIComponent(criticalConfirmationPageUrl())).toContain('critical-heading');
     expect(decodeURIComponent(criticalConfirmationPageUrl())).not.toContain('Critical confirmation');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.shown).toBe(true);
+    expect(window.focused).toBe(true);
 
     manager.dispose();
     void pending;

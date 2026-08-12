@@ -45,12 +45,12 @@ test('moves a managed asset to a real folder and exposes one visible undo', asyn
     await window.getByLabel('目标文件夹').selectOption({ label: 'Target (0)' });
     await window.getByRole('button', { name: '确认移动' }).click();
     await expect(window.locator('.workspace-notice')).toContainText('已移动 1 项资产');
-    await expect(window.getByRole('button', { name: '撤销移动' })).toBeVisible();
+    await expect(window.getByRole('button', { name: '撤销' })).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'Target', 'move-me.png'))).toBe(true);
     expect(existsSync(path.join(libraryPath, 'Assets', 'move-me.png'))).toBe(false);
 
-    await window.getByRole('button', { name: '撤销移动' }).click();
-    await expect(window.locator('.workspace-notice')).toContainText('已撤销移动 1 项资产');
+    await window.getByRole('button', { name: '撤销' }).click();
+    await expect(window.locator('.workspace-notice')).toContainText('已撤回上一步操作（1 项）。');
     await expect(assetCard(window, 'move-me.png')).toBeVisible();
     expect(existsSync(path.join(libraryPath, 'Assets', 'move-me.png'))).toBe(true);
     expect(existsSync(path.join(libraryPath, 'Assets', 'Target', 'move-me.png'))).toBe(false);

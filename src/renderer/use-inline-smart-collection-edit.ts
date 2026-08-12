@@ -34,7 +34,7 @@ export interface UseInlineSmartCollectionEditParams {
     filters?: readonly unknown[] | null;
     sort?: unknown;
   };
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   reloadSmartCollections: () => Promise<void>;
   /** Fired after a successful create so the host can open settings. */
   onCreated?: (collection: SmartCollectionSummary) => void;
@@ -131,7 +131,7 @@ export function useInlineSmartCollectionEdit({
           ? null
           : current,
       );
-      setNotice(t("toast.smartCollectionSaved"));
+      setNotice(t("toast.smartCollectionSaved"), result.value.historyEntryId);
       await reloadSmartCollections();
       onCreated?.(result.value);
     } catch (caught) {

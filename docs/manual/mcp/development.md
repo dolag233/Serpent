@@ -26,7 +26,7 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 **MCP/脚本的操作与人类的操作没有不同**：`file.import` 导入 = 人类导入，`asset.trash` 删除 = 人类删除。含义：
 
 - 领域校验与安全边界不变（Schema、计划、版本、Worker），source 只影响审计标签；
-- 副作用必须与人类操作一致：自动 AI 分析入队（`onImportCompleted` → `enqueueAutoAnalyzeAfterImport`，与桌面导入 IPC 同一函数）、undo group、插件 will-hooks、桌面提示（同一套 toast，见 Serpent-fmbr）；
+- 副作用必须与人类操作一致：自动 AI 分析入队（`onImportCompleted` → `enqueueAutoAnalyzeAfterImport`，与桌面导入 IPC 同一函数）、Worker 操作历史回执、插件 will-hooks、桌面提示（同一套 toast，见 Serpent-fmbr）；
 - 不得为自动化单独造一套提示/入队/撤销机制；触发点放在统一完成点（Gateway 钩子 / 事件），而非 MCP transport 层。
 
 若发现某个人类操作的副作用在自动化路径缺失，视为 bug（Serpent-ihpx 即此类）。

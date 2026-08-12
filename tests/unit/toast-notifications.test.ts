@@ -95,6 +95,21 @@ describe('createToastNotifications', () => {
     toast.dispose();
   });
 
+  it('keeps the history entry id on the notice for a race-safe inline undo', () => {
+    const toast = createToastNotifications();
+    toast.setNotice('已移动。', 'history-1');
+
+    expect(toast.getSnapshot().renderedStack[0]).toMatchObject({
+      text: '已移动。',
+      historyEntryId: 'history-1',
+    });
+    expect(toast.getSnapshot().rendered).toMatchObject({
+      text: '已移动。',
+      historyEntryId: 'history-1',
+    });
+    toast.dispose();
+  });
+
   it('unmounts only after the exit transition ends (fallback timer)', () => {
     const toast = createToastNotifications();
     toast.setNotice('已保存。');

@@ -106,7 +106,9 @@ export const en = {
     mainMenuHelp: "Help",
     mainMenuSettings: "Settings",
     mainMenuUndo: "Undo last operation",
+    mainMenuUndoCount: "Undo operation ({count} items)",
     mainMenuRedo: "Redo",
+    mainMenuRedoCount: "Redo operation ({count} items)",
     mainMenuCut: "Cut",
     mainMenuCopySelection: "Copy selected assets",
     mainMenuPaste: "Paste",
@@ -1654,6 +1656,10 @@ export const en = {
     undoMoveFailed: "Failed to undo move.",
     undoCopyDone: "Undid copy for {count} assets",
     undoCopyFailed: "Failed to undo copy.",
+    historyUndoDone: "Undid the last operation ({count} items).",
+    historyUndoFailed: "Could not undo the last operation.",
+    historyRedoDone: "Redid the operation ({count} items).",
+    historyRedoFailed: "Could not redo the operation.",
     permanentDeleted: "Permanently deleted {count} items.",
     permanentDeleteItem: "{name} ({reason})",
     selectedAsset: "Selected asset",
@@ -1811,7 +1817,12 @@ export const en = {
       AI_SEARCH_FAILED: "The AI service could not convert this search.",
       VERSION_CONFLICT: "Metadata was changed by another operation. Refresh and edit again.",
       ZIP_TOO_LARGE: "Library exceeds the standard ZIP limit (4 GiB / 65,534 entries). Export as a folder instead.",
-      TRANSFER_IN_PROGRESS: "Another library import or export is already using the same library or path."
+      TRANSFER_IN_PROGRESS: "Another library import or export is already using the same library or path.",
+      HISTORY_ENTRY_NOT_FOUND: "No reversible operation is available for this request.",
+      HISTORY_NOT_TOP: "That operation is no longer the current undo or redo target.",
+      HISTORY_NOT_REVERSIBLE: "This operation cannot be undone or redone.",
+      HISTORY_TRANSITION_IN_PROGRESS: "Another undo or redo operation is already in progress.",
+      HISTORY_STALE: "The files or records changed, so this operation cannot be reversed safely."
     },
     reason: {
       PERMISSION_DENIED: "The current user lacks permission to read the source or write to the destination.",
@@ -1867,6 +1878,8 @@ export const en = {
     undoMove: "Undo move",
     undoCopy: "Undo copy",
     undoTrash: "Undo",
-    undoTagDelete: "Undo"
+    undoTagDelete: "Undo",
+    undo: "Undo",
+    redo: "Redo"
   }
 } as CatalogMessages<typeof zhCN>;

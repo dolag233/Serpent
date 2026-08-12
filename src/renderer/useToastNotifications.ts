@@ -16,7 +16,7 @@ export interface UseToastNotificationsReturn extends ToastSnapshot {
   setError: (text: string | null) => void;
   setWarning: (text: string | null) => void;
   /** Drop-in replacement for the former `setNotice` state setter. */
-  setNotice: (text: string | null) => void;
+  setNotice: (text: string | null, historyEntryId?: string) => void;
   /** Blocking fatal modal body; null clears. */
   setFatal: (text: string | null) => void;
   /** Start closing the highest-severity visible toast. */

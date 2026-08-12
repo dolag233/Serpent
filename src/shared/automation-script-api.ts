@@ -43,6 +43,9 @@ export const automationScriptCommandIdSchema = z.enum([
   'asset.palette.aggregate-recent',
   'library.inspect',
   'library.change-sequence',
+  'history.status',
+  'history.undo',
+  'history.redo',
   'linked-folder.list',
   'tag.list',
   'tag.create',
@@ -173,11 +176,11 @@ export const automationScriptCommandInputSchema = z.strictObject({
 export type AutomationScriptCommandInput = z.infer<typeof automationScriptCommandInputSchema>;
 
 export type AutomationScriptCommandResult =
-  | { ok: true; result: unknown; undoGroupId?: string }
+  | { ok: true; result: unknown; historyEntryId?: string; undoGroupId?: string }
   | { ok: false; error: AutomationScriptHostError };
 
 export const automationScriptCommandResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), result: z.unknown(), undoGroupId: z.string().min(1).optional() }),
+  z.strictObject({ ok: z.literal(true), result: z.unknown(), historyEntryId: z.string().min(1).optional(), undoGroupId: z.string().min(1).optional() }),
   z.strictObject({ ok: z.literal(false), error: automationScriptHostErrorSchema }),
 ]);
 
@@ -229,6 +232,13 @@ export const automationScriptUndoInputSchema = z.strictObject({
 export type AutomationScriptUndoInput = z.infer<typeof automationScriptUndoInputSchema>;
 
 export const automationScriptUndoResultSchema = z.union([
+  z.strictObject({
+    ok: z.literal(true),
+    /** Worker history receipts consumed in reverse execution order. */
+    historyEntryIds: z.array(z.string().min(1)).max(10_000),
+    undoneCount: z.number().int().nonnegative(),
+    skippedCount: z.number().int().nonnegative(),
+  }),
   z.strictObject({
     ok: z.literal(true),
     undoGroupId: z.string().min(1),

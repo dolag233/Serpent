@@ -5,14 +5,21 @@ import { importSummaryMessage } from './import-summary';
 
 export interface AutomationCommandToast {
   message: string;
+  /** The Worker history entry that produced this toast, if reversible. */
+  historyEntryId?: string;
+}
+
+function withHistory(message: string, historyEntryId: string | undefined): AutomationCommandToast {
+  return historyEntryId === undefined ? { message } : { message, historyEntryId };
 }
 
 function info(
   locale: AppLocale,
   key: string,
   params?: Record<string, string | number>,
+  historyEntryId?: string,
 ): AutomationCommandToast {
-  return { message: translateForLocale(locale, key, params) };
+  return withHistory(translateForLocale(locale, key, params), historyEntryId);
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -22,6 +29,11 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function countOf(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function historyEntryIdOf(record: Record<string, unknown>): string | undefined {
+  const value = record.historyEntryId;
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
 /**
@@ -39,6 +51,7 @@ export function automationCommandToast(
   const { commandId, result } = payload;
   if (!isPlainRecord(result)) return undefined;
   if (result.status === 'confirmation-required') return undefined;
+  const historyEntryId = historyEntryIdOf(result);
   switch (commandId) {
     case 'file.import': {
       if (result.status !== 'completed' || !isPlainRecord(result.completion)) return undefined;
@@ -49,38 +62,41 @@ export function automationCommandToast(
       if (importedCount === undefined || skippedCount === undefined || replacedCount === undefined) {
         return undefined;
       }
-      return { message: importSummaryMessage({ importedCount, skippedCount, replacedCount }, locale) };
+      return withHistory(
+        importSummaryMessage({ importedCount, skippedCount, replacedCount }, locale),
+        historyEntryId,
+      );
     }
     case 'asset.trash': {
       const count = countOf(result, 'trashedCount');
-      return count === undefined ? undefined : info(locale, 'toast.batchTrashed', { count });
+      return count === undefined ? undefined : info(locale, 'toast.batchTrashed', { count }, historyEntryId);
     }
     case 'asset.delete-permanent': {
       const count = countOf(result, 'deletedCount');
-      return count === undefined ? undefined : info(locale, 'toast.assetsDeletedFromDisk', { count });
+      return count === undefined ? undefined : info(locale, 'toast.assetsDeletedFromDisk', { count }, historyEntryId);
     }
     case 'asset.move': {
       const count = countOf(result, 'movedCount');
-      return count === undefined ? undefined : info(locale, 'toast.movedCount', { count });
+      return count === undefined ? undefined : info(locale, 'toast.movedCount', { count }, historyEntryId);
     }
     case 'asset.paths.copy':
-      return info(locale, 'toast.copyPathDone');
+      return info(locale, 'toast.copyPathDone', undefined, historyEntryId);
     case 'tag.create': {
       const name = result.name;
       return typeof name === 'string' && name.length > 0
-        ? info(locale, 'toast.tagCreated', { name })
+        ? info(locale, 'toast.tagCreated', { name }, historyEntryId)
         : undefined;
     }
     case 'tag.assign': {
       const count = countOf(result, 'assignedCount');
-      return count === undefined ? undefined : info(locale, 'toast.tagsAddedCount', { count });
+      return count === undefined ? undefined : info(locale, 'toast.tagsAddedCount', { count }, historyEntryId);
     }
     case 'tag.remove':
-      return info(locale, 'toast.tagRemoved');
+      return info(locale, 'toast.tagRemoved', undefined, historyEntryId);
     case 'collection.assets.add':
-      return info(locale, 'toast.addedToCollection');
+      return info(locale, 'toast.addedToCollection', undefined, historyEntryId);
     case 'collection.assets.remove':
-      return info(locale, 'toast.removedFromCollection');
+      return info(locale, 'toast.removedFromCollection', undefined, historyEntryId);
     default:
       return undefined;
   }

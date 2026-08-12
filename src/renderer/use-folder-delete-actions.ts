@@ -27,7 +27,7 @@ interface UseFolderDeleteActionsParams {
   locale: AppLocale;
   assetScope: string;
   folders: readonly FolderParentNode[];
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: "loading" | "ready") => void;
   closePreview: () => Promise<void>;
@@ -74,6 +74,7 @@ export function useFolderDeleteActions({
             name,
             count: result.value.trashedAssetCount,
           }),
+          result.value.historyEntryId,
         );
         await afterFolderMutation([folderId]);
       } catch (caught) {

@@ -5,6 +5,7 @@ import {
 } from '../shared/protocol/errors';
 import { LibraryServiceError } from './library-service';
 import { LibraryWriteCoordinatorError } from './library-write-coordinator';
+import { HistoryTransitionError } from './operation-history';
 
 /** Serpent-033e: any write against a read-only (newer-schema) library. */
 function isSqliteReadonlyFailure(error: unknown): boolean {
@@ -43,6 +44,9 @@ export function publicErrorForWorkerFailure(error: unknown): PublicError {
     return createPublicError('LIBRARY_STRUCTURE_MISMATCH');
   }
   if (error instanceof LibraryWriteCoordinatorError) {
+    return createPublicError(error.code);
+  }
+  if (error instanceof HistoryTransitionError) {
     return createPublicError(error.code);
   }
   if (error instanceof LibraryServiceError) {

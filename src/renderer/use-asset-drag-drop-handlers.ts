@@ -13,29 +13,18 @@ import {
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { useLocale, useT } from "./i18n";
 
-export type UndoableFileOp =
-  | {
-      readonly kind: "move" | "copy";
-      readonly operationId: string;
-    }
-  | {
-      readonly kind: "trash";
-      readonly assetIds: readonly string[];
-    };
-
 export type UseAssetDragDropHandlersParams = {
   api: SerpentLibraryApi | null;
   library: RendererLibrarySummary | null;
   assets: AssetSummary[];
   assetScope: string;
-  setNotice: (message: string) => void;
+  setNotice: (message: string, historyEntryId?: string) => void;
   setError: (message: string | null) => void;
   setUiState: (state: "loading" | "importing" | "ready") => void;
   clearAssetSelection: () => void;
-  trashManagedAssets: (assetIds: string[]) => Promise<void>;
+  trashManagedAssets: (assetIds: string[]) => Promise<string | undefined>;
   reloadCurrentContentRef: MutableRefObject<() => Promise<void>>;
   setCollections: (collections: CollectionSummary[]) => void;
-  setLastUndoableOp: (op: UndoableFileOp | null) => void;
 };
 
 /**
@@ -54,7 +43,6 @@ export function useAssetDragDropHandlers({
   trashManagedAssets,
   reloadCurrentContentRef,
   setCollections,
-  setLastUndoableOp,
 }: UseAssetDragDropHandlersParams) {
   const t = useT();
   const { locale } = useLocale();
@@ -104,14 +92,6 @@ export function useAssetDragDropHandlers({
               conflictStrategy: "keep-both",
             });
             if (!result.ok) throw new LibraryOperationError(result.error);
-            if (result.value.operationId) {
-              setLastUndoableOp({
-                kind: "copy",
-                operationId: result.value.operationId,
-              });
-            } else {
-              setLastUndoableOp(null);
-            }
             setNotice(
               t("toast.copiedCount", { count: result.value.copiedCount }) +
                 (result.value.skippedCount
@@ -125,6 +105,7 @@ export function useAssetDragDropHandlers({
                     })
                   : "") +
                 t("common.sentenceEnd"),
+              result.value.historyEntryId,
             );
           } else {
             const result = await api.moveAssets({
@@ -134,14 +115,6 @@ export function useAssetDragDropHandlers({
               conflictStrategy: "keep-both",
             });
             if (!result.ok) throw new LibraryOperationError(result.error);
-            if (result.value.operationId) {
-              setLastUndoableOp({
-                kind: "move",
-                operationId: result.value.operationId,
-              });
-            } else {
-              setLastUndoableOp(null);
-            }
             setNotice(
               t("toast.movedCount", { count: result.value.movedCount }) +
                 (result.value.skippedCount
@@ -155,6 +128,7 @@ export function useAssetDragDropHandlers({
                     })
                   : "") +
                 t("common.sentenceEnd"),
+              result.value.historyEntryId,
             );
           }
           clearAssetSelection();
@@ -184,7 +158,6 @@ export function useAssetDragDropHandlers({
       setUiState,
       clearAssetSelection,
       reloadCurrentContentRef,
-      setLastUndoableOp,
       locale,
       t,
     ],
@@ -221,8 +194,9 @@ export function useAssetDragDropHandlers({
                 ? t("toast.unavailableSkippedSuffix", {
                     count: resolution.skippedCount,
                   })
-                : "") +
+              : "") +
               t("common.sentenceEnd"),
+            result.value.historyEntryId,
           );
         } catch (caught) {
           setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
@@ -243,13 +217,14 @@ export function useAssetDragDropHandlers({
         return;
       }
       void (async () => {
-        await trashManagedAssets(eligible);
+        const historyEntryId = await trashManagedAssets(eligible);
         if (skippedCount > 0) {
           setNotice(
             t("toast.trashedWithSkipped", {
               count: eligible.length,
               skipped: skippedCount,
             }),
+            historyEntryId,
           );
         }
       })();

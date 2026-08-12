@@ -41,6 +41,20 @@ MCP transport 仍可能有协议层 `Mcp-Session-Id`，但它只用于请求关�
 
 库内结果应包含实际 `libraryId`；资源库变更通过 logging notification 报告 `changeSequence`，通知不是完整快照。
 
+## 撤回与重做
+
+撤回/重做由资源库 Worker 持有，Desktop、脚本、MCP 和插件共享同一条每库线性历史。MCP 不保存自己的 session 撤回栈，也不把文件 `operationId` 当作可执行的恢复凭据。
+
+| MCP 工具 | 作用 |
+| --- | --- |
+| `serpent_history_status` | 返回当前库的 `undoTop`、`redoTop`、`staleTop` 和 `transitionInProgress`；不返回路径或内部 recipe。 |
+| `serpent_history_undo` | 用 `libraryId` 和从 `history.status` 读到的 `expectedHistoryEntryId` 撤回当前栈顶。 |
+| `serpent_history_redo` | 用 `libraryId` 和当前 `redoTop.historyEntryId` 重做当前栈顶。 |
+
+调用必须显式带预期条目 ID；条目不是当前栈顶、已经 stale、被新的写入截断或存在并发转换时，服务器拒绝请求，不会跳过中间操作。新的正向写入会清除 redo 分支。永久删除等不可逆操作是 history barrier，不会因为开启 Full access 就变得可撤回。
+
+推荐流程：先调用 `serpent_history_status`，确认目标条目的 label/state，再调用 undo/redo；成功后使用返回的新 status 刷新显示。`staleTop` 只说明被阻塞的历史摘要，不能让 Agent 绕过前置条件强行恢复。
+
 ## 路径与导入
 
 Agent 工作流始终传显式路径，不调用原生文件选择器：
