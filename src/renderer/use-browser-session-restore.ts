@@ -6,6 +6,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type RefObject,
@@ -51,6 +52,8 @@ export type UseBrowserSessionRestoreArgs = {
   setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
   setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
   setAssetSelectionAnchor: (assetId: string | null) => void;
+  /** Blocks the persistence effect while the saved session is being hydrated. */
+  setBrowserSessionReady: (ready: boolean) => void;
   pendingRestoredFocusRef: MutableRefObject<string | null>;
   navHistoryRef: MutableRefObject<WorkspaceNavHistory>;
   setNavHistoryUi: Dispatch<
@@ -76,6 +79,11 @@ export function useBrowserSessionRestore(
 ): void {
   const t = useT();
   const { locale } = useLocale();
+  // React StrictMode intentionally mounts effects twice in development. The
+  // restore flow owns a sequence of async list/load/state operations, so two
+  // concurrent runs can race and let the second run overwrite the restored
+  // selection (or the browser session) with its initial empty state.
+  const restoreStartedRef = useRef(false);
   const {
     api,
     loadContent,
@@ -95,6 +103,7 @@ export function useBrowserSessionRestore(
     setSelectedAssetId,
     setSelectedAssetIds,
     setAssetSelectionAnchor,
+    setBrowserSessionReady,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -103,9 +112,11 @@ export function useBrowserSessionRestore(
   } = args;
 
   const restore = useCallback(async () => {
+    setBrowserSessionReady(false);
     if (!api) {
       setError(t("toast.bridgeUnavailable"));
       setUiState("idle");
+      setBrowserSessionReady(true);
       return;
     }
     let activeLibrary: RendererLibrarySummary | null = null;
@@ -178,6 +189,10 @@ export function useBrowserSessionRestore(
     } catch (caught) {
       setError(toMessage(caught, t("toast.workspaceRestoreFailed"), locale));
       setUiState(activeLibrary ? "ready" : "idle");
+    } finally {
+      // Do not let useBrowserSessionPersist observe the transient empty
+      // selection between setLibrary() and applyStoredBrowserSession().
+      setBrowserSessionReady(true);
     }
   }, [
     api,
@@ -192,6 +207,7 @@ export function useBrowserSessionRestore(
     setActiveTagId,
     setAssetScope,
     setAssetSelectionAnchor,
+    setBrowserSessionReady,
     setAssets,
     setError,
     setFolderRecursive,
@@ -208,12 +224,18 @@ export function useBrowserSessionRestore(
   ]);
 
   useEffect(() => {
+    // The preload bridge can be unavailable for the first render. Leave the
+    // guard unset in that case so the effect can retry when the bridge arrives.
+    if (!api || restoreStartedRef.current) return;
+    restoreStartedRef.current = true;
     void Promise.resolve().then(restore);
-  }, [restore]);
+  }, [api, restore]);
 }
 
 export type UseBrowserSessionPersistArgs = {
   library: RendererLibrarySummary | null;
+  /** False while the saved scope/selection is being hydrated on startup. */
+  browserSessionReady: boolean;
   selectedAsset: AssetSummary | undefined;
   showTrash: boolean;
   activeTagId: string | null;
@@ -228,6 +250,7 @@ export function useBrowserSessionPersist(
 ): void {
   const {
     library,
+    browserSessionReady,
     selectedAsset,
     showTrash,
     activeTagId,
@@ -238,7 +261,7 @@ export function useBrowserSessionPersist(
   } = args;
 
   useEffect(() => {
-    if (!library) return;
+    if (!library || !browserSessionReady) return;
     const session = buildBrowserSessionFromBrowseState({
       showTrash,
       activeTagId,
@@ -255,6 +278,7 @@ export function useBrowserSessionPersist(
   }, [
     activeCollectionId,
     activeSmartCollectionId,
+    browserSessionReady,
     activeTagId,
     assetScope,
     library,

@@ -223,7 +223,12 @@ export const AssetPreviewModal = forwardRef<
   }), [asset, isFullscreen, libraryId]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [manualRetryError, setManualRetryError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  // Recreate the HTMLMediaElement after a manual retry. Clearing the playback
+  // error alone leaves the failed source mounted, so Chromium may not emit a
+  // second error event and the viewer loses its actionable retry surface.
+  const [playbackRetryGeneration, setPlaybackRetryGeneration] = useState(0);
   const [selectedExrPlane, setSelectedExrPlane] = useState(0);
   const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
@@ -233,6 +238,7 @@ export const AssetPreviewModal = forwardRef<
     useState<ViewerContextMenuPosition | null>(null);
   const [fitRequestToken, setFitRequestToken] = useState(0);
   const resolutionRef = useRef<PreviewResolution | null>(null);
+  const playbackErrorRef = useRef<string | null>(null);
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
@@ -251,6 +257,7 @@ export const AssetPreviewModal = forwardRef<
       mode: "client" | "fullscreen" = "client",
       exrPlane = selectedExrPlane,
       colorSpace = selectedColorSpace,
+      preserveError = false,
     ) => {
       const sequence = ++requestSequence.current;
       if (!quiet) setLoading(true);
@@ -303,10 +310,11 @@ export const AssetPreviewModal = forwardRef<
           // Quiet polls must not clear a source-playback error while proxy is
           // still generating; clear once we upgrade to a ready proxy URL.
           if (
-            !quiet ||
-            (result.value.status === "ready" &&
-              result.value.playbackMode === "proxy" &&
-              result.value.url)
+            !preserveError &&
+            (!quiet ||
+              (result.value.status === "ready" &&
+                result.value.playbackMode === "proxy" &&
+                result.value.url))
           ) {
             setError(null);
           }
@@ -328,6 +336,8 @@ export const AssetPreviewModal = forwardRef<
     setSelectedExrPlane(0);
     setSelectedColorSpace(undefined);
     setDisplayTransform(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
+    playbackErrorRef.current = null;
+    setManualRetryError(null);
   }, [asset.assetId]);
 
   const ensureProxyFallback = useCallback(
@@ -474,7 +484,26 @@ export const AssetPreviewModal = forwardRef<
 
   async function retry() {
     setRetrying(true);
-    setError(null);
+    setPlaybackRetryGeneration((generation) => generation + 1);
+    // For a source-backed video, keep the existing playback error until
+    // `loadedmetadata` gives proof that the recreated media element can play.
+    // Clearing it immediately can leave an unplayable source mounted with no
+    // second error event on Chromium's custom `serpent://` scheme.
+    const retainedPlaybackError =
+      playbackErrorRef.current ??
+      error ??
+      (asset.mediaType === "video"
+        ? t("preview.videoFailed", { code: "VIDEO_MEDIA_ERR_4" })
+        : null);
+    const retainPlaybackError =
+      asset.mediaType === "video" && Boolean(resolution?.url);
+    if (retainPlaybackError && retainedPlaybackError !== null) {
+      setManualRetryError(retainedPlaybackError);
+      setError(retainedPlaybackError);
+    } else {
+      setManualRetryError(null);
+      setError(null);
+    }
     try {
       const result = await api.retryArtifact({
         libraryId,
@@ -492,7 +521,16 @@ export const AssetPreviewModal = forwardRef<
           requestFailureMessage(t("preview.retryFailed"), result.error, t),
         );
       } else {
-        await resolvePreview(false);
+        await resolvePreview(
+          false,
+          "client",
+          selectedExrPlane,
+          selectedColorSpace,
+          retainPlaybackError,
+        );
+        if (retainPlaybackError && retainedPlaybackError !== null) {
+          setError(retainedPlaybackError);
+        }
       }
     } catch {
       setError(t("preview.retryFailedNoResponse"));
@@ -599,14 +637,17 @@ export const AssetPreviewModal = forwardRef<
       mediaError != null &&
       (mediaError.code === 3 || mediaError.code === 4);
     if (shouldProxyFallback) {
-      setError(
+      const message =
         previewErrorDetail(resolution.errorCode, t) ??
-          t("preview.videoFailed", { code: errorCode }),
-      );
+        t("preview.videoFailed", { code: errorCode });
+      playbackErrorRef.current = message;
+      setError(message);
       void ensureProxyFallback(errorCode);
       return;
     }
-    setError(t("preview.videoFailed", { code: errorCode }));
+    const message = t("preview.videoFailed", { code: errorCode });
+    playbackErrorRef.current = message;
+    setError(message);
     void api
       .reportPreviewError({
         libraryId,
@@ -626,6 +667,7 @@ export const AssetPreviewModal = forwardRef<
     requireDirectApproval: false,
     hasPlaceholder: Boolean(placeholderUrl),
   });
+  const viewerError = error ?? manualRetryError;
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
   const imageSrc = resolution?.url ?? placeholderUrl;
@@ -756,6 +798,7 @@ export const AssetPreviewModal = forwardRef<
             // viewer must use the <video> surface (Chromium cannot decode
             // video/webm in <img>), while mediaType stays "image".
             <VideoPlayerControls
+              key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
               displayTransform={displayTransform}
               fitRequestToken={fitRequestToken}
               isFullscreen={isFullscreen}
@@ -763,7 +806,35 @@ export const AssetPreviewModal = forwardRef<
               onError={handlePlaybackError}
               onFullscreen={() => void toggleFullscreen()}
               onMutedChange={setViewerMuted}
-              onReady={() => setDirectApproved(true)}
+              onReady={() => {
+                setDirectApproved(true);
+              }}
+              onPlaying={(video) => {
+                // An unsupported custom source can emit `play` immediately
+                // and only publish MEDIA_ERR_4 later. Poll briefly so an
+                // early play event cannot remove the retry surface before the
+                // media element settles.
+                const startedAt = Date.now();
+                const confirmPlayable = () => {
+                  if (
+                    video.error ||
+                    !video.isConnected ||
+                    video.readyState < HTMLMediaElement.HAVE_METADATA ||
+                    video.videoWidth <= 0 ||
+                    video.videoHeight <= 0
+                  ) {
+                    return;
+                  }
+                  if (Date.now() - startedAt < 5_000) {
+                    window.setTimeout(confirmPlayable, 100);
+                    return;
+                  }
+                  playbackErrorRef.current = null;
+                  setManualRetryError(null);
+                  setError(null);
+                };
+                confirmPlayable();
+              }}
               onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
@@ -845,8 +916,8 @@ export const AssetPreviewModal = forwardRef<
             </div>
           ) : (
             <div
-              className={`preview-state${primarySurface === "unavailable" || error ? " is-error" : ""}`}
-              role={error ? "alert" : "status"}
+              className={`preview-state${primarySurface === "unavailable" || viewerError ? " is-error" : ""}`}
+              role={viewerError ? "alert" : "status"}
             >
               <strong>
                 {primarySurface === "waiting"
@@ -854,7 +925,7 @@ export const AssetPreviewModal = forwardRef<
                   : t("preview.unavailable")}
               </strong>
               <p>
-                {error ??
+                {viewerError ??
                   (resolution
                     ? previewFailureMessage(resolution, t)
                     : t("preview.statusReadFailed"))}
@@ -873,9 +944,9 @@ export const AssetPreviewModal = forwardRef<
               )}
             </div>
           )}
-          {error && ready && (
+          {viewerError && ready && (
             <div className="preview-playback-error" role="alert">
-              <span>{error}</span>
+              <span>{viewerError}</span>
               {!unsupported && (
                 <button
                   disabled={retrying}

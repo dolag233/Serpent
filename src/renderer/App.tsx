@@ -749,6 +749,10 @@ function AppInner() {
   const [allAssetCount, setAllAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  // Session persistence must wait until the startup restore has applied the
+  // saved scope and selection; otherwise the initial empty React state can
+  // overwrite the last browsed asset in localStorage.
+  const [browserSessionReady, setBrowserSessionReady] = useState(false);
   const [uiState, setUiState] = useState<UiState>("booting");
   const uiStateRef = useRef(uiState);
   uiStateRef.current = uiState;
@@ -2797,6 +2801,7 @@ function AppInner() {
     setSelectedAssetId,
     setSelectedAssetIds,
     setAssetSelectionAnchor,
+    setBrowserSessionReady,
     pendingRestoredFocusRef,
     navHistoryRef,
     setNavHistoryUi,
@@ -2814,6 +2819,7 @@ function AppInner() {
   });
   useBrowserSessionPersist({
     library,
+    browserSessionReady,
     selectedAsset,
     showTrash,
     activeTagId,

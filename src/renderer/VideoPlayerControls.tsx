@@ -49,6 +49,7 @@ export interface VideoPlayerControlsProps {
   onRotate?(): void;
   onMutedChange(muted: boolean): void;
   onReady?(): void;
+  onPlaying?(video: HTMLVideoElement): void;
   onSwipeNext?: () => void;
   onSwipePrevious?: () => void;
   fitRequestToken?: number;
@@ -97,6 +98,7 @@ export function VideoPlayerControls({
   onFullscreen,
   onMutedChange,
   onReady,
+  onPlaying,
   onSwipeNext,
   onSwipePrevious,
   onUserActivity,
@@ -424,10 +426,22 @@ export function VideoPlayerControls({
               displayTransform.quarterTurns,
             );
             measureAndFit("reset", { w: size.width, h: size.height });
-            onReady?.();
+          }}
+          onCanPlay={(event) => {
+            const video = event.currentTarget;
+            // Chromium can emit `loadedmetadata` for an unsupported custom
+            // source before reporting MEDIA_ERR_4. `canplay` is the first
+            // event here that proves the recreated source is actually
+            // playable, so only then clear a retained retry error.
+            if (video.videoWidth > 0 && video.videoHeight > 0 && !video.error) {
+              onReady?.();
+            }
           }}
           onPause={() => setPaused(true)}
-          onPlay={() => setPaused(false)}
+          onPlay={() => {
+            setPaused(false);
+            if (videoRef.current) onPlaying?.(videoRef.current);
+          }}
           onSeeked={() => {
             seekSessionRef.current?.onSeeked();
             if (scrubbingPointerId.current === null && videoRef.current) {
