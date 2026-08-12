@@ -90,11 +90,19 @@ export function normalizeAssetFileBaseName(input: string): string {
 
 /**
  * Strip the Windows '\\?\' extended-length spelling from a normalized path
- * ('\\?\C:\...' → 'C:\...'). Pure string logic so the guard is testable on
- * any platform; the caller keeps the win32 gate.
+ * ('\\?\C:\...' → 'C:\...' and '\\?\UNC\server\share\...' →
+ * '\\server\share\...'). Pure string logic so the guard is testable on any
+ * platform; the caller keeps the win32 gate.
  */
 export function stripWindowsExtendedPathPrefix(normalized: string): string {
-  return /^\\\\?\\/u.test(normalized) ? normalized.slice(4) : normalized;
+  const extendedPrefix = '\\\\?\\';
+  if (!normalized.startsWith(extendedPrefix)) return normalized;
+
+  const withoutPrefix = normalized.slice(extendedPrefix.length);
+  if (withoutPrefix.toLowerCase().startsWith('unc\\')) {
+    return `\\\\${withoutPrefix.slice('unc\\'.length)}`;
+  }
+  return withoutPrefix;
 }
 
 export function normalizeAbsolutePath(input: string): string {

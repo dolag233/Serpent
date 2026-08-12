@@ -66,14 +66,15 @@ describe('library path rules', () => {
       .toThrow(LibraryInputError);
   });
 
-  it('strips the Windows extended-length path prefix for identity (pure guard)', () => {
-    expect(stripWindowsExtendedPathPrefix('\\\\?\\C:\\Library\\Concept Art')).toBe(
-      'C:\\Library\\Concept Art',
-    );
-    expect(stripWindowsExtendedPathPrefix('C:\\Library\\Concept Art')).toBe(
-      'C:\\Library\\Concept Art',
-    );
-    expect(stripWindowsExtendedPathPrefix('/plain/posix/path')).toBe('/plain/posix/path');
+  it.each([
+    ['\\\\?\\C:\\Library\\Concept Art', 'C:\\Library\\Concept Art'],
+    ['\\\\?\\UNC\\server\\share\\Library\\Concept Art', '\\\\server\\share\\Library\\Concept Art'],
+    ['\\\\?\\unc\\server\\share\\Library\\Concept Art', '\\\\server\\share\\Library\\Concept Art'],
+    ['\\\\server\\share\\Library\\Concept Art', '\\\\server\\share\\Library\\Concept Art'],
+    ['C:\\Library\\Concept Art', 'C:\\Library\\Concept Art'],
+    ['/plain/posix/path', '/plain/posix/path'],
+  ])('normalizes Windows extended path spelling %j without changing its root', (input, expected) => {
+    expect(stripWindowsExtendedPathPrefix(input)).toBe(expected);
   });
 });
 
