@@ -90,6 +90,8 @@ Console 的脚本源最多 64 KiB；脚本输出逐行收集，单行最多 16 K
 
 脚本启动时，Console 会按脚本内容、目标资源库和能力发起一次运行授权。未保存 Console 代码的授权是当前会话级；保存脚本可获得保存脚本级的重复授权，但改动源文本、目标库或能力后会重新确认。脚本不能自行提权。
 
+脚本的 `history.undo` / `history.redo` 需要同时声明 `library.read` 和 `history.write`；只有读取权限的执行会在 Gateway 处稳定拒绝，Worker 不会执行逆向写入。`history.write` 与其他受控写能力一起受运行授权和 Worker 历史前置条件约束。
+
 低风险元数据写入（评分、喜欢、标签、合集、空文件夹等）在运行授权后执行。资源库/文件生命周期和内容写入需要额外的本机计划确认，包括：
 
 - `library.create`、`files.import`

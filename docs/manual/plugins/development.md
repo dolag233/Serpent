@@ -376,6 +376,8 @@ metadata。
 插件使用与脚本共享的 Gateway 领域面，包括 library、assets、folders、tags、collections、metadata、content、jobs、storage、data、
 secrets、net、clipboard 等。实际可调用能力由权限决定；结果不承诺返回资源库绝对路径。
 
+需要调用统一撤回/重做的插件必须声明 `history.write` 与 `library.read`。该权限直接复用 Automation Registry 的同名 capability；只声明 `library.read` 的调用会在 Gateway 被拒绝，不会进入 Worker。
+
 内容读取使用 `assets.readContent(assetId, { maxBytes })`，得到受限 base64、revision、大小、MIME 和 `truncated`。内容写回使用
 `replaceContent` 或 `stageContent`/`replaceContentBatch`，须使用 managed asset、权限和 expected revision；写入经过 Execution Plan/确认，
 大文件不放在单一 IPC payload。批量替换先统一校验 revision，再提交 staging；不能宣称文件系统原子性。

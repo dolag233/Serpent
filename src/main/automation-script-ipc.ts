@@ -237,6 +237,7 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
       const sessionId = source === 'desktop-console' ? sessionFor(event.sender.id) : undefined;
       const declaredCapabilities = [
         'library.read',
+        'history.write',
         'folder.read',
         'folder.write',
         'asset.read',

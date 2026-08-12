@@ -15,6 +15,7 @@ describe('plugin permission → automation capability mapping', () => {
   it('keeps overlapping Gateway capabilities and drops plugin-only permissions', () => {
     expect(automationCapabilitiesFromPluginPermissions([
       'library.read',
+      'history.write',
       'asset.read',
       'content.write',
       'tag.write',
@@ -25,6 +26,7 @@ describe('plugin permission → automation capability mapping', () => {
       'asset.read',
       'content.write',
       'folder.write',
+      'history.write',
       'library.read',
       'tag.write',
     ]);

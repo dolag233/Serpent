@@ -45,6 +45,8 @@ MCP transport 仍可能有协议层 `Mcp-Session-Id`，但它只用于请求关�
 
 撤回/重做由资源库 Worker 持有，Desktop、脚本、MCP 和插件共享同一条每库线性历史。MCP 不保存自己的 session 撤回栈，也不把文件 `operationId` 当作可执行的恢复凭据。
 
+`serpent_history_undo` 和 `serpent_history_redo` 需要 `library.read` 与受控的 `history.write` capability；只读 credential 不能绕过这项能力检查，也不会把请求送入 Worker。读写/Auto 按普通受控写入策略执行，Full Access 只改变 MCP 档位授权，不绕过历史前置条件。
+
 | MCP 工具 | 作用 |
 | --- | --- |
 | `serpent_history_status` | 返回当前库的 `undoTop`、`redoTop`、`staleTop` 和 `transitionInProgress`；不返回路径或内部 recipe。 |

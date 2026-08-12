@@ -58,6 +58,8 @@ Permission Broker 只读取 credential 权限档，不保存 transport session g
 
 危险命令（如永久删除）在只读档下与普通写入同等对待——必须由桌面用户当场确认或拒绝，Agent 无法自行确认（sonnet 审查回归：read-only 不得存在任何绕过桌面确认的危险执行路径）。读写档下使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行。完全档直接执行（启用时用户已确认责任），但不能跳过领域校验。
 
+撤回/重做命令额外要求 Automation capability `history.write`，它与 `library.read` 同时存在才可进入 Worker。只有 `library.read` 的执行会稳定返回权限拒绝，且不会触发历史转换；Auto/读写档由 Gateway 的普通受控能力策略授权，Full Access 也不会改变 Worker 的栈顶和前置条件校验。
+
 ## Desktop 通知
 
 `serpent_ui_notify` 是非阻塞信息投影，不是权限通道，仅接受 `toast` 模式（dialog 模式已按 stateless 设计移除）。Host 或 Agent 可以用它说明“正在导入显式路径”“正在查询任务”等阶段，但不得打开选择器或用 notification 等待人类批准。

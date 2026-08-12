@@ -64,7 +64,7 @@ type PluginRuntime =
 当前 `pluginPermissionSchema` 的完整枚举为：
 
 ```text
-library.read  folder.read  folder.write  asset.read  metadata.read
+library.read  history.write  folder.read  folder.write  asset.read  metadata.read
 tag.read  collection.read  job.read  metadata.write  tag.write
 collection.write  ai.enqueue  job.manage  file.import  file.move
 file.rename  trash.write  clipboard.read  clipboard.write  content.read

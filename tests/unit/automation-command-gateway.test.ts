@@ -9,6 +9,7 @@ import {
   type AutomationCapability,
   describeAutomationCommands,
   getAutomationCapabilityDefinition,
+  getAutomationCommandDescriptor,
   getAutomationCommandPermissionMetadata,
   generateAutomationTypeDeclaration,
 } from '../../src/automation/command-registry';
@@ -53,7 +54,7 @@ function request(
 }
 
 function resolver(overrides: Partial<{
-  source: 'desktop-console' | 'script' | 'mcp' | 'test';
+  source: 'desktop-console' | 'script' | 'mcp' | 'plugin' | 'test';
   clientCredentialId: string;
   clientName: string;
   libraryId: string | null;
@@ -137,6 +138,14 @@ class RecordingWorker implements AutomationWorkerClient {
     return this.nextResult;
   }
 }
+
+const emptyHistoryStatus = {
+  libraryId: 'library-1',
+  undoTop: null,
+  redoTop: null,
+  staleTop: null,
+  transitionInProgress: false,
+};
 
 describe('Automation Command Registry', () => {
   it('contains complete read/write descriptors and exports JSON/TypeScript contracts', () => {
@@ -344,9 +353,77 @@ describe('Automation Command Registry', () => {
       }
     }
   });
+
+  it('declares history undo and redo as a controlled history write', () => {
+    for (const commandId of ['history.undo', 'history.redo'] as const) {
+      const descriptor = getAutomationCommandDescriptor(commandId);
+      expect(descriptor?.requiredCapabilities).toEqual(['library.read', 'history.write']);
+      expect(descriptor === undefined ? undefined : getAutomationCommandPermissionMetadata(descriptor)).toMatchObject({
+        riskTier: 'controlled',
+        requestableCapabilities: ['history.write'],
+        canPersist: true,
+      });
+    }
+  });
 });
 
 describe('Automation Command Gateway', () => {
+  it.each(['desktop-console', 'script', 'mcp', 'plugin'] as const)(
+    'rejects history undo and redo from a %s execution with only library.read before Worker dispatch',
+    async (source) => {
+      const worker = new RecordingWorker({
+        ok: true,
+        type: 'history.undone',
+        historyEntryId: 'history-entry-1',
+        affectedCount: 1,
+        status: emptyHistoryStatus,
+      });
+      const commandGateway = gateway(worker, {
+        source,
+        grantedCapabilities: ['library.read'],
+      });
+
+      for (const commandId of ['history.undo', 'history.redo'] as const) {
+        await expect(commandGateway.execute(request(commandId, {
+          expectedHistoryEntryId: 'history-entry-1',
+        }))).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'AUTOMATION_CAPABILITY_DENIED' },
+        });
+      }
+      expect(worker.commands).toEqual([]);
+    },
+  );
+
+  it.each(['desktop-console', 'script', 'mcp', 'plugin'] as const)(
+    'dispatches history redo from a %s execution with history.write',
+    async (source) => {
+      const worker = new RecordingWorker({
+        ok: true,
+        type: 'history.redone',
+        historyEntryId: 'history-entry-1',
+        affectedCount: 1,
+        status: emptyHistoryStatus,
+      });
+      const commandGateway = gateway(worker, {
+        source,
+        grantedCapabilities: ['library.read', 'history.write'],
+      });
+
+      await expect(commandGateway.execute(request('history.redo', {
+        expectedHistoryEntryId: 'history-entry-1',
+      }))).resolves.toMatchObject({
+        ok: true,
+        result: { historyEntryId: 'history-entry-1', affectedCount: 1 },
+      });
+      expect(worker.commands).toEqual([{
+        type: 'history.redo',
+        libraryId: 'library-1',
+        expectedHistoryEntryId: 'history-entry-1',
+      }]);
+    },
+  );
+
   it('asks the Main permission broker for an MCP controlled capability before dispatch', async () => {
     const worker = new RecordingWorker({
       ok: true,

@@ -116,7 +116,7 @@ describe('Desktop Console automation IPC', () => {
     expect(start).toMatchObject({
       ok: true,
       executionId: 'execution-1',
-      capabilities: expect.arrayContaining(['library.read', 'library.create', 'file.import']),
+      capabilities: expect.arrayContaining(['library.read', 'history.write', 'library.create', 'file.import']),
     });
     if (!start || typeof start !== 'object' || !('executionId' in start)) throw new Error('Expected an execution.');
 
