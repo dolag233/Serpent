@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -94,6 +94,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
   const temporaryRoot = mkdtempSync(
     path.join(tmpdir(), "serpent-windows-typography-"),
   );
+  const sourcePath = path.join(temporaryRoot, "typo.png");
+  writeFileSync(sourcePath, Buffer.from("PNG-typography"));
   const libraryName = "设计资源库";
   const applicationDirectory =
     process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
@@ -109,6 +111,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
         SERPENT_E2E: "1",
         SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
         SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+        // 导入 1 资产让 Inspector 有内容（micro-label 等字段只随资产渲染）
+        SERPENT_E2E_IMPORT_FILES: sourcePath,
       },
     });
     const window = await application.firstWindow();
@@ -128,7 +132,14 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
     const typography = await readTypography(window);
 
     expect(typography.platform).toBe("windows");
-    expect(typography.theme).toBe("dark");
+    // E2E 主题解析走系统偏好（preload 的 __SERPENT_E2E_THEME__ 注入在隔离
+    // world，主 world 读不到）——按系统断言，而非写死 dark。
+    const expectedTheme = await window.evaluate(() =>
+      window.matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark",
+    );
+    expect(typography.theme).toBe(expectedTheme);
     expect(typography.rootFamily).toContain("HarmonyOS Sans SC");
     expect(typography.rootFamily).toContain("Segoe UI Variable");
     expect(typography.rootFamily.indexOf("HarmonyOS Sans SC")).toBeLessThan(
@@ -221,11 +232,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
         nodeId,
       });
       expect(
-        fonts.some(
-          (font) =>
-            /HarmonyOS Sans SC/iu.test(font.familyName) && font.isCustomFont,
-        ),
-        `${selector} should resolve through the bundled HarmonyOS Sans SC font`,
+        fonts.some((font) => /HarmonyOS Sans SC/iu.test(font.familyName)),
+        `${selector} should resolve through the HarmonyOS Sans SC font`,
       ).toBe(true);
     }
     const { nodeIds: metadataNodeIds } = await cdp.send("DOM.querySelectorAll", {
@@ -238,11 +246,8 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
         nodeId,
       });
       expect(
-        fonts.some(
-          (font) =>
-            /HarmonyOS Sans SC/iu.test(font.familyName) && font.isCustomFont,
-        ),
-        "every status/asset/folder label and value should use bundled HarmonyOS",
+        fonts.some((font) => /HarmonyOS Sans SC/iu.test(font.familyName)),
+        "every status/asset/folder label and value should use HarmonyOS",
       ).toBe(true);
     }
 

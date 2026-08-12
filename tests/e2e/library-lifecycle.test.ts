@@ -159,11 +159,16 @@ test("restores the recent library and focuses the last browsed asset after a ful
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
       .click();
+    // 等导入 reveal 的 pending 过期（280ms）——否则点击会被 reveal 重应用
+    // 覆盖（选中回到全选，session 存的是第一个资产而非点击目标）。
+    await window.waitForTimeout(500);
     const rememberedCard = window.locator(".asset-card", {
       hasText: "remember-me.txt",
     });
     await rememberedCard.click();
     await expect(rememberedCard).toHaveAttribute("aria-pressed", "true");
+    // 等待会话保存完成（useEffect 异步写 session，close 前必须落盘）
+    await window.waitForTimeout(800);
     await application.close();
 
     application = await launch();

@@ -82,6 +82,8 @@ test("ordinary browsing continuously appends every asset without page controls",
     await expect(
       window.getByText("asset-050.txt", { exact: true }),
     ).toBeVisible();
+    // 限定卡片内匹配：asset-000.txt 同时出现在 Inspector（如 hover 预览）
+    // 时，卡片断言不受影响。
     await expect(
       window.locator(".asset-card").filter({ hasText: "asset-000.txt" }),
     ).toHaveCount(1);

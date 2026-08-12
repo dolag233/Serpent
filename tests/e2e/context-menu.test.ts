@@ -191,6 +191,9 @@ test("context menu clamps at viewport edges", async () => {
 
     // Verify menu still works after testing
     await window.keyboard.press("Escape");
+    // 创建合集后 scope 自动进入合集（新行为）——回到「所有资产」再验证
+    // 资产菜单仍然可用。
+    await window.getByRole("button", { name: /所有资产/ }).click();
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
     await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();
@@ -228,6 +231,10 @@ test("single-menu enforcement — opening new context menu closes existing one",
     // Create a collection for dual-menu testing.
     // (The sidebar no longer enumerates tags — REQ-TAG-001 — so the
     // collection row is the remaining organization menu entry.)
+    // 导入 reveal 会选中资产——先 Escape 清除选择（对齐 122 的两次 Escape
+    // 惯例），否则「添加合集」的输入框不出现（2026-08-12 实测）。
+    await window.keyboard.press("Escape");
+    await window.keyboard.press("Escape");
     await window.getByRole("button", { name: "添加合集" }).click();
     await window.getByPlaceholder("新建合集").fill("Single Test Collection");
     await window.getByPlaceholder("新建合集").press("Enter");
@@ -239,6 +246,8 @@ test("single-menu enforcement — opening new context menu closes existing one",
     await expect(assetCard).toBeVisible();
 
     // Step 1: Open context menu on the asset card
+    // 创建合集后 scope 自动进入合集——回到「所有资产」再右键资产卡片。
+    await window.getByRole("button", { name: /所有资产/ }).click();
     await assetCard.click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
     await expect(window.getByRole("menuitem", { name: "用默认应用打开" })).toBeVisible();

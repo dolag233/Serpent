@@ -37,7 +37,15 @@ test('activates the fixed standard Host probe and writes library storage', async
     await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
 
-    await window.getByRole('button', { name: '设置' }).click();
+    if (process.platform === 'win32') {
+      // Windows 无工具栏设置齿轮（8-09~8-12 菜单重构）——从应用菜单栏打开。
+      await window.getByRole('button', { name: '主菜单' }).click();
+      await window
+        .getByRole('menuitem', { name: '设置', exact: true })
+        .click();
+    } else {
+      await window.getByRole('button', { name: '设置' }).click();
+    }
     const dialog = window.getByRole('dialog', { name: '通用设置' });
     await dialog.getByRole('tab', { name: '插件' }).click();
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();

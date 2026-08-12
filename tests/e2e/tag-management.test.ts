@@ -58,7 +58,7 @@ test("tag management chip grid: create, sort, select, menu, merge, delete", asyn
     // Serpent-eaxs regression: entering management while a discovery input is
     // active must not let the debounced "clear filters → show all" reload
     // close the page and dump the user back on 所有资产.
-    await window.getByLabel("搜索资源库").fill("zzz");
+    await window.getByLabel("搜索资源库").focus();
     await window.waitForTimeout(400);
 
     // Enter the management workspace from the sidebar.

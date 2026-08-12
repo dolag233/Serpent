@@ -168,8 +168,11 @@ test("creates a nested subfolder inline from the folder context menu", async () 
       menu.getByRole("menuitem", { name: "重命名…" }),
     ).toBeVisible();
     // REQ-MENU-006: the folder shell actions sit in the same menu.
+    // Platform label: macOS Finder vs Windows File Explorer (sidebar-commands).
     await expect(
-      menu.getByRole("menuitem", { name: "在 Finder 中打开" }),
+      menu.getByRole("menuitem", {
+        name: process.platform === "darwin" ? "在 Finder 中打开" : "在文件浏览器中打开",
+      }),
     ).toBeVisible();
     await expect(
       menu.getByRole("menuitem", { name: "复制文件夹路径" }),
@@ -334,6 +337,8 @@ test("keeps the inline rename row open with an inline conflict error and allows 
     const window = await application.firstWindow();
     await createLibrary(window, libraryName);
     await createFolderViaSidebar(window, "素材甲");
+    // 创建后自动进入新文件夹（产品行为）——回根再建第二个，保证两者同父级。
+    await window.getByRole("button", { name: /所有资产/ }).click();
     await createFolderViaSidebar(window, "素材乙");
 
     const input = await openFolderRenameInline(window, "素材甲");
@@ -464,6 +469,9 @@ test("creates under the selected folder from the sidebar plus entry, cancels wit
       sidebarFolderRow(window, "已有子级"),
     ).toHaveCount(0);
 
+    // 创建「已有子级」后自动进入子级；折叠后显式回到父级再添加，
+    // 保证「+」入口嵌套在父级下。
+    await sidebarFolderRow(window, "父级").click();
     await window.getByRole("button", { name: "添加文件夹" }).click();
 
     // The pending row nests under the selected folder, not at the root.
