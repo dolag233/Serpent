@@ -7926,6 +7926,60 @@ function AppInner() {
     });
   }, [mainMenuSections, shellApi]);
 
+  useEffect(() => {
+    if (!shellApi) return;
+    shellApi.setApplicationMenuCommandLabel(
+      "edit.undo",
+      operationHistory?.undoTop === null || operationHistory?.undoTop === undefined
+        ? t("shell.mainMenuUndo")
+        : t("shell.mainMenuUndoCount", { count: operationHistory.undoTop.affectedCount }),
+    );
+    shellApi.setApplicationMenuCommandLabel(
+      "edit.redo",
+      operationHistory?.redoTop === null || operationHistory?.redoTop === undefined
+        ? t("shell.mainMenuRedo")
+        : t("shell.mainMenuRedoCount", { count: operationHistory.redoTop.affectedCount }),
+    );
+    // Serpent-接管: the native menu accelerator must NOT intercept Cmd/Ctrl+Z
+    // while a text field is focused — Chromium's native text undo/redo would
+    // be swallowed. The item is only enabled for the business history outside
+    // editable text (which is also what the in-app menu labels advertise).
+    shellApi.setApplicationMenuCommandEnabled(
+      "edit.undo",
+      !editableTextFocused
+        && operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined
+        && !busy,
+    );
+    shellApi.setApplicationMenuCommandEnabled(
+      "edit.redo",
+      !editableTextFocused
+        && operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined
+        && !busy,
+    );
+  }, [busy, editableTextFocused, operationHistory, shellApi, t]);
+
+  // Serpent-接管: Windows has no native menu bar (its accelerators are gone),
+  // so the business undo/redo shortcuts live in the renderer. A focused text
+  // field keeps Ctrl+Z/Ctrl+Shift+Z for Chromium's native text undo/redo.
+  useEffect(() => {
+    if (!IS_WINDOWS_PLATFORM) return;
+    const onUndoRedoKeyDown = (event: KeyboardEvent) => {
+      if (editableTextFocused || busy) return;
+      if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key !== "z" && event.key !== "Z") return;
+      event.preventDefault();
+      if (event.shiftKey) {
+        if (operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined) {
+          void redoLastOperation();
+        }
+      } else if (operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined) {
+        void undoLastFileOp();
+      }
+    };
+    document.addEventListener("keydown", onUndoRedoKeyDown);
+    return () => document.removeEventListener("keydown", onUndoRedoKeyDown);
+  }, [busy, editableTextFocused, operationHistory, undoLastFileOp, redoLastOperation]);
+
   return (
     <>
     <HoverTipHost />
