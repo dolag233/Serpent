@@ -134,4 +134,48 @@ describe('requestTimeoutForCommand', () => {
     if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
     else process.env.SERPENT_OIIO_PATH = previousOiioPath;
   });
+
+  it('passes an explicit missing FFmpeg path to the Worker unchanged', async () => {
+    const child = new FakeUtilityProcess();
+    utilityProcessFork.mockReturnValueOnce(child);
+    const logger = {
+      worker: vi.fn(),
+      error: vi.fn(),
+      info: vi.fn(),
+    } as unknown as AppLogger;
+    const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    const missingFfmpegPath = '/tmp/serpent-missing-ffmpeg';
+    process.env.SERPENT_FFMPEG_PATH = missingFfmpegPath;
+    process.env.SERPENT_OIIO_PATH = '/tmp/serpent-oiiotool';
+
+    try {
+      const start = client.start();
+      child.emit('message', { type: 'worker.ready' });
+      await start;
+
+      expect(utilityProcessFork).toHaveBeenCalledWith(
+        '/tmp/library-worker.js',
+        [],
+        expect.objectContaining({
+          env: expect.objectContaining({ SERPENT_FFMPEG_PATH: missingFfmpegPath }),
+        }),
+      );
+
+      const forkOptions = utilityProcessFork.mock.calls.at(-1)?.[2] as {
+        env?: NodeJS.ProcessEnv;
+      } | undefined;
+      expect(forkOptions?.env?.SERPENT_FFMPEG_PATH).toBe(missingFfmpegPath);
+
+      const shutdown = client.shutdown();
+      child.emit('message', { type: 'worker.shutdown.ack' });
+      await shutdown;
+    } finally {
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
 });

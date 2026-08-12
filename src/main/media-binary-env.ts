@@ -56,11 +56,15 @@ export function mediaBinaryWorkerEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env = { ...baseEnv };
-  if (!env.SERPENT_FFMPEG_PATH) {
+  // A configured path is authoritative even when it does not exist. This is
+  // intentional: launch-time test and development overrides must reach the
+  // Worker unchanged so a missing component reports FFMPEG_REQUIRED instead
+  // of silently recovering from bundled/PATH binaries.
+  if (env.SERPENT_FFMPEG_PATH === undefined) {
     const ffmpeg = firstRunnable(resourceCandidates("ffmpeg", "ffmpeg"));
     if (ffmpeg) env.SERPENT_FFMPEG_PATH = ffmpeg;
   }
-  if (!env.SERPENT_OIIO_PATH) {
+  if (env.SERPENT_OIIO_PATH === undefined) {
     const oiiotool = firstRunnable(resourceCandidates("oiio", "oiiotool"));
     if (oiiotool) env.SERPENT_OIIO_PATH = oiiotool;
   }
