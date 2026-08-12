@@ -2747,6 +2747,20 @@ export interface RecordOperationHistoryInput {
   sourceReference?: string | null;
 }
 
+export interface OperationHistoryGroupStepInput {
+  affectedEntities?: readonly string[];
+  commandId: string;
+  forwardRecipe: HistoryRecipe;
+  inverseRecipe: HistoryRecipe;
+}
+
+export interface TrashSelectionResult {
+  historyEntryId: string;
+  removedFolderCount: number;
+  trashedAssetCount: number;
+  trashedFolderCount: number;
+}
+
 export interface OperationHistoryTransitionResult {
   affectedCount: number;
   direction: HistoryDirection;
@@ -6155,6 +6169,28 @@ export class LibraryService {
    * are intentionally not accepted by this boundary.
    */
   recordOperationHistory(input: RecordOperationHistoryInput): HistoryOperationReceipt {
+    return this.recordOperationHistoryGroup({
+      ...input,
+      steps: [{
+        commandId: input.commandId,
+        forwardRecipe: input.forwardRecipe,
+        inverseRecipe: input.inverseRecipe,
+        affectedEntities: input.affectedEntities,
+      }],
+    });
+  }
+
+  /**
+   * Persist one user intent with one or more ordered Worker-owned steps.
+   * `open` is written before a caller starts an external filesystem phase;
+   * callers must complete or discard it after the phase.  A Worker restart
+   * marks an unfinished group stale, so an interrupted batch is never exposed
+   * as a successful undo target.
+   */
+  recordOperationHistoryGroup(input: Omit<RecordOperationHistoryInput, 'forwardRecipe' | 'inverseRecipe'> & {
+    commit?: boolean;
+    steps: readonly OperationHistoryGroupStepInput[];
+  }): HistoryOperationReceipt {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.historyReplayDepth > 0) {
       return {
@@ -6164,18 +6200,26 @@ export class LibraryService {
         policy: input.policy ?? 'reversible',
       };
     }
+    if (input.steps.length === 0) throw new LibraryServiceError('LIBRARY_CORRUPT');
     if (!Number.isSafeInteger(input.affectedCount) || input.affectedCount < 0) {
       throw new LibraryServiceError('LIBRARY_CORRUPT');
     }
-    const forward = historyRecipeSchema.parse(input.forwardRecipe);
-    const inverse = historyRecipeSchema.parse(input.inverseRecipe);
-    try {
-      assertRegisteredHistoryRecipePair(forward, inverse);
-    } catch (error) {
-      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
-    }
+    const steps = input.steps.map((step) => {
+      const forward = historyRecipeSchema.parse(step.forwardRecipe);
+      const inverse = historyRecipeSchema.parse(step.inverseRecipe);
+      try {
+        assertRegisteredHistoryRecipePair(forward, inverse);
+      } catch (error) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+      }
+      return {
+        ...step,
+        forward,
+        inverse,
+        affectedEntities: step.affectedEntities ?? [],
+      };
+    });
     const historyEntryId = randomUUID();
-    const historyStepId = randomUUID();
     const now = new Date().toISOString();
     const appliedSequence = ((openLibrary.connection
       .prepare('SELECT COALESCE(MAX(applied_sequence), 0) AS sequence FROM operation_history')
@@ -6184,13 +6228,19 @@ export class LibraryService {
     const source = input.source ?? 'desktop';
     const labelArgs = input.labelArgs ?? {};
     const affectedEntities = input.affectedEntities ?? [];
-    const forwardJson = JSON.stringify(forward);
-    const inverseJson = JSON.stringify(inverse);
     const labelArgsJson = JSON.stringify(labelArgs);
     const affectedEntitiesJson = JSON.stringify(affectedEntities);
+    const serializedSteps = steps.map((step) => ({
+      forwardJson: JSON.stringify(step.forward),
+      inverseJson: JSON.stringify(step.inverse),
+      affectedEntitiesJson: JSON.stringify(step.affectedEntities),
+    }));
+    const historyBytes = serializedSteps.reduce((total, step) => total
+      + Buffer.byteLength(step.forwardJson, 'utf8')
+      + Buffer.byteLength(step.inverseJson, 'utf8')
+      + Buffer.byteLength(step.affectedEntitiesJson, 'utf8'), 0);
     if (
-      Buffer.byteLength(forwardJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
-      || Buffer.byteLength(inverseJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
+      historyBytes > OPERATION_HISTORY_MAX_RECIPE_BYTES
       || Buffer.byteLength(labelArgsJson, 'utf8') + Buffer.byteLength(affectedEntitiesJson, 'utf8') > OPERATION_HISTORY_MAX_RECIPE_BYTES
     ) {
       throw new LibraryServiceError('HISTORY_TOO_LARGE');
@@ -6205,7 +6255,7 @@ export class LibraryService {
            (history_entry_id, source, source_reference, label_key, label_args_json,
             policy, state, applied_sequence, redo_sequence, stale_code,
             affected_count, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'applied', ?, 0, NULL, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, 'open', ?, 0, NULL, ?, ?, ?)`,
       ).run(
         historyEntryId,
         source,
@@ -6218,26 +6268,32 @@ export class LibraryService {
         now,
         now,
       );
-      openLibrary.connection.prepare(
+      const insertStep = openLibrary.connection.prepare(
         `INSERT INTO operation_history_steps
            (history_step_id, history_entry_id, ordinal, command_id, recipe_kind,
             recipe_version, forward_payload_json, inverse_payload_json,
             affected_entities_json, current_direction)
-         VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, 'forward')`,
-      ).run(
-        historyStepId,
-        historyEntryId,
-        input.commandId,
-        forward.kind,
-        forward.version,
-        // Persist the complete versioned recipe, not only its payload. Undo
-        // and redo both validate the kind/version against the Worker-owned
-        // registry before executing it.
-        forwardJson,
-        inverseJson,
-        affectedEntitiesJson,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'forward')`,
       );
+      steps.forEach((step, ordinal) => {
+        const serialized = serializedSteps[ordinal]!;
+        insertStep.run(
+          randomUUID(),
+          historyEntryId,
+          ordinal,
+          step.commandId,
+          step.forward.kind,
+          step.forward.version,
+          // Persist the complete versioned recipe, not only its payload. Undo
+          // and redo both validate the kind/version against the Worker-owned
+          // registry before executing it.
+          serialized.forwardJson,
+          serialized.inverseJson,
+          serialized.affectedEntitiesJson,
+        );
+      });
     })();
+    if (input.commit !== false) this.completeOperationHistoryGroup(input.libraryId, historyEntryId);
     try {
       this.pruneOperationHistory(openLibrary);
     } catch (error) {
@@ -6254,6 +6310,32 @@ export class LibraryService {
       redoable: false,
       policy,
     };
+  }
+
+  private completeOperationHistoryGroup(libraryId: string, historyEntryId: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const updatedAt = new Date().toISOString();
+    openLibrary.connection.prepare(
+      "UPDATE operation_history SET state = 'applied', updated_at = ?, stale_code = NULL WHERE history_entry_id = ? AND state = 'open'",
+    ).run(updatedAt, historyEntryId);
+  }
+
+  private discardOperationHistoryGroup(libraryId: string, historyEntryId: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection.prepare(
+      "DELETE FROM operation_history WHERE history_entry_id = ? AND state = 'open'",
+    ).run(historyEntryId);
+  }
+
+  private markOperationHistoryGroupStale(
+    libraryId: string,
+    historyEntryId: string,
+    staleCode: string,
+  ): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection.prepare(
+      "UPDATE operation_history SET state = 'stale', stale_code = ?, updated_at = ? WHERE history_entry_id = ? AND state = 'open'",
+    ).run(staleCode, new Date().toISOString(), historyEntryId);
   }
 
   recordOperationHistoryBarrier(input: {
@@ -9404,6 +9486,10 @@ export class LibraryService {
   trashManagedFolder(input: {
     libraryId: string;
     folderId: string;
+    /** Batch trash reserves these ids before execution so an open history
+     * group has complete inverse recipes even if the Worker is interrupted. */
+    operationId?: string;
+    tombstoneIds?: readonly string[];
   }): {
     trashedAssetCount: number;
     removedFolderCount: number;
@@ -9414,78 +9500,103 @@ export class LibraryService {
     const { folder, descendantFolders, assetIds } =
       this.collectManagedFolderSubtree(openLibrary, input.folderId);
 
-    let trashedAssetCount = 0;
-    if (assetIds.length > 0) {
-      const result = this.trashAssets({
-        libraryId: input.libraryId,
-        assetIds,
-        allowExplicitlyIgnored: true,
-      });
-      trashedAssetCount = result.trashedCount;
-    }
-
-    const trashedAt = new Date().toISOString();
-    const tombstoneFolders = [...descendantFolders, folder];
-    const folderIds = tombstoneFolders.map((row) => row.folder_id);
-    const tombstoneIds: string[] = [];
-    let rootTombstoneId: string | undefined;
-    const countPlaceholders = folderIds.map(() => '?').join(', ');
-    const countRows =
-      folderIds.length === 0
-        ? []
-        : (openLibrary.connection
-            .prepare(
-              `SELECT trashed_from_folder_id AS folder_id, COUNT(*) AS asset_count
-                 FROM assets
-                WHERE deleted_at IS NOT NULL
-                  AND trashed_from_folder_id IN (${countPlaceholders})
-                GROUP BY trashed_from_folder_id`,
-            )
-            .all(...folderIds) as Array<{ folder_id: string; asset_count: number }>);
-    const assetCountByFolderId = new Map(
-      countRows.map((row) => [row.folder_id, row.asset_count]),
-    );
-
-    openLibrary.connection.transaction(() => {
-      const insert = openLibrary.connection.prepare(
-        `INSERT INTO trashed_managed_folders
-           (tombstone_id, folder_id, relative_path, name, parent_relative_path,
-            trashed_at, trashed_asset_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const row of tombstoneFolders) {
-        const parentRelative = path.posix.dirname(row.relative_path);
-        const tombstoneId = randomUUID();
-        tombstoneIds.push(tombstoneId);
-        if (row.folder_id === folder.folder_id) rootTombstoneId = tombstoneId;
-        insert.run(
-          tombstoneId,
-          row.folder_id,
-          row.relative_path,
-          row.name,
-          parentRelative === '.' ? null : parentRelative,
-          trashedAt,
-          assetCountByFolderId.get(row.folder_id) ?? 0,
-        );
-        // Bind before deleting managed_folders rows (FK would null folder_id).
-        openLibrary.connection
-          .prepare(
-            `UPDATE assets
-                SET trashed_from_tombstone_id = ?
-              WHERE deleted_at IS NOT NULL
-                AND trashed_from_folder_id = ?`,
-          )
-          .run(tombstoneId, row.folder_id);
+    let trashedAssetOperationId: string | undefined;
+    try {
+      let trashedAssetCount = 0;
+      if (assetIds.length > 0) {
+        const result = this.trashAssets({
+          libraryId: input.libraryId,
+          assetIds,
+          allowExplicitlyIgnored: true,
+          operationId: input.operationId,
+        });
+        trashedAssetCount = result.trashedCount;
+        trashedAssetOperationId = result.operationId;
       }
-    })();
 
-    const removedFolderCount = this.removeManagedFolderRowsAndDirectory(
-      openLibrary,
-      folder,
-      descendantFolders,
-    );
-    if (!rootTombstoneId) throw new LibraryServiceError('LIBRARY_CORRUPT');
-    return { trashedAssetCount, removedFolderCount, tombstoneIds, rootTombstoneId };
+      const trashedAt = new Date().toISOString();
+      const tombstoneFolders = [...descendantFolders, folder];
+      const folderIds = tombstoneFolders.map((row) => row.folder_id);
+      const tombstoneIds: string[] = [];
+      let rootTombstoneId: string | undefined;
+      const countPlaceholders = folderIds.map(() => '?').join(', ');
+      const countRows =
+        folderIds.length === 0
+          ? []
+          : (openLibrary.connection
+              .prepare(
+                `SELECT trashed_from_folder_id AS folder_id, COUNT(*) AS asset_count
+                   FROM assets
+                  WHERE deleted_at IS NOT NULL
+                    AND trashed_from_folder_id IN (${countPlaceholders})
+                  GROUP BY trashed_from_folder_id`,
+              )
+              .all(...folderIds) as Array<{ folder_id: string; asset_count: number }>);
+      const assetCountByFolderId = new Map(
+        countRows.map((row) => [row.folder_id, row.asset_count]),
+      );
+
+      openLibrary.connection.transaction(() => {
+        const insert = openLibrary.connection.prepare(
+          `INSERT INTO trashed_managed_folders
+             (tombstone_id, folder_id, relative_path, name, parent_relative_path,
+              trashed_at, trashed_asset_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        );
+        for (const [index, row] of tombstoneFolders.entries()) {
+          const parentRelative = path.posix.dirname(row.relative_path);
+          const tombstoneId = input.tombstoneIds?.[index] ?? randomUUID();
+          tombstoneIds.push(tombstoneId);
+          if (row.folder_id === folder.folder_id) rootTombstoneId = tombstoneId;
+          insert.run(
+            tombstoneId,
+            row.folder_id,
+            row.relative_path,
+            row.name,
+            parentRelative === '.' ? null : parentRelative,
+            trashedAt,
+            assetCountByFolderId.get(row.folder_id) ?? 0,
+          );
+          // Bind before deleting managed_folders rows (FK would null folder_id).
+          openLibrary.connection
+            .prepare(
+              `UPDATE assets
+                  SET trashed_from_tombstone_id = ?
+                WHERE deleted_at IS NOT NULL
+                  AND trashed_from_folder_id = ?`,
+            )
+            .run(tombstoneId, row.folder_id);
+        }
+      })();
+
+      const removedFolderCount = this.removeManagedFolderRowsAndDirectory(
+        openLibrary,
+        folder,
+        descendantFolders,
+      );
+      if (!rootTombstoneId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return { trashedAssetCount, removedFolderCount, tombstoneIds, rootTombstoneId };
+    } catch (error) {
+      // Folder trash owns the nested asset-trash operation. If removing the
+      // folder tree fails, restore those assets before surfacing the failure;
+      // otherwise a single folder request could leave a silent partial trash.
+      if (trashedAssetOperationId) {
+        try {
+          this.undoTrashAssets({
+            libraryId: input.libraryId,
+            operationId: trashedAssetOperationId,
+            requireAll: true,
+          });
+        } catch (rollbackError) {
+          this.diagnose('folder.trash.rollback', rollbackError, {
+            libraryId: input.libraryId,
+            folderId: input.folderId,
+            operationId: trashedAssetOperationId,
+          });
+        }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
   }
 
   /**
@@ -22614,6 +22725,7 @@ export class LibraryService {
     assetIds: string[];
     /** Folder deletion intentionally includes assets hidden by ignore rules. */
     allowExplicitlyIgnored?: boolean;
+    operationId?: string;
   }): { trashedCount: number; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (!input.allowExplicitlyIgnored) {
@@ -22696,7 +22808,7 @@ export class LibraryService {
       }
 
       // Phase 2: write file_operations + update DB in a single transaction
-      const operationId = randomUUID();
+      const operationId = input.operationId ?? randomUUID();
       const now = new Date().toISOString();
       const trashRelativePrefix = '__trash__';
 
@@ -22774,6 +22886,221 @@ export class LibraryService {
         } catch {
           // Best-effort rollback; the DB transaction was not committed.
         }
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  /**
+   * Desktop-only mixed trash batch. The Worker owns the selection snapshot,
+   * parent/child collapse, forward execution, compensation and one history
+   * entry; the Renderer never loops individual trash commands.
+   */
+  trashSelection(input: {
+    libraryId: string;
+    assetIds: readonly string[];
+    folderIds: readonly string[];
+    source?: HistorySource;
+    sourceReference?: string | null;
+  }): TrashSelectionResult {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const assetIds = [...input.assetIds];
+    const folderIds = [...input.folderIds];
+    if (assetIds.length === 0 && folderIds.length === 0) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    if (
+      new Set(assetIds).size !== assetIds.length
+      || new Set(folderIds).size !== folderIds.length
+      || assetIds.length > 10_000
+      || folderIds.length > 10_000
+    ) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+
+    // Resolve and collapse folders before touching either the filesystem or
+    // the history table. Selecting a parent and child is one logical target.
+    const folderRows = folderIds.map((folderId) => {
+      const row = openLibrary.connection.prepare(
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity FROM managed_folders WHERE folder_id = ?',
+      ).get(folderId) as ManagedFolderRow | undefined;
+      if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+      if (!realDirectoryExists(this.folderPath(openLibrary, row.relative_path))) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      return row;
+    });
+    const roots = folderRows.filter((row) => !folderRows.some((other) => (
+      other.folder_id !== row.folder_id
+      && row.relative_path.startsWith(`${other.relative_path}/`)
+    )));
+
+    const subtreeAssetIds = new Set<string>();
+    const folderPlans = roots.map((root) => {
+      const subtree = this.collectManagedFolderSubtree(openLibrary, root.folder_id);
+      for (const assetId of subtree.assetIds) subtreeAssetIds.add(assetId);
+      const tombstoneFolders = [...subtree.descendantFolders, subtree.folder];
+      const tombstoneIds = tombstoneFolders.map(() => randomUUID());
+      const rootTombstoneId = tombstoneIds[tombstoneFolders.length - 1];
+      if (!rootTombstoneId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+      return {
+        folderId: root.folder_id,
+        operationId: randomUUID(),
+        tombstoneIds,
+        rootTombstoneId,
+      };
+    });
+
+    // An explicit asset inside a selected folder is already covered by that
+    // folder step. Assets outside selected subtrees retain normal single-asset
+    // trash validation, including ignore rules.
+    const independentAssetIds = assetIds.filter((assetId) => !subtreeAssetIds.has(assetId));
+    if (independentAssetIds.length > 0) {
+      this.assertAssetsNotExplicitlyIgnored(openLibrary, independentAssetIds);
+      const rows = openLibrary.connection.prepare(
+        `SELECT asset_id, location_kind, deleted_at
+           FROM assets
+          WHERE asset_id IN (${independentAssetIds.map(() => '?').join(',')})`,
+      ).all(...independentAssetIds) as Array<{
+        asset_id: string;
+        location_kind: string;
+        deleted_at: string | null;
+      }>;
+      const rowById = new Map(rows.map((row) => [row.asset_id, row]));
+      for (const assetId of independentAssetIds) {
+        const row = rowById.get(assetId);
+        if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+        if (row.location_kind !== 'managed' || row.deleted_at !== null) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        }
+      }
+    }
+
+    type AssetPlan = { assetIds: string[]; operationId: string };
+    type FolderPlan = (typeof folderPlans)[number];
+    const assetPlans: AssetPlan[] = independentAssetIds.length === 0
+      ? []
+      : [{ assetIds: independentAssetIds, operationId: randomUUID() }];
+    const historySteps: OperationHistoryGroupStepInput[] = [
+      ...assetPlans.map((plan) => ({
+        commandId: 'asset.trash',
+        affectedEntities: plan.assetIds,
+        forwardRecipe: {
+          kind: 'asset-trash',
+          version: 1,
+          payload: { assetIds: plan.assetIds },
+        } satisfies HistoryRecipe,
+        inverseRecipe: {
+          kind: 'asset-trash-undo',
+          version: 1,
+          payload: { operationId: plan.operationId },
+        } satisfies HistoryRecipe,
+      })),
+      ...folderPlans.map((plan: FolderPlan) => ({
+        commandId: 'folder.trash',
+        affectedEntities: [plan.folderId],
+        forwardRecipe: {
+          kind: 'managed-folder-trash',
+          version: 1,
+          payload: { folderId: plan.folderId },
+        } satisfies HistoryRecipe,
+        inverseRecipe: {
+          kind: 'managed-folder-restore',
+          version: 1,
+          payload: { tombstoneId: plan.rootTombstoneId },
+        } satisfies HistoryRecipe,
+      })),
+    ];
+    const affectedEntities = [...independentAssetIds, ...roots.map((row) => row.folder_id)];
+    const history = this.recordOperationHistoryGroup({
+      libraryId: input.libraryId,
+      source: input.source,
+      sourceReference: input.sourceReference,
+      commandId: 'selection.trash',
+      labelKey: 'history.selection.trash',
+      labelArgs: { assets: 0, folders: roots.length },
+      affectedCount: roots.length + independentAssetIds.length,
+      affectedEntities,
+      steps: historySteps,
+      commit: false,
+    });
+    const completed: Array<
+      | { kind: 'asset'; operationId: string }
+      | { kind: 'folder'; tombstoneId: string }
+    > = [];
+    let trashedAssetCount = 0;
+    let removedFolderCount = 0;
+    try {
+      for (const plan of assetPlans) {
+        const result = this.trashAssets({
+          libraryId: input.libraryId,
+          assetIds: plan.assetIds,
+          operationId: plan.operationId,
+        });
+        trashedAssetCount += result.trashedCount;
+        completed.push({ kind: 'asset', operationId: result.operationId });
+      }
+      for (const plan of folderPlans) {
+        const result = this.trashManagedFolder({
+          libraryId: input.libraryId,
+          folderId: plan.folderId,
+          operationId: plan.operationId,
+          tombstoneIds: plan.tombstoneIds,
+        });
+        trashedAssetCount += result.trashedAssetCount;
+        removedFolderCount += result.removedFolderCount;
+        completed.push({ kind: 'folder', tombstoneId: result.rootTombstoneId });
+      }
+      // Update the label only after the real logical counts are known. This is
+      // a display projection; the recipes and entity set remain unchanged.
+      openLibrary.connection.prepare(
+        'UPDATE operation_history SET label_args_json = ?, affected_count = ?, updated_at = ? WHERE history_entry_id = ?',
+      ).run(
+        JSON.stringify({ assets: trashedAssetCount, folders: roots.length }),
+        roots.length + trashedAssetCount,
+        new Date().toISOString(),
+        history.historyEntryId,
+      );
+      this.completeOperationHistoryGroup(input.libraryId, history.historyEntryId);
+      return {
+        historyEntryId: history.historyEntryId,
+        removedFolderCount,
+        trashedAssetCount,
+        trashedFolderCount: roots.length,
+      };
+    } catch (error) {
+      let compensationFailed = false;
+      for (const step of [...completed].reverse()) {
+        try {
+          if (step.kind === 'asset') {
+            this.undoTrashAssets({
+              libraryId: input.libraryId,
+              operationId: step.operationId,
+              requireAll: true,
+            });
+          } else {
+            this.restoreTrashedManagedFolder({
+              libraryId: input.libraryId,
+              tombstoneId: step.tombstoneId,
+            });
+          }
+        } catch (rollbackError) {
+          compensationFailed = true;
+          this.diagnose('selection.trash.rollback', rollbackError, {
+            libraryId: input.libraryId,
+            historyEntryId: history.historyEntryId,
+            stepKind: step.kind,
+          });
+        }
+      }
+      if (compensationFailed) {
+        this.markOperationHistoryGroupStale(
+          input.libraryId,
+          history.historyEntryId,
+          'BATCH_COMPENSATION_FAILED',
+        );
+      } else {
+        this.discardOperationHistoryGroup(input.libraryId, history.historyEntryId);
       }
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
     }
@@ -27440,7 +27767,12 @@ export class LibraryService {
          FROM operation_history_attempts
         WHERE status IN ('preparing', 'applying')`,
     ).all() as Array<{ attempt_id: string; history_entry_id: string }>;
-    if (unfinished.length === 0) return;
+    const unfinishedGroups = openLibrary.connection.prepare(
+      `SELECT history_entry_id
+         FROM operation_history
+        WHERE state = 'open'`,
+    ).all() as Array<{ history_entry_id: string }>;
+    if (unfinished.length === 0 && unfinishedGroups.length === 0) return;
     const now = new Date().toISOString();
     openLibrary.connection.transaction(() => {
       const markEntry = openLibrary.connection.prepare(
@@ -27457,12 +27789,19 @@ export class LibraryService {
         markEntry.run(now, attempt.history_entry_id);
         markAttempt.run(now, attempt.attempt_id);
       }
+      const markGroup = openLibrary.connection.prepare(
+        `UPDATE operation_history
+            SET state = 'stale', stale_code = 'WORKER_RESTART_DURING_GROUP', updated_at = ?
+          WHERE history_entry_id = ? AND state = 'open'`,
+      );
+      for (const group of unfinishedGroups) markGroup.run(now, group.history_entry_id);
     })();
     this.diagnose('operation-history.recovered-stale-transition', new Error(
       'An unfinished history transition was marked stale after Worker restart.',
     ), {
       libraryId: openLibrary.summary.libraryId,
       attemptCount: unfinished.length,
+      groupCount: unfinishedGroups.length,
     });
   }
 

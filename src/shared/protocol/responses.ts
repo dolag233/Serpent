@@ -926,6 +926,14 @@ const assetOperationSuccessSchemas = [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('selection.trashed'),
+    trashedAssetCount: z.number().int().nonnegative(),
+    trashedFolderCount: z.number().int().nonnegative(),
+    removedFolderCount: z.number().int().nonnegative(),
+    historyEntryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('asset.content.replaced'),
     assetId: nonBlankString,
     revisionId: nonBlankString,

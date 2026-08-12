@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 interface TestDatabaseConnection {
   close(): void;
   prepare(source: string): {
+    get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): { changes: number };
   };
 }
@@ -326,6 +327,74 @@ describe('durable operation history', () => {
     }).map((folder) => folder.folderId)).toEqual(
       expect.arrayContaining([managedFolderId, nested.folderId]),
     );
+  });
+
+  it('trashes mixed assets and parent/child folders as one durable group', async () => {
+    const { service, libraryId, libraryPath, assetId, managedFolderId } = createLibraryWithAsset();
+    const nested = service.createManagedFolder({
+      libraryId,
+      name: 'Nested batch',
+      parentFolderId: managedFolderId,
+    });
+    const sibling = service.createManagedFolder({
+      libraryId,
+      name: 'Sibling batch',
+    });
+    const outsideFolder = service.createManagedFolder({
+      libraryId,
+      name: 'Outside batch',
+    });
+    const outsideSource = path.join(temporaryRoot(), 'outside-batch.png');
+    writeFileSync(outsideSource, 'outside batch');
+    const outsideAsset = importFile(service, libraryId, outsideSource, outsideFolder.folderId).assets[0]!;
+
+    const result = service.trashSelection({
+      libraryId,
+      // This asset is outside the selected folders and forms the mixed asset
+      // step; the parent asset below is covered by the folder step.
+      assetIds: [assetId, outsideAsset.assetId],
+      folderIds: [managedFolderId, nested.folderId, sibling.folderId],
+      source: 'desktop',
+    });
+    expect(result.trashedFolderCount).toBe(2);
+    expect(result.removedFolderCount).toBe(3);
+    expect(result.trashedAssetCount).toBe(2);
+
+    const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      const stepCount = database.prepare(
+        'SELECT COUNT(*) AS count FROM operation_history_steps WHERE history_entry_id = ?',
+      ).get(result.historyEntryId) as { count: number };
+      expect(stepCount.count).toBe(3);
+    } finally {
+      database.close();
+    }
+    expect(service.getOperationHistoryStatus(libraryId).undoTop?.historyEntryId)
+      .toBe(result.historyEntryId);
+
+    service.closeLibrary(libraryId);
+    expect(service.openLibrary(libraryPath).libraryId).toBe(libraryId);
+    expect(service.getOperationHistoryStatus(libraryId).undoTop?.historyEntryId)
+      .toBe(result.historyEntryId);
+
+    await undo(service, libraryId, result.historyEntryId);
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).not.toEqual(
+      expect.arrayContaining([assetId, outsideAsset.assetId]),
+    );
+    expect(service.getManagedFolderHistorySnapshot({
+      libraryId,
+      folderIds: [managedFolderId, nested.folderId, sibling.folderId],
+    })).toHaveLength(3);
+
+    await redo(service, libraryId, result.historyEntryId);
+    expect(service.listTrash(libraryId).map((asset) => asset.assetId)).toEqual(
+      expect.arrayContaining([assetId, outsideAsset.assetId]),
+    );
+    expect(service.getManagedFolderHistorySnapshot({
+      libraryId,
+      folderIds: [managedFolderId, nested.folderId, sibling.folderId],
+      allowMissing: true,
+    })).toHaveLength(0);
   });
 
   it('round-trips tag creation and assignment as separate linear entries', async () => {

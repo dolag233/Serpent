@@ -124,11 +124,21 @@ export function useFolderDragDropHandlers({
           let trashedAssets = 0;
           let trashedFolders = 0;
           let historyEntryId: string | undefined;
-          for (const folderId of folderIds) {
-            const result = await api.trashFolder({ libraryId, folderId });
+          if (folderIds.length === 1) {
+            const result = await api.trashFolder({ libraryId, folderId: folderIds[0]! });
             if (!result.ok) throw new LibraryOperationError(result.error);
-            trashedFolders += 1;
-            trashedAssets += result.value.trashedAssetCount;
+            trashedFolders = 1;
+            trashedAssets = result.value.trashedAssetCount;
+            historyEntryId = result.value.historyEntryId;
+          } else {
+            const result = await api.trashSelection({
+              libraryId,
+              assetIds: [],
+              folderIds: [...folderIds],
+            });
+            if (!result.ok) throw new LibraryOperationError(result.error);
+            trashedFolders = result.value.trashedFolderCount;
+            trashedAssets = result.value.trashedAssetCount;
             historyEntryId = result.value.historyEntryId;
           }
           setNotice(

@@ -470,6 +470,25 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
+  async trashSelection(input: {
+    libraryId: string;
+    assetIds: string[];
+    folderIds: string[];
+  }) {
+    const result = await request({ type: 'selection.trash.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'selection.trashed') throw new Error('Unexpected trash-selection response.');
+    return {
+      ok: true as const,
+      value: {
+        trashedAssetCount: result.trashedAssetCount,
+        trashedFolderCount: result.trashedFolderCount,
+        removedFolderCount: result.removedFolderCount,
+        historyEntryId: result.historyEntryId,
+      },
+    };
+  },
+
   async deleteFolderFromDisk(input: {
     libraryId: string;
     folderId: string;

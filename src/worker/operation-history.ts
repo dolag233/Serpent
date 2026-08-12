@@ -171,7 +171,8 @@ export class OperationHistoryStateMachine {
       redoTop: publicSummary(latestUndone(this.#entries)),
       staleTop: publicSummary(latestStale(this.#entries)),
       transitionInProgress:
-        transition !== null || this.#entries.some((entry) => entry.state === 'undoing' || entry.state === 'redoing'),
+        transition !== null || this.#entries.some((entry) =>
+          entry.state === 'open' || entry.state === 'undoing' || entry.state === 'redoing'),
     };
   }
 

@@ -236,6 +236,16 @@ export interface SerpentLibraryApi {
       historyEntryId?: string;
     }>
   >;
+  trashSelection(input: {
+    libraryId: string;
+    assetIds: string[];
+    folderIds: string[];
+  }): Promise<LibraryApiResult<{
+    trashedAssetCount: number;
+    trashedFolderCount: number;
+    removedFolderCount: number;
+    historyEntryId: string;
+  }>>;
   deleteFolderFromDisk(input: {
     libraryId: string;
     folderId: string;

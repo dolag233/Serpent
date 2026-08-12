@@ -5989,28 +5989,31 @@ function AppInner() {
       let trashedAssets = 0;
       let trashedFolders = 0;
       let historyEntryId: string | undefined;
-      if (assetIds.length > 0) {
-        const result = await api.trashAssets({
+      if (assetIds.length === 0 && folderIds.length === 1) {
+        const result = await api.trashFolder({
           libraryId: library.libraryId,
-          assetIds,
+          folderId: folderIds[0]!,
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
-        trashedAssets = result.value.trashedCount;
+        trashedFolders = 1;
+        trashedAssets = result.value.trashedAssetCount;
         historyEntryId = result.value.historyEntryId;
+      } else {
+        const result = await api.trashSelection({
+          libraryId: library.libraryId,
+          assetIds,
+          folderIds: [...folderIds],
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        trashedAssets = result.value.trashedAssetCount;
+        trashedFolders = result.value.trashedFolderCount;
+        historyEntryId = result.value.historyEntryId;
+      }
+      if (assetIds.length > 0) {
         const collectionResult = await api.listCollections({
           libraryId: library.libraryId,
         });
         if (collectionResult.ok) setCollections(collectionResult.value);
-      }
-      for (const folderId of folderIds) {
-        const result = await api.trashFolder({
-          libraryId: library.libraryId,
-          folderId,
-        });
-        if (!result.ok) throw new LibraryOperationError(result.error);
-        trashedFolders += 1;
-        trashedAssets += result.value.trashedAssetCount;
-        historyEntryId = result.value.historyEntryId;
       }
       setNotice(
         t("toast.selectionTrashed", {

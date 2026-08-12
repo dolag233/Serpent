@@ -259,6 +259,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     folderId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('selection.trash.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).max(10_000),
+    folderIds: z.array(identifierSchema).max(10_000),
+  }).refine((value) => value.assetIds.length > 0 || value.folderIds.length > 0, {
+    message: 'A trash selection must contain an asset or folder.',
+  }),
+  z.strictObject({
     type: z.literal('folder.delete-from-disk.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -1122,6 +1130,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('folder.trash'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('selection.trash'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).max(10_000),
+    folderIds: z.array(identifierSchema).max(10_000),
+  }).refine((value) => value.assetIds.length > 0 || value.folderIds.length > 0, {
+    message: 'A trash selection must contain an asset or folder.',
   }),
   z.strictObject({
     type: z.literal('folder.delete-from-disk'),

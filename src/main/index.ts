@@ -1647,6 +1647,13 @@ async function commandFor(
         libraryId: request.libraryId,
         folderId: request.folderId,
       };
+    case "selection.trash.request":
+      return {
+        type: "selection.trash",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        folderIds: request.folderIds,
+      };
     case "folder.delete-from-disk.request":
       return {
         type: "folder.delete-from-disk",

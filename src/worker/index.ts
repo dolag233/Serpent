@@ -635,6 +635,32 @@ async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
   if (automationResult) return automationResult;
 
+  // Mixed desktop trash is a filesystem batch, so it cannot run inside the
+  // synchronous SQLite transaction used by bounded metadata writes. It still
+  // owns the same durable per-library writer lease for the entire
+  // preflight→execute→history-commit window.
+  if (request.command.type === 'selection.trash') {
+    const lease = await libraryService.acquireWriteLease(request.command.libraryId);
+    try {
+      const result = libraryService.trashSelection({
+        libraryId: request.command.libraryId,
+        assetIds: request.command.assetIds,
+        folderIds: request.command.folderIds,
+        source: request.historyContext?.source ?? 'desktop',
+        sourceReference: request.historyContext?.sourceReference ?? null,
+      });
+      return { ok: true, type: 'selection.trashed', ...result };
+    } finally {
+      try {
+        lease.release();
+      } catch (error) {
+        libraryService.reportDiagnostic('selection.trash.lease-release', error, {
+          libraryId: request.command.libraryId,
+        });
+      }
+    }
+  }
+
   const libraryId = boundedWriteLibraryId(request.command);
   if (!libraryId) return handleRequestWithoutWriteLease(request);
 
@@ -2898,8 +2924,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         historyEntryId: result.historyEntryId,
         affectedCount: result.affectedCount,
         status: result.status,
-      };
-    }
+        };
+      }
+    case 'selection.trash':
+      throw new Error('Selection trash must be dispatched through its writer lease.');
     default:
       return assertNever(request.command);
   }
