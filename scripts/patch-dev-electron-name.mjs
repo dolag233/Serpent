@@ -44,8 +44,11 @@ if (result.status !== 0) {
   console.warn(`[patch-dev-electron-name] PlistBuddy failed: ${result.stderr?.trim()}`);
   process.exit(1);
 }
-// Re-register so the Dock and menu bar pick up the new name.
-spawnSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', [
-  '-f', appBundle,
+// Re-register with LaunchServices (user domain — the system domain needs
+// sudo and is not writable from a dev script). The Dock keeps its own
+// cached name/URL, so also restart it; the screen flashes briefly.
+const ls = spawnSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', [
+  '-f', '-kill', '-r', '-domain', 'user', appBundle,
 ], { stdio: 'ignore' });
-console.log('[patch-dev-electron-name] Dev Electron.app renamed to Serpent (Dock + menu bar).');
+spawnSync('killall', ['Dock'], { stdio: 'ignore' });
+console.log(`[patch-dev-electron-name] Dev Electron.app renamed to Serpent (menu bar immediate; Dock restarted to pick up the name${ls.status !== 0 ? '; lsregister exit ' + ls.status : ''}).`);
