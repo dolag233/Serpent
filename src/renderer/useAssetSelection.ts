@@ -445,6 +445,10 @@ export function useAssetSelection({
       // Serpent-wgl2: the hits diff key must not leak across marquees — a
       // second drag over the same region would otherwise skip every update.
       marqueeLastHitsKeyRef.current = "";
+      // Serpent-wgl2: suppress the per-card selection transition while a
+      // marquee is active — a large hit set otherwise animates hundreds of
+      // box-shadows at once and drags the frame rate down.
+      document.body.classList.add("is-marquee-active");
       marqueeActiveRef.current = true;
     },
     [
@@ -743,6 +747,7 @@ export function useAssetSelection({
       }
 
       applyMarqueeBoxStyle(null);
+      document.body.classList.remove("is-marquee-active");
     };
 
     document.addEventListener("mousemove", handleMouseMove);
@@ -762,6 +767,7 @@ export function useAssetSelection({
         cancelAnimationFrame(marqueeRafRef.current);
         marqueeRafRef.current = null;
       }
+      document.body.classList.remove("is-marquee-active");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refs + stable setState setters; intentional single-registration
   }, []);

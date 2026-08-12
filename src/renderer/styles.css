@@ -8611,6 +8611,14 @@ select.ai-config-input.ai-config-languages {
 .asset-card:hover {
   background: var(--hover);
 }
+
+/* Serpent-wgl2: while a marquee drag is active the per-card selection
+   transition is disabled — a large hit set would otherwise animate hundreds
+   of box-shadows at once. Selection lands instantly, which also reads better
+   for batch marquee interaction. */
+.is-marquee-active .asset-card {
+  transition: none;
+}
 /* REQ-SELECT-003: the selection ring is an outward 2px box-shadow — one px
    thicker than the card's own 1px border and fully outside the preview's
    boundary, so the preview image can no longer cover it (the old inset
