@@ -12,7 +12,7 @@
   },
   "scripts": {
     "start": "node scripts/dev-start.mjs",
-    "prestart": "node scripts/ensure-native.mjs",
+    "prestart": "node scripts/ensure-native.mjs && node scripts/patch-dev-electron-name.mjs",
     "start:forge": "electron-forge start",
     "start:multi": "node scripts/dev-start.mjs --multi",
     "cli:build": "vite build --config vite.cli-worker.config.ts && vite build --config vite.cli.config.ts",

@@ -5591,13 +5591,18 @@ function AppInner() {
       await refreshRecentLibraries(null);
       setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
     } catch (caught) {
-      // Worker closes the library before rm; clear UI even when rm fails.
-      if (!(caught instanceof LibraryOperationError && caught.code === "LIBRARY_NOT_OPEN")) {
+      // Worker closes the library before rm; clear UI even when rm fails —
+      // EXCEPT when the user cancelled the red confirmation: nothing was
+      // deleted and the current library must stay open.
+      if (!(caught instanceof LibraryOperationError
+        && (caught.code === "LIBRARY_NOT_OPEN" || caught.code === "CANCELLED"))) {
         toreDown = true;
         applyClosedLibraryUi();
         await refreshRecentLibraries(null);
       }
-      setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
+      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+        setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
+      }
     } finally {
       setUiState(toreDown ? "idle" : "ready");
     }
