@@ -1417,6 +1417,10 @@ function AppInner() {
     [assetCardSize, canvasWidthPx],
   );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  // Serpent-wgl2: the marquee box div is always mounted and moved directly
+  // through this ref — never through React state (per-frame state re-renders
+  // the whole non-memoized grid).
+  const marqueeBoxRef = useRef<HTMLDivElement>(null);
   // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
   const cardSizeRestoreFrameRef = useRef<number | null>(null);
   // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
@@ -2002,7 +2006,6 @@ function AppInner() {
     handleCardClick,
     handleFolderCardClick,
     cardMouseDownRef,
-    marqueeBox,
     selectedIdSet,
   } = useAssetSelection({
     assets: visibleAssets,
@@ -2013,6 +2016,7 @@ function AppInner() {
     draggedMemberId,
     draggedCollectionId,
     workspaceCanvasRef,
+    marqueeBoxRef,
     folderIds: visibleFolderIds,
     selectionAssetIds,
     masonryShiftSelection: assetViewMode === "masonry",
@@ -8783,17 +8787,12 @@ function AppInner() {
           }}
           ref={workspaceCanvasRef}
         >
-          {marqueeBox && (
-            <div
-              className="marquee-selection-box"
-              style={{
-                left: marqueeBox.left,
-                top: marqueeBox.top,
-                width: marqueeBox.width,
-                height: marqueeBox.height,
-              }}
-            />
-          )}
+          {/* Serpent-wgl2: rendered once, mutated directly via ref — a
+              per-frame React state would re-render the whole grid. */}
+          <div
+            className="marquee-selection-box"
+            ref={marqueeBoxRef}
+          />
           {library && showPluginSidebarView ? (
             <PluginSidebarViewPanel
               activeView={activePluginSidebarView}

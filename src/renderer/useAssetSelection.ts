@@ -40,6 +40,8 @@ export interface UseAssetSelectionParams {
   draggedCollectionId: string | null;
   /** Ref to the scrollable workspace canvas element */
   workspaceCanvasRef: React.RefObject<HTMLDivElement | null>;
+  /** Serpent-wgl2: the always-mounted marquee box div, mutated directly via ref. */
+  marqueeBoxRef: React.RefObject<HTMLDivElement | null>;
   /** Visible folder-card ids (REQ-FOLDER-010), used for Shift+click range and marquee. */
   folderIds?: string[];
   /**
@@ -81,8 +83,6 @@ export interface UseAssetSelectionReturn {
   handleFolderCardClick: (folderId: string, event: React.MouseEvent) => void;
   /** Ref that must be set in the card's onMouseDown: `cardMouseDownRef.current = e.button` */
   cardMouseDownRef: React.MutableRefObject<number>;
-  /** Current marquee box (null when not dragging). Render a div with these coordinates. */
-  marqueeBox: { left: number; top: number; width: number; height: number } | null;
   /** Derived Set<string> for O(1) selection membership checks */
   selectedIdSet: Set<string>;
 }
@@ -96,6 +96,7 @@ export function useAssetSelection({
   draggedMemberId,
   draggedCollectionId,
   workspaceCanvasRef,
+  marqueeBoxRef,
   folderIds = [],
   selectionAssetIds,
   masonryShiftSelection = false,
@@ -133,9 +134,6 @@ export function useAssetSelection({
   const cardMouseDownRef = useRef<number>(0);
 
   // ── Marquee state ──────────────────────────────────────────────────────
-  const [marqueeBox, setMarqueeBox] = useState<{
-    left: number; top: number; width: number; height: number;
-  } | null>(null);
   const marqueeStartRef = useRef({ x: 0, y: 0 });
   const marqueeStartContentRef = useRef({ x: 0, y: 0 });
   const marqueePointerClientRef = useRef({ x: 0, y: 0 });
@@ -160,6 +158,24 @@ export function useAssetSelection({
   // The selection arrays are only pushed to React when the hit set actually
   // changes — most frames move the box without crossing a new card.
   const marqueeLastHitsKeyRef = useRef('');
+
+  // Serpent-wgl2: direct-DOM marquee box writer — function declaration so it
+  // is hoisted before the mousedown handler that calls it.
+  function applyMarqueeBoxStyle(rect: {
+    left: number; top: number; width: number; height: number;
+  } | null): void {
+    const el = marqueeBoxRef.current;
+    if (!el) return;
+    if (rect === null) {
+      el.style.display = "none";
+      return;
+    }
+    el.style.display = "block";
+    el.style.left = `${rect.left}px`;
+    el.style.top = `${rect.top}px`;
+    el.style.width = `${rect.width}px`;
+    el.style.height = `${rect.height}px`;
+  }
 
   // ── clearAssetSelection ────────────────────────────────────────────────
   // Also clears folder-card selection (REQ-FOLDER-010): the two selections
@@ -420,12 +436,15 @@ export function useAssetSelection({
       )
         ? [...selectedFolderIds]
         : [];
-      setMarqueeBox({
+      applyMarqueeBoxStyle({
         left: e.clientX,
         top: e.clientY,
         width: 0,
         height: 0,
       });
+      // Serpent-wgl2: the hits diff key must not leak across marquees — a
+      // second drag over the same region would otherwise skip every update.
+      marqueeLastHitsKeyRef.current = "";
       marqueeActiveRef.current = true;
     },
     [
@@ -561,7 +580,7 @@ export function useAssetSelection({
       );
       const clippedRect = clipRectToViewport(viewportRect, viewport);
       if (clippedRect) {
-        setMarqueeBox({
+        applyMarqueeBoxStyle({
           left: clippedRect.left,
           top: clippedRect.top,
           width: clippedRect.right - clippedRect.left,
@@ -570,7 +589,7 @@ export function useAssetSelection({
       } else {
         // Pointer is entirely outside the canvas — keep the box hidden while
         // retaining the content-space rectangle for hit testing.
-        setMarqueeBox({
+        applyMarqueeBoxStyle({
           left: viewport.left,
           top: viewport.top,
           width: 0,
@@ -592,6 +611,9 @@ export function useAssetSelection({
       if (marqueeRafRef.current === null) {
         marqueeRafRef.current = requestAnimationFrame(() => {
           marqueeRafRef.current = null;
+          // Serpent-wgl2: a mouseup between pointermove and this frame must
+          // not resurrect the marquee box.
+          if (!marqueeActiveRef.current) return;
           updateMarquee(marqueePointerClientRef.current);
         });
       }
@@ -668,15 +690,23 @@ export function useAssetSelection({
         cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
       }
+      if (marqueeRafRef.current !== null) {
+        cancelAnimationFrame(marqueeRafRef.current);
+        marqueeRafRef.current = null;
+      }
 
       const start = marqueeStartRef.current;
       const dx = Math.abs(e.clientX - start.x);
       const dy = Math.abs(e.clientY - start.y);
 
-      // Tiny drag (< 5px) is a click on empty canvas, clear selection
+      // Tiny drag (< 5px) is a click on empty canvas. A plain click clears
+      // the selection; a Cmd/Ctrl/Shift click is a toggle/extend gesture and
+      // must leave it untouched.
       if (dx < 5 && dy < 5) {
-        clearAssetSelection();
-        setMarqueeBox(null);
+        if (!isMarqueeAdditive(marqueeModifiersRef.current, selectionPlatform)) {
+          clearAssetSelection();
+        }
+        applyMarqueeBoxStyle(null);
         return;
       }
 
@@ -712,7 +742,7 @@ export function useAssetSelection({
         }
       }
 
-      setMarqueeBox(null);
+      applyMarqueeBoxStyle(null);
     };
 
     document.addEventListener("mousemove", handleMouseMove);
@@ -728,6 +758,10 @@ export function useAssetSelection({
         cancelAnimationFrame(autoScrollRafRef.current);
         autoScrollRafRef.current = null;
       }
+      if (marqueeRafRef.current !== null) {
+        cancelAnimationFrame(marqueeRafRef.current);
+        marqueeRafRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refs + stable setState setters; intentional single-registration
   }, []);
@@ -741,7 +775,6 @@ export function useAssetSelection({
     handleCardClick,
     handleFolderCardClick,
     cardMouseDownRef,
-    marqueeBox,
     selectedIdSet,
   };
 }
