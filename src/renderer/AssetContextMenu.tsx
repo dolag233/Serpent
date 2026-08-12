@@ -594,6 +594,16 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
   };
 
   if (!activeContextMenu) return null;
+  // Serpent-接管: the workspace canvas menu is a plugin extension point
+  // (PLUGIN-015). With no plugin contributions it would render an empty
+  // floating menu on blank-canvas right-click — suppress it entirely; the
+  // active descriptor stays set so a late async contribution still appears.
+  if (
+    activeContextMenu.descriptor.type === "workspace" &&
+    pluginWorkspaceMenuItems.length === 0
+  ) {
+    return null;
+  }
 
   const ariaLabel =
     activeContextMenu.descriptor.type === "multi-asset"

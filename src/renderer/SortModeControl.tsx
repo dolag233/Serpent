@@ -219,7 +219,6 @@ export function SortModeControl({
             id={listId}
             onKeyDown={onListKeyDown}
             onPointerMove={() => setKeyboardNav(false)}
-            preferRight
             role="dialog"
           >
             <div
