@@ -147,6 +147,19 @@ export function useAssetSelection({
   const autoScrollRef = useRef<{ direction: number; speed: number }>({ direction: 0, speed: 0 });
   const autoScrollRafRef = useRef<number | null>(null);
   const marqueeModifiersRef = useRef<{ metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>({ metaKey: false, ctrlKey: false, shiftKey: false });
+  // Serpent-wgl2: the marquee must not run per pointermove (~120Hz) — the
+  // per-card getBoundingClientRect reads force a layout pass every frame.
+  // Pointer coordinates are parked in a ref and the marquee (box update +
+  // hit scan + selection diff) runs once per animation frame instead.
+  const marqueeRafRef = useRef<number | null>(null);
+  // Card rectangles are cached in canvas-content coordinates, which do not
+  // change while scrolling; the cache is dropped whenever the canvas layout
+  // size changes (resize / column reflow). Only cache misses read DOM.
+  const marqueeCardRectsRef = useRef(new Map<string, MarqueeRect>());
+  const marqueeCacheLayoutSigRef = useRef('');
+  // The selection arrays are only pushed to React when the hit set actually
+  // changes — most frames move the box without crossing a new card.
+  const marqueeLastHitsKeyRef = useRef('');
 
   // ── clearAssetSelection ────────────────────────────────────────────────
   // Also clears folder-card selection (REQ-FOLDER-010): the two selections
@@ -456,18 +469,33 @@ export function useAssetSelection({
       const cards = canvas.querySelectorAll<HTMLElement>(
         "[data-asset-id], [data-folder-id]",
       );
+      // Serpent-wgl2: cache card rects in canvas-content coordinates — they
+      // stay valid while scrolling and are only dropped when the canvas
+      // layout size changes (window resize / column reflow). Scrolling the
+      // grid therefore costs one viewport read instead of N forced reflows.
+      const layoutSig = `${canvas.clientWidth}x${canvas.clientHeight}`;
+      if (layoutSig !== marqueeCacheLayoutSigRef.current) {
+        marqueeCacheLayoutSigRef.current = layoutSig;
+        marqueeCardRectsRef.current.clear();
+      }
+      const cardRects = marqueeCardRectsRef.current;
       for (const card of cards) {
-        const rect = card.getBoundingClientRect();
-        const cardContentRect = viewportRectToContent(
-          {
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-          },
-          viewport,
-          scroll,
-        );
+        const key = card.dataset.assetId ?? card.dataset.folderId ?? "";
+        let cardContentRect = key === "" ? undefined : cardRects.get(key);
+        if (cardContentRect === undefined) {
+          const rect = card.getBoundingClientRect();
+          cardContentRect = viewportRectToContent(
+            {
+              left: rect.left,
+              top: rect.top,
+              right: rect.right,
+              bottom: rect.bottom,
+            },
+            viewport,
+            scroll,
+          );
+          if (key !== "") cardRects.set(key, cardContentRect);
+        }
         if (rectsIntersect(cardContentRect, box)) {
           const assetId = card.dataset.assetId;
           const folderId = card.dataset.folderId;
@@ -484,6 +512,13 @@ export function useAssetSelection({
     }) => {
       marqueeHitIdsRef.current = hits.assetHitIds;
       marqueeFolderHitIdsRef.current = hits.folderHitIds;
+
+      // Serpent-wgl2: only push to React when the hit set actually changed —
+      // most frames move the box without crossing a card boundary, and the
+      // previous per-frame setState re-rendered the whole selection grid.
+      const hitsKey = `${hits.assetHitIds.join("")} ${hits.folderHitIds.join("")}`;
+      if (hitsKey === marqueeLastHitsKeyRef.current) return;
+      marqueeLastHitsKeyRef.current = hitsKey;
 
       // Always read the mousedown-time snapshot, never the live event
       // modifiers — the operation must not change mid-drag.
@@ -550,7 +585,16 @@ export function useAssetSelection({
 
       const pointer = { x: e.clientX, y: e.clientY };
       marqueePointerClientRef.current = pointer;
-      updateMarquee(pointer);
+      // Serpent-wgl2: park the pointer and run the marquee once per animation
+      // frame — the raw pointermove stream (~120Hz on high-refresh displays)
+      // would otherwise force a layout pass (getBoundingClientRect per card)
+      // on every event.
+      if (marqueeRafRef.current === null) {
+        marqueeRafRef.current = requestAnimationFrame(() => {
+          marqueeRafRef.current = null;
+          updateMarquee(marqueePointerClientRef.current);
+        });
+      }
 
       const canvasViewport = readCanvasViewport();
 
