@@ -28,6 +28,7 @@ import {
   samePreviewPlayback,
   shouldContinuePreviewPolling,
 } from "./preview-poll";
+import { waitForMediaArtifactRetry } from "./media-retry";
 import { Icon } from "./Icons";
 import type { ViewerChromeActivitySource } from "./viewer-chrome-idle";
 import { resolveViewerPrimarySurface } from "./viewer-preview-policy";
@@ -521,6 +522,18 @@ export const AssetPreviewModal = forwardRef<
           requestFailureMessage(t("preview.retryFailed"), result.error, t),
         );
       } else {
+        await waitForMediaArtifactRetry({
+          api,
+          libraryId,
+          assetId: asset.assetId,
+          artifactKind:
+            resolution?.kind ??
+            (asset.mediaType === "video"
+              ? "webm_proxy"
+              : asset.mediaType === "audio"
+                ? "audio_proxy"
+                : "thumbnail"),
+        });
         await resolvePreview(
           false,
           "client",
