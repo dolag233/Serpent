@@ -1005,6 +1005,11 @@ test("maintains consistent preferences, accessible names, zoom behavior, and avo
       window.getByRole("button", { name: /偏好测试合集/ }),
     ).toBeVisible();
 
+    // Creating a collection intentionally enters the new collection scope.
+    // Return to the library-wide scope before adding the existing asset.
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await expect(cardById).toBeVisible();
+
     await cardById.click({ button: "right" });
     await window.getByRole("menuitem", { name: "添加到合集" }).hover();
     await window.getByRole("option", { name: "偏好测试合集" }).click();

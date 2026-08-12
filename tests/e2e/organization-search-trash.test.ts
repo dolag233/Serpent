@@ -103,6 +103,11 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     await window.getByPlaceholder('新建合集').press('Enter');
     await expect(window.getByRole('button', { name: /精选/ })).toBeVisible();
 
+    // Creating a collection enters the new empty scope; return to all assets
+    // before organizing the imported asset into it.
+    await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(assetCard).toBeVisible();
+
     await assetCard.click({ button: 'right' });
     await window.getByRole('menuitem', { name: '添加标签…' }).click();
     await window.getByRole('option', { name: '角色' }).click();
@@ -355,6 +360,12 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('批量合集');
     await window.getByPlaceholder('新建合集').press('Enter');
+
+    // Creating a collection enters the new empty scope; return to all assets
+    // before the batch selection.
+    await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(locateAssetCard(window, 'first.txt')).toBeVisible();
+    await expect(locateAssetCard(window, 'second.txt')).toBeVisible();
 
     await locateAssetCard(window, 'first.txt').click();
     await locateAssetCard(window, 'second.txt').click({ modifiers: [additiveModifier] });
@@ -624,6 +635,11 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('空合集');
     await window.getByPlaceholder('新建合集').press('Enter');
+    // Creating a collection enters the new empty scope; return to all assets
+    // before assigning both members.
+    await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(locateAssetCard(window, 'child-only.txt')).toBeVisible();
+    await expect(locateAssetCard(window, 'direct-only.txt')).toBeVisible();
     // Import auto-selects every imported asset (reveal), so right-clicking one
     // card would open the multi-asset menu and add the whole selection. Click
     // the canvas background first to reset the selection to the single target.

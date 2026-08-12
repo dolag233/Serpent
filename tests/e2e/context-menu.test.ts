@@ -170,6 +170,11 @@ test("context menu clamps at viewport edges", async () => {
     await window.getByPlaceholder("新建合集").press("Enter");
     await expect(window.getByRole("button", { name: /Clamp Collection/ })).toBeVisible();
 
+    // Collection creation enters the new empty scope; the asset-menu check
+    // below is intentionally back in the library-wide scope.
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await expect(assetCard).toBeVisible();
+
     // Open organization context menu on the collection
     await window.getByRole("button", { name: /Clamp Collection/ }).click({ button: "right" });
     await expect(window.getByRole("menu")).toBeVisible({ timeout: 5_000 });
@@ -227,6 +232,11 @@ test("single-menu enforcement — opening new context menu closes existing one",
     await window.getByPlaceholder("新建合集").fill("Single Test Collection");
     await window.getByPlaceholder("新建合集").press("Enter");
     await expect(window.getByRole("button", { name: /Single Test Collection/ })).toBeVisible();
+
+    // Collection creation enters the new empty scope; both asset-menu steps
+    // intentionally operate from the library-wide scope.
+    await window.getByRole("button", { name: /所有资产/ }).click();
+    await expect(assetCard).toBeVisible();
 
     // Step 1: Open context menu on the asset card
     await assetCard.click({ button: "right" });
