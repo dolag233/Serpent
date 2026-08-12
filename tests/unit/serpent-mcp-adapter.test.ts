@@ -482,6 +482,7 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
     const input = {
       libraryId: 'library-1',
       assetIds: ['00000000-0000-4000-8000-000000000010'],
+      idempotencyKey: 'delete-permanent-1',
     };
     const first = await callSerpentMcpTool({
       toolName: 'serpent_asset_delete_permanent',
@@ -498,7 +499,7 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
     // Nothing executed on the first call.
     expect(worker.commands).toHaveLength(0);
     if (!first.ok) throw new Error('expected challenge result');
-    const challenge = first.result as { challengeId: string; planHash: string | null };
+    const challenge = first.result as { challengeId: string; planHash: string };
 
     const confirmed = await callSerpentMcpTool({
       toolName: 'serpent_asset_delete_permanent',
@@ -541,6 +542,7 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
     const input = {
       libraryId: 'library-1',
       assetIds: ['00000000-0000-4000-8000-000000000010'],
+      idempotencyKey: 'delete-permanent-2',
     };
     const first = await callSerpentMcpTool({
       toolName: 'serpent_asset_delete_permanent',
@@ -556,7 +558,7 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
       arguments: {
         ...input,
         challengeId: '00000000-0000-4000-8000-0000000000ff',
-        planHash: null,
+        planHash: '',
         acknowledged: true,
         idempotencyKey: 'delete-permanent-forged',
       },

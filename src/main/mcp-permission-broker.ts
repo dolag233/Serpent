@@ -10,6 +10,7 @@ import type {
 } from '../automation/command-gateway';
 import {
   hasMcpChallengeConfirmation,
+  getMcpChallengeIdempotencyKey,
   stripMcpChallengeConfirmationFields,
   type McpDangerousOperationChallenge,
 } from '../automation/mcp-challenge';
@@ -153,10 +154,25 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
     }
     const canonicalInput = stripMcpChallengeConfirmationFields(input.commandInput);
     const targets = this.deriveTargets(canonicalInput);
+    const targetIds = targets.map((target) => target.id);
+    const idempotencyKey = getMcpChallengeIdempotencyKey(input.commandInput);
+    // Auto dangerous calls need one stable operation key from the outset so
+    // the challenge cannot be confirmed with a caller-selected replacement.
+    // Full Access bypasses this branch above and remains direct by policy.
+    if (idempotencyKey === undefined) {
+      this.#audit?.info(
+        'mcp.permission.challenge-rejected',
+        'Dangerous MCP operation requires a non-empty idempotency key.',
+        { credentialId, commandId: descriptor.commandId, targetCount: targetIds.length },
+      );
+      return { allowed: false, reason: 'denied' };
+    }
     const binding = {
       credentialId,
       commandId: descriptor.commandId,
       canonicalInput,
+      targetIds,
+      idempotencyKey,
       libraryId: context.libraryId,
       contextRevision: context.contextRevision ?? null,
     };
@@ -166,14 +182,13 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
       irreversibleEffects: [descriptor.summary],
       targets,
       recovery: descriptor.impact === 'destructive' ? 'none' : 'partial',
-      planHash: null,
       ...binding,
     });
     if (hasMcpChallengeConfirmation(input.commandInput)) {
       const raw = input.commandInput as Record<string, unknown>;
       const consumed = this.#challengeStore.consume({
         challengeId: String(raw.challengeId),
-        planHash: typeof raw.planHash === 'string' ? raw.planHash : null,
+        planHash: typeof raw.planHash === 'string' ? raw.planHash : '',
         ...binding,
       });
       if (consumed.status === 'ok') {

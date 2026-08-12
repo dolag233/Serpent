@@ -125,20 +125,23 @@ function withChallengeConfirmationFields(
     : {};
   properties.challengeId = {
     type: 'string',
+    minLength: 1,
     description: '第一次调用返回的 challengeId。第二次调用必须原样回传。',
   };
   properties.planHash = {
     type: 'string',
-    nullable: true,
+    minLength: 1,
     description: '风险报告中的 planHash；第二次调用必须原样回传。',
   };
   properties.acknowledged = {
     type: 'boolean',
-    description: '第二次调用必须为 true；单独 true 而缺少精确 challengeId/planHash 不生效。',
+    const: true,
+    description: '第二次调用必须为 true；单独 true 或缺少精确 challengeId/planHash/idempotencyKey 均不生效。',
   };
   properties.idempotencyKey = {
     type: 'string',
-    description: '第二次调用的幂等键，用于审计与去重。',
+    minLength: 1,
+    description: '危险操作从首次调用起绑定的非空幂等键；第二次调用必须原样回传。',
   };
   return { ...schema, properties };
 }

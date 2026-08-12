@@ -48,7 +48,9 @@ describe('MCP permission contract', () => {
     expect(dangerousTool?.inputSchema).toMatchObject({
       properties: expect.objectContaining({
         challengeId: expect.anything(),
-        acknowledged: expect.anything(),
+        planHash: expect.objectContaining({ type: 'string', minLength: 1 }),
+        acknowledged: expect.objectContaining({ const: true }),
+        idempotencyKey: expect.objectContaining({ type: 'string', minLength: 1 }),
       }),
     });
     for (const operation of automationCriticalOperationRegistry) {

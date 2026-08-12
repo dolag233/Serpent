@@ -176,7 +176,11 @@ describe('MCP dangerous operation challenge (Serpent-8b5b.2)', () => {
     const authorization = await broker.authorize({
       context: criticalContext(),
       descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1', 'asset-2'] },
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1', 'asset-2'],
+        idempotencyKey: 'delete-1',
+      },
     });
     expect(authorization).toMatchObject({
       allowed: false,
@@ -205,7 +209,11 @@ describe('MCP dangerous operation challenge (Serpent-8b5b.2)', () => {
     const first = await broker.authorize({
       context: criticalContext(),
       descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'] },
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        idempotencyKey: 'delete-1',
+      },
     });
     if (!('challenge' in first)) throw new Error('expected challenge');
 
@@ -246,12 +254,56 @@ describe('MCP dangerous operation challenge (Serpent-8b5b.2)', () => {
     expect(replayed.challenge.challengeId).not.toBe(first.challenge.challengeId);
   });
 
+  it('rejects acknowledged-only, missing-plan and missing-idempotency confirmations', async () => {
+    const broker = createBroker({ policyStore: policyStore() });
+    const first = await broker.authorize({
+      context: criticalContext(),
+      descriptor: descriptor('asset.delete-permanent'),
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        idempotencyKey: 'delete-1',
+      },
+    });
+    if (!('challenge' in first)) throw new Error('expected challenge');
+
+    const acknowledgedOnly = await broker.authorize({
+      context: criticalContext(),
+      descriptor: descriptor('asset.delete-permanent'),
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        challengeId: first.challenge.challengeId,
+        acknowledged: true,
+        idempotencyKey: 'delete-1',
+      },
+    });
+    expect(acknowledgedOnly).toMatchObject({ allowed: false, reason: 'challenge-required' });
+
+    const missingKey = await broker.authorize({
+      context: criticalContext(),
+      descriptor: descriptor('asset.delete-permanent'),
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        challengeId: first.challenge.challengeId,
+        planHash: first.challenge.planHash,
+        acknowledged: true,
+      },
+    });
+    expect(missingKey).toEqual({ allowed: false, reason: 'denied' });
+  });
+
   it('rejects tampered arguments, cross-client use and state changes', async () => {
     const broker = createBroker({ policyStore: policyStore() });
     const first = await broker.authorize({
       context: criticalContext(),
       descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'] },
+      commandInput: {
+        libraryId: 'library-1',
+        assetIds: ['asset-1'],
+        idempotencyKey: 'delete-1',
+      },
     });
     if (!('challenge' in first)) throw new Error('expected challenge');
     const base = {
