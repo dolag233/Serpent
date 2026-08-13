@@ -178,4 +178,132 @@ describe('requestTimeoutForCommand', () => {
       else process.env.SERPENT_OIIO_PATH = previousOiioPath;
     }
   });
+
+  it('retries the worker spawn once when the first child exits before ready', async () => {
+    utilityProcessFork.mockClear();
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const first = new FakeUtilityProcess();
+      const second = new FakeUtilityProcess();
+      utilityProcessFork
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second);
+      const logger = {
+        worker: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+      } as unknown as AppLogger;
+      const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+
+      const start = client.start();
+      first.emit('exit', 1);
+      // The retry fork spans two microtask hops (reject → attempt throw →
+      // loop retry); wait for the second fork instead of guessing turns.
+      await vi.waitFor(() => {
+        expect(utilityProcessFork).toHaveBeenCalledTimes(2);
+      });
+      second.emit('message', { type: 'worker.ready' });
+      await start;
+
+      expect(utilityProcessFork).toHaveBeenCalledTimes(2);
+      expect(first.kill).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        'worker.ready-retry',
+        expect.any(String),
+      );
+    } finally {
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
+
+  it('retries the worker spawn once when the ready handshake times out', async () => {
+    vi.useFakeTimers();
+    utilityProcessFork.mockClear();
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const first = new FakeUtilityProcess();
+      const second = new FakeUtilityProcess();
+      utilityProcessFork
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second);
+      const logger = {
+        worker: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+      } as unknown as AppLogger;
+      const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+
+      const start = client.start();
+      await vi.advanceTimersByTimeAsync(15_000);
+      second.emit('message', { type: 'worker.ready' });
+      await start;
+
+      expect(first.kill).toHaveBeenCalled();
+      expect(utilityProcessFork).toHaveBeenCalledTimes(2);
+      expect(logger.error).toHaveBeenCalledWith(
+        'worker.ready-timeout',
+        expect.anything(),
+        expect.objectContaining({ attempt: 1 }),
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        'worker.ready-retry',
+        expect.any(String),
+      );
+    } finally {
+      vi.useRealTimers();
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
+
+  it('fails startup when both spawn attempts time out', async () => {
+    vi.useFakeTimers();
+    utilityProcessFork.mockClear();
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const first = new FakeUtilityProcess();
+      const second = new FakeUtilityProcess();
+      utilityProcessFork
+        .mockReturnValueOnce(first)
+        .mockReturnValueOnce(second);
+      const logger = {
+        worker: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+      } as unknown as AppLogger;
+      const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+
+      const start = client.start();
+      await vi.advanceTimersByTimeAsync(15_000);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(start).rejects.toThrow('ready handshake timed out');
+
+      expect(utilityProcessFork).toHaveBeenCalledTimes(2);
+      expect(logger.error).toHaveBeenCalledWith(
+        'worker.ready-timeout',
+        expect.anything(),
+        expect.objectContaining({ attempt: 2 }),
+      );
+    } finally {
+      vi.useRealTimers();
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
 });
