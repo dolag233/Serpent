@@ -68,7 +68,7 @@ describe("shouldShowThumbnailFailureBadge", () => {
     ).toBe(false);
   });
 
-  it("shows the badge for decodable media with a recorded failure", () => {
+  it("never shows a warning badge for thumbnail failure", () => {
     expect(
       shouldShowThumbnailFailureBadge(
         {
@@ -78,7 +78,7 @@ describe("shouldShowThumbnailFailureBadge", () => {
         },
         true,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("hides the badge once a ready thumbnail exists", () => {

@@ -1,4 +1,4 @@
-import type { ManagedFolderSummary } from "../shared/asset-types";
+import type { LinkedFolderSummary, ManagedFolderSummary } from "../shared/asset-types";
 
 export type ManagedFolderBreadcrumbEntry = {
   folderId: string;
@@ -31,6 +31,28 @@ export function buildManagedFolderBreadcrumbTrail(
 
     trail.push({ folderId: folder.folderId, name: folder.name });
     currentId = folder.parentFolderId;
+  }
+
+  trail.reverse();
+  return trail;
+}
+
+export function buildLinkedFolderBreadcrumbTrail(
+  folders: readonly LinkedFolderSummary[],
+  folderId: string,
+): ManagedFolderBreadcrumbEntry[] {
+  const byId = new Map(folders.map((folder) => [folder.folderId, folder]));
+  const trail: ManagedFolderBreadcrumbEntry[] = [];
+  const visited = new Set<string>();
+
+  let currentId: string | null = folderId;
+  while (currentId !== null) {
+    if (visited.has(currentId)) return [];
+    visited.add(currentId);
+    const folder = byId.get(currentId);
+    if (!folder) return [];
+    trail.push({ folderId: folder.folderId, name: folder.displayName });
+    currentId = folder.parentFolderId ?? null;
   }
 
   trail.reverse();

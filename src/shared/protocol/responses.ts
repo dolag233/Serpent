@@ -289,6 +289,15 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     assetId: nonBlankString,
     errorCode: nonBlankString,
     reason: nonBlankString,
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.dimensions.ready'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
   }),
 ]);
 

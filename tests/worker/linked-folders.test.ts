@@ -121,6 +121,99 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('Serpent-a9vh: exposes virtual child folders and non-recursive browse', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.png'), 'aaa');
+    mkdirSync(path.join(sourceRoot, 'notes'));
+    writeFileSync(path.join(sourceRoot, 'notes', 'b.png'), 'bbb');
+    mkdirSync(path.join(sourceRoot, 'notes', '2024'));
+    writeFileSync(path.join(sourceRoot, 'notes', '2024', 'c.png'), 'ccc');
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'LinkedTree', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    const listed = service.listLinkedFolders(created.libraryId);
+    expect(listed.map((folder) => folder.relativePath).sort()).toEqual(['', 'notes', 'notes/2024']);
+    const notes = listed.find((folder) => folder.relativePath === 'notes');
+    expect(notes?.parentFolderId).toBe(linked.folderId);
+    expect(notes?.folderId).toBe(`lfv:${linked.folderId}/notes`);
+
+    const cards = service.listFolderBrowseEntries({
+      libraryId: created.libraryId,
+      parentFolderId: linked.folderId,
+    });
+    expect(cards.map((entry) => entry.name)).toEqual(['notes']);
+    expect(cards[0]?.locationKind).toBe('linked');
+    expect(cards[0]?.directAssetCount).toBe(1);
+    expect(cards[0]?.recursiveAssetCount).toBe(2);
+    expect(cards[0]?.childFolderCount).toBe(1);
+
+    const rootDirect = service.listAssets({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      recursive: false,
+    });
+    expect(rootDirect.map((asset) => asset.relativeFilePath)).toEqual(['a.png']);
+
+    const notesDirect = service.searchAssets({
+      libraryId: created.libraryId,
+      scope: { kind: 'folder', folderId: notes!.folderId, recursive: false },
+      limit: 50,
+      offset: 0,
+    });
+    expect(notesDirect.items.map((item) => item.relativeFilePath)).toEqual(['notes/b.png']);
+
+    const notesRecursive = service.searchAssets({
+      libraryId: created.libraryId,
+      scope: { kind: 'folder', folderId: notes!.folderId, recursive: true },
+      limit: 50,
+      offset: 0,
+    });
+    expect(notesRecursive.items.map((item) => item.relativeFilePath).sort()).toEqual([
+      'notes/2024/c.png',
+      'notes/b.png',
+    ]);
+
+    service.closeAll();
+  });
+
+  it('Serpent-l1oi: header-probed image dimensions are available before thumbnails', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(
+      path.join(sourceRoot, 'pixel.png'),
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'LinkedDims', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+    const assets = service.listAssets({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      recursive: false,
+    });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]?.width).toBe(1);
+    expect(assets[0]?.height).toBe(1);
+    expect(assets[0]?.thumbnailStatus).not.toBe('ready');
+
+    service.closeAll();
+  });
+
   it('refresh creates an external-change revision when a linked asset is overwritten externally', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'source');
@@ -455,11 +548,10 @@ describe('Linked folder import', () => {
     expect(byPath.get('notes/data.json')?.mediaType).toBe('text');
     expect(byPath.get('notes/payload.xml')?.mediaType).toBe('text');
 
-    // Linked browse keeps nested files visible even when recursive=false
-    // (virtual subdir cards are not yet the nav surface).
+    const notesId = `lfv:${linked.folderId}/notes`;
     const searched = service.searchAssets({
       libraryId: created.libraryId,
-      scope: { kind: 'folder', folderId: linked.folderId, recursive: false },
+      scope: { kind: 'folder', folderId: notesId, recursive: false },
       filters: [{ field: 'format', values: ['text'], exclude: false }],
       limit: 50,
       offset: 0,
@@ -472,6 +564,15 @@ describe('Linked folder import', () => {
       'notes/readme.md',
     ]);
     expect(searched.items.every((item) => item.mediaType === 'text')).toBe(true);
+
+    const rootText = service.searchAssets({
+      libraryId: created.libraryId,
+      scope: { kind: 'folder', folderId: linked.folderId, recursive: false },
+      filters: [{ field: 'format', values: ['text'], exclude: false }],
+      limit: 50,
+      offset: 0,
+    });
+    expect(rootText.items).toEqual([]);
 
     service.closeAll();
   });

@@ -1961,7 +1961,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void) {
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseThumbnailEvent(input));

@@ -70,7 +70,7 @@ describe("buildUnifiedDirectoryNavEntries", () => {
     ]);
   });
 
-  it("appends linked folders after managed with depth 1 and no invented hierarchy", () => {
+  it("appends linked folders after managed, including virtual children", () => {
     const folders = [managed({ folderId: "m1", name: "Managed", relativePath: "managed" })];
     const linkedFolders = [
       linked({
@@ -78,12 +78,27 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         displayName: "Linked Online",
         status: "available",
         assetCount: 3,
+        linkedFolderId: "l1",
+        relativePath: "",
+        parentFolderId: null,
+      }),
+      linked({
+        folderId: "lfv:l1/notes",
+        displayName: "notes",
+        status: "available",
+        assetCount: 1,
+        linkedFolderId: "l1",
+        relativePath: "notes",
+        parentFolderId: "l1",
       }),
       linked({
         folderId: "l2",
         displayName: "Linked Offline",
         status: "offline",
         assetCount: 0,
+        linkedFolderId: "l2",
+        relativePath: "",
+        parentFolderId: null,
       }),
     ];
 
@@ -98,24 +113,41 @@ describe("buildUnifiedDirectoryNavEntries", () => {
       },
       {
         kind: "linked",
-        folderId: "l1",
-        name: "Linked Online",
-        depth: 1,
-        status: "available",
-        assetCount: 3,
-      },
-      {
-        kind: "linked",
         folderId: "l2",
         name: "Linked Offline",
         depth: 1,
+        parentFolderId: null,
         status: "offline",
         assetCount: 0,
+        linkedFolderId: "l2",
+        relativePath: "",
+      },
+      {
+        kind: "linked",
+        folderId: "l1",
+        name: "Linked Online",
+        depth: 1,
+        parentFolderId: null,
+        status: "available",
+        assetCount: 3,
+        linkedFolderId: "l1",
+        relativePath: "",
+      },
+      {
+        kind: "linked",
+        folderId: "lfv:l1/notes",
+        name: "notes",
+        depth: 2,
+        parentFolderId: "l1",
+        status: "available",
+        assetCount: 1,
+        linkedFolderId: "l1",
+        relativePath: "notes",
       },
     ]);
   });
 
-  it("keeps linked-only lists as flat root-level entries", () => {
+  it("keeps linked-only roots at depth 1", () => {
     expect(
       buildUnifiedDirectoryNavEntries(
         [],
@@ -127,15 +159,18 @@ describe("buildUnifiedDirectoryNavEntries", () => {
         folderId: "only",
         name: "Only Linked",
         depth: 1,
+        parentFolderId: null,
         status: "available",
         assetCount: 1,
+        linkedFolderId: "only",
+        relativePath: "",
       },
     ]);
   });
 });
 
 describe("filterCollapsedDirectoryEntries", () => {
-  it("hides managed descendants of collapsed folders and keeps linked rows", () => {
+  it("hides managed and linked descendants of collapsed folders", () => {
     const folders = [
       managed({ folderId: "p", name: "Parent", relativePath: "Parent" }),
       managed({
@@ -146,10 +181,26 @@ describe("filterCollapsedDirectoryEntries", () => {
       }),
     ];
     const entries = buildUnifiedDirectoryNavEntries(folders, [
-      linked({ folderId: "l1", displayName: "Link", assetCount: 2 }),
+      linked({
+        folderId: "l1",
+        displayName: "Link",
+        assetCount: 2,
+        linkedFolderId: "l1",
+        relativePath: "",
+        parentFolderId: null,
+      }),
+      linked({
+        folderId: "lfv:l1/notes",
+        displayName: "notes",
+        assetCount: 1,
+        linkedFolderId: "l1",
+        relativePath: "notes",
+        parentFolderId: "l1",
+      }),
     ]);
     expect(managedFolderIdsWithChildren(entries).has("p")).toBe(true);
-    const visible = filterCollapsedDirectoryEntries(entries, new Set(["p"]));
+    expect(managedFolderIdsWithChildren(entries).has("l1")).toBe(true);
+    const visible = filterCollapsedDirectoryEntries(entries, new Set(["p", "l1"]));
     expect(visible.map((entry) => entry.folderId)).toEqual(["p", "l1"]);
   });
 });

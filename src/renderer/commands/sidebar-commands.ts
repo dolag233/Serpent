@@ -3,8 +3,16 @@
 // ---------------------------------------------------------------------------
 
 import type { LinkedFolderSummary } from '../../shared/asset-types';
+import { linkedRevealFolderId } from '../../shared/linked-folder-tree';
 import { translateForLocale } from '../i18n';
 import type { CommandContext, CommandDefinition } from './command-types';
+
+function revealFolderId(ctx: SidebarCommandContext): string {
+  if (ctx.locationKind === 'linked') {
+    return linkedRevealFolderId(ctx.subjectId, ctx.linkedRelativePath);
+  }
+  return ctx.subjectId;
+}
 
 export interface SidebarCommandActions {
   readonly openFolderInFileManager: (folderId: string) => void;
@@ -85,7 +93,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     group: 'open',
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
-    run: (ctx) => ctx.actions.openFolderInFileManager(ctx.subjectId),
+    run: (ctx) => ctx.actions.openFolderInFileManager(revealFolderId(ctx)),
   },
   {
     id: 'folder.create-subfolder',
@@ -132,7 +140,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     group: 'organize',
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
-    run: (ctx) => ctx.actions.copyFolderPath(ctx.subjectId),
+    run: (ctx) => ctx.actions.copyFolderPath(revealFolderId(ctx)),
   },
   {
     id: 'folder.copy',
@@ -144,7 +152,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) => ctx.menuKind === 'folder',
     disabledReason: offlineReason,
-    run: (ctx) => ctx.actions.copyFolder(ctx.subjectId),
+    run: (ctx) => ctx.actions.copyFolder(revealFolderId(ctx)),
   },
   {
     id: 'folder.paste',

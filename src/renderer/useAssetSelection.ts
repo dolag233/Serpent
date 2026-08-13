@@ -7,6 +7,10 @@ import {
 } from "./browse-selection-order";
 import { resolveFolderCardClickIntent } from "./folder-card-click";
 import {
+  collectPublishedAssetCenters,
+  collectPublishedAssetHits,
+} from "./canvas-asset-layout";
+import {
   canvasViewportFromMetrics,
   clientPointToContent,
   clipRectToViewport,
@@ -256,18 +260,26 @@ export function useAssetSelection({
     const anchorId = selectionAnchorRef.current;
     const canvas = workspaceCanvasRef.current;
     if (!anchorId || !canvas) return false;
-    const items = [
-      ...canvas.querySelectorAll<HTMLElement>(
-        ".asset-card[data-asset-id]",
-      ),
-    ].flatMap((card) => {
-      const id = card.dataset.assetId;
-      if (!id) return [];
-      const rect = card.getBoundingClientRect();
-      return [
-        { id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-      ];
-    });
+    const viewport = canvasViewportFromMetrics(
+      canvas.getBoundingClientRect(),
+      canvas,
+    );
+    const scroll = { left: canvas.scrollLeft, top: canvas.scrollTop };
+    const published = collectPublishedAssetCenters(canvas, viewport, scroll);
+    const items =
+      published ??
+      [
+        ...canvas.querySelectorAll<HTMLElement>(
+          ".asset-card[data-asset-id]",
+        ),
+      ].flatMap((card) => {
+        const id = card.dataset.assetId;
+        if (!id) return [];
+        const rect = card.getBoundingClientRect();
+        return [
+          { id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
+        ];
+      });
     const range = resolveMasonryCenterRange({
       items,
       browseOrder: assetIds,
@@ -500,8 +512,18 @@ export function useAssetSelection({
       const folderHitIds: string[] = [];
       const viewport = readCanvasViewport();
       const scroll = readCanvasScroll();
+      // Windowed grids only mount the visible slice. Hit-test the published
+      // layout so a drag can select every card, not just the ~50 in the DOM.
+      const publishedAssetHits = collectPublishedAssetHits(
+        canvas,
+        box,
+        viewport,
+        scroll,
+      );
       const cards = canvas.querySelectorAll<HTMLElement>(
-        "[data-asset-id], [data-folder-id]",
+        publishedAssetHits
+          ? "[data-folder-id]"
+          : "[data-asset-id], [data-folder-id]",
       );
       // Serpent-wgl2: cache card rects in canvas-content coordinates — they
       // stay valid while scrolling and are only dropped when the canvas
@@ -537,7 +559,10 @@ export function useAssetSelection({
           else if (folderId) folderHitIds.push(folderId);
         }
       }
-      return { assetHitIds, folderHitIds };
+      return {
+        assetHitIds: publishedAssetHits ?? assetHitIds,
+        folderHitIds,
+      };
     };
 
     const applyMarqueeHits = (hits: {

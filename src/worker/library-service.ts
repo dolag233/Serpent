@@ -53,7 +53,18 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
+import { workerMediaDecodeConcurrency, workerMediaDecodeWaveSize } from './media-concurrency';
 import { readImageDimensionsSync } from './image-dimensions';
+import {
+  collectLinkedDirectoryPrefixes,
+  directChildLinkedDirectories,
+  encodeLinkedVirtualFolderId,
+  linkedAssetIsDirectChild,
+  linkedAssetIsUnderDirectory,
+  linkedDirectoryName,
+  parentLinkedRelativePath,
+  parseLinkedVirtualFolderId,
+} from '../shared/linked-folder-tree';
 import {
   claimNextPluginJobRecord,
   cancelPluginJobRecord,
@@ -3129,15 +3140,12 @@ class AsyncSemaphore {
 // A Library Worker may own several open libraries. These module-level gates
 // therefore cap decoder pressure across all LibraryService instances and all
 // libraries in the process, not merely within one queue drain.
-// Serpent-azf6: image decodes raised 2 → 4 so a 700+ asset import wave drains
-// in roughly half the wall time. libvips (Sharp) streams with lazy allocation,
-// so four bounded decodes stay within desktop memory; OIIO stays at 1 because
-// it handles very heavy EXR/HDR sources.
-const sharpDecoderSemaphore = new AsyncSemaphore(4);
-// Keep a bounded amount of decoder pressure while allowing a video import
-// batch to make progress on more than one asset. This covers both ffmpeg and
-// ffprobe because they contend for the same media decode resources.
-const ffmpegDecoderSemaphore = new AsyncSemaphore(4);
+// Image/video decode pool size is logical CPUs minus 3 (2 for the OS, 1 for
+// the current Serpent thread). OIIO stays at 1 because it handles very heavy
+// EXR/HDR sources — that is a memory bound, not a thread-count default.
+const MEDIA_DECODE_CONCURRENCY = workerMediaDecodeConcurrency();
+const sharpDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
+const ffmpegDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
 
 interface MediaExecutionContext {
@@ -10760,6 +10768,8 @@ export class LibraryService {
   }): FolderBrowseEntry[] {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (input.parentFolderId !== null) {
+      const linkedEntries = this.listLinkedFolderBrowseEntries(openLibrary, input);
+      if (linkedEntries !== null) return linkedEntries;
       const parent = openLibrary.connection
         .prepare('SELECT folder_id FROM managed_folders WHERE folder_id = ?')
         .get(input.parentFolderId) as { folder_id: string } | undefined;
@@ -10816,8 +10826,166 @@ export class LibraryService {
         recursiveAssetCount: recursiveCounts.get(row.folder_id) ?? directAssetCount,
         childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
         coverArtifactIds: coverMap.get(row.folder_id) ?? [],
+        linkedFolderId: null,
       };
     });
+  }
+
+  /**
+   * Serpent-a9vh: virtual child folders for a linked root or linked subdir.
+   * Returns null when `parentFolderId` is not a linked scope.
+   */
+  private listLinkedFolderBrowseEntries(
+    openLibrary: OpenLibrary,
+    input: { parentFolderId: string | null; showIgnored?: boolean },
+  ): FolderBrowseEntry[] | null {
+    if (input.parentFolderId === null) return null;
+    const resolved = this.resolveLinkedFolderScope(openLibrary, input.parentFolderId);
+    if (!resolved) return null;
+
+    const paths = this.listLinkedAssetRelativePaths(
+      openLibrary,
+      resolved.linkedFolderId,
+      input.showIgnored === true,
+    );
+    const prefixes = collectLinkedDirectoryPrefixes(paths);
+    const children = directChildLinkedDirectories(prefixes, resolved.relativePath);
+    if (children.length === 0) return [];
+
+    return children.map((relativePath) => {
+      const folderId = encodeLinkedVirtualFolderId(resolved.linkedFolderId, relativePath);
+      const descendantPaths = paths.filter((filePath) =>
+        linkedAssetIsUnderDirectory(filePath, relativePath),
+      );
+      const directAssetCount = descendantPaths.filter((filePath) =>
+        linkedAssetIsDirectChild(filePath, relativePath),
+      ).length;
+      const childFolderCount = directChildLinkedDirectories(prefixes, relativePath).length;
+      return {
+        folderId,
+        parentFolderId: input.parentFolderId,
+        locationKind: 'linked' as const,
+        name: linkedDirectoryName(relativePath),
+        relativePath,
+        status: resolved.status,
+        directAssetCount,
+        recursiveAssetCount: descendantPaths.length,
+        childFolderCount,
+        coverArtifactIds: this.linkedDirectoryCoverArtifactIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          relativePath,
+          input.showIgnored === true,
+        ),
+        linkedFolderId: resolved.linkedFolderId,
+      };
+    });
+  }
+
+  private resolveLinkedFolderScope(
+    openLibrary: OpenLibrary,
+    folderId: string,
+  ): {
+    linkedFolderId: string;
+    relativePath: string;
+    status: 'available' | 'offline';
+    absoluteRootPath: string;
+  } | null {
+    const virtual = parseLinkedVirtualFolderId(folderId);
+    const linkedFolderId = virtual?.linkedFolderId ?? folderId;
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, status, absolute_root_path
+           FROM linked_folders
+          WHERE folder_id = ? AND library_id = ?`,
+      )
+      .get(linkedFolderId, openLibrary.summary.libraryId) as
+      | {
+          folder_id: string;
+          status: 'available' | 'offline';
+          absolute_root_path: string;
+        }
+      | undefined;
+    if (!row) return null;
+    if (virtual && virtual.relativePath === '') return null;
+    return {
+      linkedFolderId: row.folder_id,
+      relativePath: virtual?.relativePath ?? '',
+      status: row.status,
+      absoluteRootPath: row.absolute_root_path,
+    };
+  }
+
+  private listLinkedAssetRelativePaths(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    showIgnored: boolean,
+  ): string[] {
+    const connection = openLibrary.connection;
+    const hasIgnoreTable = hasTable(connection, 'linked_ignored_assets');
+    const hasSequenceFrames = hasTable(connection, 'asset_sequence_frames');
+    const rows = connection
+      .prepare(
+        `SELECT a.relative_file_path
+           FROM assets a
+          WHERE a.linked_folder_id = ?
+            AND a.location_kind = 'linked'
+            AND a.deleted_at IS NULL
+            ${hasIgnoreTable
+              ? 'AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)'
+              : ''}
+            AND ${this.explicitIgnoreSql(connection, 'a', showIgnored)}
+            ${hasSequenceFrames
+              ? `AND NOT EXISTS (
+              SELECT 1
+                FROM asset_sequence_frames hidden_sequence_frame
+               WHERE hidden_sequence_frame.asset_id = a.asset_id
+                 AND hidden_sequence_frame.position > 0
+            )`
+              : ''}`,
+      )
+      .all(linkedFolderId) as Array<{ relative_file_path: string }>;
+    return rows.map((row) => row.relative_file_path);
+  }
+
+  private linkedDirectoryCoverArtifactIds(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    relativePath: string,
+    showIgnored: boolean,
+  ): string[] {
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return [];
+    }
+    const prefix = relativePath === '' ? '' : `${relativePath}/`;
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT ra.artifact_id
+           FROM assets a
+           JOIN revision_artifacts ra
+             ON ra.revision_id = a.current_revision_id
+            AND ra.kind IN ('thumbnail', 'video_poster')
+            AND ra.status = 'ready'
+            AND ra.invalidated_at IS NULL
+          WHERE a.linked_folder_id = ?
+            AND a.location_kind = 'linked'
+            AND a.deleted_at IS NULL
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+            AND (
+              a.relative_file_path = ?
+              OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
+            )
+          ORDER BY a.relative_file_path
+          LIMIT 3`,
+      )
+      .all(
+        linkedFolderId,
+        relativePath,
+        prefix,
+        [...prefix].length,
+        prefix,
+      ) as Array<{ artifact_id: string }>;
+    return rows.map((row) => row.artifact_id);
   }
 
   /**
@@ -11115,27 +11283,43 @@ export class LibraryService {
         status: 'available' | 'offline';
         absolute_root_path: string;
       }>;
-    return rows.filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, '')).map((row) => {
-      const countRow = openLibrary.connection
-        .prepare(`SELECT COUNT(*) AS count FROM assets a
-                   WHERE a.linked_folder_id = ?
-                     AND NOT EXISTS (SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id)
-                     AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
-                     AND NOT EXISTS (
-                       SELECT 1
-                         FROM asset_sequence_frames hidden_sequence_frame
-                        WHERE hidden_sequence_frame.asset_id = a.asset_id
-                          AND hidden_sequence_frame.position > 0
-                     )`)
-        .get(row.folder_id) as { count: number };
-      return {
-        folderId: row.folder_id,
-        displayName: row.display_name,
-        status: row.status,
-        assetCount: countRow.count,
-        absoluteRootPath: row.absolute_root_path,
-      };
-    });
+    return rows
+      .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
+      .flatMap((row) => {
+        const paths = this.listLinkedAssetRelativePaths(openLibrary, row.folder_id, false);
+        const prefixes = collectLinkedDirectoryPrefixes(paths);
+        const root: LinkedFolderSummary = {
+          folderId: row.folder_id,
+          displayName: row.display_name,
+          status: row.status,
+          assetCount: paths.length,
+          absoluteRootPath: row.absolute_root_path,
+          linkedFolderId: row.folder_id,
+          relativePath: '',
+          parentFolderId: null,
+        };
+        const children = prefixes
+          .filter((prefix) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, prefix))
+          .map((relativePath) => {
+            const parentPath = parentLinkedRelativePath(relativePath);
+            return {
+              folderId: encodeLinkedVirtualFolderId(row.folder_id, relativePath),
+              displayName: linkedDirectoryName(relativePath),
+              status: row.status,
+              assetCount: paths.filter((filePath) =>
+                linkedAssetIsUnderDirectory(filePath, relativePath),
+              ).length,
+              absoluteRootPath: row.absolute_root_path,
+              linkedFolderId: row.folder_id,
+              relativePath,
+              parentFolderId:
+                parentPath === null || parentPath === ''
+                  ? row.folder_id
+                  : encodeLinkedVirtualFolderId(row.folder_id, parentPath),
+            };
+          });
+        return [root, ...children];
+      });
   }
 
   getLinkedFolderRules(input: { libraryId: string; folderId: string }): LinkedFolderRule[] {
@@ -11831,12 +12015,10 @@ export class LibraryService {
           )
           .get(input.folderId) as ManagedFolderRow | undefined
       : undefined;
-    const linkedFolderId = input.folderId && !managedFolder
-      ? (openLibrary.connection
-          .prepare('SELECT folder_id FROM linked_folders WHERE folder_id = ?')
-          .get(input.folderId) as { folder_id: string } | undefined)?.folder_id
-      : undefined;
-    if (input.folderId && !managedFolder && !linkedFolderId) {
+    const linkedScope = input.folderId && !managedFolder
+      ? this.resolveLinkedFolderScope(openLibrary, input.folderId)
+      : null;
+    if (input.folderId && !managedFolder && !linkedScope) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
     // Serpent-verg.2 — lenient read (0031 §1): display/derived columns added
@@ -11944,10 +12126,13 @@ export class LibraryService {
             row.managed_folder_id === managedFolder.folder_id
           );
         }
-        if (linkedFolderId) {
-          // Linked-folder scope: all assets in the linked folder (relative
-          // paths already encode subdirectory structure; recursive is implied).
-          return row.linked_folder_id === linkedFolderId;
+        if (linkedScope) {
+          if (row.linked_folder_id !== linkedScope.linkedFolderId) return false;
+          if (!input.recursive) {
+            return linkedAssetIsDirectChild(row.relative_file_path, linkedScope.relativePath);
+          }
+          if (linkedScope.relativePath === '') return true;
+          return linkedAssetIsUnderDirectory(row.relative_file_path, linkedScope.relativePath);
         }
         return input.recursive || row.managed_folder_id === null;
       })
@@ -12078,6 +12263,7 @@ export class LibraryService {
         this.syncAssetSearchContent(openLibrary.connection, assetId);
       }
     })();
+    this.persistLinkedFolderImageDimensions(openLibrary, folderId);
     this.reconcileLinkedWatchers(openLibrary);
 
     return {
@@ -12086,6 +12272,9 @@ export class LibraryService {
       status: 'available',
       assetCount: entries.length,
       absoluteRootPath: canonicalRoot,
+      linkedFolderId: folderId,
+      relativePath: '',
+      parentFolderId: null,
     };
   }
 
@@ -15573,18 +15762,24 @@ export class LibraryService {
       if (!directoryExists(targetPath)) throw new LibraryServiceError('FOLDER_NOT_FOUND');
       return targetPath;
     }
-    const linked = openLibrary.connection
-      .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
-      .get(folderId) as { absolute_root_path: string; status: 'available' | 'offline' } | undefined;
-    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
-    if (this.explicitFolderIgnored(openLibrary, 'linked', folderId, '')) {
+    const linkedScope = this.resolveLinkedFolderScope(openLibrary, folderId);
+    if (!linkedScope) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (this.explicitFolderIgnored(
+      openLibrary,
+      'linked',
+      linkedScope.linkedFolderId,
+      linkedScope.relativePath,
+    )) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
-    if (linked.status === 'offline' || this.linkedRootIsGone(linked.absolute_root_path)) {
+    if (linkedScope.status === 'offline' || this.linkedRootIsGone(linkedScope.absoluteRootPath)) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND');
     }
+    const targetPath = linkedScope.relativePath === ''
+      ? linkedScope.absoluteRootPath
+      : path.join(linkedScope.absoluteRootPath, ...linkedScope.relativePath.split('/'));
     try {
-      return realpathSync(linked.absolute_root_path);
+      return realpathSync(targetPath);
     } catch (error) {
       throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
     }
@@ -16011,11 +16206,15 @@ export class LibraryService {
     let imageProcessed = false;
 
     try {
+      const headerSize = readImageDimensionsSync(assetPath);
+      if (headerSize) {
+        this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
+      }
       const { inputWidth, inputHeight, gifMetadata } = await sharpDecoderSemaphore.run(
         execution.signal,
         async () => {
           const s = this.options.sharpFn ?? requireSharp();
-          const probe = s(assetPath);
+          const probe = s(assetPath, { failOn: 'none', sequentialRead: true });
           const metadata = await probe.metadata();
           const pages = metadata.pages ?? 1;
           const isGif =
@@ -16069,7 +16268,9 @@ export class LibraryService {
             }
           }
 
-          const pipeline = isAnimatedGif ? s(assetPath, { page }) : s(assetPath);
+          const pipeline = isAnimatedGif
+            ? s(assetPath, { page, failOn: 'none', sequentialRead: true })
+            : s(assetPath, { failOn: 'none', sequentialRead: true });
           const finalMeta = isAnimatedGif ? await pipeline.metadata() : metadata;
           const swapsDimensions = finalMeta.orientation !== undefined
             && finalMeta.orientation >= 5
@@ -16138,18 +16339,16 @@ export class LibraryService {
         );
       }
 
-      // Serpent-7x0: best-effort EXIF/IPTC/XMP author auto-extract on first
-      // thumbnail. Never blocks or fails thumbnail generation.
-      await this.backfillAuthorFromExif(openLibrary, input.assetId, assetPath);
-
-      // Emit thumbnail-ready notification
-      this.options.onAssetsChanged?.({
-        type: 'asset.changed',
-        libraryId: input.libraryId,
-        changedCount: 1,
-        missingCount: 0,
-        source: 'client',
-      });
+      const pendingThumbs = openLibrary.connection.prepare(
+        `SELECT 1 FROM jobs
+          WHERE library_id = ?
+            AND kind = 'generate_thumbnail'
+            AND status IN ('queued', 'running')
+          LIMIT 1`,
+      ).get(openLibrary.summary.libraryId);
+      if (!pendingThumbs) {
+        await this.backfillAuthorFromExif(openLibrary, input.assetId, assetPath);
+      }
 
       return { artifactId };
     } catch (error) {
@@ -16193,8 +16392,193 @@ export class LibraryService {
             : 'THUMBNAIL_GENERATION_FAILED',
           new Date().toISOString(),
         );
+      const headerSize = readImageDimensionsSync(assetPath);
+      if (headerSize) {
+        this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
+      }
 
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  private persistLinkedFolderImageDimensions(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    limit = 64,
+  ): void {
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, location_kind, linked_folder_id, current_revision_id
+           FROM assets
+          WHERE linked_folder_id = ?
+            AND location_kind = 'linked'
+            AND deleted_at IS NULL
+            AND current_revision_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+               WHERE ra.revision_id = current_revision_id
+                 AND ra.kind = 'extracted_metadata'
+                 AND ra.invalidated_at IS NULL
+                 AND ra.width IS NOT NULL
+            )
+          LIMIT ?`,
+      )
+      .all(linkedFolderId, Math.max(0, Math.min(256, Math.trunc(limit)))) as Array<{
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        current_revision_id: string | null;
+      }>;
+    for (const row of rows) {
+      if (!row.current_revision_id) continue;
+      this.persistSourceImageDimensions(openLibrary, row.current_revision_id, row);
+    }
+  }
+
+  backfillMissingImageDimensions(
+    libraryId: string,
+    limit = 32,
+  ): Array<{ assetId: string; width: number; height: number }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const imageSql = IMAGE_EXTENSIONS
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.relative_file_path, a.location_kind, a.linked_folder_id,
+                a.current_revision_id
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND a.current_revision_id IS NOT NULL
+            AND (${imageSql})
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+               WHERE ra.revision_id = a.current_revision_id
+                 AND ra.kind = 'extracted_metadata'
+                 AND ra.invalidated_at IS NULL
+                 AND ra.width IS NOT NULL
+            )
+          ORDER BY a.relative_file_path
+          LIMIT ?`,
+      )
+      .all(
+        ...IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        Math.max(1, Math.min(64, Math.trunc(limit))),
+      ) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        current_revision_id: string | null;
+      }>;
+    const out: Array<{ assetId: string; width: number; height: number }> = [];
+    for (const row of rows) {
+      if (!row.current_revision_id) continue;
+      const size = this.persistSourceImageDimensions(
+        openLibrary,
+        row.current_revision_id,
+        row,
+      );
+      if (size) {
+        out.push({ assetId: row.asset_id, width: size.width, height: size.height });
+      }
+    }
+    return out;
+  }
+
+  private persistSourceImageDimensionsForAssets(
+    openLibrary: OpenLibrary,
+    assetIds: string[],
+  ): void {
+    if (assetIds.length === 0) return;
+    assetIds = assetIds.slice(0, 64);
+    const placeholders = assetIds.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT relative_file_path, location_kind, linked_folder_id, current_revision_id
+           FROM assets
+          WHERE asset_id IN (${placeholders})`,
+      )
+      .all(...assetIds) as Array<{
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        current_revision_id: string | null;
+      }>;
+    for (const row of rows) {
+      if (!row.current_revision_id) continue;
+      this.persistSourceImageDimensions(openLibrary, row.current_revision_id, row);
+    }
+  }
+
+  private persistSourceImageDimensions(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    asset: {
+      relative_file_path: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+    },
+  ): { width: number; height: number } | null {
+    if (LibraryService.detectMediaType(asset.relative_file_path) !== 'image') return null;
+    const size = this.imageDimensionsForAsset(openLibrary, asset);
+    if (!size) return null;
+    this.persistExtractedImageDimensions(openLibrary, revisionId, size);
+    return size;
+  }
+
+  /**
+   * Cheap header-probed width/height so masonry/sort do not wait for thumbnails
+   * (Serpent-l1oi). Skips when extracted_metadata already exists.
+   */
+  private persistExtractedImageDimensions(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    size: { width: number; height: number },
+  ): void {
+    const existing = openLibrary.connection
+      .prepare(
+        `SELECT artifact_id
+           FROM revision_artifacts
+          WHERE revision_id = ?
+            AND kind = 'extracted_metadata'
+            AND invalidated_at IS NULL`,
+      )
+      .get(revisionId) as { artifact_id: string } | undefined;
+    if (existing) return;
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.json`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    try {
+      writeFileSync(
+        artifactAbsPath,
+        JSON.stringify({ width: size.width, height: size.height }),
+        'utf-8',
+      );
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          outputStat.size,
+          artifactRelPath,
+          size.width,
+          size.height,
+          `image-header@${SHARP_VERSION}`,
+          new Date().toISOString(),
+        );
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      this.diagnose('image.extracted-dimensions', error, { revisionId });
     }
   }
 
@@ -16212,6 +16596,16 @@ export class LibraryService {
     try {
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
+      const now = new Date().toISOString();
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE revision_id = ?
+              AND kind = 'extracted_metadata'
+              AND invalidated_at IS NULL`,
+        )
+        .run(now, revisionId);
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -16228,7 +16622,7 @@ export class LibraryService {
           metadata.height || null,
           metadata.durationMs,
           `sharp-gif-meta@${SHARP_VERSION}`,
-          new Date().toISOString(),
+          now,
         );
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
@@ -16314,14 +16708,6 @@ export class LibraryService {
         reason: 'MEDIA_PROCESSING_FAILED',
       });
     }
-
-    this.options.onAssetsChanged?.({
-      type: 'asset.changed',
-      libraryId: input.libraryId,
-      changedCount: 1,
-      missingCount: 0,
-      source: 'client',
-    });
 
     return { artifactId: waveformArtifactId };
   }
@@ -16468,15 +16854,6 @@ export class LibraryService {
       });
     }
 
-    // Emit thumbnail-ready notification only after the primary poster exists.
-    this.options.onAssetsChanged?.({
-      type: 'asset.changed',
-      libraryId: input.libraryId,
-      changedCount: 1,
-      missingCount: 0,
-      source: 'client',
-    });
-
     return { artifactId: posterArtifactId };
   }
 
@@ -16583,6 +16960,14 @@ export class LibraryService {
         AND kind = 'extract_palette' AND status IN ('queued', 'running', 'paused') LIMIT 1`,
     ).get(assetId, revisionId);
     if (active) return false;
+    const pendingThumbs = openLibrary.connection.prepare(
+      `SELECT 1 FROM jobs
+        WHERE library_id = ?
+          AND kind = 'generate_thumbnail'
+          AND status IN ('queued', 'running')
+        LIMIT 1`,
+    ).get(openLibrary.summary.libraryId);
+    if (pendingThumbs) return false;
     const now = new Date().toISOString();
     const result = openLibrary.connection.prepare(
       `INSERT INTO jobs
@@ -16668,13 +17053,6 @@ export class LibraryService {
         dominant.hue,
         dominant.lightness,
       );
-      this.options.onAssetsChanged?.({
-        type: 'asset.changed',
-        libraryId,
-        changedCount: 1,
-        missingCount: 0,
-        source: 'client',
-      });
       return true;
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
@@ -17376,14 +17754,6 @@ export class LibraryService {
         .run(artifactId, revisionId, outputStat.size, artifactRelPath,
           `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
-
-      this.options.onAssetsChanged?.({
-        type: 'asset.changed',
-        libraryId: input.libraryId,
-        changedCount: 1,
-        missingCount: 0,
-        source: 'client',
-      });
 
       return { artifactId };
     } catch (error) {
@@ -18861,6 +19231,8 @@ export class LibraryService {
       repairFailed?: boolean;
       /** Serpent-5xbg: also re-open retryable failed artifacts (throttled). */
       retryFailed?: boolean;
+      /** Background fill waves skip GIF/audio stale-artifact scans. */
+      skipStaleRepair?: boolean;
     } = {},
   ): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
@@ -18925,8 +19297,11 @@ export class LibraryService {
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v'];
-    // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
     const nowInvalidate = new Date().toISOString();
+    if (options.skipStaleRepair) {
+      // Background fill only inserts missing generate_thumbnail rows.
+    } else {
+    // CU-D7: invalidate pre-gifstill GIF thumbs so page-0 black frames requeue.
     openLibrary.connection
       .prepare(
         `UPDATE revision_artifacts
@@ -19041,6 +19416,7 @@ export class LibraryService {
             )`,
       )
       .run(nowInvalidate);
+    }
     // Serpent-azf6: scenes scheduling with explicit ids (notably the visible
     // browse wave) also BOOST already-queued preview jobs of those assets —
     // the enqueue SQL below skips assets with an active job, so without this
@@ -19323,15 +19699,20 @@ export class LibraryService {
     );
 
     let processed = 0;
-    const maxJobs = Math.max(1, Math.min(20, options.maxJobs ?? 20));
+    const decodeConcurrency = workerMediaDecodeConcurrency();
+    const maxJobs = Math.max(
+      1,
+      Math.min(100, options.maxJobs ?? workerMediaDecodeWaveSize()),
+    );
     // Serpent-1tio: media jobs no longer run strictly serially. Claim and run
-    // up to 4 in parallel per queue call — the bounded Sharp/FFmpeg(4)/OIIO(1)
-    // decoder semaphores and the process-wide model-render gate cap the real
-    // concurrency. The claim UPDATE is atomic (WHERE status = 'queued'), so
-    // concurrent workers never double-execute a job. `budget` is reserved
-    // synchronously at claim time (before any await), so a wave starts at
-    // most maxJobs jobs exactly; a lease-busy retry returns its slot.
-    const workerCount = Math.min(maxJobs, 4);
+    // up to (logical CPUs - 3) in parallel per queue call — the bounded
+    // Sharp/FFmpeg/OIIO decoder semaphores and the process-wide model-render
+    // gate cap the real concurrency. The claim UPDATE is atomic
+    // (WHERE status = 'queued'), so concurrent workers never double-execute a
+    // job. `budget` is reserved synchronously at claim time (before any await),
+    // so a wave starts at most maxJobs jobs exactly; a lease-busy retry
+    // returns its slot.
+    const workerCount = Math.min(maxJobs, decodeConcurrency);
     let budget = maxJobs;
     const runWorker = async (): Promise<void> => {
     while (budget > 0) {
@@ -19655,9 +20036,12 @@ export class LibraryService {
           errorCode,
         });
         if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
+          const mediaInfo = this.thumbnailArtifactMap(libraryId, [job.asset_id]).get(job.asset_id);
           options.onResult?.({
             assetId: job.asset_id,
             errorCode,
+            ...(mediaInfo?.width ? { width: mediaInfo.width } : {}),
+            ...(mediaInfo?.height ? { height: mediaInfo.height } : {}),
           });
         }
       } finally {
@@ -20231,11 +20615,33 @@ export class LibraryService {
             whereParts.push('a.managed_folder_id = ?');
             allParams.push(folderId);
           }
-        } else if (linked) {
-          whereParts.push('a.linked_folder_id = ?');
-          allParams.push(folderId);
         } else {
-          throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          const linkedScope = this.resolveLinkedFolderScope(openLibrary, folderId);
+          if (!linkedScope && !linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          const linkedFolderId = linkedScope?.linkedFolderId ?? folderId;
+          const relativePath = linkedScope?.relativePath ?? '';
+          whereParts.push('a.linked_folder_id = ?');
+          allParams.push(linkedFolderId);
+          if (!input.scope.recursive) {
+            if (relativePath === '') {
+              whereParts.push(`instr(a.relative_file_path, '/') = 0`);
+            } else {
+              const escaped = relativePath
+                .replaceAll('\\', '\\\\')
+                .replaceAll('%', '\\%')
+                .replaceAll('_', '\\_');
+              whereParts.push(
+                `a.relative_file_path LIKE ? ESCAPE '\\' AND instr(substr(a.relative_file_path, ?), '/') = 0`,
+              );
+              allParams.push(`${escaped}/%`, relativePath.length + 2);
+            }
+          } else if (relativePath !== '') {
+            const prefix = `${relativePath}/`;
+            whereParts.push(
+              `(a.relative_file_path = ? OR substr(a.relative_file_path, 1, ?) = ?)`,
+            );
+            allParams.push(relativePath, [...prefix].length, prefix);
+          }
         }
       }
     } else if (input.scope?.kind === 'collection') {
@@ -27812,6 +28218,11 @@ export class LibraryService {
               now,
               assetId,
             );
+          this.persistSourceImageDimensions(openLibrary, revisionId, {
+            relative_file_path: action.destinationRelativePath,
+            location_kind: 'managed',
+            linked_folder_id: null,
+          });
           if (action.entry.sourcePageUrl !== undefined) {
             const sourcePageUrl = action.entry.sourcePageUrl.trim();
             if (sourcePageUrl === '') {
@@ -28375,6 +28786,7 @@ export class LibraryService {
         }
       }
     })();
+    this.persistSourceImageDimensionsForAssets(openLibrary, discoveredAssetIds);
     this.createDetectedImageSequences(openLibrary, discoveredAssetIds);
     this.reconcileLinkedWatchers(openLibrary);
 

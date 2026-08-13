@@ -33,9 +33,9 @@ import {
   shouldShowAssetSourceBadge,
 } from "./asset-source-badge";
 import {
-  coverSrc,
   isCardHoverPreviewable,
   isCardSequencePlayable,
+  resolveAssetCardCoverUrl,
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import {
@@ -72,7 +72,10 @@ import {
   ScopeBreadcrumbs,
   buildScopeBreadcrumbSegments,
 } from "./ScopeBreadcrumbs";
-import { buildManagedFolderBreadcrumbTrail } from "./folder-breadcrumb-trail";
+import {
+  buildLinkedFolderBreadcrumbTrail,
+  buildManagedFolderBreadcrumbTrail,
+} from "./folder-breadcrumb-trail";
 import { folderBrowseScope } from "./folder-browse-scope";
 import {
   resolveBrowseCanvasBodyLayout,
@@ -353,16 +356,15 @@ import {
   nextDiscreteCardSizeFromWheelDelta,
   stepDiscreteCardSize,
 } from "./card-size-stops";
-import {
-  assetGridLayoutStyle,
-  countFittingColumns,
-  distributeMasonryItems,
-} from "./asset-grid-layout";
+import { assetGridLayoutStyle } from "./asset-grid-layout";
 import { JustifiedAssetRows } from "./justified-asset-rows";
+import { MasonryColumns } from "./masonry-columns";
 import {
-  estimateMasonryPreviewHeightPx,
-  resolveMasonryPreviewStyle,
-} from "./masonry-preview-frame";
+  applyAssetThumbnailPatches,
+  mergeAssetThumbnailPatch,
+  type AssetThumbnailPatch,
+} from "./asset-thumbnail-patches";
+import { resolveMasonryPreviewStyle } from "./masonry-preview-frame";
 import {
   captureAnchor,
   pickNearestCard,
@@ -520,176 +522,6 @@ function ToolButton({
     >
       <Icon name={icon} />
     </button>
-  );
-}
-
-function MasonryColumns({
-  assets,
-  cardSize,
-  children,
-  showCaption,
-  suspendScrollRestoration = false,
-}: {
-  assets: AssetSummary[];
-  cardSize: number;
-  children: ReactNode[];
-  showCaption: boolean;
-  suspendScrollRestoration?: boolean;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [availableWidth, setAvailableWidth] = useState(0);
-  const availableWidthRef = useRef(0);
-  const restoreFrameRef = useRef<number | null>(null);
-  const scrollSnapshotRef = useRef<number | null>(null);
-  const rawRestoreTargetRef = useRef<number | null>(null);
-  const suspendScrollRestorationRef = useRef(suspendScrollRestoration);
-
-  useLayoutEffect(() => {
-    suspendScrollRestorationRef.current = suspendScrollRestoration;
-    if (!suspendScrollRestoration) return;
-    if (restoreFrameRef.current !== null) {
-      cancelAnimationFrame(restoreFrameRef.current);
-      restoreFrameRef.current = null;
-    }
-    scrollSnapshotRef.current = null;
-    rawRestoreTargetRef.current = null;
-  }, [suspendScrollRestoration]);
-
-  useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
-    const canvas = () => element.closest<HTMLElement>(".workspace-canvas");
-    const scheduleRawRestore = () => {
-      if (suspendScrollRestorationRef.current) return;
-      if (restoreFrameRef.current !== null) return;
-      const settle = (remaining: number) => {
-        const root = canvas();
-        const snapshot = scrollSnapshotRef.current;
-        if (!root || snapshot === null) {
-          restoreFrameRef.current = null;
-          return;
-        }
-        root.scrollTop = Math.min(
-          Math.max(0, snapshot),
-          Math.max(0, root.scrollHeight - root.clientHeight),
-        );
-        rawRestoreTargetRef.current = root.scrollTop;
-        if (remaining <= 0) {
-          scrollSnapshotRef.current = null;
-          rawRestoreTargetRef.current = null;
-          restoreFrameRef.current = null;
-          return;
-        }
-        restoreFrameRef.current = requestAnimationFrame(() => settle(remaining - 1));
-      };
-      restoreFrameRef.current = requestAnimationFrame(() => settle(12));
-    };
-    const updateWidth = () => {
-      const width = element.clientWidth;
-      const root = canvas();
-      if (isCanvasReflowRestorationPending(root)) {
-        // The outer canvas anchor is the single owner of scroll restoration
-        // during panel/window reflow. Still accept the new width so the
-        // columns can calculate their final layout, but never snapshot or
-        // replay a competing raw scrollTop here.
-        availableWidthRef.current = width;
-        scrollSnapshotRef.current = null;
-        rawRestoreTargetRef.current = null;
-        if (restoreFrameRef.current !== null) {
-          cancelAnimationFrame(restoreFrameRef.current);
-          restoreFrameRef.current = null;
-        }
-        setAvailableWidth(width);
-        return;
-      }
-      if (suspendScrollRestorationRef.current) {
-        availableWidthRef.current = width;
-        scrollSnapshotRef.current = null;
-        rawRestoreTargetRef.current = null;
-        if (restoreFrameRef.current !== null) {
-          cancelAnimationFrame(restoreFrameRef.current);
-          restoreFrameRef.current = null;
-        }
-        setAvailableWidth(width);
-        return;
-      }
-      const widthChanged = width !== availableWidthRef.current;
-      if (widthChanged) {
-        availableWidthRef.current = width;
-        if (root) scrollSnapshotRef.current = root.scrollTop;
-        rawRestoreTargetRef.current = null;
-        setAvailableWidth(width);
-      }
-      if (scrollSnapshotRef.current !== null) {
-        if (restoreFrameRef.current !== null) {
-          cancelAnimationFrame(restoreFrameRef.current);
-          restoreFrameRef.current = null;
-        }
-        scheduleRawRestore();
-      }
-    };
-    const root = canvas();
-    const cancelRawRestoreOnUserScroll = () => {
-      const expected = rawRestoreTargetRef.current;
-      if (
-        expected !== null &&
-        Math.abs((root?.scrollTop ?? 0) - expected) < 0.5
-      ) {
-        rawRestoreTargetRef.current = null;
-        return;
-      }
-      scrollSnapshotRef.current = null;
-      rawRestoreTargetRef.current = null;
-      if (restoreFrameRef.current !== null) {
-        cancelAnimationFrame(restoreFrameRef.current);
-        restoreFrameRef.current = null;
-      }
-    };
-    updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(element);
-    root?.addEventListener("scroll", cancelRawRestoreOnUserScroll, { passive: true });
-    return () => {
-      observer.disconnect();
-      root?.removeEventListener("scroll", cancelRawRestoreOnUserScroll);
-      if (restoreFrameRef.current !== null) {
-        cancelAnimationFrame(restoreFrameRef.current);
-      }
-    };
-  }, []);
-
-  const columnCount = countFittingColumns(availableWidth, cardSize);
-  const distributed = distributeMasonryItems(
-    assets.map((asset, index) => ({ asset, child: children[index] })),
-    columnCount,
-    ({ asset }) => {
-      // Serpent-5p45: keep column packing consistent with the natural preview
-      // height; a fixed cap would create a wider contain-fit letterbox.
-      const previewHeight = estimateMasonryPreviewHeightPx(
-        asset.width,
-        asset.height,
-        cardSize,
-      );
-      return previewHeight + (showCaption ? 42 : 0) + 12;
-    },
-  );
-
-  return (
-    <div
-      className="masonry-columns"
-      ref={containerRef}
-      style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
-    >
-      {distributed.map((column, index) => (
-        <div className="masonry-column" key={`masonry-column-${index}`}>
-          {column.items.map(({ asset, child }) => (
-            <div className="masonry-card-slot" key={asset.assetId}>
-              {child}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -2151,6 +1983,7 @@ function AppInner() {
               activeCollectionId,
               activeSmartCollectionId,
               folders,
+              linkedFolders,
               searchActive: Boolean(searchValue.trim()),
             })
           : undefined;
@@ -2178,6 +2011,7 @@ function AppInner() {
     activeCollectionId,
     activeSmartCollectionId,
     folders,
+    linkedFolders,
     searchValue,
     showIgnoredItems,
   ]);
@@ -2972,13 +2806,29 @@ function AppInner() {
   ]);
   useEffect(() => {
     if (!api) return;
-    return api.onThumbnailEvent((event) => {
+    const pending = new Map<string, AssetThumbnailPatch>();
+    let frame = 0;
+    const flush = () => {
+      frame = 0;
+      if (pending.size === 0) return;
+      const batch = new Map(pending);
+      pending.clear();
+      setAssets((current) => applyAssetThumbnailPatches(current, batch));
+    };
+    const queuePatch = (assetId: string, patch: AssetThumbnailPatch) => {
+      pending.set(assetId, mergeAssetThumbnailPatch(pending.get(assetId), patch));
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(flush);
+    };
+    const unsubscribe = api.onThumbnailEvent((event) => {
       if (event.libraryId !== library?.libraryId) return;
-      // A failed worker job can complete before the first post-import browse
-      // request puts its asset in `assets` (ENOENT for a missing media tool is
-      // especially fast). Keep the result independently so loadContent can
-      // render the failure once that request resolves, rather than dropping a
-      // terminal error forever because this particular state snapshot is empty.
+      if (event.type === "asset.dimensions.ready") {
+        queuePatch(event.assetId, {
+          width: event.width,
+          height: event.height,
+        });
+        return;
+      }
       if (event.type === "asset.thumbnail.failed") {
         const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
         setThumbnailFailures((failures) => {
@@ -2993,88 +2843,41 @@ function AppInner() {
           }
           return next;
         });
+        if (!suppressFailure) {
+          queuePatch(event.assetId, {
+            thumbnailStatus: "failed",
+            thumbnailArtifactId: null,
+            ...(event.width === undefined ? {} : { width: event.width }),
+            ...(event.height === undefined ? {} : { height: event.height }),
+          });
+        }
+        return;
       }
-      setAssets((current) => {
-        const asset = current.find((item) => item.assetId === event.assetId);
-        if (!asset && event.type === "asset.thumbnail.ready" && event.artifactId) {
-          const ownsSequenceFrame = current.some((item) =>
-            item.sequence?.frames.some((frame) => frame.assetId === event.assetId),
-          );
-          if (!ownsSequenceFrame) return current;
-          return current.map((item) =>
-            item.sequence?.frames.some((frame) => frame.assetId === event.assetId)
-              ? {
-                  ...item,
-                  sequence: {
-                    ...item.sequence,
-                    frames: item.sequence.frames.map((frame) =>
-                      frame.assetId === event.assetId
-                        ? { ...frame, thumbnailArtifactId: event.artifactId ?? null }
-                        : frame,
-                    ),
-                  },
-                }
-              : item,
-          );
-        }
-        if (!asset) return current;
-
-        if (event.type === "asset.thumbnail.failed") {
-          const suppressFailure =
-            isBenignThumbnailErrorCode(event.errorCode) ||
-            !assetSupportsThumbnail(asset);
-          if (suppressFailure) {
-            setThumbnailFailures((failures) => {
-              if (!failures.has(event.assetId)) return failures;
-              const next = new Map(failures);
-              next.delete(event.assetId);
-              return next;
-            });
-          }
-          if (suppressFailure) return current;
-          return current.map((item) =>
-            item.assetId === event.assetId
-              ? {
-                  ...item,
-                  thumbnailStatus: "failed",
-                  thumbnailArtifactId: null,
-                }
-              : item,
-          );
-        }
-
-        if (event.type === "asset.thumbnail.ready" && event.artifactId) {
-          setThumbnailFailures((failures) => {
-            if (!failures.has(event.assetId)) return failures;
-            const next = new Map(failures);
-            next.delete(event.assetId);
-            return next;
-          });
-          return current.map((item) =>
-            item.assetId === event.assetId
-              ? {
-                  ...item,
-                  thumbnailStatus: "ready" as const,
-                  thumbnailArtifactId: event.artifactId ?? null,
-                  ...(event.width === undefined ? {} : { width: event.width }),
-                  ...(event.height === undefined ? {} : { height: event.height }),
-                  ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
-                }
-              : item,
-          );
-        }
-
-        if (event.type === "asset.thumbnail.ready") {
-          setThumbnailFailures((failures) => {
-            if (!failures.has(event.assetId)) return failures;
-            const next = new Map(failures);
-            next.delete(event.assetId);
-            return next;
+      if (event.type === "asset.thumbnail.ready") {
+        setThumbnailFailures((failures) => {
+          if (!failures.has(event.assetId)) return failures;
+          const next = new Map(failures);
+          next.delete(event.assetId);
+          return next;
+        });
+        if (event.artifactId) {
+          queuePatch(event.assetId, {
+            thumbnailStatus: "ready",
+            thumbnailArtifactId: event.artifactId,
+            ...(event.width === undefined ? {} : { width: event.width }),
+            ...(event.height === undefined ? {} : { height: event.height }),
+            ...(event.durationMs === undefined
+              ? {}
+              : { durationMs: event.durationMs }),
+            sequenceFrameArtifactId: event.artifactId,
           });
         }
-        return current;
-      });
+      }
     });
+    return () => {
+      unsubscribe();
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+    };
   }, [api, library?.libraryId, t]);
   useEffect(() => {
     if (!api || !library) return;
@@ -6617,23 +6420,31 @@ function AppInner() {
         }
       });
     });
+    let historyTimer: number | undefined;
+    const scheduleHistoryRefresh = () => {
+      if (historyTimer !== undefined) window.clearTimeout(historyTimer);
+      historyTimer = window.setTimeout(() => {
+        historyTimer = undefined;
+        void refreshOperationHistory();
+      }, 1500);
+    };
     const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
-      void refreshOperationHistory();
+      scheduleHistoryRefresh();
       // Cross-process change-sequence bumps are not asset mutation counts.
       // Refresh silently without forging an asset.changed payload.
       if (uiStateRef.current === "importing") {
         scheduleSilentReload();
         return;
       }
-      // Library changes can arrive immediately before a user navigation (for
-      // example, a trash operation followed by opening the Trash scope).
-      // Debounce the passive refresh so it observes the destination scope
-      // instead of racing the explicit navigation load.
-      scheduleSilentReload();
+      // revision_artifacts / jobs writes also bump change-sequence. The grid
+      // is patched by onThumbnailEvent; a full searchAssets here freezes the
+      // canvas after large imports (Serpent-yti0). Asset-set mutations still
+      // arrive on asset.changed.
     });
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      if (historyTimer !== undefined) window.clearTimeout(historyTimer);
       unsubscribe();
       unsubscribeLibraryChanged();
     };
@@ -8113,13 +7924,14 @@ function AppInner() {
                   folderTrail:
                     assetScope !== "all" && assetScope !== "root"
                       ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                          .length > 0
+                        ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                        : buildLinkedFolderBreadcrumbTrail(
+                            linkedFolders,
+                            assetScope,
+                          )
                       : [],
-                  linkedFolderLabel:
-                    assetScope !== "all" && assetScope !== "root"
-                      ? (linkedFolders.find(
-                          (folder) => folder.folderId === assetScope,
-                        )?.displayName ?? null)
-                      : null,
+                  linkedFolderLabel: null,
                 },
                 t,
               )}
@@ -8905,9 +8717,16 @@ function AppInner() {
                             openContextMenu(
                               {
                                 type: "folder",
-                                folderId: intent.folderId,
+                                folderId:
+                                  clickedEntry.linkedFolderId ??
+                                  intent.folderId,
                                 name: clickedEntry.name,
-                                locationKind: "managed",
+                                locationKind: clickedEntry.locationKind,
+                                linkedRelativePath:
+                                  clickedEntry.locationKind === "linked" &&
+                                  clickedEntry.relativePath
+                                    ? clickedEntry.relativePath
+                                    : undefined,
                               },
                               { x: event.clientX, y: event.clientY },
                             );
@@ -9009,9 +8828,19 @@ function AppInner() {
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
                       );
+                      const cardCover = resolveAssetCardCoverUrl({
+                        libraryId: library?.libraryId,
+                        assetId: asset.assetId,
+                        mediaType: asset.mediaType,
+                        availability: asset.availability,
+                        deletedAt: asset.deletedAt,
+                        thumbnailStatus: asset.thumbnailStatus,
+                        thumbnailArtifactId: asset.thumbnailArtifactId,
+                      });
                       const showThumbnailFailure = shouldShowThumbnailFailureBadge(
                         asset,
                         thumbnailFailures.has(asset.assetId),
+                        cardCover.usedSourceFallback,
                       );
                       const renamingThisAsset =
                         assetRenameDialog?.assetId === asset.assetId;
@@ -9195,15 +9024,7 @@ function AppInner() {
                               />
                             );
                           }
-                          const thumbCover =
-                            asset.thumbnailStatus === "ready" &&
-                            asset.thumbnailArtifactId &&
-                            library
-                              ? coverSrc(
-                                  library.libraryId,
-                                  asset.thumbnailArtifactId,
-                                )
-                              : null;
+                          const thumbCover = cardCover.url;
                           if (isCardSequencePlayable(asset) && library) {
                             const sequenceActive =
                               hoveredAssetId === asset.assetId ||
@@ -9467,6 +9288,7 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             cardSize={assetCardSize}
+                            renderCard={renderAssetCard}
                             showCaption={
                               canvasPrefs.fields.name ||
                               canvasPrefs.fields.size ||
@@ -9475,16 +9297,13 @@ function AppInner() {
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)
                             }
-                          >
-                            {section.assets.map(renderAssetCard)}
-                          </MasonryColumns>
+                          />
                         ) : (
                           <JustifiedAssetRows
                             assets={section.assets}
                             cardSize={assetCardSize}
-                          >
-                            {section.assets.map(renderAssetCard)}
-                          </JustifiedAssetRows>
+                            renderCard={renderAssetCard}
+                          />
                         )}
                       </div>
                     ));

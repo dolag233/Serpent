@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildManagedFolderBreadcrumbTrail } from "../../src/renderer/folder-breadcrumb-trail";
-import type { ManagedFolderSummary } from "../../src/shared/asset-types";
+import {
+  buildLinkedFolderBreadcrumbTrail,
+  buildManagedFolderBreadcrumbTrail,
+} from "../../src/renderer/folder-breadcrumb-trail";
+import type { LinkedFolderSummary, ManagedFolderSummary } from "../../src/shared/asset-types";
 
 const folder = (
   overrides: Partial<ManagedFolderSummary> & Pick<ManagedFolderSummary, "folderId" | "name" | "relativePath">,
@@ -84,5 +87,36 @@ describe("buildManagedFolderBreadcrumbTrail", () => {
     ];
 
     expect(buildManagedFolderBreadcrumbTrail(folders, "a")).toEqual([]);
+  });
+});
+
+describe("buildLinkedFolderBreadcrumbTrail", () => {
+  it("walks virtual linked children to the import root", () => {
+    const folders: LinkedFolderSummary[] = [
+      {
+        folderId: "root",
+        displayName: "Paintings",
+        status: "available",
+        assetCount: 3,
+        absoluteRootPath: "/tmp/paint",
+        linkedFolderId: "root",
+        relativePath: "",
+        parentFolderId: null,
+      },
+      {
+        folderId: "lfv:root/notes",
+        displayName: "notes",
+        status: "available",
+        assetCount: 2,
+        absoluteRootPath: "/tmp/paint",
+        linkedFolderId: "root",
+        relativePath: "notes",
+        parentFolderId: "root",
+      },
+    ];
+    expect(buildLinkedFolderBreadcrumbTrail(folders, "lfv:root/notes")).toEqual([
+      { folderId: "root", name: "Paintings" },
+      { folderId: "lfv:root/notes", name: "notes" },
+    ]);
   });
 });

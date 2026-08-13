@@ -3,6 +3,7 @@ import {
   coverSrc,
   isCardHoverPreviewable,
   resolveActivePreviewAssetId,
+  resolveAssetCardCoverUrl,
   resolveLivePreviewMedia,
 } from "../../src/renderer/asset-card-hover-preview";
 
@@ -190,5 +191,60 @@ describe("resolveLivePreviewMedia (Serpent-a9n)", () => {
         mediaType: "other",
       }),
     ).toEqual({ url: undefined, kind: null });
+  });
+});
+
+describe("resolveAssetCardCoverUrl", () => {
+  it("uses the preview artifact when the thumbnail is ready", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "ready",
+        thumbnailArtifactId: "art-1",
+      }),
+    ).toEqual({ url: coverSrc("lib", "art-1"), usedSourceFallback: false });
+  });
+
+  it("uses the default icon path when the thumbnail failed", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "failed",
+        thumbnailArtifactId: null,
+      }),
+    ).toEqual({ url: null, usedSourceFallback: false });
+  });
+
+  it("does not fall back for pending, missing, or non-image assets", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "pending",
+        thumbnailArtifactId: null,
+      }).url,
+    ).toBeNull();
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "video",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "failed",
+        thumbnailArtifactId: null,
+      }).url,
+    ).toBeNull();
   });
 });

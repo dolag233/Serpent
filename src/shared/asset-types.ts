@@ -43,10 +43,10 @@ export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
 export const folderBrowseEntrySchema = z.strictObject({
   folderId: nonBlankString,
   parentFolderId: nonBlankString.nullable(),
-  locationKind: z.literal('managed'),
+  locationKind: z.enum(['managed', 'linked']),
   name: nonBlankString,
-  relativePath: portableRelativePathSchema,
-  status: z.literal('available'),
+  relativePath: z.string().max(4096),
+  status: z.enum(['available', 'offline']),
   /** Direct-child assets only (covers / layout helpers). */
   directAssetCount: z.number().int().nonnegative(),
   /** All descendant assets (REQ-FOLDER-003 / Serpent-toh). */
@@ -54,6 +54,8 @@ export const folderBrowseEntrySchema = z.strictObject({
   childFolderCount: z.number().int().nonnegative(),
   /** Up to 3 ready thumbnail/poster artifact ids for the folder cover deck. */
   coverArtifactIds: z.array(nonBlankString).max(3),
+  /** Linked root id when this card is a virtual linked subdirectory. */
+  linkedFolderId: nonBlankString.nullable().optional(),
 });
 
 export type FolderBrowseEntry = z.infer<typeof folderBrowseEntrySchema>;
@@ -80,6 +82,11 @@ export const linkedFolderSummarySchema = z.strictObject({
   assetCount: z.number().int().nonnegative(),
   /** Absolute linked root for hover affordance (Serpent-rc9). */
   absoluteRootPath: z.string().min(1).max(4096),
+  /** Linked-root id; equals folderId for the import root itself. */
+  linkedFolderId: nonBlankString.optional(),
+  /** Path relative to the linked root; empty string for the import root. */
+  relativePath: z.string().max(4096).optional().default(''),
+  parentFolderId: nonBlankString.nullable().optional(),
 });
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
@@ -358,7 +365,7 @@ export type FilterClause = z.infer<typeof filterClauseSchema>;
 export const searchScopeSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('folder'),
-    folderId: nonBlankString.nullable(),
+    folderId: z.string().min(1).max(4096).nullable(),
     recursive: z.boolean(),
   }),
   z.strictObject({

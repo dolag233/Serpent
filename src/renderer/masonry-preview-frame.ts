@@ -13,8 +13,9 @@ export function estimateMasonryPreviewHeightPx(
   columnWidthPx: number,
 ): number {
   const col = Number.isFinite(columnWidthPx) && columnWidthPx > 0 ? columnWidthPx : 0;
-  if (!width || !height || width <= 0 || height <= 0 || col <= 0) {
-    return col > 0 ? col * 0.72 : 0;
+  if (col <= 0) return 1;
+  if (!width || !height || width <= 0 || height <= 0) {
+    return col * 0.72;
   }
   return col * (height / width);
 }

@@ -65,6 +65,7 @@ import { AiProgressThrottler } from './ai/progress-throttler';
 import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
 import { dispatchAutomationReadOnlyRequest } from './automation-readonly-dispatch';
+import { workerMediaDecodeWaveSize } from './media-concurrency';
 import {
   boundedWriteLibraryId,
   executeBoundedWriteWorkerCommand,
@@ -464,12 +465,12 @@ function scheduleThumbnailQueue(
           });
         }
       };
-      // Serpent-1tio: one queue call whose internal worker pool (capped at 4)
-      // replaces the previous four serial consumers — the bounded
-      // Sharp/FFmpeg(4)/OIIO(1) semaphores keep the real process concurrency
-      // identical, and atomic job claims prevent duplicate processing.
+      // Image thumbs share a CPU-derived Sharp semaphore. Video/OIIO stay
+      // separately bounded. Claim a wave of 2× concurrency so the pool stays
+      // full instead of draining and waiting for the next setTimeout.
+      const thumbnailWaveSize = workerMediaDecodeWaveSize();
       const processed = await libraryService.processThumbnailQueue(libraryId, {
-        maxJobs: 8,
+        maxJobs: thumbnailWaveSize,
         onResult,
         onAiInputReady: (event) => {
           parentPort?.postMessage({
@@ -494,7 +495,34 @@ function scheduleThumbnailQueue(
         modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
       });
-      continueImmediately = processed === 8;
+      continueImmediately = processed === thumbnailWaveSize;
+      if (!continueImmediately) {
+        const filled = libraryService.enqueueThumbnailJobs(libraryId, {
+          limit: 500,
+          priority: 50,
+          skipStaleRepair: true,
+        });
+        continueImmediately = filled > 0;
+      }
+      if (!continueImmediately) {
+        try {
+          const dimensions = libraryService.backfillMissingImageDimensions(libraryId, 48);
+          for (const item of dimensions) {
+            parentPort?.postMessage({
+              type: 'asset.dimensions.ready',
+              libraryId,
+              assetId: item.assetId,
+              width: item.width,
+              height: item.height,
+            });
+          }
+          if (dimensions.length > 0) continueImmediately = true;
+        } catch (dimensionError) {
+          libraryService.reportDiagnostic('thumbnail-schedule.dimensions', dimensionError, {
+            libraryId,
+          });
+        }
+      }
     } catch (error) {
       libraryService.reportDiagnostic('thumbnail-schedule.process', error, { libraryId });
     }

@@ -22,6 +22,8 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+/** Browse/search/reveal ids may be virtual linked paths: `lfv:{rootId}/{relativePath}`. */
+const folderScopeIdSchema = nonBlankString.max(4096);
 // Schema layer rejects only obvious injection shapes (separators, control
 // characters, dot segments, blank/overlong input). The portable-name semantics
 // (reserved DOS names, trailing space/period, UTF-8 byte limit) are enforced
@@ -205,17 +207,17 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.open-in-file-manager.request'),
     libraryId: identifierSchema,
-    folderId: identifierSchema,
+    folderId: folderScopeIdSchema,
   }),
   z.strictObject({
     type: z.literal('folder.open-with.request'),
     libraryId: identifierSchema,
-    folderId: identifierSchema,
+    folderId: folderScopeIdSchema,
   }),
   z.strictObject({
     type: z.literal('folder.copy-path.request'),
     libraryId: identifierSchema,
-    folderId: identifierSchema,
+    folderId: folderScopeIdSchema,
   }),
   // Clarification #5 / Serpent-vgp: OS file clipboard (Finder/Explorer).
   z.strictObject({
@@ -249,7 +251,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.browse-entries.request'),
     libraryId: identifierSchema,
-    parentFolderId: identifierSchema.nullable(),
+    parentFolderId: z.string().min(1).max(4096).nullable(),
     showIgnored: z.boolean().optional(),
   }),
   // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
@@ -1113,7 +1115,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.get-path'),
     libraryId: identifierSchema,
-    folderId: identifierSchema,
+    folderId: folderScopeIdSchema,
   }),
   z.strictObject({
     type: z.literal('folder.list'),
@@ -1123,7 +1125,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('folder.browse-entries'),
     libraryId: identifierSchema,
-    parentFolderId: identifierSchema.nullable(),
+    parentFolderId: folderScopeIdSchema.nullable(),
     showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
@@ -1173,7 +1175,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.list'),
     libraryId: identifierSchema,
-    folderId: optionalIdentifierSchema,
+    folderId: folderScopeIdSchema.optional(),
     recursive: z.boolean(),
     showIgnored: z.boolean().optional(),
   }),
@@ -2195,7 +2197,7 @@ export function parseWorkerRequest(input: unknown): WorkerRequest {
 
 export const activeContextSchema = z.strictObject({
   libraryId: z.string().nullable(),
-  selectedFolderId: optionalIdentifierSchema,
+  selectedFolderId: folderScopeIdSchema.optional(),
 });
 
 export type ActiveContext = z.infer<typeof activeContextSchema>;

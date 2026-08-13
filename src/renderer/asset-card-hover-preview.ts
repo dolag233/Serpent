@@ -57,6 +57,31 @@ export function coverSrc(
   return `serpent://preview/${libraryId}/${thumbnailArtifactId}`;
 }
 
+/** Original-file URL used when the derived thumbnail is missing or failed. */
+export function sourceSrc(libraryId: string, assetId: string): string {
+  return `serpent://source/${libraryId}/${assetId}`;
+}
+
+export function resolveAssetCardCoverUrl(input: {
+  libraryId: string | undefined;
+  assetId: string;
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "other";
+  availability?: "available" | "missing";
+  deletedAt?: string | null;
+  thumbnailStatus: "ready" | "pending" | "failed" | null;
+  thumbnailArtifactId: string | null;
+}): { url: string | null; usedSourceFallback: boolean } {
+  const { libraryId } = input;
+  if (!libraryId) return { url: null, usedSourceFallback: false };
+  if (input.thumbnailStatus === "ready" && input.thumbnailArtifactId) {
+    return {
+      url: coverSrc(libraryId, input.thumbnailArtifactId),
+      usedSourceFallback: false,
+    };
+  }
+  return { url: null, usedSourceFallback: false };
+}
+
 export interface LivePreviewMedia {
   /** Playable URL, present only when this preview should actually render. */
   url: string | undefined;

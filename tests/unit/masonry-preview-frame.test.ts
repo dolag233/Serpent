@@ -27,6 +27,11 @@ describe("estimateMasonryPreviewHeightPx", () => {
       5,
     );
   });
+
+  it("never collapses to zero when the column width is unknown", () => {
+    expect(estimateMasonryPreviewHeightPx(1920, 1080, 0)).toBe(1);
+    expect(estimateMasonryPreviewHeightPx(null, null, 0)).toBe(1);
+  });
 });
 
 describe("resolveMasonryPreviewStyle", () => {

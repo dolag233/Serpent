@@ -8440,6 +8440,7 @@ select.ai-config-input.ai-config-languages {
 
 .masonry-columns {
   display: grid;
+  align-self: start;
   width: 100%;
   align-items: start;
   gap: 14px;

@@ -925,10 +925,33 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       if (!lf) return null;
       const offline = entry.status === "offline";
       const linkedAffordance = linkedFolderNavAffordance(entry.status);
+      const hasChildren = foldersWithChildren.has(entry.folderId);
+      const expanded = !collapsedFolderIds.has(entry.folderId);
+      const linkedRootId = entry.linkedFolderId;
       return (
         <NavRow
           active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
           depth={entry.depth}
+          disclosure={
+            hasChildren ? (
+              <button
+                aria-expanded={expanded}
+                aria-label={
+                  expanded
+                    ? t("nav.collapseFolder", { name: entry.name })
+                    : t("nav.expandFolder", { name: entry.name })
+                }
+                className={`nav-disclosure${expanded ? " is-expanded" : ""}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleFolderCollapsed(entry.folderId);
+                }}
+                type="button"
+              >
+                <Icon name="chevron-right" size={12} />
+              </button>
+            ) : undefined
+          }
           icon={linkedAffordance.icon}
           iconColor={linkedAffordance.iconColor}
           key={entry.folderId}
@@ -955,9 +978,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             // Shift+right-click keeps the legacy convert-to-managed shortcut;
             // a plain right-click opens the shared folder menu (REQ-MENU-006),
             // which also carries the linked-rules entry.
-            if (event.shiftKey) {
+            if (event.shiftKey && entry.relativePath === "") {
               onConvertLinkedDialog({
-                folderId: lf.folderId,
+                folderId: linkedRootId,
                 name: lf.displayName,
                 targetFolderId: "",
               });
@@ -966,10 +989,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onOpenContextMenu(
               {
                 type: "folder",
-                folderId: entry.folderId,
+                folderId: linkedRootId,
                 name: entry.name,
                 locationKind: "linked",
                 status: entry.status,
+                linkedRelativePath:
+                  entry.relativePath === "" ? undefined : entry.relativePath,
               },
               { x: event.clientX, y: event.clientY },
             );
@@ -1008,7 +1033,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             setAssetDropTarget(null);
             try {
               const ids = JSON.parse(serialized) as string[];
-              void onCopyManagedToLinked(lf, ids);
+              const root =
+                linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
+                lf;
+              void onCopyManagedToLinked(root, ids);
             } catch {
               // drag data invalid — silently ignore
             }
@@ -1285,11 +1313,6 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           {library ? (
             <>
               {renderDirectoryEntries()}
-              {linkedFolders.length > 0 && (
-                <p className="nav-empty">
-                  {t("nav.linkedFolderHint")}
-                </p>
-              )}
             </>
           ) : (
             <p className="nav-empty">{t("nav.openLibraryFoldersHint")}</p>

@@ -4,7 +4,7 @@ import {
   resolveFolderBrowseParentId,
   type FolderBrowseCanvasContext,
 } from "../../src/renderer/folder-browse-canvas";
-import type { ManagedFolderSummary } from "../../src/shared/asset-types";
+import type { LinkedFolderSummary, ManagedFolderSummary } from "../../src/shared/asset-types";
 
 const managedFolder = (folderId: string): ManagedFolderSummary => ({
   folderId,
@@ -44,7 +44,27 @@ describe("resolveFolderBrowseParentId", () => {
     ).toBeUndefined();
   });
 
-  it("has no folder-card row for a linked-folder scope (not a managed folder id)", () => {
+  it("resolves a linked-folder scope when the id is in linkedFolders", () => {
+    const linkedFolder: LinkedFolderSummary = {
+      folderId: "linked-1",
+      displayName: "Linked",
+      status: "available",
+      assetCount: 2,
+      absoluteRootPath: "/tmp/linked",
+      linkedFolderId: "linked-1",
+      relativePath: "",
+      parentFolderId: null,
+    };
+    expect(
+      resolveFolderBrowseParentId({
+        ...baseContext,
+        assetScope: "linked-1",
+        linkedFolders: [linkedFolder],
+      }),
+    ).toBe("linked-1");
+  });
+
+  it("has no folder-card row for an unknown folder id", () => {
     expect(
       resolveFolderBrowseParentId({ ...baseContext, assetScope: "linked-1" }),
     ).toBeUndefined();

@@ -1,11 +1,9 @@
 import type { AssetSummary } from "../shared/asset-types";
-import { assetSupportsThumbnail } from "../shared/thumbnail-support";
 
 export function shouldShowThumbnailFailureBadge(
-  asset: Pick<AssetSummary, "mediaType" | "displayName" | "thumbnailStatus">,
-  hasFailureRecord: boolean,
+  _asset: Pick<AssetSummary, "mediaType" | "displayName" | "thumbnailStatus">,
+  _hasFailureRecord: boolean,
+  _usedSourceFallback = false,
 ): boolean {
-  if (!hasFailureRecord) return false;
-  if (asset.thumbnailStatus === "ready") return false;
-  return assetSupportsThumbnail(asset);
+  return false;
 }
