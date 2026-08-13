@@ -288,9 +288,10 @@ describe('requestTimeoutForCommand', () => {
       const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
 
       const start = client.start();
+      const startRejected = expect(start).rejects.toThrow('ready handshake timed out');
       await vi.advanceTimersByTimeAsync(15_000);
       await vi.advanceTimersByTimeAsync(15_000);
-      await expect(start).rejects.toThrow('ready handshake timed out');
+      await startRejected;
 
       expect(utilityProcessFork).toHaveBeenCalledTimes(2);
       expect(logger.error).toHaveBeenCalledWith(
