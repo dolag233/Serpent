@@ -107,6 +107,25 @@ describe("hasActivePluginJobs", () => {
     ).toBeNull();
   });
 
+  it("does not retain a successful job in the activity banner", () => {
+    const succeeded = job("succeeded");
+    expect(
+      selectPluginJobActivity(
+        {
+          queued: 0,
+          running: 0,
+          succeeded: 1,
+          failed: 0,
+          paused: 0,
+          cancelled: 0,
+          interrupted: 0,
+          jobs: [succeeded],
+        },
+        Date.parse("2026-08-02T00:00:01.000Z"),
+      ),
+    ).toBeNull();
+  });
+
   it("keeps interrupted jobs out of active toolbar state", () => {
     const interrupted = job("interrupted");
     expect(

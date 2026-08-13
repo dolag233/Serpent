@@ -128,8 +128,10 @@ export async function copyInspectedPluginFiles(
   sourceDirectory: string,
   targetDirectory: string,
   files: readonly (PluginPackageFile & { kind: 'file' })[],
+  signal?: AbortSignal,
 ): Promise<void> {
   for (const file of files) {
+    if (signal?.aborted) throw new Error('Plugin installation was stopped.');
     const sourcePath = safeContainedPath(sourceDirectory, file.path);
     const targetPath = safeContainedPath(targetDirectory, file.path);
     await mkdir(path.dirname(targetPath), { recursive: true });
@@ -141,6 +143,7 @@ export async function extractPluginArchive(
   archive: Uint8Array,
   targetDirectory: string,
   limits: PluginPackageLimits,
+  signal?: AbortSignal,
 ): Promise<void> {
   let zip: AdmZip;
   try {
@@ -161,6 +164,7 @@ export async function extractPluginArchive(
   const rootPrefix = hasSingleRoot ? `${rootSegments[0]}/` : '';
   let expandedBytes = 0;
   for (const entry of entries) {
+    if (signal?.aborted) throw new Error('Plugin installation was stopped.');
     if (entry.isDirectory) continue;
     const unixMode = (entry.attr >>> 16) & 0o170000;
     if (unixMode === 0o120000) {

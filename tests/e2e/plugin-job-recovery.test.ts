@@ -123,7 +123,7 @@ test('does not resume a plugin job after the whole Electron process restarts', a
     await dialog.getByRole('button', { name: '安装插件' }).click();
     const installDialog = window.getByRole('dialog', { name: '安装插件' });
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '安装本地插件' }).click();
+    await installDialog.getByRole('button', { name: '本地安装' }).click();
     await expect(dialog.getByText(/Job Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: '信任', exact: true }).click();
     await expect(dialog.getByRole('checkbox', { name: '启用插件' })).toBeChecked();

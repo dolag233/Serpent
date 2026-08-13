@@ -72,6 +72,8 @@ export const CRITICAL_CONFIRMATION_GET_CHANNEL = 'serpent:critical-confirmation:
 export const CRITICAL_CONFIRMATION_DECIDE_CHANNEL = 'serpent:critical-confirmation:decide' as const;
 /** Renderer plugin manager → Main. File paths remain Main-owned. */
 export const PLUGIN_MANAGER_CHANNEL = 'serpent:plugin-manager:request' as const;
+/** Main → Renderer: progress and terminal state for a GitHub plugin install. */
+export const PLUGIN_INSTALL_PROGRESS_CHANNEL = 'serpent:plugin:install-progress' as const;
 /** Main → Renderer: plugin contributions changed after install/enable/refresh. */
 export const PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL =
   'serpent:plugin:contributions-changed' as const;

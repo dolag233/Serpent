@@ -50,6 +50,7 @@ export interface PluginInstallFromDirectoryInput {
   scope: PluginInstallationScope;
   libraryDirectory?: string;
   source: PluginPackageSource;
+  signal?: AbortSignal;
 }
 
 export interface PluginInstallFromArchiveInput {
@@ -57,6 +58,7 @@ export interface PluginInstallFromArchiveInput {
   scope: PluginInstallationScope;
   libraryDirectory?: string;
   source: PluginPackageSource;
+  signal?: AbortSignal;
 }
 
 export type PluginGitHubReleaseAsset = {
@@ -72,6 +74,13 @@ export type PluginGitHubRelease = {
   assets: PluginGitHubReleaseAsset[];
 };
 
+export type PluginGitHubDownloadOptions = {
+  signal?: AbortSignal;
+  waitIfPaused?: () => Promise<void>;
+  onPhase?: (phase: 'resolving' | 'downloading' | 'installing') => void;
+  onProgress?: (progress: { bytesDownloaded: number; totalBytes?: number }) => void;
+};
+
 export type PluginGitHubAvailableUpdate = {
   version: string;
   tag: string;
@@ -84,8 +93,8 @@ export interface PluginGitHubClient {
   listTags(repository: string): Promise<Array<{ name: string; commitSha: string }>>;
   defaultBranch(repository: string): Promise<{ name: string; commitSha: string }>;
   listReleases(repository: string): Promise<PluginGitHubRelease[]>;
-  downloadReleaseAsset(browserDownloadUrl: string): Promise<Uint8Array>;
-  downloadArchive(repository: string, ref: string): Promise<{ archive: Uint8Array; commitSha: string }>;
+  downloadReleaseAsset(browserDownloadUrl: string, options?: PluginGitHubDownloadOptions): Promise<Uint8Array>;
+  downloadArchive(repository: string, ref: string, options?: PluginGitHubDownloadOptions): Promise<{ archive: Uint8Array; commitSha: string }>;
   commitShaForRef(repository: string, ref: string): Promise<string>;
 }
 
@@ -98,6 +107,8 @@ export interface PluginInstallFromGitHubInput {
   client: PluginGitHubClient;
   /** Prefer Release assets for this host; defaults to process.platform/arch. */
   platformToken?: string;
+  signal?: AbortSignal;
+  downloadOptions?: PluginGitHubDownloadOptions;
 }
 
 export interface PluginGitHubUpdatePreference {

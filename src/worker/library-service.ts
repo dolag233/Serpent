@@ -16105,15 +16105,13 @@ export class LibraryService {
       );
 
       const outputStat = statSync(artifactAbsPath);
-      let outputWidth = inputWidth;
-      let outputHeight = inputHeight;
-      if (inputWidth > 512 || inputHeight > 512) {
-        const ratio = Math.min(512 / inputWidth, 512 / inputHeight);
-        outputWidth = Math.round(inputWidth * ratio);
-        outputHeight = Math.round(inputHeight * ratio);
-      }
       imageProcessed = true;
 
+      // AssetSummary.width/height describe the source image, not the bounded
+      // WebP card artifact. Keeping the source dimensions here is important
+      // when a plugin replaces a large image: both the old and new card
+      // thumbnails may be capped at 512px, while the actual resolution has
+      // changed substantially.
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -16126,8 +16124,8 @@ export class LibraryService {
           revisionId,
           outputStat.size,
           artifactRelPath,
-          outputWidth || null,
-          outputHeight || null,
+          inputWidth || null,
+          inputHeight || null,
           SHARP_THUMBNAIL_GENERATOR,
           new Date().toISOString(),
         );
@@ -17497,13 +17495,13 @@ export class LibraryService {
   }
 
   /** Persist bounded Main-brokered plugin media as the normal thumbnail artifact. */
-  writePluginMediaArtifact(input: {
+  async writePluginMediaArtifact(input: {
     libraryId: string;
     assetId: string;
     mimeType: string;
     bytesBase64: string;
     providerId?: string;
-  }): { artifactId: string } {
+  }): Promise<{ artifactId: string }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const asset = openLibrary.connection
       .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ? AND deleted_at IS NULL')
@@ -17518,6 +17516,31 @@ export class LibraryService {
     const artifactId = randomUUID();
     const artifactRelPath = `${artifactId}.plugin`;
     const artifactAbsPath = path.join(this.artifactsDir(openLibrary), artifactRelPath);
+    let width: number | null = null;
+    let height: number | null = null;
+    if (input.mimeType.toLowerCase().startsWith('image/')) {
+      try {
+        const metadata = await (this.options.sharpFn ?? requireSharp())(bytes).metadata();
+        const metadataWidth = metadata.width;
+        const metadataHeight = metadata.height;
+        width = typeof metadataWidth === 'number'
+          && Number.isInteger(metadataWidth)
+          && metadataWidth > 0
+          ? metadataWidth
+          : null;
+        height = typeof metadataHeight === 'number'
+          && Number.isInteger(metadataHeight)
+          && metadataHeight > 0
+          ? metadataHeight
+          : null;
+      } catch (error) {
+        this.diagnose('plugin-media-artifact.metadata', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+          mimeType: input.mimeType,
+        });
+      }
+    }
     mkdirSync(this.artifactsDir(openLibrary), { recursive: true });
     try {
       writeFileSync(artifactAbsPath, bytes, { flag: 'wx' });
@@ -17534,8 +17557,8 @@ export class LibraryService {
           .prepare(
             `INSERT INTO revision_artifacts
                (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-                generator_version, status, generated_at)
-             VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, 'ready', ?)`,
+                width, height, generator_version, status, generated_at)
+             VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
           )
           .run(
             artifactId,
@@ -17543,6 +17566,8 @@ export class LibraryService {
             input.mimeType,
             bytes.length,
             artifactRelPath,
+            width,
+            height,
             `plugin:${input.providerId ?? 'media-provider'}`,
             now,
           );
@@ -17640,6 +17665,8 @@ export class LibraryService {
     generatorVersion: string;
     status: string;
     errorCode: string | null;
+    width: number | null;
+    height: number | null;
   } | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assetRow = openLibrary.connection
@@ -17662,6 +17689,8 @@ export class LibraryService {
       'generator_version',
       'status',
       'error_code',
+      'width',
+      'height',
     ]);
     if (present.length === 0) return null;
     const row = connection
@@ -17680,6 +17709,8 @@ export class LibraryService {
         generator_version?: string;
         status?: string;
         error_code?: string | null;
+        width?: number | null;
+        height?: number | null;
       } | undefined;
 
     if (!row) return null;
@@ -17692,6 +17723,8 @@ export class LibraryService {
       // artifact as absent instead of failing.
       status: row.status ?? '',
       errorCode: row.error_code ?? null,
+      width: row.width ?? null,
+      height: row.height ?? null,
     };
   }
 

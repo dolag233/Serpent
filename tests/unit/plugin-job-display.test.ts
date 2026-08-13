@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import {
   formatPluginJobError,
+  formatPluginJobPluginName,
   formatPluginJobProgressMessage,
   formatPluginJobProgressSummary,
   getPluginJobDisplayProgress,
 } from "../../src/renderer/plugin-job-display";
 
 describe("plugin job display", () => {
+  it("turns a reverse-domain plugin id into a readable fallback name", () => {
+    expect(formatPluginJobPluginName("com.dolag.serpent.image-upscaler")).toBe("Image Upscaler");
+  });
+
   it("calculates the percentage from authoritative counters", () => {
     expect(
       formatPluginJobProgressSummary({
@@ -94,6 +99,19 @@ describe("plugin job display", () => {
         message: "读取资产 image.png",
       }),
     ).toBe("");
+  });
+
+  it("redacts paths from the live progress message", () => {
+    expect(
+      formatPluginJobProgressMessage({
+        completed: 0,
+        total: 1,
+        progress: 0,
+        status: "running",
+        phase: "spawn",
+        message: "/Users/dolag/Library/Application Support/Serpent/plugin.js",
+      }),
+    ).toBe("spawn · <path>");
   });
 
   it("redacts host paths and bounds plugin failure text", () => {

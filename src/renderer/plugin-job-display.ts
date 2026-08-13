@@ -16,6 +16,15 @@ const MAX_PLUGIN_JOB_ERROR_DISPLAY_LENGTH = 240;
 const UNIX_PATH_PATTERN = /(?:file:\/\/)?\/(?:Users|private|tmp|var|home|Volumes|Applications|System|Library|etc|opt|dev)\/[^,;|()[\]{}\n]*/giu;
 const WINDOWS_PATH_PATTERN = /[A-Za-z]:\\[^,;|()[\]{}\n]*/gu;
 
+export function formatPluginJobPluginName(pluginId: string): string {
+  const localName = pluginId.split(".").at(-1) ?? pluginId;
+  return localName
+    .split(/[-_]+/u)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
 /**
  * Keep plugin-provided failure text useful without putting host paths or
  * unbounded protocol payloads into the Renderer UI. The original detail is
@@ -71,8 +80,8 @@ export function formatPluginJobProgressMessage(
   job: PluginJobDisplayRecord,
 ): string {
   if (job.status === "queued" || job.status === "interrupted") return "";
-  return [job.phase, job.message]
+  return formatPluginJobError([job.phase, job.message]
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))
-    .join(" · ");
+    .join(" · "), undefined);
 }

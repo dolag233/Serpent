@@ -56,6 +56,25 @@ afterEach(() => {
 describe('Plugin package IPC bridge', () => {
   it('parses contribution listing and command invocation requests', () => {
     expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.install-github',
+      scope: 'user',
+      repository: 'owner/repository',
+      operationId: 'install-1',
+    })).toMatchObject({
+      type: 'plugin-manager.install-github',
+      repository: 'owner/repository',
+      operationId: 'install-1',
+    });
+    expect(pluginManagerRequestSchema.parse({
+      type: 'plugin-manager.install-control',
+      operationId: 'install-1',
+      action: 'pause',
+    })).toEqual({
+      type: 'plugin-manager.install-control',
+      operationId: 'install-1',
+      action: 'pause',
+    });
+    expect(pluginManagerRequestSchema.parse({
       type: 'plugin-manager.list-contributions',
       libraryId: 'library-a',
       target: 'menus.asset',
@@ -333,6 +352,30 @@ describe('Plugin package IPC bridge', () => {
     await expect(handler({ type: 'plugin-manager.install-github', repository: 'https://example.com/nope' }))
       .resolves.toEqual({ ok: false, code: 'invalid-request' });
     expect(selectorCalled).toBe(false);
+  });
+
+  it('checks eligible updates when enabling the global auto-update policy', async () => {
+    const userData = temporaryRoot('serpent-plugin-ipc-global-auto-update-');
+    const manager = createManager(userData);
+    const applyUpdates = vi.spyOn(manager, 'applyEligibleGitHubAutoUpdates').mockResolvedValue([]);
+    const handler = createPluginPackageRequestHandler({
+      manager,
+      resolveLibraryDirectory: async () => undefined,
+      chooseLocalPackage: async () => undefined,
+    });
+
+    await expect(handler({
+      type: 'plugin-manager.set-global-auto-update',
+      enabled: true,
+    })).resolves.toMatchObject({ ok: true, autoUpdateAll: true });
+    expect(applyUpdates).toHaveBeenCalledTimes(1);
+
+    applyUpdates.mockClear();
+    await expect(handler({
+      type: 'plugin-manager.set-global-auto-update',
+      enabled: false,
+    })).resolves.toMatchObject({ ok: true, autoUpdateAll: false });
+    expect(applyUpdates).not.toHaveBeenCalled();
   });
 
   it('keeps a Main-selected local path out of Renderer responses and supports a cancelled picker', async () => {

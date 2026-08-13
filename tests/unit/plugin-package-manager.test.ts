@@ -392,11 +392,8 @@ describe('PluginPackageManager installation and integrity', () => {
     });
     expect(available).toMatchObject({ version: '1.1.0', tag: 'v1.1.0' });
 
-    await manager.setAutoUpdatePreference({
-      pluginId: first.package.lock.pluginId,
-      sourceFingerprint: first.package.lock.sourceFingerprint,
-      autoUpdate: true,
-    });
+    await manager.setGlobalAutoUpdatePreference(true);
+    await expect(manager.getGlobalAutoUpdatePreference()).resolves.toBe(true);
     const applied = await manager.applyEligibleGitHubAutoUpdates({
       scope: 'user',
       client,

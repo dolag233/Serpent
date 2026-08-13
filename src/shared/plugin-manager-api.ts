@@ -19,6 +19,11 @@ import {
   pluginSettingValueSchema,
 } from '../plugins/plugin-manifest';
 import { isGitHubPluginInstallUrl } from '../shared/plugin-github-url';
+import {
+  pluginInstallControlActionSchema,
+  pluginInstallOperationIdSchema,
+  type PluginInstallProgress,
+} from './plugin-install-progress';
 
 const pluginIdSchema = z.string().min(3).max(64).regex(/^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/u);
 const versionSchema = z.string().min(1).max(128);
@@ -166,7 +171,17 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     deadlineMs: z.number().int().positive().max(5_000).optional(),
   }),
   z.strictObject({ type: z.literal('plugin-manager.install-local'), ...scopedRequestFields }),
-  z.strictObject({ type: z.literal('plugin-manager.install-github'), ...scopedRequestFields, repository: githubRepositorySchema }),
+  z.strictObject({
+    type: z.literal('plugin-manager.install-github'),
+    ...scopedRequestFields,
+    repository: z.string().min(1).max(512).refine((value) => isGitHubPluginInstallUrl(value), 'Expected a GitHub owner/repository or URL.'),
+    operationId: pluginInstallOperationIdSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.install-control'),
+    operationId: pluginInstallOperationIdSchema,
+    action: pluginInstallControlActionSchema,
+  }),
   z.strictObject({
     type: z.literal('plugin-manager.update-github'),
     ...scopedRequestFields,
@@ -177,6 +192,10 @@ export const pluginManagerRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('plugin-manager.set-auto-update'),
     pluginId: pluginIdSchema,
     sourceFingerprint: z.string().min(1).max(1_024),
+    enabled: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin-manager.set-global-auto-update'),
     enabled: z.boolean(),
   }),
   z.strictObject({
@@ -660,6 +679,7 @@ export const pluginManagerResponseSchema = z.union([
     packages: z.array(pluginManagerPackageSummarySchema).max(20_000),
     resolutions: z.array(pluginManagerResolutionSummarySchema).max(20_000),
     safeMode: z.boolean(),
+    autoUpdateAll: z.boolean().optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -677,6 +697,10 @@ export const pluginManagerResponseSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     saved: z.literal(true),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    control: z.literal('accepted'),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -730,6 +754,7 @@ export function parsePluginManagerResponse(input: unknown): PluginManagerRespons
 /** Narrow preload API; it intentionally has no filesystem or Electron access. */
 export interface SerpentPluginManagerApi {
   request(input: PluginManagerRequest): Promise<PluginManagerResponse>;
+  onInstallProgress?(listener: (event: PluginInstallProgress) => void): () => void;
   listPluginContributions(input: {
     libraryId?: string;
     target?: PluginHostContributionTarget;

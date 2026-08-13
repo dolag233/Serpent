@@ -1,8 +1,8 @@
 import type { PluginJobRecord } from "../plugins/plugin-jobs";
 import {
   formatPluginJobProgressMessage,
-  formatPluginJobProgressSummary,
   formatPluginJobError,
+  formatPluginJobPluginName,
   getPluginJobDisplayProgress,
 } from "./plugin-job-display";
 import { useT } from "./i18n";
@@ -19,9 +19,9 @@ export function PluginJobActivityBanner({
 }) {
   const t = useT();
   const progressMessage = formatPluginJobProgressMessage(job);
-  const progressSummary = formatPluginJobProgressSummary(job);
   const errorMessage = formatPluginJobError(job.errorDetail, job.errorCode);
   const progress = getPluginJobDisplayProgress(job);
+  const progressPercentage = `${Math.round(progress * 100)}%`;
   const statusLabel = t(`dialog.mediaJobs.pluginJobStatus.${job.status}`);
   const tone = job.status === "failed"
     ? "error"
@@ -49,24 +49,22 @@ export function PluginJobActivityBanner({
       className={`workspace-plugin-job-progress is-${job.status}`}
       dismissLabel={t("dialog.mediaJobs.closePluginJobActivity")}
       dismissible
-      message={progressMessage || statusLabel}
+      message={progressMessage || undefined}
       onDismiss={onDismiss}
       max={1}
       progress={job.status === "interrupted" ? undefined : progress}
       progressAriaLabel={statusLabel}
-      progressLabel={progressSummary}
       tone={tone}
       title={(
         <span
           className="plugin-job-activity-title"
           title={`${job.ownerPluginId} · ${job.pluginHandlerId}`}
         >
-          <span className="plugin-job-activity-plugin">{job.ownerPluginId}</span>
-          <span aria-hidden="true" className="plugin-job-activity-separator"> · </span>
-          <span className="plugin-job-activity-handler">{job.pluginHandlerId}</span>
+          <span aria-hidden="true" className="plugin-job-activity-status-mark" />
+          <span className="plugin-job-activity-plugin">{formatPluginJobPluginName(job.ownerPluginId)}</span>
         </span>
       )}
-      valueText={progressSummary}
+      valueText={progressPercentage}
     >
       {errorMessage ? (
         <div className="plugin-job-activity-error" title={errorMessage}>

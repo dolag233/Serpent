@@ -42,7 +42,11 @@ describe('plugin release asset naming', () => {
 });
 
 describe('GitHub plugin install URLs', () => {
-  it('accepts repository and Release page URLs', () => {
+  it('accepts repository, owner/repository shorthand and Release page URLs', () => {
+    expect(parseGitHubRepositoryUrl('owner/repo')).toMatchObject({
+      repository: 'https://github.com/owner/repo',
+      preferLatestRelease: true,
+    });
     expect(parseGitHubRepositoryUrl('https://github.com/owner/repo')).toMatchObject({
       repository: 'https://github.com/owner/repo',
       preferLatestRelease: true,

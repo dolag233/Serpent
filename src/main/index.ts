@@ -92,6 +92,7 @@ import {
   WINDOW_FOCUS_CHANNEL,
   NATIVE_EDIT_COPY_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_INSTALL_PROGRESS_CHANNEL,
   PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
   PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
@@ -5966,6 +5967,11 @@ async function startApplication(): Promise<void> {
         return result.libraries.find((library) => library.libraryId === libraryId)?.libraryPath;
       },
       chooseLocalPackage: selectPluginPackage,
+      notifyInstallProgress: (event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(PLUGIN_INSTALL_PROGRESS_CHANNEL, event);
+        }
+      },
       revealPackageDirectory: (absoluteDirectory) => {
         shell.showItemInFolder(absoluteDirectory);
       },

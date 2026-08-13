@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -33,6 +33,8 @@ import type { PluginSettingsSnapshot, PluginSettingsStore } from './plugin-setti
 import type { PluginStorageStore } from './plugin-storage-store';
 import type { PluginMcpExposureStore } from './plugin-mcp-exposure-store';
 import { createPluginUiUrl } from './plugin-ui-assets';
+import { PluginInstallCancelledError, PluginInstallOperation } from './plugin-install-operation';
+import type { PluginInstallProgress } from '../shared/plugin-install-progress';
 import type {
   PluginMediaProviderInput,
   PluginMediaProviderResult,
@@ -85,6 +87,8 @@ export interface PluginPackageIpcOptions {
   resolveLibraryDirectory(libraryId: string): Promise<string | undefined>;
   /** Main-owned native picker. It must never return a value to Renderer. */
   chooseLocalPackage(): Promise<string | undefined>;
+  /** Main-only event sink; payloads are already Renderer-safe and path-free. */
+  notifyInstallProgress?(event: PluginInstallProgress): void;
   /** Reveal an installed package directory in the OS file manager. Path stays in Main. */
   revealPackageDirectory?(absoluteDirectory: string): void;
   /**
@@ -463,11 +467,25 @@ function libraryIdFor(request: PluginManagerRequest): string | undefined {
 }
 
 export function createPluginPackageRequestHandler(options: PluginPackageIpcOptions) {
+  const installOperations = new Map<string, PluginInstallOperation>();
   return async (input: unknown): Promise<PluginManagerResponse> => {
     const parsed = pluginManagerRequestSchema.safeParse(input);
     if (!parsed.success) return { ok: false, code: 'invalid-request' };
     const request = parsed.data;
     try {
+      if (request.type === 'plugin-manager.install-control') {
+        const operation = installOperations.get(request.operationId);
+        if (operation === undefined) {
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_INSTALL_NOT_FOUND',
+            message: 'The plugin installation is no longer running.',
+          };
+        }
+        operation.control(request.action);
+        return { ok: true, control: 'accepted' };
+      }
       const libraryId = libraryIdFor(request);
       const requiresLibrary = (request.type === 'plugin-manager.resolve'
         || request.type === 'plugin-manager.rollback'
@@ -699,12 +717,38 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           return { ok: false, code: 'selection-cancelled' };
         }
       } else if (request.type === 'plugin-manager.install-github') {
-        await options.manager.installFromGitHub({
-          repository: request.repository,
-          scope: request.scope,
-          libraryDirectory,
-          client: createGitHubPluginClient(),
-        });
+        const operationId = request.operationId ?? randomUUID();
+        const operation = new PluginInstallOperation(
+          operationId,
+          (event) => options.notifyInstallProgress?.(event),
+        );
+        installOperations.set(operationId, operation);
+        try {
+          await options.manager.installFromGitHub({
+            repository: request.repository,
+            scope: request.scope,
+            libraryDirectory,
+            client: createGitHubPluginClient(),
+            signal: operation.signal,
+            downloadOptions: operation.downloadOptions(),
+          });
+          operation.setCompleted();
+        } catch (error) {
+          if (operation.stopped || error instanceof PluginInstallCancelledError) {
+            return { ok: false, code: 'selection-cancelled' };
+          }
+          const message = pluginCommandFailureMessage(error instanceof Error ? error.message : undefined);
+          operation.setFailed(message ?? 'GitHub plugin installation failed.');
+          if (error instanceof PluginPackageManagerError) return pluginFailureResponse(error);
+          return {
+            ok: false,
+            code: 'operation-failed',
+            failureCode: 'PLUGIN_INSTALL_FAILED',
+            message: message ?? 'GitHub plugin installation failed.',
+          };
+        } finally {
+          installOperations.delete(operationId);
+        }
       } else if (request.type === 'plugin-manager.update-github') {
         await options.manager.applyGitHubUpdateForLock({
           scope: request.scope,
@@ -719,6 +763,8 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
           sourceFingerprint: request.sourceFingerprint,
           autoUpdate: request.enabled,
         });
+      } else if (request.type === 'plugin-manager.set-global-auto-update') {
+        await options.manager.setGlobalAutoUpdatePreference(request.enabled);
       } else if (request.type === 'plugin-manager.reveal-package') {
         const installed = await options.manager.listInstalled({
           scope: request.scope,
@@ -794,11 +840,14 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
 
       // GitHub auto-update apply + remote update discovery are intentionally not
       // on the hot settings-list path (large packages + network). Run them on
-      // reload / install / explicit update actions instead.
-      if (request.type === 'plugin-manager.reload'
-        || request.type === 'plugin-manager.install-github'
+      // reload / explicit update actions / enabling the global policy instead.
+      // A newly installed package is already the requested version, so
+      // installing it must not immediately start a second, untracked request.
+      const shouldCheckGitHubUpdates = request.type === 'plugin-manager.reload'
         || request.type === 'plugin-manager.update-github'
-        || request.type === 'plugin-manager.set-auto-update') {
+        || request.type === 'plugin-manager.set-auto-update'
+        || (request.type === 'plugin-manager.set-global-auto-update' && request.enabled);
+      if (shouldCheckGitHubUpdates) {
         const githubClient = createGitHubPluginClient();
         try {
           const appliedUser = await options.manager.applyEligibleGitHubAutoUpdates({
@@ -841,7 +890,8 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
       const checkRemoteUpdates = request.type === 'plugin-manager.reload'
         || request.type === 'plugin-manager.install-github'
         || request.type === 'plugin-manager.update-github'
-        || request.type === 'plugin-manager.set-auto-update';
+        || request.type === 'plugin-manager.set-auto-update'
+        || (request.type === 'plugin-manager.set-global-auto-update' && request.enabled);
       const githubClient = checkRemoteUpdates ? createGitHubPluginClient() : undefined;
       const packages = await Promise.all([...user, ...library].map(async (entry) => {
         const base = summary(entry);
@@ -891,6 +941,7 @@ export function createPluginPackageRequestHandler(options: PluginPackageIpcOptio
         packages,
         resolutions,
         safeMode: await options.manager.getSafeMode(),
+        autoUpdateAll: await options.manager.getGlobalAutoUpdatePreference(),
       };
     } catch (error) {
       if (error instanceof PluginSettingsStoreError) {

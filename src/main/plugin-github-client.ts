@@ -1,6 +1,7 @@
 import {
   type PluginFetch,
   type PluginGitHubClient,
+  type PluginGitHubDownloadOptions,
   type PluginGitHubRelease,
   PluginPackageManagerError,
 } from './plugin-package-manager-types';
@@ -16,6 +17,45 @@ async function githubJson(fetchImpl: PluginFetch, url: string): Promise<unknown>
     throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `GitHub request failed with HTTP ${response.status}.`);
   }
   return response.json();
+}
+
+async function downloadBytes(
+  response: Response,
+  options: PluginGitHubDownloadOptions | undefined,
+): Promise<Uint8Array> {
+  const totalBytesHeader = response.headers.get('content-length');
+  const parsedTotalBytes = totalBytesHeader === null ? undefined : Number(totalBytesHeader);
+  const totalBytes = parsedTotalBytes !== undefined && Number.isSafeInteger(parsedTotalBytes) && parsedTotalBytes >= 0
+    ? parsedTotalBytes
+    : undefined;
+  if (response.body?.getReader === undefined) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    options?.onProgress?.({ bytesDownloaded: bytes.byteLength, ...(totalBytes === undefined ? {} : { totalBytes }) });
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytesDownloaded = 0;
+  try {
+    while (true) {
+      await options?.waitIfPaused?.();
+      if (options?.signal?.aborted) throw new DOMException('The download was stopped.', 'AbortError');
+      const next = await reader.read();
+      if (next.done) break;
+      chunks.push(next.value);
+      bytesDownloaded += next.value.byteLength;
+      options?.onProgress?.({ bytesDownloaded, ...(totalBytes === undefined ? {} : { totalBytes }) });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(bytesDownloaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 /**
@@ -85,7 +125,7 @@ export function createGitHubPluginClient(fetchImpl: PluginFetch = fetch): Plugin
         return [{ tagName, draft, prerelease, assets }];
       });
     },
-    async downloadReleaseAsset(browserDownloadUrl: string): Promise<Uint8Array> {
+    async downloadReleaseAsset(browserDownloadUrl: string, options?: PluginGitHubDownloadOptions): Promise<Uint8Array> {
       let url: URL;
       try {
         url = new URL(browserDownloadUrl);
@@ -98,24 +138,26 @@ export function createGitHubPluginClient(fetchImpl: PluginFetch = fetch): Plugin
       const response = await fetchImpl(browserDownloadUrl, {
         headers: { Accept: 'application/octet-stream' },
         redirect: 'follow',
+        ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
       if (!response.ok) {
         throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `GitHub release asset download failed with HTTP ${response.status}.`);
       }
-      return new Uint8Array(await response.arrayBuffer());
+      return downloadBytes(response, options);
     },
-    async downloadArchive(repository: string, ref: string): Promise<{ archive: Uint8Array; commitSha: string }> {
+    async downloadArchive(repository: string, ref: string, options?: PluginGitHubDownloadOptions): Promise<{ archive: Uint8Array; commitSha: string }> {
       const { owner, name } = parseGitHubRepositoryUrl(repository);
       const [commitSha, response] = await Promise.all([
         commitForRef(repository, ref),
         fetchImpl(`${githubApiRoot}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/zipball/${encodeURIComponent(ref)}`, {
           headers: { Accept: 'application/vnd.github+json' },
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
         }),
       ]);
       if (!response.ok) {
         throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', `GitHub archive download failed with HTTP ${response.status}.`);
       }
-      return { archive: new Uint8Array(await response.arrayBuffer()), commitSha };
+      return { archive: await downloadBytes(response, options), commitSha };
     },
     async commitShaForRef(repository: string, ref: string): Promise<string> {
       return commitForRef(repository, ref);

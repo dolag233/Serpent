@@ -59,23 +59,48 @@ test('installs a library plugin through the settings bridge, then trusts and Saf
     const dialog = window.getByRole('dialog', { name: '通用设置' });
     await dialog.getByRole('tab', { name: '插件' }).click();
     await expect(dialog.getByText('暂未安装插件。', { exact: true }).first()).toBeVisible();
+    const globalAutoUpdate = dialog.getByRole('checkbox', { name: '自动更新' });
+    await expect(globalAutoUpdate).toBeVisible();
+    await expect(globalAutoUpdate).not.toBeChecked();
     await dialog.getByRole('button', { name: '安装插件' }).click();
     const installDialog = window.getByRole('dialog', { name: '安装插件' });
     await expect(installDialog).toBeVisible();
+    await expect(installDialog.getByRole('button', { name: '本地安装' })).toBeVisible();
+    await expect(installDialog.getByRole('button', { name: '从 GitHub 安装' })).toBeVisible();
+    await installDialog.getByRole('button', { name: '从 GitHub 安装' }).click();
+    const githubDialog = window.getByRole('dialog', { name: '从 GitHub 安装' });
+    await githubDialog.getByRole('textbox', { name: 'GitHub 仓库或 Release 链接' }).fill('not-a-github-repository');
+    await githubDialog.getByRole('button', { name: '开始安装' }).click();
+    await expect(githubDialog.getByText('请输入有效的 GitHub HTTPS 仓库地址、owner/repository 或 Release 链接。', { exact: true })).toBeVisible();
+    await githubDialog.getByRole('button', { name: '返回' }).click();
     await installDialog.getByLabel('安装范围').selectOption('library');
-    await installDialog.getByRole('button', { name: '安装本地插件' }).click();
+    await installDialog.getByRole('button', { name: '本地安装' }).click();
 
     const libraryCard = dialog.locator('.plugin-settings-scope-card').filter({ hasText: '资源库插件' });
 
     await expect(dialog.getByText(/Palette Tools\s*-\s*v/)).toBeVisible({ timeout: 30_000 });
-    await expect(dialog.getByText('等待在此设备上信任', { exact: true })).toBeVisible();
+    await expect(libraryCard.getByRole('checkbox', { name: '自动更新' })).toHaveCount(0);
     await expect(libraryCard.getByRole('button', { name: '打开插件目录' })).toBeVisible();
-    await dialog.getByRole('button', { name: '信任', exact: true }).click();
+    await expect(libraryCard.getByRole('button', { name: '信任', exact: true })).toHaveCount(0);
+    await expect(libraryCard.getByRole('button', { name: '不信任', exact: true })).toHaveCount(0);
 
     const enableToggle = libraryCard.getByRole('checkbox', { name: '启用插件' });
-    await expect(enableToggle).toBeChecked();
+    await expect(enableToggle).not.toBeChecked();
     await expect(enableToggle).toBeEnabled();
     const enableRow = libraryCard.locator('label.plugin-settings-enable-toggle');
+    const cancelledConsent = window.waitForEvent('dialog').then(async (consent) => {
+      expect(consent.message()).toContain('Palette Tools');
+      await consent.dismiss();
+    });
+    await Promise.all([cancelledConsent, enableRow.click({ force: true })]);
+    await expect(enableToggle).not.toBeChecked();
+    const consentDialog = window.waitForEvent('dialog').then(async (consent) => {
+      expect(consent.message()).toContain('Palette Tools');
+      expect(consent.message()).toContain('asset.read');
+      await consent.accept();
+    });
+    await Promise.all([consentDialog, enableRow.click({ force: true })]);
+    await expect(enableToggle).toBeChecked();
     await enableRow.click({ force: true });
     await expect(enableToggle).not.toBeChecked();
     await enableRow.click({ force: true });

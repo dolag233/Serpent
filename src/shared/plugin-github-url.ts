@@ -12,6 +12,18 @@ export type ParsedGitHubPluginRepository = {
 };
 
 export function parseGitHubRepositoryUrl(value: string): ParsedGitHubPluginRepository {
+  const shorthand = value.trim().replace(/^github\.com\//iu, '').replace(/\.git$/u, '');
+  if (/^[^/\s]+\/[^/\s]+$/u.test(shorthand)) {
+    const [owner, name] = shorthand.split('/');
+    if (owner !== undefined && name !== undefined && owner.length > 0 && name.length > 0) {
+      return {
+        repository: `https://github.com/${owner}/${name}`,
+        owner,
+        name,
+        preferLatestRelease: true,
+      };
+    }
+  }
   let url: URL;
   try {
     url = new URL(value);

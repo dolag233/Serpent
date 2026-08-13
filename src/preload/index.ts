@@ -60,6 +60,7 @@ import {
   AUTOMATION_SCRIPT_RECENT_LIST_CHANNEL,
   AUTOMATION_SCRIPT_RECENT_OPEN_CHANNEL,
   PLUGIN_MANAGER_CHANNEL,
+  PLUGIN_INSTALL_PROGRESS_CHANNEL,
   PLUGIN_CONTRIBUTIONS_CHANGED_CHANNEL,
   PLUGIN_INPUT_CAPTURE_EVENT_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
@@ -103,6 +104,7 @@ import {
   type PluginManagerResponse,
   type SerpentPluginManagerApi,
 } from '../shared/plugin-manager-api';
+import { pluginInstallProgressSchema, type PluginInstallProgress } from '../shared/plugin-install-progress';
 import {
   parseOpenExternalUrlResult,
   type RevealAppLogResult,
@@ -1959,7 +1961,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string }) => void) {
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseThumbnailEvent(input));
@@ -2352,6 +2354,14 @@ const plugins: SerpentPluginManagerApi = Object.freeze({
       console.error('plugin-manager.response-invalid', error, raw);
       return { ok: false, code: 'operation-failed' };
     }
+  },
+  onInstallProgress(listener: (event: PluginInstallProgress) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const parsed = pluginInstallProgressSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data);
+    };
+    ipcRenderer.on(PLUGIN_INSTALL_PROGRESS_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(PLUGIN_INSTALL_PROGRESS_CHANNEL, handler);
   },
   async listPluginContributions(input: {
     libraryId?: string;

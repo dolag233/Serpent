@@ -8,7 +8,6 @@ const liveStatuses = new Set<PluginJobRecord["status"]>([
 
 const attentionStatuses = new Set<PluginJobRecord["status"]>([
   "paused",
-  "succeeded",
   "failed",
   "cancelled",
   "interrupted",

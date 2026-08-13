@@ -109,6 +109,7 @@ const GLOBAL_RUNTIME_SCOPE = '__serpent_global_runtime__';
 const deviceStateSchema = z.strictObject({
   version: z.literal(DEVICE_STATE_VERSION),
   safeMode: z.boolean(),
+  autoUpdateAll: z.boolean().default(false),
   trustDecisions: z.array(pluginTrustDecisionSchema).max(20_000),
   resolutions: z.array(pluginResolutionSchema).max(20_000),
   quarantines: z.array(pluginQuarantineRecordSchema).max(20_000).default([]),
@@ -124,6 +125,7 @@ function emptyDeviceState(): PluginDeviceState {
   return {
     version: DEVICE_STATE_VERSION,
     safeMode: false,
+    autoUpdateAll: false,
     trustDecisions: [],
     resolutions: [],
     quarantines: [],
@@ -176,6 +178,7 @@ export class PluginPackageManager {
   }
 
   async installFromDirectory(input: PluginInstallFromDirectoryInput): Promise<PluginInstallResult> {
+    if (input.signal?.aborted) throw new Error('Plugin installation was stopped.');
     const root = this.#packageStoreRoot(input.scope, input.libraryDirectory);
     const inspectedSource = await inspectPluginDirectory(input.directory, input.source, this.#limits);
     this.#assertCompatible(inspectedSource.manifest);
@@ -197,7 +200,8 @@ export class PluginPackageManager {
     const stagingDirectory = path.join(root, `.staging-${randomUUID()}`);
     try {
       await mkdir(stagingDirectory, { recursive: false });
-      await copyInspectedPluginFiles(input.directory, stagingDirectory, inspectedSource.snapshot.files);
+      await copyInspectedPluginFiles(input.directory, stagingDirectory, inspectedSource.snapshot.files, input.signal);
+      if (input.signal?.aborted) throw new Error('Plugin installation was stopped.');
       const staged = await inspectPluginDirectory(stagingDirectory, input.source, this.#limits);
       if (staged.lock.packageHash !== inspectedSource.lock.packageHash
         || staged.lock.manifestSha256 !== inspectedSource.lock.manifestSha256) {
@@ -259,6 +263,7 @@ export class PluginPackageManager {
   }
 
   async installFromArchive(input: PluginInstallFromArchiveInput): Promise<PluginInstallResult> {
+    if (input.signal?.aborted) throw new Error('Plugin installation was stopped.');
     if (input.archive.byteLength > this.#limits.maxArchiveBytes) {
       throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'The plugin archive exceeds the maximum allowed size.');
     }
@@ -266,13 +271,14 @@ export class PluginPackageManager {
     const extractionDirectory = path.join(root, `.archive-staging-${randomUUID()}`);
     try {
       await mkdir(extractionDirectory, { recursive: true });
-      await extractPluginArchive(input.archive, extractionDirectory, this.#limits);
+      await extractPluginArchive(input.archive, extractionDirectory, this.#limits, input.signal);
       try {
         return await this.installFromDirectory({
           directory: extractionDirectory,
           scope: input.scope,
           libraryDirectory: input.libraryDirectory,
           source: input.source,
+          signal: input.signal,
         });
       } catch (error) {
         if (error instanceof PluginPackageManagerError && [
@@ -310,6 +316,8 @@ export class PluginPackageManager {
       libraryDirectory: input.libraryDirectory,
       client: input.client,
       platformToken,
+      signal: input.signal,
+      downloadOptions: input.downloadOptions,
     });
     if (releaseInstall !== undefined) return releaseInstall;
 
@@ -323,6 +331,8 @@ export class PluginPackageManager {
       scope: input.scope,
       libraryDirectory: input.libraryDirectory,
       client: input.client,
+      signal: input.signal,
+      downloadOptions: input.downloadOptions,
     });
   }
 
@@ -412,8 +422,19 @@ export class PluginPackageManager {
     sourceFingerprint: string;
   }): Promise<boolean> {
     const state = await this.#readDeviceState();
-    return state.updatePreferences.find((entry) => entry.pluginId === input.pluginId
-      && entry.sourceFingerprint === input.sourceFingerprint)?.autoUpdate ?? false;
+    return (state.autoUpdateAll || state.updatePreferences.find((entry) => entry.pluginId === input.pluginId
+      && entry.sourceFingerprint === input.sourceFingerprint)?.autoUpdate) ?? false;
+  }
+
+  async getGlobalAutoUpdatePreference(): Promise<boolean> {
+    return (await this.#readDeviceState()).autoUpdateAll;
+  }
+
+  async setGlobalAutoUpdatePreference(enabled: boolean): Promise<void> {
+    const state = await this.#readDeviceState();
+    state.autoUpdateAll = enabled;
+    if (!enabled) state.updatePreferences = [];
+    await this.#writeDeviceState(state);
   }
 
   async setAutoUpdatePreference(input: {
@@ -456,7 +477,7 @@ export class PluginPackageManager {
       if (entry.status !== 'valid' || entry.package.lock.source.kind !== 'github') continue;
       const preference = state.updatePreferences.find((item) => item.pluginId === entry.package.lock.pluginId
         && item.sourceFingerprint === entry.package.lock.sourceFingerprint);
-      if (preference?.autoUpdate !== true) continue;
+      if (state.autoUpdateAll !== true && preference?.autoUpdate !== true) continue;
       if (input.libraryId !== undefined) {
         const resolution = state.resolutions.find((item) => item.libraryId === input.libraryId
           && item.pluginId === entry.package.lock.pluginId);
@@ -488,6 +509,8 @@ export class PluginPackageManager {
     libraryDirectory?: string;
     client: PluginGitHubClient;
     platformToken: PluginPlatformToken;
+    signal?: AbortSignal;
+    downloadOptions?: PluginInstallFromGitHubInput['downloadOptions'];
   }): Promise<PluginInstallResult | undefined> {
     let releases: Awaited<ReturnType<PluginGitHubClient['listReleases']>>;
     try {
@@ -519,10 +542,11 @@ export class PluginPackageManager {
       }
       sawAnyNormativeAsset = true;
       const [archive, commitSha] = await Promise.all([
-        input.client.downloadReleaseAsset(asset.browserDownloadUrl),
+        input.client.downloadReleaseAsset(asset.browserDownloadUrl, input.downloadOptions),
         input.client.commitShaForRef(input.repository, candidate.tagName),
       ]);
       try {
+        input.downloadOptions?.onPhase?.('installing');
         return await this.installFromArchive({
           archive,
           scope: input.scope,
@@ -534,6 +558,7 @@ export class PluginPackageManager {
             commitSha,
             fingerprint: `github:${input.repository}`,
           },
+          signal: input.signal,
         });
       } catch (error) {
         if (error instanceof PluginPackageManagerError && error.code === 'PLUGIN_PACKAGE_INCOMPATIBLE') {
@@ -563,6 +588,8 @@ export class PluginPackageManager {
     scope: PluginInstallationScope;
     libraryDirectory?: string;
     client: PluginGitHubClient;
+    signal?: AbortSignal;
+    downloadOptions?: PluginInstallFromGitHubInput['downloadOptions'];
   }): Promise<PluginInstallResult> {
     const tags = await input.client.listTags(input.repository);
     const compatibleTags = tags
@@ -586,11 +613,12 @@ export class PluginPackageManager {
 
     let lastCompatibilityFailure: unknown;
     for (const candidate of candidates) {
-      const downloaded = await input.client.downloadArchive(input.repository, candidate.ref);
+      const downloaded = await input.client.downloadArchive(input.repository, candidate.ref, input.downloadOptions);
       if (!/^[a-f0-9]{40,64}$/u.test(downloaded.commitSha)) {
         throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'GitHub returned an invalid commit SHA for the plugin archive.');
       }
       try {
+        input.downloadOptions?.onPhase?.('installing');
         return await this.installFromArchive({
           archive: downloaded.archive,
           scope: input.scope,
@@ -602,6 +630,7 @@ export class PluginPackageManager {
             commitSha: downloaded.commitSha,
             fingerprint: `github:${input.repository}`,
           },
+          signal: input.signal,
         });
       } catch (error) {
         if (error instanceof PluginPackageManagerError && error.code === 'PLUGIN_PACKAGE_INCOMPATIBLE') {
@@ -1159,7 +1188,16 @@ export class PluginPackageManager {
       throw error;
     }
     try {
-      return deviceStateSchema.parse(JSON.parse(contents));
+      const raw = JSON.parse(contents) as unknown;
+      const state = deviceStateSchema.parse(raw);
+      // Migrate the previous per-plugin UI to the new global switch without
+      // silently disabling an existing opt-in.
+      if (typeof raw === 'object' && raw !== null
+        && !Object.prototype.hasOwnProperty.call(raw, 'autoUpdateAll')
+        && state.updatePreferences.some((entry) => entry.autoUpdate)) {
+        state.autoUpdateAll = true;
+      }
+      return state;
     } catch {
       throw new PluginPackageManagerError('PLUGIN_DEVICE_STATE_INVALID', 'The local plugin trust and resolution state is invalid.');
     }

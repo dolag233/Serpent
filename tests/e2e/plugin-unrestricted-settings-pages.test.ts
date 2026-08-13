@@ -207,7 +207,7 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
     const installDialog = window.getByRole('dialog', { name: '安装插件' });
     await expect(installDialog).toBeVisible();
     await installDialog.getByLabel('安装范围').selectOption('user');
-    await installDialog.getByRole('button', { name: '安装本地插件' }).click();
+    await installDialog.getByRole('button', { name: '本地安装' }).click();
     await expect(dialog.getByText(/Unrestricted Settings Probe\s*-\s*v/)).toBeVisible({ timeout: 30_000 });
 
     const card = dialog.locator('.plugin-settings-scope-card').filter({

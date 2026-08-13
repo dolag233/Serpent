@@ -51,6 +51,20 @@ function createCorruptImage(destPath: string): void {
   writeFileSync(destPath, Buffer.from('this is not an image', 'utf-8'));
 }
 
+async function createPngBytes(width: number, height: number): Promise<Buffer> {
+  const sharp = require('sharp') as (input: unknown) => {
+    png(): { toBuffer(): Promise<Buffer> };
+  };
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 3,
+      background: { r: 40, g: 120, b: 220 },
+    },
+  }).png().toBuffer();
+}
+
 function importNoConflict(service: LibraryService, libraryId: string, sourcePath: string): void {
   sharedImportNoConflict(service, libraryId, sourcePath);
 }
@@ -172,30 +186,37 @@ describe('generateThumbnail (sharp)', () => {
     const pluginBytes = VALID_1X1_PNG.toString('base64');
 
     service.enqueueThumbnailJobs(created.libraryId);
+    let thumbnailResult: { width?: number; height?: number } | undefined;
     expect(await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 1,
+      onResult: (result) => {
+        thumbnailResult = result;
+      },
       pluginMediaProvider: async ({ assetId }) =>
-        service.writePluginMediaArtifact({
+        (await service.writePluginMediaArtifact({
           libraryId: created.libraryId,
           assetId,
           mimeType: 'image/png',
           bytesBase64: pluginBytes,
           providerId: 'probe-thumbnail',
-        }).artifactId,
+        })).artifactId,
     })).toBe(1);
+    expect(thumbnailResult).toMatchObject({ width: 1, height: 1 });
 
     const artifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
     expect(artifact).toMatchObject({
       status: 'ready',
       mimeType: 'image/png',
       generatorVersion: 'plugin:probe-thumbnail',
+      width: 1,
+      height: 1,
     });
     expect(readFileSync(service.getArtifactAbsolutePath(created.libraryId, artifact!.artifactId)))
       .toEqual(VALID_1X1_PNG);
     service.closeAll();
   });
 
-  it('serves a plugin image artifact for an otherwise unsupported preview', () => {
+  it('serves a plugin image artifact for an otherwise unsupported preview', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'PluginPreview', selectedParentPath: root });
@@ -204,7 +225,7 @@ describe('generateThumbnail (sharp)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
-    const artifact = service.writePluginMediaArtifact({
+    const artifact = await service.writePluginMediaArtifact({
       libraryId: created.libraryId,
       assetId: asset.assetId,
       mimeType: 'image/png',
@@ -227,7 +248,7 @@ describe('generateThumbnail (sharp)', () => {
     const created = service.createLibrary({ displayName: 'PNG', selectedParentPath: root });
 
     const sourcePath = path.join(root, 'test.png');
-    createTestImage(sourcePath);
+    writeFileSync(sourcePath, await createPngBytes(2048, 1024));
     importNoConflict(service, created.libraryId, sourcePath);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
@@ -248,6 +269,43 @@ describe('generateThumbnail (sharp)', () => {
     expect(row.mime_type).toBe('image/webp');
     expect(row.generator_version).toContain('sharp@');
     db.close();
+
+    const refreshed = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(refreshed).toMatchObject({ width: 2048, height: 1024 });
+
+    service.closeAll();
+  });
+
+  it('refreshes source dimensions after plugin-style content replacement', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ReplaceDimensions', selectedParentPath: root });
+    const sourcePath = path.join(root, 'upscale.png');
+    writeFileSync(sourcePath, await createPngBytes(256, 128));
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
+      .toMatchObject({ width: 256, height: 128 });
+
+    const upscaled = await createPngBytes(2048, 1024);
+    const replacement = service.replaceManagedAssetContent({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      dataBase64: upscaled.toString('base64'),
+      expectedRevisionId: asset.currentRevisionId,
+    });
+    expect(replacement.byteSize).toBe(upscaled.byteLength);
+
+    expect(await service.processThumbnailQueue(created.libraryId, { maxJobs: 1 })).toBe(1);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
+      .toMatchObject({
+        currentRevisionId: replacement.revisionId,
+        byteSize: upscaled.byteLength,
+        width: 2048,
+        height: 1024,
+      });
 
     service.closeAll();
   });

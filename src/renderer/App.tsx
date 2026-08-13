@@ -218,8 +218,6 @@ import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
 import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
-import { PluginTrustPromptDialog } from "./PluginTrustPromptDialog";
-import { usePluginTrustPrompt } from "./use-plugin-trust-prompt";
 import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
 import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
 import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
@@ -1149,11 +1147,6 @@ function AppInner() {
   const [appSettingsCategory, setAppSettingsCategory] =
     useState<AppSettingsCategoryId>("general");
   const [pluginContributionEpoch, setPluginContributionEpoch] = useState(0);
-  const pluginTrustPrompt = usePluginTrustPrompt({
-    api: (window as RendererWindow).serpent?.plugins,
-    libraryId: library?.libraryId,
-    suppressWhileSettingsOpen: appSettingsOpen && appSettingsCategory === "plugins",
-  });
   const pluginContributionRefreshKey = `${appSettingsOpen ? "settings" : "browse"}:${pluginContributionEpoch}`;
   const pluginSidebarRefreshKey = pluginContributionRefreshKey;
   useEffect(() => {
@@ -6692,7 +6685,7 @@ function AppInner() {
       linkedRulesEditorOpen: Boolean(linkedRulesEditor),
       convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
       dialogOpen: Boolean(dialog),
-      pluginTrustPromptOpen: Boolean(pluginTrustPrompt.pending),
+      pluginTrustPromptOpen: false,
       fatalAlertOpen: Boolean(fatalAlertMessage),
       aiConnectionFailureOpen: aiConnectionFailureGate.open,
       conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
@@ -6719,7 +6712,6 @@ function AppInner() {
     linkedRulesEditor,
     convertLinkedDialog.folderId,
     dialog,
-    pluginTrustPrompt.pending,
     fatalAlertMessage,
     aiConnectionFailureGate.open,
     conflicts?.importId,
@@ -6768,7 +6760,6 @@ function AppInner() {
       else presentImportConflicts(value);
     },
     setError,
-    onDismissPluginTrustPrompt: pluginTrustPrompt.dismissLater,
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
   });
@@ -6795,7 +6786,6 @@ function AppInner() {
       Boolean(imageSequenceImportOffer) ||
       Boolean(fatalAlertMessage) ||
       aiConnectionFailureGate.open ||
-      Boolean(pluginTrustPrompt.pending) ||
       (mediaJobsOpen && library !== null) ||
       linkedRulesEditor ||
       convertLinkedDialog.folderId,
@@ -9856,21 +9846,6 @@ function AppInner() {
         mcpApi={(window as RendererWindow).serpent?.mcp}
         open={appSettingsOpen}
       />
-      {pluginTrustPrompt.pending ? (
-        <PluginTrustPromptDialog
-          busy={pluginTrustPrompt.busy}
-          onLater={pluginTrustPrompt.dismissLater}
-          onOpenSettings={() => {
-            pluginTrustPrompt.hidePrompt();
-            setAppSettingsCategory("plugins");
-            setAppSettingsOpen(true);
-          }}
-          onTrustAll={() => {
-            void pluginTrustPrompt.trustAll();
-          }}
-          plugins={pluginTrustPrompt.pending}
-        />
-      ) : null}
       <LibrarySettingsDialog
         key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
         library={library}
