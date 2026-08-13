@@ -40,6 +40,29 @@ function safeContainedPath(root: string, relativePath: string): string {
   return candidate;
 }
 
+/**
+ * ZIP producers on Windows commonly emit `./file` (bsdtar `-c .`) or
+ * `dir\\file` (Compress-Archive). Neither is path traversal. Canonicalize to a
+ * relative POSIX path before the package-path schema runs.
+ */
+export function canonicalizePluginArchiveEntryPath(
+  entryName: string,
+): { ok: true; path: string } | { ok: true; skip: true } | { ok: false } {
+  if (entryName.includes('\0')) return { ok: false };
+  const posix = entryName.replaceAll('\\', '/');
+  if (posix.startsWith('/') || /^[A-Za-z]:/u.test(posix)) return { ok: false };
+  const segments: string[] = [];
+  for (const segment of posix.split('/')) {
+    if (segment.length === 0 || segment === '.') continue;
+    if (segment === '..') return { ok: false };
+    segments.push(segment);
+  }
+  if (segments.length === 0) return { ok: true, skip: true };
+  const relativePath = segments.join('/');
+  if (!pluginPackagePathSchema.safeParse(relativePath).success) return { ok: false };
+  return { ok: true, path: relativePath };
+}
+
 export async function inspectPluginDirectory(
   directory: string,
   source: PluginPackageSource,
@@ -155,7 +178,17 @@ export async function extractPluginArchive(
   if (entries.length > limits.maxFileCount) {
     throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'The plugin archive contains too many entries.');
   }
-  const fileNames = entries.filter((entry) => !entry.isDirectory).map((entry) => entry.entryName);
+  const canonicalFiles: Array<{ entry: (typeof entries)[number]; relativePath: string }> = [];
+  for (const entry of entries) {
+    if (entry.isDirectory) continue;
+    const canonical = canonicalizePluginArchiveEntryPath(entry.entryName);
+    if (!canonical.ok) {
+      throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin archive contains an absolute or traversing path.');
+    }
+    if (!('path' in canonical)) continue;
+    canonicalFiles.push({ entry, relativePath: canonical.path });
+  }
+  const fileNames = canonicalFiles.map((file) => file.relativePath);
   const rootSegments = fileNames.map((name) => name.split('/')[0]).filter((segment): segment is string => segment !== undefined);
   const hasSingleRoot = rootSegments.length > 0
     && pluginPackagePathSchema.safeParse(rootSegments[0]).success
@@ -163,17 +196,16 @@ export async function extractPluginArchive(
     && fileNames.every((name) => name.includes('/'));
   const rootPrefix = hasSingleRoot ? `${rootSegments[0]}/` : '';
   let expandedBytes = 0;
-  for (const entry of entries) {
+  for (const { entry, relativePath: canonicalPath } of canonicalFiles) {
     if (signal?.aborted) throw new Error('Plugin installation was stopped.');
-    if (entry.isDirectory) continue;
     const unixMode = (entry.attr >>> 16) & 0o170000;
     if (unixMode === 0o120000) {
       throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin archives must not contain symbolic links.');
     }
-    if (!entry.entryName.startsWith(rootPrefix)) {
+    if (!canonicalPath.startsWith(rootPrefix)) {
       throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin archive contains an invalid root entry.');
     }
-    const relativePath = entry.entryName.slice(rootPrefix.length);
+    const relativePath = canonicalPath.slice(rootPrefix.length);
     if (!pluginPackagePathSchema.safeParse(relativePath).success) {
       throw new PluginPackageManagerError('PLUGIN_ARCHIVE_INVALID', 'Plugin archive contains an absolute or traversing path.');
     }

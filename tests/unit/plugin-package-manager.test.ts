@@ -220,6 +220,26 @@ describe('PluginPackageManager installation and integrity', () => {
     })).rejects.toMatchObject({ code: 'PLUGIN_ARCHIVE_INVALID' });
   });
 
+  it('installs a Windows tar zip whose entries are prefixed with ./', async () => {
+    const source = temporaryRoot('serpent-plugin-source-');
+    const userData = temporaryRoot('serpent-plugin-user-');
+    writePlugin(source);
+    const archive = new AdmZip();
+    archive.addFile('./serpent-plugin.json', readFileSync(path.join(source, 'serpent-plugin.json')));
+    archive.addFile('./README.md', readFileSync(path.join(source, 'README.md')));
+    archive.addFile('./LICENSE', readFileSync(path.join(source, 'LICENSE')));
+    archive.addFile('./dist/main.js', readFileSync(path.join(source, 'dist', 'main.js')));
+    archive.addFile('./dist/ui/index.html', readFileSync(path.join(source, 'dist', 'ui', 'index.html')));
+    const manager = createManager(userData);
+
+    const installed = await manager.installFromArchive({
+      archive: archive.toBuffer(),
+      scope: 'user',
+      source: { kind: 'local-package', fingerprint: 'zip:windows-tar' },
+    });
+    expect(installed.package.lock.pluginId).toBe('com.example.palette-tools');
+  });
+
   it('uses a GitHub repository client to pick the latest compatible tag without Releases or build commands', async () => {
     const source = temporaryRoot('serpent-plugin-source-');
     const userData = temporaryRoot('serpent-plugin-user-');
