@@ -8,7 +8,7 @@
 
 | 目标 | 入门 | API 参考 |
 | --- | --- | --- |
-| 编写插件 | [插件开发指南](plugins/development.md) | [插件 API 参考](plugins/api-reference.md) |
+| 编写插件 | [插件开发指南](plugins/development.md) · [最佳实践](plugins/best-practices.md) | [插件 API 参考](plugins/api-reference.md) |
 | 编写自动化脚本 | [脚本开发指南](scripts/development.md) | [脚本 API 参考](scripts/api-reference.md) |
 | 接入 MCP | [MCP 开发指南](mcp/development.md) | [MCP API 参考](mcp/api-reference.md) |
 

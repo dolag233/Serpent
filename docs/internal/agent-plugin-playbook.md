@@ -1,11 +1,12 @@
 # Agent 插件开发与测试 Playbook
 
-> 给实现/测试插件的 Agent 用。人类开发者见 [插件开发手册](../manual/plugins/development.md) 与 [插件 API 参考](../manual/plugins/api-reference.md)。
+> 给实现/测试插件的 Agent 用。人类开发者见 [插件开发手册](../manual/plugins/development.md)、[插件开发最佳实践](../manual/plugins/best-practices.md) 与 [插件 API 参考](../manual/plugins/api-reference.md)。
+> 完整参考实现：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
 > 验收口径（产品 2026-08-01）：**插件 / 脚本 / MCP / Gateway 以自动化测试为准；该范围要求的测试绿即视为通过**，不依赖人类逐步点验。
 
 ## 1. 开工前
 
-1. 读本文件 + 上述两份人读文档 + `docs/internal/implementation/0024-script-plugin-platform.md`（需要时）。  
+1. 读本文件 + 上述人读文档 + `docs/internal/implementation/0024-script-plugin-platform.md`（需要时）。  
 2. 主仓：`/Users/dolag/Development/Serpent`（本地磁盘；禁止 NAS/SMB 跑 Electron）。  
 3. 插件源码：与 Serpent **同级 sibling**（如 `Serpent-Plugin-ImageUpscaler`），**不要**放进主仓目录。  
 4. Node：`.nvmrc`（24.x）；主仓依赖已 `npm ci`。  
@@ -16,26 +17,26 @@
 ```text
 my-plugin/
   serpent-plugin.json
-  entry/main.js    # 已编译；standard / trusted 均可加载
+  entry/main.js    # 已编译；restricted / unrestricted 均可加载
   README.md
   LICENSE
 ```
 
-清单必填：`id`、`version`、`engines.serpent`、`engines.pluginApi`、`runtime.mode`（`standard`|`trusted`）、`runtime.entry`、`permissions`、`contributes`。
+清单必填：`id`、`version`、`engines.serpent`、`engines.pluginApi`、`runtime.mode`（`restricted`|`unrestricted`）、`runtime.entry`、`permissions`、`contributes`。
 
 入口：
 
 ```js
-exports.activate = async function activate(serpent) { /* ... */ };
-exports.deactivate = async function deactivate() {};
+exports.setup = async function setup(context) { /* ... */ };
+exports.dispose = async function dispose(reason) { void reason; };
 ```
 
 - 领域读写走 `serpent.*`（Automation Gateway）。  
 - 读/写资产字节：`content.read` / `content.write` → `readContent` / `replaceContent`（写回有计划确认）。  
 - 模型/缓存：`data.files` → `serpent.data.getDirectory({ scope? })`  
-  - user：`{userData}/plugin-data/<pluginId>/`  
-  - library：`<库>/.serpent/plugin-data/<pluginId>/`  
-- ONNX / 原生 / 任意 `fs`：用 `trusted`；仍优先用 `serpent.*` 改库，禁止 shell `mv` 覆盖 `Assets/`。
+  - user：`{userData}/plugin-files/<pluginId>/`  
+  - library：`<库>/.serpent/plugin-files/<pluginId>/`  
+- ONNX / 原生 / 任意 `fs`：用 `unrestricted`；仍优先用 `serpent.*` 改库，禁止 shell `mv` 覆盖 `Assets/`。
 
 主仓夹具参考：`tests/fixtures/plugins/*-probe/`。
 

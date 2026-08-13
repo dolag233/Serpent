@@ -22,7 +22,9 @@
 
 面向编写插件、脚本、MCP 适配器的开发者。**不需要了解软件架构**，直接看[扩展作者手册](../manual/README.md)：
 
-- [插件开发指南](../manual/plugins/development.md) + [API 参考](../manual/plugins/api-reference.md)
+- [插件开发指南](../manual/plugins/development.md) + [最佳实践](../manual/plugins/best-practices.md) + [API 参考](../manual/plugins/api-reference.md)
+- [插件分发与更新](../manual/plugins/distribution-and-updates.md)
+- 完整参考实现：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)
 - [脚本开发指南](../manual/scripts/development.md) + [API 参考](../manual/scripts/api-reference.md)
 - [MCP 开发指南](../manual/mcp/development.md) + [API 参考](../manual/mcp/api-reference.md)
 

@@ -4,6 +4,16 @@
 `plugin-manifest.ts`、`plugin-sdk.ts`、Plugin Manager API 和测试 fixture 为准；当前平台仍处于开发态，
 未在本文中承诺尚未实现的能力。
 
+相关文档：
+
+| 文档 | 用途 |
+| --- | --- |
+| 本文 | Manifest、生命周期、Contribution、Job、设置、发布前测试 |
+| [插件 API 参考](api-reference.md) | `serpent.*` 方法、权限和错误码 |
+| [插件分发与更新](distribution-and-updates.md) | 安装通道、平台 token、GitHub Release 文件名 |
+| [插件开发最佳实践](best-practices.md) | 成品包、ZIP 路径、Job 进度、内容分块、原生二进制 |
+| [Image Upscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler) | 无限制插件 + 平台 Release 的参考实现 |
+
 ## 1. 先了解插件模型
 
 插件是长期运行的扩展，不是一次性脚本。它可以声明命令、菜单、工具栏、Inspector/Viewer 操作、快捷键、
@@ -35,7 +45,9 @@ my-plugin/
 ```
 
 入口可以由 TypeScript 编译生成，但安装和运行时只读取包内已生成的 JavaScript；安装过程不替插件执行
-`npm install`、构建、`postinstall` 或 Shell。
+`npm install`、构建、`postinstall` 或 Shell。ZIP 条目必须是相对 POSIX 路径（`entry/main.js`），不要写成
+`./entry/main.js` 或 `entry\\main.js`。细则与 Windows 打包方式见 [最佳实践 §8](best-practices.md#8-成品包与-zip-条目名)
+和 [分发规范](distribution-and-updates.md)。
 
 一个最小受限插件：
 
@@ -455,9 +467,20 @@ quarantine。`dispose` 应可重复调用且不依赖当前 UI。
 4. 本地文件夹、ZIP、GitHub Release ZIP 均安装、信任、激活、停用、升级、卸载过。
 5. 已测试升级 staging、失败恢复、Job 中断后的显式重试、完整重启以及 user/library 两种安装范围。
 6. 发布版本保持稳定 `id`，并记录支持的 Serpent SemVer 与 Plugin API 版本。
+7. ZIP 条目名、平台 asset 文件名和原生二进制执行位按 [最佳实践](best-practices.md) 核对。
 
 ## 13. 明确不应写入插件的能力
 
 当前不要依赖动态 Contribution Registrar、尚未发布的通用 descriptor Registrar、`openLibrary`、通用 Host GPU/VRAM/CPU/内存 API、Host 共享模型 Worker、
 宿主 React/DOM 注入、通用 Python 运行时、任意 SQL、系统全局键鼠 Hook 或由权限拦截 unrestricted Node 行为。它们不是当前可发布的
 插件契约；不确定的行为按开发态限制处理，并在插件 README 中说明。
+
+## 14. 参考实现
+
+仓库内的 `tests/fixtures/plugins/*-probe/` 覆盖单一扩展点，适合对照 schema 和 Host 行为。
+
+需要对照「可安装、可发布、带原生运行时」的完整插件时，使用
+[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
+它演示了 `unrestricted` + `global`、`setup`/`dispose`、冻结 `invocation`、Job 工作单元进度、
+Base64 分块 staging、一次 `replaceContentBatch`，以及 macOS/Windows GitHub Release 平台 ZIP。
+实践说明集中在 [插件开发最佳实践](best-practices.md)。

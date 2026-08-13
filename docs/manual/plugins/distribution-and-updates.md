@@ -4,7 +4,7 @@
 > 安装通道：**GitHub** · **本地 ZIP** · **本地文件夹**  
 > 实现跟踪：`Serpent-u3nx`（Release asset + 平台匹配）、`Serpent-8r91`（更新提示与自动更新）  
 
-> 相关：[插件开发手册](development.md)、[0024](../../internal/implementation/0024-script-plugin-platform.md)、[ADR-0026](../../internal/adr/0026-plugin-runtime-installation-and-trust.md)
+> 相关：[插件开发手册](development.md)、[插件开发最佳实践](best-practices.md)、[0024](../../internal/implementation/0024-script-plugin-platform.md)、[ADR-0026](../../internal/adr/0026-plugin-runtime-installation-and-trust.md)
 
 ## 1. 安装通道（产品面）
 
@@ -87,6 +87,18 @@ LICENSE
 ```
 
 禁止依赖用户机器现场执行 `npm install` / `npm run build` 才能通过校验。
+
+### 3.1 ZIP 条目路径
+
+Host 用 adm-zip **读取** ZIP，不在 Windows 上提供 `zip` 命令。条目名必须是相对 POSIX 路径：
+
+- 使用 `/` 分隔目录，例如 `entry/main.js`。
+- 不要使用 `\`、盘符、前导 `/`、`..`。
+- 不要把当前目录写成路径段：`./serpent-plugin.json` 会被旧版 Host 拒绝（`PLUGIN_ARCHIVE_INVALID`：absolute or traversing path）。当前 Host 会去掉 `./` 并把 `\` 换成 `/`，但发布包仍应写出不含这些前缀的路径。
+- 允许 ZIP 内有且仅有一层包裹目录（`my-plugin/serpent-plugin.json`）；解压后会剥掉该前缀。
+- 禁止符号链接。
+
+Windows 上 `tar -a -c -f out.zip -C dist .` 会稳定写出 `./` 前缀；`Compress-Archive` 可能写出反斜杠。不要依赖这两条命令直接作为 Release 产物。打包方式见 [最佳实践 §8](best-practices.md#8-成品包与-zip-条目名)。参考实现：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
 
 ## 4. GitHub Release 结构与 asset 命名
 
@@ -171,10 +183,12 @@ Safe Mode 只停用无限制插件；自动更新检查可继续，但**不得**
 
 1. `npm ci && npm run build`（或等价）产出成品目录  
 2. 按平台打 ZIP（原生依赖必须打进对应平台包，勿假设用户有编译链）  
-3. 按 §4.2 命名并上传到 GitHub Release  
-4. 清单 `version` 与 Release tag / 文件名 version 一致  
-5. 无限制插件填写正确的 `nativeModules`（platform/arch/nodeAbi）  
-6. README 写明支持的平台 token 列表  
+3. 抽查 ZIP 条目为相对 POSIX 路径，无 `./`、`\`、`..`  
+4. 按 §4.2 命名并上传到 GitHub Release  
+5. 清单 `version` 与 Release tag / 文件名 version 一致  
+6. 无限制插件填写正确的 `nativeModules`（platform/arch/nodeAbi）  
+7. README 写明支持的平台 token 列表  
+8. Unix 可执行文件不要假设解压后仍有执行位；运行时按需 `chmod`  
 
 ## 7. 实现分期
 
