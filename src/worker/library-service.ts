@@ -28,6 +28,7 @@ import {
 } from 'node:fs';
 import { rm as rmAsync } from 'node:fs/promises';
 import path from 'node:path';
+import { removePathWithSyncRetry, renamePathWithRetry } from './windows-fs-retry';
 import {
   execFile,
   execFileSync,
@@ -5103,7 +5104,10 @@ export class LibraryService {
 
   private removeOperation(operationPath: string): void {
     this.assertSafeOperationPath(operationPath);
-    rmSync(operationPath, { force: true, recursive: true });
+    // Windows: a Defender scan of just-moved staged files (or any lingering
+    // child handle) makes recursive rm throw EBUSY/EPERM/ENOTEMPTY for a
+    // short moment; retry transient locks before reporting failure.
+    removePathWithSyncRetry(operationPath);
     try {
       rmdirSync(path.dirname(operationPath));
     } catch {
@@ -10039,7 +10043,11 @@ export class LibraryService {
       const directoryPath = this.folderPath(openLibrary, folder.relative_path);
       if (existsSync(directoryPath)) {
         mkdirSync(path.dirname(stagedTreePath), { recursive: true });
-        renameSync(directoryPath, stagedTreePath);
+        // Windows: the folder rename fails with EPERM/EBUSY while the folder
+        // (or a child) is held open — Explorer, Defender scan, a player.
+        // Retry transient locks briefly; a persistent lock falls through to
+        // the typed error below, surfaced to the user as FILE_BUSY.
+        renamePathWithRetry(directoryPath, stagedTreePath);
       }
       folderTreeStaged = true;
       manifest.phase = 'filesystem-staged';
@@ -10061,7 +10069,19 @@ export class LibraryService {
       openLibrary.connection.prepare(
         "UPDATE file_operations SET status = 'committed', manifest_json = ?, updated_at = ? WHERE operation_id = ?",
       ).run(JSON.stringify(manifest), new Date().toISOString(), folderOperationId);
-      this.removeOperation(operationPath);
+      try {
+        this.removeOperation(operationPath);
+      } catch (cleanupError) {
+        // The tombstones, asset trash and folder staging all committed — a
+        // lingering handle on a staged file (Defender scan, Explorer) must
+        // not turn a successful trash into a reported failure. A committed
+        // operation directory is safe to retain; reopen recovery sweeps it.
+        this.diagnose('folder.trash.committed-cleanup', cleanupError, {
+          libraryId: input.libraryId,
+          folderId: input.folderId,
+          operationId: folderOperationId,
+        });
+      }
       const removedFolderCount = tombstoneFolders.length;
       return { trashedAssetCount, removedFolderCount, tombstoneIds, rootTombstoneId };
     } catch (error) {

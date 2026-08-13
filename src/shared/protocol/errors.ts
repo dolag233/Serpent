@@ -165,10 +165,15 @@ export function publicReasonFromError(error: unknown): PublicErrorReason | undef
     }
     if ('code' in current && typeof current.code === 'string') {
       const reasonByCode: Partial<Record<string, PublicErrorReason>> = {
-        EACCES: 'PERMISSION_DENIED', EPERM: 'PERMISSION_DENIED',
+        EACCES: 'PERMISSION_DENIED',
+        // Windows EPERM is overwhelmingly a lock / delete-pending state
+        // (Explorer holding a folder, Defender scan) rather than an ACL
+        // denial, which surfaces as EACCES; FILE_BUSY gives the actionable
+        // guidance instead of a misleading permission message.
+        EPERM: process.platform === 'win32' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
         ENAMETOOLONG: 'PATH_LIMIT_EXCEEDED', ENOSPC: 'DISK_FULL', EDQUOT: 'DISK_FULL',
         EROFS: 'READ_ONLY_FILESYSTEM', ENOENT: 'SOURCE_NOT_FOUND', ENOTDIR: 'SOURCE_NOT_FOUND',
-        EINVAL: 'NAME_NOT_SUPPORTED', EIO: 'IO_ERROR', EBUSY: 'IO_ERROR', EMFILE: 'IO_ERROR',
+        EINVAL: 'NAME_NOT_SUPPORTED', EIO: 'IO_ERROR', EBUSY: 'FILE_BUSY', EMFILE: 'IO_ERROR',
       };
       const reason = reasonByCode[current.code];
       if (reason) return reason;

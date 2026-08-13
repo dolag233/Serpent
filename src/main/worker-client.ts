@@ -45,7 +45,10 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
-const READY_TIMEOUT_MS = 5_000;
+// 15s: a cold UtilityProcess spawn under memory pressure (large game/IDE
+// processes, AV scanning the fresh bundle) legitimately exceeds 5s before the
+// worker module finishes loading; a too-tight handshake fails startup.
+const READY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
@@ -134,6 +137,31 @@ export class LibraryWorkerClient {
   async start(): Promise<void> {
     if (this.#child) throw new Error('Library Worker has already been started.');
 
+    // A cold UtilityProcess spawn can be transiently slow on loaded machines
+    // (memory pressure, antivirus scanning the freshly built bundle): the
+    // fixed 5s ready handshake used to fail `npm start` outright (regression
+    // observed on Windows under heavy load — worker.boot never logged, the
+    // module simply had not finished loading). Retry the spawn once before
+    // failing startup so a slow first boot survives.
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await this.#startAttempt(attempt);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt === 1) {
+          this.logger.info(
+            'worker.ready-retry',
+            'Library Worker failed to become ready on the first attempt; retrying the spawn.',
+          );
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async #startAttempt(attempt: number): Promise<void> {
     const child = utilityProcess.fork(this.#modulePath, [], {
       serviceName: 'Serpent Library Worker',
       stdio: 'pipe',
@@ -153,7 +181,10 @@ export class LibraryWorkerClient {
       });
     });
     child.on('spawn', () => {
-      this.logger.info('worker.spawn', 'Library Worker spawned.', { pid: child.pid });
+      this.logger.info('worker.spawn', 'Library Worker spawned.', {
+        pid: child.pid,
+        attempt,
+      });
     });
     child.on('exit', this.#onExit);
 
@@ -165,10 +196,10 @@ export class LibraryWorkerClient {
         this.logger.error(
           'worker.ready-timeout',
           new Error('Library Worker ready handshake timed out.'),
-          { pid: child.pid, timeoutMs: READY_TIMEOUT_MS },
+          { pid: child.pid, timeoutMs: READY_TIMEOUT_MS, attempt },
         );
-        reject(new Error('Library Worker ready handshake timed out.'));
         child.kill();
+        reject(new Error('Library Worker ready handshake timed out.'));
       }, READY_TIMEOUT_MS);
 
       const onInitialMessage = (message: unknown) => {
@@ -177,8 +208,8 @@ export class LibraryWorkerClient {
         } catch (error) {
           clearTimeout(timer);
           child.off('message', onInitialMessage);
-          reject(new Error('Library Worker sent a malformed ready handshake.', { cause: error }));
           child.kill();
+          reject(new Error('Library Worker sent a malformed ready handshake.', { cause: error }));
           return;
         }
 
@@ -197,7 +228,6 @@ export class LibraryWorkerClient {
       });
       child.on('message', onInitialMessage);
     });
-
   }
 
   request(

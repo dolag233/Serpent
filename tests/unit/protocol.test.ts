@@ -4,7 +4,7 @@ import {
   parseRendererRequest,
   parseWorkerRequest,
 } from '../../src/shared/protocol/requests';
-import { createPublicError, toPublicError } from '../../src/shared/protocol/errors';
+import { createPublicError, publicReasonFromError, toPublicError } from '../../src/shared/protocol/errors';
 import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
@@ -2157,5 +2157,34 @@ describe('model convert-fbx protocol (slice B, Serpent-5ygi)', () => {
         errorCode: 'FBX_BROKE',
       },
     })).toThrow();
+  });
+});
+
+describe('publicReasonFromError', () => {
+  it('maps EBUSY to FILE_BUSY (folder/file held open)', () => {
+    expect(
+      publicReasonFromError(Object.assign(new Error('busy'), { code: 'EBUSY' })),
+    ).toBe('FILE_BUSY');
+  });
+
+  it('maps EPERM to FILE_BUSY on Windows (lock/delete-pending, not ACL)', () => {
+    expect(
+      publicReasonFromError(Object.assign(new Error('denied'), { code: 'EPERM' })),
+    ).toBe(process.platform === 'win32' ? 'FILE_BUSY' : 'PERMISSION_DENIED');
+  });
+
+  it('maps EACCES to PERMISSION_DENIED on every platform', () => {
+    expect(
+      publicReasonFromError(Object.assign(new Error('denied'), { code: 'EACCES' })),
+    ).toBe('PERMISSION_DENIED');
+  });
+
+  it('walks the cause chain of a wrapped LibraryServiceError', () => {
+    const wrapped = Object.assign(new Error('LIBRARY_NOT_WRITABLE'), {
+      cause: Object.assign(new Error('locked'), { code: 'EPERM' }),
+    });
+    expect(publicReasonFromError(wrapped)).toBe(
+      process.platform === 'win32' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
+    );
   });
 });
