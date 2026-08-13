@@ -27,13 +27,6 @@ function policyStore(): McpPermissionPolicyStore {
 function createBroker(options: {
   policyStore: McpPermissionPolicyStore;
   audit?: { info: (scope: string, message: string, context?: Record<string, unknown>) => void };
-  confirmOutOfScope?: (input: {
-    credentialId: string;
-    clientName?: string;
-    commandId: string;
-    summary: string;
-    targetCount: number;
-  }) => Promise<boolean>;
 }): McpPermissionBroker {
   return new McpPermissionBroker({ ...options, challengeStore: new McpOperationChallengeStore() });
 }
@@ -70,7 +63,7 @@ describe('MCP permission broker', () => {
     expect(audit).toHaveBeenCalledWith('mcp.permission.auto', expect.any(String), expect.objectContaining({
       credentialId: '00000000-0000-4000-8000-000000000001',
       commandId: 'tag.create',
-      mode: 'read-write',
+      mode: 'auto',
       capabilities: ['tag.write'],
     }));
   });
@@ -149,7 +142,7 @@ describe('MCP permission broker', () => {
       context: {
         credentialId: '00000000-0000-4000-8000-000000000001',
         commandId: 'tag.create',
-        mode: 'read-write',
+        mode: 'auto',
         capabilities: ['tag.write'],
       },
     }]);
@@ -339,112 +332,30 @@ describe('MCP dangerous operation challenge (Serpent-8b5b.2)', () => {
   });
 });
 
-describe('MCP read-only profile and full-access dangerous bypass (permission profiles)', () => {
+describe('MCP Auto and Full Access profiles', () => {
   const credentialId = '00000000-0000-4000-8000-000000000001';
 
-  it('asks the desktop user before a read-only credential may write', async () => {
+  it('runs routine writes in Auto without a desktop prompt', async () => {
     const store = policyStore();
-    store.setMode(credentialId, 'read-only');
-    const decisions: Array<{ commandId: string; targetCount: number }> = [];
-    const broker = createBroker({
-      policyStore: store,
-      confirmOutOfScope: async (input) => {
-        decisions.push({ commandId: input.commandId, targetCount: input.targetCount });
-        return true;
-      },
-    });
-    const authorization = await broker.authorize({
-      context: context({ clientCredentialId: credentialId, clientName: 'browse-agent' }),
-      descriptor: descriptor('tag.create'),
-      commandInput: { name: 'x' },
-    });
-    expect(authorization).toEqual({ allowed: true, scope: 'already-granted' });
-    expect(decisions).toEqual([{ commandId: 'tag.create', targetCount: 0 }]);
-  });
-
-  it('denies a read-only write when the desktop user declines', async () => {
-    const store = policyStore();
-    store.setMode(credentialId, 'read-only');
-    const broker = createBroker({
-      policyStore: store,
-      confirmOutOfScope: async () => false,
-    });
-    const authorization = await broker.authorize({
-      context: context({ clientCredentialId: credentialId }),
-      descriptor: descriptor('tag.create'),
-      commandInput: { name: 'x' },
-    });
-    expect(authorization).toEqual({ allowed: false, reason: 'denied' });
-  });
-
-  it('denies a read-only write deterministically when no confirmation handler exists', async () => {
-    const store = policyStore();
-    store.setMode(credentialId, 'read-only');
+    store.setMode(credentialId, 'auto');
     const broker = createBroker({ policyStore: store });
     const authorization = await broker.authorize({
       context: context({ clientCredentialId: credentialId }),
       descriptor: descriptor('tag.create'),
       commandInput: { name: 'x' },
     });
-    expect(authorization).toEqual({ allowed: false, reason: 'denied' });
-  });
-
-  it('lets read-only credentials read without any confirmation', async () => {
-    const store = policyStore();
-    store.setMode(credentialId, 'read-only');
-    const broker = createBroker({ policyStore: store });
-    const authorization = await broker.authorize({
-      context: context({ clientCredentialId: credentialId }),
-      descriptor: descriptor('asset.search'),
-      commandInput: { query: { clauses: [] } },
-    });
     expect(authorization).toEqual({ allowed: true, scope: 'already-granted' });
   });
 
-  it('executes dangerous operations directly under full-access without a challenge', async () => {
+  it('keeps the dangerous challenge under Full Access', async () => {
     const store = policyStore();
     store.setMode(credentialId, 'full-access');
     const broker = createBroker({ policyStore: store });
     const authorization = await broker.authorize({
       context: context({ clientCredentialId: credentialId, libraryId: 'library-1', contextRevision: 3 }),
       descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'] },
+      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'], idempotencyKey: 'full-access-delete' },
     });
-    expect(authorization).toEqual({ allowed: true, scope: 'always-allow' });
-  });
-
-  it('never lets a read-only credential confirm a dangerous operation by itself (desktop user must approve)', async () => {
-    // Sonnet review regression: the critical branch used to run before the
-    // read-only gate, so a read-only credential could delete assets forever
-    // through the agent-confirmable two-phase challenge with no human at all.
-    const store = policyStore();
-    store.setMode(credentialId, 'read-only');
-    const decisions: Array<{ commandId: string; targetCount: number }> = [];
-    const broker = createBroker({
-      policyStore: store,
-      confirmOutOfScope: async (input) => {
-        decisions.push({ commandId: input.commandId, targetCount: input.targetCount });
-        return true;
-      },
-    });
-    const authorization = await broker.authorize({
-      context: context({ clientCredentialId: credentialId, libraryId: 'library-1', contextRevision: 3 }),
-      descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1', 'asset-2'] },
-    });
-    expect(authorization).toEqual({ allowed: true, scope: 'already-granted' });
-    expect(decisions).toEqual([{ commandId: 'asset.delete-permanent', targetCount: 2 }]);
-  });
-
-  it('denies a read-only dangerous operation when no confirmation handler exists', async () => {
-    const store = policyStore();
-    store.setMode(credentialId, 'read-only');
-    const broker = createBroker({ policyStore: store });
-    const authorization = await broker.authorize({
-      context: context({ clientCredentialId: credentialId, libraryId: 'library-1', contextRevision: 3 }),
-      descriptor: descriptor('asset.delete-permanent'),
-      commandInput: { libraryId: 'library-1', assetIds: ['asset-1'] },
-    });
-    expect(authorization).toEqual({ allowed: false, reason: 'denied' });
+    expect(authorization).toMatchObject({ allowed: false, reason: 'challenge-required' });
   });
 });

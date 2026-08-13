@@ -21,18 +21,6 @@ export interface McpPermissionBrokerOptions {
   policyStore: McpPermissionPolicyStore;
   /** Single-use store for dangerous two-phase challenges. */
   challengeStore: McpOperationChallengeStore;
-  /**
-   * Desktop confirmation for writes that are outside the credential's
-   * profile (a read-only credential attempting a write). The MCP call
-   * waits for the user's decision; an absent handler denies immediately.
-   */
-  confirmOutOfScope?: (input: {
-    credentialId: string;
-    clientName?: string;
-    commandId: string;
-    summary: string;
-    targetCount: number;
-  }) => Promise<boolean>;
   audit?: {
     info(scope: string, message: string, context?: Record<string, unknown>): void;
   };
@@ -41,21 +29,18 @@ export interface McpPermissionBrokerOptions {
 /**
  * Resolves credential-profile MCP access without transport-session state.
  *
- * Profiles: read-only (writes need a desktop confirmation), read-write
- * (ordinary writes direct, dangerous ops need the two-phase challenge),
- * full-access (everything direct — the user accepted the responsibility when
- * enabling it).
+ * Profiles: Auto (routine and recoverable work direct) and Full Access. Both
+ * profiles retain the exact Agent challenge for dangerous operations; no MCP
+ * request ever opens a human permission dialog.
  */
 export class McpPermissionBroker implements AutomationPermissionBroker {
   readonly #policyStore: McpPermissionPolicyStore;
   readonly #challengeStore: McpOperationChallengeStore;
-  readonly #confirmOutOfScope: McpPermissionBrokerOptions['confirmOutOfScope'];
   readonly #audit: McpPermissionBrokerOptions['audit'];
 
   public constructor(options: McpPermissionBrokerOptions) {
     this.#policyStore = options.policyStore;
     this.#challengeStore = options.challengeStore;
-    this.#confirmOutOfScope = options.confirmOutOfScope;
     this.#audit = options.audit;
   }
 
@@ -76,51 +61,9 @@ export class McpPermissionBroker implements AutomationPermissionBroker {
     }
     const mode = this.#policyStore.getMode(credentialId);
 
-    // Serpent-8b5b.8 + sonnet review: the read-only gate applies to EVERY
-    // write — including dangerous critical operations that would otherwise
-    // fall through to the agent-confirmable two-phase challenge below and
-    // permanently delete assets with zero human participation. A read-only
-    // credential only ever writes when the desktop user approves the
-    // out-of-scope confirmation right here.
-    if (mode === 'read-only' && descriptor.impact !== 'read') {
-      const targetCount = this.deriveTargets(input.commandInput).length;
-      if (this.#confirmOutOfScope !== undefined) {
-        const approved = await this.#confirmOutOfScope({
-          credentialId,
-          clientName: context.clientName,
-          commandId: descriptor.commandId,
-          summary: descriptor.summary,
-          targetCount,
-        });
-        if (approved) {
-          this.#audit?.info(
-            'mcp.permission.out-of-scope-approved',
-            'A write outside the read-only profile was approved by the desktop user.',
-            { credentialId, commandId: descriptor.commandId, targetCount },
-          );
-          return { allowed: true, scope: 'already-granted' };
-        }
-      }
-      this.#audit?.info(
-        'mcp.permission.out-of-scope-denied',
-        'A write outside the read-only profile was denied.',
-        { credentialId, commandId: descriptor.commandId, targetCount },
-      );
-      return { allowed: false, reason: 'denied' };
-    }
-
-    // Dangerous operations: full-access runs them directly (the user accepted
-    // the responsibility when enabling it); read-write still needs the
-    // two-phase agent challenge.
+    // Dangerous operations always require the exact Agent challenge. Full
+    // Access changes routine capability exposure only; it is not a bypass.
     if (descriptor.criticalOperation === true) {
-      if (mode === 'full-access') {
-        this.#audit?.info(
-          'mcp.permission.full-access-critical',
-          'Dangerous MCP operation executed under the full-access profile.',
-          { credentialId, commandId: descriptor.commandId },
-        );
-        return { allowed: true, scope: 'always-allow' };
-      }
       return this.authorizeCritical(input);
     }
 

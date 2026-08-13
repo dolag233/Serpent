@@ -11,6 +11,7 @@
 - bearer credential 只保存带应用 pepper 的 SHA-256 哈希；HTTP 请求先完成 Host/Origin/认证校验，再读取 body。
 - MCP session 与 Automation Execution、活动资源库、context revision、能力授权和动态工具列表绑定；资源库切换通过 Main 的本机选择器/确认和 Gateway。
 - 删除旧 stdio、headless、attached proxy、私有 socket、启动脚本及其旧测试；Registry/Gateway/Journal 作为唯一命令与权限边界保留。
+- 2026-08-13 收口历史遗留 E2E：`tests/e2e/automation-mcp-launcher.test.ts` 不再启动废弃 `run-mcp`，改为隔离 Desktop profile 的内嵌 HTTP 配置、真实 SDK initialize/tools/list/tools/call、断开重连测试。
 - 为 Windows 补充设置、凭据、Execution Journal 的受控 JSON 文件替换路径，并在服务 listener/runtime 错误时清理 session。
 - 根据独立 Luna 审查补齐 IPC Zod 边界、崩溃恢复写入、MCP cancellation/progress、MCP 原生路径选择、稳定 HTTP 错误码、插件 `tools/list_changed` 通知，并清理当前用户文档中的旧入口说明。
 

@@ -1,8 +1,7 @@
 // Serpent-033e: a library written by a newer build must still open — in
 // read-only mode — instead of throwing LIBRARY_VERSION_TOO_NEW and locking
 // the user out. Writes fail at the SQLite level and map to LIBRARY_READ_ONLY.
-import { rmSync } from 'node:fs';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -100,6 +99,47 @@ describe('read-only degrade for newer-schema libraries', () => {
         .run('00000000-0000-0000-0000-000000000000', 'x', 'now'),
     ).toThrow(/readonly/iu);
     db.close();
+  });
+
+  it('rejects disk-delete before touching files or folders in a read-only library', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: '只读磁盘保护', selectedParentPath: root });
+    const source = path.join(root, 'protected.png');
+    writeFileSync(source, Buffer.from('protected asset'));
+    const folder = service.createManagedFolder({
+      libraryId: created.libraryId,
+      name: 'Folder',
+    });
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+      targetFolderId: folder.folderId,
+    });
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const managedAssetPath = path.join(created.libraryPath, 'Assets', 'Folder', 'protected.png');
+    const managedFolderPath = path.join(created.libraryPath, 'Assets', 'Folder');
+    expect(existsSync(managedAssetPath)).toBe(true);
+
+    service.closeAll();
+    markLibraryAsV37(created.libraryPath);
+    const summary = service.openLibrary(created.libraryPath);
+    expect(summary.readOnly).toBe(true);
+
+    expect(() => service.deleteAssetsFromDisk({
+      libraryId: created.libraryId,
+      assetIds: [asset.assetId],
+    })).toThrow('LIBRARY_READ_ONLY');
+    expect(() => service.deleteManagedFolderFromDisk({
+      libraryId: created.libraryId,
+      folderId: folder.folderId,
+    })).toThrow('LIBRARY_READ_ONLY');
+
+    expect(existsSync(managedAssetPath)).toBe(true);
+    expect(existsSync(managedFolderPath)).toBe(true);
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(1);
+    expect(service.listManagedFolders(created.libraryId)).toHaveLength(1);
   });
 
   it('maps SQLITE_READONLY failures to the LIBRARY_READ_ONLY public code', () => {

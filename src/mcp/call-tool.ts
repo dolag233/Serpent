@@ -14,6 +14,7 @@ import type { PublicErrorCode } from '../shared/protocol/errors';
 import { normalizeAutomationAssetSearchInput } from '../main/normalize-automation-asset-search-input';
 import {
   parsePluginMcpToolArguments,
+  parsePluginMcpLibraryId,
   type PluginMcpToolDefinition,
 } from './plugin-tool-catalog';
 import {
@@ -115,12 +116,31 @@ export async function callSerpentMcpTool(
 ): Promise<SerpentMcpCallToolResult> {
   const context = contextWithRequestSignal(input.context, input.signal);
   const executionId = context?.executionId;
-  const libraryId = context?.libraryId ?? undefined;
   const tool = resolveSerpentMcpTool(input.toolName, input.exposure);
   if (!tool) {
     const knownRegistryTool = automationCommandRegistry.some((descriptor) => descriptor.mcp.toolName === input.toolName);
-    const knownPluginTool = input.pluginTools?.isKnown(input.toolName, libraryId) === true;
-    const pluginTool = input.pluginTools?.list(libraryId).find((candidate) => candidate.name === input.toolName);
+    const knownPluginTool = input.pluginTools?.isKnown(input.toolName) === true;
+    // Resolve the namespace before parsing plugin arguments. An unknown tool
+    // must remain MCP_TOOL_NOT_FOUND even when its caller omitted a field that
+    // a real plugin tool would require; otherwise typoed calls get a
+    // misleading target error and ordinary registry tools can be misclassified.
+    if (!knownRegistryTool && !knownPluginTool) {
+      return { ok: false, code: 'MCP_TOOL_NOT_FOUND', message: `Unknown Serpent MCP tool: ${input.toolName}` };
+    }
+    if (knownRegistryTool && !knownPluginTool) {
+      return { ok: false, code: 'MCP_TOOL_NOT_EXPOSED', message: `MCP tool ${input.toolName} is not enabled.` };
+    }
+    let pluginLibraryId: string | undefined;
+    try {
+      pluginLibraryId = parsePluginMcpLibraryId(input.arguments ?? {});
+    } catch {
+      return {
+        ok: false,
+        code: 'MCP_LIBRARY_TARGET_REQUIRED',
+        message: `Plugin MCP tool ${input.toolName} requires an explicit libraryId.`,
+      };
+    }
+    const pluginTool = input.pluginTools?.list(pluginLibraryId).find((candidate) => candidate.name === input.toolName);
     if (pluginTool !== undefined) {
       if (!mcpExposureAllowsWrite(input.exposure)) {
         return { ok: false, code: 'MCP_TOOL_NOT_EXPOSED', message: `Plugin MCP tool ${input.toolName} is not enabled.` };
@@ -136,13 +156,18 @@ export async function callSerpentMcpTool(
             message: 'The MCP tool call was cancelled by the client.',
           };
         }
-        const context = parsePluginMcpToolArguments(pluginTool, input.arguments ?? {});
+        const parsedPluginArguments = parsePluginMcpToolArguments(pluginTool, input.arguments ?? {});
+        const pluginContext = {
+          ...(parsedPluginArguments.assetIds === undefined ? {} : { assetIds: parsedPluginArguments.assetIds }),
+          ...(parsedPluginArguments.folderIds === undefined ? {} : { folderIds: parsedPluginArguments.folderIds }),
+          ...(parsedPluginArguments.collectionIds === undefined ? {} : { collectionIds: parsedPluginArguments.collectionIds }),
+        };
         const result = await input.pluginTools!.call({
           pluginId: pluginTool.pluginId,
           commandId: pluginTool.commandId,
-          context,
+          context: pluginContext,
           executionId,
-          ...(libraryId === undefined ? {} : { libraryId }),
+          libraryId: pluginLibraryId,
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         });
         if (input.signal?.aborted) {
@@ -160,6 +185,13 @@ export async function callSerpentMcpTool(
           toolName: pluginTool.name,
           plugin: { pluginId: pluginTool.pluginId, commandId: pluginTool.commandId },
           result,
+          libraryId: pluginLibraryId,
+          ...(input.getLibraryChangeSequence === undefined
+            ? {}
+            : (() => {
+              const changeSequence = input.getLibraryChangeSequence(pluginLibraryId);
+              return changeSequence === undefined ? {} : { libraryChangeSequence: changeSequence };
+            })()),
         };
       } catch {
         return { ok: false, code: 'MCP_GATEWAY_FAILURE', message: 'Plugin command rejected the MCP tool call.' };

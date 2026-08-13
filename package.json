@@ -15,8 +15,6 @@
     "prestart": "node scripts/ensure-native.mjs && node scripts/patch-dev-electron-name.mjs",
     "start:forge": "electron-forge start",
     "start:multi": "node scripts/dev-start.mjs --multi",
-    "cli:build": "vite build --config vite.cli-worker.config.ts && vite build --config vite.cli.config.ts",
-    "cli": "node scripts/run-cli.mjs",
     "prepackage": "node scripts/media-binaries.mjs verify && node scripts/verify-ufbx-wasm.mjs",
     "package": "electron-forge package",
     "verify:package": "node scripts/verify-package.mjs",

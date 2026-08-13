@@ -12,6 +12,11 @@ export const pluginMcpCommandContextSchema = z.strictObject({
 );
 export type PluginMcpCommandContext = z.infer<typeof pluginMcpCommandContextSchema>;
 
+export const pluginMcpToolArgumentsSchema = pluginMcpCommandContextSchema.extend({
+  libraryId: z.string().trim().min(1).max(512),
+});
+export type PluginMcpToolArguments = z.infer<typeof pluginMcpToolArgumentsSchema>;
+
 export type PluginMcpCommandSource = {
   pluginId: string;
   commandId: string;
@@ -29,6 +34,10 @@ export type PluginMcpToolDefinition = {
     type: 'object';
     additionalProperties: false;
     properties: Record<string, {
+      type: 'string';
+      minLength: number;
+      maxLength: number;
+    } | {
       type: 'array';
       items: { type: 'string' };
       minItems: number;
@@ -97,22 +106,27 @@ export function listPluginMcpTools(
 export function parsePluginMcpToolArguments(
   tool: PluginMcpToolDefinition,
   input: unknown,
-): PluginMcpCommandContext {
+): PluginMcpToolArguments {
   if (!tool.inputSchema) throw new Error(`Plugin MCP tool ${tool.name} has no input schema`);
-  return pluginMcpCommandContextSchema.parse(input);
+  return pluginMcpToolArgumentsSchema.parse(input);
+}
+
+export function parsePluginMcpLibraryId(input: unknown): string {
+  return z.object({ libraryId: z.string().trim().min(1).max(512) }).passthrough().parse(input).libraryId;
 }
 
 const pluginMcpInputSchemaJson: PluginMcpToolDefinition['inputSchema'] = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    libraryId: { type: 'string', minLength: 1, maxLength: 512 },
     assetIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
     folderIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
     collectionIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 256 },
   },
   anyOf: [
-    { required: ['assetIds'] },
-    { required: ['folderIds'] },
-    { required: ['collectionIds'] },
+    { required: ['libraryId', 'assetIds'] },
+    { required: ['libraryId', 'folderIds'] },
+    { required: ['libraryId', 'collectionIds'] },
   ],
 };

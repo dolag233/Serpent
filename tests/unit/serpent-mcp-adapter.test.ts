@@ -36,17 +36,16 @@ const profileCredentials = [
   '00000000-0000-4000-8000-0000000000bb',
   '00000000-0000-4000-8000-0000000000cc',
 ];
-function createTestPermissionBroker(mode?: 'read-only' | 'read-write' | 'full-access'): McpPermissionBroker {
+function createTestPermissionBroker(mode?: 'auto' | 'full-access'): McpPermissionBroker {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-mcp-challenge-'));
   challengeRoots.push(root);
   const store = new McpPermissionPolicyStore(root);
   const broker = new McpPermissionBroker({
     policyStore: store,
     challengeStore: new McpOperationChallengeStore(),
-    confirmOutOfScope: async () => true,
   });
   if (mode !== undefined) {
-    const credentialId = profileCredentials[mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2]!;
+    const credentialId = profileCredentials[mode === 'auto' ? 0 : 2]!;
     store.setMode(credentialId, mode);
   }
   return broker;
@@ -439,7 +438,7 @@ describe('Serpent MCP tools/call → Gateway', () => {
     ]);
     expect((await readClient.listTools()).tools.map((tool) => tool.name))
       .not.toContain(pluginTool.name);
-    const denied = await readClient.callTool({ name: pluginTool.name, arguments: { assetIds: ['asset-1'] } });
+    const denied = await readClient.callTool({ name: pluginTool.name, arguments: { libraryId: 'library-1', assetIds: ['asset-1'] } });
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.content)).toContain('MCP_TOOL_NOT_EXPOSED');
     await readClient.close();
@@ -456,7 +455,7 @@ describe('Serpent MCP tools/call → Gateway', () => {
       writeClient.connect(writeClientTransport),
     ]);
     expect((await writeClient.listTools()).tools.map((tool) => tool.name)).toContain(pluginTool.name);
-    const called = await writeClient.callTool({ name: pluginTool.name, arguments: { assetIds: ['asset-1'] } });
+    const called = await writeClient.callTool({ name: pluginTool.name, arguments: { libraryId: 'library-1', assetIds: ['asset-1'] } });
     expect(called.isError).not.toBe(true);
     await writeClient.close();
     await writeServer.close();
@@ -572,8 +571,8 @@ describe('Serpent MCP dangerous two-phase challenge (Serpent-8b5b.2)', () => {
 });
 
 describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)', () => {
-  function profileGateway(worker: RecordingWorker, mode: 'read-only' | 'read-write' | 'full-access') {
-    const index = mode === 'read-only' ? 0 : mode === 'read-write' ? 1 : 2;
+  function profileGateway(worker: RecordingWorker, mode: 'auto' | 'full-access') {
+    const index = mode === 'auto' ? 0 : 2;
     const credentialId = profileCredentials[index]!;
     const profileResolver: AutomationExecutionResolver = {
       resolve: (executionId) => executionId === 'mcp-execution'
@@ -591,9 +590,9 @@ describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)',
     });
   }
 
-  it('runs a read-only credential write only after the desktop user approves', async () => {
+  it('runs an Auto credential routine write without a desktop prompt', async () => {
     const worker = new RecordingWorker({ ok: true, type: 'tag.created', tag: { tagId: 'tag-1', name: 'x', assetCount: 0 } });
-    const gateway = profileGateway(worker, 'read-only');
+    const gateway = profileGateway(worker, 'auto');
     const result = await callSerpentMcpTool({
       toolName: 'serpent_tag_create',
       arguments: { libraryId: 'library-1', name: 'x' },
@@ -605,7 +604,7 @@ describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)',
     expect(worker.commands).toHaveLength(1);
   });
 
-  it('executes a dangerous operation directly under full-access without a challenge', async () => {
+  it('keeps the dangerous challenge under full-access', async () => {
     const worker = new RecordingWorker({
       ok: true,
       type: 'asset.deleted-permanent',
@@ -617,15 +616,15 @@ describe('Serpent MCP permission profiles through the gateway (Serpent-8b5b.8)',
     const fullAccessContext = mcpContext(readExposure, {
       clientCredentialId: profileCredentials[2],
     });
-    const result = await callSerpentMcpTool({
+    const first = await callSerpentMcpTool({
       toolName: 'serpent_asset_delete_permanent',
-      arguments: { libraryId: 'library-1', assetIds: ['00000000-0000-4000-8000-000000000010'] },
+      arguments: { libraryId: 'library-1', assetIds: ['00000000-0000-4000-8000-000000000010'], idempotencyKey: 'full-access-delete-1' },
       context: fullAccessContext,
       exposure: readExposure,
       gateway,
     });
-    expect(result).toMatchObject({ ok: true, commandId: 'asset.delete-permanent', result: { deletedCount: 1 } });
-    expect(worker.commands).toHaveLength(1);
+    expect(first).toMatchObject({ ok: true, commandId: 'asset.delete-permanent', result: { status: 'confirmation-required' } });
+    expect(worker.commands).toHaveLength(0);
   });
 });
 

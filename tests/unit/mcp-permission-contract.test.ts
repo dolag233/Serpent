@@ -20,13 +20,13 @@ const currentManual = [
 
 describe('MCP permission contract', () => {
   it('keeps the Registry, tools/list projection and manual on the same model', () => {
-    expect(mcpAccessModeSchema.options).toEqual(['read-only', 'read-write', 'full-access']);
+    expect(mcpAccessModeSchema.options).toEqual(['auto', 'full-access']);
     expect(mcpCredentialPermissionSchema.parse({
       credentialId: '00000000-0000-4000-8000-000000000001',
-      mode: 'read-write',
+      mode: 'auto',
     })).toEqual({
       credentialId: '00000000-0000-4000-8000-000000000001',
-      mode: 'read-write',
+      mode: 'auto',
     });
 
     const tools = listSerpentMcpTools(readExposure).tools;
@@ -60,10 +60,9 @@ describe('MCP permission contract', () => {
     }
 
     expect(currentManual).not.toContain('skipApproval');
-    expect(currentManual).toContain('只读');
-    expect(currentManual).toContain('读写');
+    expect(currentManual).toContain('Auto');
     expect(currentManual).toContain('完全');
-    expect(currentManual).toContain('Read-only');
+    expect(currentManual).toContain('Full Access');
     expect(currentManual).toContain('显式 libraryId');
     expect(readCapabilities).not.toContain('tag.write');
   });

@@ -7,17 +7,15 @@ export const MCP_ENDPOINT_PATH = '/mcp' as const;
 
 /**
  * Credential-level permission profile. It never depends on an MCP transport
- * session.
- * - 'read-only':    reads only; any write needs a desktop confirmation.
- * - 'read-write':   ordinary reads and recoverable writes run directly;
- *                   dangerous operations still need the two-phase challenge.
- * - 'full-access':  everything runs directly, including dangerous operations;
- *                   the user accepts the responsibility when enabling it.
+ * session. Auto runs routine and recoverable work without human prompts;
+ * dangerous operations always require the Agent's exact two-phase challenge.
+ * Full Access is an explicit trust setting, but it does not remove that
+ * machine-verifiable dangerous-operation boundary.
  */
-export const mcpAccessModeSchema = z.enum(['read-only', 'read-write', 'full-access']);
+export const mcpAccessModeSchema = z.enum(['auto', 'full-access']);
 export type McpAccessMode = z.infer<typeof mcpAccessModeSchema>;
 
-/** Legacy 'auto' values read from pre-profile policy files map to 'read-write'. */
+/** Old profiles are accepted on read and normalized to the new two-mode model. */
 export const mcpLegacyAccessModeSchema = z.enum(['auto', 'read-only', 'read-write', 'full-access']);
 export type McpLegacyAccessMode = z.infer<typeof mcpLegacyAccessModeSchema>;
 

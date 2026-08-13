@@ -20,12 +20,12 @@ describe('MCP access mode store', () => {
     const credentialA = '00000000-0000-4000-8000-000000000001';
     const credentialB = '00000000-0000-4000-8000-000000000002';
 
-    expect(store.getMode(credentialA)).toBe('read-write');
+    expect(store.getMode(credentialA)).toBe('auto');
     store.setMode(credentialA, 'full-access');
 
     const reloaded = new McpPermissionPolicyStore(root);
     expect(reloaded.getMode(credentialA)).toBe('full-access');
-    expect(reloaded.getMode(credentialB)).toBe('read-write');
+    expect(reloaded.getMode(credentialB)).toBe('auto');
     expect(reloaded.snapshot(credentialA)).toEqual({ credentialId: credentialA, mode: 'full-access' });
   });
 
@@ -38,13 +38,13 @@ describe('MCP access mode store', () => {
 
     store.setMode(credentialA, 'full-access');
     store.setMode(credentialB, 'full-access');
-    store.setMode(credentialA, 'read-write');
-    expect(store.getMode(credentialA)).toBe('read-write');
+    store.setMode(credentialA, 'auto');
+    expect(store.getMode(credentialA)).toBe('auto');
     expect(store.getMode(credentialB)).toBe('full-access');
 
     store.clearCredential(credentialB);
-    expect(store.getMode(credentialB)).toBe('read-write');
-    expect(store.getMode(credentialA)).toBe('read-write');
+    expect(store.getMode(credentialB)).toBe('auto');
+    expect(store.getMode(credentialA)).toBe('auto');
   });
 
   it('fails closed for invalid credential ids and ignores corrupted or legacy policy files', () => {
@@ -54,7 +54,7 @@ describe('MCP access mode store', () => {
 
     const store = new McpPermissionPolicyStore(root);
     const credentialId = '00000000-0000-4000-8000-000000000005';
-    expect(store.getMode(credentialId)).toBe('read-write');
+    expect(store.getMode(credentialId)).toBe('auto');
     expect(() => store.setMode('not-a-credential', 'full-access')).toThrow();
 
     writeFileSync(path.join(root, 'mcp-permission-policies.json'), JSON.stringify({
@@ -64,6 +64,24 @@ describe('MCP access mode store', () => {
         policies: [{ capability: 'tag.write', policy: 'always-allow' }],
       }],
     }));
-    expect(new McpPermissionPolicyStore(root).getMode(credentialId)).toBe('read-write');
+    expect(new McpPermissionPolicyStore(root).getMode(credentialId)).toBe('auto');
+  });
+
+  it('migrates the removed read-only/read-write profiles to Auto', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-mcp-policy-'));
+    roots.push(root);
+    const autoCredential = '00000000-0000-4000-8000-000000000006';
+    const fullCredential = '00000000-0000-4000-8000-000000000007';
+    writeFileSync(path.join(root, 'mcp-permission-policies.json'), JSON.stringify({
+      version: 2,
+      credentials: [
+        { credentialId: autoCredential, mode: 'read-only' },
+        { credentialId: fullCredential, mode: 'full-access' },
+      ],
+    }));
+
+    const store = new McpPermissionPolicyStore(root);
+    expect(store.getMode(autoCredential)).toBe('auto');
+    expect(store.getMode(fullCredential)).toBe('full-access');
   });
 });

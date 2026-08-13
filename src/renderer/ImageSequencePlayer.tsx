@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
@@ -8,6 +8,7 @@ import { Icon } from "./Icons";
 import { useT } from "./i18n";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 import { Slider } from "./ui/primitives";
+import { advanceImageSequenceFrame } from "./image-sequence-playback";
 import type { ViewerDisplayTransform } from "./viewer-display-transform";
 import { ZoomableImage } from "./zoomable-preview-image";
 
@@ -56,12 +57,32 @@ export function ImageSequencePlayer({
   );
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
+  const playingRef = useRef(true);
+
+  const setPlayback = (nextPlaying: boolean) => {
+    // Keep the imperative guard in sync before React processes the state
+    // update. Otherwise a playback interval can win a race with a keyboard
+    // slider event (Home/ArrowRight) and advance one extra frame.
+    playingRef.current = nextPlaying;
+    setPlaying(nextPlaying);
+  };
 
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(
-      () =>
-        setFrameIndex((current) => (current + 1) % sequence.frames.length),
+      () => {
+        setFrameIndex((current) => {
+          // The callback may already be queued when the user pauses or
+          // scrubs. Re-check the ref inside the updater so that stale ticks
+          // cannot apply after the slider has selected a frame.
+          if (!playingRef.current) return current;
+          return advanceImageSequenceFrame(
+            current,
+            sequence.frames.length,
+            playingRef.current,
+          );
+        });
+      },
       1000 / Math.max(1, sequence.fps),
     );
     return () => window.clearInterval(timer);
@@ -107,7 +128,7 @@ export function ImageSequencePlayer({
       }
       event.preventDefault();
       event.stopPropagation();
-      setPlaying((current) => !current);
+      setPlayback(!playingRef.current);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -158,7 +179,7 @@ export function ImageSequencePlayer({
       )}
       <div className="preview-sequence-controls preview-chrome-fade">
         <button
-          onClick={() => setPlaying((current) => !current)}
+          onClick={() => setPlayback(!playingRef.current)}
           type="button"
           {...iconActionAttrs(
             playing ? t("preview.sequencePause") : t("preview.sequencePlay"),
@@ -171,7 +192,7 @@ export function ImageSequencePlayer({
           max={sequence.frames.length - 1}
           min={0}
           onValueChange={(nextFrame) => {
-            setPlaying(false);
+            setPlayback(false);
             setFrameIndex(nextFrame);
           }}
           step={1}

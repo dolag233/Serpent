@@ -32,7 +32,7 @@ export const allCapabilities = [
 ] as const satisfies readonly AutomationCapability[];
 
 export const readExposure: SerpentMcpToolExposure = {
-  accessMode: 'read-write',
+  accessMode: 'auto',
   activeLibraryId: 'library-1',
   grantedCapabilities: readCapabilities,
   hostCapabilities: [],

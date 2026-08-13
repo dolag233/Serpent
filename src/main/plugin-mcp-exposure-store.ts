@@ -1,11 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { readAtomicJsonFile, writeAtomicJsonFile } from './atomic-json-file';
 import path from 'node:path';
 
 import { z } from 'zod';
@@ -40,13 +33,8 @@ export class PluginMcpExposureStore {
   }
 
   async load(): Promise<void> {
-    let contents: string;
-    try {
-      contents = await readFile(this.#filePath, 'utf8');
-    } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw error;
-    }
+    const contents = readAtomicJsonFile(this.#filePath);
+    if (contents === undefined) return;
     let raw: unknown;
     try {
       raw = JSON.parse(contents);
@@ -96,15 +84,9 @@ export class PluginMcpExposureStore {
       version: EXPOSURE_FILE_VERSION,
       enabled: this.listEnabled(),
     }), null, 2)}\n`;
-    const directory = path.dirname(this.#filePath);
-    await mkdir(directory, { recursive: true });
-    const stagingPath = `${this.#filePath}.staging-${randomUUID()}`;
-    try {
-      await writeFile(stagingPath, contents, { encoding: 'utf8', mode: 0o600 });
-      await rename(stagingPath, this.#filePath);
-    } finally {
-      await rm(stagingPath, { force: true });
-    }
+    // Reuse the shared crash-safe replacement policy. In particular, a plain
+    // rename(staging, destination) is not a replace operation on Windows.
+    writeAtomicJsonFile(this.#filePath, contents);
   }
 }
 

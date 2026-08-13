@@ -3844,15 +3844,48 @@ function hasLegacyPluginMigrationHistory(
 /**
  * Normalize the old plugin-first history into the current canonical history.
  * The plugin tables already exist under their old migrations, so apply the
- * three ingestion schemas and the v32 Plugin Job schema before rewriting the
- * history rows to canonical checksums in one transaction (the caller already
- * owns the migration transaction for v23+ databases).
+ * three ingestion schemas and the v32 Plugin Job schema before applying the
+ * canonical v33-v36 schemas that the old branch never had. Only after every
+ * missing object exists may the history rows be rewritten to canonical
+ * checksums. The caller already owns the migration transaction for v23+
+ * databases.
  */
 function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): void {
   connection.exec(EXPLICIT_IGNORES_SCHEMA_SQL);
   connection.exec(EXTENSION_IGNORES_SCHEMA_SQL);
   connection.exec(GITIGNORE_SCHEMA_SQL);
   connection.exec(PLUGIN_JOB_INTERRUPTED_SCHEMA_SQL);
+  // The legacy branch stopped at its plugin-derived-fields v28. It therefore
+  // has neither model artifacts, content fingerprints, operation history nor
+  // the durable redo stack. Reuse the canonical migration bodies here instead
+  // of only rewriting schema_migrations (which would make the DB claim
+  // v36 while still physically missing these tables, columns and indexes).
+  const revisionArtifactsSql = connection
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_artifacts'")
+    .get() as { sql?: string } | undefined;
+  if (!revisionArtifactsSql?.sql?.includes("'model_glb'")) {
+    connection.exec(MODEL_ARTIFACT_KIND_SCHEMA_SQL);
+  }
+  ensureContentFingerprintColumn(connection);
+  const historyObjects = [
+    'operation_history',
+    'operation_history_steps',
+    'operation_history_attempts',
+    'library_change_on_operation_history_insert',
+    'library_change_on_operation_history_update',
+    'library_change_on_operation_history_delete',
+  ];
+  if (!historyObjects.every((name) => hasSchemaObject(connection, name))) {
+    if (hasSchemaObject(connection, 'operation_history')
+      || hasSchemaObject(connection, 'operation_history_steps')
+      || hasSchemaObject(connection, 'operation_history_attempts')) {
+      throw new Error('The legacy library contains an incomplete operation history schema.');
+    }
+    connection.exec(OPERATION_HISTORY_SCHEMA_SQL);
+  }
+  if (!columnsFor(connection, 'operation_history').has('redo_sequence')) {
+    connection.exec(OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL);
+  }
   connection.prepare('DELETE FROM schema_migrations WHERE version >= 24').run();
   const insert = connection.prepare(
     'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
@@ -6180,6 +6213,16 @@ export class LibraryService {
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
     this.syncGitignore(openLibrary);
     return openLibrary;
+  }
+
+  /**
+   * Reject mutations before they can touch the filesystem. A newer schema is
+   * opened through a SQLite read-only connection, but file operations happen
+   * before their metadata transaction; relying on SQLite to reject the later
+   * write could leave disk and DB inconsistent.
+   */
+  private assertLibraryWritable(openLibrary: OpenLibrary): void {
+    if (openLibrary.readOnly) throw new LibraryServiceError('LIBRARY_READ_ONLY');
   }
 
   /**
@@ -9172,6 +9215,7 @@ export class LibraryService {
     parentFolderId?: string;
   }): ManagedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     let name: string;
     try {
       name = normalizeFolderName(input.name);
@@ -9260,6 +9304,7 @@ export class LibraryService {
     newName: string;
   }): ManagedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     let name: string;
     try {
       name = normalizeFolderName(input.newName);
@@ -9527,6 +9572,7 @@ export class LibraryService {
     folders: ManagedFolderSummary[];
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     if (
       input.folderIds.length === 0 ||
       new Set(input.folderIds).size !== input.folderIds.length
@@ -9857,6 +9903,7 @@ export class LibraryService {
     rootTombstoneId: string;
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const existingTombstones = openLibrary.connection.prepare(
       `SELECT tombstone_id, relative_path FROM trashed_managed_folders
         WHERE folder_id = ? ORDER BY length(relative_path) ASC`,
@@ -10088,6 +10135,7 @@ export class LibraryService {
    */
   async trashManagedFolderAsync(input: Parameters<LibraryService['trashManagedFolder']>[0]): Promise<ReturnType<LibraryService['trashManagedFolder']>> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const subtree = this.collectManagedFolderSubtree(openLibrary, input.folderId);
     await this.cancelMediaJobsForAssets(openLibrary, subtree.assetIds);
     return this.trashManagedFolder(input);
@@ -10095,6 +10143,7 @@ export class LibraryService {
 
   async trashSelectionAsync(input: Parameters<LibraryService['trashSelection']>[0]): Promise<ReturnType<LibraryService['trashSelection']>> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const assetIds = new Set(input.assetIds);
     for (const folderId of input.folderIds) {
       for (const assetId of this.collectManagedFolderSubtree(openLibrary, folderId).assetIds) assetIds.add(assetId);
@@ -10112,6 +10161,7 @@ export class LibraryService {
     folderId: string;
   }): { deletedAssetCount: number; removedFolderCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const { folder, descendantFolders, assetIds } =
       this.collectManagedFolderSubtree(openLibrary, input.folderId);
 
@@ -10143,6 +10193,7 @@ export class LibraryService {
     folderId: string;
   }): Promise<{ deletedAssetCount: number; removedFolderCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const { folder, descendantFolders, assetIds } =
       this.collectManagedFolderSubtree(openLibrary, input.folderId);
     await this.cancelMediaJobsForAssets(openLibrary, assetIds);
@@ -10169,6 +10220,7 @@ export class LibraryService {
     folderIds: string[];
   }): { deletedFolderIds: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const folderIds = [...new Set(input.folderIds)];
     if (folderIds.length === 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
@@ -10265,6 +10317,7 @@ export class LibraryService {
     folderId: string;
   }): { removedAssetCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const linked = openLibrary.connection
       .prepare(
         'SELECT folder_id FROM linked_folders WHERE folder_id = ? AND library_id = ?',
@@ -10313,6 +10366,7 @@ export class LibraryService {
     deleteFromDisk: boolean;
   }): Promise<{ deletedAssetCount: number; failedCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     let relativePath: string;
     try {
       relativePath = normalizeRelativeAssetPath(input.relativePath);
@@ -10614,6 +10668,7 @@ export class LibraryService {
     assetIds: string[];
   }): Promise<{ deletedCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
@@ -21375,6 +21430,7 @@ export class LibraryService {
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): { movedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -21554,6 +21610,7 @@ export class LibraryService {
     outputAssetIdsBySource: Array<{ sourceAssetId: string; newAssetId: string }>;
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -22397,6 +22454,7 @@ export class LibraryService {
     byteSize: number;
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     if (
       input.dataBase64.length === 0
       || input.dataBase64.length % 4 !== 0
@@ -22575,6 +22633,7 @@ export class LibraryService {
       });
     }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const rows = openLibrary.connection.prepare(
       `SELECT assets.asset_id, assets.location_kind, assets.relative_file_path, assets.current_revision_id,
               revisions.modified_at AS current_modified_at,
@@ -22963,6 +23022,7 @@ export class LibraryService {
     newBaseName: string;
   }): { asset: AssetSummary } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, [input.assetId]);
     let baseName: string;
     try {
@@ -23253,6 +23313,7 @@ export class LibraryService {
     operationId?: string;
   }): { trashedCount: number; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     if (!input.allowExplicitlyIgnored) {
       this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     }
@@ -23429,6 +23490,7 @@ export class LibraryService {
     sourceReference?: string | null;
   }): TrashSelectionResult {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const assetIds = [...input.assetIds];
     const folderIds = [...input.folderIds];
     if (assetIds.length === 0 && folderIds.length === 0) {
@@ -23721,6 +23783,7 @@ export class LibraryService {
     conflictStrategy?: 'keep-both' | 'replace' | 'skip';
   }): { restoredCount: number; assets: AssetSummary[]; operationId: string } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
@@ -24325,6 +24388,7 @@ export class LibraryService {
     assetIds: string[];
   }): { deletedCount: number } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -24377,6 +24441,7 @@ export class LibraryService {
     assetIds: string[];
   }): { deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
@@ -24556,6 +24621,7 @@ export class LibraryService {
     folders: ManagedFolderSummary[];
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
     const root = openLibrary.connection
       .prepare(
         `SELECT tombstone_id, folder_id, relative_path, name, parent_relative_path,

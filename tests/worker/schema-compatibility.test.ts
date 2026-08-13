@@ -25,6 +25,7 @@ interface TestDatabaseConnection {
   prepare(source: string): {
     run(...params: unknown[]): unknown;
     get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
   };
 }
 
@@ -85,6 +86,24 @@ function buildLibraryAtVersion(root: string, targetVersion: number): string {
   return libraryPath;
 }
 
+/** Build the historical plugin-first v28 layout that used v24-v28 for a
+ * different set of migration bodies than the canonical merged sequence. */
+function buildLegacyPluginFirstV28(root: string): string {
+  const libraryPath = buildLibraryAtVersion(root, 23);
+  const db = new Database(libraryFilePath(libraryPath));
+  const legacySourceVersions = [27, 28, 29, 30, 31];
+  for (const [index, sourceVersion] of legacySourceVersions.entries()) {
+    const migration = MIGRATIONS.find((candidate) => candidate.version === sourceVersion)!;
+    db.exec(migration.sql);
+    db.prepare(
+      'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+    ).run(24 + index, migration.checksum, new Date().toISOString());
+  }
+  db.pragma('user_version = 28');
+  db.close();
+  return libraryPath;
+}
+
 describe('migration registry integrity (static audit)', () => {
   it('versions are contiguous from 1 to SUPPORTED_SCHEMA_VERSION', () => {
     const versions = MIGRATIONS.map((migration) => migration.version);
@@ -124,6 +143,75 @@ describe('migration replay (every version opens and migrates to latest)', () => 
       expect(schemaVersionOf(libraryFilePath(libraryPath))).toBe(SUPPORTED_SCHEMA_VERSION);
     });
   }
+});
+
+describe('legacy plugin-first v28 migration', () => {
+  it('applies canonical v33-v36 objects before normalizing migration history', () => {
+    const root = temporaryRoot();
+    const libraryPath = buildLegacyPluginFirstV28(root);
+    const service = new LibraryService();
+
+    expect(() => service.openLibrary(libraryPath)).not.toThrow();
+    const libraryId = 'lib_23';
+    const receipt = service.recordOperationHistoryBarrier({
+      libraryId,
+      affectedCount: 1,
+      commandId: 'migration.compatibility-test',
+      labelKey: 'history.compatibility-test',
+      reason: 'schema compatibility fixture',
+      source: 'script',
+    });
+    expect(receipt.historyEntryId).toBeTruthy();
+    expect(service.getOperationHistoryStatus(libraryId).staleTop).toBeNull();
+    service.closeAll();
+
+    const db = new Database(libraryFilePath(libraryPath));
+    expect(schemaVersionOf(libraryFilePath(libraryPath))).toBe(SUPPORTED_SCHEMA_VERSION);
+    const objectNames = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+          WHERE type IN ('table', 'index', 'trigger')
+            AND name IN (
+              'operation_history', 'operation_history_steps', 'operation_history_attempts',
+              'operation_history_redo_sequence_idx', 'library_change_on_operation_history_insert',
+              'library_change_on_operation_history_update', 'library_change_on_operation_history_delete'
+            )
+          ORDER BY name`,
+      )
+      .all() as Array<{ name: string }>;
+    expect(objectNames.map((row) => row.name)).toEqual([
+      'library_change_on_operation_history_delete',
+      'library_change_on_operation_history_insert',
+      'library_change_on_operation_history_update',
+      'operation_history',
+      'operation_history_attempts',
+      'operation_history_redo_sequence_idx',
+      'operation_history_steps',
+    ]);
+
+    const revisionColumns = db.pragma('table_info(revisions)') as Array<{ name: string }>;
+    expect(revisionColumns.map((column) => column.name)).toContain('content_fingerprint');
+    const historyColumns = db.pragma('table_info(operation_history)') as Array<{ name: string }>;
+    expect(historyColumns.map((column) => column.name)).toContain('redo_sequence');
+    const artifactSql = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_artifacts'")
+      .get() as { sql: string };
+    expect(artifactSql.sql).toContain("'model_glb'");
+    const historyRows = db
+      .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 24 ORDER BY version')
+      .all() as Array<{ version: number; checksum: string }>;
+    expect(historyRows).toHaveLength(13);
+    expect(historyRows.map((row) => row.version)).toEqual(
+      Array.from({ length: 13 }, (_, index) => index + 24),
+    );
+    expect(historyRows[9]?.checksum).toBe(MIGRATIONS.find((migration) => migration.version === 33)!.checksum);
+    expect(historyRows[12]?.checksum).toBe(MIGRATIONS.find((migration) => migration.version === 36)!.checksum);
+    const persistedHistory = db
+      .prepare("SELECT source, state, policy FROM operation_history WHERE label_key = 'history.compatibility-test'")
+      .get() as { source: string; state: string; policy: string } | undefined;
+    expect(persistedHistory).toEqual({ source: 'script', state: 'applied', policy: 'barrier' });
+    db.close();
+  });
 });
 
 describe('mid-migration failure injection', () => {

@@ -4599,28 +4599,6 @@ async function startApplication(): Promise<void> {
     policyStore: mcpPermissionPolicyStore,
     challengeStore: mcpOperationChallengeStore,
     audit: logger,
-    confirmOutOfScope: async (input) => {
-      const manager = criticalConfirmationWindowManager;
-      if (manager === undefined) return false;
-      const english = appLocale === 'en';
-      const client = input.clientName?.trim() || (english ? 'An MCP client' : '某个 MCP 客户端');
-      return manager.request({
-        title: english ? 'MCP permission confirmation' : 'MCP 权限确认',
-        heading: english
-          ? 'Allow this MCP client to write?'
-          : '允许这个 MCP 客户端写入？',
-        message: english
-          ? `${client} wants to: ${input.summary}`
-          : `${client} 请求：${input.summary}`,
-        detail: english
-          ? `Credential ${input.credentialId.slice(0, 8)} is read-only. This operation affects ${input.targetCount} target(s).`
-          : `凭据 ${input.credentialId.slice(0, 8)} 是只读权限。此操作涉及 ${input.targetCount} 个目标。`,
-        cancelLabel: english ? 'Deny' : '拒绝',
-        // Serpent review: the stateless model has no allow-once grants — this
-        // approves exactly this one call, so the label must not promise one.
-        confirmLabel: english ? 'Allow write' : '允许写入',
-      });
-    },
   });
   automationRecentScripts = createJsonFileAutomationRecentScriptsStore(
     path.join(app.getPath('userData'), 'automation-recent-scripts.json'),
@@ -5346,11 +5324,7 @@ async function startApplication(): Promise<void> {
     });
     pluginMcpToolProvider = new PluginMcpToolProvider({
       activationCoordinator: pluginActivationCoordinator,
-      getLibraryId: () => {
-        return mainWindow === undefined
-          ? null
-          : focusedContexts.get(mainWindow.id)?.libraryId ?? null;
-      },
+      exposureStore: pluginMcpExposureStore,
     });
     pluginJobScheduler = new PluginJobScheduler({
       supervisor: pluginRuntimeSupervisor,

@@ -8,7 +8,7 @@ Serpent MCP 由 Desktop Main 进程内嵌提供，仅监听 `127.0.0.1` 的 Stre
 2. 可选打开“自动启动”。
 3. 点击“启动 MCP 服务”。
 4. 点击“复制 MCP 配置”，粘贴到目标客户端。
-5. 新 credential 默认读写（read-write）；可切到只读（read-only，写入需桌面确认）或完全（full-access，一切直接执行，启用时有红色警告）。
+5. 新 credential 默认 Auto；可切到 Full Access（普通和可恢复操作直接执行，启用时有红色警告）。
 
 不需要编辑 JSON、启动 npm、选择工作目录或重复批准普通操作。
 
@@ -35,7 +35,9 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 
 `src/automation/command-registry.ts` 是 MCP 工具和输入/输出 Schema 的单一来源。`src/mcp/tool-catalog.ts` 为核心工具生成静态目录，`src/mcp/call-tool.ts` 对库级调用提取并校验显式 `libraryId`，再通过 Gateway 的 `contextOverrides` 做单次目标绑定。
 
-过渡约束：插件 MCP 工具当前只在 `full-access` 档暴露（`tool-catalog.ts` 的 exposure 判断）；read-write/read-only 客户端拿不到插件工具列表。与 ADR-0025“插件与脚本/MCP 同一 Action 面”的完全对齐留待插件权限投影设计。
+过渡约束：插件 MCP 工具当前只在 `full-access` 档暴露（`tool-catalog.ts` 的 exposure 判断）；Auto 客户端拿不到插件工具列表。与 ADR-0025“插件与脚本/MCP 同一 Action 面”的完全对齐留待插件权限投影设计。
+
+插件 MCP 工具也必须在每次调用的参数中携带显式 `libraryId`，并同时提供至少一个 `assetIds`、`folderIds` 或 `collectionIds`。Provider 不会从 Desktop 焦点库补全目标；插件暴露开关在 list/call 两条路径都会即时生效。
 
 全局命令（列出最近资源库、列出已打开资源库、建库、导入已导出的库）不要求 `libraryId`。库级命令（资产、文件夹、标签、合集、导入资产、AI 和任务）要求 `libraryId`。不要从 Desktop 当前库或 HTTP session 填充缺省目标。库级调用的目标由 Gateway 单次绑定，不会写回 MCP session。
 
@@ -47,16 +49,16 @@ transport 可以为 MCP SDK 保存 session，但禁止把 active library、libra
 
 MCP 路径请求绝不调用 Electron 原生文件选择器。Windows 需要独立验证盘符、UNC、长路径、保留名、大小写不敏感、反斜杠和 reparse point/junction。
 
-## 权限档：只读 / 读写 / 完全
+## 权限档：Auto / Full Access
 
 `McpPermissionPolicyStore` 只保存 credential 级 `mode`：
 
 - `auto` 是默认值。普通和可恢复操作由 Gateway 直接执行，不能调用人类权限 prompt。
-- `full-access` 由设置页的独立红色确认窗口开启；开启后普通及暴露的危险 MCP 调用均不等待 Agent 二次确认。
+- `full-access` 由设置页的独立红色确认窗口开启；开启后普通及暴露的可恢复 MCP 调用直接执行，但危险调用仍需要 Agent 二次确认。
 
-Permission Broker 只读取 credential 权限档，不保存 transport session grant。只读档的写入请求由桌面确认框决定（调用方等待用户决定）；读写档的普通操作不弹窗；完全档一切直接执行。普通计划型文件操作仍执行 Worker 的只读计划、状态 token、change sequence 和幂等校验。
+Permission Broker 只读取 credential 权限档，不保存 transport session grant。Auto 和 Full Access 的普通操作都不弹窗；普通计划型文件操作仍执行 Worker 的只读计划、状态 token、change sequence 和幂等校验。
 
-危险命令（如永久删除）在只读档下与普通写入同等对待——必须由桌面用户当场确认或拒绝，Agent 无法自行确认（sonnet 审查回归：read-only 不得存在任何绕过桌面确认的危险执行路径）。读写档下使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行。完全档直接执行（启用时用户已确认责任），但不能跳过领域校验。
+危险命令（如永久删除）在 Auto 和 Full Access 下都使用一次性 challenge，绑定 credential、命令、规范化参数、libraryId、目标 ID 和前置版本；第一次调用只能返回风险报告，第二次精确确认才能执行，不能通过 Full Access 绕过。
 
 撤回/重做命令额外要求 Automation capability `history.write`，它与 `library.read` 同时存在才可进入 Worker。只有 `library.read` 的执行会稳定返回权限拒绝，且不会触发历史转换；Auto/读写档由 Gateway 的普通受控能力策略授权，Full Access 也不会改变 Worker 的栈顶和前置条件校验。
 
@@ -76,7 +78,7 @@ Permission Broker 只读取 credential 权限档，不保存 transport session g
 
 定向自动化测试至少覆盖：
 
-- 只读 / 读写 / 完全 权限档持久化和凭据隔离；
+- Auto / Full Access 权限档持久化和凭据隔离；
 - 多连接、断开重连后工具目录和显式 `libraryId` 行为不变；
 - 缺少库目标时的稳定错误；
 - 空资源库列表、显式建库和显式路径导入；

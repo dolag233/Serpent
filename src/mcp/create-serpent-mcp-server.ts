@@ -133,6 +133,7 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       exposure: currentExposure(),
       gateway,
       pluginTools: backend.getPluginTools(),
+      signal: extra.signal,
       ...(backend.getLibraryChangeSequence === undefined
         ? {}
         : { getLibraryChangeSequence: backend.getLibraryChangeSequence }),

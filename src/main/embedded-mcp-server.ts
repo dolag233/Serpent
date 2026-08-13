@@ -515,7 +515,7 @@ export class EmbeddedMcpServer {
     if (existing === undefined || existing.revokedAt !== null) {
       throw new EmbeddedMcpServerError('MCP_CLIENT_UNAUTHORIZED', 'The MCP client credential is unavailable.');
     }
-    const mode = this.#permissionPolicyStore?.getMode(credentialId) ?? 'read-write';
+    const mode = this.#permissionPolicyStore?.getMode(credentialId) ?? 'auto';
     const label = `${existing.label} 副本`;
     const credential = this.#credentials.issue(label);
     this.#permissionPolicyStore?.setMode(credential.credentialId, mode);
@@ -744,7 +744,7 @@ export class EmbeddedMcpServer {
       getExecutionContext: (): AutomationExecutionContext | undefined => this.#journal.resolve(execution.executionId),
       getToolExposure: () => {
         return {
-          accessMode: this.#permissionPolicyStore?.getMode(credential.credentialId) ?? 'read-write',
+          accessMode: this.#permissionPolicyStore?.getMode(credential.credentialId) ?? 'auto',
           hostCapabilities: ['desktop-ui'] as const,
         };
       },

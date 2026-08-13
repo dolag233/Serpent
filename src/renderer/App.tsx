@@ -185,6 +185,7 @@ import {
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
+import { buildMarqueeLayoutKey } from "./marquee-layout-key";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -1998,6 +1999,27 @@ function AppInner() {
     () => canvasFolderBrowseEntries.map((entry) => entry.folderId),
     [canvasFolderBrowseEntries],
   );
+  const marqueeLayoutKey = useMemo(
+    () =>
+      buildMarqueeLayoutKey({
+        viewMode: assetViewMode,
+        cardSize: assetCardSize,
+        masonryGridWidth,
+        fields: canvasPrefs.fields,
+        assetIds:
+          selectionAssetIds ?? visibleAssets.map((asset) => asset.assetId),
+        folderIds: visibleFolderIds,
+      }),
+    [
+      assetCardSize,
+      assetViewMode,
+      canvasPrefs.fields,
+      masonryGridWidth,
+      selectionAssetIds,
+      visibleAssets,
+      visibleFolderIds,
+    ],
+  );
   const {
     handleCanvasMouseDown,
     clearAssetSelection,
@@ -2020,6 +2042,7 @@ function AppInner() {
     folderIds: visibleFolderIds,
     selectionAssetIds,
     masonryShiftSelection: assetViewMode === "masonry",
+    marqueeLayoutKey,
     selectedFolderIds,
     setSelectedFolderIds,
     onSelectionCleared: () => {

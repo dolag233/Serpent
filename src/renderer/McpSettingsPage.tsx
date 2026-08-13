@@ -267,7 +267,7 @@ export function McpSettingsPage({
             const permissionState = snapshot!.credentialPermissions.find(
               (candidate) => candidate.credentialId === credential.credentialId,
             );
-            const mode = permissionState?.mode ?? "read-write";
+            const mode = permissionState?.mode ?? "auto";
             return (
               <div className="mcp-permission-client" key={credential.credentialId}>
                 <div className="app-settings-card-divider" />
@@ -281,9 +281,7 @@ export function McpSettingsPage({
                     <span>
                       {mode === "full-access"
                         ? t("settings.mcpAccessModeFullHint")
-                        : mode === "read-only"
-                          ? t("settings.mcpAccessModeReadOnlyHint")
-                          : t("settings.mcpAccessModeReadWriteHint")}
+                        : t("settings.mcpAccessModeAutoHint")}
                     </span>
                   </div>
                   <div className="app-settings-option-group">
@@ -292,12 +290,11 @@ export function McpSettingsPage({
                       className="settings-select"
                       disabled={busy}
                       onChange={(event) => {
-                        void request({ type: "set-access-mode", credentialId: credential.credentialId, mode: event.target.value as "read-only" | "read-write" | "full-access" });
+                        void request({ type: "set-access-mode", credentialId: credential.credentialId, mode: event.target.value as "auto" | "full-access" });
                       }}
                       value={mode}
                     >
-                      <option value="read-only">{t("settings.mcpAccessModeReadOnly")}</option>
-                      <option value="read-write">{t("settings.mcpAccessModeReadWrite")}</option>
+                      <option value="auto">{t("settings.mcpAccessModeAuto")}</option>
                       <option value="full-access">{t("settings.mcpAccessModeFull")}</option>
                     </select>
                     <button

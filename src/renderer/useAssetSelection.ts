@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { AssetSummary } from "../shared/asset-types";
 import {
   buildBrowseSelectionOrder,
@@ -51,6 +51,11 @@ export interface UseAssetSelectionParams {
   selectionAssetIds?: string[];
   /** Use center-point rectangle semantics for Shift+click in masonry. */
   masonryShiftSelection?: boolean;
+  /**
+   * Changes whenever card layout geometry can change without a canvas resize
+   * (view mode, card size, visible fields, or visual card order).
+   */
+  marqueeLayoutKey: string;
   /** Currently selected folder-card IDs */
   selectedFolderIds?: string[];
   /** Setter for folder multi-select */
@@ -100,6 +105,7 @@ export function useAssetSelection({
   folderIds = [],
   selectionAssetIds,
   masonryShiftSelection = false,
+  marqueeLayoutKey,
   selectedFolderIds = [],
   setSelectedFolderIds,
   onSelectionCleared,
@@ -155,15 +161,19 @@ export function useAssetSelection({
   // size changes (resize / column reflow). Only cache misses read DOM.
   const marqueeCardRectsRef = useRef(new Map<string, MarqueeRect>());
   const marqueeCacheLayoutSigRef = useRef('');
+  const marqueeLayoutKeyRef = useRef(marqueeLayoutKey);
+  useLayoutEffect(() => {
+    marqueeLayoutKeyRef.current = marqueeLayoutKey;
+  }, [marqueeLayoutKey]);
   // The selection arrays are only pushed to React when the hit set actually
   // changes — most frames move the box without crossing a new card.
   const marqueeLastHitsKeyRef = useRef('');
 
-  // Serpent-wgl2: direct-DOM marquee box writer — function declaration so it
-  // is hoisted before the mousedown handler that calls it.
-  function applyMarqueeBoxStyle(rect: {
+  // Serpent-wgl2: direct-DOM marquee box writer. Keep the callback stable so
+  // the mousedown handler does not capture a new function on every render.
+  const applyMarqueeBoxStyle = useCallback((rect: {
     left: number; top: number; width: number; height: number;
-  } | null): void {
+  } | null): void => {
     const el = marqueeBoxRef.current;
     if (!el) return;
     if (rect === null) {
@@ -175,7 +185,7 @@ export function useAssetSelection({
     el.style.top = `${rect.top}px`;
     el.style.width = `${rect.width}px`;
     el.style.height = `${rect.height}px`;
-  }
+  }, [marqueeBoxRef]);
 
   // ── clearAssetSelection ────────────────────────────────────────────────
   // Also clears folder-card selection (REQ-FOLDER-010): the two selections
@@ -459,6 +469,7 @@ export function useAssetSelection({
       selectedFolderIds,
       selectionPlatform,
       workspaceCanvasRef,
+      applyMarqueeBoxStyle,
     ],
   );
 
@@ -496,7 +507,7 @@ export function useAssetSelection({
       // stay valid while scrolling and are only dropped when the canvas
       // layout size changes (window resize / column reflow). Scrolling the
       // grid therefore costs one viewport read instead of N forced reflows.
-      const layoutSig = `${canvas.clientWidth}x${canvas.clientHeight}`;
+      const layoutSig = `${canvas.clientWidth}x${canvas.clientHeight}|${marqueeLayoutKeyRef.current}`;
       if (layoutSig !== marqueeCacheLayoutSigRef.current) {
         marqueeCacheLayoutSigRef.current = layoutSig;
         marqueeCardRectsRef.current.clear();

@@ -85,6 +85,11 @@ async function createAndImport(
   await window.getByRole("button", { name: "创建资源库" }).click();
   await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
   await window.getByRole("button", { name: "创建", exact: true }).click();
+  // Library creation commits through Main/Worker asynchronously. Waiting for
+  // the empty browse surface makes the following import click observe the
+  // same ready state as a user, instead of racing the initial library.opened
+  // refresh (which otherwise intermittently leaves the button absent).
+  await expect(window.getByRole("heading", { name: "导入资产以开始整理" })).toBeVisible();
   await window
     .getByRole("button", { name: "导入文件", exact: true })
     .first()
@@ -213,6 +218,64 @@ test("marquee-selects multiple cards in grid mode", async () => {
     await window.keyboard.up("Shift");
 
     await expect.poll(() => selectedCount(window)).toBe(4);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee invalidates card geometry after layout and size changes", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(8);
+  try {
+    await createAndImport(window, "布局切换后框选缓存验收", 8);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    // Prime the geometry cache in grid mode.
+    const firstGridCard = window.locator(".asset-card").first();
+    const firstGridBox = await firstGridCard.boundingBox();
+    if (!firstGridBox) throw new Error("Grid card is not visible");
+    await window.mouse.move(firstGridBox.x - 6, firstGridBox.y - 6);
+    await window.mouse.down();
+    await window.mouse.move(
+      firstGridBox.x + firstGridBox.width + 6,
+      firstGridBox.y + firstGridBox.height + 6,
+      { steps: 8 },
+    );
+    await window.mouse.up();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    await window.keyboard.press("Escape");
+    await expect.poll(() => selectedCount(window)).toBe(0);
+
+    // Both changes can reflow cards while the canvas itself keeps the same
+    // client size. A stale cache would use the old grid rectangles here.
+    await window.getByRole("button", { name: "瀑布流视图" }).click();
+    const sizeControl = window.locator(
+      '.asset-size-control input[type="range"]',
+    );
+    await sizeControl.fill("0");
+    await expect(window.locator(".asset-grid")).toHaveClass(/is-masonry/);
+    await expect.poll(() => sizeControl.inputValue()).toBe("0");
+
+    const target = window.locator(".asset-card").nth(3);
+    await expect(target).toBeVisible();
+    const targetBox = await target.boundingBox();
+    if (!targetBox) throw new Error("Masonry target card is not visible");
+    await window.mouse.move(targetBox.x - 4, targetBox.y - 4);
+    await window.mouse.down();
+    await window.mouse.move(
+      targetBox.x + targetBox.width + 4,
+      targetBox.y + targetBox.height + 4,
+      { steps: 8 },
+    );
+    await window.mouse.up();
+
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    await expect(target).toHaveClass(/is-selected/);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
