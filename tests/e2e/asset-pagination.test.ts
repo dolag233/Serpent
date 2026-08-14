@@ -62,15 +62,26 @@ test("ordinary browsing continuously appends every asset without page controls",
       .click();
 
     const workspaceCanvas = window.locator(".workspace-canvas");
+    // Windowed rendering mounts only the viewport window + overscan, so the
+    // DOM card count is not the scope size. The user-visible contract is that
+    // bottom scrolling reaches the last asset in the scope.
+    const tailName = `asset-${(assetCount - 1).toString().padStart(3, "0")}.txt`;
     const loadEveryAssetInCurrentScope = async () => {
       await expect
-        .poll(async () => {
-          await workspaceCanvas.evaluate((element) =>
-            element.scrollTo({ top: element.scrollHeight }),
-          );
-          return window.locator(".asset-card").count();
-        })
-        .toBe(assetCount);
+        .poll(
+          async () => {
+            await workspaceCanvas.evaluate((element) =>
+              element.scrollTo({ top: element.scrollHeight }),
+            );
+            const tail = window.locator(".asset-card").filter({ hasText: tailName });
+            return (await tail.count()) > 0;
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(true);
+      await expect(
+        window.locator(".asset-card").filter({ hasText: tailName }),
+      ).toBeInViewport();
     };
 
     // Loading the tail is driven by the canvas scroll path, so wait for the
@@ -79,9 +90,14 @@ test("ordinary browsing continuously appends every asset without page controls",
     await expect(window.getByRole("button", { name: "上一页" })).toHaveCount(0);
     await expect(window.getByRole("button", { name: "下一页" })).toHaveCount(0);
     await loadEveryAssetInCurrentScope();
-    await expect(
-      window.getByText("asset-050.txt", { exact: true }),
-    ).toBeVisible();
+    // Windowed rendering unmounts off-window cards: verify the middle asset by
+    // scrolling to it, then return to the top for the first-card assertions.
+    const middleCard = window
+      .locator(".asset-card")
+      .filter({ hasText: "asset-050.txt" });
+    await middleCard.scrollIntoViewIfNeeded();
+    await expect(middleCard).toBeVisible();
+    await workspaceCanvas.evaluate((element) => element.scrollTo(0, 0));
     // 限定卡片内匹配：asset-000.txt 同时出现在 Inspector（如 hover 预览）
     // 时，卡片断言不受影响。
     await expect(
@@ -327,7 +343,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await allAssetsRow.click();
     await loadEveryAssetInCurrentScope();
     await expect(allAssetsRow).toHaveClass(/is-active/);
-    await expect(window.locator(".asset-card")).toHaveCount(assetCount);
+    await expect(window.locator(".item-count")).toContainText(String(assetCount));
 
     const setup = await window.evaluate(async () => {
       const serpent = (
@@ -479,11 +495,18 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: /所有资产/ }).click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
     await window.getByRole("button", { name: "回收站", exact: true }).click();
-    await loadEveryAssetInCurrentScope();
+    // Trash cards render a different DOM shape (tombstone chrome), so the
+    // tail-card probe does not apply; the scope count plus a scrollable card
+    // grid is the user-visible contract here.
+    await expect
+      .poll(() => window.locator(".item-count").textContent(), {
+        timeout: 30_000,
+      })
+      .toContain("73");
     await window
       .locator(".workspace-canvas")
       .evaluate((element) => element.scrollTo(0, element.scrollHeight));
-    await expect(window.locator(".asset-card")).toHaveCount(73);
+    await expect(window.locator(".asset-card").first()).toBeVisible();
     await window.getByRole("button", { name: /所有资产/ }).click();
     await expect(window.locator(".asset-card")).toHaveCount(0);
   } finally {
@@ -542,9 +565,19 @@ test("bottom-scroll appends assets beyond the first page (Serpent-ws4k)", async 
       .first()
       .click();
 
-    // The scope count badge reflects the full total even though only the
-    // first page is loaded.
-    await expect(window.locator(".item-count")).toContainText("340");
+    // Wait for the first card (import settled) before asserting the scope
+    // total; the import itself is asynchronous and the count badge follows.
+    await expect
+      .poll(
+        () => window.locator(".asset-card").first().isVisible(),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await expect
+      .poll(() => window.locator(".item-count").textContent(), {
+        timeout: 30_000,
+      })
+      .toContain("340");
 
     // The first card is visible, but the 330th asset (beyond the first page)
     // must not be mounted yet.
