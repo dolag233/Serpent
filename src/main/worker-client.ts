@@ -88,6 +88,8 @@ export function requestTimeoutForCommand(
     commandType.startsWith('asset.import.')
     || commandType === 'asset.refresh'
     || commandType === 'library.create'
+    // 库打开含 schema 迁移（大库/旧版库重写可超过 15s 默认超时，导致启动失败）
+    || commandType === 'library.open'
     || commandType === 'automation.file-import-plan'
     || commandType === 'automation.file-operation-plan'
     || commandType === 'extension.save-from-url'
