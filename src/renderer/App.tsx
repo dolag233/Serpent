@@ -81,6 +81,7 @@ import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
 } from "./folder-browse-canvas";
+import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
 import { FolderCard } from "./FolderCard";
 import {
   isFolderRecursiveEnabled,
@@ -566,6 +567,10 @@ function AppInner() {
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
+  // Serpent-d0nv: bump to re-fetch folder browse entries when a cover
+  // candidate's thumbnail becomes ready (progressive cover refresh).
+  const [folderBrowseRefreshToken, setFolderBrowseRefreshToken] = useState(0);
+  const folderCoverCandidateAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
   /** Full trash tombstone list for hierarchy browse (Serpent-6pcd). */
   const [trashedFolders, setTrashedFolders] = useState<TrashedFolderSummary[]>(
     [],
@@ -2050,7 +2055,19 @@ function AppInner() {
     linkedFolders,
     searchValue,
     showIgnoredItems,
+    // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
+    // the row re-fetches and the generated cover appears without navigation.
+    folderBrowseRefreshToken,
   ]);
+
+  // Serpent-d0nv: keep the cover-candidate asset set (from the last browse
+  // entries response) visible to the thumbnail event subscriber so a ready
+  // cover refreshes the folder-card row without a full reload.
+  useEffect(() => {
+    folderCoverCandidateAssetIdsRef.current = collectFolderCoverCandidateAssetIds(
+      folderBrowseEntries,
+    );
+  }, [folderBrowseEntries]);
 
   const previewIndex = previewAsset
     ? visibleAssets.findIndex((asset) => asset.assetId === previewAsset.assetId)
@@ -2856,6 +2873,16 @@ function AppInner() {
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(flush);
     };
+    // Serpent-d0nv: a burst of cover thumbnail.ready events collapses into a
+    // single folder-browse-entries re-fetch (one IPC for the current parent).
+    let folderBrowseRefreshFrame = 0;
+    const scheduleFolderBrowseRefresh = () => {
+      if (folderBrowseRefreshFrame !== 0) return;
+      folderBrowseRefreshFrame = window.requestAnimationFrame(() => {
+        folderBrowseRefreshFrame = 0;
+        setFolderBrowseRefreshToken((token) => token + 1);
+      });
+    };
     const unsubscribe = api.onThumbnailEvent((event) => {
       if (event.libraryId !== library?.libraryId) return;
       if (event.type === "asset.dimensions.ready") {
@@ -2907,12 +2934,22 @@ function AppInner() {
               : { durationMs: event.durationMs }),
             sequenceFrameArtifactId: event.artifactId,
           });
+          // Serpent-d0nv: when a cover candidate of the current folder-card
+          // row finishes generating, re-fetch the browse entries so the card
+          // shows its cover immediately instead of staying on the empty
+          // folder icon until navigation.
+          if (folderCoverCandidateAssetIdsRef.current.has(event.assetId)) {
+            scheduleFolderBrowseRefresh();
+          }
         }
       }
     });
     return () => {
       unsubscribe();
       if (frame !== 0) window.cancelAnimationFrame(frame);
+      if (folderBrowseRefreshFrame !== 0) {
+        window.cancelAnimationFrame(folderBrowseRefreshFrame);
+      }
     };
   }, [api, library?.libraryId, t]);
   useEffect(() => {
