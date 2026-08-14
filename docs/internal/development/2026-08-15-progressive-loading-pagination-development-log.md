@@ -73,6 +73,35 @@
 E2E 未运行（主 agent 集中串行收口）；`tests/e2e/asset-pagination.test.ts` 是
 连续追加模型验收（73 资产 < 300，第一页即全量，滚动轮询仍通过）。
 
+## 五、交叉审查修复（2026-08-15，追加提交）
+
+flash 模型审查发现并修复：
+
+1. **select-all/invert 异步竞态（必修）**：`fetchScopeAssetIds` await 后无条件
+   应用结果，切换文件夹/搜索范围后立刻 Ctrl+A 会把旧范围 ID 集写进新范围选择。
+   修复：`use-browse-pagination.ts` 提取 `fetchBrowseScopeAssetIdsGuarded`（捕获
+   代际 → await → 再校验代际），hook 的 `fetchScopeAssetIds` 用 `generationRef`
+   作为代际读取器；过期/失败返回 null，select-all/invert 对 null/空集 no-op
+   （不清空既有选择——与旧同步行为一致：空范围时键盘守卫
+   `browseScopeAssetIds.length === 0` 与菜单 `hasBrowseAssets` 本就不触发，空
+   ID 集仅在空范围出现，旧行为即 no-op；注释与单测均已写明）。
+2. **9 处同构注册块收敛（建议修）**：App.tsx 6 处 + restore-browser-session.ts
+   3 处 `beginBrowsePage({kind/query/filters/scope/sort/showIgnored/target},
+   {items/total/offset})` 提取为 `registerBrowseSearchPage` /
+   `registerBrowseSmartCollectionPage`（`use-browse-pagination.ts` 导出，
+   `BeginBrowsePage` 统一类型），消除复制。
+3. **测试补缺（必修）**：`dispatchSelectionKeyboardAction`（selection-keyboard.ts
+   提取，hook 只接线 DOM 监听）覆盖 select-all/invert/clear 回调触发与守卫；
+   新 `tests/unit/browse-pagination.test.ts` 覆盖 idsOnly 拉取、
+   `fetchBrowseScopeAssetIdsGuarded` 代际过期丢弃用例、两个注册 helper。
+4. **小项说明**：审查提到的 `NATIVE_DRAG_PRIME_VISIBLE_COUNT=500` 在当前代码
+   中并不存在（`primeNativeAssetDragCache` 对结果全部 assetId 预热，无 500
+   截断）；分页后每页结果 ≤300，拖拽预热窗口即当前页，与 `BROWSE_PAGE_SIZE=300`
+   天然一致，无需改动。
+
+修复提交后验证：`npm run typecheck` / `npm run lint` / 定向单测
+（selection-keyboard + browse-pagination 新增用例）全部通过（见提交说明）。
+
 ## 四、遗留项 / 风险
 
 - **keyset 游标**：OFFSET 深分页（>50k 时每页从头扫描）未做，收益在 COUNT 全量

@@ -352,6 +352,8 @@ import {
 } from "./folder-card-width";
 import {
   BROWSE_PAGE_SIZE,
+  registerBrowseSearchPage,
+  registerBrowseSmartCollectionPage,
   useBrowsePagination,
 } from "./use-browse-pagination";
 import {
@@ -1950,10 +1952,6 @@ function AppInner() {
     [selectedFolderIds],
   );
 
-  const visibleAssetIds = useMemo(
-    () => visibleAssets.map((asset) => asset.assetId),
-    [visibleAssets],
-  );
   const browseScopeAssetIds = useMemo(() => {
     const rows = showTrash ? trashedAssets : assets;
     return rows.map((asset) => asset.assetId);
@@ -1972,8 +1970,9 @@ function AppInner() {
   ]);
   // Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
   // the loaded page, so they resolve the full id set on demand (idsOnly).
-  // A failed/empty resolve is a no-op; the async gap keeps the existing
-  // REQ-BROWSE-001 semantics (selection covers the full scope count).
+  // A stale id set (scope switched mid-fetch) and a null/empty resolve are
+  // both no-ops — matching the pre-pagination synchronous guards, they never
+  // clear an existing selection.
   const selectAllBrowseScope = useCallback(async () => {
     const ids = await fetchBrowseScopeAssetIds();
     if (!ids || ids.length === 0) return;
@@ -2007,11 +2006,7 @@ function AppInner() {
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     browseScopeAssetIds,
-    visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetId,
-    selectionAnchorRef,
-    setAssetSelectionAnchor,
     clearAssetSelection,
     onSelectAll: () => void selectAllBrowseScope(),
     onInvert: () => void invertBrowseScope(),
@@ -2737,23 +2732,18 @@ function AppInner() {
       setSearchSnippets(new Map());
       // Serpent-ws4k: register the paginated query so the scroll sentinel can
       // append the next page with the exact same scope/sort/filters.
-      beginBrowsePage(
-        {
-          kind: "search",
-          libraryId: activeLibrary.libraryId,
-          query: opts?.discovery?.search ?? null,
-          filters: opts?.discovery?.filters,
-          scope: browseScope,
-          sort: opts?.discovery?.sort,
-          showIgnored: includeIgnored,
-          target: trashMode ? "trash" : "assets",
-        },
-        {
-          items: assetResult.value.items,
-          total: assetResult.value.total,
-          offset: assetResult.value.offset,
-        },
-      );
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: activeLibrary.libraryId,
+        query: opts?.discovery?.search ?? null,
+        filters: opts?.discovery?.filters,
+        scope: browseScope,
+        sort: opts?.discovery?.sort,
+        showIgnored: includeIgnored,
+        target: trashMode ? "trash" : "assets",
+        items: assetResult.value.items,
+        total: assetResult.value.total,
+        offset: assetResult.value.offset,
+      });
       setLinkedFolders(linkedResult.value);
       setTags(tagResult.value);
       setCollections(collectionResult.value);
@@ -3637,23 +3627,18 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
-      beginBrowsePage(
-        {
-          kind: "search",
-          libraryId: library.libraryId,
-          query: definition.search ?? null,
-          filters: definition.filters,
-          sort: definition.sort,
-          scope: null,
-          showIgnored: showIgnoredItems,
-          target: "assets",
-        },
-        {
-          items: result.value.items,
-          total: result.value.total,
-          offset: result.value.offset,
-        },
-      );
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
@@ -3695,23 +3680,18 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
-      beginBrowsePage(
-        {
-          kind: "search",
-          libraryId: library.libraryId,
-          query: definition.search ?? null,
-          filters: definition.filters,
-          sort: definition.sort,
-          scope: null,
-          showIgnored: showIgnoredItems,
-          target: "assets",
-        },
-        {
-          items: result.value.items,
-          total: result.value.total,
-          offset: result.value.offset,
-        },
-      );
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -4145,23 +4125,18 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
-      beginBrowsePage(
-        {
-          kind: "search",
-          libraryId: library.libraryId,
-          query: null,
-          scope: { kind: "collection", collectionId, recursive },
-          sort: null,
-          filters: null,
-          showIgnored: showIgnoredItems,
-          target: "assets",
-        },
-        {
-          items: result.value.items,
-          total: result.value.total,
-          offset: result.value.offset,
-        },
-      );
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: null,
+        scope: { kind: "collection", collectionId, recursive },
+        sort: null,
+        filters: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
       // Also refresh sidebar metadata
       const [tagResult, collectionResult, smartResult] = await Promise.all([
         api.listTags({ libraryId: library.libraryId }),
@@ -4986,23 +4961,18 @@ function AppInner() {
     }
     applySearchResult(result.value);
     // Serpent-ws4k: subsequent pages must reuse the same query/scope/sort.
-    beginBrowsePage(
-      {
-        kind: "search",
-        libraryId: library.libraryId,
-        query: definition.search ?? null,
-        filters: definition.filters,
-        scope: currentSearchScope(),
-        sort: definition.sort,
-        showIgnored: showIgnoredItems,
-        target: "assets",
-      },
-      {
-        items: result.value.items,
-        total: result.value.total,
-        offset: result.value.offset,
-      },
-    );
+    registerBrowseSearchPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      query: definition.search ?? null,
+      filters: definition.filters,
+      scope: currentSearchScope(),
+      sort: definition.sort,
+      showIgnored: showIgnoredItems,
+      target: "assets",
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     return result.value;
   }
 
@@ -5132,19 +5102,13 @@ function AppInner() {
         ),
       );
       applySearchResult(result.value);
-      beginBrowsePage(
-        {
-          kind: "smart-collection",
-          libraryId: library.libraryId,
-          collectionId,
-          target: "assets",
-        },
-        {
-          items: result.value.items,
-          total: result.value.total,
-          offset: result.value.offset,
-        },
-      );
+      registerBrowseSmartCollectionPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        collectionId,
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
