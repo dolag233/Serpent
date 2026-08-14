@@ -33,6 +33,7 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import {
   appendAssetPage,
   browseLoadMoreObserverRoot,
+  excludeLocallyDeletedAssets,
   resolveSearchTotalAfterAppend,
 } from "./asset-browse-load-more";
 
@@ -203,6 +204,12 @@ export type UseBrowsePaginationResult = {
   appendNextPage: () => Promise<void>;
   /** Full-scope asset ids for select-all / invert (idsOnly query). */
   fetchScopeAssetIds: () => Promise<string[] | null>;
+  /**
+   * Serpent-关联刷新: fold a local deletion into the pagination bookkeeping so
+   * an in-flight/next append cannot resurrect deleted rows and the offset
+   * counters stay consistent until the deferred full reconcile re-registers.
+   */
+  removeLocally: (assetIds: string[], removedCount: number) => void;
   /** Drop the current definition (library close / navigation to non-browse views). */
   reset: () => void;
   hasMorePages: boolean;
@@ -228,6 +235,8 @@ export function useBrowsePagination(
   const loadedRef = useRef(0);
   const totalRef = useRef(0);
   const loadedIdsRef = useRef<Set<string>>(new Set());
+  /** Serpent-关联刷新: ids deleted since the last beginPage — appends skip them. */
+  const deletedIdsRef = useRef<Set<string>>(new Set());
   const loadingRef = useRef(false);
   const [hasMorePages, setHasMorePages] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -242,6 +251,7 @@ export function useBrowsePagination(
       loadedRef.current = firstPage.offset + firstPage.items.length;
       totalRef.current = firstPage.total;
       loadedIdsRef.current = new Set(firstPage.items.map((item) => item.assetId));
+      deletedIdsRef.current = new Set();
       setSearchOffset(loadedRef.current);
       setHasMorePages(loadedRef.current < firstPage.total);
     },
@@ -292,9 +302,15 @@ export function useBrowsePagination(
         offset: number;
         snippets?: Array<{ assetId: string; text: string }>;
       };
+      // Serpent-关联刷新: skip rows deleted locally since the last beginPage so
+      // an append cannot resurrect them.
+      const liveItems = excludeLocallyDeletedAssets(
+        page.items,
+        deletedIdsRef.current,
+      );
       const existingIds = loadedIdsRef.current;
       let newlyAdded = 0;
-      for (const item of page.items) {
+      for (const item of liveItems) {
         if (!existingIds.has(item.assetId)) newlyAdded += 1;
       }
       const total = resolveSearchTotalAfterAppend({
@@ -304,7 +320,7 @@ export function useBrowsePagination(
         newlyAddedCount: newlyAdded,
       });
       loadedRef.current = requestOffset + page.items.length;
-      for (const item of page.items) existingIds.add(item.assetId);
+      for (const item of liveItems) existingIds.add(item.assetId);
       totalRef.current = total;
       setSearchTotal(total);
       setSearchOffset(loadedRef.current);
@@ -320,7 +336,7 @@ export function useBrowsePagination(
         });
       }
       const apply = definition.target === "trash" ? setTrashedAssets : setAssets;
-      apply((current) => appendAssetPage(current, page.items));
+      apply((current) => appendAssetPage(current, liveItems));
     } finally {
       loadingRef.current = false;
       setLoadingMore(false);
@@ -343,6 +359,20 @@ export function useBrowsePagination(
         currentGeneration: () => generationRef.current,
       }),
     [api],
+  );
+
+  const removeLocally = useCallback(
+    (assetIds: string[], removedCount: number) => {
+      for (const assetId of assetIds) {
+        deletedIdsRef.current.add(assetId);
+        if (loadedIdsRef.current.delete(assetId)) {
+          loadedRef.current = Math.max(0, loadedRef.current - 1);
+        }
+      }
+      totalRef.current = Math.max(0, totalRef.current - removedCount);
+      setHasMorePages(loadedRef.current < totalRef.current);
+    },
+    [],
   );
 
   const reset = useCallback(() => {
@@ -379,6 +409,7 @@ export function useBrowsePagination(
     beginPage,
     appendNextPage,
     fetchScopeAssetIds,
+    removeLocally,
     reset,
     hasMorePages,
     loadingMore,

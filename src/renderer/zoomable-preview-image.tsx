@@ -201,12 +201,14 @@ export const ZoomableImage = forwardRef<
     fitToWindow();
   }, [fitRequestToken, fitToWindow]);
 
-  // Reset decode latch and measured size whenever the full URL identity
-  // changes (asset switch; placeholder→full upgrades keep the same src).
+  // Reset the decode latch whenever the full URL identity changes (asset
+  // switches remount via key; placeholder->full upgrades change src, so the
+  // probe must re-decode the new URL). The measured natural size is NOT reset
+  // here — asset switches already remount (key={assetId}) and the upgrade must
+  // keep the previous measurement to preserve the user's zoom/pan
+  // (Serpent-esuj).
   useEffect(() => {
     setFullDecoded(false);
-    setSourceNatural({ w: 0, h: 0 });
-    sourceNaturalRef.current = { w: 0, h: 0 };
   }, [src]);
 
   // Prefetch full image; only promote after proven decode (naturalWidth > 0).

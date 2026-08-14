@@ -920,6 +920,7 @@ function AppInner() {
   const {
     beginPage: beginBrowsePage,
     fetchScopeAssetIds: fetchBrowseScopeAssetIds,
+    removeLocally: removeLocallyFromBrowse,
     reset: resetBrowsePagination,
   } = browsePagination;
 
@@ -2896,6 +2897,23 @@ function AppInner() {
       void (async () => {
         try {
           await closeAssetPreview(false);
+          // P1 (2026-08-15): switching libraries must not keep the previous
+          // library's asset cards on the canvas even for a frame — their
+          // serpent://preview URLs would be rebuilt with the NEW libraryId and
+          // every card would flash "file missing". Clear the lists before the
+          // new library id lands.
+          setAssets([]);
+          setTrashedAssets([]);
+          setFolders([]);
+          setLinkedFolders([]);
+          setFolderBrowseEntries([]);
+          setTrashedFolders([]);
+          setTags([]);
+          setCollections([]);
+          setSmartCollections([]);
+          setSearchTotal(null);
+          setAllAssetCount(0);
+          resetBrowsePagination();
           setLibrary(event.library);
           setPluginJobs(null);
           setHiddenPluginJobActivityId(null);
@@ -4493,15 +4511,29 @@ function AppInner() {
       setTrashedAssets((current) => removeAssetIdsLocally(current, removed));
       setSearchTotal((current) => decrementScopeCount(current, removedCount));
       setAllAssetCount((current) => Math.max(0, current - removedCount));
+      // Serpent-关联刷新: fold the deletion into the pagination bookkeeping so
+      // an in-flight append cannot resurrect the removed rows.
+      removeLocallyFromBrowse(assetIds, removedCount);
       if (deferredReconcileTimerRef.current !== undefined) {
         window.clearTimeout(deferredReconcileTimerRef.current);
       }
       deferredReconcileTimerRef.current = window.setTimeout(() => {
         deferredReconcileTimerRef.current = undefined;
-        void reloadCurrentContentRef.current().catch(() => undefined);
+        // Keep the user's scroll position across the silent reconcile — a
+        // replaced first page must not yank the canvas to the bottom.
+        const canvas = workspaceCanvasRef.current;
+        const scrollTopBefore = canvas?.scrollTop ?? 0;
+        void reloadCurrentContentRef.current()
+          .catch(() => undefined)
+          .finally(() => {
+            const nextCanvas = workspaceCanvasRef.current;
+            if (nextCanvas && nextCanvas.scrollTop !== scrollTopBefore) {
+              nextCanvas.scrollTo({ top: scrollTopBefore });
+            }
+          });
       }, 1500);
     },
-    [],
+    [removeLocallyFromBrowse],
   );
 
   function openInlineCollectionRename(collectionId: string, currentName: string) {

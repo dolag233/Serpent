@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendAssetPage,
   countNewlyAddedAssets,
+  excludeLocallyDeletedAssets,
   resolveSearchTotalAfterAppend,
 } from "../../src/renderer/asset-browse-load-more";
 
@@ -76,5 +77,21 @@ describe("appendAssetPage (Serpent-ws4k)", () => {
     const next = appendAssetPage(current, []);
     expect(next).toEqual(current);
     expect(next).not.toBe(current);
+  });
+});
+
+describe("excludeLocallyDeletedAssets (Serpent-关联刷新)", () => {
+  it("drops ids deleted since the last beginPage", () => {
+    expect(
+      excludeLocallyDeletedAssets(
+        [{ assetId: "a" }, { assetId: "b" }, { assetId: "c" }],
+        new Set(["b"]),
+      ).map((item) => item.assetId),
+    ).toEqual(["a", "c"]);
+  });
+
+  it("returns the same reference when nothing is deleted", () => {
+    const items = [{ assetId: "a" }, { assetId: "b" }];
+    expect(excludeLocallyDeletedAssets(items, new Set())).toBe(items);
   });
 });
