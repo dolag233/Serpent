@@ -18991,7 +18991,20 @@ export class LibraryService {
         : new Set(['thumbnail', 'video_poster', 'model_glb']);
       if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
+    return this.artifactFilePathFromRow(openLibrary, row.file_path);
+  }
 
+  /**
+   * Containment-checked absolute path for an artifact row's relative path.
+   * The artifacts root itself must be a real directory (no symlink), the
+   * resolved target must stay inside it, and the target file must exist as a
+   * regular non-symlink file. Callers that already hold the artifact row skip
+   * the per-artifact DB lookup (Serpent-v4jf batch drag priming).
+   */
+  private artifactFilePathFromRow(
+    openLibrary: OpenLibrary,
+    relativeFilePath: string,
+  ): string {
     const artifactsDir = this.artifactsDir(openLibrary);
     let artifactsRoot: string;
     try {
@@ -19004,7 +19017,7 @@ export class LibraryService {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
     }
-    const targetPath = path.resolve(artifactsRoot, ...row.file_path.split('/'));
+    const targetPath = path.resolve(artifactsRoot, ...relativeFilePath.split('/'));
     const relation = path.relative(artifactsRoot, targetPath);
     if (
       relation === '' ||
@@ -19032,6 +19045,153 @@ export class LibraryService {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
     }
+  }
+
+  /**
+   * Batched native-drag priming entries (Serpent-v4jf).
+   *
+   * The legacy per-asset loop cost 3-4 point queries per asset (resolveAssetPath,
+   * getThumbnailArtifact, getArtifactAbsolutePath plus their internal lookups);
+   * priming a 50k-item browse result stalled the Worker event loop with ~150k+
+   * queries while Main awaited the primer before forwarding the browse response.
+   * This resolves the same semantics in 500-id chunks: one assets query per
+   * chunk (with the standard explicit-ignore filter), one ready
+   * thumbnail/video_poster query per chunk (video_poster preferred, matching
+   * getThumbnailArtifact), then per-entry filesystem checks that keep the
+   * exact safety boundary of the single-entry resolvers. Missing entries are
+   * skipped like the legacy loop; hard failures still throw.
+   */
+  resolveAssetDragInfos(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): Array<{
+    assetId: string;
+    absolutePath: string;
+    thumbnailAbsolutePath?: string;
+  }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const uniqueIds = [...new Set(assetIds)];
+    if (uniqueIds.length === 0) return [];
+    const connection = openLibrary.connection;
+    const batchSize = 500;
+
+    const assetRows: Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+      relative_file_path: string;
+      current_revision_id: string | null;
+    }> = [];
+    for (let i = 0; i < uniqueIds.length; i += batchSize) {
+      const batch = uniqueIds.slice(i, i + batchSize);
+      const placeholders = batch.map(() => '?').join(', ');
+      assetRows.push(
+        ...(connection
+          .prepare(
+            `SELECT a.asset_id, a.location_kind, a.linked_folder_id,
+                    a.relative_file_path, a.current_revision_id
+               FROM assets a
+              WHERE a.asset_id IN (${placeholders})
+                AND ${this.explicitIgnoreSql(connection, 'a', false)}`,
+          )
+          .all(...batch) as typeof assetRows),
+      );
+    }
+
+    // Lenient read: libraries predating revision_artifacts.status/kind have no
+    // served thumbnails to resolve (the single-entry path would fail the same
+    // columns); degrade to source-path-only entries instead of throwing.
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    const canResolveThumbnails =
+      artifactColumns.has('status') && artifactColumns.has('kind');
+    const thumbnailByRevision = new Map<
+      string,
+      { filePath: string }
+    >();
+    if (canResolveThumbnails) {
+      const revisionIds = [
+        ...new Set(
+          assetRows
+            .map((row) => row.current_revision_id)
+            .filter((id): id is string => id !== null && id.length > 0),
+        ),
+      ];
+      for (let i = 0; i < revisionIds.length; i += batchSize) {
+        const batch = revisionIds.slice(i, i + batchSize);
+        const placeholders = batch.map(() => '?').join(', ');
+        const rows = connection
+          .prepare(
+            `SELECT revision_id, file_path
+               FROM revision_artifacts
+              WHERE revision_id IN (${placeholders})
+                AND kind IN ('thumbnail', 'video_poster')
+                AND status = 'ready'
+                AND invalidated_at IS NULL
+              ORDER BY revision_id, CASE kind WHEN 'video_poster' THEN 0 ELSE 1 END`,
+          )
+          .all(...batch) as Array<{ revision_id: string; file_path: string }>;
+        for (const row of rows) {
+          if (!thumbnailByRevision.has(row.revision_id)) {
+            thumbnailByRevision.set(row.revision_id, { filePath: row.file_path });
+          }
+        }
+      }
+    }
+
+    const entries: Array<{
+      assetId: string;
+      absolutePath: string;
+      thumbnailAbsolutePath?: string;
+    }> = [];
+    for (const row of assetRows) {
+      let absolutePath: string;
+      try {
+        absolutePath =
+          row.location_kind === 'managed'
+            ? this.folderPath(openLibrary, row.relative_file_path)
+            : this.linkedAssetPath(
+                openLibrary,
+                row.linked_folder_id,
+                row.relative_file_path,
+              );
+      } catch (error) {
+        if (
+          error instanceof LibraryServiceError &&
+          error.code === 'ASSET_NOT_FOUND'
+        ) {
+          continue;
+        }
+        throw error;
+      }
+      const thumbnail =
+        row.current_revision_id === null
+          ? undefined
+          : thumbnailByRevision.get(row.current_revision_id);
+      let thumbnailAbsolutePath: string | undefined;
+      if (thumbnail) {
+        try {
+          thumbnailAbsolutePath = this.artifactFilePathFromRow(
+            openLibrary,
+            thumbnail.filePath,
+          );
+        } catch (error) {
+          if (
+            !(error instanceof LibraryServiceError) ||
+            error.code !== 'ASSET_NOT_FOUND'
+          ) {
+            throw error;
+          }
+        }
+      }
+      entries.push({
+        assetId: row.asset_id,
+        absolutePath,
+        ...(thumbnailAbsolutePath === undefined
+          ? {}
+          : { thumbnailAbsolutePath }),
+      });
+    }
+    return entries;
   }
 
   getCurrentMediaSource(
