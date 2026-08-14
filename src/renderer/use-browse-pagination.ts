@@ -63,6 +63,128 @@ export type BrowseFirstPage = {
   offset: number;
 };
 
+export type BeginBrowsePage = (
+  definition: BrowsePageDefinition,
+  firstPage: BrowseFirstPage,
+) => void;
+
+/**
+ * Fetch the full-scope id set for select-all / invert (idsOnly). Pure helper —
+ * the hook wraps it in a generation guard so a stale result is never applied.
+ */
+export async function fetchBrowseScopeIds(options: {
+  api: SerpentLibraryApi;
+  definition: BrowsePageDefinition;
+}): Promise<string[] | null> {
+  const { api, definition } = options;
+  if (definition.kind === "smart-collection") {
+    const result = await api.executeSmartCollection({
+      libraryId: definition.libraryId,
+      collectionId: definition.collectionId,
+      idsOnly: true,
+    });
+    return result.ok ? (result.value.assetIds ?? []) : null;
+  }
+  const result = await api.searchAssets({
+    libraryId: definition.libraryId,
+    query: definition.query,
+    filters: definition.filters ?? undefined,
+    scope: definition.scope ?? undefined,
+    sort: definition.sort ?? undefined,
+    showIgnored: definition.showIgnored,
+    idsOnly: true,
+  });
+  return result.ok ? (result.value.assetIds ?? []) : null;
+}
+
+/**
+ * Guard a scope-id fetch against a superseded browse definition (Serpent-ws4k
+ * review). The captured generation is compared again after the await: switching
+ * folder/scope while the ids query is in flight bumps the controller
+ * generation, so the stale id set is discarded instead of being applied to the
+ * new scope's selection.
+ *
+ * Returns null both on failure and on staleness. Callers treat null/empty as a
+ * no-op — they must not clear an existing selection: the synchronous
+ * pre-pagination behavior only reached an empty id set through an empty scope,
+ * where the keyboard/menu guards already no-op'd (see
+ * dispatchSelectionKeyboardAction / hasBrowseAssets).
+ */
+export async function fetchBrowseScopeAssetIdsGuarded(options: {
+  api: SerpentLibraryApi | null;
+  definition: BrowsePageDefinition | null;
+  currentGeneration: () => number;
+  fetch?: (input: {
+    api: SerpentLibraryApi;
+    definition: BrowsePageDefinition;
+  }) => Promise<string[] | null>;
+}): Promise<string[] | null> {
+  const { api, definition, currentGeneration } = options;
+  const fetchImpl = options.fetch ?? fetchBrowseScopeIds;
+  if (!api || !definition) return null;
+  const generation = currentGeneration();
+  const ids = await fetchImpl({ api, definition });
+  if (generation !== currentGeneration()) return null;
+  return ids;
+}
+
+export type BrowseSearchPageRegistration = {
+  libraryId: string;
+  query: SearchQuery | null;
+  filters?: FilterClause[] | null;
+  scope?: SearchScope | null;
+  sort?: SortDefinition | null;
+  showIgnored: boolean;
+  target?: "assets" | "trash";
+  items: AssetSummary[];
+  total: number;
+  offset: number;
+};
+
+/** Shared registration for every search-shaped first page (Serpent-ws4k). */
+export function registerBrowseSearchPage(
+  beginPage: BeginBrowsePage,
+  input: BrowseSearchPageRegistration,
+): void {
+  beginPage(
+    {
+      kind: "search",
+      libraryId: input.libraryId,
+      query: input.query,
+      filters: input.filters ?? null,
+      scope: input.scope ?? null,
+      sort: input.sort ?? null,
+      showIgnored: input.showIgnored,
+      target: input.target ?? "assets",
+    },
+    { items: input.items, total: input.total, offset: input.offset },
+  );
+}
+
+export type BrowseSmartCollectionPageRegistration = {
+  libraryId: string;
+  collectionId: string;
+  items: AssetSummary[];
+  total: number;
+  offset: number;
+};
+
+/** Shared registration for smart-collection first pages (Serpent-ws4k). */
+export function registerBrowseSmartCollectionPage(
+  beginPage: BeginBrowsePage,
+  input: BrowseSmartCollectionPageRegistration,
+): void {
+  beginPage(
+    {
+      kind: "smart-collection",
+      libraryId: input.libraryId,
+      collectionId: input.collectionId,
+      target: "assets",
+    },
+    { items: input.items, total: input.total, offset: input.offset },
+  );
+}
+
 export type UseBrowsePaginationArgs = {
   api: SerpentLibraryApi | null;
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
@@ -213,28 +335,15 @@ export function useBrowsePagination(
     setTrashedAssets,
   ]);
 
-  const fetchScopeAssetIds = useCallback(async (): Promise<string[] | null> => {
-    const definition = definitionRef.current;
-    if (!definition || !api) return null;
-    if (definition.kind === "smart-collection") {
-      const result = await api.executeSmartCollection({
-        libraryId: definition.libraryId,
-        collectionId: definition.collectionId,
-        idsOnly: true,
-      });
-      return result.ok ? (result.value.assetIds ?? []) : null;
-    }
-    const result = await api.searchAssets({
-      libraryId: definition.libraryId,
-      query: definition.query,
-      filters: definition.filters ?? undefined,
-      scope: definition.scope ?? undefined,
-      sort: definition.sort ?? undefined,
-      showIgnored: definition.showIgnored,
-      idsOnly: true,
-    });
-    return result.ok ? (result.value.assetIds ?? []) : null;
-  }, [api]);
+  const fetchScopeAssetIds = useCallback(
+    (): Promise<string[] | null> =>
+      fetchBrowseScopeAssetIdsGuarded({
+        api,
+        definition: definitionRef.current,
+        currentGeneration: () => generationRef.current,
+      }),
+    [api],
+  );
 
   const reset = useCallback(() => {
     definitionRef.current = null;

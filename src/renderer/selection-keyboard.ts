@@ -27,6 +27,47 @@ export const INVERT_SELECTION_SHORTCUT: ShortcutSpec = {
 
 export type SelectionKeyboardAction = "select-all" | "invert" | "clear";
 
+export type SelectionKeyboardDispatch = {
+  /** True when the browse scope has no loaded rows (select-all/invert no-op). */
+  readonly browseScopeEmpty: boolean;
+  /** True when nothing is selected (Escape-clear no-op). */
+  readonly selectionEmpty: boolean;
+  readonly onSelectAll?: () => void;
+  readonly onInvert?: () => void;
+  readonly onClear?: () => void;
+};
+
+/**
+ * Dispatch a matched selection-keyboard action against the current canvas
+ * state. Returns true when the keydown was consumed (caller must
+ * preventDefault). Guards preserve the synchronous pre-pagination behavior:
+ * select-all/invert are no-ops on an empty scope (Serpent-ws4k — the async
+ * select-all/invert callbacks must therefore also no-op on null/empty id sets
+ * instead of clearing the selection), and Escape-clear is a no-op on an empty
+ * selection.
+ */
+export function dispatchSelectionKeyboardAction(
+  action: SelectionKeyboardAction | null,
+  dispatch: SelectionKeyboardDispatch,
+): boolean {
+  if (action === "select-all") {
+    if (dispatch.browseScopeEmpty) return false;
+    dispatch.onSelectAll?.();
+    return true;
+  }
+  if (action === "invert") {
+    if (dispatch.browseScopeEmpty) return false;
+    dispatch.onInvert?.();
+    return true;
+  }
+  if (action === "clear") {
+    if (dispatch.selectionEmpty) return false;
+    dispatch.onClear?.();
+    return true;
+  }
+  return false;
+}
+
 export function matchSelectionKeyboardAction(
   event: ShortcutEvent & { readonly key: string },
   platform: CommandPlatform,
