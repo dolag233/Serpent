@@ -63,7 +63,7 @@ export function JustifiedAssetRows({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
-  const viewport = useCanvasLocalViewport(containerRef);
+  const viewport = useCanvasLocalViewport(containerRef, cardSize);
 
   useLayoutEffect(() => {
     const element = containerRef.current;

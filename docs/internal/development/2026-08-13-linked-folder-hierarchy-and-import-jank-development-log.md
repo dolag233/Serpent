@@ -105,3 +105,17 @@ npx vitest run tests/unit/asset-drag-preview.test.ts tests/unit/asset-drag-drop.
 用户复核后撤回以下快速滚动方案：刷新时保留上一轮 `ready` 缩略图、静态卡片改用 `loading="eager"`、小资源库禁用窗口化。这组方案没有解决白区问题，且实际滚动表现不可接受；对应 Renderer 辅助函数和单测已撤回。`Serpent-1s3d` 仍是未解决的 P0，Value:3 仍是固定复现档位。
 
 原生拖拽继续保留独立修复：Worker 按当前 revision 返回卡片缩略图/视频 `video_poster` 的真实路径，Main 生成 96×72 拖拽图并使用可见文件图标兜底；Renderer 在 Escape 时清理拖拽 ghost 与内部拖拽状态。`npm run typecheck`、`npm run lint`、协议/拖拽相关单测 4 files / 101 tests 通过；Computer Use 在 Value:3 下中途按 Escape 后资源库未变且应用保持响应。截图无法可靠捕获 macOS 原生拖拽代理本身，因此图标视觉仍需人眼观察。
+
+## 2026-08-14 Serpent-1s3d：截断式白区
+
+用户补充：第四档最明显；快速向下滑动时，下面新露出的区域是截断式整片纯白，不是单张卡片没刷出缩略图。
+
+根因不是「禁用窗口化」能修的小库问题。固定 `VIEWPORT_OVERSCAN_PX = 1200` 在大卡片下只覆盖约 4 张卡的跑道；scroll 事件经 rAF 再 `setState` 后，React 提交时视口已经再往下走了一截，旧切片的 `spacerAfter` 露成白区。同时卡片实际高度若与 `columnWindow` 估算不一致，单列会拦腰错位。
+
+修复：
+
+1. `viewportOverscanPx` 至少 `max(1200, 视口×3, 卡片×8)`，瀑布流/平铺窗口共用。
+2. `masonryCardSlotStyle` 把槽位高度和 `--masonry-preview-height` 锁成与窗口化同一套估算；CSS 去掉 `.masonry-column` 的 14px gap，避免 spacer 看不见的空带。
+3. 缺宽高占位从 `col*0.72` 改为与 `.asset-preview { aspect-ratio: 1.3 }` 一致。
+
+自动化：`tests/unit/viewport-window.test.ts`、`masonry-slot-style.test.ts`、`masonry-preview-frame.test.ts`；E2E `thumbnail-scroll-regression.test.ts` 改为在 Value:3 下断言视口内无 >80px 未覆盖带，不再要求小库挂载全部卡片。2026-08-14 用户复验：仍有类似截断白区，体感略好一点；CANVAS-037 记为人类验收不通过，`Serpent-1s3d` 保持 open。

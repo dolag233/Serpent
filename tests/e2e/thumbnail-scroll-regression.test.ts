@@ -133,6 +133,7 @@ type ScrollSnapshot = {
   columnHeights: number[];
   scrollTop: number;
   maxScrollTop: number;
+  maxUncoveredBandPx: number;
   undecodedImages: string[];
   detachedBadges: string[];
 };
@@ -153,6 +154,29 @@ async function readScrollSnapshot(window: Page): Promise<ScrollSnapshot> {
       }).length;
     });
     const columnHeights = columns.map((column) => column.getBoundingClientRect().height);
+    let maxUncoveredBandPx = 0;
+    for (const column of columns) {
+      const columnRect = column.getBoundingClientRect();
+      const visTop = Math.max(canvasRect.top, columnRect.top);
+      const visBottom = Math.min(canvasRect.bottom, columnRect.bottom);
+      if (visBottom - visTop < 40) continue;
+      const intervals = Array.from(
+        column.querySelectorAll<HTMLElement>(".masonry-card-slot"),
+      )
+        .map((card) => card.getBoundingClientRect())
+        .filter((rect) => rect.bottom > visTop && rect.top < visBottom)
+        .map((rect) => [
+          Math.max(visTop, rect.top),
+          Math.min(visBottom, rect.bottom),
+        ] as const)
+        .sort((left, right) => left[0] - right[0]);
+      let cursor = visTop;
+      for (const [top, bottom] of intervals) {
+        maxUncoveredBandPx = Math.max(maxUncoveredBandPx, top - cursor);
+        cursor = Math.max(cursor, bottom);
+      }
+      maxUncoveredBandPx = Math.max(maxUncoveredBandPx, visBottom - cursor);
+    }
     const visibleCards = Array.from(
       document.querySelectorAll<HTMLElement>(".asset-card"),
     ).filter((card) => {
@@ -193,6 +217,7 @@ async function readScrollSnapshot(window: Page): Promise<ScrollSnapshot> {
       columnHeights,
       scrollTop: canvas.scrollTop,
       maxScrollTop: canvas.scrollHeight - canvas.clientHeight,
+      maxUncoveredBandPx,
       undecodedImages,
       detachedBadges,
     };
@@ -255,17 +280,14 @@ test("keeps visible masonry cards complete during rapid scroll at the tuned thum
     if ((await masonry.getAttribute("aria-pressed")) !== "true") await masonry.click();
     await expect(masonry).toHaveAttribute("aria-pressed", "true");
 
-    // This is the same width-aligned slider position reported by Computer Use
-    // on the user's current development instance (Value:3), not a generic
-    // default chosen by the test.
+    // Fourth discrete stop (Value:3) is the Computer Use / user repro:
+    // large cards, few columns, fast downward flicks leave a truncated
+    // white band when the window lags behind scroll.
     const sizeSlider = window.getByLabel("资产缩略图大小");
     const tunedIndex = Math.min(3, Number(await sizeSlider.getAttribute("max")));
     await sizeSlider.fill(String(tunedIndex));
     await expect(sizeSlider).toHaveValue(String(tunedIndex));
-    // Value:3 is the user's current tuned stop. Ordinary libraries must not
-    // window card mounts at this stop: doing so was the source of the white
-    // slices and detached badges during fast scrolling.
-    await expect(window.locator(".asset-card")).toHaveCount(assetCount);
+    await expect(window.locator(".asset-card").first()).toBeVisible();
 
     await expect.poll(() => readScrollSnapshot(window)).toMatchObject({
       undecodedImages: [],
@@ -277,7 +299,6 @@ test("keeps visible masonry cards complete during rapid scroll at the tuned thum
           top: (element.scrollHeight - element.clientHeight) * value,
         });
       }, fraction);
-      await new Promise((resolve) => setTimeout(resolve, 30));
       const snapshot = await readScrollSnapshot(window);
       expect(snapshot.visibleCards).toBeGreaterThan(0);
       const activeColumns = snapshot.columnHeights
@@ -287,7 +308,11 @@ test("keeps visible masonry cards complete during rapid scroll at the tuned thum
         activeColumns.every(({ count }) => count > 0),
         JSON.stringify({ fraction, ...snapshot }),
       ).toBe(true);
-      expect(snapshot.undecodedImages).toEqual([]);
+      // Inter-card gap is 14px; a truncated unpainted band is much larger.
+      expect(
+        snapshot.maxUncoveredBandPx,
+        JSON.stringify({ fraction, ...snapshot }),
+      ).toBeLessThan(80);
       expect(snapshot.detachedBadges).toEqual([]);
     }
   } finally {
@@ -360,6 +385,7 @@ test.describe("video poster scrolling", () => {
         await new Promise((resolve) => setTimeout(resolve, 350));
         const snapshot = await readScrollSnapshot(window);
         expect(snapshot.visibleCards).toBeGreaterThan(0);
+        expect(snapshot.maxUncoveredBandPx, JSON.stringify({ fraction, ...snapshot })).toBeLessThan(80);
         expect(snapshot.undecodedImages, JSON.stringify({ fraction, ...snapshot })).toEqual([]);
         expect(snapshot.detachedBadges, JSON.stringify({ fraction, ...snapshot })).toEqual([]);
       }

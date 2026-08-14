@@ -364,7 +364,6 @@ import {
   mergeAssetThumbnailPatch,
   type AssetThumbnailPatch,
 } from "./asset-thumbnail-patches";
-import { resolveMasonryPreviewStyle } from "./masonry-preview-frame";
 import {
   captureAnchor,
   pickNearestCard,
@@ -9082,14 +9081,6 @@ function AppInner() {
                     >
                       <div
                         className="asset-preview"
-                        style={
-                          assetViewMode === "masonry"
-                            ? resolveMasonryPreviewStyle(
-                                asset.width,
-                                asset.height,
-                              )
-                            : undefined
-                        }
                         title={
                           showThumbnailFailure
                             ? thumbnailFailures.get(asset.assetId)

@@ -23,7 +23,14 @@ describe("estimateMasonryPreviewHeightPx", () => {
 
   it("falls back when dimensions are missing", () => {
     expect(estimateMasonryPreviewHeightPx(null, null, 160)).toBeCloseTo(
-      160 * 0.72,
+      160 / 1.3,
+      5,
+    );
+  });
+
+  it("matches the CSS .asset-preview placeholder ratio so unlocked cards cannot drift", () => {
+    expect(estimateMasonryPreviewHeightPx(null, null, 280)).toBeCloseTo(
+      280 / 1.3,
       5,
     );
   });

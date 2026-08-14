@@ -8451,11 +8451,36 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 14px;
+  /* Windowing spacers own the inter-card gap via slot margin. A CSS gap
+     here would add extra empty strips that the column window cannot see
+     (Serpent-1s3d). */
+  gap: 0;
 }
 
 .masonry-card-slot {
   min-width: 0;
+  flex-shrink: 0;
+}
+
+.asset-grid.is-masonry .masonry-card-slot .asset-card {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+}
+
+.masonry-card-slot .asset-preview {
+  flex: 0 0 var(--masonry-preview-height, auto);
+  width: 100%;
+  height: var(--masonry-preview-height, auto);
+  max-height: none;
+  aspect-ratio: unset;
+}
+
+.masonry-card-slot .asset-caption {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* REQ-FOLDER-001/002/003/010: direct child folder cards above the asset grid.

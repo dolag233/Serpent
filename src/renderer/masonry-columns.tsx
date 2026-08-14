@@ -2,6 +2,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -19,7 +20,23 @@ import {
   stackItemHeights,
 } from "./canvas-asset-layout";
 import { isCanvasReflowRestorationPending } from "./canvas-reflow-restore";
+import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
+
+export function masonryCardSlotStyle(args: {
+  previewHeightPx: number;
+  bodyHeightPx: number;
+  isLast: boolean;
+}): CSSProperties {
+  const preview = Math.max(1, args.previewHeightPx);
+  const body = Math.max(1, args.bodyHeightPx);
+  return {
+    height: body,
+    flexShrink: 0,
+    marginBottom: args.isLast ? undefined : ASSET_GRID_GAP_PX,
+    ["--masonry-preview-height" as string]: `${preview}px`,
+  };
+}
 
 export function MasonryColumns({
   assets,
@@ -41,7 +58,7 @@ export function MasonryColumns({
   const scrollSnapshotRef = useRef<number | null>(null);
   const rawRestoreTargetRef = useRef<number | null>(null);
   const suspendScrollRestorationRef = useRef(suspendScrollRestoration);
-  const viewport = useCanvasLocalViewport(containerRef);
+  const viewport = useCanvasLocalViewport(containerRef, cardSize);
 
   useLayoutEffect(() => {
     suspendScrollRestorationRef.current = suspendScrollRestoration;
@@ -180,6 +197,9 @@ export function MasonryColumns({
       style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
     >
       {distributed.map((column, index) => {
+        const previews = column.items.map((asset) =>
+          estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidth),
+        );
         const bodies = column.items.map((asset) =>
           estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
         );
@@ -210,9 +230,11 @@ export function MasonryColumns({
                 <div
                   className="masonry-card-slot"
                   key={asset.assetId}
-                  style={
-                    isLast ? undefined : { marginBottom: ASSET_GRID_GAP_PX }
-                  }
+                  style={masonryCardSlotStyle({
+                    previewHeightPx: previews[itemIndex]!,
+                    bodyHeightPx: bodies[itemIndex]!,
+                    isLast,
+                  })}
                 >
                   {renderCard(asset)}
                 </div>

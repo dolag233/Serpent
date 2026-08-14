@@ -4,13 +4,37 @@ import {
   type RefObject,
 } from "react";
 
-/** Extra pixels above/below the canvas viewport that stay mounted. */
+/** Floor for extra pixels above/below the canvas viewport that stay mounted. */
 export const VIEWPORT_OVERSCAN_PX = 1200;
+
+/**
+ * Runway for windowed browse columns. A fast trackpad flick plus one React
+ * commit of lag can move several screens; large cards consume that runway
+ * faster, which is why the truncated white band is worst around the 4th
+ * thumbnail stop (Serpent-1s3d).
+ */
+export function viewportOverscanPx(
+  viewportHeightPx: number,
+  cardSizePx: number = 0,
+): number {
+  const view =
+    Number.isFinite(viewportHeightPx) && viewportHeightPx > 0
+      ? viewportHeightPx
+      : 800;
+  const card =
+    Number.isFinite(cardSizePx) && cardSizePx > 0 ? cardSizePx : 0;
+  return Math.max(
+    VIEWPORT_OVERSCAN_PX,
+    Math.round(view * 3),
+    Math.round(card * 8),
+  );
+}
 
 export function useCanvasLocalViewport(
   containerRef: RefObject<HTMLElement | null>,
+  cardSizePx: number = 0,
 ): { start: number; end: number } {
-  const [viewport, setViewport] = useState({ start: 0, end: 2400 });
+  const [viewport, setViewport] = useState({ start: 0, end: 8000 });
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -23,7 +47,7 @@ export function useCanvasLocalViewport(
       if (raf !== 0) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        const next = readCanvasLocalViewport(element, canvas);
+        const next = readCanvasLocalViewport(element, canvas, undefined, cardSizePx);
         setViewport((previous) =>
           previous.start === next.start && previous.end === next.end
             ? previous
@@ -42,19 +66,21 @@ export function useCanvasLocalViewport(
       observer.disconnect();
       if (raf !== 0) cancelAnimationFrame(raf);
     };
-  }, [containerRef]);
+  }, [containerRef, cardSizePx]);
 
   return viewport;
 }
 export function readCanvasLocalViewport(
   container: HTMLElement,
   canvas: HTMLElement,
-  overscanPx: number = VIEWPORT_OVERSCAN_PX,
+  overscanPx?: number,
+  cardSizePx: number = 0,
 ): { start: number; end: number } {
+  const overscan = overscanPx ?? viewportOverscanPx(canvas.clientHeight, cardSizePx);
   const containerRect = container.getBoundingClientRect();
   const canvasRect = canvas.getBoundingClientRect();
-  const start = canvasRect.top - containerRect.top - overscanPx;
-  const end = start + canvas.clientHeight + overscanPx * 2;
+  const start = canvasRect.top - containerRect.top - overscan;
+  const end = start + canvas.clientHeight + overscan * 2;
   return { start, end };
 }
 
