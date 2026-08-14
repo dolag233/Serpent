@@ -275,7 +275,7 @@ serpent.assets.stageContent(assetId, dataBase64, options?): Promise<{
 serpent.assets.replaceContentBatch(items): Promise<{ operationId: string; items: unknown[] }>
 ```
 
-`readContent` 有字节上限并可能返回 `truncated`；`replaceContent` 只接受 managed 且可用资产，须 `content.write`，并经过计划确认。
+`readContent` 有字节上限并可能返回 `truncated`；`replaceContent` 接受托管（managed）与链接（linked）可用资产，须 `content.write`，并经过计划确认。
 批量替换使用 staging 和 `expectedRevisionId` 做统一预检，不能假定多文件系统原子性。
 
 通过 Automation Gateway 暴露的公共分页列表 API（包括 `folder.list`、`asset.list` 和资产搜索）的 `limit` 都是正整数，默认值由 API

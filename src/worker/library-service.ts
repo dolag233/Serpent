@@ -5825,7 +5825,12 @@ export class LibraryService {
       }
     };
     for (const file of [...manifest.files].reverse()) {
-      const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      let destinationPath: string;
+      try {
+        destinationPath = this.resolveAssetPath(openLibrary.summary.libraryId, file.assetId);
+      } catch {
+        destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+      }
       const backupPath = path.join(operationPath, 'backup', file.backupName);
       if (!realFileExists(backupPath)) continue;
       if (!realFileExists(destinationPath)) {
@@ -8428,10 +8433,27 @@ export class LibraryService {
         if (row.location_kind === 'managed' && row.deleted_at === null) outcome = 'execute';
       } else if (input.operation === 'replace-content') {
         if (
-          row.location_kind === 'managed'
-          && row.deleted_at === null
+          row.deleted_at === null
           && row.availability === 'available'
-        ) outcome = 'execute';
+        ) {
+          if (row.location_kind === 'linked') {
+            const linkedFolder = openLibrary.connection
+              .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+              .get(row.linked_folder_id) as {
+                absolute_root_path: string;
+                status: 'available' | 'offline';
+              } | undefined;
+            if (
+              linkedFolder
+              && linkedFolder.status === 'available'
+              && !this.linkedRootIsGone(linkedFolder.absolute_root_path)
+            ) {
+              outcome = 'execute';
+            }
+          } else if (row.location_kind === 'managed') {
+            outcome = 'execute';
+          }
+        }
       } else if (input.operation === 'restore-if-original-vacant') {
         if (row.location_kind === 'managed' && row.deleted_at !== null) outcome = 'execute';
       } else if (input.operation === 'move') {
@@ -22979,23 +23001,38 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_ASSET_METADATA');
     }
     const row = openLibrary.connection
-      .prepare(`SELECT asset_id, location_kind, availability, deleted_at, current_revision_id
+      .prepare(`SELECT asset_id, location_kind, linked_folder_id, availability, deleted_at, current_revision_id
            FROM assets WHERE asset_id = ?`)
       .get(input.assetId) as {
         asset_id: string;
         location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
         availability: 'available' | 'missing';
         deleted_at: string | null;
         current_revision_id: string | null;
       } | undefined;
     if (
       !row ||
-      row.location_kind !== 'managed' ||
       row.availability !== 'available' ||
       row.deleted_at !== null ||
       row.current_revision_id === null
     ) {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (row.location_kind === 'linked') {
+      const linkedFolder = openLibrary.connection
+        .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+        .get(row.linked_folder_id) as {
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        } | undefined;
+      if (
+        !linkedFolder ||
+        linkedFolder.status !== 'available' ||
+        this.linkedRootIsGone(linkedFolder.absolute_root_path)
+      ) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
     }
 
     const stagingToken = input.stagingToken ?? randomUUID();
@@ -23126,24 +23163,37 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        `SELECT asset_id, location_kind, relative_file_path, current_revision_id,
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path, current_revision_id,
                 availability, deleted_at
            FROM assets WHERE asset_id = ?`,
       )
       .get(input.assetId) as {
         asset_id: string;
         location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
         relative_file_path: string;
         current_revision_id: string | null;
         availability: 'available' | 'missing';
         deleted_at: string | null;
       } | undefined;
     if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    if (row.location_kind !== 'managed') {
-      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE');
-    }
     if (row.deleted_at !== null || row.availability !== 'available' || !row.current_revision_id) {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    if (row.location_kind === 'linked') {
+      const linkedFolder = openLibrary.connection
+        .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+        .get(row.linked_folder_id) as {
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        } | undefined;
+      if (
+        !linkedFolder ||
+        linkedFolder.status !== 'available' ||
+        this.linkedRootIsGone(linkedFolder.absolute_root_path)
+      ) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
     }
     if (
       input.expectedRevisionId !== undefined
@@ -23291,7 +23341,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     const rows = openLibrary.connection.prepare(
-      `SELECT assets.asset_id, assets.location_kind, assets.relative_file_path, assets.current_revision_id,
+      `SELECT assets.asset_id, assets.location_kind, assets.linked_folder_id, assets.relative_file_path, assets.current_revision_id,
               revisions.modified_at AS current_modified_at,
               availability, deleted_at
          FROM assets
@@ -23300,6 +23350,7 @@ export class LibraryService {
     ).all(...input.items.map((item) => item.assetId)) as Array<{
       asset_id: string;
       location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
       relative_file_path: string;
       current_revision_id: string | null;
       availability: 'available' | 'missing';
@@ -23311,12 +23362,26 @@ export class LibraryService {
       const row = rowById.get(item.assetId);
       if (
         !row ||
-        row.location_kind !== 'managed' ||
         row.deleted_at !== null ||
         row.availability !== 'available' ||
         row.current_revision_id === null
       ) {
         throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      if (row.location_kind === 'linked') {
+        const linkedFolder = openLibrary.connection
+          .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
+          .get(row.linked_folder_id) as {
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          } | undefined;
+        if (
+          !linkedFolder ||
+          linkedFolder.status !== 'available' ||
+          this.linkedRootIsGone(linkedFolder.absolute_root_path)
+        ) {
+          throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+        }
       }
       if (row.current_revision_id !== item.expectedRevisionId) {
         throw new LibraryServiceError('VERSION_CONFLICT');
@@ -23432,7 +23497,7 @@ export class LibraryService {
           `UPDATE file_operations SET status = 'applying', updated_at = ? WHERE operation_id = ? AND status = 'preparing'`,
         ).run(new Date().toISOString(), operationId);
         for (const file of manifest.files) {
-          const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+          const destinationPath = this.resolveAssetPath(input.libraryId, file.assetId);
           this.options.beforeContentReplaceBatchBackup?.({
             assetId: file.assetId,
             libraryId: input.libraryId,
@@ -23444,7 +23509,7 @@ export class LibraryService {
         }
         this.failAt('crash-content-replace-batch-after-backup');
         for (const file of manifest.files) {
-          const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+          const destinationPath = this.resolveAssetPath(input.libraryId, file.assetId);
           if (sha256FileAtPath(destinationPath) !== file.originalSha256) {
             throw new LibraryServiceError('VERSION_CONFLICT', { reason: 'SOURCE_CHANGED' });
           }
@@ -23466,7 +23531,7 @@ export class LibraryService {
         const committedAt = new Date().toISOString();
         openLibrary.connection.transaction(() => {
           for (const file of manifest.files) {
-            const destinationPath = this.folderPath(openLibrary, file.destinationRelativePath);
+            const destinationPath = this.resolveAssetPath(input.libraryId, file.assetId);
             const fileStat = lstatSync(destinationPath, { bigint: true });
             const storedByteSize = Number(fileStat.size);
             if (!Number.isSafeInteger(storedByteSize)) {

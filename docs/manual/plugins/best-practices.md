@@ -19,7 +19,7 @@
 | 命令/Job 在整个应用会话里注册一次，可服务多个库 | `runtime.instanceScope: "global"` |
 | 每个打开的库各有一份隔离状态 | `runtime.instanceScope: "library"` |
 
-`unrestricted` 仍必须走 Gateway 改托管资产。权限清单不能拦住插件直接调 Node，但 `assets.readContent` / `stageContent` / `replaceContentBatch` 仍然受权限和确认计划约束。不要用 `fs` 覆盖资源库 `Assets/`。
+`unrestricted` 仍必须走 Gateway 改资产。权限清单不能拦住插件直接调 Node，但 `assets.readContent` / `stageContent` / `replaceContentBatch` 仍然受权限和确认计划约束。不要用 `fs` 绕过 Gateway 直接覆盖资源库 `Assets/` 或链接源目录。
 
 Image Upscaler 使用 `unrestricted` + `global`：Upscayl 需要子进程和本地模型，命令与 Job handler 在会话内只注册一次，跨库时用 `serpent.forLibrary(libraryId)`。
 
@@ -68,7 +68,7 @@ Manifest 先声明 Job，`recovery` 只能是 `idempotent` 或 `checkpoint`。ha
 
 ## 5. 内容读取、分块 staging 与一次确认
 
-读：`assets.readContent(assetId, { maxBytes })`。写回托管资产：`stageContent` + `replaceContentBatch`（或单资产 `replaceContent`）。写回走 Execution Plan，用户确认一次。
+读：`assets.readContent(assetId, { maxBytes })`。写回资产：`stageContent` + `replaceContentBatch`（或单资产 `replaceContent`），支持托管资产与链接资产。写回走 Execution Plan，用户确认一次。
 
 分块上限针对的是**每次调用解码后的二进制**，当前为 `1,048,576` 字节（1 MiB），不是整张图的大小。IPC 用 Base64，因此：
 

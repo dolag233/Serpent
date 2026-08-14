@@ -497,4 +497,117 @@ describe('asset metadata and content revisions', () => {
     expect(retainedAfterReopen).toEqual(operationDirectories);
     expect(existsSync(path.join(operationsPath, retainedAfterReopen[0]!, 'backup'))).toBe(true);
   });
+
+  it('replaces content on a linked asset with a new revision and writes to external file', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-linked-replace-test-'));
+    temporaryRoots.push(root);
+    const linkedRoot = mkdtempSync(path.join(tmpdir(), 'serpent-linked-root-'));
+    temporaryRoots.push(linkedRoot);
+    const linkedFilePath = path.join(linkedRoot, 'linked-image.png');
+    const originalBytes = Buffer.from('original-linked-image');
+    writeFileSync(linkedFilePath, originalBytes);
+
+    const service = new LibraryService();
+    services.push(service);
+    const library = service.createLibrary({
+      displayName: 'Linked content replace',
+      selectedParentPath: root,
+    });
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(assets).toHaveLength(1);
+    const linkedAsset = assets[0]!;
+    expect(linkedAsset.locationKind).toBe('linked');
+
+    const replacement = Buffer.from('replaced-linked-image-bytes');
+    const result = service.replaceManagedAssetContent({
+      libraryId: library.libraryId,
+      assetId: linkedAsset.assetId,
+      dataBase64: replacement.toString('base64'),
+      expectedRevisionId: linkedAsset.currentRevisionId,
+    });
+
+    expect(result).toMatchObject({
+      assetId: linkedAsset.assetId,
+      byteSize: replacement.length,
+    });
+    expect(result.revisionId).not.toBe(linkedAsset.currentRevisionId);
+    expect(readFileSync(linkedFilePath)).toEqual(replacement);
+    const updated = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+    expect(updated.currentRevisionId).toBe(result.revisionId);
+  });
+
+  it('stages content and replaces a batch containing both managed and linked assets', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-mixed-batch-test-'));
+    temporaryRoots.push(root);
+    const linkedRoot = mkdtempSync(path.join(tmpdir(), 'serpent-mixed-linked-root-'));
+    temporaryRoots.push(linkedRoot);
+
+    const managedSourcePath = path.join(root, 'managed.png');
+    writeFileSync(managedSourcePath, Buffer.from('managed-original'));
+    const linkedFilePath = path.join(linkedRoot, 'linked.png');
+    writeFileSync(linkedFilePath, Buffer.from('linked-original'));
+
+    const service = new LibraryService();
+    services.push(service);
+    const library = service.createLibrary({
+      displayName: 'Mixed batch replace',
+      selectedParentPath: root,
+    });
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [managedSourcePath],
+    });
+    if (!('assets' in imported) || imported.assets.length !== 1) {
+      throw new Error('Expected one imported managed asset.');
+    }
+    const managedAsset = imported.assets[0]!;
+
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const allAssets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    const linkedAsset = allAssets.find((a) => a.locationKind === 'linked')!;
+    expect(linkedAsset).toBeDefined();
+
+    const stagedManaged = service.stageManagedAssetContent({
+      libraryId: library.libraryId,
+      assetId: managedAsset.assetId,
+      dataBase64: Buffer.from('managed-new').toString('base64'),
+      complete: true,
+    });
+    const stagedLinked = service.stageManagedAssetContent({
+      libraryId: library.libraryId,
+      assetId: linkedAsset.assetId,
+      dataBase64: Buffer.from('linked-new').toString('base64'),
+      complete: true,
+    });
+
+    const result = service.replaceManagedAssetContentBatch({
+      libraryId: library.libraryId,
+      items: [
+        {
+          assetId: managedAsset.assetId,
+          stagingToken: stagedManaged.stagingToken,
+          expectedRevisionId: managedAsset.currentRevisionId,
+        },
+        {
+          assetId: linkedAsset.assetId,
+          stagingToken: stagedLinked.stagingToken,
+          expectedRevisionId: linkedAsset.currentRevisionId,
+        },
+      ],
+    });
+
+    expect(result.items).toHaveLength(2);
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'managed.png'))).toEqual(
+      Buffer.from('managed-new'),
+    );
+    expect(readFileSync(linkedFilePath)).toEqual(Buffer.from('linked-new'));
+  });
 });

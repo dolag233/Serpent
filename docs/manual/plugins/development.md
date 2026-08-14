@@ -391,7 +391,7 @@ secrets、net、clipboard 等。实际可调用能力由权限决定；结果不
 需要调用统一撤回/重做的插件必须声明 `history.write` 与 `library.read`。该权限直接复用 Automation Registry 的同名 capability；只声明 `library.read` 的调用会在 Gateway 被拒绝，不会进入 Worker。
 
 内容读取使用 `assets.readContent(assetId, { maxBytes })`，得到受限 base64、revision、大小、MIME 和 `truncated`。内容写回使用
-`replaceContent` 或 `stageContent`/`replaceContentBatch`，须使用 managed asset、权限和 expected revision；写入经过 Execution Plan/确认，
+`replaceContent` 或 `stageContent`/`replaceContentBatch`，须使用可用资产（managed 或 linked）、权限和 expected revision；写入经过 Execution Plan/确认，
 大文件不放在单一 IPC payload。批量替换先统一校验 revision，再提交 staging；不能宣称文件系统原子性。
 
 Gateway 拒绝、计划过期、用户取消或权限不足时，Promise 会 reject 一个带有 `error.code` 和公开 `error.message` 的错误；例如
