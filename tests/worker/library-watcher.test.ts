@@ -185,7 +185,7 @@ describe('managed asset watcher', () => {
     service.closeAll();
   });
 
-  it('does not schedule after close and swallows refresh errors', () => {
+  it('does not schedule after close and swallows refresh errors', async () => {
     const root = temporaryRoot();
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
@@ -201,7 +201,11 @@ describe('managed asset watcher', () => {
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });
     services.push(service);
-    service.createLibrary({ displayName: 'Errors', selectedParentPath: root });
+    const library = service.createLibrary({ displayName: 'Errors', selectedParentPath: root });
+    // Serpent-tumv: the on-open refresh moved to the background reconciliation
+    // step; drive it explicitly so the injected failure lands on the same
+    // diagnostic scope.
+    await service.runOpenBackgroundReconciliation(library.libraryId);
     observers.callbacks[0]!();
     expect(() => scheduler.flush()).not.toThrow();
     expect(diagnostics).toEqual(

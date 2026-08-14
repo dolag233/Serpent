@@ -894,6 +894,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.open': {
       const library = libraryService.openLibrary(request.command.selectedLibraryPath);
       scheduleThumbnailScene(library.libraryId, 'startup');
+      // Serpent-tumv (LIB-018): deliver the opened response first, then run the
+      // disk-heavy reconciliation (artifact sweep, trash purge, Assets rescan)
+      // in the background so large libraries become interactive without
+      // waiting for a full disk walk.
+      void libraryService.runOpenBackgroundReconciliation(library.libraryId);
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.close':

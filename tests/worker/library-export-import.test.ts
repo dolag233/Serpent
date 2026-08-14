@@ -257,10 +257,12 @@ describe('LibraryService export', () => {
     expect(existsSync(artifactPath)).toBe(true);
     rmSync(artifactPath);
 
-    // Re-open triggers reconcileMissingArtifactFiles + enqueueThumbnailJobs.
+    // Serpent-tumv: re-open delivers immediately; the missing-artifact sweep
+    // now runs in the background reconciliation step.
     service.closeAll();
     const service2 = newService();
     const reopened = service2.openLibrary(created.libraryPath);
+    await service2.runOpenBackgroundReconciliation(reopened.libraryId);
     const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
     expect(listed[0]?.thumbnailStatus).not.toBe('ready');
     const regenerated = (await service2.generateThumbnail({

@@ -19470,7 +19470,10 @@ export class LibraryService {
    * Used after import/open when an older export omitted the artifacts tree while
    * the DB still recorded status=ready (Serpent-pxd).
    */
-  private reconcileMissingArtifactFiles(openLibrary: OpenLibrary): number {
+  private async reconcileMissingArtifactFiles(
+    openLibrary: OpenLibrary,
+    yieldTurn?: () => Promise<void>,
+  ): Promise<number> {
     // Serpent-verg.2 — lenient open (0031 §1): libraries predating
     // revision_artifacts.status skip this recovery step instead of failing
     // to open.
@@ -19536,15 +19539,53 @@ export class LibraryService {
       }
     };
 
+    // Serpent-tumv: sweep in batches and yield between batches so a large
+    // artifact store does not stall the Worker event loop for seconds.
+    const batchSize = 400;
     let invalidated = 0;
-    openLibrary.connection.transaction(() => {
-      for (const row of rows) {
-        if (artifactFilePresent(row.file_path)) continue;
-        invalidate.run(now, row.artifact_id);
-        invalidated += 1;
+    for (let offset = 0; offset < rows.length; offset += batchSize) {
+      const batch = rows.slice(offset, offset + batchSize);
+      openLibrary.connection.transaction(() => {
+        for (const row of batch) {
+          if (artifactFilePresent(row.file_path)) continue;
+          invalidate.run(now, row.artifact_id);
+          invalidated += 1;
+        }
+      })();
+      if (yieldTurn && offset + batchSize < rows.length) {
+        await yieldTurn();
       }
-    })();
+    }
     return invalidated;
+  }
+
+  /**
+   * Serpent-tumv (LIB-018, progressive open): the disk-heavy post-open
+   * reconciliation that used to run inside the synchronous library.open —
+   * artifact-file sweep, expired-trash purge, and the whole Assets-directory
+   * rescan. The Worker runtime starts this after the library.opened response
+   * has been delivered; each step yields the event loop so the user's first
+   * browse requests are not starved behind a large-library rescan.
+   */
+  async runOpenBackgroundReconciliation(libraryId: string): Promise<void> {
+    const openLibrary = this.openById.get(libraryId);
+    if (!openLibrary) return;
+    const yieldTurn = () =>
+      new Promise<void>((resolve) => setTimeout(resolve, 0));
+    try {
+      await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
+      await yieldTurn();
+      // Purge expired trash on open (best-effort, single busy file does not abort)
+      try {
+        this.purgeExpiredTrash(libraryId);
+      } catch (error) {
+        this.diagnose('trash.purge-on-open', error, { libraryId });
+      }
+      await yieldTurn();
+      this.refreshManagedAssetsOnOpen(libraryId);
+    } catch (error) {
+      this.diagnose('open.background-reconciliation', error, { libraryId });
+    }
   }
 
   /**
@@ -29673,22 +29714,13 @@ export class LibraryService {
         this.applicationSessionId,
       );
       this.reconcileDefaultIgnoredAssets(openLibrary);
-      // Serpent-pxd: exports that omitted `.serpent/artifacts` (or partial copies)
-      // leave ready rows pointing at missing files → broken <img>. Invalidate so
-      // enqueueThumbnailJobs below can regenerate.
-      this.reconcileMissingArtifactFiles(openLibrary);
-      // Purge expired trash on open (best-effort, single busy file does not abort)
-      try {
-        this.purgeExpiredTrash(summary.libraryId);
-      } catch (error) {
-        this.diagnose('trash.purge-on-open', error, { libraryId: summary.libraryId });
-      }
       this.startAssetWatcher(openLibrary);
       this.reconcileLinkedWatchers(openLibrary);
-      this.refreshManagedAssetsOnOpen(summary.libraryId);
-      // Persist only the first visible batch. The Worker runtime drains these
-      // asynchronously and later list/search requests raise the priority of
-      // whatever the user is actually looking at.
+      // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
+      // steps moved out of the synchronous open path and run in the background
+      // (runOpenBackgroundReconciliation). Opening a large library used to
+      // block on a full artifact-file lstat sweep + expired-trash purge + a
+      // whole Assets-directory rescan before the first frame rendered.
       this.enqueueThumbnailJobs(summary.libraryId, {
         limit: 50,
         priority: 100,
