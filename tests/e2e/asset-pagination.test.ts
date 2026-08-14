@@ -491,3 +491,86 @@ test("ordinary browsing continuously appends every asset without page controls",
     rmSync(temporaryRoot, { force: true, recursive: true });
   }
 });
+
+test("bottom-scroll appends assets beyond the first page (Serpent-ws4k)", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-pagination-beyond-e2e-"),
+  );
+  const sourceRoot = path.join(temporaryRoot, "sources");
+  const libraryName = "分页追加验收";
+  // Deliberately above BROWSE_PAGE_SIZE (300) so the first render cannot
+  // contain the whole scope and the tail must arrive through incremental
+  // bottom-scroll appends.
+  const assetCount = 340;
+  mkdirSync(sourceRoot);
+  const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
+    const sourcePath = path.join(
+      sourceRoot,
+      `asset-${index.toString().padStart(3, "0")}.txt`,
+    );
+    writeFileSync(sourcePath, `asset ${index}`);
+    return sourcePath;
+  });
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByRole("button", { name: "添加文件夹" }).click();
+    await window.getByLabel("新文件夹名称").fill("分页文件夹");
+    await window.keyboard.press("Enter");
+    await sidebarFolderRow(window, "分页文件夹").click();
+    await window
+      .getByRole("button", { name: "导入文件", exact: true })
+      .first()
+      .click();
+
+    // The scope count badge reflects the full total even though only the
+    // first page is loaded.
+    await expect(window.locator(".item-count")).toContainText("340");
+
+    // The first card is visible, but the 330th asset (beyond the first page)
+    // must not be mounted yet.
+    await expect(window.locator(".asset-card").first()).toBeVisible();
+    const canvas = window.locator(".workspace-canvas");
+    await expect
+      .poll(async () => {
+        await canvas.evaluate((element) =>
+          element.scrollTo({ top: element.scrollHeight }),
+        );
+        const tail = window
+          .locator(".asset-card")
+          .filter({ hasText: "asset-339.txt" });
+        return (await tail.count()) > 0;
+      })
+      .toBe(true);
+    // After the incremental appends the tail card is actually visible.
+    await expect(
+      window.locator(".asset-card").filter({ hasText: "asset-339.txt" }),
+    ).toBeInViewport();
+
+    // No pagination buttons exist; the continuous-loading contract is kept.
+    await expect(window.getByRole("button", { name: "上一页" })).toHaveCount(0);
+    await expect(window.getByRole("button", { name: "下一页" })).toHaveCount(0);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
