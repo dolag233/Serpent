@@ -14,6 +14,16 @@ export interface UseBatchActionsParams {
   setNotice: (msg: string, historyEntryId?: string) => void;
   setError: (msg: string | null) => void;
   reloadCurrentContent: () => Promise<void>;
+  /**
+   * Serpent-关联刷新: remove the deleted asset ids from the visible list and
+   * adjust scope counts locally, deferring the expensive full reload to the
+   * background. Deleting a linked asset used to wait for a whole searchAssets
+   * round trip (~10s on large libraries) before the card disappeared.
+   */
+  applyLocalAssetRemoval: (
+    assetIds: string[],
+    options?: { removedCount?: number },
+  ) => void;
   chooseTag: (tagId: string) => Promise<void>;
   chooseCollection: (collectionId: string, recursive?: boolean) => Promise<void>;
   clearAssetSelection: () => void;
@@ -41,6 +51,7 @@ export function useBatchActions({
   setNotice,
   setError,
   reloadCurrentContent,
+  applyLocalAssetRemoval,
   chooseTag,
   chooseCollection,
   clearAssetSelection,
@@ -269,7 +280,7 @@ export function useBatchActions({
       if (deletedCount > 0) {
         clearAssetSelection();
         await refreshCollections();
-        await reloadCurrentContent();
+        applyLocalAssetRemoval(assetIds, { removedCount: deletedCount });
       }
     } catch (caught) {
       setError(
@@ -301,7 +312,9 @@ export function useBatchActions({
       );
       await refreshCollections();
       clearAssetSelection();
-      await reloadCurrentContent();
+      applyLocalAssetRemoval(assetIds, {
+        removedCount: result.value.trashedCount,
+      });
       return result.value.historyEntryId;
     } catch (caught) {
       setError(
@@ -333,7 +346,9 @@ export function useBatchActions({
       );
       await refreshCollections();
       clearAssetSelection();
-      await reloadCurrentContent();
+      applyLocalAssetRemoval(assetIds, {
+        removedCount: result.value.deletedCount,
+      });
     } catch (caught) {
       setError(
         toMessage(

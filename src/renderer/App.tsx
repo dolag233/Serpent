@@ -86,6 +86,10 @@ import {
   resolveFolderBrowseParentId,
 } from "./folder-browse-canvas";
 import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
+import {
+  decrementScopeCount,
+  removeAssetIdsLocally,
+} from "./asset-local-refresh";
 import { FolderCard } from "./FolderCard";
 import {
   isFolderRecursiveEnabled,
@@ -4475,6 +4479,31 @@ function AppInner() {
     });
   }
 
+  // Serpent-关联刷新: asset/folder deletions must clear cards immediately
+  // instead of waiting for a full searchAssets round trip (~10s on large
+  // libraries). Remove ids locally, adjust scope counts, and quietly
+  // re-reconcile once in the background (derived sidebar/folder data stays
+  // fresh without blocking the user).
+  const deferredReconcileTimerRef = useRef<number | undefined>(undefined);
+  const applyLocalAssetRemoval = useCallback(
+    (assetIds: string[], options?: { removedCount?: number }) => {
+      const removed = new Set(assetIds);
+      const removedCount = options?.removedCount ?? assetIds.length;
+      setAssets((current) => removeAssetIdsLocally(current, removed));
+      setTrashedAssets((current) => removeAssetIdsLocally(current, removed));
+      setSearchTotal((current) => decrementScopeCount(current, removedCount));
+      setAllAssetCount((current) => Math.max(0, current - removedCount));
+      if (deferredReconcileTimerRef.current !== undefined) {
+        window.clearTimeout(deferredReconcileTimerRef.current);
+      }
+      deferredReconcileTimerRef.current = window.setTimeout(() => {
+        deferredReconcileTimerRef.current = undefined;
+        void reloadCurrentContentRef.current().catch(() => undefined);
+      }, 1500);
+    },
+    [],
+  );
+
   function openInlineCollectionRename(collectionId: string, currentName: string) {
     setShowCollectionInput(false);
     setCollectionInputValue("");
@@ -4662,6 +4691,7 @@ function AppInner() {
     setNotice,
     setError,
     reloadCurrentContent,
+    applyLocalAssetRemoval,
     chooseTag,
     chooseCollection,
     clearAssetSelection,
@@ -5917,7 +5947,9 @@ function AppInner() {
       }
       setNotice(msg);
       clearAssetSelection();
-      await loadContent(library, "all", { trashMode: true });
+      applyLocalAssetRemoval(assetIds, {
+        removedCount: result.value.deletedCount,
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
@@ -6051,7 +6083,7 @@ function AppInner() {
         }),
       );
       clearAssetSelection();
-      await reloadCurrentContent();
+      applyLocalAssetRemoval(assetIds, { removedCount: deletedAssets });
     } catch (caught) {
       setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
     } finally {
@@ -6586,6 +6618,7 @@ function AppInner() {
     let reloadTimer: number | undefined;
     let reloadInFlight = false;
     let reloadQueued = false;
+    let assetChangeDebounceTimer: number | undefined;
     const scheduleSilentReload = () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       reloadTimer = window.setTimeout(() => {
@@ -6616,36 +6649,47 @@ function AppInner() {
         scheduleSilentReload();
         return;
       }
-      void Promise.resolve().then(async () => {
-        try {
-          await reloadCurrentContentRef.current();
-          if (selectedAssetId) {
-            const metadata = await api.getAssetMetadata({
-              libraryId: library.libraryId,
-              assetId: selectedAssetId,
-            });
-            if (metadata.ok) {
-              applyLoadedMetadata(selectedAssetId, metadata.value);
+      // Serpent-关联刷新: batch mutations (delete/trash/relink) broadcast one
+      // asset.changed per asset — debounce so a 500-asset delete triggers one
+      // reconcile instead of 500 queued full reloads. Local removal already
+      // cleared the cards; this reload only reconciles derived data.
+      if (assetChangeDebounceTimer !== undefined) {
+        window.clearTimeout(assetChangeDebounceTimer);
+      }
+      const latestEvent = event;
+      assetChangeDebounceTimer = window.setTimeout(() => {
+        assetChangeDebounceTimer = undefined;
+        void Promise.resolve().then(async () => {
+          try {
+            await reloadCurrentContentRef.current();
+            if (selectedAssetId) {
+              const metadata = await api.getAssetMetadata({
+                libraryId: library.libraryId,
+                assetId: selectedAssetId,
+              });
+              if (metadata.ok) {
+                applyLoadedMetadata(selectedAssetId, metadata.value);
+              }
             }
+            if (latestEvent.source === "text-save") {
+              setNotice(t("toast.textFileSaved"));
+            } else if (latestEvent.source === "watcher") {
+              const missing = latestEvent.missingCount
+                ? t("toast.diskSyncedMissing", { count: latestEvent.missingCount })
+                : "";
+              setNotice(
+                t("toast.diskSyncedAuto", {
+                  count: latestEvent.changedCount,
+                  missing,
+                }),
+              );
+            }
+            // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
+          } catch (caught) {
+            setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
           }
-          if (event.source === "text-save") {
-            setNotice(t("toast.textFileSaved"));
-          } else if (event.source === "watcher") {
-            const missing = event.missingCount
-              ? t("toast.diskSyncedMissing", { count: event.missingCount })
-              : "";
-            setNotice(
-              t("toast.diskSyncedAuto", {
-                count: event.changedCount,
-                missing,
-              }),
-            );
-          }
-          // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
-        } catch (caught) {
-          setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
-        }
-      });
+        });
+      }, 300);
     });
     let historyTimer: number | undefined;
     const scheduleHistoryRefresh = () => {
@@ -6672,6 +6716,9 @@ function AppInner() {
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
       if (historyTimer !== undefined) window.clearTimeout(historyTimer);
+      if (assetChangeDebounceTimer !== undefined) {
+        window.clearTimeout(assetChangeDebounceTimer);
+      }
       unsubscribe();
       unsubscribeLibraryChanged();
     };
