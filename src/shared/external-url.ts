@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ShowEditContextMenuResult } from './edit-context-menu';
 import type { ViewerVideoShortcutAction } from './viewer-video-shortcuts';
+import type { BrowseKeyboardAction } from './browse-keyboard-shortcuts';
 import type {
   WindowControlAction,
   WindowControlResult,
@@ -184,4 +185,13 @@ export interface SerpentShellApi {
   publishInputCaptureEvent(payload: PluginInputCapturePublishPayload): void;
   /** Renderer → Main: pause capture while Host modals are open. */
   setInputCaptureSystemModalActive(active: boolean): void;
+  /**
+   * Windows hidden F2 / Delete accelerators (Serpent-g8u9). Disable while an
+   * input, dialog, or preview owns those keys.
+   */
+  setBrowseShortcutAcceleratorsEnabled?(enabled: boolean): void;
+  /** Main-forwarded browse F2 / Delete / Shift+Delete. */
+  onBrowseShortcut?(
+    listener: (action: BrowseKeyboardAction) => void,
+  ): () => void;
 }

@@ -119,7 +119,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     ]);
   });
 
-  it('linked 根：linked-rules + remove-from-library 可见，无 trash / disk-delete', () => {
+  it('linked 根：trash + remove-from-library 可见，无 disk-delete', () => {
     const { ctx } = makeCtx({
       locationKind: 'linked',
       status: 'available',
@@ -132,6 +132,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
+      'folder.move-to-trash',
       'folder.remove-from-library',
     ]);
   });
@@ -166,6 +167,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.open-in-file-manager',
       'folder.copy-path',
       'folder.copy',
+      'folder.move-to-trash',
       'folder.remove-from-library',
     ]);
   });
@@ -184,6 +186,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
+      'folder.move-to-trash',
       'folder.remove-from-library',
     ]);
     for (const id of [
@@ -390,6 +393,29 @@ describe('run 委托到 actions 回调包', () => {
       {},
       'trashManagedFolder',
       ['folder-1', '素材'],
+    ],
+    [
+      'folder.move-to-trash',
+      {
+        locationKind: 'linked',
+        isLinkedRoot: true,
+        linkedFolderResolved: true,
+        linkedFolder: LINKED_FOLDER,
+      },
+      'trashLinkedFolderSubtree',
+      ['folder-1', '', '素材'],
+    ],
+    [
+      'folder.move-to-trash',
+      {
+        locationKind: 'linked',
+        isLinkedRoot: false,
+        linkedRelativePath: 'props/wood',
+        linkedFolderResolved: true,
+        linkedFolder: LINKED_FOLDER,
+      },
+      'trashLinkedFolderSubtree',
+      ['folder-1', 'props/wood', '素材'],
     ],
     [
       'folder.delete-from-disk',

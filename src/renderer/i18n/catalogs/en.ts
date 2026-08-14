@@ -456,7 +456,6 @@ export const en = {
       restore: "Restore",
       deletePermanent: "Delete permanently",
       deletePermanentEllipsis: "Delete permanently…",
-      deleteLinked: "Delete linked asset…",
       removeFromCollection: "Remove from current collection",
       addTags: "Add tags…",
       removeTags: "Remove tags…",
@@ -491,7 +490,6 @@ export const en = {
       moveTo: "Move to…",
       linkedRules: "Linked rules…",
       moveToTrash: "Move to Trash",
-      moveToTrashConfirm: "Move folder \"{name}\" to Trash?\nIts contents will be moved to Trash too.",
       deleteFromDisk: "Delete from disk…",
       removeFromLibrary: "Remove from library",
       removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."
@@ -785,15 +783,6 @@ export const en = {
       automationWarning: "Warning",
       automationError: "Couldn't complete the action",
       confirm: "OK"
-    },
-    deleteLinked: {
-      title: "Delete linked asset",
-      body: "Remove linked asset \"{name}\" from Serpent? By default only the index record is removed; source files on disk stay untouched.",
-      deleteSourceAria: "Also delete source files on disk",
-      deleteSourceHelp: "Also move source files to the system Trash. If the OS refuses, both the source file and the Serpent record are kept, with a specific reason.",
-      sourceUnavailable: "Source file is unavailable; only the Serpent link record can be removed.",
-      submitWithTrash: "Move to system Trash and remove",
-      submitRecordOnly: "Remove record only"
     },
     rename: {
       fileTitle: "Rename file",
@@ -1678,7 +1667,6 @@ export const en = {
     emptyTrashFailed: "Failed to empty Trash.",
     deleteLinkedPartial: "Linked asset delete incomplete: deleted {deleted}, kept {failed}. Reasons: {reasons}",
     deleteLinkedWithTrash: "Moved {count} source files to the system Trash and removed linked asset records.",
-    deleteLinkedRecordOnly: "Removed {count} linked asset records; source files on disk unchanged.",
     refreshListManually: "Please refresh the asset list manually.",
     deleteDoneRefreshFailed: "Delete finished, but refreshing the UI failed: {reason}",
     deleteOutcomeRefreshFailed: "{outcome} Also, refreshing the UI failed: {reason}",

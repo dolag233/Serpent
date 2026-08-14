@@ -52,6 +52,12 @@ export const VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL =
 /** Main → Renderer: video letter shortcut (D/F/X/C) after before-input. */
 export const VIEWER_VIDEO_SHORTCUT_CHANNEL =
   'serpent:viewer:video-shortcut' as const;
+/** Main → Renderer: Windows F2 / Delete / Shift+Delete (Serpent-g8u9). */
+export const BROWSE_SHORTCUT_CHANNEL =
+  'serpent:shell:browse-shortcut' as const;
+/** Renderer → Main: disable hidden F2/Delete accelerators in text fields. */
+export const BROWSE_SHORTCUT_MENU_ENABLED_CHANNEL =
+  'serpent:shell:browse-shortcut-menu-enabled' as const;
 
 /** Renderer Desktop Console → Main-owned Automation Execution/Gateway bridge. */
 export const AUTOMATION_SCRIPT_OPEN_CHANNEL = 'serpent:automation:script-open' as const;

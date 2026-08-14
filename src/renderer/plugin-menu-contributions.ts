@@ -194,7 +194,6 @@ const KNOWN_HOST_MENU_ANCHORS = new Set([
   "asset.clear-ai-content",
   "asset.move-to-trash",
   "asset.delete-from-disk",
-  "asset.delete-linked",
   "asset.delete-permanent",
   "folder.move-to-trash",
   "folder.delete-from-disk",

@@ -36,7 +36,6 @@ describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / Serpent-vf8x)", () => {
     const trash = assetCommandDefinitions.find(
       (d) => d.id === "asset.move-to-trash",
     );
-    expect(open?.shortcut).toBeDefined();
     expect(rename?.shortcut).toBeDefined();
     expect(trash?.shortcut).toBeDefined();
 
@@ -65,6 +64,20 @@ describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / Serpent-vf8x)", () => {
         trash!.shortcut!,
         {
           key: "Delete",
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        rename!.shortcut!,
+        {
+          key: "",
+          code: "F2",
           metaKey: false,
           ctrlKey: false,
           altKey: false,

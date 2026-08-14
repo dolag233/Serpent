@@ -44,6 +44,8 @@ export type FolderShortcutResolveInput = {
   readonly selectedFolderCardIds: readonly string[];
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
+  /** Inline rename currently exists for managed folders only. */
+  readonly canRenameFolder?: (folderId: string) => boolean;
 };
 
 /**
@@ -93,6 +95,7 @@ export function resolveFolderShortcutAction(
     selectedFolderCardIds,
     selectedAssetCount,
     resolveManagedFolderName,
+    canRenameFolder,
   } = input;
 
   if (commandId === "folder.create-subfolder") {
@@ -111,10 +114,15 @@ export function resolveFolderShortcutAction(
   // Rename / trash: assets keep priority when any asset is selected.
   if (selectedAssetCount > 0) return { type: "none" };
 
-  if (focusedNav?.locationKind === "managed") {
+  // Linked and managed folders use the same F2 / Delete / Shift+Delete
+  // targeting. Delete goes to trash with no confirmation (Serpent-g8u9).
+  if (focusedNav) {
     const name = resolveManagedFolderName(focusedNav.folderId);
     if (name === undefined) return { type: "none" };
     if (commandId === "folder.rename") {
+      if (canRenameFolder && !canRenameFolder(focusedNav.folderId)) {
+        return { type: "none" };
+      }
       return {
         type: "rename",
         folderId: focusedNav.folderId,
@@ -141,6 +149,9 @@ export function resolveFolderShortcutAction(
   );
   if (card) {
     if (commandId === "folder.rename") {
+      if (canRenameFolder && !canRenameFolder(card.folderId)) {
+        return { type: "none" };
+      }
       return {
         type: "rename",
         folderId: card.folderId,
@@ -159,6 +170,9 @@ export function resolveFolderShortcutAction(
     const name = resolveManagedFolderName(browseManagedFolderId);
     if (name !== undefined) {
       if (commandId === "folder.rename") {
+        if (canRenameFolder && !canRenameFolder(browseManagedFolderId)) {
+          return { type: "none" };
+        }
         return {
           type: "rename",
           folderId: browseManagedFolderId,

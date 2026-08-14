@@ -31,7 +31,7 @@ describe("buildMultiAssetMenuSkipReport", () => {
     expect(report.allTrashed).toBe(false);
   });
 
-  it("skips linked assets for move and trash with a linked reason", () => {
+  it("skips linked assets for move but includes them in trash", () => {
     const report = buildMultiAssetMenuSkipReport(
       ["m", "l"],
       [
@@ -40,9 +40,9 @@ describe("buildMultiAssetMenuSkipReport", () => {
       ],
     );
     expect(report.move.processCount).toBe(1);
-    expect(report.trash.processCount).toBe(1);
+    expect(report.trash.processCount).toBe(2);
     expect(report.move.skips).toEqual([{ reason: "linked", count: 1 }]);
-    expect(report.trash.skips).toEqual([{ reason: "linked", count: 1 }]);
+    expect(report.trash.skipCount).toBe(0);
     expect(report.linkedCount).toBe(1);
   });
 
@@ -113,9 +113,8 @@ describe("buildMultiAssetMenuSkipReport", () => {
       { reason: "trashed", count: 1 },
       { reason: "unresolved", count: 1 },
     ]);
-    expect(report.trash.processAssetIds).toEqual(["ok", "miss"]);
+    expect(report.trash.processAssetIds).toEqual(["ok", "link", "miss"]);
     expect(report.trash.skips).toEqual([
-      { reason: "linked", count: 1 },
       { reason: "trashed", count: 1 },
       { reason: "unresolved", count: 1 },
     ]);
@@ -179,10 +178,10 @@ describe("formatMenuActionSkipLine / formatMultiAssetMenuSkipFooter", () => {
       ],
     );
     expect(formatMultiAssetMenuSkipFooter(report, "zh-CN")).toBe(
-      "移动：将处理 1 / 跳过 1（链接资产）；回收站：将处理 1 / 跳过 1（链接资产）",
+      "移动：将处理 1 / 跳过 1（链接资产）",
     );
     expect(formatMultiAssetMenuSkipFooter(report, "en")).toBe(
-      "Move: process 1 / skip 1 (linked); Trash: process 1 / skip 1 (linked)",
+      "Move: process 1 / skip 1 (linked)",
     );
   });
 

@@ -6,6 +6,7 @@ import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
 import type { AiReliabilitySettings } from '../shared/ai-reliability';
 import type { ViewerVideoShortcutAction } from '../shared/viewer-video-shortcuts';
+import type { BrowseKeyboardAction } from '../shared/browse-keyboard-shortcuts';
 import type { ApplicationMenuCommand } from '../shared/application-menu';
 import {
   mcpSettingsResponseSchema,
@@ -48,6 +49,8 @@ import {
   WINDOW_MAXIMIZED_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
   VIEWER_VIDEO_SHORTCUT_CHANNEL,
+  BROWSE_SHORTCUT_CHANNEL,
+  BROWSE_SHORTCUT_MENU_ENABLED_CHANNEL,
   AUTOMATION_SCRIPT_OPEN_CHANNEL,
   AUTOMATION_SCRIPT_SAVE_CHANNEL,
   AUTOMATION_SCRIPT_START_CHANNEL,
@@ -2259,6 +2262,24 @@ const shell: SerpentShellApi = Object.freeze({
   },
   setViewerVideoShortcutsActive(active: boolean): void {
     ipcRenderer.send(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, { active: Boolean(active) });
+  },
+  setBrowseShortcutAcceleratorsEnabled(enabled: boolean): void {
+    ipcRenderer.send(BROWSE_SHORTCUT_MENU_ENABLED_CHANNEL, { enabled: Boolean(enabled) });
+  },
+  onBrowseShortcut(listener: (action: BrowseKeyboardAction) => void): () => void {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { action?: string },
+    ) => {
+      const action = payload?.action;
+      if (action === 'rename' || action === 'trash' || action === 'disk-delete') {
+        listener(action);
+      }
+    };
+    ipcRenderer.on(BROWSE_SHORTCUT_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(BROWSE_SHORTCUT_CHANNEL, handler);
+    };
   },
   onViewerVideoShortcut(listener: (action: ViewerVideoShortcutAction) => void): () => void {
     const handler = (

@@ -185,6 +185,9 @@ describe('matchesShortcut 修饰键语义（移植自旧匹配器）', () => {
       matchesShortcut(MOVE_TO_TRASH, event({ key: 'Delete' }), 'windows'),
     ).toBe(true);
     expect(
+      matchesShortcut(MOVE_TO_TRASH, event({ key: 'Del' }), 'windows'),
+    ).toBe(true);
+    expect(
       matchesShortcut(
         MOVE_TO_TRASH,
         event({ key: 'Delete', ctrlKey: true }),
@@ -247,6 +250,31 @@ describe('注册表定义：标签与匹配同源（REQ-COMMAND-002 不漂移）
     expect(
       matchesShortcut(spec, event({ key: 'F2', metaKey: true }), 'mac'),
     ).toBe(false);
+  });
+
+  it('asset.rename：Windows 上 code/keyCode 回退命中 F2（Serpent-g8u9）', () => {
+    const spec = specOf('asset.rename');
+    expect(
+      matchesShortcut(
+        spec,
+        event({ key: '', code: 'F2' }),
+        'windows',
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        spec,
+        event({ key: 'Process', code: 'F2' }),
+        'windows',
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        spec,
+        event({ key: '', keyCode: 113 }),
+        'windows',
+      ),
+    ).toBe(true);
   });
 });
 

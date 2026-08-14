@@ -8,6 +8,8 @@ import { createCommandRegistry } from "../../src/renderer/commands/command-regis
 function event(
   partial: Partial<{
     key: string;
+    code: string;
+    keyCode: number;
     metaKey: boolean;
     ctrlKey: boolean;
     altKey: boolean;
@@ -54,6 +56,13 @@ describe("asset action keyboard chords (Serpent-uye)", () => {
       matchAssetActionKeyboardCommand(
         "asset.open-external",
         event({ key: "o", ctrlKey: true }),
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.rename",
+        event({ key: "F2" }),
         "windows",
       ),
     ).toBe(true);
@@ -109,5 +118,29 @@ describe("asset action keyboard chords (Serpent-uye)", () => {
         "mac",
       ),
     ).toBe(false);
+  });
+
+  it("matches F2 rename via code/keyCode when key is IME-noisy (Serpent-g8u9)", () => {
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.rename",
+        event({ key: "", code: "F2" }),
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.rename",
+        event({ key: "Process", code: "F2" }),
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchAssetActionKeyboardCommand(
+        "asset.rename",
+        event({ key: "", keyCode: 113 }),
+        "windows",
+      ),
+    ).toBe(true);
   });
 });

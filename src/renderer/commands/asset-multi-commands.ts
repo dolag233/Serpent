@@ -55,6 +55,8 @@ export interface AssetMultiCommandContext extends CommandContext {
   readonly managedCount: number;
   readonly availableManagedCount: number;
   readonly linkedCount: number;
+  /** Linked assets that Delete / 移入回收站 should send to the OS trash. */
+  readonly linkedAssetIds: readonly string[];
   /** Managed folder cards included in trash / disk-delete process counts. */
   readonly folderCount: number;
   readonly processFolderIds: readonly string[];
@@ -210,7 +212,7 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       id: 'assets.move-to-trash',
       title: (ctx) =>
         t(ctx, 'command.assets.moveToTrash', {
-          count: ctx.managedCount + ctx.folderCount,
+          count: ctx.managedCount + ctx.linkedCount + ctx.folderCount,
         }),
       group: 'delete',
       shortcut: {
@@ -219,12 +221,12 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       },
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.managedCount + ctx.folderCount === 0
+        ctx.managedCount + ctx.linkedCount + ctx.folderCount === 0
           ? t(ctx, 'command.reason.noManaged')
           : null,
       run: (ctx) =>
         ctx.actions.moveToTrash(
-          [...ctx.managedAssetIds],
+          [...ctx.managedAssetIds, ...ctx.linkedAssetIds],
           [...ctx.processFolderIds],
         ),
     },

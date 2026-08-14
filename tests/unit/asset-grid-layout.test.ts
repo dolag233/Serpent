@@ -4,6 +4,7 @@ import {
   ASSET_GRID_GAP_PX,
   assetGridLayoutStyle,
   countFittingColumns,
+  distributeIntegerRowWidths,
   distributeMasonryItems,
   layoutJustifiedRows,
   leftoverWidthPx,
@@ -144,6 +145,16 @@ describe("distributed masonry", () => {
   });
 });
 
+describe("distributeIntegerRowWidths (Serpent-oq86)", () => {
+  it("emits whole pixels that sum exactly to the usable width", () => {
+    const widths = distributeIntegerRowWidths([16 / 9, 1, 9 / 16], 180, 872);
+    expect(widths.every((width) => Number.isInteger(width) && width >= 1)).toBe(
+      true,
+    );
+    expect(widths.reduce((sum, width) => sum + width, 0)).toBe(872);
+  });
+});
+
 describe("layoutJustifiedRows", () => {
   it("keeps equal height within a row and fills the container width", () => {
     const rows = layoutJustifiedRows(
@@ -160,7 +171,9 @@ describe("layoutJustifiedRows", () => {
     const row = rows[0]!;
     const widths = row.items.map((item) => item.width);
     const gaps = 14 * (row.items.length - 1);
-    expect(widths.reduce((sum, w) => sum + w, 0) + gaps).toBeCloseTo(900, 0);
+    expect(widths.every((width) => Number.isInteger(width))).toBe(true);
+    expect(Number.isInteger(row.height)).toBe(true);
+    expect(widths.reduce((sum, w) => sum + w, 0) + gaps).toBe(900);
     expect(new Set(row.items.map((item) => item.height)).size).toBe(1);
   });
 

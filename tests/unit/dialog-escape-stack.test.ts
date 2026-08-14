@@ -10,7 +10,6 @@ const empty: DialogEscapeSnapshot = {
   assetRenameOpen: false,
   imageSequenceImportOpen: false,
   imageSequenceDialogOpen: false,
-  deleteLinkedOpen: false,
   batchRelinkOpen: false,
   restoreOpen: false,
   moveOpen: false,

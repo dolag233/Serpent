@@ -49,10 +49,10 @@ import { parseSearchExpression, splitSearchHighlights } from "./search-expressio
 import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
 import { LinkedRulesDialog } from "./LinkedRulesDialog";
 import { TagManagementWorkspace } from "./TagManagementWorkspace";
-import { DeleteLinkedDialog } from "./DeleteLinkedDialog";
 import { useFolderDeleteActions } from "./use-folder-delete-actions";
 import { useFolderOrganizeActions } from "./use-folder-organize-actions";
 import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
@@ -77,6 +77,10 @@ import {
   buildManagedFolderBreadcrumbTrail,
 } from "./folder-breadcrumb-trail";
 import { folderBrowseScope } from "./folder-browse-scope";
+import {
+  linkedDirectoryName,
+  parseLinkedVirtualFolderId,
+} from "../shared/linked-folder-tree";
 import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
@@ -914,12 +918,6 @@ function AppInner() {
     () => undefined,
   );
 
-  const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{
-    assetIds: string[];
-    displayNames: string;
-    deleteSourceFile: boolean;
-    canDeleteSourceFile: boolean;
-  } | null>(null);
   const [restoreDialog, setRestoreDialog] = useState<{
     assetIds: string[];
     target: "original" | "root" | string;
@@ -2059,18 +2057,20 @@ function AppInner() {
     () => visibleAssets.filter((asset) => selectedIdSet.has(asset.assetId)),
     [selectedIdSet, visibleAssets],
   );
-  const selectedManagedCount = useMemo(
-    () => selectedAssets.filter((a) => a.locationKind === "managed").length,
-    [selectedAssets],
-  );
   const diskDeleteKeyboardTargets = useMemo(() => {
     const report = buildMultiAssetMenuSkipReport(
       selectedAssetIds,
       visibleAssets,
       selectedFolderIds,
     );
+    const trashIdSet = new Set(report.trash.processAssetIds);
     return {
-      assetIds: [...report.trash.processAssetIds],
+      assetIds: visibleAssets
+        .filter(
+          (asset) =>
+            trashIdSet.has(asset.assetId) && asset.locationKind === "managed",
+        )
+        .map((asset) => asset.assetId),
       folderIds: [...report.trash.processFolderIds],
     };
   }, [selectedAssetIds, visibleAssets, selectedFolderIds]);
@@ -4393,16 +4393,6 @@ function AppInner() {
   }
 
   function requestTrashManagedFolder(folderId: string, name: string) {
-    const folder = folders.find((candidate) => candidate.folderId === folderId);
-    const hasContents =
-      (folder?.directAssetCount ?? 0) > 0 ||
-      (folder?.childFolderCount ?? 0) > 0;
-    if (
-      hasContents &&
-      !window.confirm(t("command.folder.moveToTrashConfirm", { name }))
-    ) {
-      return;
-    }
     void trashManagedFolder(folderId, name);
   }
 
@@ -4516,6 +4506,7 @@ function AppInner() {
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
+    trashLinkedAssets,
     deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   } = useBatchActions({
@@ -4750,20 +4741,48 @@ function AppInner() {
   });
 
   const resolveManagedFolderName = useCallback(
-    (folderId: string) =>
-      folders.find((folder) => folder.folderId === folderId)?.name,
-    [folders],
+    (folderId: string) => {
+      const managed = folders.find((folder) => folder.folderId === folderId)?.name;
+      if (managed !== undefined) return managed;
+      const linkedRoot = linkedFolders.find(
+        (folder) => folder.folderId === folderId,
+      )?.displayName;
+      if (linkedRoot !== undefined) return linkedRoot;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) return linkedDirectoryName(virtual.relativePath) || undefined;
+      return undefined;
+    },
+    [folders, linkedFolders],
   );
+
+  function requestTrashFolder(folderId: string, name: string) {
+    const virtual = parseLinkedVirtualFolderId(folderId);
+    if (virtual) {
+      void trashLinkedFolderSubtree(
+        virtual.linkedFolderId,
+        virtual.relativePath,
+        name,
+      );
+      return;
+    }
+    if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+      void trashLinkedFolderSubtree(folderId, "", name);
+      return;
+    }
+    requestTrashManagedFolder(folderId, name);
+  }
 
   // Serpent-vf8x: folder create/rename/trash chords (mac ⌘ / Windows Ctrl).
   useFolderCommandShortcuts({
     enabled: Boolean(library) && !showTrash,
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
-    browseManagedFolderId: selectedFolder?.folderId ?? null,
+    browseManagedFolderId: selectedFolderId ?? null,
     selectedFolderCardIds: selectedFolderIds,
     selectedAssetCount: selectedAssetIds.length,
     resolveManagedFolderName,
+    canRenameFolder: (folderId) =>
+      folders.some((folder) => folder.folderId === folderId),
     createSubfolder: (parentFolderId) => {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
@@ -4773,9 +4792,22 @@ function AppInner() {
       openInlineFolderRename(folderId, currentName);
     },
     trashManagedFolder: (folderId, name) => {
-      requestTrashManagedFolder(folderId, name);
+      requestTrashFolder(folderId, name);
     },
     deleteFolderFromDisk: (folderId, name) => {
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) {
+        openDiskDelete({
+          kind: "linked-child",
+          linkedFolderId: virtual.linkedFolderId,
+          relativePath: virtual.relativePath,
+          name,
+        });
+        return;
+      }
+      if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+        return;
+      }
       openDiskDelete({ kind: "managed", folderId, name });
     },
   });
@@ -5864,8 +5896,49 @@ function AppInner() {
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
-    if (folderIds.length === 0) {
-      await trashManagedAssets(assetIds);
+
+    const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+    const linkedAssetIds = assetIds.filter(
+      (assetId) => assetById.get(assetId)?.locationKind === "linked",
+    );
+    const managedAssetIds = assetIds.filter(
+      (assetId) => assetById.get(assetId)?.locationKind !== "linked",
+    );
+    const linkedFolderIds: string[] = [];
+    const managedFolderIds: string[] = [];
+    for (const folderId of folderIds) {
+      if (
+        parseLinkedVirtualFolderId(folderId) ||
+        linkedFolders.some((folder) => folder.folderId === folderId)
+      ) {
+        linkedFolderIds.push(folderId);
+      } else {
+        managedFolderIds.push(folderId);
+      }
+    }
+
+    if (linkedAssetIds.length > 0) {
+      await trashLinkedAssets(linkedAssetIds);
+    }
+    for (const folderId of linkedFolderIds) {
+      const name = resolveManagedFolderName(folderId) ?? folderId;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) {
+        await trashLinkedFolderSubtree(
+          virtual.linkedFolderId,
+          virtual.relativePath,
+          name,
+        );
+      } else {
+        await trashLinkedFolderSubtree(folderId, "", name);
+      }
+    }
+
+    if (managedAssetIds.length === 0 && managedFolderIds.length === 0) {
+      return;
+    }
+    if (managedFolderIds.length === 0) {
+      await trashManagedAssets(managedAssetIds);
       return;
     }
     setUiState("loading");
@@ -5873,10 +5946,10 @@ function AppInner() {
       let trashedAssets = 0;
       let trashedFolders = 0;
       let historyEntryId: string | undefined;
-      if (assetIds.length === 0 && folderIds.length === 1) {
+      if (managedAssetIds.length === 0 && managedFolderIds.length === 1) {
         const result = await api.trashFolder({
           libraryId: library.libraryId,
-          folderId: folderIds[0]!,
+          folderId: managedFolderIds[0]!,
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedFolders = 1;
@@ -5885,15 +5958,15 @@ function AppInner() {
       } else {
         const result = await api.trashSelection({
           libraryId: library.libraryId,
-          assetIds,
-          folderIds: [...folderIds],
+          assetIds: managedAssetIds,
+          folderIds: [...managedFolderIds],
         });
         if (!result.ok) throw new LibraryOperationError(result.error);
         trashedAssets = result.value.trashedAssetCount;
         trashedFolders = result.value.trashedFolderCount;
         historyEntryId = result.value.historyEntryId;
       }
-      if (assetIds.length > 0) {
+      if (managedAssetIds.length > 0) {
         const collectionResult = await api.listCollections({
           libraryId: library.libraryId,
         });
@@ -5908,7 +5981,7 @@ function AppInner() {
       );
       clearAssetSelection();
       if (
-        isBrowseScopeAffectedByFolderTrash(assetScope, folderIds, folders)
+        isBrowseScopeAffectedByFolderTrash(assetScope, managedFolderIds, folders)
       ) {
         await chooseFolder("root");
       } else {
@@ -5947,71 +6020,6 @@ function AppInner() {
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
       setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  // --- Linked asset delete ---
-
-  async function executeDeleteLinked() {
-    if (!api || !library || !deleteLinkedDialog) return;
-    const { assetIds, deleteSourceFile } = deleteLinkedDialog;
-    setDeleteLinkedDialog(null);
-    setUiState("loading");
-    try {
-      const result = await api.deleteLinkedAssets({
-        libraryId: library.libraryId,
-        assetIds,
-        deleteSourceFile,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      let outcomeError: string | null = null;
-      if (result.value.failedCount > 0) {
-        const reasons = [
-          ...new Set(
-            result.value.failures.map(({ reason }) =>
-              translateForLocale(locale, `error.reason.${reason}`),
-            ),
-          ),
-        ];
-        outcomeError = t("toast.deleteLinkedPartial", {
-          deleted: result.value.deletedCount,
-          failed: result.value.failedCount,
-          reasons: reasons.join("；"),
-        });
-        setError(outcomeError);
-      } else {
-        setError(null);
-        setNotice(
-          deleteSourceFile
-            ? t("toast.deleteLinkedWithTrash", {
-                count: result.value.deletedCount,
-              })
-            : t("toast.deleteLinkedRecordOnly", {
-                count: result.value.deletedCount,
-              }),
-        );
-      }
-      if (result.value.deletedCount > 0) clearAssetSelection();
-      if (result.value.deletedCount > 0) {
-        await refreshCollectionSummaries();
-      }
-      try {
-        await reloadCurrentContent();
-      } catch (refreshError) {
-        const refreshReason = toMessage(refreshError, t("toast.refreshListManually"), locale);
-        setError(
-          outcomeError
-            ? t("toast.deleteOutcomeRefreshFailed", {
-                outcome: outcomeError,
-                reason: refreshReason,
-              })
-            : t("toast.deleteDoneRefreshFailed", { reason: refreshReason }),
-        );
-      }
-    } catch (caught) {
-      setError(toMessage(caught, t("toast.deleteLinkedFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -6529,7 +6537,6 @@ function AppInner() {
       assetRenameOpen: Boolean(assetRenameDialog),
       imageSequenceImportOpen: Boolean(imageSequenceImportOffer),
       imageSequenceDialogOpen: Boolean(imageSequenceDialog),
-      deleteLinkedOpen: Boolean(deleteLinkedDialog),
       batchRelinkOpen: Boolean(batchRelinkPreview),
       restoreOpen: Boolean(restoreDialog),
       moveOpen: Boolean(moveDialog),
@@ -6555,7 +6562,6 @@ function AppInner() {
     assetRenameDialog,
     imageSequenceImportOffer,
     imageSequenceDialog,
-    deleteLinkedDialog,
     batchRelinkPreview,
     restoreDialog,
     moveDialog,
@@ -6589,7 +6595,6 @@ function AppInner() {
     },
     cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
-    setDeleteLinkedDialog,
     setRestoreDialog,
     setMoveDialog,
     setCollectionEditor,
@@ -6629,7 +6634,6 @@ function AppInner() {
     dialog ||
       conflicts ||
       assetRenameDialog ||
-      deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
       moveDialog ||
@@ -6653,6 +6657,15 @@ function AppInner() {
   );
   useDialogFocusTrap(dialogFocusTrapActive);
 
+  useWindowsBrowseShortcutBridge({
+    shell: shellApi,
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    acceleratorsBlocked:
+      dialogFocusTrapActive ||
+      Boolean(previewAsset) ||
+      editableTextFocused,
+  });
+
   useEffect(() => {
     // Serpent-0rk: freeze shell pointer targets while any modal is open.
     document.body.classList.toggle("serpent-modal-open", dialogFocusTrapActive);
@@ -6671,7 +6684,6 @@ function AppInner() {
     busy,
     selectedAsset,
     selectedAssets,
-    selectedManagedCount,
     pasteDestinationFolderId: browsePasteDestination,
     diskDeleteAssetIds: diskDeleteKeyboardTargets.assetIds,
     diskDeleteFolderIds: diskDeleteKeyboardTargets.folderIds,
@@ -6681,6 +6693,9 @@ function AppInner() {
     },
     onTrashManaged: (assetIds) => {
       void trashManagedAssets(assetIds);
+    },
+    onTrashLinked: (assetIds) => {
+      void trashLinkedAssets(assetIds);
     },
     onRename: openAssetRename,
     onCopyFiles: (assetIds) => {
@@ -6844,7 +6859,6 @@ function AppInner() {
     if (
       dialog ||
       conflicts ||
-      deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
       collectionEditor
@@ -6920,7 +6934,6 @@ function AppInner() {
     closeAssetPreview,
     collectionEditor,
     conflicts,
-    deleteLinkedDialog,
     dialog,
     previewAsset,
     previewIndex,
@@ -9943,20 +9956,6 @@ function AppInner() {
           }}
         />
       )}
-      {deleteLinkedDialog && (
-        <DeleteLinkedDialog
-          displayNames={deleteLinkedDialog.displayNames}
-          deleteSourceFile={deleteLinkedDialog.deleteSourceFile}
-          canDeleteSourceFile={deleteLinkedDialog.canDeleteSourceFile}
-          onClose={() => setDeleteLinkedDialog(null)}
-          onConfirm={() => void executeDeleteLinked()}
-          onToggleDeleteSourceFile={(checked) =>
-            setDeleteLinkedDialog((current) =>
-              current ? { ...current, deleteSourceFile: checked } : current,
-            )
-          }
-        />
-      )}
       <RelinkPreview
         session={batchRelinkPreview}
         keepMetadata={batchRelinkKeepMetadata}
@@ -10126,14 +10125,6 @@ function AppInner() {
           void deletePermanentFromTrash(assetIds);
         }}
         onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
-        onDeleteLinked={(assetId, displayName, canDeleteSourceFile) =>
-          setDeleteLinkedDialog({
-            assetIds: [assetId],
-            displayNames: displayName,
-            deleteSourceFile: false,
-            canDeleteSourceFile,
-          })
-        }
         onAnalyze={(assetId, batchIds) => {
           void handleAnalyzeClick(assetId, batchIds);
         }}

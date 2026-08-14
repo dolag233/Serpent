@@ -8,8 +8,10 @@
  * skip folders with reason "folder".
  *
  * Eligibility mirrors drag-drop / file-op gates: move needs managed + available
- * + not trashed; trash needs managed + not trashed. Linked, unavailable,
+ * + not trashed; trash needs managed or linked + not trashed. Unavailable,
  * unresolved, and trashed assets become skip buckets rather than silent gaps.
+ * Linked assets skip move (they are not library-owned bytes) but Delete sends
+ * them to the OS recycle bin the same as managed trash.
  */
 
 import {
@@ -160,7 +162,11 @@ export function buildMultiAssetMenuSkipReport(
   for (const asset of resolved) {
     if (asset.locationKind === "linked") {
       pushSkip(moveSkips, "linked");
-      pushSkip(trashSkips, "linked");
+      if (asset.deletedAt) {
+        pushSkip(trashSkips, "trashed");
+      } else {
+        trashIds.push(asset.assetId);
+      }
       continue;
     }
     // managed

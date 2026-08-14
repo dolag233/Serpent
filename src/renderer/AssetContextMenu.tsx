@@ -187,7 +187,6 @@ const HOST_MENU_ANCHORS: Record<PluginHostMenuGroup, readonly string[]> = {
   delete: [
     "asset.move-to-trash",
     "asset.delete-from-disk",
-    "asset.delete-linked",
     "asset.delete-permanent",
     "folder.move-to-trash",
     "folder.delete-from-disk",
@@ -318,7 +317,6 @@ interface AssetContextMenuProps {
   onRestore: (assetIds: string[]) => void;
   onPermanentDelete: (assetIds: string[]) => void;
   onRelink: (assetId: string) => void;
-  onDeleteLinked: (assetId: string, displayName: string, canDeleteSourceFile: boolean) => void;
   onAnalyze: (assetId: string, batchIds?: readonly string[]) => void;
   onClearAiContent: (assetIds: string[]) => void;
   canAnalyze: boolean;
@@ -402,7 +400,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onRestore,
     onPermanentDelete,
     onRelink,
-    onDeleteLinked,
     onAnalyze,
     onClearAiContent,
     canAnalyze,
@@ -1202,7 +1199,21 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               targetAssets,
               targetFolderIds,
             );
-            const managedAssetIds = [...skipReport.trash.processAssetIds];
+            const trashAssetIds = [...skipReport.trash.processAssetIds];
+            const managedAssetIds = targetAssets
+              .filter(
+                (asset) =>
+                  trashAssetIds.includes(asset.assetId) &&
+                  asset.locationKind === "managed",
+              )
+              .map((asset) => asset.assetId);
+            const linkedAssetIds = targetAssets
+              .filter(
+                (asset) =>
+                  trashAssetIds.includes(asset.assetId) &&
+                  asset.locationKind === "linked",
+              )
+              .map((asset) => asset.assetId);
             const availableManagedAssetIds = [
               ...skipReport.move.processAssetIds,
             ];
@@ -1249,7 +1260,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               aiPendingAssetIds,
               managedCount: managedAssetIds.length,
               availableManagedCount: availableManagedAssetIds.length,
-              linkedCount: skipReport.linkedCount,
+              linkedCount: linkedAssetIds.length,
+              linkedAssetIds,
               folderCount: moveFolderIds.length,
               processFolderIds: moveFolderIds,
               trashedAll: allTrashed,
@@ -1647,7 +1659,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               assetDeleted: isDeleted,
               activeCollectionId,
               aiCanAnalyze: canAnalyze,
-              assetDisplayName: displayName,
               pasteTargetFolderId: resolvedPasteTarget,
               actions: {
                 view: onViewAsset,
@@ -1665,7 +1676,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 relink: onRelink,
                 restore: onRestore,
                 deletePermanent: onPermanentDelete,
-                deleteLinked: onDeleteLinked,
                 removeFromCurrentCollection: onRemoveFromCurrentCollection,
               },
             };
@@ -1703,7 +1713,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const deleteFromDiskItem = resolvedById.get(
               "asset.delete-from-disk",
             );
-            const deleteLinkedItem = resolvedById.get("asset.delete-linked");
             const addableCollectionIds = memberIdsByCollection
               ? new Set(
                   collections
@@ -2098,14 +2107,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() =>
                         runAssetCommand("asset.delete-from-disk")
                       }
-                    />
-                  )}
-                  {deleteLinkedItem && (
-                    <ContextMenuItem
-                      icon={<Icon name="link" size={14} />}
-                      label={deleteLinkedItem.label}
-                      danger
-                      onAction={() => runAssetCommand("asset.delete-linked")}
                     />
                   )}
                   <PluginMenuItems

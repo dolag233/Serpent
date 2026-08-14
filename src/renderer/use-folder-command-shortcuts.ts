@@ -10,6 +10,7 @@ import {
   sidebarCommandDefinitions,
   type SidebarCommandDefinition,
 } from "./commands/sidebar-commands";
+import { shouldForwardBrowseShortcut } from "../shared/browse-shortcut-dedupe";
 import {
   readFocusedNavFolder,
   resolveFolderShortcutAction,
@@ -56,6 +57,7 @@ export type UseFolderCommandShortcutsArgs = {
   readonly selectedFolderCardIds: readonly string[];
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
+  readonly canRenameFolder?: (folderId: string) => boolean;
   readonly createSubfolder: (parentFolderId: string | null) => void;
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly trashManagedFolder: (folderId: string, name: string) => void;
@@ -77,6 +79,7 @@ export function useFolderCommandShortcuts(
     selectedFolderCardIds,
     selectedAssetCount,
     resolveManagedFolderName,
+    canRenameFolder,
     createSubfolder,
     renameFolder,
     trashManagedFolder,
@@ -101,8 +104,19 @@ export function useFolderCommandShortcuts(
           selectedFolderCardIds,
           selectedAssetCount,
           resolveManagedFolderName,
+          canRenameFolder,
         });
         if (action.type === "none") continue;
+
+        const browseAction =
+          commandId === "folder.rename"
+            ? "rename"
+            : commandId === "folder.delete-from-disk"
+              ? "disk-delete"
+              : commandId === "folder.move-to-trash"
+                ? "trash"
+                : null;
+        if (browseAction && !shouldForwardBrowseShortcut(browseAction)) return;
 
         event.preventDefault();
         if (action.type === "create-subfolder") {
@@ -122,8 +136,8 @@ export function useFolderCommandShortcuts(
       }
     };
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, platform === "windows");
+    return () => document.removeEventListener("keydown", onKeyDown, platform === "windows");
   }, [
     enabled,
     platform,
@@ -132,6 +146,7 @@ export function useFolderCommandShortcuts(
     selectedFolderCardIds,
     selectedAssetCount,
     resolveManagedFolderName,
+    canRenameFolder,
     createSubfolder,
     renameFolder,
     trashManagedFolder,

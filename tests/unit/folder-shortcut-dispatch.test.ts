@@ -8,6 +8,7 @@ import {
 const names = new Map([
   ["folder-a", "Alpha"],
   ["folder-b", "Beta"],
+  ["linked-1", "Linked"],
 ]);
 
 const resolveName = (id: string) => names.get(id);
@@ -149,6 +150,37 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
       folderId: "folder-b",
       currentName: "Beta",
     });
+  });
+
+  it("trash/disk-delete use a focused linked folder like a managed one", () => {
+    expect(
+      resolveFolderShortcutAction({
+        commandId: "folder.move-to-trash",
+        focusedNav: { folderId: "linked-1", locationKind: "linked" },
+        browseManagedFolderId: null,
+        selectedFolderCardIds: [],
+        selectedAssetCount: 0,
+        resolveManagedFolderName: resolveName,
+      }),
+    ).toEqual({
+      type: "move-to-trash",
+      folderId: "linked-1",
+      name: "Linked",
+    });
+  });
+
+  it("skips linked rename when canRenameFolder is false", () => {
+    expect(
+      resolveFolderShortcutAction({
+        commandId: "folder.rename",
+        focusedNav: { folderId: "linked-1", locationKind: "linked" },
+        browseManagedFolderId: null,
+        selectedFolderCardIds: [],
+        selectedAssetCount: 0,
+        resolveManagedFolderName: resolveName,
+        canRenameFolder: () => false,
+      }),
+    ).toEqual({ type: "none" });
   });
 });
 

@@ -94,8 +94,8 @@ export function useCollectionCommandShortcuts(
       }
     };
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, platform === "windows");
+    return () => document.removeEventListener("keydown", onKeyDown, platform === "windows");
   }, [
     enabled,
     platform,

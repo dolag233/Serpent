@@ -128,6 +128,59 @@ const DEFAULT_ASPECT = 1;
 /** Single leftover card: do not stretch to full width (looks like a banner). */
 const LAST_ROW_MAX_STRETCH = 1.18;
 
+/**
+ * Pack aspect-ratio widths into integer CSS pixels that sum exactly to
+ * `usableWidthPx` (Hamilton / largest-remainder). Fractional justified
+ * slots jitter on Windows: Chromium re-snaps object-fit and glyph
+ * baselines every frame at 125%/150% DPI (Serpent-oq86).
+ */
+export function distributeIntegerRowWidths(
+  aspectRatios: readonly number[],
+  rowHeightPx: number,
+  usableWidthPx: number,
+): number[] {
+  const count = aspectRatios.length;
+  if (count === 0) return [];
+  const height = Math.max(1, Math.round(rowHeightPx));
+  const usable = Math.max(count, Math.round(usableWidthPx));
+  const raw = aspectRatios.map((aspect) => {
+    const ratio =
+      Number.isFinite(aspect) && aspect > 0 ? aspect : DEFAULT_ASPECT;
+    return ratio * height;
+  });
+  const rawSum = raw.reduce((sum, width) => sum + width, 0);
+  if (!(rawSum > 0)) {
+    const widths = Array.from({ length: count }, () => 1);
+    widths[count - 1] = Math.max(1, usable - (count - 1));
+    return widths;
+  }
+  const scaled = raw.map((width) => (width / rawSum) * usable);
+  const widths = scaled.map((width) => Math.max(0, Math.floor(width)));
+  let leftover = usable - widths.reduce((sum, width) => sum + width, 0);
+  const order = scaled
+    .map((width, index) => ({ index, frac: width - Math.floor(width) }))
+    .sort((left, right) => right.frac - left.frac);
+  for (const { index } of order) {
+    if (leftover <= 0) break;
+    widths[index]! += 1;
+    leftover -= 1;
+  }
+  for (let index = 0; index < count; index += 1) {
+    if (widths[index]! >= 1) continue;
+    const donor = widths.reduce(
+      (best, width, candidate) => (width > widths[best]! ? candidate : best),
+      0,
+    );
+    if (widths[donor]! > 1) {
+      widths[donor]! -= 1;
+      widths[index] = 1;
+    } else {
+      widths[index] = 1;
+    }
+  }
+  return widths;
+}
+
 export function aspectRatioForAsset(width: number | null, height: number | null): number {
   if (
     typeof width === "number" &&
@@ -150,7 +203,7 @@ export function layoutJustifiedRows(
   targetRowHeightPx: number,
   gapPx: number = ASSET_GRID_GAP_PX,
 ): JustifiedRow[] {
-  const width = Math.max(0, containerWidthPx);
+  const width = Math.max(0, Math.round(containerWidthPx));
   const targetH = Math.max(1, Math.round(targetRowHeightPx));
   if (width <= 0 || items.length === 0) return [];
 
@@ -166,15 +219,26 @@ export function layoutJustifiedRows(
     let scale = usable / naturalWidth;
     // Only withhold stretch for a lone leftover card; multi-item last rows
     // still fill the row like the contact-sheet reference.
-    if (isLast && pending.length === 1 && scale > LAST_ROW_MAX_STRETCH) {
+    const withholdStretch =
+      isLast && pending.length === 1 && scale > LAST_ROW_MAX_STRETCH;
+    if (withholdStretch) {
       scale = 1;
     }
-    const height = Math.max(1, targetH * scale);
+    const height = Math.max(1, Math.round(targetH * scale));
+    const widths = withholdStretch
+      ? pending.map((item) =>
+          Math.max(1, Math.round(item.aspectRatio * height)),
+        )
+      : distributeIntegerRowWidths(
+          pending.map((item) => item.aspectRatio),
+          height,
+          usable,
+        );
     rows.push({
       height,
-      items: pending.map((item) => ({
+      items: pending.map((item, index) => ({
         id: item.id,
-        width: item.aspectRatio * height,
+        width: widths[index] ?? 1,
         height,
       })),
     });

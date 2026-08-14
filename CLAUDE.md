@@ -168,6 +168,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - `docs/internal/qa/NNNN-*.md` — QA 报告
 - `docs/internal/qa/human-acceptance-checklist.md` — 功能验收队列；UI 仅用户可标「人类验收通过」；`PLUGIN-*`/`AUT-*` 以自动化测试为准（见 `docs/internal/agent-plugin-playbook.md`）
 - `docs/internal/ui/0001-studio-contact-sheet-direction.md` — UI 视觉方向
+- `docs/internal/ui/0006-progressive-loading-ux-principles.md` — 禁止同步阻塞加载；打开库约 1 秒可交互
 - `docs/internal/research/` — 技术调研
 
 ## 核心体验回归门禁

@@ -12,6 +12,7 @@ import {
   COPY_SELECTION_CHANNEL,
 } from "../shared/protocol/channels";
 import { shouldHideApplicationMenuBar } from "../shared/window-controls";
+import { installWindowsHiddenAcceleratorMenu } from "./viewer-video-shortcut-menu";
 import { lookupMessage } from "../renderer/i18n/types";
 import { zhCN } from "../renderer/i18n/catalogs/zh-CN";
 import { en } from "../renderer/i18n/catalogs/en";
@@ -147,11 +148,10 @@ function enrichMenuTemplate(
  * Call once during app ready so macOS defaults cannot steal
  * Cmd/Ctrl+=,-,0 from renderer zoom shortcuts (Serpent-46i9).
  *
- * Windows (Serpent-znex / Serpent-r7gu): hide the menu bar entirely for
- * frameless shell unity. Chromium still handles Ctrl+C/V in inputs;
- * right-click edit menu is Serpent-d8u. Setting null also drops Electron
- * View reload/zoom roles that would otherwise remain as invisible
- * accelerators if we only hid the bar.
+ * Windows (Serpent-znex / Serpent-r7gu): hide the menu bar for frameless
+ * shell unity, but keep a hidden accelerator menu for F2/Delete (Serpent-g8u9)
+ * so Chromium still has a local shortcut path. Do not use a bare `null` menu:
+ * that also drops those accelerators and can reintroduce View zoom roles.
  */
 export function installApplicationMenu(options?: {
   showDevTools?: boolean;
@@ -159,7 +159,7 @@ export function installApplicationMenu(options?: {
 }): void {
   const platform = process.platform as ApplicationMenuPlatform;
   if (shouldHideApplicationMenuBar(platform)) {
-    Menu.setApplicationMenu(null);
+    installWindowsHiddenAcceleratorMenu();
     return;
   }
   const showDevTools =

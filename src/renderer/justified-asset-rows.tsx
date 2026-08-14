@@ -42,8 +42,8 @@ export function justifiedSlotStyle(
   placement: JustifiedPlacement,
 ): CSSProperties {
   return {
-    width: placement.width,
-    ["--justified-preview-height" as string]: `${Math.max(1, placement.height)}px`,
+    width: Math.max(1, Math.round(placement.width)),
+    ["--justified-preview-height" as string]: `${Math.max(1, Math.round(placement.height))}px`,
   };
 }
 

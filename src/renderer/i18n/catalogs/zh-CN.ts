@@ -444,7 +444,6 @@ export const zhCN = {
       restore: "恢复",
       deletePermanent: "永久删除",
       deletePermanentEllipsis: "永久删除…",
-      deleteLinked: "删除链接资产…",
       removeFromCollection: "从当前合集移除",
       addTags: "添加标签…",
       removeTags: "移除标签…",
@@ -479,7 +478,6 @@ export const zhCN = {
       moveTo: "移动到…",
       linkedRules: "链接规则…",
       moveToTrash: "移入回收站",
-      moveToTrashConfirm: "将文件夹「{name}」移入回收站？\n其中内容会一并移入回收站。",
       deleteFromDisk: "从硬盘中删除…",
       removeFromLibrary: "从库中移除",
       removeFromLibraryConfirm: "从资源库移除链接文件夹「{name}」？\n外部源目录不会被删除。"
@@ -772,15 +770,6 @@ export const zhCN = {
       automationWarning: "注意",
       automationError: "无法完成操作",
       confirm: "知道了"
-    },
-    deleteLinked: {
-      title: "删除链接资产",
-      body: "确定要从 Serpent 中移除链接资产\"{name}\"吗？默认只移除索引记录，磁盘源文件保持不变。",
-      deleteSourceAria: "同时删除磁盘源文件",
-      deleteSourceHelp: "同时将磁盘源文件移入系统回收站。系统拒绝操作时，该项源文件和 Serpent 记录都会保留，并显示具体原因。",
-      sourceUnavailable: "源文件当前不可用，只能移除 Serpent 中的链接记录。",
-      submitWithTrash: "移入系统回收站并移除",
-      submitRecordOnly: "仅移除记录"
     },
     rename: {
       fileTitle: "重命名文件",
@@ -1660,7 +1649,6 @@ export const zhCN = {
     emptyTrashFailed: "清空回收站失败。",
     deleteLinkedPartial: "删除链接资产未全部完成：已删除 {deleted} 项，另有 {failed} 项保留。原因：{reasons}",
     deleteLinkedWithTrash: "已将 {count} 个源文件移入系统回收站，并移除链接资产记录。",
-    deleteLinkedRecordOnly: "已移除 {count} 项链接资产记录，磁盘源文件保持不变。",
     refreshListManually: "请手动刷新资产列表。",
     deleteDoneRefreshFailed: "删除已完成，但界面刷新失败：{reason}",
     deleteOutcomeRefreshFailed: "{outcome} 另外，界面刷新失败：{reason}",

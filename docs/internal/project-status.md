@@ -3,11 +3,17 @@
 > 更新时间：2026-08-14
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-14 晚间用户反馈（先开单）**：
+  THUMB-006 / `Serpent-lpnt` 人类验收通过（残缺/缺失图像能生成正常缩略图；重复单 `Serpent-k2zw` 一并关闭）。
+  P0 `Serpent-oq86` Windows 平铺卡片上下抖动：用户确认通过（CANVAS-038）。
+  新开 P0：`Serpent-tumv` 禁止同步加载、打开库约 1 秒可交互（LIB-018，原则见 `docs/internal/ui/0006-progressive-loading-ux-principles.md`）。
+  新开 P1：`Serpent-esuj` 查看页模糊→原图快慢不一且升级重置视图（VIEWER-027）。
+  `Serpent-g8u9` Windows F2/Delete：链接与托管同等操作；Delete 默认进回收站且不弹确认（托管→应用回收站，链接→系统回收站）。已去掉链接删除确认框与主进程「删除链接源文件」危险确认。COMMAND-002 / COMMAND-005 / SHORTCUT-001 待 Windows 再验。Ctrl+V 另议。
 - **2026-08-14 大批量浏览卡顿与框选**：窗口化 + 全量布局几何框选 + 解码并发逻辑核−3。
   用户确认 PERF-001 / CANVAS-036 通过（`Serpent-yti0`）。新开 P1：Windows 打开后
   浏览画布出现残留小框选 UI（SELECT-016 / `Serpent-er9g`），已实现初始隐藏与滚动坐标修复，待 Windows
   真机验收。其余晚间 P1 已实现并有定向自动化证据，待人类/Windows 验收：
-  `Serpent-lpnt` / `ni8w` / `lf16` / `nd35` / `7hri` / `4mlf`。
+  `Serpent-ni8w` / `lf16` / `nd35` / `7hri` / `4mlf`。
 - **2026-08-14 瀑布流截断白区（Serpent-1s3d）**：第四档快速下滚时新露出的区域是整片截断白区，
   不是单张白卡片。根因是固定 1200px overscan 在大卡片 + React 提交滞后时被甩开，窗口化仍渲染旧切片。
   现按视口×3 与卡片尺寸加宽 overscan，并把瀑布流卡片槽锁到与 `columnWindow` 相同的估算高度。

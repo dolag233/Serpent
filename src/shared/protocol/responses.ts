@@ -605,7 +605,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('linked-folder.subtree-deleted'),
     linkedFolderId: nonBlankString,
-    relativePath: nonBlankString,
+    relativePath: z.union([z.literal(''), portableRelativePathSchema]),
     deletedAssetCount: z.number().int().nonnegative(),
     failedCount: z.number().int().nonnegative(),
   }),

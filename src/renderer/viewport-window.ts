@@ -70,6 +70,13 @@ export function useCanvasLocalViewport(
 
   return viewport;
 }
+/** Whole CSS pixels. Fractional getBoundingClientRect edges retrigger
+ *  windowing every frame on Windows DPI (Serpent-oq86). */
+export function quantizeCanvasViewportOffsetPx(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value);
+}
+
 export function readCanvasLocalViewport(
   container: HTMLElement,
   canvas: HTMLElement,
@@ -79,7 +86,8 @@ export function readCanvasLocalViewport(
   const overscan = overscanPx ?? viewportOverscanPx(canvas.clientHeight, cardSizePx);
   const containerRect = container.getBoundingClientRect();
   const canvasRect = canvas.getBoundingClientRect();
-  const start = canvasRect.top - containerRect.top - overscan;
+  const start =
+    quantizeCanvasViewportOffsetPx(canvasRect.top - containerRect.top) - overscan;
   const end = start + canvas.clientHeight + overscan * 2;
   return { start, end };
 }

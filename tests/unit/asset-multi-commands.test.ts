@@ -59,6 +59,7 @@ function makeCtx(
     managedCount: 2,
     availableManagedCount: 1,
     linkedCount: 1,
+    linkedAssetIds: ['a-3'],
     folderCount: 0,
     processFolderIds: [],
     trashedAll: false,
@@ -145,7 +146,7 @@ describe('内嵌计数标题（与历史渲染一致）', () => {
     ['assets.copy', '复制（2 项）'],
     ['assets.paste', '粘贴'],
     ['assets.move-to-folder', '移动到文件夹…（1 项）'],
-    ['assets.move-to-trash', '移入回收站（2 项）'],
+    ['assets.move-to-trash', '移入回收站（3 项）'],
     ['assets.clear-selection', '清除选择（3 项）'],
   ] as const)('正常分支 %s 标题为「%s」', (id, expected) => {
     const { ctx } = makeCtx();
@@ -165,14 +166,14 @@ describe('内嵌计数标题（与历史渲染一致）', () => {
     [{ selectionCount: 5 }, 'assets.restore', '恢复所选（5 项）'],
     [{ selectionCount: 5 }, 'assets.delete-permanent', '永久删除（5 项）'],
     [{ selectionCount: 5 }, 'assets.clear-selection', '清除选择（5 项）'],
-    [{ managedCount: 7 }, 'assets.move-to-trash', '移入回收站（7 项）'],
+    [{ managedCount: 7, linkedCount: 0, linkedAssetIds: [] }, 'assets.move-to-trash', '移入回收站（7 项）'],
     [
       { availableManagedCount: 4 },
       'assets.move-to-folder',
       '移动到文件夹…（4 项）',
     ],
     [{ availableManagedCount: 0 }, 'assets.move-to-folder', '移动到文件夹…（0 项）'],
-    [{ managedCount: 0 }, 'assets.move-to-trash', '移入回收站（0 项）'],
+    [{ managedCount: 0, linkedCount: 0, linkedAssetIds: [] }, 'assets.move-to-trash', '移入回收站（0 项）'],
   ] as const)(
     '计数随 ctx 变化：%o → %s =「%s」',
     (overrides, id, expected) => {
@@ -209,8 +210,13 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     ).toMatchObject({ disabled: false, disabledReason: null });
   });
 
-  it('move-to-trash：托管为 0 时禁用并给出原因', () => {
-    const { ctx } = makeCtx({ managedCount: 0, managedAssetIds: [] });
+  it('move-to-trash：托管与链接均为 0 时禁用并给出原因', () => {
+    const { ctx } = makeCtx({
+      managedCount: 0,
+      managedAssetIds: [],
+      linkedCount: 0,
+      linkedAssetIds: [],
+    });
     expect(
       findItem(registry.resolveMenu(ctx), 'assets.move-to-trash'),
     ).toMatchObject({
@@ -310,7 +316,7 @@ describe('run 委托到 actions 回调包', () => {
     ['assets.copy', {}, 'copyFiles', [['a-1', 'a-3']]],
     ['assets.paste', {}, 'pasteIntoFolder', ['folder-1']],
     ['assets.move-to-folder', {}, 'moveToFolder', [['a-1'], []]],
-    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2'], []]],
+    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2', 'a-3'], []]],
     ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2'], []]],
     ['assets.clear-selection', {}, 'clearSelection', []],
   ] as const)(
@@ -324,16 +330,18 @@ describe('run 委托到 actions 回调包', () => {
     },
   );
 
-  it('move-to-folder 只传可用托管 id，move-to-trash 传全部托管 id', () => {
+  it('move-to-folder 只传可用托管 id，move-to-trash 传托管与链接 id', () => {
     const { ctx, calls } = makeCtx({
       managedAssetIds: ['m-1', 'm-2', 'm-3'],
       availableManagedAssetIds: ['m-2'],
+      linkedAssetIds: ['l-1'],
+      linkedCount: 1,
     });
     void registry.get('assets.move-to-folder')?.run(ctx);
     void registry.get('assets.move-to-trash')?.run(ctx);
     expect(calls).toEqual([
       { action: 'moveToFolder', args: [['m-2'], []] },
-      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3'], []] },
+      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3', 'l-1'], []] },
     ]);
   });
 
@@ -343,6 +351,8 @@ describe('run 委托到 actions 回调包', () => {
       processFolderIds: ['f-1', 'f-2'],
       managedCount: 1,
       managedAssetIds: ['a-1'],
+      linkedCount: 0,
+      linkedAssetIds: [],
     });
     const trash = findItem(registry.resolveMenu(ctx), 'assets.move-to-trash');
     expect(trash.label).toContain('3');

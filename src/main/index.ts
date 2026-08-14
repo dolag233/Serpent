@@ -40,6 +40,9 @@ import {
   setViewerVideoShortcutCaptureActive,
 } from "./viewer-video-shortcut-capture";
 import { forwardViewerVideoShortcut } from "./viewer-video-shortcut-forward";
+import { forwardBrowseShortcut } from "./browse-shortcut-forward";
+import { setWindowsBrowseShortcutAcceleratorsEnabled } from "./viewer-video-shortcut-menu";
+import { matchBrowseKeyboardShortcut } from "../shared/browse-keyboard-shortcuts";
 import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
@@ -103,6 +106,7 @@ import {
   PLUGIN_INPUT_CAPTURE_SESSIONS_CHANNEL,
   PLUGIN_INPUT_CAPTURE_SYSTEM_MODAL_CHANNEL,
   VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL,
+  BROWSE_SHORTCUT_MENU_ENABLED_CHANNEL,
   OFFSCREEN_THUMBNAIL_FRAME_CHANNEL,
   MCP_SETTINGS_REQUEST_CHANNEL,
   MCP_SETTINGS_EVENT_CHANNEL,
@@ -181,7 +185,10 @@ import {
   type AutomationCommandId,
   type AutomationSource,
 } from '../automation/command-registry';
-import { shouldUseFramelessTitleBar } from "../shared/window-controls";
+import {
+  shouldHideApplicationMenuBar,
+  shouldUseFramelessTitleBar,
+} from "../shared/window-controls";
 import { matchViewerVideoLetterShortcut } from "../shared/viewer-video-shortcuts";
 import {
   resolveOpenExternalUrlTarget,
@@ -920,6 +927,21 @@ async function createMainWindow(): Promise<void> {
     if (captureResult === 'delivered' || captureResult === 'queued') {
       event.preventDefault();
       return;
+    }
+    if (shouldHideApplicationMenuBar(process.platform)) {
+      const browseAction = matchBrowseKeyboardShortcut({
+        type: input.type,
+        code: input.code,
+        key: input.key,
+        keyCode: (input as { keyCode?: number }).keyCode,
+        control: input.control,
+        meta: input.meta,
+        alt: input.alt,
+        shift: input.shift,
+      });
+      if (browseAction) {
+        forwardBrowseShortcut(window.webContents, browseAction);
+      }
     }
     if (!isViewerVideoShortcutContentsActive(window.webContents.id)) {
       return;
@@ -4355,7 +4377,6 @@ function criticalRendererRequest(request: RendererRequest): boolean {
     || request.type === 'asset.delete-from-disk.request'
     || request.type === 'asset.delete-permanent.request'
     || request.type === 'trash.purge.request'
-    || (request.type === 'asset.delete-linked.request' && request.deleteSourceFile)
     || (request.type === 'linked-folder.delete-subtree.request' && request.deleteFromDisk);
 }
 
@@ -4372,14 +4393,11 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
       ? 'linked-folder'
       : request.type === 'asset.delete-permanent.request'
         ? 'asset-permanent'
-        : request.type === 'asset.delete-linked.request'
-          ? 'asset-linked-source'
         : request.type === 'trash.purge.request'
           ? 'trash-purge'
           : 'asset';
   const count = request.type === 'asset.delete-from-disk.request'
     || request.type === 'asset.delete-permanent.request'
-    || request.type === 'asset.delete-linked.request'
     ? request.assetIds.length
     : undefined;
   const heading = operation === 'folder'
@@ -4388,8 +4406,6 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
       ? (english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？')
       : operation === 'asset-permanent'
         ? (english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？')
-        : operation === 'asset-linked-source'
-          ? (english ? 'Delete linked asset source files?' : '删除链接资产源文件？')
         : operation === 'trash-purge'
           ? (english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？')
           : (english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？');
@@ -4399,8 +4415,6 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
       ? (english ? 'The selected linked-folder source files will be permanently deleted.' : '选定链接文件夹中的源文件将被永久删除。')
       : operation === 'asset-permanent'
         ? (english ? `${count ?? 0} selected trash asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项回收站资产将被永久删除。`)
-        : operation === 'asset-linked-source'
-          ? (english ? `${count ?? 0} linked asset source file(s) will be permanently deleted.` : `选定的 ${count ?? 0} 个链接资产源文件将被永久删除。`)
         : operation === 'trash-purge'
           ? (english ? 'All assets currently in the Serpent trash will be permanently deleted.' : 'Serpent 回收站中的全部资产将被永久删除。')
           : (english ? `${count ?? 0} selected asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项资产将被永久删除。`);
@@ -6341,6 +6355,15 @@ async function startApplication(): Promise<void> {
         );
       }
     }
+  });
+
+  ipcMain.on(BROWSE_SHORTCUT_MENU_ENABLED_CHANNEL, (_event, input: unknown) => {
+    const enabled =
+      typeof input === "object" &&
+      input !== null &&
+      "enabled" in input &&
+      Boolean((input as { enabled?: unknown }).enabled);
+    setWindowsBrowseShortcutAcceleratorsEnabled(enabled);
   });
 
   ipcMain.on(VIEWER_VIDEO_SHORTCUTS_ACTIVE_CHANNEL, (event, input: unknown) => {

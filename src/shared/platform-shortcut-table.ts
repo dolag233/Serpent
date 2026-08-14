@@ -41,7 +41,7 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
   },
   {
     id: "asset.rename",
-    purpose: "Rename selected managed asset (F2 on both platforms)",
+    purpose: "Rename selected asset (F2 on both platforms; managed or linked)",
     mac: { label: "F2", key: "F2" },
     windows: { label: "F2", key: "F2" },
   },

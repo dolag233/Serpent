@@ -73,10 +73,77 @@ export function formatShortcut(
 /** 键盘事件的最小结构；DOM KeyboardEvent 在结构上与之兼容。 */
 export interface ShortcutEvent {
   readonly key: string;
+  /** Physical key (KeyboardEvent.code); used when `key` is missing or IME-noisy. */
+  readonly code?: string;
+  /** Legacy keyCode; Windows IME / Electron before-input sometimes omit `code`. */
+  readonly keyCode?: number;
   readonly metaKey: boolean;
   readonly ctrlKey: boolean;
   readonly altKey: boolean;
   readonly shiftKey: boolean;
+}
+
+/** DOM / Electron legacy keyCode for named and function keys (VIEWER-018 parity). */
+const SHORTCUT_KEY_CODE: Readonly<Record<string, number>> = {
+  backspace: 8,
+  tab: 9,
+  enter: 13,
+  escape: 27,
+  space: 32,
+  delete: 46,
+  f1: 112,
+  f2: 113,
+  f3: 114,
+  f4: 115,
+  f5: 116,
+  f6: 117,
+  f7: 118,
+  f8: 119,
+  f9: 120,
+  f10: 121,
+  f11: 122,
+  f12: 123,
+};
+
+function shortcutEventMatchesChordKey(
+  chordKey: string,
+  event: ShortcutEvent,
+): boolean {
+  const expected = chordKey.toLowerCase();
+  const key = event.key.toLowerCase();
+  if (key.length > 0 && key !== 'process' && key === expected) return true;
+  if (expected === 'delete' && key === 'del') return true;
+
+  const code = event.code?.toLowerCase();
+  if (code !== undefined && code.length > 0) {
+    if (code === expected) return true;
+    // Letter chords store 'o'; physical code is 'KeyO'.
+    if (expected === 'delete' && (key === 'del' || code === 'del')) return true;
+    if (expected.length === 1 && code === `key${expected}`) return true;
+    // Numpad operators may report Add/Subtract while chord uses =/-.
+    if (expected === '=' && code === 'equal') return true;
+    if (expected === '+' && (code === 'equal' || code === 'add')) return true;
+    if (expected === '-' && (code === 'minus' || code === 'subtract')) return true;
+    if (expected === '0' && code === 'digit0') return true;
+  }
+
+  const keyCode = event.keyCode;
+  if (keyCode !== undefined && keyCode !== 0) {
+    const named = SHORTCUT_KEY_CODE[expected];
+    if (named !== undefined && keyCode === named) return true;
+    // A–Z / 0–9 when chord is a single character.
+    if (expected.length === 1) {
+      const upper = expected.toUpperCase();
+      if (upper >= 'A' && upper <= 'Z' && keyCode === upper.charCodeAt(0)) {
+        return true;
+      }
+      if (expected >= '0' && expected <= '9' && keyCode === expected.charCodeAt(0)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -102,7 +169,7 @@ export function matchesShortcut(
   if (event.metaKey !== (chord.metaKey ?? false)) return false;
   if (event.ctrlKey !== (chord.ctrlKey ?? false)) return false;
   if (event.shiftKey !== (chord.shiftKey ?? false)) return false;
-  return event.key.toLowerCase() === chord.key.toLowerCase();
+  return shortcutEventMatchesChordKey(chord.key, event);
 }
 
 /**

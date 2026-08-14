@@ -22,6 +22,14 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+/**
+ * Linked-folder subtree path. Empty string means the linked folder root
+ * (OS trash / disk delete of the whole linked tree).
+ */
+const linkedSubtreeRelativePathSchema = z.union([
+  z.literal(''),
+  portableRelativePathSchema,
+]);
 /** Browse/search/reveal ids may be virtual linked paths: `lfv:{rootId}/{relativePath}`. */
 const folderScopeIdSchema = nonBlankString.max(4096);
 // Schema layer rejects only obvious injection shapes (separators, control
@@ -282,7 +290,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.delete-subtree.request'),
     libraryId: identifierSchema,
     linkedFolderId: identifierSchema,
-    relativePath: portableRelativePathSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
@@ -1176,7 +1184,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.delete-subtree'),
     libraryId: identifierSchema,
     linkedFolderId: identifierSchema,
-    relativePath: portableRelativePathSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({

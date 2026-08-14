@@ -10386,10 +10386,14 @@ export class LibraryService {
   }
 
   /**
-   * Clarification #7: delete a linked *child* folder path.
+   * Clarification #7: delete a linked folder path.
+   * - relativePath "": the linked folder root — OS trash (or rm) of the
+   *   source tree, then drop the library index (same as removeLinkedFolder
+   *   after the bytes are gone).
+   * - relativePath child: a linked *child* folder.
    * - deleteFromDisk false: move sources to the OS trash (linked bytes are not
    *   library-owned, so they cannot enter the app trash) and drop index rows.
-   * - deleteFromDisk true: irreversible rm of the child directory tree + rows.
+   * - deleteFromDisk true: irreversible rm of the directory tree + rows.
    */
   async deleteLinkedFolderSubtree(input: {
     libraryId: string;
@@ -10399,11 +10403,16 @@ export class LibraryService {
   }): Promise<{ deletedAssetCount: number; failedCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
+    const isLinkedRoot = input.relativePath === '';
     let relativePath: string;
-    try {
-      relativePath = normalizeRelativeAssetPath(input.relativePath);
-    } catch (error) {
-      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+    if (isLinkedRoot) {
+      relativePath = '';
+    } else {
+      try {
+        relativePath = normalizeRelativeAssetPath(input.relativePath);
+      } catch (error) {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+      }
     }
 
     const linked = openLibrary.connection
@@ -10420,23 +10429,35 @@ export class LibraryService {
       | undefined;
     if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
-    const prefix = `${relativePath}/`;
-    const assetRows = openLibrary.connection
-      .prepare(
-        `SELECT asset_id FROM assets
-          WHERE linked_folder_id = ?
-            AND location_kind = 'linked'
-            AND deleted_at IS NULL
-            AND (relative_file_path = ? OR substr(relative_file_path, 1, ?) = ?)`,
-      )
-      .all(
-        input.linkedFolderId,
-        relativePath,
-        [...prefix].length,
-        prefix,
-      ) as Array<{ asset_id: string }>;
+    const prefix = isLinkedRoot ? '' : `${relativePath}/`;
+    const assetQuery = isLinkedRoot
+      ? openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE linked_folder_id = ?
+                AND location_kind = 'linked'
+                AND deleted_at IS NULL`,
+          )
+          .all(input.linkedFolderId)
+      : openLibrary.connection
+          .prepare(
+            `SELECT asset_id FROM assets
+              WHERE linked_folder_id = ?
+                AND location_kind = 'linked'
+                AND deleted_at IS NULL
+                AND (relative_file_path = ? OR substr(relative_file_path, 1, ?) = ?)`,
+          )
+          .all(
+            input.linkedFolderId,
+            relativePath,
+            [...prefix].length,
+            prefix,
+          );
+    const assetRows = assetQuery as Array<{ asset_id: string }>;
 
-    const dirPath = path.join(linked.absolute_root_path, ...relativePath.split('/'));
+    const dirPath = isLinkedRoot
+      ? linked.absolute_root_path
+      : path.join(linked.absolute_root_path, ...relativePath.split('/'));
 
     if (input.deleteFromDisk) {
       if (linked.status === 'available' && existsSync(dirPath)) {
@@ -10445,6 +10466,15 @@ export class LibraryService {
         } catch (error) {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
+      }
+      if (isLinkedRoot) {
+        return {
+          deletedAssetCount: this.removeLinkedFolder({
+            libraryId: input.libraryId,
+            folderId: input.linkedFolderId,
+          }).removedAssetCount,
+          failedCount: 0,
+        };
       }
       if (assetRows.length > 0) {
         openLibrary.connection.transaction(() => {
@@ -10479,6 +10509,12 @@ export class LibraryService {
       } catch {
         // Files already trashed; directory cleanup is best-effort.
       }
+    }
+    if (isLinkedRoot && failedCount === 0) {
+      this.removeLinkedFolder({
+        libraryId: input.libraryId,
+        folderId: input.linkedFolderId,
+      });
     }
     return { deletedAssetCount, failedCount };
   }

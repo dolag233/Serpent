@@ -27,6 +27,7 @@ export interface UseBatchActionsResult {
   batchAddSelectionToCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
   batchRemoveSelectionFromCollection: (collectionId: string, assetIds: string[]) => Promise<void>;
   trashManagedAssets: (assetIds: string[]) => Promise<string | undefined>;
+  trashLinkedAssets: (assetIds: string[]) => Promise<void>;
   deleteManagedAssetsFromDisk: (assetIds: string[]) => Promise<void>;
   copyManagedSelectionToLinked: (folder: LinkedFolderSummary, assetIds: string[]) => Promise<void>;
 }
@@ -216,6 +217,68 @@ export function useBatchActions({
     }
   }
 
+  const LINKED_DELETE_CHUNK = 20;
+
+  async function trashLinkedAssets(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
+    setUiState("loading");
+    try {
+      let deletedCount = 0;
+      let failedCount = 0;
+      const failures: Array<{ reason: string }> = [];
+      for (let offset = 0; offset < assetIds.length; offset += LINKED_DELETE_CHUNK) {
+        const chunk = assetIds.slice(offset, offset + LINKED_DELETE_CHUNK);
+        const result = await api.deleteLinkedAssets({
+          libraryId: library.libraryId,
+          assetIds: chunk,
+          deleteSourceFile: true,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        deletedCount += result.value.deletedCount;
+        failedCount += result.value.failedCount;
+        failures.push(...result.value.failures);
+      }
+      if (failedCount > 0) {
+        const reasons = [
+          ...new Set(
+            failures.map(({ reason }) =>
+              translateForLocale(locale, `error.reason.${reason}`),
+            ),
+          ),
+        ];
+        setError(
+          translateForLocale(locale, "toast.deleteLinkedPartial", {
+            deleted: deletedCount,
+            failed: failedCount,
+            reasons: reasons.join("；"),
+          }),
+        );
+      } else {
+        setError(null);
+        setNotice(
+          translateForLocale(locale, "toast.deleteLinkedWithTrash", {
+            count: deletedCount,
+          }),
+        );
+      }
+      if (deletedCount > 0) {
+        clearAssetSelection();
+        await refreshCollections();
+        await reloadCurrentContent();
+      }
+    } catch (caught) {
+      setError(
+        toMessage(
+          caught,
+          translateForLocale(locale, "toast.deleteLinkedFailed"),
+          locale,
+        ),
+      );
+    } finally {
+      setUiState("ready");
+    }
+  }
+
   async function trashManagedAssets(assetIds: string[]) {
     if (!api || !library) return undefined;
     setUiState("loading");
@@ -328,6 +391,7 @@ export function useBatchActions({
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
+    trashLinkedAssets,
     deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   };

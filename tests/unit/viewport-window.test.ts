@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { columnWindow, viewportOverscanPx } from "../../src/renderer/viewport-window";
+import {
+  columnWindow,
+  quantizeCanvasViewportOffsetPx,
+  viewportOverscanPx,
+} from "../../src/renderer/viewport-window";
 
 describe("columnWindow", () => {
   it("returns an empty window for no items", () => {
@@ -45,6 +49,14 @@ describe("columnWindow", () => {
       .reduce((sum, height) => sum + height, 0);
     expect(slice.spacerBefore + mounted).toBeGreaterThanOrEqual(viewEnd);
     expect(slice.spacerBefore).toBeLessThanOrEqual(viewStart + heights[slice.start]!);
+  });
+});
+
+describe("quantizeCanvasViewportOffsetPx (Serpent-oq86)", () => {
+  it("snaps fractional layout edges to whole CSS pixels", () => {
+    expect(quantizeCanvasViewportOffsetPx(10.4)).toBe(10);
+    expect(quantizeCanvasViewportOffsetPx(10.5)).toBe(11);
+    expect(quantizeCanvasViewportOffsetPx(Number.NaN)).toBe(0);
   });
 });
 

@@ -32,11 +32,6 @@ export interface AssetCommandActions {
   readonly relink: (assetId: string) => void;
   readonly restore: (assetIds: string[]) => void;
   readonly deletePermanent: (assetIds: string[]) => void;
-  readonly deleteLinked: (
-    assetId: string,
-    displayName: string,
-    canDeleteSourceFile: boolean,
-  ) => void;
   readonly removeFromCurrentCollection: (assetId: string) => void;
 }
 
@@ -50,8 +45,6 @@ export interface AssetCommandContext extends CommandContext {
   readonly assetDeleted: boolean;
   readonly activeCollectionId: string | null;
   readonly aiCanAnalyze: boolean;
-  /** 删除链接资产的确认流程需要展示名（对应 descriptor.displayName）。 */
-  readonly assetDisplayName: string;
   /**
    * Managed folder that receives OS clipboard paste (current browse folder
    * or the asset's parent). Null hides paste.
@@ -257,7 +250,7 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
       windows: { label: 'Delete', key: 'Delete' },
     },
-    visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
+    visible: (ctx) => !ctx.assetDeleted,
     disabledReason: (ctx) =>
       ctx.assetDeleted
         ? t(ctx, 'command.reason.unavailable')
@@ -284,15 +277,5 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
         : t(ctx, 'command.reason.managedUnavailableTrash'),
     run: (ctx) =>
       withPrimaryAsset(ctx, (id) => ctx.actions.deleteFromDisk([id])),
-  },
-  {
-    id: 'asset.delete-linked',
-    title: (ctx) => t(ctx, 'command.asset.deleteLinked'),
-    group: 'delete',
-    visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'linked',
-    run: (ctx) =>
-      withPrimaryAsset(ctx, (id) =>
-        ctx.actions.deleteLinked(id, ctx.assetDisplayName, ctx.assetAvailable),
-      ),
   },
 ];

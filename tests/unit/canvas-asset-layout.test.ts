@@ -74,6 +74,11 @@ describe("canvas asset layout", () => {
     const rects = layoutJustifiedAssetRects(assets, 640, 160);
     expect(rects.map((item) => item.id)).toEqual(["wide", "tall", "square"]);
     expect(rects.every((item) => item.width > 0 && item.height > 0)).toBe(true);
+    expect(
+      rects.every(
+        (item) => Number.isInteger(item.width) && Number.isInteger(item.height) && Number.isInteger(item.x) && Number.isInteger(item.y),
+      ),
+    ).toBe(true);
   });
 
   it("keeps trailing gap out of the last stacked item", () => {

@@ -3,11 +3,19 @@
  *
  * Asset actions from the command registry plus discovery toolbar (search
  * focus, F5 refresh). Selection mutations stay in useSelectionKeyboard.
+ *
+ * F2 / Delete apply to managed and linked assets alike (Serpent-g8u9). Linked
+ * Delete sends source files to the OS recycle bin with no confirmation.
  */
 
 import { useEffect, type RefObject } from "react";
 
 import type { AssetSummary } from "../shared/asset-types";
+import { shouldForwardBrowseShortcut } from "../shared/browse-shortcut-dedupe";
+import {
+  canRenameAssetWithShortcut,
+  planAssetDeleteShortcut,
+} from "./browse-key-command";
 import {
   matchAssetActionKeyboardCommand,
   isEditableAssetActionKeyboardTarget,
@@ -30,13 +38,13 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly busy: boolean;
   readonly selectedAsset: AssetSummary | undefined;
   readonly selectedAssets: readonly AssetSummary[];
-  readonly selectedManagedCount: number;
   readonly pasteDestinationFolderId: string | null | undefined;
   readonly diskDeleteAssetIds: readonly string[];
   readonly diskDeleteFolderIds: readonly string[];
   readonly searchInputRef: RefObject<HTMLInputElement | null>;
   readonly onOpenExternal: (assetId: string) => void;
   readonly onTrashManaged: (assetIds: string[]) => void;
+  readonly onTrashLinked: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
   readonly onCopyFiles: (assetIds: string[]) => void;
   readonly onCopyFilePath: (assetId: string) => void;
@@ -64,13 +72,13 @@ export function useBrowseCommandKeyboard(
     busy,
     selectedAsset,
     selectedAssets,
-    selectedManagedCount,
     pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
     searchInputRef,
     onOpenExternal,
     onTrashManaged,
+    onTrashLinked,
     onRename,
     onCopyFiles,
     onCopyFilePath,
@@ -143,49 +151,52 @@ export function useBrowseCommandKeyboard(
       }
 
       if (
-        !showTrash &&
-        activeCollectionId !== null &&
-        matchAssetActionKeyboardCommand(
-          "asset.move-to-trash",
-          event,
-          platform,
-        ) &&
-        selectedAssets.length > 0
-      ) {
-        event.preventDefault();
-        onRemoveFromCurrentCollection(
-          selectedAssets.map((asset) => asset.assetId),
-        );
-        return;
-      }
-
-      if (
-        showTrash &&
-        matchAssetActionKeyboardCommand(
-          "asset.move-to-trash",
-          event,
-          platform,
-        ) &&
-        selectedAssets.length > 0
-      ) {
-        event.preventDefault();
-        onPermanentDelete(selectedAssets.map((asset) => asset.assetId));
-        return;
-      }
-
-      if (
-        !showTrash &&
         matchAssetActionKeyboardCommand(
           "asset.delete-from-disk",
           event,
           platform,
         ) &&
+        !showTrash &&
         libraryOpen &&
         (diskDeleteAssetIds.length > 0 || diskDeleteFolderIds.length > 0)
       ) {
+        if (!shouldForwardBrowseShortcut("disk-delete")) return;
         event.preventDefault();
         onDiskDelete(diskDeleteAssetIds, diskDeleteFolderIds);
         return;
+      }
+
+      if (
+        matchAssetActionKeyboardCommand(
+          "asset.move-to-trash",
+          event,
+          platform,
+        )
+      ) {
+        const plan = planAssetDeleteShortcut({
+          showTrash,
+          activeCollectionId,
+          libraryOpen,
+          selectedAssets,
+        });
+        if (plan.type !== "none") {
+          if (!shouldForwardBrowseShortcut("trash")) return;
+          event.preventDefault();
+          if (plan.type === "permanent-delete") {
+            onPermanentDelete([...plan.assetIds]);
+            return;
+          }
+          if (plan.type === "remove-from-collection") {
+            onRemoveFromCurrentCollection([...plan.assetIds]);
+            return;
+          }
+          if (plan.type === "trash-managed") {
+            onTrashManaged([...plan.assetIds]);
+            return;
+          }
+          onTrashLinked([...plan.assetIds]);
+          return;
+        }
       }
 
       if (
@@ -232,36 +243,18 @@ export function useBrowseCommandKeyboard(
       }
 
       if (
-        matchAssetActionKeyboardCommand(
-          "asset.move-to-trash",
-          event,
-          platform,
-        ) &&
-        !showTrash &&
-        libraryOpen &&
-        selectedManagedCount > 0
-      ) {
-        event.preventDefault();
-        const managedIds = selectedAssets
-          .filter((asset) => asset.locationKind === "managed")
-          .map((asset) => asset.assetId);
-        onTrashManaged(managedIds);
-        return;
-      }
-
-      if (
         matchAssetActionKeyboardCommand("asset.rename", event, platform) &&
-        selectedAsset?.availability === "available" &&
-        !selectedAsset.deletedAt &&
-        selectedAsset.locationKind === "managed"
+        canRenameAssetWithShortcut(selectedAsset)
       ) {
+        if (!shouldForwardBrowseShortcut("rename")) return;
         event.preventDefault();
         onRename(selectedAsset.assetId);
       }
     };
 
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, platform === "windows");
+    return () =>
+      document.removeEventListener("keydown", onKeyDown, platform === "windows");
   }, [
     enabled,
     platform,
@@ -272,13 +265,13 @@ export function useBrowseCommandKeyboard(
     busy,
     selectedAsset,
     selectedAssets,
-    selectedManagedCount,
     pasteDestinationFolderId,
     diskDeleteAssetIds,
     diskDeleteFolderIds,
     searchInputRef,
     onOpenExternal,
     onTrashManaged,
+    onTrashLinked,
     onRename,
     onCopyFiles,
     onCopyFilePath,

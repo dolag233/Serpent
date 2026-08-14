@@ -383,6 +383,45 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
     expect(existsSync(path.join(external, 'root.png'))).toBe(true);
   });
 
+  it('moves a linked folder root to the OS trash and drops the index', async () => {
+    const temp = root();
+    const external = path.join(temp, 'linked-root');
+    mkdirSync(external, { recursive: true });
+    writeFileSync(path.join(external, 'root.png'), 'root-bytes');
+
+    const trashed: string[] = [];
+    const service = newService({
+      trashItem: async (sourcePath: string) => {
+        trashed.push(sourcePath);
+        rmSync(sourcePath, { force: true, recursive: true });
+      },
+    });
+    const library = service.createLibrary({
+      displayName: 'LinkedRootTrash',
+      selectedParentPath: temp,
+    });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: external,
+      displayName: '根',
+    });
+
+    const trashResult = await service.deleteLinkedFolderSubtree({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: '',
+      deleteFromDisk: false,
+    });
+    expect(trashResult.deletedAssetCount).toBe(1);
+    expect(trashed.some((entry) => entry === external)).toBe(true);
+    expect(existsSync(external)).toBe(false);
+
+    const remaining = service.listLinkedFolders(library.libraryId);
+    expect(remaining.map((folder) => folder.folderId)).not.toContain(
+      linked.folderId,
+    );
+  });
+
   it('permanently deletes a linked child directory tree from disk', async () => {
     const temp = root();
     const external = path.join(temp, 'linked-perm');

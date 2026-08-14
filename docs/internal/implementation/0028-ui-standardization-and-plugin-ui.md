@@ -89,7 +89,7 @@
 
 ### 3.3 对话框、确认框与阻塞层
 
-涉及 `CreateDialog.tsx`、`ImportDialog.tsx`、`ExportDialog.tsx`、`MoveDialog.tsx`、`RenameDialog.tsx`、`RestoreDialog.tsx`、`PermanentDeleteDialog.tsx`、`DiskDeleteConfirmDialog.tsx`、`DeleteLinkedDialog.tsx`、`ConvertLinkedDialog.tsx`、`NameConflictDialog.tsx`、`ContentDuplicateDialog.tsx`、`ImportConflictDialogShell.tsx`、`PluginTrustPromptDialog.tsx`、`AiConfigDialog.tsx`、`ScriptSandboxPreviewDialog.tsx` 等。
+涉及 `CreateDialog.tsx`、`ImportDialog.tsx`、`ExportDialog.tsx`、`MoveDialog.tsx`、`RenameDialog.tsx`、`RestoreDialog.tsx`、`PermanentDeleteDialog.tsx`、`DiskDeleteConfirmDialog.tsx`、`ConvertLinkedDialog.tsx`、`NameConflictDialog.tsx`、`ContentDuplicateDialog.tsx`、`ImportConflictDialogShell.tsx`、`PluginTrustPromptDialog.tsx`、`AiConfigDialog.tsx`、`ScriptSandboxPreviewDialog.tsx` 等。
 
 统一对象：
 

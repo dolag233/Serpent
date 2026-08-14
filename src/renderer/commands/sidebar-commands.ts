@@ -58,8 +58,9 @@ export interface SidebarCommandContext extends CommandContext {
   readonly linkedFolderResolved: boolean;
   readonly linkedFolder?: LinkedFolderSummary;
   /**
-   * Linked roots only expose "remove from library". Linked child folders
-   * (relativePath set) use the same trash / disk-delete entries as managed.
+   * Linked roots expose both "move to trash" (OS recycle bin) and
+   * "remove from library" (index only). Linked child folders use the same
+   * trash / disk-delete entries as managed.
    */
   readonly isLinkedRoot?: boolean;
   /** Present when the subject is a linked child directory path. */
@@ -190,21 +191,17 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
-      (ctx.locationKind === 'managed' ||
-        (ctx.locationKind === 'linked' && ctx.isLinkedRoot === false)),
+      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     disabledReason: offlineReason,
     run: (ctx) => {
       if (ctx.locationKind === 'managed') {
         ctx.actions.trashManagedFolder(ctx.subjectId, ctx.subjectName);
         return;
       }
-      if (
-        ctx.locationKind === 'linked' &&
-        ctx.linkedRelativePath !== undefined
-      ) {
+      if (ctx.locationKind === 'linked') {
         ctx.actions.trashLinkedFolderSubtree(
           ctx.subjectId,
-          ctx.linkedRelativePath,
+          ctx.linkedRelativePath ?? '',
           ctx.subjectName,
         );
       }

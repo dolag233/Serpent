@@ -39,7 +39,6 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
     relink: record('relink'),
     restore: record('restore'),
     deletePermanent: record('deletePermanent'),
-    deleteLinked: record('deleteLinked'),
     removeFromCurrentCollection: record('removeFromCurrentCollection'),
   };
 }
@@ -61,7 +60,6 @@ function makeCtx(
     assetDeleted: false,
     activeCollectionId: null,
     aiCanAnalyze: true,
-    assetDisplayName: '示例.png',
     pasteTargetFolderId: 'folder-1',
     actions: makeActions(calls),
     ...overrides,
@@ -83,7 +81,7 @@ function findItem(
 }
 
 describe('可见性（与历史内联 JSX 条件一致）', () => {
-  it('managed + available：常规项全部可见，relink / delete-linked / 回收站项隐藏', () => {
+  it('managed + available：常规项全部可见，relink / 回收站项隐藏', () => {
     const { ctx } = makeCtx();
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
@@ -119,7 +117,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     ]);
   });
 
-  it('linked + available：delete-linked 可见，move-to-folder / move-to-trash / relink 隐藏', () => {
+  it('linked + available：move-to-trash 可见，move-to-folder / relink 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked' });
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
@@ -131,11 +129,11 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.rename',
       'asset.ai-analyze',
       'asset.clear-ai-content',
-      'asset.delete-linked',
+      'asset.move-to-trash',
     ]);
   });
 
-  it('linked + unavailable：delete-linked 与 relink 可见，move-to-folder 隐藏', () => {
+  it('linked + unavailable：relink 与 move-to-trash 可见，move-to-folder 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
@@ -148,7 +146,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.rename',
       'asset.ai-analyze',
       'asset.clear-ai-content',
-      'asset.delete-linked',
+      'asset.move-to-trash',
     ]);
   });
 
@@ -245,7 +243,7 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     });
   });
 
-  it('linked + unavailable：路径操作禁用，relink 与 delete-linked 保持启用', () => {
+  it('linked + unavailable：路径操作禁用，relink 与 move-to-trash 保持启用', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     const menu = registry.resolveMenu(ctx);
     expect(findItem(menu, 'asset.open-external').disabledReason).toBe(
@@ -255,7 +253,7 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
       disabled: false,
       disabledReason: null,
     });
-    expect(findItem(menu, 'asset.delete-linked')).toMatchObject({
+    expect(findItem(menu, 'asset.move-to-trash')).toMatchObject({
       disabled: false,
       disabledReason: null,
     });
@@ -312,13 +310,12 @@ describe('标题与快捷键标签', () => {
     ['asset.ai-analyze', 'AI 分析'],
     ['asset.move-to-trash', '移入回收站'],
     ['asset.delete-from-disk', '从硬盘中删除…'],
-    ['asset.delete-linked', '删除链接资产…'],
   ] as const)('%s 标题为「%s」（与历史渲染一致）', (id, expected) => {
     // 用全开 ctx 让每项都可见：deleted 覆盖回收站项，正常 ctx 覆盖其余。
     const { ctx } = makeCtx({
       activeCollectionId: 'col-1',
       assetDeleted: id === 'asset.restore' || id === 'asset.delete-permanent',
-      locationKind: id === 'asset.delete-linked' ? 'linked' : 'managed',
+      locationKind: 'managed',
       assetAvailable: id !== 'asset.relink',
     });
     expect(findItem(registry.resolveMenu(ctx), id).label).toBe(expected);
@@ -391,12 +388,6 @@ describe('run 委托到 actions 回调包', () => {
       [['asset-1']],
     ],
     [
-      'asset.delete-linked',
-      { locationKind: 'linked' },
-      'deleteLinked',
-      ['asset-1', '示例.png', true],
-    ],
-    [
       'asset.remove-from-current-collection',
       { activeCollectionId: 'col-1' },
       'removeFromCurrentCollection',
@@ -415,17 +406,11 @@ describe('run 委托到 actions 回调包', () => {
     },
   );
 
-  it('delete-linked 把 assetAvailable 传给 canDeleteSourceFile', () => {
-    const { ctx, calls } = makeCtx({
-      locationKind: 'linked',
-      assetAvailable: false,
-    });
-    void registry.get('asset.delete-linked')?.run(ctx);
+  it('linked 资产 Delete 走 move-to-trash，不再打开确认框', () => {
+    const { ctx, calls } = makeCtx({ locationKind: 'linked' });
+    void registry.get('asset.move-to-trash')?.run(ctx);
     expect(calls).toEqual([
-      {
-        action: 'deleteLinked',
-        args: ['asset-1', '示例.png', false],
-      },
+      { action: 'moveToTrash', args: [['asset-1']] },
     ]);
   });
 
@@ -442,7 +427,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('17 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('16 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
@@ -460,7 +445,6 @@ describe('注册表完整性', () => {
       'asset.clear-ai-content',
       'asset.move-to-trash',
       'asset.delete-from-disk',
-      'asset.delete-linked',
     ]);
   });
 
