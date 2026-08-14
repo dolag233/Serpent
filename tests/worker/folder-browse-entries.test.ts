@@ -15,6 +15,7 @@ interface TestDatabaseConnection {
   prepare(source: string): {
     get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): unknown;
+    all(...parameters: unknown[]): unknown;
   };
 }
 
@@ -112,9 +113,13 @@ describe('folder browse entries', () => {
     expect(entryA.recursiveAssetCount).toBe(1);
     expect(entryA.childFolderCount).toBe(1);
     expect(entryA.coverArtifactIds).toEqual([artifactId]);
+    // Serpent-d0nv: the cover candidate asset id rides alongside the artifact
+    // id so the worker can schedule the cover thumbnail scene for it.
+    expect(entryA.coverAssetIds).toEqual([asset.assetId]);
     expect(entryB.directAssetCount).toBe(0);
     expect(entryB.recursiveAssetCount).toBe(0);
     expect(entryB.coverArtifactIds).toEqual([]);
+    expect(entryB.coverAssetIds).toEqual([]);
 
     const withCounts = service.listManagedFolders(library.libraryId);
     // ManagedFolderSummary.directAssetCount is the displayed descendant total.
@@ -126,6 +131,135 @@ describe('folder browse entries', () => {
       directAssetCount: 1,
       childFolderCount: 2,
     });
+
+    service.closeAll();
+  });
+
+  it('caps cover candidates at three per folder and maps them to asset ids (Serpent-d0nv)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'BrowseCovers', selectedParentPath: root });
+
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'Parent' });
+    const child = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+
+    const assets: Array<{ assetId: string; currentRevisionId: string }> = [];
+    for (const [index, name] of ['a.png', 'b.png', 'c.png', 'd.png'].entries()) {
+      const fixture = path.join(root, name);
+      // Distinct bytes per file: identical content would be flagged as a
+      // suspected duplicate and return a conflict plan instead of importing.
+      writeFileSync(
+        fixture,
+        Buffer.concat([VALID_1X1_PNG, Buffer.from([index])]),
+      );
+      const imported = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        targetFolderId: child.folderId,
+        sourceKind: 'files',
+        sourcePaths: [fixture],
+      });
+      if ('importId' in imported) throw new Error('unexpected conflict plan');
+      assets.push(imported.assets[0]!);
+    }
+
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const insertArtifact = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/png', 68, ?, 1, 1, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    assets.forEach((asset, index) => {
+      insertArtifact.run(
+        `art_cover_${index}`,
+        asset.currentRevisionId,
+        `artifacts/c${index}.png`,
+        now,
+      );
+    });
+    db.close();
+
+    const underParent = service.listFolderBrowseEntries({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+    });
+    const entry = underParent.find((candidate) => candidate.folderId === child.folderId)!;
+    // Path order (a/b/c) wins; the 4th asset (d) is beyond the deck cap of 3.
+    expect(entry.coverArtifactIds).toEqual(['art_cover_0', 'art_cover_1', 'art_cover_2']);
+    expect(entry.coverAssetIds).toEqual(
+      assets.slice(0, 3).map((asset) => asset.assetId),
+    );
+
+    service.closeAll();
+  });
+
+  it('returns cover candidates without ready thumbnails and the cover scene enqueues them (Serpent-d0nv)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'BrowseCoverCandidates', selectedParentPath: root });
+
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'Parent' });
+    const child = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+
+    const assets: Array<{ assetId: string }> = [];
+    for (const [index, name] of ['a.png', 'b.png', 'c.png', 'd.png'].entries()) {
+      const fixture = path.join(root, name);
+      writeFileSync(
+        fixture,
+        Buffer.concat([VALID_1X1_PNG, Buffer.from([index])]),
+      );
+      const imported = service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        targetFolderId: child.folderId,
+        sourceKind: 'files',
+        sourcePaths: [fixture],
+      });
+      if ('importId' in imported) throw new Error('unexpected conflict plan');
+      assets.push(imported.assets[0]!);
+    }
+
+    // No revision_artifacts rows at all: display covers are empty, but the
+    // scheduling candidates (top-3 direct assets by path) must still be
+    // returned so the cover scene can generate them.
+    const underParent = service.listFolderBrowseEntries({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+    });
+    const entry = underParent.find((candidate) => candidate.folderId === child.folderId)!;
+    expect(entry.coverArtifactIds).toEqual([]);
+    expect(entry.coverAssetIds).toEqual(
+      assets.slice(0, 3).map((asset) => asset.assetId),
+    );
+
+    // The cover scene (limit 100, priority 400) enqueues the ungenerated
+    // candidates; the 4th asset stays out of the queue.
+    const enqueued = service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: entry.coverAssetIds,
+      limit: 100,
+      priority: 400,
+    });
+    expect(enqueued).toBe(3);
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const queued = db.prepare(
+      'SELECT asset_id, priority FROM jobs WHERE kind = ? AND status = ? ORDER BY asset_id',
+    ).all('generate_thumbnail', 'queued') as Array<{ asset_id: string; priority: number }>;
+    db.close();
+    expect(queued).toHaveLength(3);
+    for (const row of queued) {
+      expect(row.priority).toBe(400);
+    }
+    expect(queued.map((row) => row.asset_id).sort()).toEqual(
+      assets.slice(0, 3).map((asset) => asset.assetId).sort(),
+    );
 
     service.closeAll();
   });

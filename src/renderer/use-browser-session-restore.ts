@@ -31,6 +31,7 @@ import {
   applyStoredBrowserSession,
   type LoadContentForRestore,
 } from "./restore-browser-session";
+import type { BeginBrowsePage } from "./use-browse-pagination";
 import type { WorkspaceNavHistory, WorkspaceNavLocation } from "./workspace-nav-history";
 
 export type UseBrowserSessionRestoreArgs = {
@@ -49,6 +50,8 @@ export type UseBrowserSessionRestoreArgs = {
   setActiveSmartCollectionId: Dispatch<SetStateAction<string | null>>;
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setSearchTotal: Dispatch<SetStateAction<number | null>>;
+  /** Serpent-ws4k: register the restored scope for paginated appends. */
+  beginBrowsePage: BeginBrowsePage;
   setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
   setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
   setAssetSelectionAnchor: (assetId: string | null) => void;
@@ -100,6 +103,7 @@ export function useBrowserSessionRestore(
     setActiveSmartCollectionId,
     setAssets,
     setSearchTotal,
+    beginBrowsePage,
     setSelectedAssetId,
     setSelectedAssetIds,
     setAssetSelectionAnchor,
@@ -157,6 +161,7 @@ export function useBrowserSessionRestore(
               setAssets,
               setTrashedAssets,
               setSearchTotal,
+              beginBrowsePage,
             });
             restoredLocation = applied.restoredLocation;
             if (applied.restoredAsset) {
@@ -196,6 +201,7 @@ export function useBrowserSessionRestore(
     }
   }, [
     api,
+    beginBrowsePage,
     collectionRecursiveRef,
     folderRecursiveRef,
     loadContent,

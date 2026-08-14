@@ -14,6 +14,12 @@ import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import type { StoredBrowserSession } from "./browser-session";
 import { BROWSE_SCOPE_SEARCH } from "./browse-scope-search";
 import { LibraryOperationError } from "./error-utils";
+import type { BeginBrowsePage } from "./use-browse-pagination";
+import {
+  BROWSE_PAGE_SIZE,
+  registerBrowseSearchPage,
+  registerBrowseSmartCollectionPage,
+} from "./use-browse-pagination";
 import type { WorkspaceNavLocation } from "./workspace-nav-history";
 
 export type SessionAssetPage = {
@@ -77,6 +83,11 @@ export type RestoreBrowserSessionDeps = {
     update: AssetSummary[] | ((current: AssetSummary[]) => AssetSummary[]),
   ) => void;
   setSearchTotal: (total: number | null) => void;
+  /**
+   * Serpent-ws4k: register the restored scope with the pagination controller
+   * so the scroll sentinel appends the next page with the same query/scope.
+   */
+  beginBrowsePage: BeginBrowsePage;
 };
 
 export type RestoreBrowserSessionResult = {
@@ -162,6 +173,7 @@ export async function applyStoredBrowserSession(
     setAssets,
     setTrashedAssets,
     setSearchTotal,
+    beginBrowsePage,
   } = deps;
 
   let restoredItems = deps.initialItems;
@@ -211,13 +223,27 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       filters: searchFilters,
-      ...BROWSE_SCOPE_SEARCH,
+      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveTagId(session.scope.id);
     setTagFilter(session.scope.name);
     setAssets(result.value.items);
     setSearchTotal(result.value.total);
+    registerBrowseSearchPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      query: null,
+      filters: searchFilters,
+      scope: null,
+      sort: null,
+      showIgnored: false,
+      target: "assets",
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     restoredItems = result.value.items;
     restoredLocation = { kind: "tag", tagId: session.scope.id };
   } else if (session.scope.kind === "collection") {
@@ -230,12 +256,26 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       scope: searchScope,
-      ...BROWSE_SCOPE_SEARCH,
+      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveCollectionId(session.scope.id);
     setAssets(result.value.items);
     setSearchTotal(result.value.total);
+    registerBrowseSearchPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      query: null,
+      filters: null,
+      scope: searchScope,
+      sort: null,
+      showIgnored: false,
+      target: "assets",
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     restoredItems = result.value.items;
     restoredLocation = {
       kind: "collection",
@@ -246,12 +286,21 @@ export async function applyStoredBrowserSession(
     const result = await api.executeSmartCollection({
       libraryId: library.libraryId,
       collectionId: session.scope.id,
-      ...BROWSE_SCOPE_SEARCH,
+      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveSmartCollectionId(session.scope.id);
     setAssets(result.value.items);
     setSearchTotal(result.value.total);
+    registerBrowseSmartCollectionPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      collectionId: session.scope.id,
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     restoredItems = result.value.items;
     restoredLocation = {
       kind: "smart-collection",

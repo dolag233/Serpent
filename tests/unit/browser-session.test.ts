@@ -253,6 +253,7 @@ describe("applyStoredBrowserSession", () => {
       setAssets: vi.fn(),
       setTrashedAssets,
       setSearchTotal: vi.fn(),
+      beginBrowsePage: vi.fn(),
     });
 
     expect(setShowTrash).toHaveBeenCalledWith(true);

@@ -423,7 +423,9 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.getByRole('menuitem', { name: '移除标签…' }).click();
     await window.getByRole('option', { name: '批量标签' }).click();
     await expect(window.locator('.workspace-notice')).toContainText('已为 2 项资产移除标签');
-    await expect(window.locator('.asset-card')).toHaveCount(0);
+    await expect
+      .poll(() => window.locator('.asset-card').count(), { timeout: 15_000 })
+      .toBe(0);
 
     await window.getByRole('button', { name: /批量合集/ }).first().click();
     const batchCollectionScopeToggle = window.getByRole('button', {
@@ -480,7 +482,11 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await locateAssetCard(window, 'second.txt').click({ modifiers: ['Shift'] });
     // Right-click to open multi-asset context menu
     await locateAssetCard(window, 'first.txt').click({ button: 'right' });
-    await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
+    const trashMenuItem = window.getByRole('menuitem', {
+      name: /移入回收站（2 项）/,
+    });
+    await expect(trashMenuItem).toBeVisible({ timeout: 15_000 });
+    await trashMenuItem.click();
     await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
     await window.getByRole('button', { name: /回收站/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);

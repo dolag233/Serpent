@@ -912,6 +912,8 @@ const assetOperationSuccessSchemas = [
     items: z.array(assetSummarySchema),
     total: z.number().int().nonnegative(),
     offset: z.number().int().nonnegative(),
+    /** Serpent-ws4k: present when the request used idsOnly (select-all). */
+    assetIds: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -925,6 +927,8 @@ const assetOperationSuccessSchemas = [
         text: nonBlankString,
       }),
     ).optional(),
+    /** Serpent-ws4k: present when the request used idsOnly (select-all). */
+    assetIds: z.array(nonBlankString).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),

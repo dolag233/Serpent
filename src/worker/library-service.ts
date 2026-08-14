@@ -10873,6 +10873,14 @@ export class LibraryService {
       visibleChildren.map((row) => row.folder_id),
       input.showIgnored === true,
     );
+    // Serpent-d0nv: scheduling candidates are the top-3 direct assets by path
+    // with NO ready-thumbnail requirement — the cover scene must enqueue the
+    // folders that have no covers yet (the user-visible symptom).
+    const coverCandidateMap = this.folderCoverCandidateAssetMap(
+      openLibrary,
+      visibleChildren.map((row) => row.folder_id),
+      input.showIgnored === true,
+    );
 
     return visibleChildren.map((row) => {
       const directAssetCount = counts.directAssetCounts.get(row.folder_id) ?? 0;
@@ -10888,6 +10896,11 @@ export class LibraryService {
         recursiveAssetCount: recursiveCounts.get(row.folder_id) ?? directAssetCount,
         childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
         coverArtifactIds: coverMap.get(row.folder_id) ?? [],
+        // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
+        // + progressive refresh on thumbnail.ready). Candidates do NOT require
+        // a ready thumbnail — ungenerated assets get enqueued by the cover
+        // scene; display covers stay ready-gated in coverArtifactIds.
+        coverAssetIds: coverCandidateMap.get(row.folder_id) ?? [],
         linkedFolderId: null,
       };
     });
@@ -10934,6 +10947,16 @@ export class LibraryService {
         recursiveAssetCount: descendantPaths.length,
         childFolderCount,
         coverArtifactIds: this.linkedDirectoryCoverArtifactIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          relativePath,
+          input.showIgnored === true,
+        ),
+        // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
+        // + progressive refresh on thumbnail.ready). Candidates do NOT require
+        // a ready thumbnail — ungenerated assets get enqueued by the cover
+        // scene; display covers stay ready-gated in coverArtifactIds.
+        coverAssetIds: this.linkedDirectoryCoverCandidateAssetIds(
           openLibrary,
           resolved.linkedFolderId,
           relativePath,
@@ -11048,6 +11071,43 @@ export class LibraryService {
         prefix,
       ) as Array<{ artifact_id: string }>;
     return rows.map((row) => row.artifact_id);
+  }
+
+  /**
+   * Serpent-d0nv: linked-directory cover scheduling candidates — the top-3
+   * direct linked assets by path, with NO ready-thumbnail requirement (see
+   * folderCoverCandidateAssetMap).
+   */
+  private linkedDirectoryCoverCandidateAssetIds(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    relativePath: string,
+    showIgnored: boolean,
+  ): string[] {
+    const prefix = relativePath === '' ? '' : `${relativePath}/`;
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id
+           FROM assets a
+          WHERE a.linked_folder_id = ?
+            AND a.location_kind = 'linked'
+            AND a.deleted_at IS NULL
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+            AND (
+              a.relative_file_path = ?
+              OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
+            )
+          ORDER BY a.relative_file_path
+          LIMIT 3`,
+      )
+      .all(
+        linkedFolderId,
+        relativePath,
+        prefix,
+        [...prefix].length,
+        prefix,
+      ) as Array<{ asset_id: string }>;
+    return rows.map((row) => row.asset_id);
   }
 
   /**
@@ -11292,6 +11352,47 @@ export class LibraryService {
       covers.set(row.folder_id, existing);
     }
     return covers;
+  }
+
+  /**
+   * Serpent-d0nv: cover scheduling candidates — the top-3 direct assets per
+   * folder by path, with NO ready-thumbnail requirement. The cover thumbnail
+   * scene (priority 400) schedules these asset ids so folders without covers
+   * generate their cover before the p50 path-alphabetical backfill; assets
+   * that already have a ready artifact are a no-op in enqueueThumbnailJobs.
+   */
+  private folderCoverCandidateAssetMap(
+    openLibrary: OpenLibrary,
+    folderIds: string[],
+    showIgnored = false,
+  ): Map<string, string[]> {
+    const candidates = new Map<string, string[]>();
+    if (folderIds.length === 0) return candidates;
+    if (!hasTable(openLibrary.connection, 'linked_ignored_assets')) {
+      return candidates;
+    }
+    const placeholders = folderIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
+           FROM assets a
+          WHERE a.managed_folder_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+            )
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+          ORDER BY a.managed_folder_id, a.relative_file_path`,
+      )
+      .all(...folderIds) as Array<{ folder_id: string; asset_id: string }>;
+
+    for (const row of rows) {
+      const existing = candidates.get(row.folder_id) ?? [];
+      if (existing.length >= 3) continue;
+      existing.push(row.asset_id);
+      candidates.set(row.folder_id, existing);
+    }
+    return candidates;
   }
 
   private summarizeManagedFolderRow(
@@ -19049,7 +19150,20 @@ export class LibraryService {
         : new Set(['thumbnail', 'video_poster', 'model_glb']);
       if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
     }
+    return this.artifactFilePathFromRow(openLibrary, row.file_path);
+  }
 
+  /**
+   * Containment-checked absolute path for an artifact row's relative path.
+   * The artifacts root itself must be a real directory (no symlink), the
+   * resolved target must stay inside it, and the target file must exist as a
+   * regular non-symlink file. Callers that already hold the artifact row skip
+   * the per-artifact DB lookup (Serpent-v4jf batch drag priming).
+   */
+  private artifactFilePathFromRow(
+    openLibrary: OpenLibrary,
+    relativeFilePath: string,
+  ): string {
     const artifactsDir = this.artifactsDir(openLibrary);
     let artifactsRoot: string;
     try {
@@ -19062,7 +19176,7 @@ export class LibraryService {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
     }
-    const targetPath = path.resolve(artifactsRoot, ...row.file_path.split('/'));
+    const targetPath = path.resolve(artifactsRoot, ...relativeFilePath.split('/'));
     const relation = path.relative(artifactsRoot, targetPath);
     if (
       relation === '' ||
@@ -19090,6 +19204,153 @@ export class LibraryService {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
     }
+  }
+
+  /**
+   * Batched native-drag priming entries (Serpent-v4jf).
+   *
+   * The legacy per-asset loop cost 3-4 point queries per asset (resolveAssetPath,
+   * getThumbnailArtifact, getArtifactAbsolutePath plus their internal lookups);
+   * priming a 50k-item browse result stalled the Worker event loop with ~150k+
+   * queries while Main awaited the primer before forwarding the browse response.
+   * This resolves the same semantics in 500-id chunks: one assets query per
+   * chunk (with the standard explicit-ignore filter), one ready
+   * thumbnail/video_poster query per chunk (video_poster preferred, matching
+   * getThumbnailArtifact), then per-entry filesystem checks that keep the
+   * exact safety boundary of the single-entry resolvers. Missing entries are
+   * skipped like the legacy loop; hard failures still throw.
+   */
+  resolveAssetDragInfos(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): Array<{
+    assetId: string;
+    absolutePath: string;
+    thumbnailAbsolutePath?: string;
+  }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const uniqueIds = [...new Set(assetIds)];
+    if (uniqueIds.length === 0) return [];
+    const connection = openLibrary.connection;
+    const batchSize = 500;
+
+    const assetRows: Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+      relative_file_path: string;
+      current_revision_id: string | null;
+    }> = [];
+    for (let i = 0; i < uniqueIds.length; i += batchSize) {
+      const batch = uniqueIds.slice(i, i + batchSize);
+      const placeholders = batch.map(() => '?').join(', ');
+      assetRows.push(
+        ...(connection
+          .prepare(
+            `SELECT a.asset_id, a.location_kind, a.linked_folder_id,
+                    a.relative_file_path, a.current_revision_id
+               FROM assets a
+              WHERE a.asset_id IN (${placeholders})
+                AND ${this.explicitIgnoreSql(connection, 'a', false)}`,
+          )
+          .all(...batch) as typeof assetRows),
+      );
+    }
+
+    // Lenient read: libraries predating revision_artifacts.status/kind have no
+    // served thumbnails to resolve (the single-entry path would fail the same
+    // columns); degrade to source-path-only entries instead of throwing.
+    const artifactColumns = columnsFor(connection, 'revision_artifacts');
+    const canResolveThumbnails =
+      artifactColumns.has('status') && artifactColumns.has('kind');
+    const thumbnailByRevision = new Map<
+      string,
+      { filePath: string }
+    >();
+    if (canResolveThumbnails) {
+      const revisionIds = [
+        ...new Set(
+          assetRows
+            .map((row) => row.current_revision_id)
+            .filter((id): id is string => id !== null && id.length > 0),
+        ),
+      ];
+      for (let i = 0; i < revisionIds.length; i += batchSize) {
+        const batch = revisionIds.slice(i, i + batchSize);
+        const placeholders = batch.map(() => '?').join(', ');
+        const rows = connection
+          .prepare(
+            `SELECT revision_id, file_path
+               FROM revision_artifacts
+              WHERE revision_id IN (${placeholders})
+                AND kind IN ('thumbnail', 'video_poster')
+                AND status = 'ready'
+                AND invalidated_at IS NULL
+              ORDER BY revision_id, CASE kind WHEN 'video_poster' THEN 0 ELSE 1 END`,
+          )
+          .all(...batch) as Array<{ revision_id: string; file_path: string }>;
+        for (const row of rows) {
+          if (!thumbnailByRevision.has(row.revision_id)) {
+            thumbnailByRevision.set(row.revision_id, { filePath: row.file_path });
+          }
+        }
+      }
+    }
+
+    const entries: Array<{
+      assetId: string;
+      absolutePath: string;
+      thumbnailAbsolutePath?: string;
+    }> = [];
+    for (const row of assetRows) {
+      let absolutePath: string;
+      try {
+        absolutePath =
+          row.location_kind === 'managed'
+            ? this.folderPath(openLibrary, row.relative_file_path)
+            : this.linkedAssetPath(
+                openLibrary,
+                row.linked_folder_id,
+                row.relative_file_path,
+              );
+      } catch (error) {
+        if (
+          error instanceof LibraryServiceError &&
+          error.code === 'ASSET_NOT_FOUND'
+        ) {
+          continue;
+        }
+        throw error;
+      }
+      const thumbnail =
+        row.current_revision_id === null
+          ? undefined
+          : thumbnailByRevision.get(row.current_revision_id);
+      let thumbnailAbsolutePath: string | undefined;
+      if (thumbnail) {
+        try {
+          thumbnailAbsolutePath = this.artifactFilePathFromRow(
+            openLibrary,
+            thumbnail.filePath,
+          );
+        } catch (error) {
+          if (
+            !(error instanceof LibraryServiceError) ||
+            error.code !== 'ASSET_NOT_FOUND'
+          ) {
+            throw error;
+          }
+        }
+      }
+      entries.push({
+        assetId: row.asset_id,
+        absolutePath,
+        ...(thumbnailAbsolutePath === undefined
+          ? {}
+          : { thumbnailAbsolutePath }),
+      });
+    }
+    return entries;
   }
 
   getCurrentMediaSource(
@@ -20573,12 +20834,19 @@ export class LibraryService {
     offset?: number | null;
     /** Serpent-6w7n: fetch entire browse scope (lightweight rows, capped). */
     scopeMode?: boolean | null;
+    /**
+     * Serpent-ws4k: fetch only asset ids for the whole scope (select-all /
+     * invert). Skips the thumbnail/sequence enrichment and returns `items: []`
+     * plus `assetIds` (capped at the browse-scope cap like scopeMode).
+     */
+    idsOnly?: boolean | null;
     showIgnored?: boolean;
   }): {
     items: AssetSummary[];
     total: number;
     offset: number;
     snippets?: Array<{ assetId: string; text: string }>;
+    assetIds?: string[];
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
@@ -20594,8 +20862,11 @@ export class LibraryService {
     const hasSearchIndex = hasTable(connection, 'asset_search_index');
     const hasSearchFts = hasTable(connection, 'asset_search');
     const scopeMode = input.scopeMode === true;
-    const limit = scopeMode ? BROWSE_SCOPE_MAX_ASSETS : (input.limit ?? 50);
-    const offset = scopeMode ? 0 : (input.offset ?? 0);
+    const idsOnly = input.idsOnly === true;
+    const limit = scopeMode || idsOnly
+      ? BROWSE_SCOPE_MAX_ASSETS
+      : (input.limit ?? 50);
+    const offset = scopeMode || idsOnly ? 0 : (input.offset ?? 0);
 
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
     const hasQuery = searchGroups.length > 0;
@@ -20954,8 +21225,11 @@ export class LibraryService {
     };
     const total = countRow.total;
 
-    // Data query.
-    const dataSql = `SELECT ${dataColumns} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    // Data query. ids-only mode (Serpent-ws4k) fetches just the stable id
+    // column so select-all/invert can cover the whole scope without shipping
+    // AssetSummary rows over three process hops.
+    const dataColumnsForFetch = idsOnly ? 'a.asset_id' : dataColumns;
+    const dataSql = `SELECT ${dataColumnsForFetch} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
       .all(...allParams, ...orderParams, limit, offset) as Array<{
@@ -20974,6 +21248,15 @@ export class LibraryService {
         trashed_from_tombstone_id?: string | null;
         snippet_text?: string;
       }>;
+
+    if (idsOnly) {
+      return {
+        items: [],
+        total,
+        offset: 0,
+        assetIds: rows.map((row) => row.asset_id),
+      };
+    }
 
     // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
     // an older library does not have (0031 §1.1); defaults come from the
@@ -21230,7 +21513,8 @@ export class LibraryService {
     limit?: number;
     offset?: number;
     scopeMode?: boolean | null;
-  }): { items: AssetSummary[]; total: number; offset: number } {
+    idsOnly?: boolean | null;
+  }): { items: AssetSummary[]; total: number; offset: number; assetIds?: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sc = openLibrary.connection
       .prepare(
@@ -21250,6 +21534,7 @@ export class LibraryService {
       filters: definition.filters ?? null,
       sort: definition.sort ?? null,
       scopeMode: input.scopeMode ?? false,
+      idsOnly: input.idsOnly ?? false,
       limit: input.scopeMode ? null : (input.limit ?? 50),
       offset: input.scopeMode ? 0 : (input.offset ?? 0),
     });

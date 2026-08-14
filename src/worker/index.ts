@@ -541,13 +541,14 @@ function scheduleThumbnailQueue(
   return enqueued;
 }
 
-type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation';
+type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation' | 'cover';
 
 /** Best-effort scheduling for normal product flows; explicit media commands use the throwing primitive. */
 function scheduleThumbnailScene(
   libraryId: string,
   scene: ThumbnailScheduleScene,
   assetIds?: string[],
+  maxIdsOverride?: number,
 ): void {
   const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number }> = {
     startup: { limit: 50, priority: 100 },
@@ -560,11 +561,17 @@ function scheduleThumbnailScene(
     linked: { limit: 50, priority: 250, maxIds: 50 },
     restore: { priority: 250, maxIds: 500 },
     mutation: { priority: 300, maxIds: 500 },
+    // Serpent-d0nv: folder-card covers are direct assets of child folders,
+    // outside the current view's visible wave — generate them before the
+    // assets below the fold. maxIds defaults to 3 per child folder; the
+    // folder.browse-entries handler passes its exact child count × 3.
+    cover: { limit: 100, priority: 400, maxIds: 300 },
   };
   const config = configs[scene];
+  const maxIds = maxIdsOverride ?? config.maxIds ?? 500;
   try {
     scheduleThumbnailQueue(libraryId, {
-      ...(assetIds ? { assetIds: assetIds.slice(0, config.maxIds ?? 500) } : {}),
+      ...(assetIds ? { assetIds: assetIds.slice(0, maxIds) } : {}),
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
       repairFailed: true,
@@ -1045,16 +1052,33 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'folder.list',
         folders: libraryService.listManagedFolders(request.command.libraryId, request.command.showIgnored === true),
       };
-    case 'folder.browse-entries':
+    case 'folder.browse-entries': {
+      const entries = libraryService.listFolderBrowseEntries({
+        libraryId: request.command.libraryId,
+        parentFolderId: request.command.parentFolderId,
+        showIgnored: request.command.showIgnored === true,
+      });
+      // Serpent-d0nv: folder covers are direct assets of child folders —
+      // outside the current view's visible wave (asset.list only schedules
+      // the current folder's assets). Schedule the cover candidates at the
+      // cover tier (400 > visible 350) so folder cards get covers before the
+      // rest of the library's p50 path-alphabetical backfill. maxIds = up to
+      // 3 candidates per child folder.
+      const coverAssetIds = entries.flatMap((entry) => entry.coverAssetIds);
+      if (coverAssetIds.length > 0) {
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'cover',
+          coverAssetIds,
+          entries.length * 3,
+        );
+      }
       return {
         ok: true,
         type: 'folder.browse-entries',
-        entries: libraryService.listFolderBrowseEntries({
-          libraryId: request.command.libraryId,
-          parentFolderId: request.command.parentFolderId,
-          showIgnored: request.command.showIgnored === true,
-        }),
+        entries,
       };
+    }
     case 'folder.list-trashed': {
       const folders = libraryService.listTrashedFolders(request.command.libraryId);
       return { ok: true, type: 'folder.list-trashed', folders };
@@ -1489,6 +1513,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
         scopeMode: request.command.scopeMode ?? false,
+        idsOnly: request.command.idsOnly ?? false,
         showIgnored: request.command.showIgnored === true,
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
@@ -1507,6 +1532,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         total: result.total,
         offset: result.offset,
         snippets: result.snippets,
+        ...(result.assetIds ? { assetIds: result.assetIds } : {}),
       };
     }
     case 'smart-collection.list':
@@ -1542,6 +1568,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         items: result.items,
         total: result.total,
         offset: result.offset,
+        ...(result.assetIds ? { assetIds: result.assetIds } : {}),
       };
     }
     case 'asset.trash': {
@@ -2443,53 +2470,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'media.get-asset-drag-infos': {
       // Main-only cache primer for native drag. Resolve visible entries before
       // dragstart: webContents.startDrag cannot wait for this Worker round trip.
+      // Serpent-v4jf: batched resolution — the legacy per-asset loop cost 3-4
+      // point queries per asset (~150k+ queries for a 50k browse result) and
+      // stalled the Worker event loop; resolveAssetDragInfos batches in 500-id
+      // chunks with identical per-entry semantics (missing skipped, hard
+      // failures throw).
       const { libraryId, assetIds } = request.command;
-      const entries: Array<{
-        assetId: string;
-        absolutePath: string;
-        thumbnailAbsolutePath?: string;
-      }> = [];
-      for (const assetId of assetIds) {
-        let absolutePath: string;
-        try {
-          absolutePath = libraryService.resolveAssetPath(libraryId, assetId);
-        } catch (error) {
-          if (
-            error instanceof LibraryServiceError &&
-            error.code === 'ASSET_NOT_FOUND'
-          ) {
-            continue;
-          }
-          throw error;
-        }
-        const thumbnail = libraryService.getThumbnailArtifact(libraryId, assetId);
-        let thumbnailAbsolutePath: string | undefined;
-        if (thumbnail) {
-          try {
-            thumbnailAbsolutePath = libraryService.getArtifactAbsolutePath(
-              libraryId,
-              thumbnail.artifactId,
-              'preview',
-            );
-          } catch (error) {
-            if (
-              !(error instanceof LibraryServiceError) ||
-              error.code !== 'ASSET_NOT_FOUND'
-            ) {
-              throw error;
-            }
-          }
-        }
-        entries.push({
-          assetId,
-          absolutePath,
-          ...(thumbnailAbsolutePath ? { thumbnailAbsolutePath } : {}),
-        });
-      }
       return {
         ok: true,
         type: 'media.asset-drag-infos',
-        entries,
+        entries: libraryService.resolveAssetDragInfos(libraryId, assetIds),
       };
     }
     case 'media.resolve-asset-paths': {

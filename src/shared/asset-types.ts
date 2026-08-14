@@ -54,6 +54,13 @@ export const folderBrowseEntrySchema = z.strictObject({
   childFolderCount: z.number().int().nonnegative(),
   /** Up to 3 ready thumbnail/poster artifact ids for the folder cover deck. */
   coverArtifactIds: z.array(nonBlankString).max(3),
+  /**
+   * Up to 3 cover candidate asset ids (Serpent-d0nv). The Worker schedules
+   * these at the `cover` thumbnail scene so folder-card covers generate
+   * before the rest of the library; the Renderer refreshes browse entries
+   * when a thumbnail.ready event hits one of these assets.
+   */
+  coverAssetIds: z.array(nonBlankString).max(3),
   /** Linked root id when this card is a virtual linked subdirectory. */
   linkedFolderId: nonBlankString.nullable().optional(),
 });

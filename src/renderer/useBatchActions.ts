@@ -104,6 +104,11 @@ export function useBatchActions({
       if (activeTagId === tagId) {
         await chooseTag(tagId);
       }
+      // Serpent-ws4k review: tag removals do not broadcast asset.changed, and
+      // the tag-filter overlay keeps its filter after the removal — reload the
+      // current content so a filtered scope empties immediately instead of
+      // showing stale cards until the next navigation.
+      await reloadCurrentContent();
       setNotice(
         formatBatchTagNotice(
           "remove",

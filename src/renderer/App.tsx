@@ -85,6 +85,7 @@ import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
 } from "./folder-browse-canvas";
+import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
 import { FolderCard } from "./FolderCard";
 import {
   isFolderRecursiveEnabled,
@@ -353,7 +354,12 @@ import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
-import { BROWSE_SCOPE_SEARCH } from "./browse-scope-search";
+import {
+  BROWSE_PAGE_SIZE,
+  registerBrowseSearchPage,
+  registerBrowseSmartCollectionPage,
+  useBrowsePagination,
+} from "./use-browse-pagination";
 import {
   enumerateDiscreteCardSizes,
   nearestDiscreteCardSize,
@@ -570,6 +576,10 @@ function AppInner() {
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
   const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
+  // Serpent-d0nv: bump to re-fetch folder browse entries when a cover
+  // candidate's thumbnail becomes ready (progressive cover refresh).
+  const [folderBrowseRefreshToken, setFolderBrowseRefreshToken] = useState(0);
+  const folderCoverCandidateAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
   /** Full trash tombstone list for hierarchy browse (Serpent-6pcd). */
   const [trashedFolders, setTrashedFolders] = useState<TrashedFolderSummary[]>(
     [],
@@ -887,6 +897,27 @@ function AppInner() {
   const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
   const [trashedAssetCount, setTrashedAssetCount] = useState(0);
+
+  // Serpent-ws4k: paginated browse/search loading. First pages render
+  // immediately; a scroll sentinel appends the next page; select-all/invert
+  // resolve the full scope id set on demand (idsOnly).
+  const browsePagination = useBrowsePagination({
+    api: api ?? null,
+    setAssets,
+    setTrashedAssets,
+    setSearchTotal,
+    setSearchOffset,
+    setSearchSnippets,
+    onLoadMoreFailed: () =>
+      setError(t("toast.loadMoreFailed")),
+  });
+  // All controller members are stable useCallback identities; destructure so
+  // downstream useCallback deps do not churn every render.
+  const {
+    beginPage: beginBrowsePage,
+    fetchScopeAssetIds: fetchBrowseScopeAssetIds,
+    reset: resetBrowsePagination,
+  } = browsePagination;
 
   const {
     multiEdit,
@@ -1919,10 +1950,6 @@ function AppInner() {
     [selectedFolderIds],
   );
 
-  const visibleAssetIds = useMemo(
-    () => visibleAssets.map((asset) => asset.assetId),
-    [visibleAssets],
-  );
   const browseScopeAssetIds = useMemo(() => {
     const rows = showTrash ? trashedAssets : assets;
     return rows.map((asset) => asset.assetId);
@@ -1939,18 +1966,48 @@ function AppInner() {
     trashedAssets.length,
     visibleAssets.length,
   ]);
+  // Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
+  // the loaded page, so they resolve the full id set on demand (idsOnly).
+  // A stale id set (scope switched mid-fetch) and a null/empty resolve are
+  // both no-ops — matching the pre-pagination synchronous guards, they never
+  // clear an existing selection.
+  const selectAllBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    setSelectedAssetIds([...ids]);
+    setSelectedAssetId(ids.at(-1));
+    setAssetSelectionAnchor(ids[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
+  const invertBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    const next = invertSelection(ids, selectedAssetIds);
+    setSelectedAssetIds(next);
+    setSelectedAssetId(next.at(-1));
+    setAssetSelectionAnchor(next[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    selectedAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
   useSelectionKeyboard({
     enabled: Boolean(library),
     platform: SHORTCUT_PLATFORM,
     previewOpen: Boolean(previewAsset),
     browseScopeAssetIds,
-    visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
-    setSelectedAssetId,
-    selectionAnchorRef,
-    setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll: () => void selectAllBrowseScope(),
+    onInvert: () => void invertBrowseScope(),
   });
 
   useEffect(() => {
@@ -1959,17 +2016,13 @@ function AppInner() {
       if (previewAsset) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (browseScopeAssetIds.length === 0) return;
-      const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-      setSelectedAssetIds(next);
-      setSelectedAssetId(next.at(-1));
-      setAssetSelectionAnchor(next[0] ?? null);
+      void invertBrowseScope();
     });
   }, [
     shellApi,
     previewAsset,
     browseScopeAssetIds,
-    selectedAssetIds,
-    selectionAnchorRef,
+    invertBrowseScope,
     setAssetSelectionAnchor,
   ]);
 
@@ -2048,7 +2101,19 @@ function AppInner() {
     linkedFolders,
     searchValue,
     showIgnoredItems,
+    // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
+    // the row re-fetches and the generated cover appears without navigation.
+    folderBrowseRefreshToken,
   ]);
+
+  // Serpent-d0nv: keep the cover-candidate asset set (from the last browse
+  // entries response) visible to the thumbnail event subscriber so a ready
+  // cover refreshes the folder-card row without a full reload.
+  useEffect(() => {
+    folderCoverCandidateAssetIdsRef.current = collectFolderCoverCandidateAssetIds(
+      folderBrowseEntries,
+    );
+  }, [folderBrowseEntries]);
 
   const previewIndex = previewAsset
     ? visibleAssets.findIndex((asset) => asset.assetId === previewAsset.assetId)
@@ -2582,7 +2647,9 @@ function AppInner() {
           filters: opts?.discovery?.filters,
           scope: browseScope,
           sort: opts?.discovery?.sort,
-          ...BROWSE_SCOPE_SEARCH,
+          // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+          limit: BROWSE_PAGE_SIZE,
+          offset: 0,
           showIgnored: includeIgnored,
         }),
         trashMode || scope !== "all"
@@ -2663,13 +2730,27 @@ function AppInner() {
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
+      // Serpent-ws4k: register the paginated query so the scroll sentinel can
+      // append the next page with the exact same scope/sort/filters.
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: activeLibrary.libraryId,
+        query: opts?.discovery?.search ?? null,
+        filters: opts?.discovery?.filters,
+        scope: browseScope,
+        sort: opts?.discovery?.sort,
+        showIgnored: includeIgnored,
+        target: trashMode ? "trash" : "assets",
+        items: assetResult.value.items,
+        total: assetResult.value.total,
+        offset: assetResult.value.offset,
+      });
       setLinkedFolders(linkedResult.value);
       setTags(tagResult.value);
       setCollections(collectionResult.value);
       setSmartCollections(smartResult.value);
       return assetResult.value.items;
     },
-    [api, showIgnoredItems],
+    [api, beginBrowsePage, showIgnoredItems],
   );
 
   useBrowserSessionRestore({
@@ -2688,6 +2769,7 @@ function AppInner() {
     setActiveSmartCollectionId,
     setAssets,
     setSearchTotal,
+    beginBrowsePage,
     setSelectedAssetId,
     setSelectedAssetIds,
     setAssetSelectionAnchor,
@@ -2856,6 +2938,16 @@ function AppInner() {
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(flush);
     };
+    // Serpent-d0nv: a burst of cover thumbnail.ready events collapses into a
+    // single folder-browse-entries re-fetch (one IPC for the current parent).
+    let folderBrowseRefreshFrame = 0;
+    const scheduleFolderBrowseRefresh = () => {
+      if (folderBrowseRefreshFrame !== 0) return;
+      folderBrowseRefreshFrame = window.requestAnimationFrame(() => {
+        folderBrowseRefreshFrame = 0;
+        setFolderBrowseRefreshToken((token) => token + 1);
+      });
+    };
     const unsubscribe = api.onThumbnailEvent((event) => {
       if (event.libraryId !== library?.libraryId) return;
       if (event.type === "asset.dimensions.ready") {
@@ -2907,12 +2999,22 @@ function AppInner() {
               : { durationMs: event.durationMs }),
             sequenceFrameArtifactId: event.artifactId,
           });
+          // Serpent-d0nv: when a cover candidate of the current folder-card
+          // row finishes generating, re-fetch the browse entries so the card
+          // shows its cover immediately instead of staying on the empty
+          // folder icon until navigation.
+          if (folderCoverCandidateAssetIdsRef.current.has(event.assetId)) {
+            scheduleFolderBrowseRefresh();
+          }
         }
       }
     });
     return () => {
       unsubscribe();
       if (frame !== 0) window.cancelAnimationFrame(frame);
+      if (folderBrowseRefreshFrame !== 0) {
+        window.cancelAnimationFrame(folderBrowseRefreshFrame);
+      }
     };
   }, [api, library?.libraryId, t]);
   useEffect(() => {
@@ -3518,11 +3620,25 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
@@ -3557,11 +3673,25 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -3988,11 +4118,25 @@ function AppInner() {
           collectionId,
           recursive,
         },
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: null,
+        scope: { kind: "collection", collectionId, recursive },
+        sort: null,
+        filters: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
       // Also refresh sidebar metadata
       const [tagResult, collectionResult, smartResult] = await Promise.all([
         api.listTags({ libraryId: library.libraryId }),
@@ -4832,7 +4976,9 @@ function AppInner() {
       filters: definition.filters,
       scope: currentSearchScope(),
       sort: definition.sort,
-      ...BROWSE_SCOPE_SEARCH,
+      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
       showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4846,6 +4992,19 @@ function AppInner() {
       clearAssetSelection({ preserveFolders: true });
     }
     applySearchResult(result.value);
+    // Serpent-ws4k: subsequent pages must reuse the same query/scope/sort.
+    registerBrowseSearchPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      query: definition.search ?? null,
+      filters: definition.filters,
+      scope: currentSearchScope(),
+      sort: definition.sort,
+      showIgnored: showIgnoredItems,
+      target: "assets",
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     return result.value;
   }
 
@@ -4952,7 +5111,9 @@ function AppInner() {
       const result = await api.executeSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
@@ -4973,6 +5134,13 @@ function AppInner() {
         ),
       );
       applySearchResult(result.value);
+      registerBrowseSmartCollectionPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        collectionId,
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
@@ -5466,6 +5634,7 @@ function AppInner() {
     setActiveSmartCollectionId(null);
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
     setMoveDialog(null);
     resetNavHistory({ kind: "all" });
     api?.setActiveContext(null);
@@ -7798,17 +7967,8 @@ function AppInner() {
           pasteOsClipboardFiles(browsePasteDestination);
         }
       },
-      selectAll: () => {
-        setSelectedAssetIds([...browseScopeAssetIds]);
-        setSelectedAssetId(browseScopeAssetIds.at(-1));
-        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
-      },
-      invertSelection: () => {
-        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-        setSelectedAssetIds(next);
-        setSelectedAssetId(next.at(-1));
-        setAssetSelectionAnchor(next[0] ?? null);
-      },
+      selectAll: () => void selectAllBrowseScope(),
+      invertSelection: () => void invertBrowseScope(),
       clearSelection: clearAssetSelection,
       openSettings: () => {
         setAppSettingsCategory("general");
@@ -9395,6 +9555,24 @@ function AppInner() {
                       </div>
                     ));
                   })()}
+                  </div>
+                )}
+                {/* Serpent-ws4k: infinite-scroll sentinel — appends the next
+                    page once it scrolls into view; hidden when the whole
+                    scope is loaded. */}
+                {browsePagination.hasMorePages && (
+                  <div
+                    ref={browsePagination.sentinelRef}
+                    className={`browse-load-more${browsePagination.loadingMore ? " is-loading" : ""}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {browsePagination.loadingMore ? (
+                      <>
+                        <span className="activity-pulse" aria-hidden />
+                        <span>{t("progress.loadingMore")}</span>
+                      </>
+                    ) : null}
                   </div>
                 )}
               </>

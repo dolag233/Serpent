@@ -5,13 +5,19 @@
  * Asset open/trash/rename chords live in useBrowseCommandKeyboard.
  * This hook only owns selection set mutations so Escape/metadata/restore
  * can keep splitting independently.
+ *
+ * Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
+ * the loaded page, so they resolve the full id set on demand (idsOnly) through
+ * the onSelectAll / onInvert callbacks. The dispatch logic itself lives in
+ * `dispatchSelectionKeyboardAction` (pure, unit-tested); this hook only wires
+ * the DOM listener.
  */
 
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect } from "react";
 
 import type { CommandPlatform } from "./commands/command-types";
-import { invertSelection } from "./invert-selection";
 import {
+  dispatchSelectionKeyboardAction,
   isEditableSelectionKeyboardTarget,
   matchSelectionKeyboardAction,
 } from "./selection-keyboard";
@@ -20,15 +26,14 @@ export type UseSelectionKeyboardArgs = {
   readonly enabled: boolean;
   readonly platform: CommandPlatform;
   readonly previewOpen: boolean;
-  /** Full browse-scope asset ids (Serpent-6w7n); used for select-all / invert. */
+  /** Loaded browse-scope asset ids (Serpent-6w7n); gates select-all/invert on a non-empty scope. */
   readonly browseScopeAssetIds: readonly string[];
-  readonly visibleAssetIds: readonly string[];
   readonly selectedAssetIds: readonly string[];
-  readonly setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
-  readonly setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
-  readonly selectionAnchorRef: MutableRefObject<string | null>;
-  readonly setAssetSelectionAnchor: (assetId: string | null) => void;
   readonly clearAssetSelection: () => void;
+  /** Serpent-ws4k: async select-all covering the whole browse scope (idsOnly). */
+  readonly onSelectAll?: () => void;
+  /** Serpent-ws4k: async invert covering the whole browse scope (idsOnly). */
+  readonly onInvert?: () => void;
 };
 
 export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
@@ -37,13 +42,10 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     platform,
     previewOpen,
     browseScopeAssetIds,
-    visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
-    setSelectedAssetId,
-    selectionAnchorRef,
-    setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll,
+    onInvert,
   } = args;
 
   useEffect(() => {
@@ -55,31 +57,14 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
       const action = matchSelectionKeyboardAction(event, platform);
-      if (action === null) return;
-
-      if (action === "select-all") {
-        if (browseScopeAssetIds.length === 0) return;
-        event.preventDefault();
-        setSelectedAssetIds([...browseScopeAssetIds]);
-        setSelectedAssetId(browseScopeAssetIds.at(-1));
-        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
-        return;
-      }
-
-      if (action === "invert") {
-        if (browseScopeAssetIds.length === 0) return;
-        event.preventDefault();
-        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-        setSelectedAssetIds(next);
-        setSelectedAssetId(next.at(-1));
-        setAssetSelectionAnchor(next[0] ?? null);
-        return;
-      }
-
-      // clear (Escape)
-      if (selectedAssetIds.length === 0) return;
-      event.preventDefault();
-      clearAssetSelection();
+      const consumed = dispatchSelectionKeyboardAction(action, {
+        browseScopeEmpty: browseScopeAssetIds.length === 0,
+        selectionEmpty: selectedAssetIds.length === 0,
+        onSelectAll,
+        onInvert,
+        onClear: clearAssetSelection,
+      });
+      if (consumed) event.preventDefault();
     };
 
     document.addEventListener("keydown", onKeyDown);
@@ -89,12 +74,9 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     platform,
     previewOpen,
     browseScopeAssetIds,
-    visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
-    setSelectedAssetId,
-    selectionAnchorRef,
-    setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll,
+    onInvert,
   ]);
 }

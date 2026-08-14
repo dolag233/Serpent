@@ -38,6 +38,8 @@ describe('trashedFoldersToBrowseEntries', () => {
       recursiveAssetCount: 3,
       childFolderCount: 0,
       coverArtifactIds: ['art-b', 'art-c'],
+      // Serpent-d0nv: trashed cards never schedule cover generation.
+      coverAssetIds: [],
     });
     expect(entries.find((entry) => entry.folderId === 'tomb-photos')).toMatchObject({
       parentFolderId: null,
