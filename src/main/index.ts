@@ -22,7 +22,7 @@ import {
   nativeImage,
   utilityProcess,
 } from "electron";
-import type { MessageBoxOptions } from "electron";
+import type { MessageBoxOptions, NativeImage } from "electron";
 
 import {
   installApplicationMenu,
@@ -30,6 +30,10 @@ import {
   setApplicationMenuCommandLabel,
 } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
+import {
+  NativeAssetDragCache,
+  startNativeAssetDrag,
+} from "./native-asset-drag";
 import {
   clearViewerVideoShortcutCapture,
   isViewerVideoShortcutContentsActive,
@@ -70,6 +74,7 @@ import {
 } from "./windows-tray";
 import {
   ASSET_CHANGE_CHANNEL,
+  ASSET_NATIVE_DRAG_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
   THUMBNAIL_CHANNEL,
   ACTIVE_CONTEXT_CHANNEL,
@@ -192,6 +197,7 @@ import {
   toPublicError,
 } from "../shared/protocol/errors";
 import {
+  parseNativeAssetDragRequest,
   parseRendererRequest,
   tryParseActiveContext,
   type RendererRequest,
@@ -351,6 +357,7 @@ let mainWindow: BrowserWindow | undefined;
 /** Effective UI locale for native dialogs; synced from Renderer (Serpent-bwb). */
 let appLocale: AppLocale = "en";
 let workerClient: LibraryWorkerClient | undefined;
+const nativeAssetDragCache = new NativeAssetDragCache();
 /** Slice E: shared offscreen window that renders model thumbnails (Serpent-hnmg). */
 let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
 let quitAfterShutdown = false;
@@ -1505,6 +1512,40 @@ function toRendererResult(
   return parseRendererResult(result);
 }
 
+async function primeNativeAssetDragCache(
+  libraryId: string,
+  assetIds: readonly string[],
+  mode: "replace" | "upsert",
+): Promise<void> {
+  if (!workerClient || assetIds.length === 0) {
+    if (mode === "replace") nativeAssetDragCache.replace(libraryId, []);
+    return;
+  }
+  try {
+    const result = await workerClient.request({
+      type: "media.get-asset-drag-infos",
+      libraryId,
+      assetIds: [...new Set(assetIds)],
+    });
+    if (!result.ok || result.type !== "media.asset-drag-infos") return;
+    if (mode === "replace") {
+      nativeAssetDragCache.replace(libraryId, result.entries);
+    } else {
+      nativeAssetDragCache.upsert(libraryId, result.entries);
+    }
+  } catch (error) {
+    logger?.info(
+      "main.native-asset-drag-cache",
+      "Could not preheat native drag entries.",
+      {
+        libraryId,
+        assetCount: assetIds.length,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+  }
+}
+
 function createNativeDialogHost(): NativeDialogHost {
   return {
     getLocale: () => appLocale,
@@ -1763,6 +1804,12 @@ async function commandFor(
       // Classified in handleLibraryRequest because classification failures need
       // a renderer-safe, specific public error instead of an INTERNAL_ERROR.
       return undefined;
+    case "asset.resolve-dropped-paths.request":
+      return {
+        type: "media.resolve-asset-paths",
+        libraryId: request.libraryId,
+        sourcePaths: request.sourcePaths,
+      };
     case "asset.import-sequence.confirm":
       // Resolved against Main-held offer paths in handleLibraryRequest.
       return undefined;
@@ -3455,6 +3502,35 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     const workerResult = await workerClient.request(command);
 
+    // Native file drag must be requested during renderer dragstart.
+    // Preheat every card-bearing result before it reaches Renderer; a later
+    // Worker round trip would miss Electron's native drag window. Upserting
+    // instead of replacing avoids an auxiliary count query evicting the cards
+    // visible in a concurrent search request.
+    const nativeDragAssets = !workerResult.ok
+      ? []
+      : workerResult.type === "asset.list" ||
+          workerResult.type === "collection.assets.list" ||
+          workerResult.type === "asset.list-trash"
+        ? workerResult.assets
+        : workerResult.type === "asset.search.result" ||
+            workerResult.type === "smart-collection.executed"
+          ? workerResult.items
+          : [];
+    if (
+      nativeDragAssets.length > 0 &&
+      "libraryId" in request &&
+      typeof request.libraryId === "string"
+    ) {
+      await primeNativeAssetDragCache(
+        request.libraryId,
+        nativeDragAssets.flatMap((asset) =>
+          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+        ),
+        "upsert",
+      );
+    }
+
     if (!workerResult.ok && relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
         relinkPreviewContext.libraryId,
@@ -3742,6 +3818,17 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           error: createPublicError("INTERNAL_ERROR"),
         } satisfies RendererResult;
       }
+    }
+    if (
+      workerResult.ok &&
+      request.type === "asset.resolve-dropped-paths.request" &&
+      workerResult.type === "media.asset-ids-resolved"
+    ) {
+      return {
+        ok: true,
+        type: "asset.dropped-paths.resolved",
+        assetIds: workerResult.assetIds,
+      } satisfies RendererResult;
     }
     if (
       workerResult.ok &&
@@ -4091,11 +4178,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         },
       });
     } else if (result.type === "library.closed") {
+      nativeAssetDragCache.clear(result.libraryId);
       clearActiveRecentLibrary(recentLibraryPath(), (error) => {
         logger?.error("recent-library.clear", error);
       });
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     } else if (result.type === "library.deleted") {
+      nativeAssetDragCache.clear(result.libraryId);
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
     return result;
@@ -5581,6 +5670,16 @@ async function startApplication(): Promise<void> {
 
   // Forward thumbnail events to the renderer
   workerClient.onThumbnailEvent((event) => {
+    if (
+      event.type === "asset.thumbnail.ready" ||
+      event.type === "asset.thumbnail.failed"
+    ) {
+      void primeNativeAssetDragCache(
+        event.libraryId,
+        [event.assetId],
+        "upsert",
+      );
+    }
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send(THUMBNAIL_CHANNEL, event);
   });
@@ -5866,6 +5965,40 @@ async function startApplication(): Promise<void> {
       } satisfies RendererResult;
     }
     return handleLibraryRequest(input);
+  });
+
+  ipcMain.on(ASSET_NATIVE_DRAG_CHANNEL, (event, input: unknown) => {
+    const dragWindow = mainWindow;
+    if (
+      !dragWindow ||
+      dragWindow.isDestroyed() ||
+      event.sender !== dragWindow.webContents
+    ) {
+      return;
+    }
+    try {
+      const request = parseNativeAssetDragRequest(input);
+      startNativeAssetDrag({
+        cache: nativeAssetDragCache,
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+        imageFactory: nativeImage,
+        fallbackIcon: appIconImage,
+        startDrag: ({ file, files, icon }) => {
+          dragWindow.webContents.startDrag({
+            file,
+            files: [...files],
+            icon: icon as NativeImage,
+          });
+        },
+      });
+    } catch (error) {
+      logger?.info(
+        "main.native-asset-drag",
+        "Native asset drag was not started.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    }
   });
 
   registerAutomationScriptIpc({

@@ -207,6 +207,10 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     id: 'asset.copy-file-path',
     title: (ctx) => t(ctx, 'command.asset.copyFilePath'),
     group: 'organize',
+    shortcut: {
+      mac: { label: '⌥⌘C', key: 'c', metaKey: true, altKey: true },
+      windows: { label: 'Ctrl+Shift+C', key: 'c', ctrlKey: true, shiftKey: true },
+    },
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.copyFilePath(id)),

@@ -374,7 +374,6 @@ import {
 } from "./canvas-scroll-anchor";
 import {
   captureReflowAnchorFromCards,
-  isCanvasReflowRestorationPending,
   retainReflowAnchor,
   scheduleAnchorRestore,
   type ScrollOffsetSnapshot,
@@ -408,6 +407,9 @@ type RendererWindow = Window & {
     automation?: SerpentAutomationScriptApi;
     plugins?: SerpentPluginManagerApi;
     mcp?: SerpentMcpSettingsApi;
+    e2e?: {
+      getRequestCount: (type: string) => number;
+    };
   };
 };
 type UiState =
@@ -1429,6 +1431,41 @@ function AppInner() {
   // REQ-DND-003: the custom drag ghost node mounted by showAssetDragPreview,
   // kept so onDragEnd can remove it from the document.
   const dragPreviewRef = useRef<HTMLElement | null>(null);
+  // HTML5-only drag selection snapshot for internal targets. Native OS drags
+  // are resolved from their returned File handles instead; retaining a native
+  // drag's ids here would leak a completed session into a later external drop.
+  const managedAssetDragIdsRef = useRef<readonly string[] | null>(null);
+  const getManagedAssetDragIds = useCallback(
+    () =>
+      managedAssetDragIdsRef.current
+        ? [...managedAssetDragIdsRef.current]
+        : null,
+    [],
+  );
+  // Escape cancels the renderer-side drag session immediately. Native OS
+  // drags are cancelled by Electron/the operating system; this also clears
+  // the custom ghost and internal selection fallback so a cancelled gesture
+  // cannot leak into the next drop.
+  useEffect(() => {
+    const handleDragCancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (
+        !managedAssetDragIdsRef.current &&
+        !dragPreviewRef.current &&
+        draggedMemberId === null
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggedMemberId(null);
+      managedAssetDragIdsRef.current = null;
+      dismissAssetDragPreview(dragPreviewRef.current);
+      dragPreviewRef.current = null;
+    };
+    window.addEventListener("keydown", handleDragCancel);
+    return () => window.removeEventListener("keydown", handleDragCancel);
+  }, [draggedMemberId]);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
@@ -4591,6 +4628,18 @@ function AppInner() {
     setCollections,
   });
 
+  const resolveManagedAssetDrop = useCallback(
+    async (files: File[]): Promise<string[]> => {
+      if (!api || !library) return [];
+      const result = await api.resolveManagedAssetDrop({
+        libraryId: library.libraryId,
+        files,
+      });
+      return result.ok ? result.value.assetIds : [];
+    },
+    [api, library],
+  );
+
   const {
     handleFoldersDroppedOnFolder,
     handleFoldersDroppedOnTrash,
@@ -4636,6 +4685,8 @@ function AppInner() {
     },
     setImageSequenceImportOffer,
     onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
+    getManagedAssetDragIds,
+    onResolveManagedAssetDrop: resolveManagedAssetDrop,
     onAssetsDroppedOnFolder: (folderId, assetIds, mode) =>
       handleAssetsDroppedOnFolder(folderId, assetIds, mode),
   });
@@ -6636,6 +6687,9 @@ function AppInner() {
     onCopyFiles: (assetIds) => {
       void handleCopyAssetFiles(assetIds);
     },
+    onCopyFilePath: (assetId) => {
+      void handleCopyFilePath(assetId);
+    },
     onPasteIntoFolder: pasteOsClipboardFiles,
     onRevealInFolder: (assetId) => {
       void handleRevealInFolder(assetId);
@@ -8067,6 +8121,8 @@ function AppInner() {
         onExternalDrop={(event, targetFolderId, targetCollectionId) =>
           handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
         }
+        getManagedAssetDragIds={getManagedAssetDragIds}
+        onResolveManagedAssetDrop={resolveManagedAssetDrop}
         onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
           handleAssetsDroppedOnFolder(folderId, assetIds, mode)
         }
@@ -8840,7 +8896,6 @@ function AppInner() {
                       const showThumbnailFailure = shouldShowThumbnailFailureBadge(
                         asset,
                         thumbnailFailures.has(asset.assetId),
-                        cardCover.usedSourceFallback,
                       );
                       const renamingThisAsset =
                         assetRenameDialog?.assetId === asset.assetId;
@@ -8897,6 +8952,7 @@ function AppInner() {
                       }}
                       onDragEnd={() => {
                         setDraggedMemberId(null);
+                        managedAssetDragIdsRef.current = null;
                         // REQ-DND-003: unmount the custom drag ghost.
                         dismissAssetDragPreview(dragPreviewRef.current);
                         dragPreviewRef.current = null;
@@ -8914,6 +8970,33 @@ function AppInner() {
                         // REQ-DND-001/002: folder/trash drops resolve this
                         // selection snapshot at the target (asset-drag-drop.ts).
                         const ids = resolveDraggedAssetIds(asset.assetId, selectedAssetIds);
+                        // Native OS drag and Chromium HTML5 drag cannot share a
+                        // single session: Electron requires preventDefault()
+                        // before startDrag, while in-app E2E keeps the HTML5
+                        // payload to exercise internal targets. The test flag
+                        // only disables the OS hand-off; production always
+                        // uses the native path.
+                        // `globalThis` in preload is isolated from the page
+                        // world when contextIsolation is enabled. Use the
+                        // explicit diagnostics bridge so E2E HTML5 drops do
+                        // not enter Electron's native OS drag loop, while
+                        // production still uses startDrag().
+                        const isE2e = Boolean(
+                          (window as RendererWindow).serpent?.e2e,
+                        );
+                        if (!isE2e && api && library) {
+                          // Electron's supported path is an asynchronous
+                          // one-way IPC from dragstart. A synchronous round
+                          // trip deadlocks when this native file drag returns
+                          // to Serpent as a drop.
+                          event.preventDefault();
+                          api.startAssetDrag({
+                            libraryId: library.libraryId,
+                            assetIds: ids,
+                          });
+                          return;
+                        }
+                        managedAssetDragIdsRef.current = ids;
                         event.dataTransfer.setData(
                           MANAGED_ASSETS_DRAG_TYPE,
                           JSON.stringify(ids),

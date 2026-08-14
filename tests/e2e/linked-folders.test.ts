@@ -57,12 +57,18 @@ test('imports a linked folder, reconciles external changes, and relinks after th
 
     await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
 
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
+    await window
+      .getByLabel('当前浏览范围')
+      .getByRole('button', { name: 'source', exact: true })
+      .click();
 
     await assetCard(window, 'a.png').click({ button: 'right' });
     await window.getByRole('menuitem', { name: '删除链接资产…' }).click();
@@ -116,7 +122,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
 
     // Relink to the new root that has a.png (different content) but not b.png/c.png.
     writeFileSync(path.join(newRoot, 'a.png'), Buffer.from('aaa-restored'));
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
     const afterRelink = await listAllAssets(window);
     const aAfterRelink = afterRelink.find((asset) => asset.displayName === 'a.png');
     const bAfterRelink = afterRelink.find((asset) => asset.displayName === 'b.png');
@@ -210,12 +216,15 @@ test('restores a linked library after a full app restart', async () => {
     // Link the folder.
     await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
-    await window.getByRole('button', { name: 'source' }).click();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
 
-    // All three assets should be visible.
+    // The root shows direct files and a virtual child-folder row; nested files
+    // appear after entering that row.
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
     // Remember asset IDs for the restart comparison.
@@ -232,11 +241,17 @@ test('restores a linked library after a full app restart', async () => {
     window = await application.firstWindow();
 
     // Wait for the library to be restored and the linked folder to be visible.
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible({ timeout: 15_000 });
-    await window.getByRole('button', { name: 'source' }).click();
+    const restoredSource = window
+      .locator('button.nav-row[data-nav-folder-kind="linked"]')
+      .filter({ hasText: 'source' })
+      .first();
+    await expect(restoredSource).toBeVisible({ timeout: 15_000 });
+    await restoredSource.click();
 
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
     const afterRestart = await listAllAssets(window);
@@ -304,8 +319,8 @@ test('applies default ignore rules — .git and node_modules are not registered 
 
     await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
-    await window.getByRole('button', { name: 'source' }).click();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // Only the real assets should be visible.
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();

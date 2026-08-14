@@ -1271,6 +1271,11 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.copy-files.requested'),
     assetIds: z.array(nonBlankString).min(1),
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.dropped-paths.resolved'),
+    assetIds: z.array(nonBlankString),
+  }),
   // Folder shell-action acknowledgements carry only the folder id; the
   // absolute path stays on the Worker→Main boundary (REQ-COMMAND-003).
   z.strictObject({
@@ -1567,6 +1572,22 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.asset-paths'),
     assetIds: z.array(nonBlankString).min(1),
     absolutePaths: z.array(nonBlankString).min(1),
+  }),
+  // Worker→Main only: a Main cache preheats native drag inputs before a
+  // renderer dragstart event. These paths never enter a renderer result.
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.asset-drag-infos'),
+    entries: z.array(z.strictObject({
+      assetId: nonBlankString,
+      absolutePath: nonBlankString,
+      thumbnailAbsolutePath: nonBlankString.optional(),
+    })).max(10_000),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.asset-ids-resolved'),
+    assetIds: z.array(nonBlankString),
   }),
   // Worker→Main only: the resolved folder path never enters the renderer
   // result schema (REQ-COMMAND-003).

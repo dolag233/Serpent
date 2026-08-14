@@ -68,6 +68,7 @@ import {
   MCP_SETTINGS_REQUEST_CHANNEL,
   MCP_SETTINGS_EVENT_CHANNEL,
 } from '../shared/protocol/channels';
+import { sendNativeAssetDrag } from './native-asset-drag';
 import {
   parsePluginInputCapturePublishPayload,
   parsePluginInputCaptureSessionsPayload,
@@ -670,6 +671,29 @@ const library: SerpentLibraryApi = Object.freeze({
       return result.ok
         ? { ok: false, error: createPublicError('INVALID_DROP_SELECTION') }
         : failure(result);
+    }
+  },
+
+  async resolveManagedAssetDrop(input: {
+    libraryId: string;
+    files: File[];
+  }): Promise<LibraryApiResult<{ assetIds: string[] }>> {
+    try {
+      const sourcePaths = resolveDroppedFilePaths(input.files, (file) =>
+        webUtils.getPathForFile(file),
+      );
+      const result = await request({
+        type: 'asset.resolve-dropped-paths.request',
+        libraryId: input.libraryId,
+        sourcePaths,
+      });
+      if (!result.ok) return failure(result);
+      if (result.type !== 'asset.dropped-paths.resolved') {
+        throw new Error('Unexpected dropped-asset resolution response.');
+      }
+      return { ok: true, value: { assetIds: result.assetIds } };
+    } catch {
+      return { ok: true, value: { assetIds: [] } };
     }
   },
 
@@ -1735,6 +1759,22 @@ const library: SerpentLibraryApi = Object.freeze({
     });
     if (!result.ok) return failure(result);
     return { ok: true, value: undefined };
+  },
+
+  startAssetDrag({
+    libraryId,
+    assetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+  }): void {
+    // Native drag owns a nested OS event loop until the pointer is released.
+    // Do not make this synchronous: dropping back onto Serpent would otherwise
+    // deadlock the Renderer waiting for Main while Main waits for the drop.
+    sendNativeAssetDrag(ipcRenderer, {
+      libraryId,
+      assetIds,
+    });
   },
 
   async openFolderInFileManager({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {

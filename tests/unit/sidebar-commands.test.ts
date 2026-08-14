@@ -22,6 +22,9 @@ const LINKED_FOLDER: LinkedFolderSummary = {
   status: 'available',
   assetCount: 12,
   absoluteRootPath: '/Volumes/Art/外部素材库',
+  relativePath: '',
+  linkedFolderId: 'folder-1',
+  parentFolderId: null,
 };
 
 interface RecordedCall {

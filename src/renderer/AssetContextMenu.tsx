@@ -407,7 +407,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onClearAiContent,
     canAnalyze,
     aiDisconnected,
-    onCopyToLinked,
     onClearSelection,
     onOpenExternal,
     onViewAsset,
@@ -1578,25 +1577,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runMultiCommand("assets.paste")}
                     />
                   )}
-              {linkedFolders
-                .filter((f) => f.status === "available")
-                .map((folder) => (
-                  <ContextMenuItem
-                    key={`batch-link-${folder.folderId}`}
-                    icon={<Icon name="link" size={14} />}
-                    label={t("menu.copyToExternal", {
-                      name: folder.displayName,
-                    })}
-                    disabled={availableManagedAssetIds.length === 0}
-                    disabledReason={t("command.reason.noCopyableManaged")}
-                    onAction={() =>
-                      onCopyToLinked(
-                        folder,
-                        availableManagedAssetIds,
-                      )
-                    }
-                  />
-                ))}
             </ContextMenuSection>
             )}
             <ContextMenuSection label={t("command.group.delete")}>
@@ -1983,22 +1963,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }}
                     />
                   )}
-                  {linkedFolders
-                    .filter((f) => f.status === "available")
-                    .map((folder) => (
-                      <ContextMenuItem
-                        key={`single-link-${folder.folderId}`}
-                        icon={<Icon name="link" size={14} />}
-                        label={t("menu.copyToExternal", {
-                          name: folder.displayName,
-                        })}
-                        disabled={!singleManaged || !isAvailable}
-                        disabledReason={t("command.reason.cannotCopyExternal")}
-                        onAction={() =>
-                          onCopyToLinked(folder, [assetId])
-                        }
-                      />
-                    ))}
                   {addableCollectionIds && addableCollectionIds.size > 0 && (
                     <ContextMenuSubmenu
                       icon={<Icon name="collection" size={14} />}

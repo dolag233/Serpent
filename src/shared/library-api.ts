@@ -313,6 +313,11 @@ export interface SerpentLibraryApi {
     html?: string;
     uriList?: string;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
+  /** Resolve native dropped File handles to managed asset ids without exposing paths. */
+  resolveManagedAssetDrop(input: {
+    libraryId: string;
+    files: File[];
+  }): Promise<LibraryApiResult<{ assetIds: string[] }>>;
   pasteClipboardImage(input: {
     libraryId: string;
     targetFolderId?: string;
@@ -570,6 +575,11 @@ export interface SerpentLibraryApi {
     libraryId: string;
     assetIds: string[];
   }): Promise<LibraryApiResult<void>>;
+  /** Start an OS-native file drag from the current dragstart event. */
+  startAssetDrag(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): void;
   // Folder shell actions (REQ-MENU-006): folder id only crosses the bridge;
   // the absolute path is resolved by the Worker and consumed by Main.
   openFolderInFileManager(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;

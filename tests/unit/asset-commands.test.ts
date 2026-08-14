@@ -341,7 +341,7 @@ describe('标题与快捷键标签', () => {
     expect(findItem(mac, 'asset.view').shortcutLabel).toBe('↵');
     expect(findItem(mac, 'asset.open-external').shortcutLabel).toBe('⌘O');
     expect(findItem(mac, 'asset.move-to-trash').shortcutLabel).toBe('⌘⌫');
-    expect(findItem(mac, 'asset.copy-file-path').shortcutLabel).toBeNull();
+    expect(findItem(mac, 'asset.copy-file-path').shortcutLabel).toBe('⌥⌘C');
 
     const windows = registry.resolveMenu(
       makeCtx({ platform: 'windows' }).ctx,
@@ -351,6 +351,9 @@ describe('标题与快捷键标签', () => {
     );
     expect(findItem(windows, 'asset.move-to-trash').shortcutLabel).toBe(
       'Delete',
+    );
+    expect(findItem(windows, 'asset.copy-file-path').shortcutLabel).toBe(
+      'Ctrl+Shift+C',
     );
   });
 });

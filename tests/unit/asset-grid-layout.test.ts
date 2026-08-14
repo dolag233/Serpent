@@ -71,7 +71,7 @@ describe("distributed masonry", () => {
     ]);
   });
 
-  it("places later cards by round-robin so ranks stay LTR in asset order (Serpent-1jnp)", () => {
+  it("packs later cards into the shortest estimated column to avoid white slices", () => {
     const heights: Record<string, number> = {
       a: 300,
       b: 100,
@@ -85,15 +85,15 @@ describe("distributed masonry", () => {
       (item) => heights[item]!,
     );
 
-    // index % 3 → [a,d] | [b,e] | [c]
+    // Shortest-load packing → [a] | [b,d,e] | [c].
     expect(columns.map((column) => column.items)).toEqual([
-      ["a", "d"],
-      ["b", "e"],
+      ["a"],
+      ["b", "d", "e"],
       ["c"],
     ]);
     expect(columns.map((column) => column.estimatedHeightPx)).toEqual([
-      380,
-      150,
+      300,
+      230,
       200,
     ]);
   });

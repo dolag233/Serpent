@@ -17,7 +17,11 @@ describe("PLATFORM_SHORTCUT_TABLE (Serpent-4ojz / Serpent-vf8x)", () => {
     for (const row of PLATFORM_SHORTCUT_TABLE) {
       expect(windowsUsesCtrlForMacMeta(row), row.id).toBe(true);
       expect(row.windows.label.includes("⌘")).toBe(false);
-      if (row.id !== "asset.delete-from-disk") {
+      // Finder's "Copy Pathname" uses ⌥⌘C, while Windows conventionally
+      // reserves Ctrl+Shift+C for copying a path. Both are intentional
+      // platform-native modifier choices rather than a mechanical Cmd→Ctrl
+      // translation.
+      if (row.id !== "asset.delete-from-disk" && row.id !== "asset.copy-file-path") {
         expect(Boolean(row.mac.shiftKey)).toBe(Boolean(row.windows.shiftKey));
         expect(Boolean(row.mac.altKey)).toBe(Boolean(row.windows.altKey));
       }

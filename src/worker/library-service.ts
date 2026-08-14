@@ -144,7 +144,11 @@ import { assertRegisteredHistoryRecipePair, assertRegisteredHistoryRecipe } from
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
 export interface SharpModule {
-  (input: string | Buffer, options?: { page?: number }): SharpInstance;
+  (input: string | Buffer, options?: {
+    page?: number;
+    failOn?: 'warning' | 'error' | 'none';
+    sequentialRead?: boolean;
+  }): SharpInstance;
   cache?(options: boolean | { files?: number }): unknown;
 }
 export interface SharpInstance {
@@ -12412,6 +12416,9 @@ export class LibraryService {
       status: 'available',
       assetCount: countRow.count,
       absoluteRootPath: canonicalNewRoot,
+      linkedFolderId: input.folderId,
+      relativePath: '',
+      parentFolderId: null,
     };
   }
 
@@ -15738,6 +15745,79 @@ export class LibraryService {
   }
 
   /**
+   * Resolve files from an OS-native drag back to current asset ids. The
+   * absolute paths are consumed only in Worker; Renderer receives ids only.
+   * Matching both managed and linked roots keeps native drags usable for
+   * folder moves, collection membership, and trash drops.
+   */
+  resolveAssetIdsByAbsolutePaths(
+    libraryId: string,
+    sourcePaths: readonly string[],
+  ): string[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path
+           FROM assets
+          WHERE deleted_at IS NULL`,
+      )
+      .all() as Array<{
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+      }>;
+    const linkedRoots = new Map(
+      (
+        openLibrary.connection
+          .prepare(
+            `SELECT folder_id, absolute_root_path
+               FROM linked_folders
+              WHERE library_id = ? AND status = 'available'`,
+          )
+          .all(libraryId) as Array<{
+          folder_id: string;
+          absolute_root_path: string;
+        }>
+      ).map((row) => [row.folder_id, row.absolute_root_path] as const),
+    );
+    const root = path.join(openLibrary.summary.libraryPath, 'Assets');
+    const key = (input: string): string => {
+      const normalized = normalizeAbsolutePath(input);
+      if (process.platform !== 'win32') return normalized;
+      return normalized
+        .split(path.sep)
+        .map((segment) => portablePathSegmentIdentity(segment))
+        .join('/');
+    };
+    const byPath = new Map<string, string>();
+    for (const row of rows) {
+      const base = row.location_kind === 'managed'
+        ? root
+        : row.linked_folder_id
+          ? linkedRoots.get(row.linked_folder_id)
+          : undefined;
+      if (!base) continue;
+      byPath.set(key(path.join(base, ...row.relative_file_path.split('/'))), row.asset_id);
+    }
+    const resolved: string[] = [];
+    const seen = new Set<string>();
+    for (const sourcePath of sourcePaths) {
+      let assetId: string | undefined;
+      try {
+        assetId = byPath.get(key(sourcePath));
+      } catch {
+        continue;
+      }
+      if (assetId && !seen.has(assetId)) {
+        seen.add(assetId);
+        resolved.push(assetId);
+      }
+    }
+    return resolved;
+  }
+
+  /**
    * Resolve the absolute path of a directory-tree folder (managed or linked)
    * for Main-process shell/clipboard actions (REQ-MENU-006). The value never
    * crosses to the Renderer (REQ-COMMAND-003).
@@ -16353,6 +16433,28 @@ export class LibraryService {
       return { artifactId };
     } catch (error) {
       const extension = path.extname(assetPath).toLowerCase();
+      if (
+        !imageProcessed &&
+        (extension === '.jpg' || extension === '.jpeg') &&
+        !execution.signal?.aborted
+      ) {
+        // Sharp correctly rejects severe JPEG truncation, while FFmpeg can
+        // often still recover the decoded rows that precede the missing tail.
+        // Keep this narrowly scoped to JPEGs and only enter it after the
+        // normal Sharp path failed, so healthy images retain the faster
+        // in-process decoder.
+        const recovered = await this.tryGenerateTruncatedJpegThumbnail({
+          openLibrary,
+          assetPath,
+          revisionId,
+          artifactId,
+          artifactRelPath,
+          artifactAbsPath,
+          execution,
+          input,
+        });
+        if (recovered) return { artifactId };
+      }
       if (!imageProcessed && (extension === '.tif' || extension === '.tiff')) {
         // libvips handles ordinary TIFFs efficiently. Complex/multi-part TIFFs
         // that it cannot decode fall back to the same OIIO + OCIO path as EXR
@@ -16398,6 +16500,97 @@ export class LibraryService {
       }
 
       throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
+  private async tryGenerateTruncatedJpegThumbnail(input: {
+    openLibrary: OpenLibrary;
+    assetPath: string;
+    revisionId: string;
+    artifactId: string;
+    artifactRelPath: string;
+    artifactAbsPath: string;
+    execution: MediaExecutionContext;
+    input: { libraryId: string; assetId: string };
+  }): Promise<boolean> {
+    const {
+      openLibrary,
+      assetPath,
+      revisionId,
+      artifactId,
+      artifactRelPath,
+      artifactAbsPath,
+      execution,
+    } = input;
+    try {
+      const result = await this.runFfmpeg(
+        resolveFfmpegPath(),
+        [
+          '-y',
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-err_detect',
+          'ignore_err',
+          '-i',
+          assetPath,
+          '-frames:v',
+          '1',
+          '-vf',
+          'scale=512:512:force_original_aspect_ratio=decrease',
+          '-c:v',
+          'libwebp',
+          '-q:v',
+          '80',
+          artifactAbsPath,
+        ],
+        { timeoutMs: 120_000, signal: execution.signal },
+      );
+      const outputStat = existsSync(artifactAbsPath)
+        ? statSync(artifactAbsPath)
+        : null;
+      if (!outputStat || outputStat.size === 0) {
+        rmSync(artifactAbsPath, { force: true });
+        return false;
+      }
+      if (result.exitCode !== 0) {
+        this.diagnose('thumbnail.jpeg-truncated-recovery-warning', new Error(
+          `FFmpeg returned ${result.exitCode} after producing a thumbnail.`,
+        ), {
+          libraryId: input.input.libraryId,
+          assetId: input.input.assetId,
+          stderr: result.stderr.slice(-400),
+        });
+      }
+      const headerSize = readImageDimensionsSync(assetPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', 'image/webp', ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          outputStat.size,
+          artifactRelPath,
+          headerSize?.width ?? null,
+          headerSize?.height ?? null,
+          `ffmpeg@${FFMPEG_VERSION};truncated-jpeg-recovery`,
+          new Date().toISOString(),
+        );
+      if (headerSize) {
+        this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
+      }
+      return true;
+    } catch (recoveryError) {
+      rmSync(artifactAbsPath, { force: true });
+      this.diagnose('thumbnail.jpeg-truncated-recovery', recoveryError, {
+        libraryId: input.input.libraryId,
+        assetId: input.input.assetId,
+      });
+      return false;
     }
   }
 
@@ -17821,7 +18014,10 @@ export class LibraryService {
       .run(artifactId, revisionId, kind, mimeType, filePath, generatorVersion, errorCode, new Date().toISOString());
   }
 
-  /** Return the current (invalidated_at IS NULL) thumbnail artifact for an asset's current revision. */
+  /**
+   * Return the current card image artifact for an asset's current revision.
+   * Videos use `video_poster`; other card media uses `thumbnail`.
+   */
   getThumbnailArtifact(
     libraryId: string,
     assetId: string,
@@ -17842,9 +18038,10 @@ export class LibraryService {
         `SELECT artifact_id, file_path, width, height
            FROM revision_artifacts
           WHERE revision_id = ?
-            AND kind = 'thumbnail'
+            AND kind IN ('thumbnail', 'video_poster')
             AND status = 'ready'
             AND invalidated_at IS NULL
+          ORDER BY CASE kind WHEN 'video_poster' THEN 0 ELSE 1 END
           LIMIT 1`,
       )
       .get(assetRow.current_revision_id) as {

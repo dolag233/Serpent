@@ -25,6 +25,7 @@ export type AssetActionKeyboardCommand =
   | "asset.move-to-trash"
   | "asset.rename"
   | "asset.copy"
+  | "asset.copy-file-path"
   | "asset.paste"
   | "asset.reveal-in-folder"
   | "asset.delete-from-disk";

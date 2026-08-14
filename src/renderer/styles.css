@@ -8338,6 +8338,7 @@ select.ai-config-input.ai-config-languages {
 
 .marquee-selection-box {
   position: fixed;
+  display: none;
   z-index: 4;
   border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);

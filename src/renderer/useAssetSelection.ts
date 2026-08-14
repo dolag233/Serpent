@@ -458,6 +458,11 @@ export function useAssetSelection({
       )
         ? [...selectedFolderIds]
         : [];
+      // A scroll or virtualization pass may have moved cards since the last
+      // marquee. Start each drag from fresh DOM rectangles; subsequent frames
+      // can still reuse the content-space cache while the layout is stable.
+      marqueeCardRectsRef.current.clear();
+      marqueeCacheLayoutSigRef.current = "";
       applyMarqueeBoxStyle({
         left: e.clientX,
         top: e.clientY,
@@ -521,10 +526,9 @@ export function useAssetSelection({
         scroll,
       );
       const cards = canvas.querySelectorAll<HTMLElement>(
-        publishedAssetHits
-          ? "[data-folder-id]"
-          : "[data-asset-id], [data-folder-id]",
+        "[data-asset-id], [data-folder-id]",
       );
+      const mountedAssetIds = new Set<string>();
       // Serpent-wgl2: cache card rects in canvas-content coordinates — they
       // stay valid while scrolling and are only dropped when the canvas
       // layout size changes (window resize / column reflow). Scrolling the
@@ -552,15 +556,29 @@ export function useAssetSelection({
           );
           if (key !== "") cardRects.set(key, cardContentRect);
         }
-        if (rectsIntersect(cardContentRect, box)) {
-          const assetId = card.dataset.assetId;
-          const folderId = card.dataset.folderId;
-          if (assetId) assetHitIds.push(assetId);
-          else if (folderId) folderHitIds.push(folderId);
-        }
+        const assetId = card.dataset.assetId;
+        const folderId = card.dataset.folderId;
+        if (assetId) mountedAssetIds.add(assetId);
+        if (!rectsIntersect(cardContentRect, box)) continue;
+        if (assetId) assetHitIds.push(assetId);
+        else if (folderId) folderHitIds.push(folderId);
       }
+      const resolvedAssetHitIds = publishedAssetHits
+        ? (() => {
+            const intersectingAssetIds = new Set(assetHitIds);
+            const publishedAssetIds = new Set(publishedAssetHits);
+            return [
+              ...publishedAssetHits.filter(
+                (assetId) =>
+                  !mountedAssetIds.has(assetId) ||
+                  intersectingAssetIds.has(assetId),
+              ),
+              ...assetHitIds.filter((assetId) => !publishedAssetIds.has(assetId)),
+            ];
+          })()
+        : assetHitIds;
       return {
-        assetHitIds: publishedAssetHits ?? assetHitIds,
+        assetHitIds: resolvedAssetHitIds,
         folderHitIds,
       };
     };

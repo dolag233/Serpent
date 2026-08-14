@@ -96,6 +96,8 @@ const linkedFolderSummary = (id: string) => ({
   status: 'available' as const,
   assetCount: 0,
   absoluteRootPath: '/external/assets',
+  relativePath: '',
+  parentFolderId: null,
 });
 
 async function callTool(

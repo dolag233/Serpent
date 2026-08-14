@@ -39,6 +39,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly onTrashManaged: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
   readonly onCopyFiles: (assetIds: string[]) => void;
+  readonly onCopyFilePath: (assetId: string) => void;
   readonly onPasteIntoFolder: (folderId: string | null) => void;
   readonly onRevealInFolder: (assetId: string) => void;
   readonly onDiskDelete: (
@@ -72,6 +73,7 @@ export function useBrowseCommandKeyboard(
     onTrashManaged,
     onRename,
     onCopyFiles,
+    onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,
     onDiskDelete,
@@ -219,6 +221,17 @@ export function useBrowseCommandKeyboard(
       }
 
       if (
+        matchAssetActionKeyboardCommand("asset.copy-file-path", event, platform) &&
+        !showTrash &&
+        selectedAsset?.availability === "available" &&
+        !selectedAsset.deletedAt
+      ) {
+        event.preventDefault();
+        onCopyFilePath(selectedAsset.assetId);
+        return;
+      }
+
+      if (
         matchAssetActionKeyboardCommand(
           "asset.move-to-trash",
           event,
@@ -268,6 +281,7 @@ export function useBrowseCommandKeyboard(
     onTrashManaged,
     onRename,
     onCopyFiles,
+    onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,
     onDiskDelete,

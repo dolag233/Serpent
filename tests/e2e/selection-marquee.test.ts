@@ -310,15 +310,15 @@ test("marquee keeps its viewport range aligned after the canvas is scrolled", as
             bottom: rect.bottom,
           };
         })
-        .filter(
-          (card) =>
-            card.id &&
-            card.top > canvasRect.top + 50 &&
-            card.bottom < canvasRect.bottom - 50,
-        );
-      const first = cards[0];
+        .filter((card) => card.id);
+      const fullyVisibleCards = cards.filter(
+        (card) =>
+          card.top > canvasRect.top + 50 &&
+          card.bottom < canvasRect.bottom - 50,
+      );
+      const first = fullyVisibleCards[0];
       if (!first) throw new Error("No fully visible card after scrolling");
-      const second = cards.find(
+      const second = fullyVisibleCards.find(
         (card) => Math.abs(card.top - first.top) < 2 && card.left > first.right,
       );
       if (!second) throw new Error("No second card in the visible row");

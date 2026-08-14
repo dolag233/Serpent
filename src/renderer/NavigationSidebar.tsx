@@ -532,6 +532,10 @@ export interface NavigationSidebarProps {
     targetFolderId: string | null | undefined,
     targetCollectionId: string | undefined,
   ) => void;
+  /** Renderer-only fallback for a native drag whose custom payload was lost. */
+  getManagedAssetDragIds?: () => readonly string[] | null;
+  /** Resolve an Electron native file drop back to managed asset ids. */
+  onResolveManagedAssetDrop?: (files: File[]) => Promise<string[]>;
 
   // --- Internal asset drag/drop (REQ-DND-001/002 + Serpent-aa3 copy mode) ---
   onAssetsDroppedOnFolder: (
@@ -658,6 +662,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onChooseSmartCollection,
     onExternalDragOver,
     onExternalDrop,
+    getManagedAssetDragIds,
+    onResolveManagedAssetDrop,
     onAssetsDroppedOnFolder,
     onFoldersDroppedOnFolder,
     selectedFolderIds,
@@ -810,7 +816,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onFoldersDroppedOnFolder(folderId, folderIds);
           return;
         }
-        const ids = parseManagedAssetDrag(event.dataTransfer);
+        const ids =
+          parseManagedAssetDrag(event.dataTransfer) ??
+          (getManagedAssetDragIds
+            ? [...(getManagedAssetDragIds() ?? [])]
+            : null) ??
+          null;
         setAssetDropTarget(null);
         if (ids && ids.length > 0) {
           event.preventDefault();
@@ -819,6 +830,29 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             ids,
             resolveDragDropMode({ altKey: event.altKey }),
           );
+          return;
+        }
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length > 0 && onResolveManagedAssetDrop) {
+          event.preventDefault();
+          event.stopPropagation();
+          const payload = externalImportPayload(event.dataTransfer);
+          void onResolveManagedAssetDrop(files).then((resolvedIds) => {
+            if (resolvedIds.length > 0) {
+              onAssetsDroppedOnFolder(
+                folderId,
+                resolvedIds,
+                resolveDragDropMode({ altKey: event.altKey }),
+              );
+              return;
+            }
+            void onImportDroppedFiles(
+              payload.files,
+              folderId,
+              undefined,
+              payload,
+            );
+          });
           return;
         }
         onExternalDrop(event, folderId, undefined);
@@ -1028,17 +1062,35 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             const serialized = event.dataTransfer.getData(
               "application/x-serpent-managed-assets",
             );
-            if (!serialized) return;
-            event.preventDefault();
-            setAssetDropTarget(null);
-            try {
-              const ids = JSON.parse(serialized) as string[];
+            const fallbackIds = getManagedAssetDragIds
+              ? [...(getManagedAssetDragIds() ?? [])]
+              : null;
+            if (serialized || fallbackIds) {
+              event.preventDefault();
+              setAssetDropTarget(null);
+              try {
+                const ids = serialized
+                  ? (JSON.parse(serialized) as string[])
+                  : fallbackIds!;
+                const root =
+                  linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
+                  lf;
+                void onCopyManagedToLinked(root, ids);
+              } catch {
+                // drag data invalid — silently ignore
+              }
+              return;
+            }
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length > 0 && onResolveManagedAssetDrop) {
+              event.preventDefault();
+              setAssetDropTarget(null);
               const root =
                 linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
                 lf;
-              void onCopyManagedToLinked(root, ids);
-            } catch {
-              // drag data invalid — silently ignore
+              void onResolveManagedAssetDrop(files).then((ids) => {
+                if (ids.length > 0) void onCopyManagedToLinked(root, ids);
+              });
             }
           }}
         />
@@ -1115,7 +1167,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           event.preventDefault();
           event.stopPropagation();
           setAssetDropTarget(null);
-          const assetIds = parseManagedAssetDrag(event.dataTransfer);
+          const assetIds =
+            parseManagedAssetDrag(event.dataTransfer) ??
+            (getManagedAssetDragIds
+              ? [...(getManagedAssetDragIds() ?? [])]
+              : null) ??
+            null;
           if (assetIds && assetIds.length > 0) {
             onAssetsDroppedOnCollection(
               c.collectionId,
@@ -1126,6 +1183,28 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }
           if (draggedCollectionId) {
             void onReorderCollection(draggedCollectionId, c.collectionId);
+          } else if (
+            event.dataTransfer.files.length > 0 &&
+            onResolveManagedAssetDrop
+          ) {
+            const files = Array.from(event.dataTransfer.files);
+            const payload = externalImportPayload(event.dataTransfer);
+            void onResolveManagedAssetDrop(files).then((resolvedIds) => {
+              if (resolvedIds.length > 0) {
+                onAssetsDroppedOnCollection(
+                  c.collectionId,
+                  resolvedIds,
+                  resolveDragDropMode({ altKey: event.altKey }),
+                );
+                return;
+              }
+              void onImportDroppedFiles(
+                payload.files,
+                undefined,
+                c.collectionId,
+                payload,
+              );
+            });
           } else if (supportsExternalImportTransfer(event.dataTransfer)) {
             const payload = externalImportPayload(event.dataTransfer);
             void onImportDroppedFiles(
@@ -1276,11 +1355,25 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               onFoldersDroppedOnTrash(folderIds);
               return;
             }
-            const ids = parseManagedAssetDrag(event.dataTransfer);
+            const ids =
+              parseManagedAssetDrag(event.dataTransfer) ??
+              (getManagedAssetDragIds
+                ? [...(getManagedAssetDragIds() ?? [])]
+                : null) ??
+              null;
             setAssetDropTarget(null);
-            if (!ids || ids.length === 0) return;
-            event.preventDefault();
-            onAssetsDroppedOnTrash(ids);
+            if (ids && ids.length > 0) {
+              event.preventDefault();
+              onAssetsDroppedOnTrash(ids);
+              return;
+            }
+            const files = Array.from(event.dataTransfer.files);
+            if (files.length > 0 && onResolveManagedAssetDrop) {
+              event.preventDefault();
+              void onResolveManagedAssetDrop(files).then((resolvedIds) => {
+                if (resolvedIds.length > 0) onAssetsDroppedOnTrash(resolvedIds);
+              });
+            }
           }}
         />
         <NavRow

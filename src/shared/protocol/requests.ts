@@ -347,6 +347,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       })
       .optional(),
   }),
+  // Created by preload after resolving native File handles. Paths never
+  // originate from Renderer code; Main/Worker map them back to asset ids.
+  z.strictObject({
+    type: z.literal('asset.resolve-dropped-paths.request'),
+    libraryId: identifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(10_000),
+  }),
   z.strictObject({
     type: z.literal('asset.import-drop-invalid.report'),
     libraryId: identifierSchema,
@@ -2053,6 +2060,25 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
         { message: 'assetIds must not contain duplicates.' },
       ),
   }),
+  // Main-only cache primer for OS-native asset drag. The Worker resolves the
+  // paths before dragstart, so Main can start the platform drag synchronously.
+  z.strictObject({
+    type: z.literal('media.get-asset-drag-infos'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
+  }),
+  z.strictObject({
+    type: z.literal('media.resolve-asset-paths'),
+    libraryId: identifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(10_000),
+  }),
   z.strictObject({
     type: z.literal('media.get-thumbnail-artifact'),
     libraryId: identifierSchema,
@@ -2191,8 +2217,30 @@ export const workerRequestSchema = z.strictObject({
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;
 export type WorkerHistoryContext = NonNullable<WorkerRequest['historyContext']>;
 
+/**
+ * Renderer → Main only. This is intentionally separate from RendererRequest:
+ * it is sent one-way from dragstart and never waits on the Worker.
+ */
+export const nativeAssetDragRequestSchema = z.strictObject({
+  libraryId: identifierSchema,
+  assetIds: z
+    .array(identifierSchema)
+    .min(1)
+    .max(10_000)
+    .refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+});
+
+export type NativeAssetDragRequest = z.infer<typeof nativeAssetDragRequestSchema>;
+
 export function parseWorkerRequest(input: unknown): WorkerRequest {
   return workerRequestSchema.parse(input);
+}
+
+export function parseNativeAssetDragRequest(input: unknown): NativeAssetDragRequest {
+  return nativeAssetDragRequestSchema.parse(input);
 }
 
 export const activeContextSchema = z.strictObject({

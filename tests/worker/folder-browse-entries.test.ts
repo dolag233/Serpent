@@ -129,4 +129,55 @@ describe('folder browse entries', () => {
 
     service.closeAll();
   });
+
+  it('refreshes recursive ancestor counts after moving an asset between child folders', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'BrowseMove', selectedParentPath: root });
+    const parent = service.createManagedFolder({ libraryId: library.libraryId, name: 'Parent' });
+    const sourceFolder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Source',
+    });
+    const targetFolder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Target',
+    });
+    const sourcePath = path.join(root, 'move.png');
+    writeFileSync(sourcePath, VALID_1X1_PNG);
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: sourceFolder.folderId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    if ('importId' in imported) throw new Error('unexpected conflict plan');
+    const asset = imported.assets[0]!;
+
+    expect(service.listManagedFolders(library.libraryId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ folderId: parent.folderId, directAssetCount: 1 }),
+        expect.objectContaining({ folderId: sourceFolder.folderId, directAssetCount: 1 }),
+        expect.objectContaining({ folderId: targetFolder.folderId, directAssetCount: 0 }),
+      ]),
+    );
+
+    service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+      targetFolderId: targetFolder.folderId,
+      conflictStrategy: 'keep-both',
+    });
+
+    expect(service.listManagedFolders(library.libraryId)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ folderId: parent.folderId, directAssetCount: 1 }),
+        expect.objectContaining({ folderId: sourceFolder.folderId, directAssetCount: 0 }),
+        expect.objectContaining({ folderId: targetFolder.folderId, directAssetCount: 1 }),
+      ]),
+    );
+    service.closeAll();
+  });
 });

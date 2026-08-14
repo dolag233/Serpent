@@ -2440,6 +2440,65 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         absolutePaths,
       };
     }
+    case 'media.get-asset-drag-infos': {
+      // Main-only cache primer for native drag. Resolve visible entries before
+      // dragstart: webContents.startDrag cannot wait for this Worker round trip.
+      const { libraryId, assetIds } = request.command;
+      const entries: Array<{
+        assetId: string;
+        absolutePath: string;
+        thumbnailAbsolutePath?: string;
+      }> = [];
+      for (const assetId of assetIds) {
+        let absolutePath: string;
+        try {
+          absolutePath = libraryService.resolveAssetPath(libraryId, assetId);
+        } catch (error) {
+          if (
+            error instanceof LibraryServiceError &&
+            error.code === 'ASSET_NOT_FOUND'
+          ) {
+            continue;
+          }
+          throw error;
+        }
+        const thumbnail = libraryService.getThumbnailArtifact(libraryId, assetId);
+        let thumbnailAbsolutePath: string | undefined;
+        if (thumbnail) {
+          try {
+            thumbnailAbsolutePath = libraryService.getArtifactAbsolutePath(
+              libraryId,
+              thumbnail.artifactId,
+              'preview',
+            );
+          } catch (error) {
+            if (
+              !(error instanceof LibraryServiceError) ||
+              error.code !== 'ASSET_NOT_FOUND'
+            ) {
+              throw error;
+            }
+          }
+        }
+        entries.push({
+          assetId,
+          absolutePath,
+          ...(thumbnailAbsolutePath ? { thumbnailAbsolutePath } : {}),
+        });
+      }
+      return {
+        ok: true,
+        type: 'media.asset-drag-infos',
+        entries,
+      };
+    }
+    case 'media.resolve-asset-paths': {
+      const assetIds = libraryService.resolveAssetIdsByAbsolutePaths(
+        request.command.libraryId,
+        request.command.sourcePaths,
+      );
+      return { ok: true, type: 'media.asset-ids-resolved', assetIds };
+    }
     case 'media.enqueue-thumbnail-jobs': {
       const enqueued = scheduleThumbnailQueue(request.command.libraryId, { limit: 50 });
       return { ok: true, type: 'media.jobs.enqueued', libraryId: request.command.libraryId, enqueued };

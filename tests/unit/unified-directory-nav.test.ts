@@ -22,6 +22,8 @@ const linked = (
   status: "available",
   assetCount: 0,
   absoluteRootPath: "/tmp/linked",
+  relativePath: "",
+  parentFolderId: null,
   ...overrides,
 });
 

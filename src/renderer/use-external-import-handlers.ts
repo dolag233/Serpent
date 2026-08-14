@@ -58,6 +58,9 @@ export type UseExternalImportHandlersParams = {
     targetFolderId: string,
     folderIds: readonly string[],
   ) => void;
+  /** Renderer-only fallback for HTML5 drags; native drags resolve File handles. */
+  getManagedAssetDragIds?: () => readonly string[] | null;
+  onResolveManagedAssetDrop?: (files: File[]) => Promise<string[]>;
   onAssetsDroppedOnFolder?: (
     targetFolderId: string,
     assetIds: string[],
@@ -85,6 +88,8 @@ export function useExternalImportHandlers({
   setConflicts,
   setImageSequenceImportOffer,
   onFoldersDroppedOnFolder,
+  getManagedAssetDragIds,
+  onResolveManagedAssetDrop,
   onAssetsDroppedOnFolder,
 }: UseExternalImportHandlersParams) {
   const t = useT();
@@ -298,9 +303,19 @@ export function useExternalImportHandlers({
       externalDragDepth.current = 0;
       setExternalDropActive(false);
       const payload = externalImportPayload(event.dataTransfer);
+      if (payload.files.length > 0 && onResolveManagedAssetDrop) {
+        // A native drag returning to the browse canvas is not an import. Its
+        // File handles identify existing managed assets, so consume it here
+        // rather than opening a false duplicate-file conflict dialog.
+        void onResolveManagedAssetDrop(payload.files).then((assetIds) => {
+          if (assetIds.length > 0) return;
+          void importDroppedFiles(payload.files, undefined, undefined, payload);
+        });
+        return;
+      }
       void importDroppedFiles(payload.files, undefined, undefined, payload);
     },
-    [importDroppedFiles, previewBlocksDrop],
+    [importDroppedFiles, onResolveManagedAssetDrop, previewBlocksDrop],
   );
 
   const handleTargetExternalDragOver = useCallback(
@@ -335,6 +350,20 @@ export function useExternalImportHandlers({
       event.stopPropagation();
       setFolderCardDropTarget(null);
       const payload = externalImportPayload(event.dataTransfer);
+      if (payload.files.length > 0 && onResolveManagedAssetDrop) {
+        void onResolveManagedAssetDrop(payload.files).then((assetIds) => {
+          // Folder/collection targets resolve native managed assets in their
+          // dedicated drop handlers. A generic target must not re-import them.
+          if (assetIds.length > 0) return;
+          void importDroppedFiles(
+            payload.files,
+            targetFolderId,
+            targetCollectionId,
+            payload,
+          );
+        });
+        return;
+      }
       void importDroppedFiles(
         payload.files,
         targetFolderId,
@@ -342,7 +371,7 @@ export function useExternalImportHandlers({
         payload,
       );
     },
-    [importDroppedFiles, previewBlocksDrop],
+    [importDroppedFiles, onResolveManagedAssetDrop, previewBlocksDrop],
   );
 
   const createFolderCardDropHandlers = useCallback(
@@ -391,7 +420,12 @@ export function useExternalImportHandlers({
         handleTargetExternalDragOver(event);
       },
       onDrop: (event: DragEvent<HTMLButtonElement>) => {
-        const assetIds = parseManagedAssetDrag(event.dataTransfer);
+        const assetIds =
+          parseManagedAssetDrag(event.dataTransfer) ??
+          (getManagedAssetDragIds
+            ? [...(getManagedAssetDragIds() ?? [])]
+            : null) ??
+          null;
         if (assetIds && assetIds.length > 0) {
           event.preventDefault();
           setFolderCardDropTarget(null);
@@ -400,6 +434,25 @@ export function useExternalImportHandlers({
             assetIds,
             resolveDragDropMode({ altKey: event.altKey }),
           );
+          return;
+        }
+        const files = Array.from(event.dataTransfer.files);
+        if (files.length > 0 && onResolveManagedAssetDrop) {
+          event.preventDefault();
+          event.stopPropagation();
+          setFolderCardDropTarget(null);
+          const payload = externalImportPayload(event.dataTransfer);
+          void onResolveManagedAssetDrop(files).then((resolvedIds) => {
+            if (resolvedIds.length > 0) {
+              onAssetsDroppedOnFolder?.(
+                folderId,
+                resolvedIds,
+                resolveDragDropMode({ altKey: event.altKey }),
+              );
+              return;
+            }
+            void importDroppedFiles(files, folderId, undefined, payload);
+          });
           return;
         }
         const draggedFolderIds = parseManagedFolderDrag(event.dataTransfer);
@@ -416,6 +469,9 @@ export function useExternalImportHandlers({
       folderCardDropTarget,
       handleTargetExternalDragOver,
       handleTargetExternalDrop,
+      importDroppedFiles,
+      getManagedAssetDragIds,
+      onResolveManagedAssetDrop,
       onFoldersDroppedOnFolder,
       onAssetsDroppedOnFolder,
     ],

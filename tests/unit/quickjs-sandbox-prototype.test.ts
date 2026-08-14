@@ -156,6 +156,8 @@ describe('QuickJS/WASM sandbox engine prototype', () => {
                   status: 'available',
                   assetCount: 3,
                   absoluteRootPath: '/must-not-reach-script/external',
+                  relativePath: '',
+                  parentFolderId: null,
                 }],
                 total: 1,
                 offset: 0,

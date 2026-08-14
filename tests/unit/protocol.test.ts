@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  parseNativeAssetDragRequest,
   parseRendererRequest,
   parseWorkerRequest,
 } from '../../src/shared/protocol/requests';
@@ -362,6 +363,27 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
       assetIds: ['asset-01', 'asset-02'],
     });
+    expect(parseNativeAssetDragRequest({
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+    })).toEqual({
+      libraryId: 'library-01',
+      assetIds: ['asset-01', 'asset-02'],
+    });
+    expect(() => parseNativeAssetDragRequest({
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      absolutePath: '/must-not-enter-renderer',
+    })).toThrow();
+    expect(parseRendererRequest({
+      type: 'asset.resolve-dropped-paths.request',
+      libraryId: 'library-01',
+      sourcePaths: ['/private/managed/asset.png'],
+    })).toEqual({
+      type: 'asset.resolve-dropped-paths.request',
+      libraryId: 'library-01',
+      sourcePaths: ['/private/managed/asset.png'],
+    });
     expect(parseRendererRequest({
       type: 'asset.open-with.request',
       libraryId: 'library-01',
@@ -406,6 +428,10 @@ describe('renderer request protocol', () => {
     })).toThrow();
     expect(() => parseRendererRequest({
       type: 'asset.copy-files.request',
+      libraryId: 'library-01',
+      assetIds: [],
+    })).toThrow();
+    expect(() => parseNativeAssetDragRequest({
       libraryId: 'library-01',
       assetIds: [],
     })).toThrow();
@@ -1212,6 +1238,15 @@ describe('preview response protocol', () => {
       assetId: 'asset-01',
       absolutePath: '/private/forged/path',
     })).toThrow();
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.dropped-paths.resolved',
+      assetIds: ['asset-01'],
+    })).toEqual({
+      ok: true,
+      type: 'asset.dropped-paths.resolved',
+      assetIds: ['asset-01'],
+    });
   });
 
   it('carries only the folder id for folder open-in-file-manager and copy-path results', () => {
@@ -1461,6 +1496,47 @@ describe('batch rating protocol', () => {
 });
 
 describe('worker request protocol', () => {
+  it('accepts the Main-only native drag cache primer and keeps its paths out of Renderer results', () => {
+    expect(parseWorkerRequest({
+      requestId: 'request-asset-drag',
+      command: {
+        type: 'media.get-asset-drag-infos',
+        libraryId: 'library-1',
+        assetIds: ['asset-1', 'asset-2'],
+      },
+    })).toMatchObject({
+      command: { type: 'media.get-asset-drag-infos', assetIds: ['asset-1', 'asset-2'] },
+    });
+
+    expect(parseWorkerResponse({
+      requestId: 'response-asset-drag',
+      result: {
+        ok: true,
+        type: 'media.asset-drag-infos',
+        entries: [{
+          assetId: 'asset-1',
+          absolutePath: '/private/library/asset-1.png',
+          thumbnailAbsolutePath: '/private/library/.serpent/artifacts/thumb.webp',
+        }],
+      },
+    }).result).toMatchObject({
+      type: 'media.asset-drag-infos',
+      entries: [{
+        thumbnailAbsolutePath: '/private/library/.serpent/artifacts/thumb.webp',
+      }],
+    });
+
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'media.asset-drag-infos',
+      entries: [{
+        assetId: 'asset-1',
+        absolutePath: '/private/library/asset-1.png',
+        thumbnailAbsolutePath: '/private/library/.serpent/artifacts/thumb.webp',
+      }],
+    })).toThrow();
+  });
+
   it('accepts a path-free remote media command and rejects non-HTTP addresses', () => {
     expect(parseWorkerRequest({
       requestId: 'request-web-drop',

@@ -367,6 +367,50 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
+  it('recovers a truncated JPEG through the bundled FFmpeg fallback', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      sharpFn: () => ({
+        async metadata() {
+          throw new Error('sharp rejected truncated JPEG');
+        },
+        rotate() { return this; },
+        toColourspace() { return this; },
+        resize() { return this; },
+        composite() { return this; },
+        webp() { return this; },
+        jpeg() { return this; },
+        async toFile() { throw new Error('sharp output should not be used'); },
+      }),
+      spawnFn: async (_command, args) => {
+        const outputPath = args.at(-1)!;
+        writeFileSync(outputPath, VALID_1X1_PNG);
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'TruncatedJPEG', selectedParentPath: root });
+    const sourcePath = path.join(root, 'truncated.jpg');
+    // The decoder seam is the focus of this test; the mock FFmpeg output
+    // represents the recoverable scanlines of a real truncated JPEG.
+    writeFileSync(sourcePath, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+    expect(result?.artifactId).toBeTruthy();
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({
+        status: 'ready',
+        mimeType: 'image/webp',
+        generatorVersion: expect.stringContaining('truncated-jpeg-recovery'),
+      });
+
+    service.closeAll();
+  });
+
   it('sets status=failed for corrupt images', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -479,6 +523,44 @@ describe('getThumbnailArtifact', () => {
     expect(artifact).toBeTruthy();
     expect(artifact!.artifactId).toBeTruthy();
     expect(artifact!.filePath).toBeTruthy();
+
+    service.closeAll();
+  });
+
+  it('returns a ready video poster as the card image artifact for native drag previews', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'VideoPoster', selectedParentPath: root });
+    const sourcePath = path.join(root, 'test.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(1024, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const posterPath = path.join(created.libraryPath, '.serpent', 'artifacts', 'drag-poster.jpg');
+    createTestImage(posterPath);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'video_poster', 'image/jpeg', ?, ?, 'test', 'ready', ?)`,
+    ).run(
+      'poster-for-drag',
+      asset.currentRevisionId,
+      readFileSync(posterPath).byteLength,
+      'drag-poster.jpg',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    expect(service.getThumbnailArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      artifactId: 'poster-for-drag',
+      filePath: 'drag-poster.jpg',
+    });
+    expect(service.getArtifactAbsolutePath(
+      created.libraryId,
+      'poster-for-drag',
+      'preview',
+    )).toBe(posterPath);
 
     service.closeAll();
   });
@@ -1105,6 +1187,49 @@ describe('resolveAssetPath', () => {
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     const assetAbsPath = service.resolveAssetPath(created.libraryId, assets[0]!.assetId);
     expect(existsSync(assetAbsPath)).toBe(true);
+
+    service.closeAll();
+  });
+
+  it('maps native dropped managed and linked paths back to live asset ids', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'DropResolve', selectedParentPath: root });
+
+    const managedSource = path.join(root, 'managed.png');
+    createTestImage(managedSource);
+    importNoConflict(service, created.libraryId, managedSource);
+    // The imported source is copied into Assets; use the Worker-owned path as
+    // the exact path that Electron would later hand back on a native drop.
+    const managedAsset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const managedPath = service.resolveAssetPath(created.libraryId, managedAsset.assetId);
+
+    const linkedRoot = path.join(root, 'linked-source');
+    mkdirSync(linkedRoot);
+    const linkedPath = path.join(linkedRoot, 'linked.png');
+    createTestImage(linkedPath);
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const linkedAsset = service
+      .listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((asset) => asset.locationKind === 'linked');
+    expect(linkedAsset).toBeDefined();
+
+    const linkedDropPath = service.resolveAssetPath(
+      created.libraryId,
+      linkedAsset!.assetId,
+    );
+
+    expect(
+      service.resolveAssetIdsByAbsolutePaths(created.libraryId, [
+        managedPath,
+        managedPath,
+        linkedDropPath,
+        path.join(root, 'not-managed.png'),
+      ]),
+    ).toEqual([managedAsset.assetId, linkedAsset!.assetId]);
 
     service.closeAll();
   });

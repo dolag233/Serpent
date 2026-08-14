@@ -45,6 +45,9 @@ describe("REQ-COMMAND-004 asset shortcuts", () => {
   const diskDelete = assetCommandDefinitions.find(
     (d) => d.id === "asset.delete-from-disk",
   )!.shortcut!;
+  const copyFilePath = assetCommandDefinitions.find(
+    (d) => d.id === "asset.copy-file-path",
+  )!.shortcut!;
 
   it("wires paste Ctrl+V / ⌘V", () => {
     expect(
@@ -114,5 +117,22 @@ describe("REQ-COMMAND-004 asset shortcuts", () => {
         "mac",
       ),
     ).toBe(false);
+  });
+
+  it("matches Ctrl+Shift+C / ⌥⌘C for copying the selected file path", () => {
+    expect(
+      matchesShortcut(
+        copyFilePath,
+        event({ key: "c", ctrlKey: true, shiftKey: true }),
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        copyFilePath,
+        event({ key: "c", metaKey: true, altKey: true }),
+        "mac",
+      ),
+    ).toBe(true);
   });
 });

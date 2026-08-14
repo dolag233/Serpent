@@ -46,16 +46,17 @@ export function leftoverWidthPx(
 }
 
 /**
- * Partitions masonry items into explicit columns in **asset order**
- * (Serpent-1jnp / SELECT-014).
+ * Partitions masonry items into explicit columns using shortest-column
+ * packing. A round-robin split preserves array order in the columns, but
+ * mixed portrait/landscape media can make one column several screens shorter
+ * than its neighbours; at the bottom of the viewport that appears as a large
+ * white slice (Serpent-1s3d). Stable shortest-column packing keeps the
+ * columns visually balanced while the original asset array remains the
+ * selection/browse order (Serpent-1jnp / SELECT-014).
  *
- * Round-robin by index (`i % columnCount`) so rank 0 is left→right across
- * columns, rank 1 is the next item in each column, etc. Visual reading order
- * then matches sort/array order — same as 平铺 — which keeps Shift ranges
- * coherent. Shortest-column packing previously scrambled that order.
- *
- * `estimateHeightPx` should include the whole card height (preview, optional
- * caption, and any vertical gap the renderer wants to account for).
+ * `estimateHeightPx` should include the whole card height (preview and
+ * optional caption). The fixed inter-card gap is included when comparing
+ * column loads, so a column with more cards is not systematically favoured.
  */
 export function distributeMasonryItems<T>(
   items: readonly T[],
@@ -71,7 +72,14 @@ export function distributeMasonryItems<T>(
   }));
 
   items.forEach((item, index) => {
-    const target = columns[index % safeColumnCount]!;
+    const target = columns.reduce((shortest, column) => {
+      const shortestLoad =
+        shortest.estimatedHeightPx +
+        shortest.items.length * ASSET_GRID_GAP_PX;
+      const columnLoad =
+        column.estimatedHeightPx + column.items.length * ASSET_GRID_GAP_PX;
+      return columnLoad < shortestLoad ? column : shortest;
+    }, columns[0]!);
     target.items.push(item);
     const estimatedHeight = estimateHeightPx(item, index);
     if (Number.isFinite(estimatedHeight) && estimatedHeight > 0) {
