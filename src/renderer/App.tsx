@@ -9427,13 +9427,15 @@ function AppInner() {
             while the browse grid scrolls (Serpent-ns3r). */}
         {externalDropActive && (
           <div className="external-drop-overlay" role="status">
-            <Icon name="upload" size={28} />
-            <strong>{t("toolbar.dropToImport")}</strong>
-            <span>
-              {activeCollectionId
-                ? t("toolbar.dropHintWithCollection")
-                : t("toolbar.dropHint")}
-            </span>
+            <div className="external-drop-overlay-content">
+              <Icon name="upload" size={28} />
+              <strong>{t("toolbar.dropToImport")}</strong>
+              <span>
+                {activeCollectionId
+                  ? t("toolbar.dropHintWithCollection")
+                  : t("toolbar.dropHint")}
+              </span>
+            </div>
           </div>
         )}
         </div>

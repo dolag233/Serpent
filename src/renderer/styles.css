@@ -4418,7 +4418,7 @@ body.serpent-modal-open .app-shell {
 .preview-video-fit:hover,
 .preview-video-fullscreen:hover,
 .preview-video-rate:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 .preview-video-time {
   flex: 0 0 auto;
@@ -8698,10 +8698,6 @@ select.ai-config-input.ai-config-languages {
   background: var(--text);
 }
 
-.workspace-canvas.is-external-drop {
-  outline: 1px solid color-mix(in srgb, var(--accent) 75%, transparent);
-  outline-offset: -2px;
-}
 .external-drop-overlay {
   position: absolute;
   z-index: 20;
@@ -8713,10 +8709,28 @@ select.ai-config-input.ai-config-languages {
   border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
   border-radius: 12px;
   /* Keep the drag affordance visible while letting the assets remain visible
-     through a 50% theme-surface wash. */
-  background: color-mix(in srgb, var(--canvas) 50%, transparent);
-  color: var(--accent);
+     through a translucent accent wash. Mixing with --canvas here made the
+     light theme effectively opaque white, which looked like the canvas had
+     been emptied during a drag. */
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--ui-action-accent);
   pointer-events: none;
+}
+.external-drop-overlay-content {
+  display: grid;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 48px));
+  place-items: center;
+  gap: 7px;
+  padding: 18px 24px 16px;
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+.external-drop-overlay-content > .icon {
+  color: var(--ui-action-accent);
 }
 .external-drop-overlay strong {
   color: var(--text);
@@ -8725,6 +8739,7 @@ select.ai-config-input.ai-config-languages {
 .external-drop-overlay span {
   color: var(--secondary);
   font-size: 11px;
+  text-align: center;
 }
 
 .asset-card {
