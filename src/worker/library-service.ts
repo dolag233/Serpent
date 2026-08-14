@@ -10815,10 +10815,17 @@ export class LibraryService {
       visibleChildren.map((row) => row.folder_id),
       input.showIgnored === true,
     );
+    // Serpent-d0nv: scheduling candidates are the top-3 direct assets by path
+    // with NO ready-thumbnail requirement — the cover scene must enqueue the
+    // folders that have no covers yet (the user-visible symptom).
+    const coverCandidateMap = this.folderCoverCandidateAssetMap(
+      openLibrary,
+      visibleChildren.map((row) => row.folder_id),
+      input.showIgnored === true,
+    );
 
     return visibleChildren.map((row) => {
       const directAssetCount = counts.directAssetCounts.get(row.folder_id) ?? 0;
-      const covers = coverMap.get(row.folder_id) ?? [];
       return {
         folderId: row.folder_id,
         parentFolderId: row.parent_folder_id,
@@ -10830,10 +10837,12 @@ export class LibraryService {
         // Serpent-toh / REQ-FOLDER-003: display all descendant assets.
         recursiveAssetCount: recursiveCounts.get(row.folder_id) ?? directAssetCount,
         childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
-        coverArtifactIds: covers.map((cover) => cover.artifactId),
+        coverArtifactIds: coverMap.get(row.folder_id) ?? [],
         // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
-        // + progressive refresh on thumbnail.ready).
-        coverAssetIds: covers.map((cover) => cover.assetId),
+        // + progressive refresh on thumbnail.ready). Candidates do NOT require
+        // a ready thumbnail — ungenerated assets get enqueued by the cover
+        // scene; display covers stay ready-gated in coverArtifactIds.
+        coverAssetIds: coverCandidateMap.get(row.folder_id) ?? [],
         linkedFolderId: null,
       };
     });
@@ -10869,12 +10878,6 @@ export class LibraryService {
         linkedAssetIsDirectChild(filePath, relativePath),
       ).length;
       const childFolderCount = directChildLinkedDirectories(prefixes, relativePath).length;
-      const covers = this.linkedDirectoryCoverArtifacts(
-        openLibrary,
-        resolved.linkedFolderId,
-        relativePath,
-        input.showIgnored === true,
-      );
       return {
         folderId,
         parentFolderId: input.parentFolderId,
@@ -10885,10 +10888,22 @@ export class LibraryService {
         directAssetCount,
         recursiveAssetCount: descendantPaths.length,
         childFolderCount,
-        coverArtifactIds: covers.map((cover) => cover.artifactId),
+        coverArtifactIds: this.linkedDirectoryCoverArtifactIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          relativePath,
+          input.showIgnored === true,
+        ),
         // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
-        // + progressive refresh on thumbnail.ready).
-        coverAssetIds: covers.map((cover) => cover.assetId),
+        // + progressive refresh on thumbnail.ready). Candidates do NOT require
+        // a ready thumbnail — ungenerated assets get enqueued by the cover
+        // scene; display covers stay ready-gated in coverArtifactIds.
+        coverAssetIds: this.linkedDirectoryCoverCandidateAssetIds(
+          openLibrary,
+          resolved.linkedFolderId,
+          relativePath,
+          input.showIgnored === true,
+        ),
         linkedFolderId: resolved.linkedFolderId,
       };
     });
@@ -10960,21 +10975,19 @@ export class LibraryService {
     return rows.map((row) => row.relative_file_path);
   }
 
-  private linkedDirectoryCoverArtifacts(
+  private linkedDirectoryCoverArtifactIds(
     openLibrary: OpenLibrary,
     linkedFolderId: string,
     relativePath: string,
     showIgnored: boolean,
-  ): Array<{ artifactId: string; assetId: string }> {
+  ): string[] {
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
       return [];
     }
     const prefix = relativePath === '' ? '' : `${relativePath}/`;
-    // Serpent-d0nv: select a.asset_id alongside artifact_id so the browse
-    // handler can schedule the cover thumbnail scene for these candidates.
     const rows = openLibrary.connection
       .prepare(
-        `SELECT ra.artifact_id, a.asset_id
+        `SELECT ra.artifact_id
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -10998,8 +11011,45 @@ export class LibraryService {
         prefix,
         [...prefix].length,
         prefix,
-      ) as Array<{ artifact_id: string; asset_id: string }>;
-    return rows.map((row) => ({ artifactId: row.artifact_id, assetId: row.asset_id }));
+      ) as Array<{ artifact_id: string }>;
+    return rows.map((row) => row.artifact_id);
+  }
+
+  /**
+   * Serpent-d0nv: linked-directory cover scheduling candidates — the top-3
+   * direct linked assets by path, with NO ready-thumbnail requirement (see
+   * folderCoverCandidateAssetMap).
+   */
+  private linkedDirectoryCoverCandidateAssetIds(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    relativePath: string,
+    showIgnored: boolean,
+  ): string[] {
+    const prefix = relativePath === '' ? '' : `${relativePath}/`;
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id
+           FROM assets a
+          WHERE a.linked_folder_id = ?
+            AND a.location_kind = 'linked'
+            AND a.deleted_at IS NULL
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+            AND (
+              a.relative_file_path = ?
+              OR (? != '' AND substr(a.relative_file_path, 1, ?) = ?)
+            )
+          ORDER BY a.relative_file_path
+          LIMIT 3`,
+      )
+      .all(
+        linkedFolderId,
+        relativePath,
+        prefix,
+        [...prefix].length,
+        prefix,
+      ) as Array<{ asset_id: string }>;
+    return rows.map((row) => row.asset_id);
   }
 
   /**
@@ -11196,8 +11246,8 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     folderIds: string[],
     showIgnored = false,
-  ): Map<string, Array<{ artifactId: string; assetId: string }>> {
-    const covers = new Map<string, Array<{ artifactId: string; assetId: string }>>();
+  ): Map<string, string[]> {
+    const covers = new Map<string, string[]>();
     if (folderIds.length === 0) return covers;
     // Serpent-verg review fix: libraries predating revision_artifacts.status
     // (v9) or linked_ignored_assets have no covers to map.
@@ -11208,13 +11258,9 @@ export class LibraryService {
       return covers;
     }
     const placeholders = folderIds.map(() => '?').join(', ');
-    // Serpent-d0nv: select a.asset_id alongside artifact_id so the browse
-    // handler can schedule the cover thumbnail scene for these candidates.
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.managed_folder_id AS folder_id,
-                ra.artifact_id AS artifact_id,
-                a.asset_id AS asset_id
+        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -11239,15 +11285,56 @@ export class LibraryService {
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
           ORDER BY a.managed_folder_id, a.relative_file_path`,
       )
-      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string; asset_id: string }>;
+      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
 
     for (const row of rows) {
       const existing = covers.get(row.folder_id) ?? [];
       if (existing.length >= 3) continue;
-      existing.push({ artifactId: row.artifact_id, assetId: row.asset_id });
+      existing.push(row.artifact_id);
       covers.set(row.folder_id, existing);
     }
     return covers;
+  }
+
+  /**
+   * Serpent-d0nv: cover scheduling candidates — the top-3 direct assets per
+   * folder by path, with NO ready-thumbnail requirement. The cover thumbnail
+   * scene (priority 400) schedules these asset ids so folders without covers
+   * generate their cover before the p50 path-alphabetical backfill; assets
+   * that already have a ready artifact are a no-op in enqueueThumbnailJobs.
+   */
+  private folderCoverCandidateAssetMap(
+    openLibrary: OpenLibrary,
+    folderIds: string[],
+    showIgnored = false,
+  ): Map<string, string[]> {
+    const candidates = new Map<string, string[]>();
+    if (folderIds.length === 0) return candidates;
+    if (!hasTable(openLibrary.connection, 'linked_ignored_assets')) {
+      return candidates;
+    }
+    const placeholders = folderIds.map(() => '?').join(', ');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.managed_folder_id AS folder_id, a.asset_id AS asset_id
+           FROM assets a
+          WHERE a.managed_folder_id IN (${placeholders})
+            AND a.deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_ignored_assets ignored WHERE ignored.asset_id = a.asset_id
+            )
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
+          ORDER BY a.managed_folder_id, a.relative_file_path`,
+      )
+      .all(...folderIds) as Array<{ folder_id: string; asset_id: string }>;
+
+    for (const row of rows) {
+      const existing = candidates.get(row.folder_id) ?? [];
+      if (existing.length >= 3) continue;
+      existing.push(row.asset_id);
+      candidates.set(row.folder_id, existing);
+    }
+    return candidates;
   }
 
   private summarizeManagedFolderRow(
