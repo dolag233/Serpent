@@ -152,6 +152,8 @@ export const ZoomableImage = forwardRef<
   const imageRef = useRef<HTMLImageElement>(null);
   const [fullDecoded, setFullDecoded] = useState(false);
   const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
+  const sourceNaturalRef = useRef({ w: 0, h: 0 });
+  const previousQuarterTurnsRef = useRef(displayTransform.quarterTurns);
   const {
     fitScale,
     fitToWindow,
@@ -164,13 +166,30 @@ export const ZoomableImage = forwardRef<
 
   const measureFromImage = useCallback(
     (image: HTMLImageElement) => {
+      const rotated =
+        previousQuarterTurnsRef.current !== displayTransform.quarterTurns;
+      previousQuarterTurnsRef.current = displayTransform.quarterTurns;
+      const hadNaturalSize = sourceNaturalRef.current.w > 0;
       setSourceNatural({ w: image.naturalWidth, h: image.naturalHeight });
+      sourceNaturalRef.current = {
+        w: image.naturalWidth,
+        h: image.naturalHeight,
+      };
       const size = viewerDisplaySize(
         image.naturalWidth,
         image.naturalHeight,
         displayTransform.quarterTurns,
       );
-      return measureAndFit("reset", { w: size.width, h: size.height });
+      // Serpent-esuj: preserve the user's zoom/pan when the placeholder
+      // upgrades to the decoded original (mode "preserve" keeps the relative
+      // scale and pan); first measurement and rotations reset to fit. With no
+      // interaction the preserve ratio is 1, so behavior equals reset.
+      const mode = rotated || !hadNaturalSize ? "reset" : "preserve";
+      const measured = measureAndFit(mode, { w: size.width, h: size.height });
+      if (!measured) {
+        sourceNaturalRef.current = { w: 0, h: 0 };
+      }
+      return measured;
     },
     [displayTransform.quarterTurns, measureAndFit],
   );
@@ -182,9 +201,12 @@ export const ZoomableImage = forwardRef<
     fitToWindow();
   }, [fitRequestToken, fitToWindow]);
 
-  // Reset decode latch whenever the full URL identity changes.
+  // Reset decode latch and measured size whenever the full URL identity
+  // changes (asset switch; placeholder→full upgrades keep the same src).
   useEffect(() => {
     setFullDecoded(false);
+    setSourceNatural({ w: 0, h: 0 });
+    sourceNaturalRef.current = { w: 0, h: 0 };
   }, [src]);
 
   // Prefetch full image; only promote after proven decode (naturalWidth > 0).
