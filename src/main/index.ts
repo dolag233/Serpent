@@ -1546,6 +1546,33 @@ async function primeNativeAssetDragCache(
   }
 }
 
+/**
+ * Serpent-v4jf: how many sorted-list-head assets to prime synchronously before
+ * a card-bearing response reaches the renderer. The head of the sorted list is
+ * exactly the first screen the user sees; priming more than a screenful before
+ * forwarding only delays the browse result.
+ */
+const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 500;
+
+/**
+ * Fire-and-forget primer for the rest of a large browse result. Chunked so a
+ * 50k result does not post one giant worker request and does not hold the
+ * worker for a single long burst; each chunk is a normal upsert.
+ */
+async function primeNativeAssetDragCacheInBackground(
+  libraryId: string,
+  assetIds: readonly string[],
+): Promise<void> {
+  const chunkSize = 5_000;
+  for (let i = 0; i < assetIds.length; i += chunkSize) {
+    const chunk = assetIds.slice(i, i + chunkSize);
+    await primeNativeAssetDragCache(libraryId, chunk, "upsert");
+    // Yield between chunks so unrelated worker traffic (thumbnail events,
+    // progress pushes) is not starved behind a long prime.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function createNativeDialogHost(): NativeDialogHost {
   return {
     getLocale: () => appLocale,
@@ -3507,6 +3534,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     // Worker round trip would miss Electron's native drag window. Upserting
     // instead of replacing avoids an auxiliary count query evicting the cards
     // visible in a concurrent search request.
+    //
+    // Serpent-v4jf: only the visible first screen (the sorted list head, i.e.
+    // what the user actually sees and can drag immediately) blocks the
+    // response. The rest primes in fire-and-forget chunks so a 50k browse
+    // result no longer stalls the renderer behind a full-cache worker burst.
     const nativeDragAssets = !workerResult.ok
       ? []
       : workerResult.type === "asset.list" ||
@@ -3522,13 +3554,21 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       "libraryId" in request &&
       typeof request.libraryId === "string"
     ) {
+      const dragAssetIds = nativeDragAssets.flatMap((asset) =>
+        asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+      );
       await primeNativeAssetDragCache(
         request.libraryId,
-        nativeDragAssets.flatMap((asset) =>
-          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-        ),
+        dragAssetIds.slice(0, NATIVE_DRAG_PRIME_VISIBLE_COUNT),
         "upsert",
       );
+      const rest = dragAssetIds.slice(NATIVE_DRAG_PRIME_VISIBLE_COUNT);
+      if (rest.length > 0) {
+        void primeNativeAssetDragCacheInBackground(
+          request.libraryId,
+          rest,
+        );
+      }
     }
 
     if (!workerResult.ok && relinkPreviewContext) {

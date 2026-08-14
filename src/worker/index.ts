@@ -2443,53 +2443,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'media.get-asset-drag-infos': {
       // Main-only cache primer for native drag. Resolve visible entries before
       // dragstart: webContents.startDrag cannot wait for this Worker round trip.
+      // Serpent-v4jf: batched resolution — the legacy per-asset loop cost 3-4
+      // point queries per asset (~150k+ queries for a 50k browse result) and
+      // stalled the Worker event loop; resolveAssetDragInfos batches in 500-id
+      // chunks with identical per-entry semantics (missing skipped, hard
+      // failures throw).
       const { libraryId, assetIds } = request.command;
-      const entries: Array<{
-        assetId: string;
-        absolutePath: string;
-        thumbnailAbsolutePath?: string;
-      }> = [];
-      for (const assetId of assetIds) {
-        let absolutePath: string;
-        try {
-          absolutePath = libraryService.resolveAssetPath(libraryId, assetId);
-        } catch (error) {
-          if (
-            error instanceof LibraryServiceError &&
-            error.code === 'ASSET_NOT_FOUND'
-          ) {
-            continue;
-          }
-          throw error;
-        }
-        const thumbnail = libraryService.getThumbnailArtifact(libraryId, assetId);
-        let thumbnailAbsolutePath: string | undefined;
-        if (thumbnail) {
-          try {
-            thumbnailAbsolutePath = libraryService.getArtifactAbsolutePath(
-              libraryId,
-              thumbnail.artifactId,
-              'preview',
-            );
-          } catch (error) {
-            if (
-              !(error instanceof LibraryServiceError) ||
-              error.code !== 'ASSET_NOT_FOUND'
-            ) {
-              throw error;
-            }
-          }
-        }
-        entries.push({
-          assetId,
-          absolutePath,
-          ...(thumbnailAbsolutePath ? { thumbnailAbsolutePath } : {}),
-        });
-      }
       return {
         ok: true,
         type: 'media.asset-drag-infos',
-        entries,
+        entries: libraryService.resolveAssetDragInfos(libraryId, assetIds),
       };
     }
     case 'media.resolve-asset-paths': {
