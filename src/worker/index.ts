@@ -1489,6 +1489,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         scope: request.command.scope ?? null,
         sort: request.command.sort ?? null,
         scopeMode: request.command.scopeMode ?? false,
+        idsOnly: request.command.idsOnly ?? false,
         showIgnored: request.command.showIgnored === true,
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
@@ -1507,6 +1508,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         total: result.total,
         offset: result.offset,
         snippets: result.snippets,
+        ...(result.assetIds ? { assetIds: result.assetIds } : {}),
       };
     }
     case 'smart-collection.list':
@@ -1542,6 +1544,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         items: result.items,
         total: result.total,
         offset: result.offset,
+        ...(result.assetIds ? { assetIds: result.assetIds } : {}),
       };
     }
     case 'asset.trash': {

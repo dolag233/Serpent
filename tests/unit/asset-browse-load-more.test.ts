@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appendAssetPage,
   countNewlyAddedAssets,
   resolveSearchTotalAfterAppend,
 } from "../../src/renderer/asset-browse-load-more";
@@ -48,5 +49,32 @@ describe("countNewlyAddedAssets", () => {
         [{ assetId: "b" }, { assetId: "c" }, { assetId: "a" }],
       ),
     ).toBe(1);
+  });
+});
+
+describe("appendAssetPage (Serpent-ws4k)", () => {
+  it("appends the page in worker order at the tail", () => {
+    expect(
+      appendAssetPage(
+        [{ assetId: "a" }, { assetId: "b" }],
+        [{ assetId: "c" }, { assetId: "d" }],
+      ).map((item) => item.assetId),
+    ).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("drops page ids already present (scope shifted between pages)", () => {
+    expect(
+      appendAssetPage(
+        [{ assetId: "a" }, { assetId: "b" }],
+        [{ assetId: "b" }, { assetId: "c" }, { assetId: "a" }],
+      ).map((item) => item.assetId),
+    ).toEqual(["a", "b", "c"]);
+  });
+
+  it("returns a copy even for an empty page", () => {
+    const current = [{ assetId: "a" }];
+    const next = appendAssetPage(current, []);
+    expect(next).toEqual(current);
+    expect(next).not.toBe(current);
   });
 });

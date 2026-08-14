@@ -2085,6 +2085,7 @@ async function commandFor(
         scope: request.scope,
         sort: request.sort,
         scopeMode: request.scopeMode,
+        idsOnly: request.idsOnly,
         limit: request.limit,
         offset: request.offset,
         showIgnored: request.showIgnored,
@@ -2123,6 +2124,7 @@ async function commandFor(
         libraryId: request.libraryId,
         collectionId: request.collectionId,
         scopeMode: request.scopeMode,
+        idsOnly: request.idsOnly,
         limit: request.limit,
         offset: request.offset,
       };

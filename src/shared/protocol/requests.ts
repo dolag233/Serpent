@@ -622,7 +622,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     sort: sortDefinitionSchema.optional(),
     /** When true, return the full browse scope (up to browse-scope cap); limit/offset ignored. */
     scopeMode: z.boolean().optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    /** Serpent-ws4k: return only `assetIds` for the whole scope (select-all); limit/offset ignored. */
+    idsOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
     showIgnored: z.boolean().optional(),
   }),
@@ -658,7 +660,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     scopeMode: z.boolean().optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    idsOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
@@ -1479,7 +1482,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     scope: searchScopeSchema.optional(),
     sort: sortDefinitionSchema.optional(),
     scopeMode: z.boolean().optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    idsOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
     showIgnored: z.boolean().optional(),
   }),
@@ -1511,7 +1515,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     scopeMode: z.boolean().optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    idsOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({

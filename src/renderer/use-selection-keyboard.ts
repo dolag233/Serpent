@@ -10,7 +10,6 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
 import type { CommandPlatform } from "./commands/command-types";
-import { invertSelection } from "./invert-selection";
 import {
   isEditableSelectionKeyboardTarget,
   matchSelectionKeyboardAction,
@@ -20,15 +19,20 @@ export type UseSelectionKeyboardArgs = {
   readonly enabled: boolean;
   readonly platform: CommandPlatform;
   readonly previewOpen: boolean;
-  /** Full browse-scope asset ids (Serpent-6w7n); used for select-all / invert. */
+  /** Loaded browse-scope asset ids (Serpent-6w7n); gates select-all/invert on a non-empty scope. */
   readonly browseScopeAssetIds: readonly string[];
   readonly visibleAssetIds: readonly string[];
   readonly selectedAssetIds: readonly string[];
-  readonly setSelectedAssetIds: Dispatch<SetStateAction<string[]>>;
   readonly setSelectedAssetId: Dispatch<SetStateAction<string | undefined>>;
   readonly selectionAnchorRef: MutableRefObject<string | null>;
   readonly setAssetSelectionAnchor: (assetId: string | null) => void;
   readonly clearAssetSelection: () => void;
+  /**
+   * Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
+   * the loaded page, so they resolve the full id set on demand (idsOnly).
+   */
+  readonly onSelectAll?: () => void;
+  readonly onInvert?: () => void;
 };
 
 export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
@@ -39,11 +43,12 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
     setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll,
+    onInvert,
   } = args;
 
   useEffect(() => {
@@ -60,19 +65,14 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
       if (action === "select-all") {
         if (browseScopeAssetIds.length === 0) return;
         event.preventDefault();
-        setSelectedAssetIds([...browseScopeAssetIds]);
-        setSelectedAssetId(browseScopeAssetIds.at(-1));
-        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
+        onSelectAll?.();
         return;
       }
 
       if (action === "invert") {
         if (browseScopeAssetIds.length === 0) return;
         event.preventDefault();
-        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-        setSelectedAssetIds(next);
-        setSelectedAssetId(next.at(-1));
-        setAssetSelectionAnchor(next[0] ?? null);
+        onInvert?.();
         return;
       }
 
@@ -91,10 +91,11 @@ export function useSelectionKeyboard(args: UseSelectionKeyboardArgs): void {
     browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
     setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll,
+    onInvert,
   ]);
 }

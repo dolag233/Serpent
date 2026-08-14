@@ -8381,6 +8381,24 @@ select.ai-config-input.ai-config-languages {
   width: 100%;
 }
 
+/* Serpent-ws4k: infinite-scroll sentinel row under the asset grid. Idle it is
+   an invisible 1px trigger; while a page fetch is in flight it shows the
+   shared activity pulse + token-colored caption. */
+.browse-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 1px;
+  padding: 0;
+  color: var(--secondary);
+  font-size: 12px;
+  user-select: none;
+}
+.browse-load-more.is-loading {
+  padding: 14px 0 22px;
+}
+
 .justified-rows {
   display: flex;
   width: 100%;

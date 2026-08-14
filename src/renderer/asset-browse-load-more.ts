@@ -46,3 +46,25 @@ export function countNewlyAddedAssets<T extends { readonly assetId: string }>(
   }
   return added;
 }
+
+/**
+ * Append a fetched page to the browse list, dropping ids that are already
+ * present (Serpent-ws4k). The page is a strict continuation of the previous
+ * page, so appended rows keep their worker order at the tail; duplicates only
+ * appear when the underlying scope changed between page fetches.
+ */
+export function appendAssetPage<T extends { readonly assetId: string }>(
+  current: readonly T[],
+  pageItems: readonly T[],
+): T[] {
+  if (pageItems.length === 0) return [...current];
+  const seen = new Set(current.map((item) => item.assetId));
+  const merged: T[] = [...current];
+  for (const item of pageItems) {
+    if (!seen.has(item.assetId)) {
+      seen.add(item.assetId);
+      merged.push(item);
+    }
+  }
+  return merged;
+}

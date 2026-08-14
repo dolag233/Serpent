@@ -20515,12 +20515,19 @@ export class LibraryService {
     offset?: number | null;
     /** Serpent-6w7n: fetch entire browse scope (lightweight rows, capped). */
     scopeMode?: boolean | null;
+    /**
+     * Serpent-ws4k: fetch only asset ids for the whole scope (select-all /
+     * invert). Skips the thumbnail/sequence enrichment and returns `items: []`
+     * plus `assetIds` (capped at the browse-scope cap like scopeMode).
+     */
+    idsOnly?: boolean | null;
     showIgnored?: boolean;
   }): {
     items: AssetSummary[];
     total: number;
     offset: number;
     snippets?: Array<{ assetId: string; text: string }>;
+    assetIds?: string[];
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
@@ -20536,8 +20543,11 @@ export class LibraryService {
     const hasSearchIndex = hasTable(connection, 'asset_search_index');
     const hasSearchFts = hasTable(connection, 'asset_search');
     const scopeMode = input.scopeMode === true;
-    const limit = scopeMode ? BROWSE_SCOPE_MAX_ASSETS : (input.limit ?? 50);
-    const offset = scopeMode ? 0 : (input.offset ?? 0);
+    const idsOnly = input.idsOnly === true;
+    const limit = scopeMode || idsOnly
+      ? BROWSE_SCOPE_MAX_ASSETS
+      : (input.limit ?? 50);
+    const offset = scopeMode || idsOnly ? 0 : (input.offset ?? 0);
 
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
     const hasQuery = searchGroups.length > 0;
@@ -20896,8 +20906,11 @@ export class LibraryService {
     };
     const total = countRow.total;
 
-    // Data query.
-    const dataSql = `SELECT ${dataColumns} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    // Data query. ids-only mode (Serpent-ws4k) fetches just the stable id
+    // column so select-all/invert can cover the whole scope without shipping
+    // AssetSummary rows over three process hops.
+    const dataColumnsForFetch = idsOnly ? 'a.asset_id' : dataColumns;
+    const dataSql = `SELECT ${dataColumnsForFetch} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
       .all(...allParams, ...orderParams, limit, offset) as Array<{
@@ -20916,6 +20929,15 @@ export class LibraryService {
         trashed_from_tombstone_id?: string | null;
         snippet_text?: string;
       }>;
+
+    if (idsOnly) {
+      return {
+        items: [],
+        total,
+        offset: 0,
+        assetIds: rows.map((row) => row.asset_id),
+      };
+    }
 
     // Serpent-verg.2 — fill degraded defaults for whitelisted columns that
     // an older library does not have (0031 §1.1); defaults come from the
@@ -21172,7 +21194,8 @@ export class LibraryService {
     limit?: number;
     offset?: number;
     scopeMode?: boolean | null;
-  }): { items: AssetSummary[]; total: number; offset: number } {
+    idsOnly?: boolean | null;
+  }): { items: AssetSummary[]; total: number; offset: number; assetIds?: string[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sc = openLibrary.connection
       .prepare(
@@ -21192,6 +21215,7 @@ export class LibraryService {
       filters: definition.filters ?? null,
       sort: definition.sort ?? null,
       scopeMode: input.scopeMode ?? false,
+      idsOnly: input.idsOnly ?? false,
       limit: input.scopeMode ? null : (input.limit ?? 50),
       offset: input.scopeMode ? 0 : (input.offset ?? 0),
     });
