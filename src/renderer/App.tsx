@@ -350,7 +350,10 @@ import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
-import { BROWSE_SCOPE_SEARCH } from "./browse-scope-search";
+import {
+  BROWSE_PAGE_SIZE,
+  useBrowsePagination,
+} from "./use-browse-pagination";
 import {
   enumerateDiscreteCardSizes,
   nearestDiscreteCardSize,
@@ -888,6 +891,27 @@ function AppInner() {
   const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
   const [trashedAssetCount, setTrashedAssetCount] = useState(0);
+
+  // Serpent-ws4k: paginated browse/search loading. First pages render
+  // immediately; a scroll sentinel appends the next page; select-all/invert
+  // resolve the full scope id set on demand (idsOnly).
+  const browsePagination = useBrowsePagination({
+    api: api ?? null,
+    setAssets,
+    setTrashedAssets,
+    setSearchTotal,
+    setSearchOffset,
+    setSearchSnippets,
+    onLoadMoreFailed: () =>
+      setError(t("toast.loadMoreFailed")),
+  });
+  // All controller members are stable useCallback identities; destructure so
+  // downstream useCallback deps do not churn every render.
+  const {
+    beginPage: beginBrowsePage,
+    fetchScopeAssetIds: fetchBrowseScopeAssetIds,
+    reset: resetBrowsePagination,
+  } = browsePagination;
 
   const {
     multiEdit,
@@ -1946,6 +1970,38 @@ function AppInner() {
     trashedAssets.length,
     visibleAssets.length,
   ]);
+  // Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
+  // the loaded page, so they resolve the full id set on demand (idsOnly).
+  // A failed/empty resolve is a no-op; the async gap keeps the existing
+  // REQ-BROWSE-001 semantics (selection covers the full scope count).
+  const selectAllBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    setSelectedAssetIds([...ids]);
+    setSelectedAssetId(ids.at(-1));
+    setAssetSelectionAnchor(ids[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
+  const invertBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    const next = invertSelection(ids, selectedAssetIds);
+    setSelectedAssetIds(next);
+    setSelectedAssetId(next.at(-1));
+    setAssetSelectionAnchor(next[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    selectedAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
   useSelectionKeyboard({
     enabled: Boolean(library),
     platform: SHORTCUT_PLATFORM,
@@ -1953,11 +2009,12 @@ function AppInner() {
     browseScopeAssetIds,
     visibleAssetIds,
     selectedAssetIds,
-    setSelectedAssetIds,
     setSelectedAssetId,
     selectionAnchorRef,
     setAssetSelectionAnchor,
     clearAssetSelection,
+    onSelectAll: () => void selectAllBrowseScope(),
+    onInvert: () => void invertBrowseScope(),
   });
 
   useEffect(() => {
@@ -1966,17 +2023,13 @@ function AppInner() {
       if (previewAsset) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       if (browseScopeAssetIds.length === 0) return;
-      const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-      setSelectedAssetIds(next);
-      setSelectedAssetId(next.at(-1));
-      setAssetSelectionAnchor(next[0] ?? null);
+      void invertBrowseScope();
     });
   }, [
     shellApi,
     previewAsset,
     browseScopeAssetIds,
-    selectedAssetIds,
-    selectionAnchorRef,
+    invertBrowseScope,
     setAssetSelectionAnchor,
   ]);
 
@@ -2599,7 +2652,9 @@ function AppInner() {
           filters: opts?.discovery?.filters,
           scope: browseScope,
           sort: opts?.discovery?.sort,
-          ...BROWSE_SCOPE_SEARCH,
+          // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+          limit: BROWSE_PAGE_SIZE,
+          offset: 0,
           showIgnored: includeIgnored,
         }),
         trashMode || scope !== "all"
@@ -2680,13 +2735,32 @@ function AppInner() {
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
+      // Serpent-ws4k: register the paginated query so the scroll sentinel can
+      // append the next page with the exact same scope/sort/filters.
+      beginBrowsePage(
+        {
+          kind: "search",
+          libraryId: activeLibrary.libraryId,
+          query: opts?.discovery?.search ?? null,
+          filters: opts?.discovery?.filters,
+          scope: browseScope,
+          sort: opts?.discovery?.sort,
+          showIgnored: includeIgnored,
+          target: trashMode ? "trash" : "assets",
+        },
+        {
+          items: assetResult.value.items,
+          total: assetResult.value.total,
+          offset: assetResult.value.offset,
+        },
+      );
       setLinkedFolders(linkedResult.value);
       setTags(tagResult.value);
       setCollections(collectionResult.value);
       setSmartCollections(smartResult.value);
       return assetResult.value.items;
     },
-    [api, showIgnoredItems],
+    [api, beginBrowsePage, showIgnoredItems],
   );
 
   useBrowserSessionRestore({
@@ -2705,6 +2779,7 @@ function AppInner() {
     setActiveSmartCollectionId,
     setAssets,
     setSearchTotal,
+    beginBrowsePage,
     setSelectedAssetId,
     setSelectedAssetIds,
     setAssetSelectionAnchor,
@@ -3555,11 +3630,30 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      beginBrowsePage(
+        {
+          kind: "search",
+          libraryId: library.libraryId,
+          query: definition.search ?? null,
+          filters: definition.filters,
+          sort: definition.sort,
+          scope: null,
+          showIgnored: showIgnoredItems,
+          target: "assets",
+        },
+        {
+          items: result.value.items,
+          total: result.value.total,
+          offset: result.value.offset,
+        },
+      );
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
@@ -3594,11 +3688,30 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      beginBrowsePage(
+        {
+          kind: "search",
+          libraryId: library.libraryId,
+          query: definition.search ?? null,
+          filters: definition.filters,
+          sort: definition.sort,
+          scope: null,
+          showIgnored: showIgnoredItems,
+          target: "assets",
+        },
+        {
+          items: result.value.items,
+          total: result.value.total,
+          offset: result.value.offset,
+        },
+      );
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -4025,11 +4138,30 @@ function AppInner() {
           collectionId,
           recursive,
         },
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      beginBrowsePage(
+        {
+          kind: "search",
+          libraryId: library.libraryId,
+          query: null,
+          scope: { kind: "collection", collectionId, recursive },
+          sort: null,
+          filters: null,
+          showIgnored: showIgnoredItems,
+          target: "assets",
+        },
+        {
+          items: result.value.items,
+          total: result.value.total,
+          offset: result.value.offset,
+        },
+      );
       // Also refresh sidebar metadata
       const [tagResult, collectionResult, smartResult] = await Promise.all([
         api.listTags({ libraryId: library.libraryId }),
@@ -4837,7 +4969,9 @@ function AppInner() {
       filters: definition.filters,
       scope: currentSearchScope(),
       sort: definition.sort,
-      ...BROWSE_SCOPE_SEARCH,
+      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
       showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4851,6 +4985,24 @@ function AppInner() {
       clearAssetSelection({ preserveFolders: true });
     }
     applySearchResult(result.value);
+    // Serpent-ws4k: subsequent pages must reuse the same query/scope/sort.
+    beginBrowsePage(
+      {
+        kind: "search",
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        scope: currentSearchScope(),
+        sort: definition.sort,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+      },
+      {
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      },
+    );
     return result.value;
   }
 
@@ -4957,7 +5109,9 @@ function AppInner() {
       const result = await api.executeSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        ...BROWSE_SCOPE_SEARCH,
+        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
@@ -4978,6 +5132,19 @@ function AppInner() {
         ),
       );
       applySearchResult(result.value);
+      beginBrowsePage(
+        {
+          kind: "smart-collection",
+          libraryId: library.libraryId,
+          collectionId,
+          target: "assets",
+        },
+        {
+          items: result.value.items,
+          total: result.value.total,
+          offset: result.value.offset,
+        },
+      );
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
@@ -5471,6 +5638,7 @@ function AppInner() {
     setActiveSmartCollectionId(null);
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
     setMoveDialog(null);
     resetNavHistory({ kind: "all" });
     api?.setActiveContext(null);
@@ -7822,17 +7990,8 @@ function AppInner() {
           pasteOsClipboardFiles(browsePasteDestination);
         }
       },
-      selectAll: () => {
-        setSelectedAssetIds([...browseScopeAssetIds]);
-        setSelectedAssetId(browseScopeAssetIds.at(-1));
-        setAssetSelectionAnchor(browseScopeAssetIds[0] ?? null);
-      },
-      invertSelection: () => {
-        const next = invertSelection(browseScopeAssetIds, selectedAssetIds);
-        setSelectedAssetIds(next);
-        setSelectedAssetId(next.at(-1));
-        setAssetSelectionAnchor(next[0] ?? null);
-      },
+      selectAll: () => void selectAllBrowseScope(),
+      invertSelection: () => void invertBrowseScope(),
       clearSelection: clearAssetSelection,
       openSettings: () => {
         setAppSettingsCategory("general");
@@ -9419,6 +9578,24 @@ function AppInner() {
                       </div>
                     ));
                   })()}
+                  </div>
+                )}
+                {/* Serpent-ws4k: infinite-scroll sentinel — appends the next
+                    page once it scrolls into view; hidden when the whole
+                    scope is loaded. */}
+                {browsePagination.hasMorePages && (
+                  <div
+                    ref={browsePagination.sentinelRef}
+                    className={`browse-load-more${browsePagination.loadingMore ? " is-loading" : ""}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {browsePagination.loadingMore ? (
+                      <>
+                        <span className="activity-pulse" aria-hidden />
+                        <span>{t("progress.loadingMore")}</span>
+                      </>
+                    ) : null}
                   </div>
                 )}
               </>

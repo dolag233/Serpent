@@ -1636,6 +1636,49 @@ describe('pagination', () => {
 
     service.closeAll();
   });
+
+  it('returns the full scope ids only when idsOnly is true (Serpent-ws4k)', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, idsOnly: true });
+    expect(result.items).toHaveLength(0);
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.assetIds).toContain(secondAssetId);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('idsOnly ignores limit/offset and still covers the whole scope', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, idsOnly: true, limit: 1, offset: 1 });
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.total).toBe(2);
+
+    service.closeAll();
+  });
+
+  it('idsOnly respects the scope (trash) and keeps soft-deleted assets out of normal ids', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.trashAssets({ libraryId, assetIds: [assetId] });
+
+    const all = service.searchAssets({ libraryId, idsOnly: true });
+    expect(all.assetIds).toHaveLength(0);
+
+    const trash = service.searchAssets({
+      libraryId,
+      scope: { kind: 'trash' },
+      idsOnly: true,
+    });
+    expect(trash.assetIds).toEqual([assetId]);
+    expect(trash.total).toBe(1);
+
+    service.closeAll();
+  });
 });
 
 // ── Smart Collections (v6) ──────────────────────────────────────────
@@ -1791,6 +1834,28 @@ describe('smart collections v6', () => {
     expect(second.offset).toBe(1);
     expect(second.items).toHaveLength(1);
     expect(second.items[0]!.assetId).not.toBe(first.items[0]!.assetId);
+    service.closeAll();
+  });
+
+  it('executes a smart collection with idsOnly for select-all (Serpent-ws4k)', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const smart = service.createSmartCollection({
+      libraryId,
+      name: 'All',
+      queryDefinitionJson: '{}',
+    });
+
+    const result = service.executeSmartCollection({
+      libraryId,
+      collectionId: smart.collectionId,
+      idsOnly: true,
+    });
+    expect(result.items).toHaveLength(0);
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
     service.closeAll();
   });
 
