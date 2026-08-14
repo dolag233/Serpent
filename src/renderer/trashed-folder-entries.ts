@@ -48,5 +48,8 @@ export function trashedFoldersToBrowseEntries(
         trashHierarchyKey(folder.trashedAt, folder.relativePath),
       ) ?? 0,
     coverArtifactIds: folder.coverArtifactIds ?? [],
+    // Serpent-d0nv: trashed covers are never scheduled for generation, so the
+    // cover-candidate asset set stays empty for trash cards.
+    coverAssetIds: [],
   }));
 }

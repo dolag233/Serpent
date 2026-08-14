@@ -10840,6 +10840,7 @@ export class LibraryService {
 
     return visibleChildren.map((row) => {
       const directAssetCount = counts.directAssetCounts.get(row.folder_id) ?? 0;
+      const covers = coverMap.get(row.folder_id) ?? [];
       return {
         folderId: row.folder_id,
         parentFolderId: row.parent_folder_id,
@@ -10851,7 +10852,10 @@ export class LibraryService {
         // Serpent-toh / REQ-FOLDER-003: display all descendant assets.
         recursiveAssetCount: recursiveCounts.get(row.folder_id) ?? directAssetCount,
         childFolderCount: counts.childFolderCounts.get(row.folder_id) ?? 0,
-        coverArtifactIds: coverMap.get(row.folder_id) ?? [],
+        coverArtifactIds: covers.map((cover) => cover.artifactId),
+        // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
+        // + progressive refresh on thumbnail.ready).
+        coverAssetIds: covers.map((cover) => cover.assetId),
         linkedFolderId: null,
       };
     });
@@ -10887,6 +10891,12 @@ export class LibraryService {
         linkedAssetIsDirectChild(filePath, relativePath),
       ).length;
       const childFolderCount = directChildLinkedDirectories(prefixes, relativePath).length;
+      const covers = this.linkedDirectoryCoverArtifacts(
+        openLibrary,
+        resolved.linkedFolderId,
+        relativePath,
+        input.showIgnored === true,
+      );
       return {
         folderId,
         parentFolderId: input.parentFolderId,
@@ -10897,12 +10907,10 @@ export class LibraryService {
         directAssetCount,
         recursiveAssetCount: descendantPaths.length,
         childFolderCount,
-        coverArtifactIds: this.linkedDirectoryCoverArtifactIds(
-          openLibrary,
-          resolved.linkedFolderId,
-          relativePath,
-          input.showIgnored === true,
-        ),
+        coverArtifactIds: covers.map((cover) => cover.artifactId),
+        // Serpent-d0nv: cover candidates as asset ids (cover scene scheduling
+        // + progressive refresh on thumbnail.ready).
+        coverAssetIds: covers.map((cover) => cover.assetId),
         linkedFolderId: resolved.linkedFolderId,
       };
     });
@@ -10974,19 +10982,21 @@ export class LibraryService {
     return rows.map((row) => row.relative_file_path);
   }
 
-  private linkedDirectoryCoverArtifactIds(
+  private linkedDirectoryCoverArtifacts(
     openLibrary: OpenLibrary,
     linkedFolderId: string,
     relativePath: string,
     showIgnored: boolean,
-  ): string[] {
+  ): Array<{ artifactId: string; assetId: string }> {
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
       return [];
     }
     const prefix = relativePath === '' ? '' : `${relativePath}/`;
+    // Serpent-d0nv: select a.asset_id alongside artifact_id so the browse
+    // handler can schedule the cover thumbnail scene for these candidates.
     const rows = openLibrary.connection
       .prepare(
-        `SELECT ra.artifact_id
+        `SELECT ra.artifact_id, a.asset_id
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -11010,8 +11020,8 @@ export class LibraryService {
         prefix,
         [...prefix].length,
         prefix,
-      ) as Array<{ artifact_id: string }>;
-    return rows.map((row) => row.artifact_id);
+      ) as Array<{ artifact_id: string; asset_id: string }>;
+    return rows.map((row) => ({ artifactId: row.artifact_id, assetId: row.asset_id }));
   }
 
   /**
@@ -11208,8 +11218,8 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     folderIds: string[],
     showIgnored = false,
-  ): Map<string, string[]> {
-    const covers = new Map<string, string[]>();
+  ): Map<string, Array<{ artifactId: string; assetId: string }>> {
+    const covers = new Map<string, Array<{ artifactId: string; assetId: string }>>();
     if (folderIds.length === 0) return covers;
     // Serpent-verg review fix: libraries predating revision_artifacts.status
     // (v9) or linked_ignored_assets have no covers to map.
@@ -11220,9 +11230,13 @@ export class LibraryService {
       return covers;
     }
     const placeholders = folderIds.map(() => '?').join(', ');
+    // Serpent-d0nv: select a.asset_id alongside artifact_id so the browse
+    // handler can schedule the cover thumbnail scene for these candidates.
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.managed_folder_id AS folder_id, ra.artifact_id AS artifact_id
+        `SELECT a.managed_folder_id AS folder_id,
+                ra.artifact_id AS artifact_id,
+                a.asset_id AS asset_id
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -11247,12 +11261,12 @@ export class LibraryService {
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a', showIgnored)}
           ORDER BY a.managed_folder_id, a.relative_file_path`,
       )
-      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string }>;
+      .all(...folderIds) as Array<{ folder_id: string; artifact_id: string; asset_id: string }>;
 
     for (const row of rows) {
       const existing = covers.get(row.folder_id) ?? [];
       if (existing.length >= 3) continue;
-      existing.push(row.artifact_id);
+      existing.push({ artifactId: row.artifact_id, assetId: row.asset_id });
       covers.set(row.folder_id, existing);
     }
     return covers;

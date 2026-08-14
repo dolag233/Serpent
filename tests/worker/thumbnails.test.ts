@@ -1485,3 +1485,40 @@ describe('visible-wave priority boost (Serpent-azf6)', () => {
     service.closeAll();
   });
 });
+
+describe('cover-wave priority (Serpent-d0nv)', () => {
+  it('enqueues cover candidates at the cover tier (400) so they beat the visible wave (350)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'CoverWave', selectedParentPath: root });
+    const source = path.join(root, 'cover.png');
+    createTestImage(source);
+    importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    // folder.browse-entries schedules the cover scene: limit 100, priority 400.
+    service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [asset.assetId],
+      limit: 100,
+      priority: 400,
+    });
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const queued = db.prepare(
+      'SELECT priority FROM jobs WHERE asset_id = ? AND kind = ? AND status = ?',
+    ).get(asset.assetId, 'generate_thumbnail', 'queued') as { priority: number } | undefined;
+    expect(queued?.priority).toBe(400);
+
+    // The visible browse wave (350) for the same asset must not lower the
+    // queued cover job (MAX boost semantics; covers outrank the current view).
+    service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [asset.assetId],
+      priority: 350,
+    });
+    const after = db.prepare(
+      'SELECT priority FROM jobs WHERE asset_id = ? AND kind = ? AND status = ?',
+    ).get(asset.assetId, 'generate_thumbnail', 'queued') as { priority: number } | undefined;
+    db.close();
+    expect(after?.priority).toBe(400);
+    service.closeAll();
+  });
+});

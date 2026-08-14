@@ -110,7 +110,10 @@ export function FolderCard({
                 <img
                   alt=""
                   className="folder-card-cover-image"
-                  loading="lazy"
+                  // Serpent-d0nv: the folder-card row is a bounded, first-screen
+                  // horizontal strip (unlike the virtualized vertical asset
+                  // grid) — eager so covers paint as soon as they are ready.
+                  loading="eager"
                   src={coverSrc(libraryId, coverArtifactId)}
                 />
               </div>
