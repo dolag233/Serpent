@@ -14,8 +14,8 @@
 
 | 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
-| 当前视口及其上下一屏 runway 的资产永远排在缩略图队首（插队） | `src/renderer/App.tsx`（400 ms 滚动防抖，从 `readPublishedCanvasAssetLayout` 计算视口交集，≤300 ids）→ `src/preload/index.ts` `reportVisibleWindow` → `src/main/index.ts` → `src/worker/index.ts` `asset.thumbnail.visible-window` → `scheduleThumbnailScene('visible', 350, {light})` | `tests/worker/thumbnails.test.ts` 优先级档测试（cover 400 > visible 350 > mutation 300；显式波保序）；`tests/worker/thumbnail-throughput.test.ts` 调用序测试 | 用户复验待执行（滚动 A→D→E→A→B 场景） |
-| 先快速扫分辨率，占位符先有正确尺寸 | `src/worker/library-service.ts` `persistVisibleWindowImageDimensions`（header 同步探测 ≤64，跳过已有 `extracted_metadata` 的行）→ `asset.dimensions.ready` 事件 → `App.tsx` `queuePatch` 宽高 | `tests/worker/thumbnails.test.ts`「visible-window header probe (Serpent-visible-window)」：返回并持久化 32×24，跳过非图片/未知 id，重复上报幂等 | 用户复验待执行（无重排抖动） |
+| 当前视口及其上下一屏 runway 的资产永远排在缩略图队首（插队） | `src/renderer/App.tsx`（400 ms 滚动防抖，从 `readPublishedCanvasAssetLayout` 计算视口交集，≤300 ids）→ `src/preload/index.ts` `reportVisibleWindow` → `src/main/index.ts` → `src/worker/index.ts` `asset.thumbnail.visible-window` → `scheduleThumbnailScene('visible', 350, {light})` | `tests/worker/thumbnails.test.ts` 优先级档测试（cover 400 > visible 350 > mutation 300；显式波保序）；`tests/worker/thumbnail-throughput.test.ts` 调用序测试 | 2026-08-15 用户复验通过（滚动 A→D→E→A→B：每次停留后当前视图及周边资产最先出缩略图） |
+| 先快速扫分辨率，占位符先有正确尺寸 | `src/worker/library-service.ts` `persistVisibleWindowImageDimensions`（header 同步探测 ≤64，跳过已有 `extracted_metadata` 的行）→ `asset.dimensions.ready` 事件 → `App.tsx` `queuePatch` 宽高 | `tests/worker/thumbnails.test.ts`「visible-window header probe (Serpent-visible-window)」：返回并持久化 32×24，跳过非图片/未知 id，重复上报幂等 | 2026-08-15 用户复验通过（占位符尺寸先行，无重排抖动） |
 | 跨进程协议贯通 | `src/shared/protocol/requests.ts`（renderer request + worker command）、`src/shared/protocol/responses.ts`（worker 结果 + renderer 透传 `acknowledged`） | `tests/unit/protocol.test.ts` 81/81 | — |
 | 首屏/可见波不触发 repairFailed 扫描 | `src/worker/index.ts` `scheduleThumbnailScene` `options.light` | 同上缩略图套件 | — |
 
@@ -24,7 +24,7 @@
 - `npm run lint`、`npm run typecheck`：通过（0 警告 0 错误）。
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/thumbnails.test.ts tests/worker/thumbnail-throughput.test.ts`：58/59 通过；唯一失败为已知环境问题（本机 gyan.dev ffmpeg 无法编码 webm proxy，「resolves the preview through the webm proxy once it is ready」），与本次变更无关。
 - Electron E2E 子集（`media-preview`、`asset-pagination`、`browsing-preferences`）：4 failed / 4 passed / 1 skipped。**基线对照**：在 `git stash` 还原全部本次变更后重跑同一子集，失败集合完全相同（`asset-pagination:17` 侧栏合集按钮超时、`browsing-preferences:404` 竖图宽高比 0.5526 vs 0.5625、`media-preview:79` 色卡预览未出现、`media-preview:364` 视频失败角标未出现）——均为本机既有失败，非本次回归；已在基线证据下分流。
-- 未执行：Computer Use 视觉验收、packaged、Windows、10k 真实媒体大库基线（本次变更后未重跑）。
+- 未执行：Computer Use 视觉验收、packaged、Windows、10k 真实媒体大库基线（本次变更后未重跑）。用户手动复验已通过（THUMB-007，滚动 A→D→E→A→B：当前视图资产最先出图、占位符无重排抖动）。
 
 ## 4. 保留条件
 
