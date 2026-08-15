@@ -9,6 +9,25 @@
 
 `docs/`、`AGENTS.md`、`CLAUDE.md`、Cursor 与 Copilot 指令都进入版本控制，作为所有开发工具共享的工程记忆。若使用远端 Issue 或 PR，还需要把验收摘要和关键结果同步到远端描述。
 
+## 分支结构与合流约定（Serpent-pou3，2026-08-15 起生效）
+
+仓库两条长期分支，职责严格分离：
+
+- **`main`**：发布基线，只维护**完整软件代码**（`src/`、`tests/`、`resources/`、`scripts/`、`assets/`、`extension/`、`website/`、公开 `docs/`、构建/打包配置）。**不含**任何纯开发文件：`.beads/`、`.codex/`、`.cursor/`、`.cursorignore`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`。打包/发布以 main 为基。
+- **`dev`**：日常开发分支，派生自 main（dev HEAD 是 main HEAD 的后代），在 main 基础上**额外携带**上述开发文件（工单、agent 指南、内部文档）。所有开发、验收、beads 操作都在 dev 上进行；功能分支一律基于 `dev` 创建。
+
+**合流规则（防止开发文件泄漏进 main）：**
+
+1. **禁止直接 `git merge dev` 到 main**——会把开发文件带进发布基线。
+2. 合入功能采用其一：
+   - `git cherry-pick <commit>` 逐个挑选功能提交；或
+   - `git merge dev --no-commit` 后手动 `git rm -r --cached` 排除开发文件清单（`.beads .codex .cursor .cursorignore AGENTS.md CLAUDE.md CONTEXT.md docs/internal`）再提交。
+3. 推送 main 必须用 `git push --no-verify origin main`（main 无 `.beads`，beads pre-push hook 无法运行，会拦截推送）。
+4. 推送 dev 保持正常流程（pre-push 自动同步 beads）。
+5. 合流后核对：`git ls-tree main --name-only` 不含开发文件；`git merge-base --is-ancestor main dev` 为真。
+
+执行记录：2026-08-15 完成首次重构——main `3d6474f`（strip dev-only files），dev `f4a37d4`（restore dev-only files，派生自 main）。
+
 ## 每个切片的文档集合
 
 ```text
