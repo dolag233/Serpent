@@ -42,6 +42,7 @@ import {
   resolveLivePreviewMedia,
 } from "./asset-card-hover-preview";
 import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
+import { buildInspectorSummaryMetadata } from "./inspector-progressive-summary";
 import { PluginInspectorSections } from "./plugin-inspector-sections";
 import { PluginInspectorViews } from "./plugin-inspector-views";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
@@ -593,6 +594,21 @@ export function InspectorPanel(props: InspectorPanelProps) {
     rawAssetMetadata?.assetId === selectedAsset?.assetId
       ? rawAssetMetadata
       : null;
+  const metadataReady = assetMetadata !== null;
+  // AssetSummary already carries the fields users need to orient themselves
+  // (name, dimensions, rating and favorite). Keep those visible while the
+  // heavier tag/palette/AI metadata request fills in asynchronously.
+  const displayMetadata: AssetMetadataResult | null = assetMetadata ??
+    (selectedAsset ? buildInspectorSummaryMetadata(selectedAsset) : null);
+  const displayDescription = metadataReady ? editDescription : "";
+  const displayRatingValue = metadataReady
+    ? editRating
+    : (selectedAsset?.rating ?? 0);
+  const displayFavorite = metadataReady
+    ? editFavorite
+    : Boolean(selectedAsset?.favorite);
+  const displaySourceUrl = metadataReady ? editSourceUrl : "";
+  const displayAuthor = metadataReady ? editAuthor : "";
 
   // Tag input state
   const [tagInputValue, setTagInputValue] = useState("");
@@ -707,13 +723,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
         source: tag.source,
       }));
     }
-    if (!assetMetadata?.tags) return [];
-    return assetMetadata.tags.map((tag) => ({
+    if (!displayMetadata?.tags) return [];
+    return displayMetadata.tags.map((tag) => ({
       id: tag.id,
       name: tag.name,
       source: tag.source as "ai" | "user",
     }));
-  }, [assetMetadata, isMultiEdit, multiEdit]);
+  }, [displayMetadata, isMultiEdit, multiEdit]);
 
   const displayedTagIds = useMemo(
     () => new Set(displayedTags.map((tag) => tag.id)),
@@ -747,7 +763,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     );
   };
 
-  const canOpenSourceUrl = toOpenableExternalUrl(editSourceUrl) !== null;
+  const canOpenSourceUrl = toOpenableExternalUrl(displaySourceUrl) !== null;
 
   // 描述输入框高度自动包裹内容（Serpent-qto）：默认单行，受控值变化（输入/
   // 切换资产）后重新量高，超过一行才增高。CSS 侧的 min-height/max-height 是
@@ -769,7 +785,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
       minHeight || 0,
       maxHeight || Number.POSITIVE_INFINITY,
     )}px`;
-  }, [editDescription, descriptionIsAi, selectedAsset?.assetId]);
+  }, [displayDescription, descriptionIsAi, selectedAsset?.assetId]);
 
   const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -928,6 +944,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             <div className="inspector-tags-header">
               <span className="inspector-section-label">{t("inspector.tags")}</span>
               <IconActionButton
+                disabled={!metadataReady}
                 icon="plus"
                 label={t("inspector.addTag")}
                 onClick={() => {
@@ -1070,7 +1087,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
           />
 
           {/* --- Asset metadata editor (compact) --- */}
-          {assetMetadata || isMultiEdit ? (
+          {displayMetadata || isMultiEdit ? (
             <>
               {versionConflict && (
                 <div className="inline-error inspector-version-conflict">
@@ -1098,11 +1115,11 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 const favoriteMixed =
                   isMultiEdit && multiEdit?.favorite.kind === "mixed";
                 const aiRating =
-                  !isMultiEdit && editRating === 0
+                  !isMultiEdit && displayRatingValue === 0
                     ? aiContent?.rating
                     : undefined;
                 const displayRating =
-                  editRating > 0 ? editRating : (aiRating ?? 0);
+                  displayRatingValue > 0 ? displayRatingValue : (aiRating ?? 0);
                 return (
               <div className="inspector-quick-row">
                 <div
@@ -1128,7 +1145,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           aria-pressed={star <= displayRating || undefined}
                           className="rating-star"
                           data-active={star <= displayRating || undefined}
-                          disabled={!ratingEditable}
+                          disabled={!ratingEditable || !metadataReady}
                           key={star}
                           onClick={() => handleRatingClick(star)}
                           type="button"
@@ -1137,10 +1154,10 @@ export function InspectorPanel(props: InspectorPanelProps) {
                           <Icon name="star" size={16} />
                         </button>
                       ))}
-                      {editRating > 0 && (
+                      {metadataReady && editRating > 0 && (
                         <button
                           className="rating-clear"
-                          disabled={!ratingEditable}
+                          disabled={!ratingEditable || !metadataReady}
                           onClick={() => handleRatingClick(0)}
                           type="button"
                           {...iconActionAttrs(t("inspector.clearRating"))}
@@ -1157,14 +1174,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   </span>
                 ) : (
                   <button
-                    aria-pressed={editFavorite || undefined}
+                    aria-pressed={displayFavorite || undefined}
                     className="favorite-toggle"
-                    data-active={editFavorite || undefined}
-                    disabled={!favoriteEditable}
+                    data-active={displayFavorite || undefined}
+                    disabled={!favoriteEditable || !metadataReady}
                     onClick={handleFavoriteToggle}
                     type="button"
                     {...iconActionAttrs(
-                      editFavorite
+                      displayFavorite
                         ? t("inspector.unfavorite")
                         : t("inspector.markFavorite"),
                     )}
@@ -1266,7 +1283,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 ) : (
                 <textarea
                   className={`text-field inspector-textarea${descriptionIsAi ? " is-ai-sourced" : ""}`}
-                  disabled={!descriptionEditable}
+                  disabled={!descriptionEditable || !metadataReady}
                   id="meta-desc"
                   maxLength={10000}
                   onBlur={handleMetadataDescriptionSave}
@@ -1278,7 +1295,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   }
                   ref={descriptionRef}
                   rows={1}
-                  value={editDescription}
+                  value={displayDescription}
                 />
                 )}
               </div>
@@ -1305,7 +1322,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 ) : (
                 <input
                   className="text-field inspector-input"
-                  disabled={!authorEditable}
+                  disabled={!authorEditable || !metadataReady}
                   id="meta-author"
                   maxLength={255}
                   onBlur={handleAuthorSave}
@@ -1314,7 +1331,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                     if (e.key === "Enter") handleAuthorSave();
                   }}
                   placeholder={t("inspector.authorPlaceholder")}
-                  value={editAuthor}
+                  value={displayAuthor}
                 />
                 )}
               </div>
@@ -1342,7 +1359,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                   ) : (
                   <input
                     className="text-field inspector-input"
-                    disabled={!sourceEditable}
+                    disabled={!sourceEditable || !metadataReady}
                     id="meta-url"
                     maxLength={255}
                     onBlur={handleSourceUrlSave}
@@ -1351,7 +1368,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       if (e.key === "Enter") handleSourceUrlSave();
                     }}
                     placeholder="https://…"
-                    value={editSourceUrl}
+                    value={displaySourceUrl}
                   />
                   )}
                   <button

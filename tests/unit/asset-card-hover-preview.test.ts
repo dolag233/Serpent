@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assetCardKey,
   coverSrc,
   isCardHoverPreviewable,
   resolveActivePreviewAssetId,
@@ -116,6 +117,15 @@ describe("resolveActivePreviewAssetId", () => {
 describe("coverSrc", () => {
   it("builds the serpent preview URL", () => {
     expect(coverSrc("lib-a", "art-b")).toBe("serpent://preview/lib-a/art-b");
+  });
+});
+
+describe("assetCardKey", () => {
+  it("remounts a reused asset id when the library changes", () => {
+    expect(assetCardKey("library-a", "asset-1")).not.toBe(
+      assetCardKey("library-b", "asset-1"),
+    );
+    expect(assetCardKey(undefined, "asset-1")).toBe("no-library:asset-1");
   });
 });
 

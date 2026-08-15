@@ -33,6 +33,7 @@ import {
   shouldShowAssetSourceBadge,
 } from "./asset-source-badge";
 import {
+  assetCardKey,
   isCardHoverPreviewable,
   isCardSequencePlayable,
   resolveAssetCardCoverUrl,
@@ -2632,11 +2633,14 @@ function AppInner() {
         discovery?: SearchDefinition;
         searchScope?: SearchScope;
         showIgnored?: boolean;
+        /** Navigation keeps sidebar data; mutations/library open opt in to refresh. */
+        refreshSidebar?: boolean;
       },
     ) => {
       if (!api) return;
       const trashMode = opts?.trashMode ?? false;
       const includeIgnored = opts?.showIgnored ?? showIgnoredItems;
+      const refreshSidebar = opts?.refreshSidebar ?? true;
       const browseScope: SearchScope | undefined =
         opts?.searchScope ??
         (trashMode
@@ -2644,8 +2648,19 @@ function AppInner() {
           : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
+      const sidebarPromise = refreshSidebar
+        ? Promise.all([
+            api.listFolders({ ...libId, showIgnored: includeIgnored }),
+            api.listLinkedFolders(libId),
+            api.listTags(libId),
+            api.listCollections(libId),
+            api.listSmartCollections(libId),
+            trashMode
+              ? api.listTrashedFolders(libId)
+              : Promise.resolve(null),
+          ])
+        : Promise.resolve(null);
       const results = await Promise.all([
-        api.listFolders({ ...libId, showIgnored: includeIgnored }),
         api.searchAssets({
           ...libId,
           query: opts?.discovery?.search ?? null,
@@ -2668,13 +2683,7 @@ function AppInner() {
           scope: { kind: "trash" },
           showIgnored: includeIgnored,
         }),
-        api.listLinkedFolders(libId),
-        api.listTags(libId),
-        api.listCollections(libId),
-        api.listSmartCollections(libId),
-        trashMode
-          ? api.listTrashedFolders(libId)
-          : Promise.resolve(null),
+        sidebarPromise,
       ]).catch((caught: unknown) => {
         if (generation !== contentLoadGenerationRef.current) return null;
         throw caught;
@@ -2682,38 +2691,46 @@ function AppInner() {
       if (results === null || generation !== contentLoadGenerationRef.current) {
         return;
       }
-      const [
-        folderResult,
-        assetResult,
-        allResult,
-        trashCountResult,
-        linkedResult,
-        tagResult,
-        collectionResult,
-        smartResult,
-        trashedFoldersResult,
-      ] = results;
-      if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+      const [assetResult, allResult, trashCountResult, sidebarResult] = results;
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
       if (allResult && !allResult.ok)
         throw new LibraryOperationError(allResult.error);
       if (!trashCountResult.ok)
         throw new LibraryOperationError(trashCountResult.error);
-      if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
-      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
-      if (!collectionResult.ok)
-        throw new LibraryOperationError(collectionResult.error);
-      if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
-      setFolders(folderResult.value);
+      if (sidebarResult) {
+        const [
+          folderResult,
+          linkedResult,
+          tagResult,
+          collectionResult,
+          smartResult,
+          trashedFoldersResult,
+        ] = sidebarResult;
+        if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+        if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
+        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+        if (!collectionResult.ok) {
+          throw new LibraryOperationError(collectionResult.error);
+        }
+        if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
+        setFolders(folderResult.value);
+        setLinkedFolders(linkedResult.value);
+        setTags(tagResult.value);
+        setCollections(collectionResult.value);
+        setSmartCollections(smartResult.value);
+        if (trashMode) {
+          if (trashedFoldersResult && !trashedFoldersResult.ok) {
+            throw new LibraryOperationError(trashedFoldersResult.error);
+          }
+          setTrashedFolders(trashedFoldersResult?.value ?? []);
+        } else {
+          setTrashedFolders([]);
+        }
+      }
       if (trashMode) {
         setTrashedAssets(assetResult.value.items);
-        if (trashedFoldersResult && !trashedFoldersResult.ok) {
-          throw new LibraryOperationError(trashedFoldersResult.error);
-        }
-        setTrashedFolders(trashedFoldersResult?.value ?? []);
       } else {
         setAssets(assetResult.value.items);
-        setTrashedFolders([]);
       }
       // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
       setThumbnailFailures((current) => {
@@ -2749,10 +2766,6 @@ function AppInner() {
         total: assetResult.value.total,
         offset: assetResult.value.offset,
       });
-      setLinkedFolders(linkedResult.value);
-      setTags(tagResult.value);
-      setCollections(collectionResult.value);
-      setSmartCollections(smartResult.value);
       return assetResult.value.items;
     },
     [api, beginBrowsePage, showIgnoredItems],
@@ -2911,6 +2924,13 @@ function AppInner() {
           setTags([]);
           setCollections([]);
           setSmartCollections([]);
+          setSelectedFolderIds([]);
+          setSelectedAssetId(undefined);
+          setSelectedAssetIds([]);
+          setAssetMetadata(null);
+          setAiContent(null);
+          metadataByAssetRef.current.clear();
+          metadataConflictAssetIdsRef.current.clear();
           setSearchTotal(null);
           setAllAssetCount(0);
           resetBrowsePagination();
@@ -3408,6 +3428,7 @@ function AppInner() {
     try {
       await loadContent(library, scope, {
         discovery: { sort: { field: sortField, order: sortOrder } },
+        refreshSidebar: false,
       });
       recordNavigation(
         scope === "all"
@@ -3455,7 +3476,10 @@ function AppInner() {
     api?.setActiveContext(library.libraryId);
     setUiState("loading");
     try {
-      await loadContent(library, "all", { trashMode: true });
+      await loadContent(library, "all", {
+        trashMode: true,
+        refreshSidebar: false,
+      });
       recordNavigation({ kind: "trash", tombstoneId });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTrashFailed"), locale));
@@ -3895,6 +3919,13 @@ function AppInner() {
       setShowCollectionInput(false);
       setCollectionInputValue("");
       setNewCollectionParentId(null);
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
+      if (!collectionResult.ok) {
+        throw new LibraryOperationError(collectionResult.error);
+      }
+      setCollections(collectionResult.value);
       // Creation should land in the new collection immediately, matching
       // folder and smart-collection creation instead of leaving the user in
       // the previous browse scope.
@@ -4159,15 +4190,6 @@ function AppInner() {
         total: result.value.total,
         offset: result.value.offset,
       });
-      // Also refresh sidebar metadata
-      const [tagResult, collectionResult, smartResult] = await Promise.all([
-        api.listTags({ libraryId: library.libraryId }),
-        api.listCollections({ libraryId: library.libraryId }),
-        api.listSmartCollections({ libraryId: library.libraryId }),
-      ]);
-      if (tagResult.ok) setTags(tagResult.value);
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      if (smartResult.ok) setSmartCollections(smartResult.value);
       recordNavigation({
         kind: "collection",
         collectionId,
@@ -9159,7 +9181,7 @@ function AppInner() {
                       data-asset-id={asset.assetId}
                       title={asset.displayName}
                       draggable={!showTrash && !renamingThisAsset}
-                      key={asset.assetId}
+                      key={assetCardKey(library?.libraryId, asset.assetId)}
                       {...(renamingThisAsset
                         ? { role: "group" as const }
                         : { type: "button" as const })}

@@ -147,7 +147,7 @@ test("identifies the PBR channel matrix with read-only display modes", async () 
         name: `${fixture.fileName} 查看页面`,
       });
       await expect(preview).toBeVisible();
-      const image = preview.locator("img.preview-image");
+      const image = preview.locator("img.preview-image:not(.is-hidden)");
       await expectImageDecoded(image);
       await expect(image).toHaveAttribute(
         "data-pbr-channel",

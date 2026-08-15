@@ -4588,6 +4588,27 @@ body.serpent-modal-open .app-shell {
   -webkit-user-drag: none;
   will-change: transform;
 }
+.preview-image-full {
+  visibility: hidden;
+}
+.preview-image-full.is-hidden {
+  visibility: hidden;
+}
+.preview-image-full.is-visible {
+  visibility: visible;
+}
+.preview-image-placeholder.is-hidden {
+  visibility: hidden;
+}
+.preview-image-middle {
+  visibility: hidden;
+}
+.preview-image-middle.is-visible {
+  visibility: visible;
+}
+.preview-image-middle.is-hidden {
+  visibility: hidden;
+}
 .preview-pbr-channel-notice {
   position: absolute;
   z-index: 2;

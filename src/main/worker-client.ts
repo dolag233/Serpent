@@ -50,6 +50,7 @@ interface PendingRequest {
 // worker module finishes loading; a too-tight handshake fails startup.
 const READY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+const SEARCH_REQUEST_TIMEOUT_MS = 60_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const LINKED_DELETE_TIMEOUT_MS = 6 * 60_000;
@@ -83,6 +84,13 @@ export function requestTimeoutForCommand(
   }
   if (commandType === 'asset.analyze') {
     return AI_QUEUE_TIMEOUT_MS;
+  }
+  if (commandType === 'asset.search' || commandType === 'media.get-asset-drag-infos') {
+    // Large-library searches and drag-info hydration can wait behind one
+    // unavoidable synchronous SQLite call. Superseded searches are discarded
+    // by the Worker before they enter SQLite; the remaining request gets a
+    // longer deadline instead of failing at the old 15s default.
+    return SEARCH_REQUEST_TIMEOUT_MS;
   }
   if (
     commandType.startsWith('asset.import.')

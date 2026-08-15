@@ -8,6 +8,10 @@ import { resolveActivePreviewAssetId } from "./asset-card-hover-preview";
 
 const DEFAULT_DEBOUNCE_MS = 200;
 
+function resolutionKey(libraryId: string, assetId: string): string {
+  return `${libraryId}\u0000${assetId}`;
+}
+
 export function useAssetCardHoverPreview(input: {
   api: SerpentLibraryApi | null | undefined;
   libraryId: string | undefined;
@@ -29,9 +33,10 @@ export function useAssetCardHoverPreview(input: {
     debounceMs = DEFAULT_DEBOUNCE_MS,
   } = input;
 
-  const [hoveredAssetId, setHoveredAssetIdState] = useState<string | null>(
-    null,
-  );
+  const [hoveredState, setHoveredState] = useState<{
+    libraryId: string | undefined;
+    assetId: string | null;
+  }>(() => ({ libraryId, assetId: null }));
   const [resolutionsByAssetId, setResolutionsByAssetId] = useState(
     () => new Map<string, PreviewResolution>(),
   );
@@ -39,13 +44,26 @@ export function useAssetCardHoverPreview(input: {
   const requestSeqRef = useRef(0);
   const debounceTimerRef = useRef(0);
 
-  const setHoveredAssetId = useCallback((assetId: string | null) => {
-    setHoveredAssetIdState(assetId);
-  }, []);
+  const hoveredAssetId =
+    hoveredState.libraryId === libraryId ? hoveredState.assetId : null;
 
-  const clearHoveredAssetId = useCallback((assetId: string) => {
-    setHoveredAssetIdState((current) => (current === assetId ? null : current));
-  }, []);
+  const setHoveredAssetId = useCallback(
+    (assetId: string | null) => {
+      setHoveredState({ libraryId, assetId });
+    },
+    [libraryId],
+  );
+
+  const clearHoveredAssetId = useCallback(
+    (assetId: string) => {
+      setHoveredState((current) =>
+        current.libraryId === libraryId && current.assetId === assetId
+          ? { libraryId, assetId: null }
+          : current,
+      );
+    },
+    [libraryId],
+  );
 
   const activePreviewAssetId = useMemo(
     () =>
@@ -59,13 +77,17 @@ export function useAssetCardHoverPreview(input: {
 
   const activeResolution = useMemo(() => {
     if (!activePreviewAssetId) return null;
-    const cached = resolutionsByAssetId.get(activePreviewAssetId);
+    if (!libraryId) return null;
+    const cached = resolutionsByAssetId.get(
+      resolutionKey(libraryId, activePreviewAssetId),
+    );
     return cached?.status === "ready" && cached.url ? cached : null;
-  }, [activePreviewAssetId, resolutionsByAssetId]);
+  }, [activePreviewAssetId, libraryId, resolutionsByAssetId]);
 
   useEffect(() => {
     if (!api || !libraryId || !activePreviewAssetId) return;
-    if (resolutionsByAssetId.get(activePreviewAssetId)?.url) return;
+    const cacheKey = resolutionKey(libraryId, activePreviewAssetId);
+    if (resolutionsByAssetId.get(cacheKey)?.url) return;
 
     const sequence = ++requestSeqRef.current;
     const targetAssetId = activePreviewAssetId;
@@ -86,7 +108,7 @@ export function useAssetCardHoverPreview(input: {
           if (!result.ok) return;
           setResolutionsByAssetId((previous) => {
             const next = new Map(previous);
-            next.set(targetAssetId, result.value);
+            next.set(cacheKey, result.value);
             return next;
           });
         } catch {
@@ -113,6 +135,15 @@ export function useAssetCardHoverPreview(input: {
     },
     [],
   );
+
+  // A preview resolution is scoped to the library that produced its URL.
+  // Keeping the asset-id-only map across a library switch can reuse an old
+  // serpent://source URL when two libraries contain the same asset id, and
+  // the in-flight request can otherwise finish after the old library closes.
+  useEffect(() => {
+    requestSeqRef.current += 1;
+    window.clearTimeout(debounceTimerRef.current);
+  }, [libraryId]);
 
   return {
     hoveredAssetId,

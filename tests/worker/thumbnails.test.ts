@@ -1132,6 +1132,32 @@ describe('getArtifactAbsolutePath', () => {
     service.closeAll();
   });
 
+  it('reuses validated paths and drops them after artifact invalidation', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'CachedArtifactPath', selectedParentPath: root });
+    const png = path.join(root, 'cached.png');
+    createTestImage(png);
+    importNoConflict(service, created.libraryId, png);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const first = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    const firstPath = service.getArtifactAbsolutePath(created.libraryId, first.artifactId, 'preview');
+    expect(service.getArtifactAbsolutePath(created.libraryId, first.artifactId, 'preview')).toBe(firstPath);
+
+    const second = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    expect(second.artifactId).not.toBe(first.artifactId);
+    // The cache follows the library change sequence subscription. Give its
+    // cross-process polling boundary one tick before checking the old token.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(() => service.getArtifactAbsolutePath(
+      created.libraryId,
+      first.artifactId,
+      'preview',
+    )).toThrow(LibraryServiceError);
+    expect(existsSync(service.getArtifactAbsolutePath(created.libraryId, second.artifactId, 'preview'))).toBe(true);
+    service.closeAll();
+  });
+
   it('rejects an artifact file replaced by a symlink', async () => {
     if (process.platform === 'win32') return;
     const root = temporaryRoot();

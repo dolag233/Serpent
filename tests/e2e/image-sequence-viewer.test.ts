@@ -185,7 +185,7 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     await frameSlider.press("Home");
     await frameSlider.press("ArrowRight");
     await expect(window.getByRole("button", { name: "播放序列" })).toBeVisible();
-    const previewImage = viewer.locator("img.preview-image");
+    const previewImage = viewer.locator("img.preview-image:not(.is-hidden)");
     await expectDecodedImage(previewImage);
     await expect(previewImage).toHaveAttribute("alt", "motion_001.png");
     await window.getByRole("button", { name: "播放序列" }).click();

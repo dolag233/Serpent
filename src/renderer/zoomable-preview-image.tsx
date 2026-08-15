@@ -151,6 +151,10 @@ export const ZoomableImage = forwardRef<
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
   const [fullDecoded, setFullDecoded] = useState(false);
+  const [middleState, setMiddleState] = useState<{
+    source: string;
+    url: string | null;
+  }>({ source: "", url: null });
   const [sourceNatural, setSourceNatural] = useState({ w: 0, h: 0 });
   const sourceNaturalRef = useRef({ w: 0, h: 0 });
   const previousQuarterTurnsRef = useRef(displayTransform.quarterTurns);
@@ -211,38 +215,87 @@ export const ZoomableImage = forwardRef<
     setFullDecoded(false);
   }, [src]);
 
-  // Prefetch full image; only promote after proven decode (naturalWidth > 0).
-  useEffect(() => {
-    if (!src) return;
-    if (placeholderSrc && src === placeholderSrc) {
-      setFullDecoded(true);
-      return;
-    }
-    let cancelled = false;
-    const probe = new Image();
-    const finish = () => {
-      if (cancelled) return;
-      if (isDecodedImage(probe)) setFullDecoded(true);
-    };
-    probe.onload = finish;
-    probe.onerror = () => {
-      // Fall through: still show placeholder; full may retry via parent.
-    };
-    probe.src = src;
-    if (probe.complete) finish();
-    return () => {
-      cancelled = true;
-      probe.onload = null;
-      probe.onerror = null;
-    };
-  }, [placeholderSrc, src]);
-
   const display = resolveViewerImageDisplay({
     placeholderUrl: placeholderSrc ?? null,
     fullUrl: src,
     fullDecoded,
   });
-  const paintSrc = display.displayUrl ?? src;
+  const hasFullUpgrade = Boolean(
+    placeholderSrc && src && placeholderSrc !== src,
+  );
+  const middleSrc = middleState.source === src ? middleState.url : null;
+
+  // Build a fit-sized middle image from the full response. This uses one
+  // resized ImageBitmap decode for the quick upgrade; the full URL remains on
+  // its own hidden <img> and becomes visible only after that element proves it
+  // has decoded. No detached full-resolution probe is created (Serpent-h00q).
+  useEffect(() => {
+    if (
+      !hasFullUpgrade ||
+      fullDecoded ||
+      typeof createImageBitmap !== "function"
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+
+    const createMiddleImage = async (): Promise<string | null> => {
+      const response = await fetch(src, { signal: controller.signal });
+      if (!response.ok) return null;
+      const sourceBlob = await response.blob();
+      const bitmap = await createImageBitmap(sourceBlob, {
+        // Supplying only one dimension preserves the source aspect ratio. The
+        // largest viewport edge is a good fit-sized middle target even before
+        // the full source's natural dimensions are known.
+        resizeWidth: Math.max(
+          1,
+          Math.round(
+            Math.max(
+              viewportRef.current?.clientWidth ?? 0,
+              viewportRef.current?.clientHeight ?? 0,
+              window.innerWidth,
+              window.innerHeight,
+            ),
+          ),
+        ),
+        resizeQuality: "high",
+      });
+      try {
+        if (controller.signal.aborted) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) return null;
+        context.drawImage(bitmap, 0, 0);
+        const middleBlob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/png"),
+        );
+        if (!middleBlob || controller.signal.aborted) return null;
+        objectUrl = URL.createObjectURL(middleBlob);
+        return objectUrl;
+      } finally {
+        bitmap.close();
+      }
+    };
+
+    void createMiddleImage()
+      .then((url) => {
+        if (!url || controller.signal.aborted) return;
+        setMiddleState({ source: src, url });
+      })
+      .catch(() => {
+        // The placeholder remains visible if a browser cannot create the
+        // resized middle layer; the full image still upgrades normally.
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [fullDecoded, hasFullUpgrade, src, viewportRef]);
+
   const pbrChannelInfo = pbrChannel ? pbrChannelCopy(pbrChannel, t) : null;
   const pbrFilter = pbrChannel
     ? pbrTextureDisplayFilter(pbrChannel)
@@ -251,7 +304,7 @@ export const ZoomableImage = forwardRef<
   useLayoutEffect(() => {
     const image = imageRef.current;
     if (image && image.naturalWidth > 0) measureFromImage(image);
-  }, [paintSrc, measureFromImage]);
+  }, [display.layer, fullDecoded, measureFromImage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -290,30 +343,86 @@ export const ZoomableImage = forwardRef<
         ref={viewportRef}
         {...viewportPointerHandlers}
       >
-        <img
-          alt={alt}
-          className="preview-image"
-          data-pbr-channel={pbrChannel?.channel}
-          draggable={false}
-          onLoad={(event) => {
-            measureFromImage(event.currentTarget);
-            if (
-              paintSrc === src &&
-              isDecodedImage(event.currentTarget)
-            ) {
-              setFullDecoded(true);
-            }
-          }}
-          ref={imageRef}
-          src={paintSrc}
-          style={{
-            width: displayW,
-            height: displayH,
-            filter: pbrFilter,
-            transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
-            transformOrigin: "center center",
-          }}
-        />
+        {hasFullUpgrade ? (
+          <>
+            <img
+              alt={middleSrc || fullDecoded ? "" : alt}
+              aria-hidden={middleSrc || fullDecoded ? true : undefined}
+              className={`preview-image preview-image-placeholder${middleSrc || fullDecoded ? " is-hidden" : ""}`}
+              data-pbr-channel={pbrChannel?.channel}
+              draggable={false}
+              onLoad={(event) => measureFromImage(event.currentTarget)}
+              ref={middleSrc || fullDecoded ? undefined : imageRef}
+              src={placeholderSrc}
+              style={{
+                width: displayW,
+                height: displayH,
+                filter: pbrFilter,
+                transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
+                transformOrigin: "center center",
+              }}
+            />
+            {middleSrc ? (
+              <img
+                alt={fullDecoded ? "" : alt}
+                aria-hidden={fullDecoded ? true : undefined}
+                className={`preview-image preview-image-middle${fullDecoded ? " is-hidden" : " is-visible"}`}
+                data-pbr-channel={pbrChannel?.channel}
+                draggable={false}
+                onLoad={(event) => measureFromImage(event.currentTarget)}
+                ref={fullDecoded ? undefined : imageRef}
+                src={middleSrc}
+                style={{
+                  width: displayW,
+                  height: displayH,
+                  filter: pbrFilter,
+                  transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
+                  transformOrigin: "center center",
+                }}
+              />
+            ) : null}
+            <img
+              alt={fullDecoded ? alt : ""}
+              aria-hidden={!fullDecoded ? true : undefined}
+              className={`preview-image preview-image-full${fullDecoded ? " is-visible" : " is-hidden"}`}
+              data-pbr-channel={pbrChannel?.channel}
+              draggable={false}
+              onLoad={(event) => {
+                measureFromImage(event.currentTarget);
+                if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+              }}
+              ref={fullDecoded ? imageRef : undefined}
+              src={src}
+              style={{
+                width: displayW,
+                height: displayH,
+                filter: pbrFilter,
+                transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
+                transformOrigin: "center center",
+              }}
+            />
+          </>
+        ) : (
+          <img
+            alt={alt}
+            className="preview-image"
+            data-pbr-channel={pbrChannel?.channel}
+            draggable={false}
+            onLoad={(event) => {
+              measureFromImage(event.currentTarget);
+              if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
+            }}
+            ref={imageRef}
+            src={display.displayUrl ?? src}
+            style={{
+              width: displayW,
+              height: displayH,
+              filter: pbrFilter,
+              transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
+              transformOrigin: "center center",
+            }}
+          />
+        )}
       </div>
       {pbrChannelInfo ? (
         <Notice

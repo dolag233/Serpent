@@ -203,11 +203,11 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expect(
       window.getByRole("button", { name: "导入文件", exact: true }).first(),
     ).toBeHidden();
-    await expectImageDecoded(preview.locator("img.preview-image"));
+    await expectImageDecoded(preview.locator("img.preview-image:not(.is-hidden)"));
     // Viewing keeps the host mounted so notices/activity strips remain
     // available, but removes it from normal flex flow with the viewing class.
     await expect(window.locator(".workspace-canvas-host")).toHaveClass(/is-viewing/);
-    const imageLocator = preview.locator("img.preview-image");
+    const imageLocator = preview.locator("img.preview-image:not(.is-hidden)");
     const fitBox = await imageLocator.boundingBox();
     expect(fitBox).not.toBeNull();
     const viewportLocator = preview.locator(".preview-image-viewport");
@@ -291,7 +291,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     const nextPreview = window.getByRole("region", {
       name: "next-automatic.png 查看页面",
     });
-    await expectImageDecoded(nextPreview.locator("img.preview-image"));
+    await expectImageDecoded(nextPreview.locator("img.preview-image:not(.is-hidden)"));
     await expect(
       window
         .locator(".inspector-hero-compact")
@@ -319,7 +319,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       name: "vector.svg 查看页面",
     });
     await expect(svgPreview).toBeVisible();
-    const svgPreviewImage = svgPreview.locator("img.preview-image");
+    const svgPreviewImage = svgPreview.locator("img.preview-image:not(.is-hidden)");
     await expectImageDecoded(svgPreviewImage);
     await expect
       .poll(() => svgPreviewImage.getAttribute("src"))
@@ -353,7 +353,7 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
     await expectImageDecoded(
       window
         .getByRole("region", { name: "automatic.png 查看页面" })
-        .locator("img.preview-image"),
+        .locator("img.preview-image:not(.is-hidden)"),
     );
   } finally {
     await application.close();

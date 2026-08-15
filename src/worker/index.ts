@@ -76,6 +76,10 @@ import {
   type PluginMediaProviderResult,
 } from '../shared/plugin-media-protocol';
 import { handleFbxConvertCommand } from './fbx/convert-command';
+import {
+  LatestSearchRequestCoordinator,
+  searchRequestLaneKey,
+} from './search-request-coordinator';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -91,6 +95,7 @@ const analysisControls = new Map<string, {
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
+const latestAssetSearchRequests = new LatestSearchRequestCoordinator();
 const pendingPluginMediaProviderRequests = new Map<string, {
   resolve: (result: PluginMediaProviderResult) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -1511,6 +1516,20 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // a future dispatcher change cannot silently restore an unfenced path.
       throw new Error('Bounded rating write was not dispatched through its transaction fence.');
     case 'asset.search': {
+      // Search is synchronous inside LibraryService. Yield once before
+      // entering SQLite so a burst of keystrokes can mark this request stale
+      // and discard it while it is still queued in the Worker event loop.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const laneKey = searchRequestLaneKey(request.command);
+      if (!latestAssetSearchRequests.isLatest(request.command.libraryId, laneKey, request.requestId)) {
+        return {
+          ok: true,
+          type: 'asset.search.result',
+          items: [],
+          total: 0,
+          offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
+        };
+      }
       const result = libraryService.searchAssets({
         libraryId: request.command.libraryId,
         query: request.command.query,
@@ -3110,6 +3129,13 @@ parentPort.on('message', async (event) => {
   let response: WorkerResponse;
   try {
     const request = parseWorkerRequest(input);
+    if (request.command.type === 'asset.search') {
+      latestAssetSearchRequests.mark(
+        request.command.libraryId,
+        searchRequestLaneKey(request.command),
+        request.requestId,
+      );
+    }
     response = { requestId: request.requestId, result: await handleRequest(request) };
   } catch (error) {
     console.error(JSON.stringify({

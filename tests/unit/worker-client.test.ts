@@ -29,6 +29,11 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('asset.list')).toBe(15_000);
   });
 
+  it('gives large-library reads room to finish after queued work', () => {
+    expect(requestTimeoutForCommand('asset.search')).toBe(60_000);
+    expect(requestTimeoutForCommand('media.get-asset-drag-infos')).toBe(60_000);
+  });
+
   it('allows library create and automation plan previews to finish before Main times out', () => {
     expect(requestTimeoutForCommand('library.create')).toBe(5 * 60_000);
     expect(requestTimeoutForCommand({

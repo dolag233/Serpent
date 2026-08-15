@@ -57,6 +57,18 @@ export function coverSrc(
   return `serpent://preview/${libraryId}/${thumbnailArtifactId}`;
 }
 
+/**
+ * React identity for a card must include its library. Asset ids are only
+ * unique inside a library, and preserving a key across a library switch can
+ * leave a card component holding the previous library's media state.
+ */
+export function assetCardKey(
+  libraryId: string | undefined,
+  assetId: string,
+): string {
+  return `${libraryId ?? "no-library"}:${assetId}`;
+}
+
 /** Original-file URL used when the derived thumbnail is missing or failed. */
 export function sourceSrc(libraryId: string, assetId: string): string {
   return `serpent://source/${libraryId}/${assetId}`;

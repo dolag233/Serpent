@@ -2504,6 +2504,12 @@ interface OpenLibrary {
   gitignoreText: string;
 }
 
+interface ArtifactPathCacheEntry {
+  absolutePath: string;
+  kind: string;
+  changeSequence: number;
+}
+
 interface ManagedFolderRow {
   folder_id: string;
   name: string;
@@ -4636,6 +4642,13 @@ export class LibraryService {
   /** Cache the first H.264-capable encoder discovered for each FFmpeg binary. */
   private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
   /**
+   * Serving a serpent:// preview used to repeat one artifact lookup and four
+   * containment filesystem probes for every image request. The cache is
+   * scoped by library and invalidated by the durable library change sequence;
+   * entries are never shared across libraries or usages.
+   */
+  private readonly artifactPathCache = new Map<string, ArtifactPathCacheEntry>();
+  /**
    * Open automation groups are keyed by their Main-owned execution source.
    * The value is an in-memory reservation until the first real step is
    * recorded. Keeping the reservation out of `operation_history` prevents a
@@ -4652,6 +4665,13 @@ export class LibraryService {
   private suppressWatcherNotifyUntilMs = 0;
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  private invalidateArtifactPathCache(libraryId: string): void {
+    const prefix = `${libraryId}\u0000`;
+    for (const key of this.artifactPathCache.keys()) {
+      if (key.startsWith(prefix)) this.artifactPathCache.delete(key);
+    }
+  }
 
   private modelAiViewsRenderer?: (
     input: ModelThumbnailRendererInput,
@@ -11124,26 +11144,46 @@ export class LibraryService {
 
     const allFolders = (openLibrary.connection
       .prepare(
-        'SELECT folder_id, relative_path FROM managed_folders',
+        'SELECT folder_id, parent_folder_id, relative_path FROM managed_folders',
       )
-      .all() as Array<{ folder_id: string; relative_path: string }>).filter((folder) =>
-      showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
+      .all() as Array<{
+        folder_id: string;
+        parent_folder_id: string | null;
+        relative_path: string;
+      }>).filter((folder) =>
+        showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, folder.relative_path),
     );
-    const { directAssetCounts } = this.managedFolderCountMaps(openLibrary, undefined, showIgnored);
+    const { directAssetCounts } = this.managedFolderCountMaps(
+      openLibrary,
+      undefined,
+      showIgnored,
+    );
+    const totals = new Map(
+      allFolders.map((folder) => [
+        folder.folder_id,
+        directAssetCounts.get(folder.folder_id) ?? 0,
+      ] as const),
+    );
 
+    // Aggregate each folder into its parent once, deepest first. The previous
+    // implementation compared every folder path with every other path (O(F²))
+    // on every sidebar/navigation load; the parent relation makes this O(F log
+    // F) for the depth ordering plus O(F) aggregation.
+    const deepestFirst = [...allFolders].sort(
+      (left, right) =>
+        right.relative_path.split('/').length - left.relative_path.split('/').length,
+    );
+    for (const folder of deepestFirst) {
+      if (!folder.parent_folder_id) continue;
+      const parentTotal = totals.get(folder.parent_folder_id);
+      if (parentTotal === undefined) continue;
+      totals.set(
+        folder.parent_folder_id,
+        parentTotal + (totals.get(folder.folder_id) ?? 0),
+      );
+    }
     for (const folder of folders) {
-      const prefix = folder.relative_path;
-      let total = directAssetCounts.get(folder.folder_id) ?? 0;
-      for (const candidate of allFolders) {
-        if (candidate.folder_id === folder.folder_id) continue;
-        if (
-          candidate.relative_path === prefix ||
-          candidate.relative_path.startsWith(`${prefix}/`)
-        ) {
-          total += directAssetCounts.get(candidate.folder_id) ?? 0;
-        }
-      }
-      result.set(folder.folder_id, total);
+      result.set(folder.folder_id, totals.get(folder.folder_id) ?? 0);
     }
     return result;
   }
@@ -19129,6 +19169,13 @@ export class LibraryService {
     usage?: 'preview' | 'proxy',
   ): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const cacheKey = `${libraryId}\u0000${artifactId}`;
+    const currentChangeSequence = openLibrary.changeSubscription.lastSequence;
+    const cached = this.artifactPathCache.get(cacheKey);
+    if (cached && cached.changeSequence === currentChangeSequence) {
+      this.assertArtifactUsage(cached.kind, usage);
+      return cached.absolutePath;
+    }
     // The join against the asset's current revision is the serving boundary:
     // permanently deleted assets lose their row and stop resolving here, while
     // trashed assets keep resolving so the trash scope can show a decodable
@@ -19144,13 +19191,22 @@ export class LibraryService {
       )
       .get(artifactId) as { artifact_id: string; file_path: string; kind: string } | undefined;
     if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    if (usage) {
-      const allowedKinds = usage === 'proxy'
-        ? new Set(['webm_proxy', 'audio_proxy'])
-        : new Set(['thumbnail', 'video_poster', 'model_glb']);
-      if (!allowedKinds.has(row.kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
-    }
-    return this.artifactFilePathFromRow(openLibrary, row.file_path);
+    this.assertArtifactUsage(row.kind, usage);
+    const absolutePath = this.artifactFilePathFromRow(openLibrary, row.file_path);
+    this.artifactPathCache.set(cacheKey, {
+      absolutePath,
+      kind: row.kind,
+      changeSequence: openLibrary.changeSubscription.lastSequence,
+    });
+    return absolutePath;
+  }
+
+  private assertArtifactUsage(kind: string, usage?: 'preview' | 'proxy'): void {
+    if (!usage) return;
+    const allowedKinds = usage === 'proxy'
+      ? new Set(['webm_proxy', 'audio_proxy'])
+      : new Set(['thumbnail', 'video_poster', 'model_glb']);
+    if (!allowedKinds.has(kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
   }
 
   /**
@@ -21050,68 +21106,84 @@ export class LibraryService {
       orderBy = `a.relative_file_path ASC, a.asset_id ASC`;
     }
 
-    // Build the base FROM + JOIN clauses.
-    const baseFrom = hasQuery
-      ? `FROM assets a
-           JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
-           LEFT JOIN revision_artifacts duration_meta
-             ON duration_meta.revision_id = a.current_revision_id
-            AND duration_meta.kind = 'extracted_metadata'
-            ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
-            AND duration_meta.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts palette_meta
-             ON palette_meta.revision_id = a.current_revision_id
-            AND palette_meta.kind = 'extracted_palette'
-            ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
-            AND palette_meta.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts technical_thumbnail
-             ON technical_thumbnail.revision_id = a.current_revision_id
-            AND technical_thumbnail.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-            ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
-            AND technical_thumbnail.invalidated_at IS NULL
-           ${hasSearchIndex ? 'JOIN asset_search_index sc ON a.asset_id = sc.asset_id' : ''}
-           ${useTrigramIndex && hasSearchIndex && hasSearchFts
-             ? 'JOIN asset_search s ON sc.rowid = s.rowid'
-             : ''}`
-      : `FROM assets a
-           JOIN revisions r ON r.revision_id = a.current_revision_id
-           LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
-           LEFT JOIN revision_artifacts duration_meta
-             ON duration_meta.revision_id = a.current_revision_id
-            AND duration_meta.kind = 'extracted_metadata'
-            ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
-            AND duration_meta.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts palette_meta
-             ON palette_meta.revision_id = a.current_revision_id
-            AND palette_meta.kind = 'extracted_palette'
-            ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
-            AND palette_meta.invalidated_at IS NULL
-           LEFT JOIN revision_artifacts technical_thumbnail
-             ON technical_thumbnail.revision_id = a.current_revision_id
-            AND technical_thumbnail.kind = CASE
-              WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
-                OR LOWER(a.relative_file_path) LIKE '%.webm'
-                OR LOWER(a.relative_file_path) LIKE '%.mov'
-                OR LOWER(a.relative_file_path) LIKE '%.avi'
-                OR LOWER(a.relative_file_path) LIKE '%.wmv'
-                OR LOWER(a.relative_file_path) LIKE '%.mkv'
-                OR LOWER(a.relative_file_path) LIKE '%.m4v'
-              THEN 'video_poster'
-              ELSE 'thumbnail'
-            END
-            ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
-            AND technical_thumbnail.invalidated_at IS NULL`;
+    // Keep the ordinary browse/count path narrow. These artifact joins used
+    // to run for every browse and search request even though they are only
+    // needed by technical filters or technical sorts. On a large library the
+    // COUNT query and the data query therefore both scanned the artifact
+    // table before the renderer even asked for thumbnail rows.
+    const filterFields = new Set((input.filters ?? []).map((filter) => filter.field));
+    const needsDurationMeta =
+      filterFields.has('width') ||
+      filterFields.has('height') ||
+      filterFields.has('duration_ms') ||
+      filterFields.has('long_edge') ||
+      filterFields.has('aspect_ratio') ||
+      input.sort?.field === 'duration' ||
+      input.sort?.field === 'long_edge';
+    const needsPaletteMeta =
+      filterFields.has('color') || input.sort?.field === 'color';
+    const needsTechnicalThumbnail =
+      filterFields.has('width') ||
+      filterFields.has('height') ||
+      filterFields.has('long_edge') ||
+      filterFields.has('aspect_ratio') ||
+      input.sort?.field === 'long_edge';
+    const durationMetaJoin = needsDurationMeta
+      ? `LEFT JOIN revision_artifacts duration_meta
+           ON duration_meta.revision_id = a.current_revision_id
+          AND duration_meta.kind = 'extracted_metadata'
+          ${artifactColumns.has('status') ? "AND duration_meta.status = 'ready'" : ''}
+          AND duration_meta.invalidated_at IS NULL`
+      : '';
+    const paletteMetaJoin = needsPaletteMeta
+      ? `LEFT JOIN revision_artifacts palette_meta
+           ON palette_meta.revision_id = a.current_revision_id
+          AND palette_meta.kind = 'extracted_palette'
+          ${artifactColumns.has('status') ? "AND palette_meta.status = 'ready'" : ''}
+          AND palette_meta.invalidated_at IS NULL`
+      : '';
+    const technicalThumbnailJoin = needsTechnicalThumbnail
+      ? `LEFT JOIN revision_artifacts technical_thumbnail
+           ON technical_thumbnail.revision_id = a.current_revision_id
+          AND technical_thumbnail.kind = CASE
+            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+              OR LOWER(a.relative_file_path) LIKE '%.webm'
+              OR LOWER(a.relative_file_path) LIKE '%.mov'
+              OR LOWER(a.relative_file_path) LIKE '%.avi'
+              OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              OR LOWER(a.relative_file_path) LIKE '%.mkv'
+              OR LOWER(a.relative_file_path) LIKE '%.m4v'
+            THEN 'video_poster'
+            ELSE 'thumbnail'
+          END
+          ${artifactColumns.has('status') ? "AND technical_thumbnail.status = 'ready'" : ''}
+          AND technical_thumbnail.invalidated_at IS NULL`
+      : '';
+    const searchJoins = hasQuery && hasSearchIndex
+      ? `JOIN asset_search_index sc ON a.asset_id = sc.asset_id
+         ${useTrigramIndex && hasSearchFts ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
+      : '';
+    const dataFrom = `FROM assets a
+         JOIN revisions r ON r.revision_id = a.current_revision_id
+         LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
+         ${durationMetaJoin}
+         ${paletteMetaJoin}
+         ${technicalThumbnailJoin}
+         ${searchJoins}`;
+    // COUNT only retains joins referenced by the WHERE clause. Revisions are
+    // display-only, while metadata is needed only for rating/favourite/URL
+    // filters; this makes the sidebar count materially cheaper than the data
+    // page without changing the result set.
+    const needsMetadataForFilter =
+      filterFields.has('rating') ||
+      filterFields.has('favorite') ||
+      filterFields.has('source_url');
+    const countFrom = `FROM assets a
+         ${needsMetadataForFilter ? 'LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id' : ''}
+         ${durationMetaJoin}
+         ${paletteMetaJoin}
+         ${technicalThumbnailJoin}
+         ${searchJoins}`;
 
     // WHERE clause.
     const whereParts: string[] = [];
@@ -21260,7 +21332,7 @@ export class LibraryService {
     ].join(',\n');
 
     // Total count query.
-    const countSql = `SELECT COUNT(*) AS total ${baseFrom} ${whereClause}`;
+    const countSql = `SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
     const countRow = connection.prepare(countSql).get(...allParams) as {
       total: number;
     };
@@ -21270,7 +21342,7 @@ export class LibraryService {
     // column so select-all/invert can cover the whole scope without shipping
     // AssetSummary rows over three process hops.
     const dataColumnsForFetch = idsOnly ? 'a.asset_id' : dataColumns;
-    const dataSql = `SELECT ${dataColumnsForFetch} ${baseFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const dataSql = `SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
       .all(...allParams, ...orderParams, limit, offset) as Array<{
@@ -29690,13 +29762,16 @@ export class LibraryService {
         connection,
         summary,
         readOnly: false,
-        changeSubscription: new LibraryWriteCoordinator(connection, summary.libraryId)
+          changeSubscription: new LibraryWriteCoordinator(connection, summary.libraryId)
           .subscribeToChangeSequence({
-            onChange: (changeSequence) => this.options.onLibraryChanged?.({
-              type: 'library.changed',
-              libraryId: summary.libraryId,
-              changeSequence,
-            }),
+            onChange: (changeSequence) => {
+              this.invalidateArtifactPathCache(summary.libraryId);
+              this.options.onLibraryChanged?.({
+                type: 'library.changed',
+                libraryId: summary.libraryId,
+                changeSequence,
+              });
+            },
           }),
         preservedRelinkPathIdentities: new Set(),
         gitignoreText: '\u0000',
@@ -31560,6 +31635,7 @@ export class LibraryService {
       openLibrary.connection.close();
       this.openById.delete(libraryId);
       this.openIdByPath.delete(openLibrary.summary.libraryPath);
+      this.invalidateArtifactPathCache(libraryId);
       this.autoRepairAttemptedByLibrary.delete(libraryId);
       this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
       return;
@@ -31584,6 +31660,7 @@ export class LibraryService {
     openLibrary.connection.close();
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);
+    this.invalidateArtifactPathCache(libraryId);
     for (const [key] of this.openOperationHistoryGroups) {
       if (key.startsWith(`${libraryId}\u0000`)) this.openOperationHistoryGroups.delete(key);
     }
