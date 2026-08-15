@@ -146,6 +146,7 @@ function rawRequest(options: {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => {
+        clearTimeout(hardTimer);
         resolve({
           status: response.statusCode ?? 0,
           headers: response.headers as Record<string, string>,
@@ -153,7 +154,17 @@ function rawRequest(options: {
         });
       });
     });
+    // 硬超时：socket 空闲超时管不住"服务器持续流式响应但非常慢"的情况
+    // （如低效的 Depth: infinity 遍历），必须给整个请求一个总时限。
+    const hardTimer = setTimeout(() => {
+      request.destroy(new RemoteStorageError('TIMEOUT', '连接超时，请检查地址与网络。', true));
+    }, options.timeoutMs);
     request.on('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(hardTimer);
+      if (error instanceof RemoteStorageError) {
+        reject(error);
+        return;
+      }
       if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ESOCKETTIMEDOUT') {
         reject(new RemoteStorageError('TIMEOUT', '连接超时，请检查地址与网络。', true));
       } else if (error.code === 'CERT_HAS_EXPIRED' || error.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || error.code === 'SELF_SIGNED_CERT_IN_CHAIN' || error.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || error.message.includes('certificate')) {
@@ -197,7 +208,7 @@ export class WebDAVDriver implements RemoteStorageDriver {
   private async request(
     method: string,
     portablePath: string,
-    options: { headers?: Record<string, string>; body?: Buffer; ifMatch?: string; destination?: string } = {},
+    options: { headers?: Record<string, string>; body?: Buffer; ifMatch?: string; destination?: string; timeoutMs?: number } = {},
   ): Promise<RawResponse> {
     const url = joinWebDAVUrl(this.config.baseUrl, portablePath);
     const parsed = new URL(url);
@@ -212,7 +223,7 @@ export class WebDAVDriver implements RemoteStorageDriver {
       headers,
       body: options.body,
       rejectUnauthorized: !this.config.allowInsecureTls,
-      timeoutMs: this.config.timeoutMs,
+      timeoutMs: options.timeoutMs ?? this.config.timeoutMs,
     });
 
     // Digest 挑战：401 + WWW-Authenticate: Digest → 计算并重试一次。
@@ -358,6 +369,7 @@ export class WebDAVDriver implements RemoteStorageDriver {
     if (this.cachedCapabilities) return this.cachedCapabilities;
     const capabilities: DriverCapabilities = {
       auth: 'none',
+      supportsContentTransfer: false,
       supportsDepthInfinity: false,
       supportsEtagIfMatch: false,
       supportsMove: false,
@@ -381,9 +393,11 @@ export class WebDAVDriver implements RemoteStorageDriver {
       throw this.mapError(anonymous.status, anonymous.body, 'PROPFIND');
     }
 
-    // 2) 递归列举能力 + 根配额属性。
+    // 2) 递归列举能力 + 根配额属性。Depth: infinity 在部分服务端
+    // 实现非常慢（60s+），用短超时探测：超时即视为不可用（分层遍历兜底）。
     const root = await this.request('PROPFIND', '', {
       headers: { Depth: 'infinity', 'Content-Type': 'application/xml; charset=utf-8' },
+      timeoutMs: Math.min(this.config.timeoutMs, 15_000),
     }).catch(() => null);
     if (root && root.status === 207) {
       capabilities.supportsDepthInfinity = true;
@@ -403,6 +417,7 @@ export class WebDAVDriver implements RemoteStorageDriver {
         headers: { 'Content-Type': 'application/octet-stream' },
       });
       if (written.status >= 200 && written.status < 300) {
+        capabilities.supportsContentTransfer = true;
         const etag = written.headers.etag;
         if (etag) {
           const conditional = await this.request('PUT', probeFile, {

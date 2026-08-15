@@ -37,6 +37,8 @@ export interface RemoteWriteResult {
 export interface DriverCapabilities {
   /** 探测出的认证模式：匿名、Basic 或 Digest。 */
   auth: 'none' | 'basic' | 'digest';
+  /** 能否上传/下载文件内容（PUT 与 GET 均可用）；false 表示该服务器不能承载同步。 */
+  supportsContentTransfer: boolean;
   supportsDepthInfinity: boolean;
   supportsEtagIfMatch: boolean;
   supportsMove: boolean;
