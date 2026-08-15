@@ -3119,15 +3119,16 @@ input[type="range"] {
   gap: 4px;
 }
 
-/* Serpent-kipk: recent rows are plain list items — no card chrome, no dismiss X. */
+/* Serpent-kipk: recent rows are plain list items — no card chrome. The
+   Serpent-kqgy follow-up puts the forget x INSIDE the full-width row button. */
 .empty-recent-open,
 .create-dialog-recent-open {
   display: flex;
+  width: 100%;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
   padding: 8px 10px;
   border: none;
   border-radius: 6px;
@@ -3135,6 +3136,30 @@ input[type="range"] {
   color: var(--text);
   cursor: pointer;
   text-align: left;
+}
+
+.create-dialog-recent-texts {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.create-dialog-recent-forget {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--secondary);
+}
+
+.create-dialog-recent-forget:hover {
+  background: var(--canvas);
+  color: var(--text);
 }
 
 .empty-recent-open:hover:not(:disabled),

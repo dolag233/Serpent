@@ -194,4 +194,40 @@ describe('thumbnail fill order (Serpent-xoaz)', () => {
     expect(queued.map((row) => row.relative_file_path).sort()).toEqual(newestPaths);
     service.closeAll();
   });
+
+  it('keeps the caller id order for explicit waves regardless of created_at (Serpent-x9xu follow-up)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({ sharpFn: instantSharp() });
+    const created = service.createLibrary({ displayName: 'ExplicitOrder', selectedParentPath: root });
+
+    const sourceDir = path.join(root, 'sources');
+    createDistinctPngs(sourceDir, 6);
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const assets = db.prepare(
+      'SELECT asset_id FROM assets ORDER BY relative_file_path',
+    ).all() as Array<{ asset_id: string }>;
+    expect(assets).toHaveLength(6);
+    const base = Date.parse('2026-01-01T00:00:00.000Z');
+    const stamp = db.prepare('UPDATE assets SET created_at = ? WHERE asset_id = ?');
+    // Path-first assets are the OLDEST imports; path-last are the newest —
+    // created_at DESC would flip the caller order.
+    assets.forEach((asset, index) => {
+      stamp.run(new Date(base + index * 1000).toISOString(), asset.asset_id);
+    });
+    db.close();
+
+    // Caller requests the path-first three in their list order.
+    const requested = assets.slice(0, 3).map((asset) => asset.asset_id);
+    expect(service.enqueueThumbnailJobs(created.libraryId, { assetIds: requested, priority: 350 })).toBe(3);
+    const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const jobs = db2.prepare(
+      "SELECT asset_id FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued' ORDER BY rowid",
+    ).all() as Array<{ asset_id: string }>;
+    db2.close();
+    // Insertion order follows the caller's id sequence, not created_at DESC.
+    expect(jobs.map((job) => job.asset_id)).toEqual(requested);
+    service.closeAll();
+  });
 });

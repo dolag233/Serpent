@@ -422,6 +422,8 @@ function scheduleThumbnailQueue(
     priority?: number;
     repairFailed?: boolean;
     retryFailed?: boolean;
+    /** Serpent-x9xu light scenes skip stale-artifact invalidation sweeps. */
+    skipStaleRepair?: boolean;
   } = {},
 ): number {
   let enqueued: number;
@@ -549,12 +551,19 @@ function scheduleThumbnailQueue(
 
 type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation' | 'cover';
 
-/** Best-effort scheduling for normal product flows; explicit media commands use the throwing primitive. */
+/**
+ * Serpent-x9xu redesign: scenes that fire on every browse/search response are
+ * "light" — they boost priorities without running the expensive auto-repair /
+ * stale-artifact scans, which belong to the explicit refresh wave. Keeps the
+ * per-page scheduling cheap enough that appending a page never stalls the
+ * Worker behind repair sweeps.
+ */
 function scheduleThumbnailScene(
   libraryId: string,
   scene: ThumbnailScheduleScene,
   assetIds?: string[],
   maxIdsOverride?: number,
+  options: { light?: boolean } = {},
 ): void {
   const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number }> = {
     startup: { limit: 50, priority: 100 },
@@ -586,11 +595,12 @@ function scheduleThumbnailScene(
       ...(assetIds ? { assetIds: assetIds.slice(0, maxIds) } : {}),
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
-      repairFailed: true,
+      repairFailed: !options.light,
       // Serpent-5xbg: every browse/refresh wave re-opens retryable failed
       // artifacts (throttled) — generation failures are healed in the
       // background whenever the asset surfaces, no periodic scan needed.
       retryFailed: true,
+      ...(options.light ? { skipStaleRepair: true } : {}),
     });
   } catch {
     // scheduleThumbnailQueue already wrote the complete diagnostic. Automatic
@@ -1549,13 +1559,21 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
       });
-      scheduleThumbnailScene(
-        request.command.libraryId,
-        'visible',
-        result.items.flatMap((asset) =>
-          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-        ),
-      );
+      // Serpent-x9xu redesign: only the FIRST page schedules the visible wave
+      // (and lightly — no repair/stale sweeps per page). Append pages must not
+      // re-boost or re-scan: the renderer reports the actual visible window
+      // (asset.thumbnail.visible-window) as the user scrolls.
+      if ((request.command.offset ?? 0) === 0 && !request.command.idsOnly) {
+        scheduleThumbnailScene(
+          request.command.libraryId,
+          'visible',
+          result.items.flatMap((asset) =>
+            asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
+          ),
+          undefined,
+          { light: true },
+        );
+      }
       return {
         ok: true,
         type: 'asset.search.result',

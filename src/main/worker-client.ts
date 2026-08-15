@@ -85,11 +85,12 @@ export function requestTimeoutForCommand(
   if (commandType === 'asset.analyze') {
     return AI_QUEUE_TIMEOUT_MS;
   }
-  if (commandType === 'asset.search' || commandType === 'media.get-asset-drag-infos') {
-    // Large-library searches and drag-info hydration can wait behind one
-    // unavoidable synchronous SQLite call. Superseded searches are discarded
-    // by the Worker before they enter SQLite; the remaining request gets a
-    // longer deadline instead of failing at the old 15s default.
+  if (commandType === 'asset.search' || commandType === 'smart-collection.execute' || commandType === 'media.get-asset-drag-infos') {
+    // Large-library searches, smart-collection pages, and drag-info hydration
+    // can wait behind one unavoidable synchronous SQLite call. Superseded
+    // searches are discarded by the Worker before they enter SQLite; the
+    // remaining request gets a longer deadline instead of failing at the old
+    // 15s default.
     return SEARCH_REQUEST_TIMEOUT_MS;
   }
   if (

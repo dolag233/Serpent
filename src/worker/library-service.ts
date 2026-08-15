@@ -20099,9 +20099,12 @@ export class LibraryService {
     // imported assets first (created_at DESC, path as a deterministic
     // tiebreaker) instead of pure path-alphabetical order — the assets the
     // user just imported surface their thumbnails first, which is what a
-    // fresh large import actually wants to see. Explicit-id waves (visible /
-    // mutation / linked) are IN-filtered, so the order only stabilizes the
-    // truncation when their id list exceeds the limit.
+    // fresh large import actually wants to see.
+    // Serpent-x9xu follow-up: explicit-id waves (visible/mutation/linked)
+    // must keep the CALLER's order — the browse list order is what the user
+    // sees top-to-bottom, so re-sorting by created_at DESC made the bottom
+    // of the viewport finish before the top. The SQL IN result is re-ordered
+    // in JS by the caller's id sequence before the insert loop.
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.current_revision_id
@@ -20132,6 +20135,15 @@ export class LibraryService {
         ...supportedExtensions.map((extension) => `%.${extension}`),
         ...(limit === undefined ? [] : [limit]),
       ) as Array<{ asset_id: string; current_revision_id: string }>;
+    if (selectedIds.length > 0) {
+      // Serpent-x9xu follow-up: keep the caller's id order for explicit
+      // waves so the user's top-of-viewport assets enqueue first.
+      const order = new Map(selectedIds.map((id, index) => [id, index]));
+      rows.sort(
+        (left, right) =>
+          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
+      );
+    }
 
     const now = new Date().toISOString();
     const insert = openLibrary.connection.prepare(
@@ -20170,6 +20182,13 @@ export class LibraryService {
         ...videoExtensions.map((extension) => `%.${extension}`),
         ...(limit === undefined ? [] : [limit]),
       ) as Array<{ asset_id: string; current_revision_id: string }>;
+    if (selectedIds.length > 0) {
+      const order = new Map(selectedIds.map((id, index) => [id, index]));
+      videoMetadataRows.sort(
+        (left, right) =>
+          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
+      );
+    }
     for (const row of videoMetadataRows) {
       this.enqueueVideoMetadataJob(
         openLibrary,
@@ -20226,6 +20245,13 @@ export class LibraryService {
         current_revision_id: string;
         relative_file_path: string;
       }>;
+    if (selectedIds.length > 0) {
+      const order = new Map(selectedIds.map((id, index) => [id, index]));
+      playbackRows.sort(
+        (left, right) =>
+          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
+      );
+    }
     for (const row of playbackRows) {
       const mediaType = LibraryService.detectMediaType(row.relative_file_path);
       if (mediaType === 'video') {
@@ -20290,6 +20316,13 @@ export class LibraryService {
         ...videoExtensions.map((extension) => `%.${extension}`),
         ...(limit === undefined ? [] : [limit]),
       ) as Array<{ asset_id: string; current_revision_id: string }>;
+    if (selectedIds.length > 0) {
+      const order = new Map(selectedIds.map((id, index) => [id, index]));
+      contactSheetRows.sort(
+        (left, right) =>
+          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
+      );
+    }
     for (const row of contactSheetRows) {
       this.enqueueVideoDerivativeJob(
         openLibrary,

@@ -180,6 +180,9 @@ export function CreateDialog({
             <ul className="create-dialog-recent-list">
               {visibleRecents.map((entry) => (
                 <li className="create-dialog-recent-row" key={entry.path}>
+                  {/* Serpent-kqgy follow-up: the forget affordance lives inside
+                      the full-width row button (far right), not as a separate
+                      button — one row, one button. */}
                   <button
                     className="create-dialog-recent-open"
                     disabled={busy}
@@ -187,29 +190,30 @@ export function CreateDialog({
                     title={entry.path}
                     type="button"
                   >
-                    <span className="create-dialog-recent-name">
-                      {entry.name}
+                    <span className="create-dialog-recent-texts">
+                      <span className="create-dialog-recent-name">
+                        {entry.name}
+                      </span>
+                      <span className="create-dialog-recent-path">
+                        {entry.path}
+                      </span>
                     </span>
-                    <span className="create-dialog-recent-path">
-                      {entry.path}
-                    </span>
+                    {onForgetRecent != null && (
+                      <span
+                        aria-label={t("shell.forgetRecentLibrary")}
+                        className="create-dialog-recent-forget"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onForgetRecent(entry.path);
+                        }}
+                        role="button"
+                        tabIndex={-1}
+                        title={t("shell.forgetRecentLibrary")}
+                      >
+                        <Icon name="close" size={12} />
+                      </span>
+                    )}
                   </button>
-                  {onForgetRecent != null && (
-                    <button
-                      className="empty-recent-forget"
-                      disabled={busy}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onForgetRecent(entry.path);
-                      }}
-                      tabIndex={-1}
-                      title={t("shell.forgetRecentLibrary")}
-                      type="button"
-                      {...iconActionAttrs(t("shell.forgetRecentLibrary"))}
-                    >
-                      <Icon name="close" size={12} />
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>
