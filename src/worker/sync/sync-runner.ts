@@ -11,10 +11,37 @@
 
 import path from 'node:path';
 
-import type { RemoteStorageDriver } from './remote-storage';
+import type { RemoteStorageDriver, RemoteStorageError } from './remote-storage';
 import type { SyncManifest, SyncManifestEntry } from './manifest';
 import { SYNC_ASSETS_DIR, SYNC_TRASH_DIR } from '../../shared/sync-paths';
 import type { SyncAction } from './sync-plan';
+
+/** 可重试错误的自动重试：3 次，指数退避（1s/2s/4s）。 */
+const SYNC_RETRY_ATTEMPTS = 3;
+const SYNC_RETRY_BASE_MS = 1_000;
+
+function isRetryable(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && 'retryable' in error
+    && (error as RemoteStorageError).retryable === true
+  );
+}
+
+export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= SYNC_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isRetryable(error) || attempt === SYNC_RETRY_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, SYNC_RETRY_BASE_MS * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
 
 export interface SyncRunnerContext {
   driver: RemoteStorageDriver;
@@ -71,7 +98,7 @@ function assetsPathOf(libraryDirectory: string, entryPath: string): string {
 /** 上传前确保远端父目录存在（多数服务端不允许 PUT 隐式建目录）。 */
 async function ensureRemoteDir(driver: RemoteStorageDriver, remotePath: string): Promise<void> {
   const dir = path.posix.dirname(remotePath);
-  if (dir && dir !== '.') await driver.mkdir(dir);
+  if (dir && dir !== '.') await withRetry(() => driver.mkdir(dir));
 }
 
 export async function runSyncActions(
@@ -99,7 +126,7 @@ export async function runSyncActions(
         const body = await context.readLocalAsset(action.assetId);
         const remotePath = assetPath(action.entry.path);
         await ensureRemoteDir(driver, remotePath);
-        const written = await driver.write(remotePath, body, { ifMatch: action.entry.etag });
+        const written = await withRetry(() => driver.write(remotePath, body, { ifMatch: action.entry.etag }));
         const entry: SyncManifestEntry = { ...action.entry, etag: written.etag, deviceId: context.deviceId, modifiedAt: now };
         manifest.entries[action.assetId] = entry;
         result.uploaded += 1;
@@ -108,7 +135,7 @@ export async function runSyncActions(
       case 'download': {
         const remotePath = assetPath(action.entry.path);
         await ensureRemoteDir(driver, remotePath);
-        const read = await driver.read(remotePath);
+        const read = await withRetry(() => driver.read(remotePath));
         await context.writeLocalAsset(action.assetId, action.entry.path, read.body);
         manifest.entries[action.assetId] = { ...action.entry, etag: read.etag ?? action.entry.etag };
         result.downloaded += 1;
@@ -119,10 +146,10 @@ export async function runSyncActions(
         if (action.winner === 'local') {
           // 正式版 = 本地内容上传；败者（远端内容）双端存冲突副本。
           const localBody = await context.readLocalAsset(action.assetId);
-          const remoteBody = await driver.read(assetPath(action.remote.path)).then((read) => read.body);
+          const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
           const remotePath = assetPath(action.remote.path);
           await ensureRemoteDir(driver, remotePath);
-          const written = await driver.write(remotePath, localBody, { ifMatch: action.remote.etag });
+          const written = await withRetry(() => driver.write(remotePath, localBody, { ifMatch: action.remote.etag }));
           manifest.entries[action.assetId] = {
             ...action.remote,
             contentHash: action.local.contentHash,
@@ -133,7 +160,7 @@ export async function runSyncActions(
             etag: written.etag,
           };
           await ensureRemoteDir(driver, assetPath(conflictName));
-          await driver.write(assetPath(conflictName), remoteBody);
+          await withRetry(() => driver.write(assetPath(conflictName), remoteBody));
           const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, remoteBody, conflictName);
           manifest.entries[copyMeta.syncId] = {
             path: conflictName,
@@ -147,12 +174,12 @@ export async function runSyncActions(
           result.uploaded += 2;
         } else {
           // 正式版 = 远端内容落本地；败者（本地内容）双端存冲突副本。
-          const remoteBody = await driver.read(assetPath(action.remote.path)).then((read) => read.body);
+          const remoteBody = await withRetry(() => driver.read(assetPath(action.remote.path))).then((read) => read.body);
           const localBody = await context.readLocalAsset(action.assetId);
           await context.writeLocalAsset(action.assetId, action.remote.path, remoteBody);
           manifest.entries[action.assetId] = { ...action.remote };
           await ensureRemoteDir(driver, assetPath(conflictName));
-          await driver.write(assetPath(conflictName), localBody);
+          await withRetry(() => driver.write(assetPath(conflictName), localBody));
           const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, localBody, conflictName);
           manifest.entries[copyMeta.syncId] = {
             path: conflictName,
@@ -172,7 +199,7 @@ export async function runSyncActions(
       case 'delete-remote': {
         const entry = manifest.entries[action.assetId];
         if (entry) {
-          await driver.delete(assetPath(entry.path));
+          await withRetry(() => driver.delete(assetPath(entry.path)));
           result.deletedRemote += 1;
         }
         break;

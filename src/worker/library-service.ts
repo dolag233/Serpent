@@ -17278,6 +17278,31 @@ export class LibraryService {
     return row?.manifest_json ?? null;
   }
 
+  /** Serpent-xffq：开始一次同步会话（sync_sessions 记录，供 UI 查询状态）。 */
+  beginSyncSession(libraryId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const sessionId = randomUUID();
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO sync_sessions (session_id, library_id, status, phase, progress_total, progress_done, started_at)
+         VALUES (?, ?, 'running', 'collect', 0, 0, ?)`,
+      )
+      .run(sessionId, libraryId, new Date().toISOString());
+    return sessionId;
+  }
+
+  /** Serpent-xffq：结束同步会话。 */
+  finishSyncSession(libraryId: string, sessionId: string, status: 'done' | 'failed' | 'cancelled', errorMessage?: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection
+      .prepare(
+        `UPDATE sync_sessions
+            SET status = ?, phase = 'idle', finished_at = ?, error_message = ?
+          WHERE session_id = ? AND library_id = ?`,
+      )
+      .run(status, new Date().toISOString(), errorMessage ?? null, sessionId, libraryId);
+  }
+
   /** 写入本地 manifest 缓存（上次同步点）。 */
   writeSyncManifestCache(libraryId: string, manifestJson: string): void {
     const openLibrary = this.requireOpenLibrary(libraryId);

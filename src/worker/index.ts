@@ -924,14 +924,26 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'sync.run': {
       const engine = buildSyncEngine(request.command.deviceId);
-      const outcome = await engine.syncOnce(request.command.libraryId, {
-        id: 'request',
-        baseUrl: request.command.baseUrl,
-        username: request.command.username,
-        password: request.command.password,
-        allowInsecureTls: request.command.allowInsecureTls,
-      });
-      return { ok: true, type: 'sync.completed', report: outcome.report, conflicts: outcome.conflicts };
+      const sessionId = libraryService.beginSyncSession(request.command.libraryId);
+      try {
+        const outcome = await engine.syncOnce(request.command.libraryId, {
+          id: 'request',
+          baseUrl: request.command.baseUrl,
+          username: request.command.username,
+          password: request.command.password,
+          allowInsecureTls: request.command.allowInsecureTls,
+        });
+        libraryService.finishSyncSession(request.command.libraryId, sessionId, 'done');
+        return { ok: true, type: 'sync.completed', report: outcome.report, conflicts: outcome.conflicts };
+      } catch (error) {
+        libraryService.finishSyncSession(
+          request.command.libraryId,
+          sessionId,
+          'failed',
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
     }
     case 'library.change-sequence':
       return {

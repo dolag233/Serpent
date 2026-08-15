@@ -22,7 +22,7 @@ import {
   type SyncManifest,
 } from './manifest';
 import { planSyncActions, type LocalAssetSnapshotEntry } from './sync-plan';
-import { runSyncActions, type SyncRunnerContext } from './sync-runner';
+import { runSyncActions, withRetry, type SyncRunnerContext } from './sync-runner';
 
 export interface SyncRootConfig {
   id: string;
@@ -183,12 +183,12 @@ export class SyncEngine {
     const result = await runSyncActions(actions, localManifest, wrappedContext);
 
     // 写回远端 manifest（带版本戳）与本地缓存。
-    await driver.mkdir(directoryName === '' ? '.' : directoryName);
+    await withRetry(() => driver.mkdir(directoryName === '' ? '.' : directoryName));
     const manifestPath = `${directoryName === '' ? '' : `${directoryName}/`}${SYNC_MANIFEST_FILE}`;
-    await driver.write(manifestPath, Buffer.from(serializeManifest(result.manifest), 'utf-8'));
+    await withRetry(() => driver.write(manifestPath, Buffer.from(serializeManifest(result.manifest), 'utf-8')));
     const metaDir = `${directoryName === '' ? '' : `${directoryName}/`}.serpent-sync`;
-    await driver.mkdir(metaDir);
-    await driver.write(`${metaDir}/format-version`, Buffer.from(String(SYNC_FORMAT_VERSION)));
+    await withRetry(() => driver.mkdir(metaDir));
+    await withRetry(() => driver.write(`${metaDir}/format-version`, Buffer.from(String(SYNC_FORMAT_VERSION))));
     await this.library.writeSyncManifestCache(libraryId, serializeManifest(result.manifest));
 
     return {
