@@ -31,6 +31,16 @@ describe('automationCommandToast (Serpent-fmbr)', () => {
     expect(toast!.message).toContain('replaced');
   });
 
+  it('counts a detected image sequence as one logical asset (Serpent-1y9r)', () => {
+    const toast = automationCommandToast(payload('file.import', {
+      status: 'completed',
+      completion: { importedCount: 151, skippedCount: 0, replacedCount: 0, assetCount: 1, fileCount: 151, assets: [] },
+    }), zh);
+    expect(toast).not.toBeUndefined();
+    expect(toast!.message).toContain('1');
+    expect(toast!.message).not.toContain('151');
+  });
+
   it('stays quiet when the import reported conflicts instead of completing', () => {
     expect(automationCommandToast(payload('file.import', {
       status: 'conflicts',

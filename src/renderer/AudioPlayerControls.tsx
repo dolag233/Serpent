@@ -133,16 +133,26 @@ export function AudioPlayerControls({
   }, [volume, muted, src]);
 
   // Particle trail pump: emit while playing; always prune/fade (incl. pause).
+  // Serpent-mrsm: the pump only runs while there is something to draw — the
+  // audio is active (playing, even while scrubbing) or trail particles are
+  // still fading out. Once paused AND the trail has fully dissipated the
+  // loop stops scheduling frames (no more per-frame setState); playback
+  // resuming (paused → false) restarts the pump via the dependency.
   useEffect(() => {
+    const audio = audioRef.current;
+    const audioActive = Boolean(audio && !audio.paused && !audio.ended);
+    if (!audioActive && trailParticlesRef.current.length === 0) return;
     let frameId = 0;
     const tick = (nowMs: number) => {
-      const audio = audioRef.current;
+      const current = audioRef.current;
       const scrubbing =
         scrubbingPointerId.current !== null ||
         waveformScrubbingPointerId.current !== null;
-      const playing = Boolean(audio && !audio.paused && !audio.ended && !scrubbing);
-      const ratio = audio
-        ? playheadRatioFromTime(audio.currentTime, audio.duration || 0)
+      const playing = Boolean(
+        current && !current.paused && !current.ended && !scrubbing,
+      );
+      const ratio = current
+        ? playheadRatioFromTime(current.currentTime, current.duration || 0)
         : 0;
 
       let particles = pruneTrailParticles(trailParticlesRef.current, nowMs);
@@ -157,11 +167,15 @@ export function AudioPlayerControls({
       trailParticlesRef.current = particles;
       setTrailParticles(particles);
       setTrailNowMs(nowMs);
+      const stillActive = Boolean(
+        current && !current.paused && !current.ended,
+      );
+      if (!stillActive && particles.length === 0) return;
       frameId = window.requestAnimationFrame(tick);
     };
     frameId = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(frameId);
-  }, []);
+  }, [paused]);
 
   const seekToRatio = useCallback((ratio: number, mode: "coalesce" | "commit") => {
     const audio = audioRef.current;

@@ -57,13 +57,21 @@ export function automationCommandToast(
       if (result.status !== 'completed' || !isPlainRecord(result.completion)) return undefined;
       const completion = result.completion;
       const importedCount = countOf(completion, 'importedCount');
+      const assetCount = countOf(completion, 'assetCount');
       const skippedCount = countOf(completion, 'skippedCount');
       const replacedCount = countOf(completion, 'replacedCount');
       if (importedCount === undefined || skippedCount === undefined || replacedCount === undefined) {
         return undefined;
       }
       return withHistory(
-        importSummaryMessage({ importedCount, skippedCount, replacedCount }, locale),
+        importSummaryMessage({
+          importedCount,
+          // Serpent-1y9r: prefer logical asset units (a detected image
+          // sequence counts as 1) when the completion carries them.
+          ...(assetCount !== undefined ? { assetCount } : {}),
+          skippedCount,
+          replacedCount,
+        }, locale),
         historyEntryId,
       );
     }

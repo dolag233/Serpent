@@ -41,9 +41,46 @@ test("does not display the metadata concurrency token as a file version", async 
       .first()
       .click();
 
-    const assetCard = window.getByRole("button", {
-      name: /metadata-version\.txt/i,
+    // Serpent-4rr4: locate the card by its stable data-asset-id instead of the
+    // accessible name — a narrow card can wrap the long file name
+    // ("metadata-vers ion .txt"), which breaks the continuous regex, and TXT
+    // cards carry no thumbnail img to key an alt attribute on.
+    const assetId = await window.evaluate(async () => {
+      const bridge = globalThis as typeof globalThis & {
+        serpent: {
+          library: {
+            listOpen(): Promise<{
+              ok: boolean;
+              value?: Array<{ libraryId: string }>;
+              error?: { message?: string };
+            }>;
+            listAssets(input: {
+              libraryId: string;
+              recursive: boolean;
+            }): Promise<{
+              ok: boolean;
+              value?: Array<{ assetId: string }>;
+              error?: { message?: string };
+            }>;
+          };
+        };
+      };
+      const open = await bridge.serpent.library.listOpen();
+      const libraryId = open.ok && open.value?.[0] ? open.value[0].libraryId : undefined;
+      if (!libraryId) throw new Error("Expected an open library.");
+      const listed = await bridge.serpent.library.listAssets({
+        libraryId,
+        recursive: true,
+      });
+      if (!listed.ok || !listed.value || listed.value.length !== 1) {
+        throw new Error("Expected exactly one imported asset.");
+      }
+      return listed.value[0]!.assetId;
     });
+    // assetId is a UUID (hex + dashes), safe to interpolate directly.
+    const assetCard = window.locator(
+      `.asset-card[data-asset-id="${assetId}"]`,
+    );
     await expect(assetCard).toBeVisible();
     await assetCard.click();
     await expect(window.getByLabel("描述")).toBeVisible();
