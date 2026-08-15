@@ -10,7 +10,8 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'user-guide/installation', label: '安装' },
         { type: 'doc', id: 'user-guide/basics', label: '基本使用' },
-        { type: 'doc', id: 'user-guide/extensions', label: '插件、脚本与 MCP' },
+        { type: 'doc', id: 'user-guide/plugins', label: '插件功能' },
+        { type: 'doc', id: 'user-guide/automation', label: '自动化功能' },
         { type: 'doc', id: 'user-guide/troubleshooting', label: '故障排查' },
       ],
     },

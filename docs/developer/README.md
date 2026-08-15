@@ -29,4 +29,4 @@
 - [脚本开发指南](../manual/scripts/development.md) + [API 参考](../manual/scripts/api-reference.md)
 - [MCP 开发指南](../manual/mcp/development.md) + [API 参考](../manual/mcp/api-reference.md)
 
-最终用户使用插件的方法见[插件使用](../user-guide/plugins.md)，自动化脚本和 MCP 见[自动化功能](../user-guide/automation.md)。
+最终用户使用插件的方法见[插件功能](../user-guide/plugins.md)，自动化脚本和 MCP 见[自动化功能](../user-guide/automation.md)。

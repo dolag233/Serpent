@@ -37,7 +37,7 @@ Download the latest extension from the [browser extension releases](https://gith
 - macOS: `Serpent.app/Contents/Resources/extension`
 - Windows: `resources/extension` inside the install directory
 
-The extension can save a web image or video from its context menu or by drag-and-drop. See [Using plugins](plugins.en.md) for plugin and extension usage.
+The extension can save a web image or video from its context menu or by drag-and-drop. See [Plugin features](plugins.en.md) for plugin and extension usage.
 
 ## Upgrading
 
