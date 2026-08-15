@@ -6,7 +6,11 @@ import { randomUUID } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
+import {
+  LibraryService,
+  LibraryServiceError,
+  SUPPORTED_SCHEMA_VERSION,
+} from '../../src/worker/library-service';
 import { buildFts5Query, normalizeSearchText, tokenizeForFts } from '../../src/worker/search-query';
 
 const temporaryRoots: string[] = [];
@@ -181,7 +185,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 36 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(

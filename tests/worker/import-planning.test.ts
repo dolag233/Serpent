@@ -81,6 +81,37 @@ describe('pending import plans', () => {
     service.closeAll();
   });
 
+  it('deduplicates same-name same-content entries staged in one batch', () => {
+    const root = temporaryRoot();
+    const firstSourceRoot = path.join(root, 'first');
+    const secondSourceRoot = path.join(root, 'second');
+    mkdirSync(firstSourceRoot);
+    mkdirSync(secondSourceRoot);
+    const firstSource = path.join(firstSourceRoot, 'shared.png');
+    const secondSource = path.join(secondSourceRoot, 'shared.png');
+    writeFileSync(firstSource, 'shared bytes');
+    writeFileSync(secondSource, 'shared bytes');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Batch dedupe', selectedParentPath: root });
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [firstSource, secondSource],
+      dedupeSameNameByContent: true,
+    });
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 1 });
+    expect(completion.assets).toHaveLength(1);
+    expect(readdirSync(path.join(library.libraryPath, 'Assets'))).toEqual(['shared.png']);
+    service.closeAll();
+  });
+
   it('creates a readonly automation import plan and rejects a changed source before staging', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'planned.png');

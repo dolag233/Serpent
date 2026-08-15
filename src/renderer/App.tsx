@@ -66,6 +66,7 @@ import { MainMenu } from "./MainMenu";
 import {
   buildMainMenuSections,
   SERPENT_VERSION,
+  type MainMenuItem,
 } from "./main-menu-items";
 import { CanvasToolbarControls } from "./CanvasToolbarControls";
 import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
@@ -3311,14 +3312,28 @@ function AppInner() {
     action: () => Promise<LibraryApiResult<RendererLibrarySummary>>,
     failureMessage: string,
   ) {
+    if (!api) return;
     setError(null);
     setUiState(busyState);
+    const previousLibraryId = library?.libraryId;
+    const libraryApi = api;
     let opened = false;
     try {
       const result = await action();
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
+      }
+      // Opening an external library first gives us a validated replacement;
+      // close the old handle immediately before switching the renderer over.
+      // If that close fails, roll back the newly opened handle so two
+      // libraries cannot remain open behind the user's back.
+      if (previousLibraryId && previousLibraryId !== result.value.libraryId) {
+        const closed = await libraryApi.close({ libraryId: previousLibraryId });
+        if (!closed.ok) {
+          await libraryApi.close({ libraryId: result.value.libraryId });
+          throw new LibraryOperationError(closed.error);
+        }
       }
       // Opening/creating can replace the entire browse scope while a
       // two-frame viewer restoration is still pending. Cancel only after the
@@ -5448,6 +5463,29 @@ function AppInner() {
     }
   }
 
+  async function importEagleLibrary() {
+    if (!api || !library) return;
+    setUiState("importing");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.importEagleLibrary({ libraryId: library.libraryId });
+      if (!result.ok) {
+        if (result.error.code === "CANCELLED") return;
+        throw new LibraryOperationError(result.error);
+      }
+      setNotice(importSummaryMessage(result.value, locale));
+      await reloadCurrentContent();
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setUiState("ready");
+    }
+  }
+
   async function confirmImageSequenceImportOffer(input: {
     action: "import-sequence" | "import-selected";
     firstFrame: number;
@@ -6854,7 +6892,7 @@ function AppInner() {
         }
       } else if (event.type === "import.progress") {
         setImportProgress(event);
-        if (event.phase === "complete") {
+        if (["complete", "cancelled", "failed"].includes(event.phase)) {
           setImportProgress(null);
         }
       }
@@ -8107,6 +8145,7 @@ function AppInner() {
       deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
+      importEagleLibrary: () => void importEagleLibrary(),
       importLinkedFolder: () => void importFolderAsLinked(),
       importLibrary: () => setImportLibraryChooserOpen(true),
       exportLibrary: () => setExportDialogOpen(true),
@@ -8149,14 +8188,28 @@ function AppInner() {
   // two platforms expose identical product functionality.
   useEffect(() => {
     if (!shellApi) return;
+    const findMenuItem = (
+      items: readonly MainMenuItem[],
+      id: string,
+    ): MainMenuItem | undefined => {
+      for (const item of items) {
+        if (item.id === id) return item;
+        const nested = item.submenu === undefined
+          ? undefined
+          : findMenuItem(item.submenu, id);
+        if (nested) return nested;
+      }
+      return undefined;
+    };
     return shellApi.onApplicationMenuCommand((command: ApplicationMenuCommand) => {
       if (command === "settings") {
         mainMenuSections.find((section) => section.id === "settings")?.onSelect?.();
         return;
       }
-      const item = mainMenuSections
-        .flatMap((section) => section.items ?? [])
-        .find((candidate) => candidate.id === command);
+      const item = mainMenuSections.reduce<MainMenuItem | undefined>(
+        (found, section) => found ?? findMenuItem(section.items ?? [], command),
+        undefined,
+      );
       // Serpent-q0b1: honor the same disabled state the Windows in-app menu
       // renders greyed out — a native macOS item stays clickable otherwise.
       if (item && !item.disabled) item.onSelect();
@@ -8911,7 +8964,7 @@ function AppInner() {
                 document.body,
               )
             : null}
-          {uiState === "importing" && (
+          {uiState === "importing" && !importProgress && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
               <span className="activity-strip-message">
@@ -8956,24 +9009,61 @@ function AppInner() {
             !["complete", "cancelled", "failed"].includes(
               importProgress.phase,
             ) && (
-              <div className="activity-strip" role="status">
+              <div className="activity-strip import-progress-strip" role="status">
                 <span className="activity-pulse" />
-                <span className="activity-strip-message">
-                  {t("progress.importingLibrary")}
-                  {importProgress.phase === "validate"
-                    ? t("progress.validating")
-                    : importProgress.phase === "copy"
-                      ? t("progress.copying")
-                      : t("progress.opening")}
-                </span>
-                <button
-                  className="secondary-button"
-                  disabled={!importProgress.importId}
-                  onClick={() => void cancelImport()}
-                  type="button"
-                >
-                  {t("progress.cancelImport")}
-                </button>
+                <div className="import-progress-body">
+                  <span className="activity-strip-message">
+                    {t("progress.importingLibrary")}
+                    {importProgress.phase === "validate"
+                      ? t("progress.validating")
+                      : importProgress.phase === "copy"
+                        ? importProgress.totalFiles > 0
+                          ? t("progress.copyingFiles", {
+                              processed: importProgress.filesProcessed,
+                              total: importProgress.totalFiles,
+                              bytesProcessed: formatBytes(importProgress.bytesProcessed),
+                              bytesTotal: formatBytes(importProgress.totalBytes),
+                            })
+                          : t("progress.copying")
+                        : t("progress.opening")}
+                  </span>
+                  {importProgress.totalFiles > 0 && (
+                    <div
+                      aria-valuemax={importProgress.totalFiles}
+                      aria-valuemin={0}
+                      aria-valuenow={Math.min(
+                        importProgress.filesProcessed,
+                        importProgress.totalFiles,
+                      )}
+                      className="task-progress-track import-progress-bar"
+                      role="progressbar"
+                    >
+                      <div
+                        className="task-progress-fill"
+                        style={{
+                          width: `${Math.round(
+                            (Math.min(
+                              importProgress.filesProcessed,
+                              importProgress.totalFiles,
+                            ) /
+                              importProgress.totalFiles) *
+                              100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                {importProgress.cancelable !== false && (
+                  <button
+                    className="secondary-button"
+                    disabled={!importProgress.importId}
+                    onClick={() => void cancelImport()}
+                    type="button"
+                  >
+                    {t("progress.cancelImport")}
+                  </button>
+                )}
               </div>
             )}
         <div

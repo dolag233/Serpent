@@ -147,6 +147,7 @@ import {
   type ImportCompletion,
   type ImportConflictPlan,
   type ImageSequenceImportOffer,
+  type EagleImportResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -617,6 +618,15 @@ const library: SerpentLibraryApi = Object.freeze({
       ok: true,
       value: result.value as ImportCompletion | ImportConflictPlan,
     };
+  },
+
+  async importEagleLibrary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<EagleImportResult>> {
+    const result = await request({ type: 'asset.import-eagle.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-eagle.completed') {
+      throw new Error('Unexpected Eagle-library import response.');
+    }
+    return { ok: true, value: result.result };
   },
 
   async importDropped(input: {
@@ -2261,7 +2271,7 @@ const shell: SerpentShellApi = Object.freeze({
         'file.import-files', 'file.import-folder', 'file.import-linked-folder',
         'edit.undo', 'edit.redo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
         'library.create', 'library.open', 'library.close', 'library.remove',
-        'library.delete-from-disk', 'library.import', 'library.export', 'library.settings',
+        'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
         'about.serpent', 'about.github', 'about.open-source', 'settings',
       ];

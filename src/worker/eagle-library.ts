@@ -1,0 +1,384 @@
+import {
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  type Dirent,
+  type BigIntStats,
+} from 'node:fs';
+import path from 'node:path';
+
+import { normalizeAbsolutePath } from './library-rules';
+
+const MAX_METADATA_BYTES = 4 * 1024 * 1024;
+const MAX_ITEM_DESCRIPTION_LENGTH = 10_000;
+const MAX_TAG_LENGTH = 255;
+const MAX_URL_LENGTH = 8_192;
+
+export class EagleLibraryReadError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'EagleLibraryReadError';
+  }
+}
+
+export interface EagleFolderNode {
+  folderId: string;
+  parentFolderId: string | null;
+  name: string;
+  description: string | null;
+}
+
+export interface EagleAssetCandidate {
+  itemId: string;
+  sourcePath: string;
+  /** Eagle's still preview; videos use this as a poster instead of encoding. */
+  thumbnailPath: string | null;
+  fileName: string;
+  byteSize: number;
+  sourceModifiedAtMs: number;
+  description: string | null;
+  rating: number;
+  sourcePageUrl: string | null;
+  tags: string[];
+  folderIds: string[];
+}
+
+export interface EagleLibrarySnapshot {
+  displayName: string;
+  sourceRootPath: string;
+  folders: EagleFolderNode[];
+  items: EagleAssetCandidate[];
+  skippedCount: number;
+  invalidCount: number;
+}
+
+interface JsonObject {
+  [key: string]: unknown;
+}
+
+function isObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function textValue(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  // Keep annotation line breaks, but remove NUL and the other non-printing
+  // controls that cannot survive a portable library round-trip.
+  return value
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function stringArray(value: unknown, maxLength: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    const text = textValue(item, maxLength);
+    if (text === '' || seen.has(text)) continue;
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function epochMilliseconds(value: unknown): number | undefined {
+  const number = finiteNumber(value);
+  return number !== undefined && number >= 0 ? number : undefined;
+}
+
+function ratingValue(value: unknown): number {
+  const number = finiteNumber(value);
+  if (number === undefined) return 0;
+  return Math.max(0, Math.min(5, Math.trunc(number)));
+}
+
+function httpUrlValue(value: unknown): string | null {
+  const candidate = textValue(value, MAX_URL_LENGTH);
+  if (candidate === '') return null;
+  try {
+    const parsed = new URL(candidate);
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      || parsed.username !== ''
+      || parsed.password !== ''
+    ) {
+      return null;
+    }
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
+function readJsonObject(filePath: string): JsonObject {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(filePath, { bigint: true });
+  } catch (error) {
+    throw new EagleLibraryReadError(`Could not read Eagle metadata: ${filePath}`, { cause: error });
+  }
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > BigInt(MAX_METADATA_BYTES)) {
+    throw new EagleLibraryReadError(`Invalid Eagle metadata file: ${filePath}`);
+  }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
+    if (!isObject(parsed)) throw new Error('metadata must be an object');
+    return parsed;
+  } catch (error) {
+    throw new EagleLibraryReadError(`Invalid Eagle metadata JSON: ${filePath}`, { cause: error });
+  }
+}
+
+function flattenFolders(
+  values: unknown[],
+  parentFolderId: string | null,
+  folders: EagleFolderNode[],
+  seenIds: Set<string>,
+): void {
+  for (const value of values) {
+    if (!isObject(value)) continue;
+    const folderId = textValue(value.id, 255);
+    const name = textValue(value.name, 255);
+    if (folderId === '' || name === '' || seenIds.has(folderId)) continue;
+    seenIds.add(folderId);
+    folders.push({
+      folderId,
+      parentFolderId,
+      name,
+      description: textValue(value.description, MAX_ITEM_DESCRIPTION_LENGTH) || null,
+    });
+    if (Array.isArray(value.children)) {
+      flattenFolders(value.children, folderId, folders, seenIds);
+    }
+  }
+}
+
+function isMetadataBackupFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return lower === 'metadata.json'
+    || lower.startsWith('metadata.')
+    || lower.startsWith('metadata-');
+}
+
+function isThumbnailFile(fileName: string): boolean {
+  return /(?:^|[_-])thumbnail(?:\.[^.]+)?$/iu.test(fileName);
+}
+
+function sourceCandidateScore(
+  fileName: string,
+  metadata: JsonObject,
+): number {
+  const metadataName = textValue(metadata.name, 255);
+  const metadataExtension = textValue(metadata.ext, 32).replace(/^\./u, '');
+  const expectedNames = new Set([
+    metadataName,
+    metadataExtension === '' ? '' : `${metadataName}.${metadataExtension}`,
+  ].filter(Boolean));
+  if (expectedNames.has(fileName)) return 100;
+  if (expectedNames.has(fileName.replace(/\.[^.]+$/u, ''))) return 90;
+  if (metadataName !== '' && fileName.startsWith(metadataName)) return 80;
+  return 0;
+}
+
+function chooseSourceFile(
+  infoPath: string,
+  metadata: JsonObject,
+): {
+  sourcePath: string;
+  fileName: string;
+  stat: BigIntStats;
+  thumbnailPath: string | null;
+} | undefined {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(infoPath, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+
+  const candidates: Array<{
+    fileName: string;
+    sourcePath: string;
+    stat: BigIntStats;
+    score: number;
+  }> = [];
+  const thumbnailCandidates: Array<{ fileName: string; sourcePath: string; stat: BigIntStats }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || isMetadataBackupFile(entry.name)) {
+      continue;
+    }
+    const sourcePath = path.join(infoPath, entry.name);
+    try {
+      const stat = lstatSync(sourcePath, { bigint: true });
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+        continue;
+      }
+      if (isThumbnailFile(entry.name)) {
+        thumbnailCandidates.push({ fileName: entry.name, sourcePath, stat });
+        continue;
+      }
+      candidates.push({
+        fileName: entry.name,
+        sourcePath,
+        stat,
+        score: sourceCandidateScore(entry.name, metadata),
+      });
+    } catch {
+      // A deleted or unreadable item is reported as skipped by the caller.
+    }
+  }
+  candidates.sort((left, right) =>
+    right.score - left.score
+    || Number(right.stat.size - left.stat.size)
+    || left.fileName.localeCompare(right.fileName),
+  );
+  const selected = candidates[0];
+  thumbnailCandidates.sort(
+    (left, right) => Number(right.stat.size - left.stat.size) || left.fileName.localeCompare(right.fileName),
+  );
+  return selected
+    ? {
+        sourcePath: selected.sourcePath,
+        fileName: selected.fileName,
+        stat: selected.stat,
+        thumbnailPath: thumbnailCandidates[0]?.sourcePath ?? null,
+      }
+    : undefined;
+}
+
+function itemFromInfoDirectory(
+  infoPath: string,
+  metadata: JsonObject,
+): EagleAssetCandidate | undefined {
+  const selected = chooseSourceFile(infoPath, metadata);
+  if (!selected) return undefined;
+  const metadataModifiedAt =
+    epochMilliseconds(metadata.lastModified)
+    ?? epochMilliseconds(metadata.modificationTime)
+    ?? Number(selected.stat.mtimeMs);
+  const itemId = textValue(metadata.id, 255) || path.basename(infoPath, '.info');
+  return {
+    itemId,
+    sourcePath: selected.sourcePath,
+    thumbnailPath: selected.thumbnailPath,
+    fileName: selected.fileName,
+    byteSize: Number(selected.stat.size),
+    sourceModifiedAtMs: metadataModifiedAt,
+    description: textValue(metadata.annotation, MAX_ITEM_DESCRIPTION_LENGTH) || null,
+    rating: ratingValue(metadata.star),
+    sourcePageUrl: httpUrlValue(metadata.url),
+    tags: stringArray(metadata.tags, MAX_TAG_LENGTH),
+    folderIds: stringArray(metadata.folders, 255),
+  };
+}
+
+function sourceRootDisplayName(sourceRootPath: string): string {
+  const baseName = path.basename(sourceRootPath);
+  const withoutExtension = baseName.toLowerCase().endsWith('.library')
+    ? baseName.slice(0, -'.library'.length)
+    : baseName;
+  return textValue(withoutExtension, 255) || 'Eagle Library';
+}
+
+/**
+ * Read Eagle's directory/JSON library format without mutating the source.
+ * Item-level corruption is isolated to that item; the root metadata file is
+ * the format boundary and therefore fails the import when it is unreadable.
+ */
+export function readEagleLibrary(sourceRootPath: string): EagleLibrarySnapshot {
+  let normalizedRoot: string;
+  try {
+    normalizedRoot = normalizeAbsolutePath(sourceRootPath);
+  } catch (error) {
+    throw new EagleLibraryReadError('Invalid Eagle library path.', { cause: error });
+  }
+
+  let rootStat: BigIntStats;
+  try {
+    rootStat = lstatSync(normalizedRoot, { bigint: true });
+  } catch (error) {
+    throw new EagleLibraryReadError('Eagle library path does not exist.', { cause: error });
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new EagleLibraryReadError('Eagle library path must be a directory.');
+  }
+
+  let sourceRoot: string;
+  try {
+    sourceRoot = realpathSync(normalizedRoot);
+  } catch (error) {
+    throw new EagleLibraryReadError('Could not resolve Eagle library path.', { cause: error });
+  }
+  const rootMetadata = readJsonObject(path.join(sourceRoot, 'metadata.json'));
+  if (!Array.isArray(rootMetadata.folders)) {
+    throw new EagleLibraryReadError('Eagle metadata.json has no folders array.');
+  }
+
+  const folders: EagleFolderNode[] = [];
+  flattenFolders(rootMetadata.folders, null, folders, new Set());
+
+  const items: EagleAssetCandidate[] = [];
+  let skippedCount = 0;
+  let invalidCount = 0;
+  const imagesPath = path.join(sourceRoot, 'images');
+  let imageEntries: Dirent[] = [];
+  try {
+    const imagesStat = lstatSync(imagesPath, { bigint: true });
+    if (imagesStat.isSymbolicLink() || !imagesStat.isDirectory()) {
+      throw new EagleLibraryReadError('Eagle images directory is invalid.');
+    }
+    imageEntries = readdirSync(imagesPath, { withFileTypes: true });
+  } catch (error) {
+    if (error instanceof EagleLibraryReadError) throw error;
+    // An empty Eagle library may not have created images/ yet.
+  }
+
+  for (const entry of imageEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || entry.isSymbolicLink() || !entry.name.toLowerCase().endsWith('.info')) {
+      continue;
+    }
+    const infoPath = path.join(imagesPath, entry.name);
+    const metadataPath = path.join(infoPath, 'metadata.json');
+    let itemMetadata: JsonObject;
+    try {
+      itemMetadata = readJsonObject(metadataPath);
+    } catch {
+      skippedCount += 1;
+      invalidCount += 1;
+      continue;
+    }
+    if (itemMetadata.isDeleted === true) {
+      skippedCount += 1;
+      continue;
+    }
+    const item = itemFromInfoDirectory(infoPath, itemMetadata);
+    if (!item) {
+      skippedCount += 1;
+      invalidCount += 1;
+      continue;
+    }
+    items.push(item);
+  }
+
+  return {
+    displayName: sourceRootDisplayName(sourceRoot),
+    sourceRootPath: sourceRoot,
+    folders,
+    items,
+    skippedCount,
+    invalidCount,
+  };
+}

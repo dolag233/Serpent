@@ -200,12 +200,15 @@ describe('legacy plugin-first v28 migration', () => {
     const historyRows = db
       .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 24 ORDER BY version')
       .all() as Array<{ version: number; checksum: string }>;
-    expect(historyRows).toHaveLength(13);
+    const currentHistoryMigrations = MIGRATIONS.filter((migration) => migration.version >= 24);
+    expect(historyRows).toHaveLength(currentHistoryMigrations.length);
     expect(historyRows.map((row) => row.version)).toEqual(
-      Array.from({ length: 13 }, (_, index) => index + 24),
+      currentHistoryMigrations.map((migration) => migration.version),
     );
     expect(historyRows[9]?.checksum).toBe(MIGRATIONS.find((migration) => migration.version === 33)!.checksum);
-    expect(historyRows[12]?.checksum).toBe(MIGRATIONS.find((migration) => migration.version === 36)!.checksum);
+    expect(historyRows.at(-1)?.checksum).toBe(
+      MIGRATIONS.find((migration) => migration.version === SUPPORTED_SCHEMA_VERSION)!.checksum,
+    );
     const persistedHistory = db
       .prepare("SELECT source, state, policy FROM operation_history WHERE label_key = 'history.compatibility-test'")
       .get() as { source: string; state: string; policy: string } | undefined;

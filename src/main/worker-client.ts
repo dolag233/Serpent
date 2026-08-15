@@ -63,6 +63,10 @@ const EXPORT_IMPORT_COMMANDS = new Set([
   'library.import-folder',
   'library.import-zip',
   'library.import-cancel',
+  // Eagle imports scan and hash every item before committing metadata. A
+  // large library can legitimately outlive the ordinary file-operation
+  // deadline, just like the archive import path above.
+  'asset.import-eagle',
 ]);
 
 export function requestTimeoutForCommand(

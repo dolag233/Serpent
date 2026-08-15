@@ -48,6 +48,7 @@ import type {
   ImportCompletion,
   ImportConflictPlan,
   ImageSequenceImportOffer,
+  EagleImportResult,
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
   LibraryChangedEvent,
@@ -331,6 +332,9 @@ export interface SerpentLibraryApi {
     libraryId: string;
     targetFolderId?: string;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
+  importEagleLibrary(input: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<EagleImportResult>>;
   importDropped(input: {
     libraryId: string;
     targetFolderId?: string;

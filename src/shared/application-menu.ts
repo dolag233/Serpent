@@ -65,6 +65,7 @@ export type ApplicationMenuCommand =
   | "library.remove"
   | "library.delete-from-disk"
   | "library.import"
+  | "library.import-eagle"
   | "library.export"
   | "library.settings"
   | "window.background-jobs"
@@ -226,6 +227,13 @@ export function buildApplicationMenuTemplate(
         commandItem("library.delete-from-disk", "shell.deleteLibraryFromDisk"),
         { type: "separator" },
         commandItem("library.import", "toolbar.importLibrary"),
+        {
+          type: "submenu",
+          labelKey: "toolbar.importExternalLibrary",
+          submenu: [
+            commandItem("library.import-eagle", "toolbar.importEagleLibrary"),
+          ],
+        },
         commandItem("library.export", "toolbar.exportLibrary"),
         { type: "separator" },
         commandItem("library.settings", "settings.librarySettings"),

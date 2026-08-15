@@ -122,4 +122,15 @@ describe("main-menu-items (Serpent-bnah)", () => {
       ]),
     );
   });
+
+  it("places external library importers under the Library menu", () => {
+    const { sections } = build();
+    const file = sections.find((section) => section.id === "file");
+    const library = sections.find((section) => section.id === "library");
+    expect(file?.items?.some((item) => item.id === "library.import-eagle")).toBe(false);
+    const external = library?.items?.find((item) => item.id === "library.import-external");
+    expect(external?.label).toBe("导入外部资源库");
+    expect(external?.submenu?.map((item) => item.id)).toEqual(["library.import-eagle"]);
+    expect(external?.submenu?.[0]?.label).toBe("导入 Eagle 资源库");
+  });
 });

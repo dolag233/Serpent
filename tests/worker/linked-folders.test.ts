@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LibraryService } from '../../src/worker/library-service';
+import { LibraryService, SUPPORTED_SCHEMA_VERSION } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -58,7 +58,7 @@ describe('Linked folders schema migration', () => {
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     try {
-    expect(database.pragma('user_version')).toEqual([{ user_version: 36 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
 
       const linkedFoldersTable = database
         .prepare(

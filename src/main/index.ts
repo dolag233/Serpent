@@ -1874,6 +1874,20 @@ async function commandFor(
           }
         : undefined;
     }
+    case "asset.import-eagle.request": {
+      const sourceRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "importEagleLibrary",
+        undefined,
+      );
+      return sourceRootPath
+        ? {
+            type: "asset.import-eagle",
+            libraryId: request.libraryId,
+            sourceRootPath,
+          }
+        : undefined;
+    }
     case "asset.import-drop.request":
       // Classified in handleLibraryRequest because classification failures need
       // a renderer-safe, specific public error instead of an INTERNAL_ERROR.
@@ -4075,8 +4089,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
-    // Auto-analyze on import: after a successful import (resolveImport or
-    // importFolderAsLinked), enqueue AI analysis for imported images.
+    // Auto-analyze on import: after a successful ordinary import
+    // (resolveImport or importFolderAsLinked), enqueue AI analysis for
+    // imported images. Eagle/external-library imports intentionally do not
+    // enter this branch: importing an external catalogue must never enqueue
+    // thousands of AI jobs, even when the global auto-analyze preference is on.
     //
     // Track importId -> libraryId mapping for resolve flows where libraryId
     // is not carried in the resolve request itself.

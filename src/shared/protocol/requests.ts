@@ -335,6 +335,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.import-eagle.request'),
+    libraryId: identifierSchema,
+  }),
   // This request is created only inside the preload bridge after Electron's
   // webUtils has resolved genuine renderer File objects. Renderer code never
   // accepts or constructs these paths directly.
@@ -1299,6 +1303,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     /** Explicitly disable automatic sequence creation for a normal import. */
     createImageSequence: z.boolean().optional(),
     automationPlan: automationImportPlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-eagle'),
+    libraryId: identifierSchema,
+    sourceRootPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),

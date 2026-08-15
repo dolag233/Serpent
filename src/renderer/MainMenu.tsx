@@ -32,21 +32,41 @@ function nextEnabledIndex(items: readonly HTMLElement[], current: number, step: 
 
 function MenuItemButton({
   item,
+  active = false,
+  onOpenSubmenu,
+  onHover,
+  parentItemId,
   onSelect,
 }: {
   readonly item: MainMenuItem;
+  readonly active?: boolean;
+  readonly onOpenSubmenu?: () => void;
+  readonly onHover?: () => void;
+  readonly parentItemId?: string;
   readonly onSelect: () => void;
 }) {
+  const hasSubmenu = Boolean(item.submenu?.length);
   return (
     <button
       aria-disabled={item.disabled || undefined}
-      className={`main-menu-item${item.danger ? " is-danger" : ""}${item.disabled ? " is-disabled" : ""}`}
+      aria-expanded={hasSubmenu ? active : undefined}
+      aria-haspopup={hasSubmenu ? "menu" : undefined}
+      className={`main-menu-item${item.danger ? " is-danger" : ""}${item.disabled ? " is-disabled" : ""}${active ? " is-active" : ""}`}
       data-menu-item-id={item.id}
+      data-main-menu-item-id={item.id}
+      data-main-menu-parent-item-id={parentItemId}
       disabled={item.disabled}
       onClick={() => {
         if (!item.disabled) {
-          onSelect();
+          if (hasSubmenu) onOpenSubmenu?.();
+          else onSelect();
         }
+      }}
+      onFocus={() => {
+        if (!item.disabled) onHover?.();
+      }}
+      onMouseEnter={() => {
+        if (!item.disabled) onHover?.();
       }}
       role="menuitem"
       tabIndex={-1}
@@ -56,6 +76,11 @@ function MenuItemButton({
       {item.shortcut ? (
         <span aria-hidden="true" className="main-menu-item-shortcut">
           {item.shortcut}
+        </span>
+      ) : null}
+      {hasSubmenu ? (
+        <span aria-hidden="true" className="main-menu-chevron">
+          ›
         </span>
       ) : null}
     </button>
@@ -72,7 +97,9 @@ export function MainMenu({
   const t = useT();
   const [open, setOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [submenuPosition, setSubmenuPosition] = useState({ left: 0, top: 5 });
+  const [itemSubmenuPosition, setItemSubmenuPosition] = useState({ left: 0, top: 5 });
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -90,6 +117,7 @@ export function MainMenu({
       cancelClose();
       setOpen(false);
       setActiveSectionId(null);
+      setActiveItemId(null);
       if (restoreFocus) {
         requestAnimationFrame(() => triggerRef.current?.focus());
       }
@@ -102,6 +130,7 @@ export function MainMenu({
     closeTimerRef.current = window.setTimeout(() => {
       setOpen(false);
       setActiveSectionId(null);
+      setActiveItemId(null);
     }, 140);
   }, [cancelClose]);
 
@@ -110,6 +139,7 @@ export function MainMenu({
       cancelClose();
       setOpen(true);
       setActiveSectionId(sectionId ?? null);
+      setActiveItemId(null);
     },
     [cancelClose],
   );
@@ -125,11 +155,16 @@ export function MainMenu({
         closeMenu(true);
         return;
       }
-      const surface = document.getElementById(menuId);
-      if (!(surface instanceof HTMLDivElement)) return;
-      if (!surface || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      const menuSurface = document.getElementById(menuId);
+      if (!(menuSurface instanceof HTMLDivElement)) return;
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
         return;
       }
+      const activeElement = document.activeElement as HTMLElement | null;
+      const activeMenu = activeElement?.closest<HTMLElement>('[role="menu"]');
+      const surface = activeMenu && rootRef.current?.contains(activeMenu)
+        ? activeMenu
+        : menuSurface;
       const items = Array.from(
         surface.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR),
       );
@@ -164,6 +199,7 @@ export function MainMenu({
   );
 
   const activeSection = sections.find((section) => section.id === activeSectionId);
+  const activeItem = activeSection?.items?.find((item) => item.id === activeItemId);
 
   useLayoutEffect(() => {
     if (!open || !activeSection?.items?.length) return;
@@ -185,6 +221,22 @@ export function MainMenu({
     });
   }, [activeSection, activeSectionId, menuId, open]);
 
+  useLayoutEffect(() => {
+    if (!open || !activeSection || !activeItem?.submenu?.length) return;
+    const surface = document.getElementById(menuId);
+    const root = rootRef.current;
+    const trigger = root?.querySelector<HTMLElement>(
+      `[data-main-menu-item-id="${CSS.escape(activeItem.id)}"]`,
+    );
+    if (!surface || !root || !trigger) return;
+    const rootRect = root.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    setItemSubmenuPosition({
+      left: triggerRect.right - rootRect.left,
+      top: triggerRect.top - rootRect.top,
+    });
+  }, [activeItem, activeSection, menuId, open]);
+
   function runSection(section: MainMenuSection) {
     if (!section.onSelect) return;
     closeMenu(true);
@@ -197,26 +249,56 @@ export function MainMenu({
     item.onSelect();
   }
 
+  function openItemSubmenu(item: MainMenuItem) {
+    if (item.disabled || !item.submenu?.length) return;
+    setActiveItemId(item.id);
+  }
+
   function onSurfaceKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "ArrowRight") {
       const section = sections.find((candidate) => candidate.id === activeSectionId);
-      const firstItem = rootRef.current?.querySelector<HTMLElement>(
-        `[data-main-menu-submenu="${section?.id ?? ""}"] ${MENU_ITEM_SELECTOR}`,
-      );
-      if (section && section.items && firstItem) {
+      const focused = document.activeElement as HTMLElement | null;
+      const focusedItemId = focused?.dataset.mainMenuItemId;
+      const focusedParentItemId = focused?.dataset.mainMenuParentItemId;
+      const nestedFirstItem = focusedParentItemId !== undefined
+        ? undefined
+        : focusedItemId === activeItemId
+        ? rootRef.current?.querySelector<HTMLElement>(
+            `[data-main-menu-item-submenu="${CSS.escape(activeItemId ?? "")}"] ${MENU_ITEM_SELECTOR}`,
+          )
+        : activeItem?.submenu?.length
+          ? rootRef.current?.querySelector<HTMLElement>(
+              `[data-main-menu-item-submenu="${CSS.escape(activeItem.id)}"] ${MENU_ITEM_SELECTOR}`,
+            )
+          : undefined;
+      const firstItem = focusedParentItemId !== undefined
+        ? undefined
+        : nestedFirstItem ?? (
+            section && section.items
+              ? rootRef.current?.querySelector<HTMLElement>(
+                  `[data-main-menu-submenu="${CSS.escape(section.id)}"] ${MENU_ITEM_SELECTOR}`,
+                )
+              : undefined
+          );
+      if (firstItem) {
         event.preventDefault();
         firstItem.focus();
       }
     } else if (event.key === "ArrowLeft") {
-      const section = sections.find((candidate) =>
-        candidate.items?.some(
-          (item) =>
-            item.id === (document.activeElement as HTMLElement)?.dataset.menuItemId,
-        ),
-      );
-      const target = document.getElementById(menuId)?.querySelector<HTMLElement>(
-        `[data-main-menu-section-id="${section?.id ?? activeSectionId ?? ""}"]`,
-      );
+      const focused = document.activeElement as HTMLElement | null;
+      const parentItemId = focused?.dataset.mainMenuParentItemId;
+      const target = parentItemId === undefined
+        ? (() => {
+            const section = sections.find((candidate) =>
+              candidate.items?.some((item) => item.id === focused?.dataset.mainMenuItemId),
+            );
+            return document.getElementById(menuId)?.querySelector<HTMLElement>(
+              `[data-main-menu-section-id="${CSS.escape(section?.id ?? activeSectionId ?? "")}"]`,
+            );
+          })()
+        : rootRef.current?.querySelector<HTMLElement>(
+            `[data-main-menu-item-id="${CSS.escape(parentItemId)}"]`,
+          );
       if (target) {
         event.preventDefault();
         target.focus();
@@ -303,7 +385,35 @@ export function MainMenu({
           style={submenuPosition}
         >
           {activeSection.items.map((item) => (
-            <MenuItemButton item={item} key={item.id} onSelect={() => runItem(item)} />
+            <MenuItemButton
+              active={item.id === activeItemId}
+              item={item}
+              key={item.id}
+              onOpenSubmenu={() => openItemSubmenu(item)}
+              onHover={() => {
+                if (item.submenu?.length) openItemSubmenu(item);
+                else setActiveItemId(null);
+              }}
+              onSelect={() => runItem(item)}
+            />
+          ))}
+        </div>
+      ) : null}
+      {open && activeItem?.submenu ? (
+        <div
+          aria-label={activeItem.label}
+          className="main-menu-submenu main-menu-item-submenu"
+          data-main-menu-item-submenu={activeItem.id}
+          role="menu"
+          style={itemSubmenuPosition}
+        >
+          {activeItem.submenu.map((item) => (
+            <MenuItemButton
+              item={item}
+              key={item.id}
+              parentItemId={activeItem.id}
+              onSelect={() => runItem(item)}
+            />
           ))}
         </div>
       ) : null}

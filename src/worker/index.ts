@@ -32,6 +32,8 @@ import {
   LibraryService,
   LibraryServiceError,
   THUMBNAIL_VISIBLE_PAGE_SIZE,
+  shutdownActiveMediaProcesses,
+  shutdownWorkerResources,
   type ModelThumbnailRenderOutcome,
 } from './library-service';
 import { publicErrorForWorkerFailure } from './public-error';
@@ -1374,6 +1376,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return 'importId' in prepared
         ? { ok: true, type: 'asset.import.conflicts', plan: prepared }
         : { ok: true, type: 'asset.import.completed', completion: prepared };
+    }
+    case 'asset.import-eagle': {
+      // Eagle entries bring their own still thumbnail. Do not enqueue a
+      // whole-library video proxy wave here; visible-window/on-demand media
+      // requests remain the only paths that may encode a source later.
+      const result = await libraryService.importEagleLibrary(request.command);
+      return { ok: true, type: 'asset.import-eagle.completed', result };
     }
     case 'asset.import.resolve': {
       const completion = libraryService.resolveImport(request.command);
@@ -3221,7 +3230,14 @@ parentPort.on('message', async (event) => {
     if (control.type === 'worker.shutdown') {
       aiJobAbortRegistry.abortAll();
       aiProgressThrottler.clearAll();
-      libraryService.closeAll();
+      // Kill real encoder children first so a stuck media promise cannot hold
+      // shutdown hostage. Abort/close then runs as a bounded second pass, and
+      // the final cleanup catches children that raced the first termination.
+      await shutdownWorkerResources(
+        (timeoutMs) => libraryService.closeAllAsync(timeoutMs),
+        shutdownActiveMediaProcesses,
+        500,
+      );
       parentPort.postMessage({ type: 'worker.shutdown.ack' });
       clearInterval(processLifetime);
       return;

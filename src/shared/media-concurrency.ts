@@ -1,13 +1,13 @@
 /**
- * Decoder / media-job concurrency derived from logical CPU count.
+ * Decoder / media-job concurrency derived from physical CPU core count.
  *
- * Reserve 2 logical processors for the OS, then one more for the Serpent
+ * Reserve two physical cores for the OS, then one more for the Serpent
  * process that is already running this work, so the pool is at most
- * `logicalCpus - 3`. Never hard-code a thread count at call sites.
+ * `physicalCpus - 3`. Never hard-code a thread count at call sites.
  */
-export function mediaDecodeConcurrency(logicalCpus: number): number {
-  if (!Number.isFinite(logicalCpus) || logicalCpus < 1) return 1;
-  return Math.max(1, Math.trunc(logicalCpus) - 3);
+export function mediaDecodeConcurrency(physicalCpus: number): number {
+  if (!Number.isFinite(physicalCpus) || physicalCpus < 1) return 1;
+  return Math.max(1, Math.trunc(physicalCpus) - 3);
 }
 
 /** Keep the claim wave larger than the live pool so workers do not idle. */

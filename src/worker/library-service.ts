@@ -141,6 +141,12 @@ import {
   type HistoryStatus,
 } from './operation-history';
 import { assertRegisteredHistoryRecipePair, assertRegisteredHistoryRecipe } from './operation-history-recipes';
+import {
+  EagleLibraryReadError,
+  readEagleLibrary,
+  type EagleAssetCandidate,
+  type EagleFolderNode,
+} from './eagle-library';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -396,6 +402,7 @@ import type {
   AutomationImportPlan,
   InternalLibrarySummary,
   ExportProgressEvent,
+  EagleImportResult,
   ImportProgressEvent,
 } from '../shared/protocol/responses';
 import {
@@ -2395,6 +2402,20 @@ const OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM = createHash('sha256')
   .update(OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v38: keep the per-asset opt-out from import-triggered automatic
+// AI durable. Preview generation remains enabled, while reopening a library
+// cannot turn a previous Eagle import back into an AI enqueue.
+const AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS asset_auto_analysis_suppression (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    reason TEXT NOT NULL CHECK (reason IN ('external-library-import')),
+    created_at TEXT NOT NULL
+  );
+`;
+const AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL)
+  .digest('hex');
+
 // Keep individual recipes bounded so a DB-only mutation cannot turn the
 // library database into an unbounded snapshot store. Large-content/history
 // operations remain a separate phase with explicit byte retention policy.
@@ -2498,6 +2519,11 @@ export const MIGRATIONS = [
     checksum: OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM,
   },
   { version: 37, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
+  {
+    version: 38,
+    sql: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL,
+    checksum: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2579,6 +2605,10 @@ interface BatchRelinkMatch {
 interface ImportSourceEntry {
   byteSize: number;
   destinationRelativePath: string;
+  /** Metadata projected from an Eagle item; absent for ordinary imports. */
+  eagleMetadata?: EagleImportedMetadata;
+  /** Hash of the staged bytes, calculated once during preparation. */
+  sha256?: string;
   /** Optional metadata intent committed atomically with this imported asset. */
   sourcePageUrl?: string;
   sourceSnapshot: SourceSnapshot;
@@ -2591,6 +2621,17 @@ interface SourceSnapshot {
   ino: bigint;
   mtimeNs: bigint;
   size: bigint;
+}
+
+interface EagleImportedMetadata {
+  collectionIds: string[];
+  description: string | null;
+  rating: number;
+  sourceModifiedAtMs: number;
+  sourcePageUrl: string | null;
+  sourceRootPath: string;
+  tagIds: string[];
+  thumbnailPath: string | null;
 }
 
 interface ManagedRelinkPlacementIdentity {
@@ -2620,10 +2661,14 @@ interface PendingImport {
   directories: string[];
   entries: ImportSourceEntry[];
   createImageSequence?: boolean;
+  /** Eagle imports deliberately avoid the O(existing-assets × same-size) scan. */
+  skipLibraryDuplicateScan?: boolean;
   expiryHandle?: unknown;
   imageSequenceFps?: number;
   libraryId: string;
   operationPath: string;
+  dedupeSameNameByContent?: boolean;
+  suppressAssetChangeEvents?: boolean;
 }
 
 interface ExistingAssetRow {
@@ -3037,6 +3082,65 @@ class TailBuffer {
   }
 }
 
+const activeMediaProcesses = new Set<ChildProcess>();
+
+function killMediaProcess(processHandle: ChildProcess, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): void {
+  if (processHandle.exitCode !== null) return;
+  try {
+    processHandle.kill(signal);
+  } catch {
+    // The process may have exited between the exitCode check and kill().
+  }
+}
+
+/**
+ * Terminate every real media child owned by this Worker. The Worker can be
+ * asked to shut down while a queue promise is between awaits, so aborting the
+ * job controller alone is not enough to prevent an ffmpeg orphan.
+ */
+export async function shutdownActiveMediaProcesses(timeoutMs = 1_000): Promise<void> {
+  const processes = [...activeMediaProcesses];
+  if (processes.length === 0) return;
+
+  const closed = processes.map((processHandle) => new Promise<void>((resolve) => {
+    if (processHandle.exitCode !== null) {
+      resolve();
+      return;
+    }
+    processHandle.once('close', () => resolve());
+  }));
+  for (const processHandle of processes) killMediaProcess(processHandle);
+  await Promise.race([
+    Promise.all(closed),
+    new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+  for (const processHandle of [...activeMediaProcesses]) {
+    killMediaProcess(processHandle, 'SIGKILL');
+  }
+}
+
+/**
+ * Keep Worker shutdown ordering testable: terminate external media children,
+ * let the service abort/close its active jobs, then catch children that raced
+ * the first pass.
+ */
+export async function shutdownWorkerResources(
+  closeAllAsync: (timeoutMs: number) => Promise<void>,
+  shutdownMediaProcesses: (timeoutMs: number) => Promise<void> = shutdownActiveMediaProcesses,
+  timeoutMs = 500,
+): Promise<void> {
+  await shutdownMediaProcesses(timeoutMs);
+  await closeAllAsync(timeoutMs);
+  await shutdownMediaProcesses(timeoutMs);
+}
+
+// If the UtilityProcess is terminated without receiving the normal shutdown
+// control message, Node still gives us a synchronous exit hook. This closes
+// the last gap that previously left ffmpeg.exe alive after Serpent stopped.
+process.once('exit', () => {
+  for (const processHandle of activeMediaProcesses) killMediaProcess(processHandle);
+});
+
 /** Real subprocess spawn (child_process.spawn with defaults). */
 export function defaultSpawnFn(
   command: string,
@@ -3053,29 +3157,27 @@ export function defaultSpawnFn(
     let aborted = false;
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill('SIGTERM');
-      // Escalate to SIGKILL after 5s if still running
-      killTimer = setTimeout(() => {
-        if (proc.exitCode === null) proc.kill('SIGKILL');
-      }, 5_000);
-      killTimer.unref();
-    }, timeoutMs);
-    timer.unref();
 
     const proc: ChildProcess = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    activeMediaProcesses.add(proc);
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killMediaProcess(proc);
+      // Escalate to SIGKILL after 5s if still running.
+      killTimer = setTimeout(() => killMediaProcess(proc, 'SIGKILL'), 5_000);
+      killTimer.unref();
+    }, timeoutMs);
+    timer.unref();
 
     const abort = (): void => {
       if (settled || aborted) return;
       aborted = true;
-      proc.kill('SIGTERM');
-      killTimer = setTimeout(() => {
-        if (proc.exitCode === null) proc.kill('SIGKILL');
-      }, 5_000);
+      killMediaProcess(proc);
+      killTimer = setTimeout(() => killMediaProcess(proc, 'SIGKILL'), 5_000);
       killTimer.unref();
     };
     options?.signal?.addEventListener('abort', abort, { once: true });
@@ -3090,6 +3192,7 @@ export function defaultSpawnFn(
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       options?.signal?.removeEventListener('abort', abort);
+      activeMediaProcesses.delete(proc);
       settled = true;
       reject(err);
     });
@@ -3098,6 +3201,7 @@ export function defaultSpawnFn(
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       options?.signal?.removeEventListener('abort', abort);
+      activeMediaProcesses.delete(proc);
       settled = true;
       if (aborted) {
         reject(new DOMException('Media job cancelled; subprocess terminated.', 'AbortError'));
@@ -3180,7 +3284,7 @@ class AsyncSemaphore {
 // A Library Worker may own several open libraries. These module-level gates
 // therefore cap decoder pressure across all LibraryService instances and all
 // libraries in the process, not merely within one queue drain.
-// Image/video decode pool size is logical CPUs minus 3 (2 for the OS, 1 for
+// Image/video decode pool size is physical CPUs minus 3 (2 for the OS, 1 for
 // the current Serpent thread). OIIO stays at 1 because it handles very heavy
 // EXR/HDR sources — that is a memory bound, not a thread-count default.
 const MEDIA_DECODE_CONCURRENCY = workerMediaDecodeConcurrency();
@@ -4676,6 +4780,8 @@ export class LibraryService {
     string,
     Set<MediaAutoRepairComponent>
   >();
+  /** Eagle imports keep their media previews but never enter auto-AI later. */
+  private readonly autoAnalysisSuppressedAssetIds = new Map<string, Set<string>>();
   /** Avoid synchronously probing missing tools on every visible-range request. */
   private readonly autoRepairProbeFailedAtByLibrary = new Map<
     string,
@@ -4711,6 +4817,49 @@ export class LibraryService {
   private suppressWatcherNotifyUntilMs = 0;
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  /**
+   * Mark imported assets as preview-only. This is deliberately kept in the
+   * Worker rather than sent through Main so a large Eagle import does not
+   * materialize thousands of asset ids in the renderer process.
+   */
+  private suppressAutoAnalysisForAssets(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): void {
+    if (assetIds.length === 0) return;
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const uniqueAssetIds = [...new Set(assetIds)];
+    const now = new Date().toISOString();
+    const insert = openLibrary.connection.prepare(
+      `INSERT OR IGNORE INTO asset_auto_analysis_suppression
+         (asset_id, reason, created_at)
+       VALUES (?, 'external-library-import', ?)`,
+    );
+    openLibrary.connection.transaction(() => {
+      for (const assetId of uniqueAssetIds) insert.run(assetId, now);
+    })();
+    const suppressed = this.autoAnalysisSuppressedAssetIds.get(libraryId) ?? new Set<string>();
+    for (const assetId of uniqueAssetIds) suppressed.add(assetId);
+    this.autoAnalysisSuppressedAssetIds.set(libraryId, suppressed);
+  }
+
+  /** Used by the media queue at the visual-input boundary. */
+  shouldAutoAnalyzeAsset(libraryId: string, assetId: string): boolean {
+    const cached = this.autoAnalysisSuppressedAssetIds.get(libraryId);
+    if (cached?.has(assetId)) return false;
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const suppressed = openLibrary.connection
+      .prepare('SELECT 1 FROM asset_auto_analysis_suppression WHERE asset_id = ? LIMIT 1')
+      .get(assetId);
+    if (suppressed !== undefined) {
+      const next = cached ?? new Set<string>();
+      next.add(assetId);
+      this.autoAnalysisSuppressedAssetIds.set(libraryId, next);
+      return false;
+    }
+    return true;
+  }
 
   private invalidateArtifactPathCache(libraryId: string): void {
     const prefix = `${libraryId}\u0000`;
@@ -9311,6 +9460,52 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE');
     }
     return { directories: [...directories].sort(), entries };
+  }
+
+  private persistEagleImportedMetadata(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    metadata: EagleImportedMetadata,
+    now: string,
+  ): void {
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO asset_metadata
+           (asset_id, description, rating, favorite, palette,
+            source_page_url, entity_version, updated_at)
+         VALUES (?, ?, ?, 0, NULL, ?, 1, ?)
+         ON CONFLICT(asset_id) DO UPDATE SET
+           description = excluded.description,
+           rating = excluded.rating,
+           favorite = excluded.favorite,
+           source_page_url = excluded.source_page_url,
+           entity_version = asset_metadata.entity_version + 1,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        assetId,
+        metadata.description,
+        metadata.rating,
+        metadata.sourcePageUrl,
+        now,
+      );
+
+    const insertTag = openLibrary.connection.prepare(
+      'INSERT OR IGNORE INTO human_asset_tags (asset_id, tag_id) VALUES (?, ?)',
+    );
+    for (const tagId of metadata.tagIds) insertTag.run(assetId, tagId);
+
+    const nextCollectionPosition = openLibrary.connection.prepare(
+      'SELECT COALESCE(MAX(position), -1) AS max_position FROM collection_assets WHERE collection_id = ?',
+    );
+    const insertCollection = openLibrary.connection.prepare(
+      'INSERT OR IGNORE INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
+    );
+    for (const collectionId of metadata.collectionIds) {
+      const row = nextCollectionPosition.get(collectionId) as { max_position: number };
+      insertCollection.run(collectionId, assetId, row.max_position + 1);
+    }
+    this.syncAssetSearchContent(openLibrary.connection, assetId);
   }
 
   createManagedFolder(input: {
@@ -18265,6 +18460,7 @@ export class LibraryService {
       args: [
         '-c:v', encoder,
         ...(encoder === 'h264_videotoolbox' ? ['-realtime', 'true'] : []),
+        '-threads', '1',
         '-b:v', '1M',
         '-g', '60',
         '-pix_fmt', 'yuv420p',
@@ -18283,6 +18479,7 @@ export class LibraryService {
       mimeType: 'video/webm',
       args: [
         '-c:v', 'libvpx-vp9',
+        '-threads', '1',
         '-b:v', '1M',
         '-deadline', 'realtime',
         '-cpu-used', '8',
@@ -18434,6 +18631,7 @@ export class LibraryService {
         '-map', '0:a:0?',
         '-vn',
         '-c:a', 'libopus',
+        '-threads', '1',
         '-b:a', '128k',
         '-f', 'ogg',
         artifactAbsPath,
@@ -20618,6 +20816,14 @@ export class LibraryService {
                  AND primary_artifact.invalidated_at IS NULL
             )
             AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts eagle_poster
+               WHERE eagle_poster.revision_id = a.current_revision_id
+                 AND eagle_poster.kind = 'video_poster'
+                 AND eagle_poster.generator_version = 'eagle-thumbnail@1'
+                 AND eagle_poster.status = 'ready'
+                 AND eagle_poster.invalidated_at IS NULL
+            )
+            AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
                WHERE ra.revision_id = a.current_revision_id
                  AND ra.kind IN ('webm_proxy', 'audio_proxy')
@@ -20797,7 +21003,7 @@ export class LibraryService {
       Math.min(100, options.maxJobs ?? workerMediaDecodeWaveSize()),
     );
     // Serpent-1tio: media jobs no longer run strictly serially. Claim and run
-    // up to (logical CPUs - 3) in parallel per queue call — the bounded
+    // up to (physical CPUs - 3) in parallel per queue call — the bounded
     // Sharp/FFmpeg/OIIO decoder semaphores and the process-wide model-render
     // gate cap the real concurrency. The claim UPDATE is atomic
     // (WHERE status = 'queued'), so concurrent workers never double-execute a
@@ -21043,7 +21249,7 @@ export class LibraryService {
         completedJobIds.push(job.job_id);
         if (job.kind === 'generate_contact_sheet') {
           const contactSheet = this.getCurrentArtifact(libraryId, job.asset_id, 'contact_sheet');
-          if (contactSheet?.status === 'ready') {
+          if (contactSheet?.status === 'ready' && this.shouldAutoAnalyzeAsset(libraryId, job.asset_id)) {
             options.onAiInputReady?.({
               assetId: job.asset_id,
               artifactId: contactSheet.artifactId,
@@ -21059,7 +21265,7 @@ export class LibraryService {
             .get(job.asset_id) as { relative_file_path: string } | undefined;
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'model') {
             const thumbnail = this.getCurrentArtifact(libraryId, job.asset_id, 'thumbnail');
-            if (thumbnail?.status === 'ready') {
+            if (thumbnail?.status === 'ready' && this.shouldAutoAnalyzeAsset(libraryId, job.asset_id)) {
               options.onAiInputReady?.({
                 assetId: job.asset_id,
                 artifactId: thumbnail.artifactId,
@@ -28455,6 +28661,7 @@ export class LibraryService {
     contentHashCache: Map<string, string>;
     seenContentHashes: Set<string>;
     ignoreBatchContentHash?: boolean;
+    skipLibraryDuplicateScan?: boolean;
   }): 'none' | 'suspected-duplicate' | 'name-conflict' {
     const {
       openLibrary,
@@ -28464,6 +28671,7 @@ export class LibraryService {
       contentHashCache,
       seenContentHashes,
       ignoreBatchContentHash = false,
+      skipLibraryDuplicateScan = false,
     } = input;
 
     // Path collision always wins (IMPORT-007 / Serpent-12ae): same destination
@@ -28478,6 +28686,7 @@ export class LibraryService {
     }
 
     if (
+      !skipLibraryDuplicateScan &&
       !ignoreBatchContentHash &&
       this.findActiveManagedAssetIdByContent(
         openLibrary,
@@ -28639,6 +28848,15 @@ export class LibraryService {
     imageSequenceFps?: number;
     createImageSequence?: boolean;
     sourcePageUrl?: string;
+    /** Internal adapter for importers whose logical path differs from disk. */
+    sourceEntries?: ImportSourceEntry[];
+    sourceDirectories?: string[];
+    dedupeSameNameByContent?: boolean;
+    /** Avoid hashing every existing same-size asset for external bulk imports. */
+    skipLibraryDuplicateScan?: boolean;
+    /** Optional progress callback for a caller-owned bulk import. */
+    onStagedEntry?: (processedCount: number, bytesProcessed: number) => void;
+    suppressAssetChangeEvents?: boolean;
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
@@ -28649,13 +28867,18 @@ export class LibraryService {
       });
     }
     const targetFolder = this.targetFolder(openLibrary, input.targetFolderId);
-    const { directories, entries } = this.enumerateImportSources({
-      sourceKind: input.sourceKind,
-      sourcePaths: input.sourcePaths,
-      targetPrefix: targetFolder?.relative_path ?? '',
-      expandImageSequences: input.expandImageSequences === true,
-      ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
-    });
+    const { directories, entries } = input.sourceEntries
+      ? {
+          directories: input.sourceDirectories ?? [],
+          entries: input.sourceEntries,
+        }
+      : this.enumerateImportSources({
+          sourceKind: input.sourceKind,
+          sourcePaths: input.sourcePaths,
+          targetPrefix: targetFolder?.relative_path ?? '',
+          expandImageSequences: input.expandImageSequences === true,
+          ...(input.sourcePageUrl === undefined ? {} : { sourcePageUrl: input.sourcePageUrl }),
+        });
     const importId = randomUUID();
     const operationPath = path.join(
       openLibrary.summary.libraryPath,
@@ -28703,7 +28926,9 @@ export class LibraryService {
       entries.forEach((entry, index) => {
         const stagedPath = path.join(stagePath, String(index));
         const byteSize = this.copySourceSnapshot(entry, stagedPath);
-        stagedEntries.push({ ...entry, byteSize, sourcePath: stagedPath });
+        const sha256 = sha256FileAtPath(stagedPath);
+        stagedEntries.push({ ...entry, byteSize, sha256, sourcePath: stagedPath });
+        input.onStagedEntry?.(index + 1, byteSize);
         if (index === 0) this.failAt('crash-during-prepare-stage');
       });
     } catch (error) {
@@ -28734,7 +28959,7 @@ export class LibraryService {
 
     try {
       for (const entry of stagedEntries) {
-        const entrySha256 = sha256FileAtPath(entry.sourcePath);
+        const entrySha256 = entry.sha256 ?? sha256FileAtPath(entry.sourcePath);
         const identity = portablePathIdentity(entry.destinationRelativePath);
         let existingSize = seenDestinations.get(identity);
         let existingAbsolutePath: string | undefined;
@@ -28757,6 +28982,7 @@ export class LibraryService {
           contentHashCache,
           seenContentHashes,
           ignoreBatchContentHash: sequenceBatchPaths.has(entry.destinationRelativePath),
+          skipLibraryDuplicateScan: input.skipLibraryDuplicateScan,
         });
 
         if (conflictKind === 'suspected-duplicate') {
@@ -28764,12 +28990,14 @@ export class LibraryService {
           const isLibraryScope = existingSize === undefined;
           if (isLibraryScope) libraryDuplicateCount += 1;
           if (examples.length < 8) {
-            const matched = this.findActiveManagedAssetByContent(
-              openLibrary,
-              entry.byteSize,
-              entrySha256,
-              contentHashCache,
-            );
+            const matched = input.skipLibraryDuplicateScan
+              ? null
+              : this.findActiveManagedAssetByContent(
+                  openLibrary,
+                  entry.byteSize,
+                  entrySha256,
+                  contentHashCache,
+                );
             examples.push({
               displayName: path.posix.basename(entry.destinationRelativePath),
               kind: isLibraryScope ? 'library-duplicate' : 'suspected-duplicate',
@@ -28852,6 +29080,15 @@ export class LibraryService {
       ...(input.imageSequenceFps !== undefined
         ? { imageSequenceFps: input.imageSequenceFps }
         : {}),
+      ...(input.suppressAssetChangeEvents === true
+        ? { suppressAssetChangeEvents: true }
+        : {}),
+      ...(input.dedupeSameNameByContent === true
+        ? { dedupeSameNameByContent: true }
+        : {}),
+      ...(input.skipLibraryDuplicateScan === true
+        ? { skipLibraryDuplicateScan: true }
+        : {}),
     };
     this.pendingImports.set(importId, pending);
     this.scheduleImportExpiry(importId, pending);
@@ -28919,6 +29156,394 @@ export class LibraryService {
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
     });
+  }
+
+  private ensureEagleCollections(
+    openLibrary: OpenLibrary,
+    folders: readonly EagleFolderNode[],
+  ): Map<string, string> {
+    const collectionIdsByFolder = new Map<string, string>();
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      for (const folder of folders) {
+        const parentId = folder.parentFolderId === null
+          ? null
+          : (collectionIdsByFolder.get(folder.parentFolderId) ?? null);
+        const existing = parentId === null
+          ? openLibrary.connection
+              .prepare(
+                `SELECT collection_id FROM collections
+                   WHERE library_id = ? AND parent_id IS NULL
+                     AND name = ? COLLATE NOCASE
+                   ORDER BY position, collection_id
+                   LIMIT 1`,
+              )
+              .get(openLibrary.summary.libraryId, folder.name) as { collection_id: string } | undefined
+          : openLibrary.connection
+              .prepare(
+                `SELECT collection_id FROM collections
+                   WHERE library_id = ? AND parent_id = ?
+                     AND name = ? COLLATE NOCASE
+                   ORDER BY position, collection_id
+                   LIMIT 1`,
+              )
+              .get(openLibrary.summary.libraryId, parentId, folder.name) as { collection_id: string } | undefined;
+        if (existing) {
+          collectionIdsByFolder.set(folder.folderId, existing.collection_id);
+          continue;
+        }
+
+        const maxPosition = parentId === null
+          ? openLibrary.connection
+              .prepare(
+                'SELECT COALESCE(MAX(position), -1) AS max_position FROM collections WHERE library_id = ? AND parent_id IS NULL',
+              )
+              .get(openLibrary.summary.libraryId) as { max_position: number }
+          : openLibrary.connection
+              .prepare(
+                'SELECT COALESCE(MAX(position), -1) AS max_position FROM collections WHERE library_id = ? AND parent_id = ?',
+              )
+              .get(openLibrary.summary.libraryId, parentId) as { max_position: number };
+        const collectionId = randomUUID();
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO collections
+               (collection_id, library_id, parent_id, name, description, cover_asset_id,
+                position, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+          )
+          .run(
+            collectionId,
+            openLibrary.summary.libraryId,
+            parentId,
+            folder.name,
+            folder.description,
+            maxPosition.max_position + 1,
+            now,
+            now,
+          );
+        collectionIdsByFolder.set(folder.folderId, collectionId);
+      }
+    })();
+    return collectionIdsByFolder;
+  }
+
+  private ensureEagleTags(
+    openLibrary: OpenLibrary,
+    items: readonly EagleAssetCandidate[],
+  ): Map<string, string> {
+    const names = new Set(items.flatMap((item) => item.tags));
+    const tagIdsByName = new Map<string, string>();
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      for (const name of names) {
+        const existing = openLibrary.connection
+          .prepare(
+            'SELECT tag_id FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE LIMIT 1',
+          )
+          .get(openLibrary.summary.libraryId, name) as { tag_id: string } | undefined;
+        if (existing) {
+          tagIdsByName.set(name, existing.tag_id);
+          continue;
+        }
+        const tagId = randomUUID();
+        openLibrary.connection
+          .prepare(
+            'INSERT OR IGNORE INTO tags (tag_id, library_id, name, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(tagId, openLibrary.summary.libraryId, name, now);
+        const inserted = openLibrary.connection
+          .prepare(
+            'SELECT tag_id FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE LIMIT 1',
+          )
+          .get(openLibrary.summary.libraryId, name) as { tag_id: string } | undefined;
+        if (inserted) tagIdsByName.set(name, inserted.tag_id);
+      }
+    })();
+    return tagIdsByName;
+  }
+
+  private eagleImportEntry(
+    snapshot: ReturnType<typeof readEagleLibrary>,
+    item: EagleAssetCandidate,
+    collectionIdsByFolder: ReadonlyMap<string, string>,
+    tagIdsByName: ReadonlyMap<string, string>,
+  ): ImportSourceEntry | null {
+    try {
+      const canonicalSourcePath = realpathSync(item.sourcePath);
+      if (!pathIsWithin(snapshot.sourceRootPath, canonicalSourcePath)) {
+        throw new EagleLibraryReadError('Eagle source escaped its library root.');
+      }
+      const sourceStat = lstatSync(item.sourcePath, { bigint: true });
+      if (
+        sourceStat.isSymbolicLink()
+        || !sourceStat.isFile()
+        || sourceStat.size > BigInt(Number.MAX_SAFE_INTEGER)
+      ) {
+        throw new EagleLibraryReadError('Eagle source is no longer a regular file.');
+      }
+      const fileName = normalizeAssetFileBaseName(path.basename(item.sourcePath));
+      const destinationRelativePath = normalizeRelativeAssetPath(fileName);
+      const tagIds = [...new Set(
+        item.tags
+          .map((tag) => tagIdsByName.get(tag))
+          .filter((tagId): tagId is string => tagId !== undefined),
+      )];
+      const collectionIds = [...new Set(
+        item.folderIds
+          .map((folderId) => collectionIdsByFolder.get(folderId))
+          .filter((collectionId): collectionId is string => collectionId !== undefined),
+      )];
+      return {
+        byteSize: Number(sourceStat.size),
+        destinationRelativePath,
+        eagleMetadata: {
+          collectionIds,
+          description: item.description,
+          rating: item.rating,
+          sourceModifiedAtMs: item.sourceModifiedAtMs,
+          sourcePageUrl: item.sourcePageUrl,
+          sourceRootPath: snapshot.sourceRootPath,
+          tagIds,
+          thumbnailPath: item.thumbnailPath,
+        },
+        sourceSnapshot: sourceSnapshot(sourceStat),
+        sourcePath: item.sourcePath,
+      };
+    } catch (error) {
+      this.diagnose('eagle-import.item-skipped', error, { itemId: item.itemId });
+      return null;
+    }
+  }
+
+  /**
+   * Eagle already stores a bounded still preview beside every normal item.
+   * Keep that preview as Serpent's ready card artifact; importing a video
+   * must not decode the full source merely to make the first screen visible.
+   */
+  private persistEagleThumbnailArtifact(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+    metadata: EagleImportedMetadata,
+  ): void {
+    if (!metadata.thumbnailPath) return;
+    const maxBytes = 32 * 1024 * 1024;
+    let artifactAbsPath: string | undefined;
+    try {
+      const canonicalRoot = realpathSync(metadata.sourceRootPath);
+      const canonicalThumbnailPath = realpathSync(metadata.thumbnailPath);
+      if (!pathIsWithin(canonicalRoot, canonicalThumbnailPath)) {
+        throw new EagleLibraryReadError('Eagle thumbnail escaped its library root.');
+      }
+      const thumbnailStat = lstatSync(canonicalThumbnailPath, { bigint: true });
+      if (
+        thumbnailStat.isSymbolicLink()
+        || !thumbnailStat.isFile()
+        || thumbnailStat.size <= 0n
+        || thumbnailStat.size > BigInt(maxBytes)
+      ) {
+        throw new EagleLibraryReadError('Eagle thumbnail is not a supported regular file.');
+      }
+
+      const extension = path.extname(canonicalThumbnailPath).toLowerCase();
+      const mimeType = directImageMimeForExtension(extension);
+      if (!mimeType || !mimeType.startsWith('image/')) {
+        throw new EagleLibraryReadError('Eagle thumbnail format is not supported.');
+      }
+      const artifactId = randomUUID();
+      const artifactRelPath = `${artifactId}${extension || '.png'}`;
+      const artifactsDir = this.artifactsDir(openLibrary);
+      artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+      mkdirSync(artifactsDir, { recursive: true });
+      copyFileSync(canonicalThumbnailPath, artifactAbsPath, constants.COPYFILE_EXCL);
+      const dimensions = readImageDimensionsSync(artifactAbsPath);
+      // The media type is derived from the imported asset path below; assetId
+      // is only used as a stable lookup key here, never as a filename.
+      const assetRow = openLibrary.connection
+        .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
+        .get(assetId) as { relative_file_path: string } | undefined;
+      const artifactKind = assetRow && LibraryService.detectMediaType(assetRow.relative_file_path) === 'video'
+        ? 'video_poster'
+        : 'thumbnail';
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL`,
+          )
+          .run(now, revisionId, artifactKind);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                width, height, generator_version, status, generated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'eagle-thumbnail@1', 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            revisionId,
+            artifactKind,
+            mimeType,
+            Number(thumbnailStat.size),
+            artifactRelPath,
+            dimensions?.width ?? null,
+            dimensions?.height ?? null,
+            now,
+          );
+      })();
+    } catch (error) {
+      if (artifactAbsPath) rmSync(artifactAbsPath, { force: true });
+      this.diagnose('eagle-import.thumbnail-skipped', error, { assetId });
+    }
+  }
+
+  async importEagleLibrary(input: {
+    libraryId: string;
+    sourceRootPath: string;
+  }): Promise<EagleImportResult> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const importId = randomUUID();
+    let totalFiles = 0;
+    let totalBytes = 0;
+    let filesProcessed = 0;
+    let bytesProcessed = 0;
+    const emitEagleProgress = (
+      phase: ImportProgressEvent['phase'],
+      processedFiles = filesProcessed,
+      processedBytes = bytesProcessed,
+    ): void => {
+      this.emitProgress({
+        type: 'import.progress',
+        importId,
+        phase,
+        cancelable: false,
+        filesProcessed: processedFiles,
+        totalFiles,
+        bytesProcessed: processedBytes,
+        totalBytes,
+      });
+    };
+
+    emitEagleProgress('validate', 0, 0);
+    let snapshot: ReturnType<typeof readEagleLibrary>;
+    try {
+      snapshot = readEagleLibrary(input.sourceRootPath);
+    } catch (error) {
+      emitEagleProgress('failed');
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+    }
+
+    totalFiles = snapshot.items.length;
+    totalBytes = snapshot.items.reduce((total, item) => total + item.byteSize, 0);
+    emitEagleProgress('copy', 0, 0);
+    try {
+      const collectionIdsByFolder = this.ensureEagleCollections(openLibrary, snapshot.folders);
+      const tagIdsByName = this.ensureEagleTags(openLibrary, snapshot.items);
+      // Publish the structure before the first copy batch. The renderer can
+      // load collections/tags/folders while assets are still being copied.
+      this.options.onAssetsChanged?.({
+        type: 'asset.changed',
+        libraryId: input.libraryId,
+        changedCount: 0,
+        missingCount: 0,
+        source: 'client',
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      let importedCount = 0;
+      let skippedCount = snapshot.skippedCount;
+      let replacedCount = 0;
+      let invalidItemCount = snapshot.invalidCount;
+      const sampleAssets: AssetSummary[] = [];
+      // Keep batches small enough that the UI receives useful progress updates.
+      const batchSize = 32;
+
+      for (let offset = 0; offset < snapshot.items.length; offset += batchSize) {
+        // Validate only the next batch. This is deliberately inside the copy
+        // loop: a broken item near the end of a large Eagle library must not
+        // prevent the first valid batches from appearing in the UI.
+        const rawBatch = snapshot.items.slice(offset, offset + batchSize);
+        const batch: ImportSourceEntry[] = [];
+        for (const item of rawBatch) {
+          const entry = this.eagleImportEntry(snapshot, item, collectionIdsByFolder, tagIdsByName);
+          if (entry) batch.push(entry);
+          else {
+            skippedCount += 1;
+            invalidItemCount += 1;
+          }
+        }
+        const batchBytesBefore = bytesProcessed;
+        let batchBytesCopied = 0;
+        if (batch.length > 0) {
+          const plan = this.prepareImport({
+            libraryId: input.libraryId,
+            sourceKind: 'files',
+            sourcePaths: batch.map((entry) => entry.sourcePath),
+            sourceEntries: batch,
+            sourceDirectories: [],
+            createImageSequence: false,
+            dedupeSameNameByContent: true,
+            skipLibraryDuplicateScan: true,
+            onStagedEntry: (batchProcessed, stagedBytes) => {
+              batchBytesCopied += stagedBytes;
+              filesProcessed = offset + batchProcessed;
+              bytesProcessed = batchBytesBefore + batchBytesCopied;
+              emitEagleProgress('copy');
+            },
+            suppressAssetChangeEvents: true,
+          });
+          const completion = this.resolveImport({
+            importId: plan.importId,
+            suspectedDuplicate: 'skip',
+            nameConflict: 'keep-both',
+          });
+          importedCount += completion.importedCount;
+          skippedCount += completion.skippedCount;
+          replacedCount += completion.replacedCount;
+          this.suppressAutoAnalysisForAssets(
+            input.libraryId,
+            completion.assets.map((asset) => asset.assetId),
+          );
+          if (sampleAssets.length < 300) {
+            sampleAssets.push(...completion.assets.slice(0, 300 - sampleAssets.length));
+          }
+          if (completion.importedCount + completion.replacedCount > 0) {
+            this.options.onAssetsChanged?.({
+              type: 'asset.changed',
+              libraryId: input.libraryId,
+              changedCount: completion.importedCount + completion.replacedCount,
+              missingCount: 0,
+              source: 'client',
+            });
+          }
+        }
+        filesProcessed = Math.min(totalFiles, offset + rawBatch.length);
+        bytesProcessed = Math.min(totalBytes, batchBytesBefore + rawBatch.reduce((total, item) => total + item.byteSize, 0));
+        emitEagleProgress('copy');
+        // Yield to the Worker IPC loop so list/search requests and renderer
+        // refreshes are serviced between import batches.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      emitEagleProgress('complete', totalFiles, totalBytes);
+      return {
+        sourceDisplayName: snapshot.displayName,
+        fileCount: snapshot.items.length,
+        importedCount,
+        assetCount: importedCount,
+        skippedCount,
+        replacedCount,
+        collectionCount: collectionIdsByFolder.size,
+        tagCount: tagIdsByName.size,
+        invalidItemCount,
+        assets: sampleAssets,
+      };
+    } catch (error) {
+      emitEagleProgress('failed');
+      throw error;
+    }
   }
 
   abandonImport(importId: string): string {
@@ -29017,6 +29642,7 @@ export class LibraryService {
     try {
       const contentHashCache = new Map<string, string>();
       const seenContentHashes = new Set<string>();
+      const occupiedContentHashes = new Map<string, string>();
       const sequenceBatchPaths = new Set<string>();
       for (const candidate of detectImageSequences(
         pending.entries.map((entry) => entry.destinationRelativePath),
@@ -29024,7 +29650,7 @@ export class LibraryService {
         for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
       }
       for (const entry of pending.entries) {
-        const entrySha256 = sha256FileAtPath(entry.sourcePath);
+        const entrySha256 = entry.sha256 ?? sha256FileAtPath(entry.sourcePath);
         const requestedDirectory = path.posix.dirname(entry.destinationRelativePath);
         const resolvedDirectory =
           requestedDirectory === '.'
@@ -29041,7 +29667,7 @@ export class LibraryService {
           existingDestination && existingDestination.size !== -1
             ? this.folderPath(openLibrary, existingDestination.actualRelativePath)
             : undefined;
-        const classified = this.classifyImportEntryConflict({
+        let classified = this.classifyImportEntryConflict({
           openLibrary,
           entry,
           entrySha256,
@@ -29050,7 +29676,27 @@ export class LibraryService {
           contentHashCache,
           seenContentHashes,
           ignoreBatchContentHash: sequenceBatchPaths.has(entry.destinationRelativePath),
+          skipLibraryDuplicateScan: pending.skipLibraryDuplicateScan,
         });
+        if (
+          pending.dedupeSameNameByContent
+          && classified === 'name-conflict'
+          && existingAbsolutePath !== undefined
+        ) {
+          const occupiedHash = occupiedContentHashes.get(
+            portablePathIdentity(existingDestination?.actualRelativePath ?? requestedDestination),
+          );
+          let existingHash = occupiedHash ?? contentHashCache.get(existingAbsolutePath);
+          if (existingHash === undefined) {
+            try {
+              existingHash = sha256FileAtPath(existingAbsolutePath);
+              contentHashCache.set(existingAbsolutePath, existingHash);
+            } catch {
+              existingHash = undefined;
+            }
+          }
+          if (existingHash === entrySha256) classified = 'suspected-duplicate';
+        }
         const conflictKind =
           classified === 'none' ? undefined : classified;
         let destinationRelativePath =
@@ -29136,6 +29782,7 @@ export class LibraryService {
           existingAsset,
           isReplacement,
         });
+        occupiedContentHashes.set(pathIdentity, entrySha256);
         seenContentHashes.add(entrySha256);
       }
     } catch (error) {
@@ -29292,6 +29939,19 @@ export class LibraryService {
       actions.forEach((action, index) => {
         const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
         renameSync(stagedPaths[index]!, destinationPath);
+        const sourceModifiedAtMs = action.entry.eagleMetadata?.sourceModifiedAtMs;
+        if (sourceModifiedAtMs !== undefined && Number.isFinite(sourceModifiedAtMs)) {
+          try {
+            const timestamp = new Date(sourceModifiedAtMs);
+            if (Number.isFinite(timestamp.getTime())) utimesSync(destinationPath, timestamp, timestamp);
+          } catch (error) {
+            // Eagle's timestamp is advisory. A filesystem that cannot restore
+            // it must not turn an otherwise valid byte import into a rollback.
+            this.diagnose('eagle-import.restore-mtime', error, {
+              relativeFilePath: action.destinationRelativePath,
+            });
+          }
+        }
         placedPaths.push(destinationPath);
         if (index === 0) this.failAt('after-first-place');
       });
@@ -29350,6 +30010,7 @@ export class LibraryService {
       for (const action of actions) {
         this.failAt('before-db-commit');
         let committedAssetId: string | null = null;
+        let committedRevisionId: string | null = null;
         openLibrary.connection.transaction(() => {
           const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
           // Persist the exact same millisecond representation used by watcher
@@ -29430,6 +30091,14 @@ export class LibraryService {
             location_kind: 'managed',
             linked_folder_id: null,
           });
+          if (action.entry.eagleMetadata) {
+            this.persistEagleImportedMetadata(
+              openLibrary,
+              assetId,
+              action.entry.eagleMetadata,
+              now,
+            );
+          }
           if (action.entry.sourcePageUrl !== undefined) {
             const sourcePageUrl = action.entry.sourcePageUrl.trim();
             if (sourcePageUrl === '') {
@@ -29451,17 +30120,28 @@ export class LibraryService {
           }
           this.syncAssetSearchContent(openLibrary.connection, assetId);
           committedAssetId = assetId;
+          committedRevisionId = revisionId;
         })();
         if (committedAssetId) {
           affectedAssetIds.push(committedAssetId);
+          if (action.entry.eagleMetadata && committedRevisionId) {
+            this.persistEagleThumbnailArtifact(
+              openLibrary,
+              committedAssetId,
+              committedRevisionId,
+              action.entry.eagleMetadata,
+            );
+          }
           this.noteClientFilesystemMutation();
-          this.options.onAssetsChanged?.({
-            type: 'asset.changed',
-            libraryId: pending.libraryId,
-            changedCount: 1,
-            missingCount: 0,
-            source: 'client',
-          });
+          if (!pending.suppressAssetChangeEvents) {
+            this.options.onAssetsChanged?.({
+              type: 'asset.changed',
+              libraryId: pending.libraryId,
+              changedCount: 1,
+              missingCount: 0,
+              source: 'client',
+            });
+          }
         }
       }
 
@@ -32153,6 +32833,7 @@ export class LibraryService {
       this.invalidateArtifactPathCache(libraryId);
       this.autoRepairAttemptedByLibrary.delete(libraryId);
       this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
+      this.autoAnalysisSuppressedAssetIds.delete(libraryId);
       return;
     }
 
@@ -32181,6 +32862,7 @@ export class LibraryService {
     }
     this.autoRepairAttemptedByLibrary.delete(libraryId);
     this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
+    this.autoAnalysisSuppressedAssetIds.delete(libraryId);
   }
 
   /**
@@ -32248,6 +32930,21 @@ export class LibraryService {
 
   listLibraries(): InternalLibrarySummary[] {
     return [...this.openById.values()].map(({ summary }) => ({ ...summary }));
+  }
+
+  /**
+   * Drain active media jobs before closing SQLite handles during Worker
+   * shutdown. The old synchronous closeAll() could close a connection while
+   * an ffmpeg promise was still unwinding, leaving the child detached.
+   */
+  async closeAllAsync(timeoutMs = 500): Promise<void> {
+    const activeJobs = [...this.activeMediaJobs.values()];
+    for (const active of activeJobs) active.controller.abort();
+    await Promise.race([
+      Promise.allSettled(activeJobs.map((active) => active.settled)).then(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+    this.closeAll();
   }
 
   closeAll(): void {

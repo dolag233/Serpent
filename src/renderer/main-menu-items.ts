@@ -22,6 +22,7 @@ export type MainMenuItem = {
   readonly id: string;
   readonly label: string;
   readonly shortcut?: string;
+  readonly submenu?: readonly MainMenuItem[];
   readonly disabled?: boolean;
   readonly danger?: boolean;
   readonly onSelect: () => void;
@@ -44,6 +45,7 @@ export type MainMenuActions = {
   readonly deleteLibraryFromDisk: () => void;
   readonly importFiles: () => void;
   readonly importFolder: () => void;
+  readonly importEagleLibrary?: () => void;
   readonly importLinkedFolder: () => void;
   readonly importLibrary: () => void;
   readonly exportLibrary: () => void;
@@ -233,6 +235,20 @@ export function buildMainMenuSections({
           label: label(locale, "toolbar.importLibrary"),
           disabled: appDisabled,
           onSelect: actions.importLibrary,
+        },
+        {
+          id: "library.import-external",
+          label: label(locale, "toolbar.importExternalLibrary"),
+          disabled: libraryDisabled,
+          onSelect: () => undefined,
+          submenu: [
+            {
+              id: "library.import-eagle",
+              label: label(locale, "toolbar.importEagleLibrary"),
+              disabled: libraryDisabled,
+              onSelect: actions.importEagleLibrary ?? (() => undefined),
+            },
+          ],
         },
         {
           id: "library.export",

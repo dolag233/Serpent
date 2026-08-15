@@ -167,6 +167,7 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
       "file.import-files",
       "file.import-folder",
       "file.import-linked-folder",
+      "library.import-eagle",
       "library.create",
       "library.open",
       "library.close",

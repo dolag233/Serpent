@@ -13,6 +13,7 @@ vi.mock('../../src/worker/author-from-exif', () => ({
 import {
   LibraryService,
   LibraryServiceError,
+  SUPPORTED_SCHEMA_VERSION,
   THUMBNAIL_VISIBLE_PAGE_SIZE,
 } from '../../src/worker/library-service';
 import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
@@ -95,7 +96,8 @@ describe('schema v9 migration', () => {
     const created = service.createLibrary({ displayName: 'V9', selectedParentPath: root });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.pragma('user_version', { simple: true })).toBe(37);
+    expect(db.pragma('user_version', { simple: true })).toBe(SUPPORTED_SCHEMA_VERSION);
+    expect(db.pragma('user_version', { simple: true })).toBe(SUPPORTED_SCHEMA_VERSION);
 
     const revArtifactCols = (db.prepare("PRAGMA table_info('revision_artifacts')").all() as Array<{ name: string }>).map((c) => c.name);
     expect(revArtifactCols).toContain('artifact_id');

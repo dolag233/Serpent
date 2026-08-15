@@ -234,7 +234,7 @@ export function LibrarySwitcher({
             tabIndex={-1}
             type="button"
           >
-            {t("shell.openLibraryEllipsis")}
+            {t("shell.openExternalLibraryEllipsis")}
           </button>
           <button
             className="library-switcher-item"

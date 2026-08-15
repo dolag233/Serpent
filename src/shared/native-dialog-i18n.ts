@@ -44,6 +44,7 @@ export function mapSystemLocaleToAppLocale(raw: string): AppLocale {
 export type NativeDialogId =
   | "importFiles"
   | "importFolder"
+  | "importEagleLibrary"
   | "createLibrary"
   | "openLibrary"
   | "linkFolder"
@@ -73,6 +74,10 @@ type DialogCatalog = Record<NativeDialogId, NativeDialogCopy>;
 const EN: DialogCatalog = {
   importFiles: { title: "Import Files", buttonLabel: "Import" },
   importFolder: { title: "Import Folder", buttonLabel: "Import Folder" },
+  importEagleLibrary: {
+    title: "Import Eagle Library",
+    buttonLabel: "Import Eagle Library",
+  },
   createLibrary: { title: "Create Library", buttonLabel: "Choose Folder" },
   openLibrary: { title: "Open Library", buttonLabel: "Open" },
   linkFolder: {
@@ -139,6 +144,10 @@ const ZH_CN: DialogCatalog = {
   importFolder: {
     title: "\u5bfc\u5165\u6587\u4ef6\u5939",
     buttonLabel: "\u5bfc\u5165\u6587\u4ef6\u5939",
+  },
+  importEagleLibrary: {
+    title: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
+    buttonLabel: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
   },
   createLibrary: {
     title: "\u521b\u5efa\u8d44\u6e90\u5e93",

@@ -145,6 +145,23 @@ export const importCompletionSchema = z.strictObject({
 
 export type ImportCompletion = z.infer<typeof importCompletionSchema>;
 
+export const eagleImportResultSchema = z.strictObject({
+  sourceDisplayName: safeDisplayName,
+  importedCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  assetCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  replacedCount: z.number().int().nonnegative(),
+  collectionCount: z.number().int().nonnegative(),
+  tagCount: z.number().int().nonnegative(),
+  invalidItemCount: z.number().int().nonnegative(),
+  // Large Eagle libraries must not send tens of thousands of cards through
+  // Main/Preload. The UI reloads its current scope after the operation.
+  assets: z.array(assetSummarySchema).max(300),
+});
+
+export type EagleImportResult = z.infer<typeof eagleImportResultSchema>;
+
 export const imageSequenceImportCandidateSchema = z.strictObject({
   displayName: safeDisplayName,
   extension: nonBlankString.max(16),
@@ -200,6 +217,8 @@ export const importProgressEventSchema = z.strictObject({
   type: z.literal('import.progress'),
   importId: nonBlankString,
   phase: z.enum(['validate', 'copy', 'extract', 'verify', 'open', 'complete', 'failed', 'cancelled']),
+  /** Eagle imports are synchronous and cannot be cancelled mid-batch yet. */
+  cancelable: z.boolean().optional(),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),
@@ -1359,6 +1378,11 @@ const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('ai.config.saved'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import-eagle.completed'),
+    result: eagleImportResultSchema,
   }),
 ] as const;
 

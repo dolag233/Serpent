@@ -2174,6 +2174,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-section:focus-visible,
 .main-menu-section.is-active,
 .main-menu-item:hover:not(:disabled),
+.main-menu-item.is-active,
 .main-menu-item:focus-visible {
   background: var(--menu-item-hover-background);
   outline: none;
@@ -8329,6 +8330,25 @@ select.ai-config-input.ai-config-languages {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.import-progress-strip {
+  align-items: flex-start;
+  border-radius: 10px;
+}
+
+.import-progress-body {
+  display: flex;
+  min-width: min(300px, 52vw);
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-progress-bar {
+  margin-top: 0;
+  height: 4px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .activity-strip .secondary-button {

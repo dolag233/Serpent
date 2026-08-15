@@ -12,6 +12,7 @@ import {
   parseRendererResult,
   parseWorkerResponse,
   parseRendererLifecycleEvent,
+  parseProgressEvent,
   parseAiProgressEvent,
   parseAiAnalysisCompletedEvent,
   parseAiContentClearedEvent,
@@ -1935,6 +1936,26 @@ describe('renderer lifecycle events', () => {
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();
+  });
+});
+
+describe('external import progress events', () => {
+  it('accepts determinate non-cancellable progress updates', () => {
+    expect(parseProgressEvent({
+      type: 'import.progress',
+      importId: 'eagle-import-01',
+      phase: 'copy',
+      cancelable: false,
+      filesProcessed: 32,
+      totalFiles: 385,
+      bytesProcessed: 1024,
+      totalBytes: 2048,
+    })).toMatchObject({
+      phase: 'copy',
+      cancelable: false,
+      filesProcessed: 32,
+      totalFiles: 385,
+    });
   });
 });
 
