@@ -1,49 +1,42 @@
 # 安装
 
-
 ## 系统要求
 
-- macOS：Apple Silicon（arm64）或 Intel（x64）macOS 11+；约 500 MB 磁盘空间（不含资源库数据）
-- Windows：64 位 Windows 10 或 11；约 500 MB 磁盘空间
+- macOS：Apple Silicon（arm64）或 Intel（x64），macOS 11 或更高版本
+- Windows：64 位 Windows 10 或 Windows 11
+- 应用本身约需 500 MB；资源库数据另占空间
 
-资源库数据另占磁盘（取决于资产数量）。Windows 验证仍在进行中，见[构建与打包](../developer/build-packaging.md)。
+Windows 的具体打包/安装证据会随发布版本变化，见[构建与打包](../developer/build-packaging.md)和[项目状态](../internal/project-status.md)。
 
+## macOS
 
-1. 下载 `Serpent-<版本>-arm64.dmg`
-2. 打开 dmg，把 Serpent 拖入「应用程序」
+1. 下载对应架构的 `Serpent-<版本>-arm64.dmg` 或 x64 安装包。
+2. 打开 DMG，将 Serpent 拖到「应用程序」。
 
-当前版本未签名公证，首次打开会提示"无法验证开发者"。右键点击应用 → 打开，之后可正常使用。也可以用终端清除隔离属性：
+当前开发版可能未签名公证，首次打开时右键应用选择「打开」并确认。若系统仍阻止，可以在终端清除隔离属性：
 
 ```bash
 xattr -cr /Applications/Serpent.app
 ```
 
-卸载：把 Serpent 拖入废纸篓。资源库数据在创建时选择的位置，删除应用不影响数据。
+卸载只需将应用移入废纸篓；资源库位于创建时选择的位置，不会因删除应用而删除。
 
 ## Windows
 
-1. 下载 `Serpent-<版本> Setup.exe`
-2. 运行安装，按提示完成
+1. 下载 `Serpent-<版本> Setup.exe` 或发布页提供的 Windows 安装包。
+2. 运行安装程序并按提示完成。
 
-未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。卸载通过系统「应用和功能」。
-
-> Windows 打包与安装流程仍在验证中，见[构建与打包](../developer/build-packaging.md)。
+未签名开发包可能触发 SmartScreen，请核对来源后选择「更多信息 → 仍要运行」。通过系统「设置 → 应用」卸载。Windows 安装器、更新和完整退出行为以当前发布包的 QA 证据为准。
 
 ## 浏览器扩展
 
-扩展不通过商店上架，随应用分发。安装应用后：
+扩展随应用源码/安装包提供，不通过商店发布。开发态可在 Chrome 或 Edge 打开 `chrome://extensions`，启用「开发者模式」，点击「加载已解压的扩展程序」，选择：
 
-1. 打开 Chrome 或 Edge，访问 `chrome://extensions`
-2. 开启「开发者模式」
-3. 点击「加载已解压的扩展程序」，选择扩展目录：
-   - macOS：`Serpent.app/Contents/Resources/extension`
-   - Windows：安装目录 `resources/extension`
+- macOS：`Serpent.app/Contents/Resources/extension`
+- Windows：安装目录下的 `resources/extension`
 
-加载后工具栏出现扩展图标。在网页图片或视频上右键可保存到 Serpent，也可以直接拖拽导入。
+加载后可在网页图片或视频上右键保存到 Serpent，也可以直接拖拽保存。扩展的详细行为见[插件、脚本与 MCP](extensions.md)。
 
 ## 升级
 
-- macOS：下载新版 dmg 替换应用，数据不受影响
-- Windows：运行新版 Setup.exe 覆盖安装，数据保留
-
-Serpent 承诺完全兼容旧版本数据，升级后旧库可直接打开使用。
+macOS 用新 DMG 替换应用，Windows 运行新版安装程序覆盖安装。资源库目录和用户配置独立于应用安装目录，通常会保留；升级前建议备份资源库。跨版本迁移、平台差异或当前发布包限制请以项目状态和发布说明为准。

@@ -1,49 +1,42 @@
 # Installation
 
+## Requirements
 
-## 系统要求
+- macOS: Apple Silicon (arm64) or Intel (x64), macOS 11 or newer
+- Windows: 64-bit Windows 10 or Windows 11
+- The app uses about 500 MB; library data needs additional space
 
-- macOS：Apple Silicon（arm64）或 Intel（x64）macOS 11+；约 500 MB 磁盘空间（不含资源库数据）
-- Windows：64 位 Windows 10 或 11；约 500 MB 磁盘空间
+Windows packaging and installation evidence can vary by release. See [build and packaging](../developer/build-packaging.en.md) and [project status](../internal/project-status.md).
 
-资源库数据另占磁盘（取决于资产数量）。Windows 验证仍在进行中，见[构建与打包](../developer/build-packaging.md)。
+## macOS
 
+1. Download the matching `Serpent-<version>-arm64.dmg` or x64 package.
+2. Open the DMG and drag Serpent to Applications.
 
-1. Download `Serpent-<version>-arm64.dmg`
-2. Open the dmg and drag Serpent into Applications
-
-The current build is unsigned and not notarized, so macOS shows "cannot verify the developer" on first launch. Right-click the app → Open; later launches work normally. You can also clear the quarantine attribute:
+Unsigned development builds may trigger Gatekeeper. Verify the source, then right-click the app, choose Open, and confirm. If it is still blocked, clear quarantine from Terminal:
 
 ```bash
 xattr -cr /Applications/Serpent.app
 ```
 
-To uninstall, drag Serpent to the Trash. Library data lives where you created it — deleting the app does not touch it.
+To uninstall, move the app to the Trash. Libraries live where you created them and are not removed with the app.
 
 ## Windows
 
-1. Download `Serpent-<version> Setup.exe`
-2. Run the installer and follow the prompts
+1. Download `Serpent-<version> Setup.exe` or the Windows package attached to the release.
+2. Run the installer and follow the prompts.
 
-Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway". Uninstall through Settings → Apps.
-
-> Windows packaging and installation is still being validated. See [build & packaging](../developer/build-packaging.en.md).
+Unsigned development builds may trigger SmartScreen. Verify the source, then choose **More info → Run anyway**. Uninstall from **Settings → Apps**. Installer, update, and full-quit behavior are release-specific and must follow the current QA evidence.
 
 ## Browser extension
 
-The extension ships inside the app (not via a store). After installing the app:
+The extension ships with the source/package rather than through a store. For a development checkout, open `chrome://extensions` in Chrome or Edge, enable Developer mode, choose **Load unpacked**, and select:
 
-1. Open Chrome or Edge and go to `chrome://extensions`
-2. Enable Developer mode
-3. Click "Load unpacked" and select the extension directory:
-   - macOS: `Serpent.app/Contents/Resources/extension`
-   - Windows: `resources/extension` in the install directory
+- macOS: `Serpent.app/Contents/Resources/extension`
+- Windows: `resources/extension` inside the install directory
 
-The extension icon appears in the toolbar. Right-click any web image or video to save it to Serpent, or drag it in directly.
+The extension can save a web image or video from its context menu or by drag-and-drop. See [Plugins, scripts, and MCP](extensions.en.md) for extension behavior.
 
 ## Upgrading
 
-- macOS: download the new dmg and replace the app; data is unaffected
-- Windows: run the new Setup.exe over the old install; data is kept
-
-Serpent is fully compatible with older library data — old libraries open as-is after an upgrade.
+Replace the macOS app with the new DMG, or run the new Windows installer over the existing install. Libraries and user configuration live outside the application install directory and normally remain; back up a library before upgrading. For migrations and release-specific caveats, use project status and release notes.

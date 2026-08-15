@@ -145,7 +145,7 @@ serpent.assets.search({
 }): Promise<Page<Asset> & { snippets?: readonly { assetId: string; text: string }[] }>
 ```
 
-脚本最稳定的用法是工具栏同款字符串，例如 `tag:抽象`、`name:rain | tag:rain`；`name:` 会归一为 `filename`。`null` 搜索当前资源库的非回收站资产。Registry 还接受结构化 `filters`/`scope`/`sort`，其完整 JSON Schema 由 Registry 生成；当前独立脚本声明对这些字段使用宽类型，不能假定未声明的字段形状。
+脚本最稳定的用法是工具栏同款字符串，例如 `tag:抽象`、`name:rain | tag:rain`、`name:"hero concept" -tag:草稿`；支持空格 AND、`|` OR、`-` 排除、引号短语和字段别名（`name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`、`author`、`path`/`folder`、`meta`/`metadata`）。`name:` 会归一为 `filename`。`null` 搜索当前资源库的非回收站资产。Registry 还接受结构化 `filters`/`scope`/`sort`，其完整 JSON Schema 由 Registry 生成；当前独立脚本声明对这些字段使用宽类型，不能假定未声明的字段形状。
 
 ### `assets.list(input?)`
 

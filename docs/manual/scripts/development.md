@@ -6,7 +6,7 @@ API 版本：`AUTOMATION_API_VERSION = 1`。本文以当前 Console 实际注入
 
 ## 先跑起来
 
-打开资源库后，从“更多工具”→“自动化脚本”打开 Console。未打开资源库时，创建资源库面板不提供脚本入口；需要无库执行时，请使用 MCP 的未绑定会话。未绑定执行只能先调用 `serpent.library.create()`；创建成功后，Serpent 会绑定新资源库，后续命令才能访问它。
+打开资源库后，从“更多工具”→“自动化脚本”打开 Console。未打开资源库时，创建资源库面板不提供脚本入口。需要在无库状态下创建资源库或导入导出库时，应使用设置中配置好的 MCP 全局命令；`library.create` 返回 `libraryId` 后，后续库级调用仍需显式传入该 ID，Serpent 不会把它隐式写入 MCP 会话。
 
 Console 运行的是脚本正文，最简单的入口是顶层 `return`：
 
@@ -82,7 +82,7 @@ Console 的脚本源最多 64 KiB；脚本输出逐行收集，单行最多 16 K
 
 ## 搜索语法
 
-`serpent.assets.search({ query })` 使用与工具栏相同的文本搜索语法；`query` 可为字符串或 `null`。`null` 表示当前资源库的非回收站资产。支持空格 AND、`|` OR、`-` 排除、引号短语和字段限定；UI 的 `name:` 会归一为 Registry 的 `filename` 字段。搜索是包含匹配，例如 `rain` 可能命中 `rainbow`，要更严格请使用更长 token 或多字段组合。
+`serpent.assets.search({ query })` 使用与工具栏相同的文本搜索语法；`query` 可为字符串或 `null`。`null` 表示当前资源库的非回收站资产。支持空格 AND、`|` OR、`-` 排除、引号短语和字段限定；字段别名包括 `name`/`filename`、`tag`/`tags`、`desc`/`description`、`source`/`url`/`link`/`source_url`、`author`、`path`/`folder`/`folder_path`、`meta`/`metadata`/`metadata_text`。搜索是包含匹配，例如 `rain` 可能命中 `rainbow`，要更严格请使用更长 token 或多字段组合。
 
 当前 Console 还接受 Registry 的结构化搜索对象，由宿主归一化；若没有明确需要，优先用字符串查询。搜索仍只返回分页资产摘要和可选摘要，不返回磁盘路径。
 
