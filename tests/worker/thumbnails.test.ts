@@ -3,12 +3,18 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const extractAuthorFromExifMock = vi.hoisted(() => vi.fn(async () => null as string | null));
+vi.mock('../../src/worker/author-from-exif', () => ({
+  extractAuthorFromExif: extractAuthorFromExifMock,
+}));
 
 import {
   LibraryService,
   LibraryServiceError,
 } from '../../src/worker/library-service';
+import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -70,6 +76,8 @@ function importNoConflict(service: LibraryService, libraryId: string, sourcePath
 }
 
 afterEach(() => {
+  extractAuthorFromExifMock.mockReset();
+  extractAuthorFromExifMock.mockResolvedValue(null);
   for (const root of temporaryRoots.splice(0)) {
     try {
       rmSync(root, { force: true, recursive: true });
@@ -939,6 +947,26 @@ describe('processThumbnailQueue', () => {
     service.closeAll();
   });
 
+  it('backfills EXIF author metadata from a queued thumbnail job', async () => {
+    extractAuthorFromExifMock.mockResolvedValue('Queue Author');
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ExifQueueAuthor', selectedParentPath: root });
+    const png = path.join(root, 'author.png');
+    createTestImage(png);
+    const { assets } = sharedImportNoConflict(service, created.libraryId, png);
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
+
+    expect(service.getAssetMetadata({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    }).author).toBe('Queue Author');
+    expect(extractAuthorFromExifMock).toHaveBeenCalledWith(expect.any(String));
+    service.closeAll();
+  });
+
   it('recovers running media jobs as queued without resetting attempt_count', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -999,12 +1027,16 @@ describe('processThumbnailQueue', () => {
 
     expect(service.listMediaJobs(created.libraryId).jobs[0]!.status).toBe('cancelled');
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(db.prepare('SELECT COUNT(*) AS count FROM revision_artifacts').get()).toMatchObject({ count: 0 });
+    // Header-probed extracted_metadata is intentionally persisted before the
+    // decoder is cancelled; the cancellation contract is that no thumbnail
+    // artifact from the interrupted job remains.
+    expect(db.prepare("SELECT COUNT(*) AS count FROM revision_artifacts WHERE kind = 'thumbnail'").get())
+      .toMatchObject({ count: 0 });
     db.close();
     service.closeAll();
   });
 
-  it('caps Sharp work at four concurrent decodes across assets (Serpent-azf6)', async () => {
+  it('caps Sharp work at the CPU-derived pool across assets (Serpent-azf6)', async () => {
     const root = temporaryRoot();
     let active = 0;
     let maximum = 0;
@@ -1053,14 +1085,17 @@ describe('processThumbnailQueue', () => {
       assetId: target.assetId,
     }));
 
-    await waitFor(() => active === 4);
-    expect(maximum).toBe(4);
+    const expectedMaximum = Math.min(targets.length, workerMediaDecodeConcurrency());
+    await waitFor(() => active === expectedMaximum);
+    expect(maximum).toBe(expectedMaximum);
     releases.splice(0).forEach((release) => release());
-    // The four held slots free up; the fifth operation acquires one of them.
-    await waitFor(() => releases.length === 1);
-    releases.shift()!();
+    // The held slots free up; any remaining operation acquires one of them.
+    if (expectedMaximum < targets.length) {
+      await waitFor(() => releases.length === targets.length - expectedMaximum);
+      releases.splice(0).forEach((release) => release());
+    }
     await Promise.all(operations);
-    expect(maximum).toBe(4);
+    expect(maximum).toBe(expectedMaximum);
     for (const target of targets) target.service.closeAll();
   });
 });

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -388,6 +388,7 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
     const external = path.join(temp, 'linked-root');
     mkdirSync(external, { recursive: true });
     writeFileSync(path.join(external, 'root.png'), 'root-bytes');
+    const canonicalExternal = realpathSync(external);
 
     const trashed: string[] = [];
     const service = newService({
@@ -413,7 +414,7 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
       deleteFromDisk: false,
     });
     expect(trashResult.deletedAssetCount).toBe(1);
-    expect(trashed.some((entry) => entry === external)).toBe(true);
+    expect(trashed.some((entry) => entry === canonicalExternal)).toBe(true);
     expect(existsSync(external)).toBe(false);
 
     const remaining = service.listLinkedFolders(library.libraryId);

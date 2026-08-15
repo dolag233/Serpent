@@ -15,6 +15,7 @@ import {
   type SpawnResult,
 } from '../../src/worker/library-service';
 import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
+import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -1240,7 +1241,7 @@ describe('media execution cancellation and global decoder limits', () => {
     service.closeAll();
   });
 
-  it('limits FFmpeg and ffprobe to four subprocesses across concurrent libraries', async () => {
+  it('limits FFmpeg and ffprobe to the CPU-derived pool across concurrent libraries', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     let active = 0;
@@ -1280,7 +1281,7 @@ describe('media execution cancellation and global decoder limits', () => {
       libraryId: target.libraryId,
       assetId: target.assetId,
     })));
-    expect(maximum).toBe(4);
+    expect(maximum).toBe(Math.min(targets.length, workerMediaDecodeConcurrency()));
     for (const target of targets) target.service.closeAll();
   });
 

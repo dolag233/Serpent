@@ -22,4 +22,5 @@
 - 当前环境没有 Computer Use，不能把真实 UI 视觉检查写成通过。
 - 没有 Windows runner；Windows 快捷键工单 `Serpent-g8u9` 保持原有未验证状态，本日志不代替 Windows 验收。
 - 没有修改或验证 `Serpent-x710` 的删除后刷新时间路径。
-- `npm run test:unit` 通过（341 files / 2576 tests / 1 skipped）。完整 `npm run test` 在媒体/回收站套件报告失败：`palette-artifact.test.ts` 3、`real-media-bundle.test.ts` 1、`video-exr.test.ts` 2、`folder-delete.test.ts` 1；随后长时间无新输出而中止，不能记为全量通过。上述失败未涉及本次大型库读路径/Renderer 变更，仍需独立修复或复验。
+- 基线提交 `2ab4c553` 后复现的 7 个 Worker 失败已分流：`enqueuePaletteJob` 的“仍有缩略图任务”查询会把当前正在运行的缩略图也算进去，导致 palette 不入队，连带造成 real-media 重启残留 10 个 palette 队列任务和 OIIO 修复任务计数错误；已移除该自阻塞判断。固定 4 并发断言已改为逻辑 CPU - 3（当前环境 8 线程因此为 5），并补上 CPU-derived wave 的释放逻辑。macOS `/var` 软链接路径比较改用 `realpath`；取消中的缩略图测试只断言 thumbnail 不落盘，保留预期的 `extracted_metadata`。
+- 另修复发现的真实缓存安全/生命周期问题：artifact path cache 命中时重新执行根目录、普通文件、符号链接和 containment 校验；永久删除本地资产后立即清空该库的路径缓存，避免变更序列轮询下一 tick 前继续提供已删除资产。并移除同样会把当前 `running` 任务算入队列的 EXIF author backfill 门控，补充队列路径集成测试。最终 `npm run test:worker` 通过（62 files / 1044 tests / 12 skipped，0 failed）；定向 `palette-artifact` 6、`real-media-bundle` 1、`video-exr` 46、`folder-delete` 17、`thumbnails` 53 均通过。`npm run test:unit` 及完整 `npm run test` 未在本次修复后重跑；Computer Use、packaged、Windows 仍未执行。

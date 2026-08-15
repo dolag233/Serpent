@@ -16618,16 +16618,10 @@ export class LibraryService {
         );
       }
 
-      const pendingThumbs = openLibrary.connection.prepare(
-        `SELECT 1 FROM jobs
-          WHERE library_id = ?
-            AND kind = 'generate_thumbnail'
-            AND status IN ('queued', 'running')
-          LIMIT 1`,
-      ).get(openLibrary.summary.libraryId);
-      if (!pendingThumbs) {
-        await this.backfillAuthorFromExif(openLibrary, input.assetId, assetPath);
-      }
+      // This runs inside the thumbnail job while that job is still marked
+      // `running`; checking for any running thumbnail here would therefore
+      // suppress EXIF author backfill for every queued thumbnail.
+      await this.backfillAuthorFromExif(openLibrary, input.assetId, assetPath);
 
       return { artifactId };
     } catch (error) {
@@ -17352,14 +17346,6 @@ export class LibraryService {
         AND kind = 'extract_palette' AND status IN ('queued', 'running', 'paused') LIMIT 1`,
     ).get(assetId, revisionId);
     if (active) return false;
-    const pendingThumbs = openLibrary.connection.prepare(
-      `SELECT 1 FROM jobs
-        WHERE library_id = ?
-          AND kind = 'generate_thumbnail'
-          AND status IN ('queued', 'running')
-        LIMIT 1`,
-    ).get(openLibrary.summary.libraryId);
-    if (pendingThumbs) return false;
     const now = new Date().toISOString();
     const result = openLibrary.connection.prepare(
       `INSERT INTO jobs
@@ -19174,6 +19160,7 @@ export class LibraryService {
     const cached = this.artifactPathCache.get(cacheKey);
     if (cached && cached.changeSequence === currentChangeSequence) {
       this.assertArtifactUsage(cached.kind, usage);
+      this.validateCachedArtifactPath(openLibrary, cached.absolutePath);
       return cached.absolutePath;
     }
     // The join against the asset's current revision is the serving boundary:
@@ -19207,6 +19194,33 @@ export class LibraryService {
       ? new Set(['webm_proxy', 'audio_proxy'])
       : new Set(['thumbnail', 'video_poster', 'model_glb']);
     if (!allowedKinds.has(kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
+  }
+
+  private validateCachedArtifactPath(openLibrary: OpenLibrary, absolutePath: string): void {
+    const artifactsDir = this.artifactsDir(openLibrary);
+    try {
+      const rootEntry = lstatSync(artifactsDir);
+      if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      const artifactsRoot = realpathSync(artifactsDir);
+      const targetEntry = lstatSync(absolutePath);
+      if (!targetEntry.isFile() || targetEntry.isSymbolicLink()) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+      const realTarget = realpathSync(absolutePath);
+      const relation = path.relative(artifactsRoot, realTarget);
+      if (
+        relation === ''
+        || relation.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relation)
+      ) {
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+      }
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('ASSET_NOT_FOUND', { cause: error });
+    }
   }
 
   /**
@@ -25695,6 +25709,9 @@ export class LibraryService {
     this.syncTrashedFolderTombstones(openLibrary);
 
     if (deletedAssetIds.length > 0) {
+      // The cross-process change subscription is polled, but a local
+      // permanent delete must stop serving the deleted asset immediately.
+      this.invalidateArtifactPathCache(input.libraryId);
       this.options.onAssetsChanged?.({
         type: 'asset.changed',
         libraryId: input.libraryId,
