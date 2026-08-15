@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Serpent 拖拽保存轮盘 · 交互原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #eceae6;
+    color: #2c2e31;
+    overflow-x: hidden;
+  }
+
+  /* ---------- 伪装网页 ---------- */
+  #page { max-width: 1080px; margin: 0 auto; padding: 28px 20px 120px; }
+  #page h1 { font-size: 18px; margin-bottom: 4px; }
+  #page .tip { color: #777; margin-bottom: 18px; max-width: 720px; }
+  #page .tip kbd {
+    background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 0 5px; font-size: 12px;
+  }
+  #tiles { columns: 4; column-gap: 14px; }
+  .tile {
+    break-inside: avoid; margin-bottom: 14px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 40px; cursor: grab; user-select: none; -webkit-user-select: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .tile:active { cursor: grabbing; }
+
+  /* ---------- 参数面板 ---------- */
+  #panel {
+    position: fixed; top: 16px; right: 16px; z-index: 40;
+    background: rgba(31,31,31,0.92); color: #f5f5f5; border-radius: 10px;
+    padding: 12px 14px; width: 220px; font-size: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  }
+  #panel h2 { font-size: 12px; margin-bottom: 8px; opacity: 0.8; font-weight: 600; }
+  #panel label { display: block; margin-bottom: 8px; }
+  #panel input[type="range"] { width: 100%; }
+  #panel .row { display: flex; justify-content: space-between; }
+  #readout { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.12); white-space: pre-line; opacity: 0.85; }
+
+  /* ---------- 轮盘（零尺寸容器：原点即圆心，所有子层共用坐标系） ---------- */
+  #scrim {
+    position: fixed; inset: 0; z-index: 2147483646; pointer-events: none;
+    background: rgba(0,0,0,0.4); opacity: 0; transition: opacity 150ms ease-out;
+  }
+  #scrim.open { opacity: 1; }
+  #wheel {
+    position: fixed; left: 0; top: 0; width: 0; height: 0; z-index: 2147483647;
+    pointer-events: none;
+    display: none;
+  }
+  #wheel.open { display: block; animation: wheelIn 130ms ease-out; }
+  @keyframes wheelIn {
+    from { transform: scale(0.82); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+  }
+  #disc {
+    position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(48, 50, 54, 0.62);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  }
+  #wheelSvg { position: absolute; overflow: visible; }
+  .armed-wedge { fill: rgba(59, 130, 246, 0.78); }
+  .back-tint { fill: rgba(255, 255, 255, 0.055); }
+  .divider { stroke: rgba(255, 255, 255, 0.13); stroke-width: 1; }
+  .band { fill: rgba(59, 130, 246, 0.30); }
+  .chev { fill: rgba(255, 255, 255, 0.65); font-size: 10px; }
+  .chev.armed { fill: #fff; }
+
+  .sector-label {
+    position: absolute; left: 0; top: 0; width: 116px;
+    text-align: center; color: #f5f5f5; pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .sector-label .ico { position: relative; width: 17px; height: 17px; color: rgba(245, 245, 245, 0.92); }
+  .sector-label .ico svg { width: 17px; height: 17px; display: block; }
+  .sector-label .ico .badge { position: absolute; right: -5px; bottom: -3px; width: 9px; height: 9px; display: block; }
+  .sector-label .txt {
+    font-size: 12px; font-weight: 500; line-height: 1.2;
+    display: block; max-width: 116px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sector-label.armed .txt { font-weight: 700; }
+  .recent-tint { fill: rgba(59, 130, 246, 0.12); }
+
+  #hub {
+    position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(30, 32, 36, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #f5f5f5; pointer-events: none;
+  }
+  #hub .x { font-size: 15px; line-height: 1; }
+  #hub .sub { font-size: 9px; opacity: 0.7; margin-top: 1px; }
+  #crumb {
+    position: absolute; left: 0; transform: translateX(-50%);
+    color: rgba(245, 245, 245, 0.9); font-size: 12px; white-space: nowrap;
+    background: rgba(48, 50, 54, 0.72); padding: 3px 12px; border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    pointer-events: none;
+  }
+
+  /* ---------- 提示 ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 56px; transform: translateX(-50%) translateY(8px);
+    background: rgba(24, 26, 28, 0.94); color: #f5f5f5; padding: 10px 18px; border-radius: 999px;
+    font-size: 13px; opacity: 0; transition: opacity 180ms, transform 180ms;
+    pointer-events: none; z-index: 2147483647;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #hint {
+    position: fixed; z-index: 2147483647; pointer-events: none;
+    background: rgba(24, 26, 28, 0.94); color: #f5f5f5; padding: 8px 14px; border-radius: 8px;
+    font-size: 12px; opacity: 0; transition: opacity 200ms; max-width: 260px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); display: none;
+  }
+  #hint.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="page">
+  <h1>假装这是一个网页</h1>
+  <p class="tip">
+    <b>按住</b>任意图片并拖动（模拟浏览器拖拽）→ Serpent 保存轮盘。
+    根级 12 点起 = 最近保存位置（时钟角标 + 浅蓝底）· 甩方向 = 选择 · 扇区上松开 = 保存 / 返回 ·
+    穿越外环 = 展开下一级（对「‹ 返回」= 退回上一级）· 中心 ✕ 或环外松开 = 退出 · <kbd>Esc</kbd> = 完全退出
+  </p>
+  <div id="tiles"></div>
+</div>
+
+<div id="panel">
+  <h2>几何参数（调优后冻结进规格）</h2>
+  <label><span class="row"><span>中心半径 hub</span><span id="vHub"></span></span>
+    <input type="range" id="rHub" min="20" max="50" step="1"></label>
+  <label><span class="row"><span>扇区外径 ringOut</span><span id="vRing"></span></span>
+    <input type="range" id="rRing" min="80" max="140" step="2"></label>
+  <label><span class="row"><span>展开带宽 band</span><span id="vBand"></span></span>
+    <input type="range" id="rBand" min="8" max="44" step="2"></label>
+  <label><input type="checkbox" id="cOffline"> 模拟未连接 Serpent</label>
+  <div id="readout">未打开</div>
+</div>
+
+<div id="scrim"></div>
+<div id="wheel">
+  <div id="disc"></div>
+  <svg id="wheelSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div id="labels"></div>
+  <div id="hub"><span class="x">✕</span><span class="sub">取消</span></div>
+  <div id="crumb"></div>
+</div>
+
+<div id="toast"></div>
+<div id="hint"></div>
+
+<script>
+'use strict';
+
+/* ================= 几何参数（2026-07-25 产品负责人调定：外径 120、中心 45） ================= */
+const CFG = { hub: 45, ringIn: 6, ringOut: 120, band: 16, releaseTolerance: 8 };
+
+/* ================= 模拟资源库文件夹树 ================= */
+function node(name, children) { return { name, children: children || [] }; }
+const TREE = [
+  node('概念设计', [node('角色'), node('场景'), node('道具'), node('载具'), node('生物'), node('武器'), node('氛围')]),
+  node('参考', [node('角色', [node('人体'), node('五官'), node('服饰')]), node('动物'), node('建筑'), node('自然')]),
+  node('贴图', [node('皮肤'), node('金属'), node('布料'), node('岩石'), node('木纹'), node('地面'), node('天空'), node('其他')]),
+  node('项目A', [node('概念'), node('成品')]),
+  node('灵感采集'),
+  node('截图'),
+];
+const RECENT_PATHS = ['参考/角色', '贴图/皮肤', '概念设计/角色', '灵感采集', '项目A/成品'];
+
+function findNode(path) {
+  let kids = TREE, found = null;
+  for (const seg of path.split('/')) {
+    found = kids.find((k) => k.name === seg) || null;
+    if (!found) return null;
+    kids = found.children;
+  }
+  return found;
+}
+const baseName = (path) => path.split('/').pop();
+
+/* ================= 层级 → 扇区项（纯逻辑，接入期搬进 radial-menu-model.ts） ================= */
+// level: {kind:'root'} | {kind:'all'} | {kind:'folder', path}
+// item:  { label, nav:'save'|'expand'|'page'|'back', path?, expandable, target? }
+// 纯文字标签（无装饰图标）；「返回」可穿越（穿越外环 = 执行导航动作）。
+// 子级槽位：返回 1 + 内容 7（>7 → 返回+6+更多）；无「保存在此」——存进某文件夹
+// 直接在上一级松开于它的扇区即可。
+const BACK_ITEM = { label: '返回', nav: 'back', expandable: true };
+const CONTENT_PAGE = 6;
+
+// 同级重名（如两个「角色」来自不同父目录）自动展开为完整路径消歧
+function disambiguateLabels(items) {
+  const counts = new Map();
+  for (const it of items) {
+    if (it.nav === 'save') counts.set(it.label, (counts.get(it.label) || 0) + 1);
+  }
+  for (const it of items) {
+    if (it.nav === 'save' && counts.get(it.label) > 1 && it.path) {
+      it.label = it.path.split('/').join(' / ');
+    }
+  }
+  return items;
+}
+
+function pageCount(level) {
+  if (level.kind === 'root') return 1;
+  const total = level.kind === 'all'
+    ? TREE.length
+    : (findNode(level.path) || { children: [] }).children.length;
+  return total <= 7 ? 1 : Math.ceil(total / CONTENT_PAGE);
+}
+
+function folderItem(path) {
+  const n = findNode(path);
+  const expandable = !!n && n.children.length > 0;
+  return {
+    label: baseName(path), nav: 'save', path,
+    expandable, target: expandable ? { kind: 'folder', path } : null,
+  };
+}
+
+function itemsFor(level, page) {
+  if (level.kind === 'root') {
+    // 最近位置着重显示：最近第 1 名在 12 点位，顺时针递次，然后 根目录、全部文件夹
+    return disambiguateLabels([
+      ...RECENT_PATHS.map((p) => ({ ...folderItem(p), recent: true })),
+      { label: '根目录', nav: 'save', path: '根目录', expandable: false },
+      { label: '全部文件夹', nav: 'expand', expandable: true, target: { kind: 'all' } },
+    ]);
+  }
+  if (level.kind === 'all') {
+    const paged = TREE.length > 7;
+    const slice = paged ? TREE.slice(page * CONTENT_PAGE, page * CONTENT_PAGE + CONTENT_PAGE) : TREE;
+    const items = slice.map((n) => ({
+      label: n.name, nav: 'save', path: n.name,
+      expandable: n.children.length > 0,
+      target: n.children.length ? { kind: 'folder', path: n.name } : null,
+    }));
+    if (paged) items.push({ label: '更多', nav: 'page', expandable: true });
+    return disambiguateLabels([BACK_ITEM, ...items]);
+  }
+  // folder：返回 + 子级（存进当前文件夹请在上一级松开于它的扇区）
+  const n = findNode(level.path) || { children: [] };
+  const paged = n.children.length > 7;
+  const slice = paged ? n.children.slice(page * CONTENT_PAGE, page * CONTENT_PAGE + CONTENT_PAGE) : n.children;
+  const items = slice.map((c) => folderItem(level.path + '/' + c.name));
+  if (paged) items.push({ label: '更多', nav: 'page', expandable: true });
+  return disambiguateLabels([BACK_ITEM, ...items]);
+}
+
+function crumbFor(level) {
+  if (level.kind === 'root') return '保存到 Serpent';
+  if (level.kind === 'all') return '全部文件夹' + (pageCount(level) > 1 ? '（翻页）' : '');
+  return '全部文件夹 / ' + level.path.split('/').join(' / ');
+}
+
+// 指针武装时面包屑实时预告动作/完整目标路径（重名文件夹消歧的第二层保障）
+function armedCrumb(item) {
+  if (!item) return null;
+  if (item.nav === 'save') return '保存到：' + item.path.split('/').join(' / ');
+  if (item.nav === 'back') return '返回上一级';
+  if (item.nav === 'page') return '下一页';
+  if (item.nav === 'expand') return '展开：' + item.label;
+  return null;
+}
+
+/* ================= SVG 图标（单色线性，非 emoji；与扩展实现一致） ================= */
+function svgIcon(inner) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+}
+const ICONS = {
+  folder: svgIcon('<path d="M4 8a2 2 0 0 1 2-2h3.5l2 2H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>'),
+  home: svgIcon('<path d="M4.5 11 12 4.5 19.5 11"/><path d="M6.5 9.5V19h11V9.5"/>'),
+  grid: svgIcon('<rect x="4.5" y="4.5" width="6.5" height="6.5" rx="1.2"/><rect x="13" y="4.5" width="6.5" height="6.5" rx="1.2"/><rect x="4.5" y="13" width="6.5" height="6.5" rx="1.2"/><rect x="13" y="13" width="6.5" height="6.5" rx="1.2"/>'),
+  back: svgIcon('<path d="M14.5 5.5 8 12l6.5 6.5"/>'),
+  more: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/></svg>',
+};
+const RECENT_BADGE =
+  '<svg class="badge" viewBox="0 0 12 12"><circle cx="6" cy="6" r="5.4" fill="#3b82f6" stroke="rgba(20,22,25,0.9)" stroke-width="1"/><path d="M6 3.4v2.9l1.9 1.2" stroke="#fff" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>';
+
+function iconForItem(item) {
+  if (item.nav === 'back') return ICONS.back;
+  if (item.nav === 'page') return ICONS.more;
+  if (item.nav === 'expand') return ICONS.grid;
+  if (item.path === '根目录') return ICONS.home;
+  return ICONS.folder;
+}
+
+/* ================= 几何（纯函数） ================= */
+const TAU = Math.PI * 2;
+const TOP = -Math.PI / 2;
+
+// 每个层级可整体旋转（rotation）：子级的「返回」扇区钉在进入方向的正对面。
+// 约定：扇区 i 的中线 = TOP + i·w + rotation（命中与渲染共用同一角坐标系）
+function midAngle(i, count, rotation) {
+  return TOP + i * (TAU / count) + rotation;
+}
+
+function sectorAt(angle, count, rotation) {
+  const w = TAU / count;
+  let rel = angle - rotation - TOP + w / 2;
+  rel = ((rel % TAU) + TAU) % TAU;
+  return Math.min(count - 1, Math.floor(rel / w));
+}
+
+// 返回扇区（index 0）的中线 = 进入方向 + π
+function rotationForEntry(entryAngle) {
+  return entryAngle + Math.PI - TOP;
+}
+
+function polar(r, a) { return [r * Math.cos(a), r * Math.sin(a)]; }
+
+function wedgePath(r0, r1, a0, a1) {
+  const [x0, y0] = polar(r0, a0), [x1, y1] = polar(r1, a0);
+  const [x2, y2] = polar(r1, a1), [x3, y3] = polar(r0, a1);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M ${x0.toFixed(1)} ${y0.toFixed(1)} L ${x1.toFixed(1)} ${y1.toFixed(1)} ` +
+    `A ${r1} ${r1} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} ` +
+    `L ${x3.toFixed(1)} ${y3.toFixed(1)} A ${r0} ${r0} 0 ${large} 0 ${x0.toFixed(1)} ${y0.toFixed(1)} Z`;
+}
+
+/* ================= 状态机 ================= */
+// canCross：穿越外环的守卫——每次层级切换后，光标必须先回到展开半径以内一次，
+// 才允许下一次穿越。防止「穿越返回」后落点仍在父级外环外而立刻反弹重进。
+const S = { open: false, stack: [], armed: -1, zone: 'none', canCross: false, pointer: { x: 0, y: 0 } };
+const cur = () => S.stack[S.stack.length - 1];
+const expandR = () => CFG.ringOut + CFG.band;
+
+function clampCenter(x, y) {
+  const m = expandR() + 16;
+  return [
+    Math.min(Math.max(x, m), Math.max(m, window.innerWidth - m)),
+    Math.min(Math.max(y, m), Math.max(m, window.innerHeight - m)),
+  ];
+}
+
+function openWheel(x, y) {
+  const [cx, cy] = clampCenter(x, y);
+  S.stack = [{ level: { kind: 'root' }, page: 0, cx, cy, rotation: 0 }];
+  S.open = true; S.armed = -1; S.zone = 'none'; S.canCross = true;
+  document.getElementById('scrim').classList.add('open');
+  render();
+}
+
+function closeWheel() {
+  S.open = false; S.stack = [];
+  document.getElementById('scrim').classList.remove('open');
+  document.getElementById('wheel').classList.remove('open');
+  setReadout('未打开');
+}
+
+function pushLevel(target, entryAngle) {
+  const [cx, cy] = clampCenter(S.pointer.x, S.pointer.y);
+  S.stack.push({ level: target, page: 0, cx, cy, rotation: rotationForEntry(entryAngle) });
+  S.armed = -1; S.canCross = false;
+  render();
+}
+
+function nextPage() {
+  const c = cur();
+  c.page = (c.page + 1) % pageCount(c.level);
+  S.armed = -1; S.canCross = false;
+  render();
+}
+
+function back() {
+  if (S.stack.length > 1) S.stack.pop();
+  S.armed = -1; S.canCross = false;
+  render();
+}
+
+function onMove(x, y) {
+  S.pointer = { x, y };
+  const c = cur();
+  const dx = x - c.cx, dy = y - c.cy;
+  const d = Math.hypot(dx, dy);
+  if (d <= expandR()) S.canCross = true;
+
+  const items = itemsFor(c.level, c.page);
+  if (d < CFG.hub) {
+    S.zone = 'hub'; S.armed = -1;
+  } else {
+    S.zone = 'ring';
+    const idx = sectorAt(Math.atan2(dy, dx), items.length, c.rotation);
+    S.armed = idx;
+    const it = items[idx];
+    if (it.expandable && d > expandR() && S.canCross) {
+      if (it.nav === 'page') nextPage();
+      else if (it.nav === 'back') back();
+      else pushLevel(it.target, midAngle(idx, items.length, c.rotation));
+      return;
+    }
+  }
+  render();
+}
+
+function onUp() {
+  if (!S.open) return;
+  const c = cur();
+  const dx = S.pointer.x - c.cx, dy = S.pointer.y - c.cy;
+  const d = Math.hypot(dx, dy);
+  // 只有落在扇区环内才生效；中心、环外任何位置松开 = 退出
+  if (S.zone === 'ring' && d <= CFG.ringOut + CFG.releaseTolerance && S.armed >= 0) {
+    const items = itemsFor(c.level, c.page);
+    const it = items[S.armed];
+    if (it.nav === 'save') { toast('已保存到：' + it.path.split('/').join(' / ')); closeWheel(); return; }
+    if (it.nav === 'expand') { pushLevel(it.target, midAngle(S.armed, items.length, c.rotation)); return; }
+    if (it.nav === 'page') { nextPage(); return; }
+    if (it.nav === 'back') { back(); return; }
+  }
+  closeWheel();
+}
+
+/* ================= 渲染 ================= */
+const wheelEl = document.getElementById('wheel');
+const discEl = document.getElementById('disc');
+const svgEl = document.getElementById('wheelSvg');
+const labelsEl = document.getElementById('labels');
+const hubEl = document.getElementById('hub');
+const crumbEl = document.getElementById('crumb');
+const readoutEl = document.getElementById('readout');
+
+function setReadout(extra) {
+  if (!S.open) { readoutEl.textContent = extra || '未打开'; return; }
+  const c = cur();
+  const items = itemsFor(c.level, c.page);
+  const dx = S.pointer.x - c.cx, dy = S.pointer.y - c.cy;
+  const deg = (dx || dy) ? Math.round(((Math.atan2(dy, dx) * 180) / Math.PI + 450) % 360) : 0;
+  readoutEl.textContent =
+    `层级: ${c.level.kind} · 页 ${c.page + 1}/${pageCount(c.level)} · 旋转 ${Math.round((c.rotation * 180) / Math.PI)}°\n` +
+    `区域: ${S.zone} · 角度: ${deg}°\n` +
+    `扇区: ${S.armed >= 0 ? items[S.armed].label : '—'}`;
+}
+
+function render() {
+  if (!S.open) return;
+  const c = cur();
+  const items = itemsFor(c.level, c.page);
+  const R = expandR() + 10;
+  const size = R * 2;
+  svgEl.setAttribute('viewBox', `${-R} ${-R} ${size} ${size}`);
+  svgEl.setAttribute('width', size);
+  svgEl.setAttribute('height', size);
+  svgEl.style.left = -R + 'px';
+  svgEl.style.top = -R + 'px';
+  wheelEl.style.left = c.cx + 'px';
+  wheelEl.style.top = c.cy + 'px';
+  wheelEl.classList.add('open');
+
+  discEl.style.width = discEl.style.height = CFG.ringOut * 2 + 'px';
+  hubEl.style.width = hubEl.style.height = (CFG.hub - 2) * 2 + 'px';
+  crumbEl.style.top = -(CFG.ringOut + 30) + 'px';
+  crumbEl.textContent =
+    (S.zone === 'ring' && S.armed >= 0 ? armedCrumb(items[S.armed]) : null) ?? crumbFor(c.level);
+
+  const n = items.length;
+  const w = TAU / n;
+  let svg = '';
+
+  // 展开引导弧（武装可展开项时）
+  if (S.zone === 'ring' && S.armed >= 0 && items[S.armed].expandable) {
+    const m = midAngle(S.armed, n, c.rotation);
+    svg += `<path class="band" d="${wedgePath(CFG.ringOut + 3, expandR() - 4, m - w / 2, m + w / 2)}"/>`;
+  }
+
+  // 「返回」与「最近」扇区常驻底（未武装时）
+  items.forEach((it, i) => {
+    if (i === S.armed) return;
+    const m = midAngle(i, n, c.rotation);
+    if (it.nav === 'back') {
+      svg += `<path class="back-tint" d="${wedgePath(CFG.hub + 1.5, CFG.ringOut - 1.5, m - w / 2, m + w / 2)}"/>`;
+    } else if (it.recent) {
+      svg += `<path class="recent-tint" d="${wedgePath(CFG.hub + 1.5, CFG.ringOut - 1.5, m - w / 2, m + w / 2)}"/>`;
+    }
+  });
+
+  // 武装扇区高亮（内缩 1.5px，保留玻璃盘描边）
+  if (S.zone === 'ring' && S.armed >= 0) {
+    const m = midAngle(S.armed, n, c.rotation);
+    svg += `<path class="armed-wedge" d="${wedgePath(CFG.hub + 1.5, CFG.ringOut - 1.5, m - w / 2, m + w / 2)}"/>`;
+  }
+
+  // 分格线（扇区 i 跨 midAngle(i) ± w/2，分格线在 i·w - w/2 处）
+  for (let i = 0; i < n; i++) {
+    const a = TOP + i * w - w / 2 + c.rotation;
+    const [x0, y0] = polar(CFG.hub + 2, a);
+    const [x1, y1] = polar(CFG.ringOut - 2, a);
+    svg += `<line class="divider" x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"/>`;
+  }
+
+  // 可展开 chevron
+  items.forEach((it, i) => {
+    if (!it.expandable) return;
+    const [tx, ty] = polar(CFG.ringOut - 12, midAngle(i, n, c.rotation));
+    svg += `<text class="chev${i === S.armed ? ' armed' : ''}" x="${tx.toFixed(1)}" y="${(ty + 3).toFixed(1)}" text-anchor="middle">▸</text>`;
+  });
+
+  svgEl.innerHTML = svg;
+
+  // 标签（图标 + 文字；HTML 覆盖层，原点=圆心）
+  const labelR = (CFG.hub + CFG.ringOut) / 2 + 6;
+  labelsEl.innerHTML = items.map((it, i) => {
+    const [lx, ly] = polar(labelR, midAngle(i, n, c.rotation));
+    const badge = it.recent ? RECENT_BADGE : '';
+    return `<div class="sector-label${i === S.armed ? ' armed' : ''}" style="transform: translate(${lx.toFixed(1)}px, ${ly.toFixed(1)}px) translate(-50%, -50%)">` +
+      `<span class="ico">${iconForItem(it)}${badge}</span><span class="txt">${it.label}</span></div>`;
+  }).join('');
+
+  setReadout();
+}
+
+/* ================= 模拟拖拽（接入期换成 dragstart/dragover/drop/dragend） ================= */
+const tilesEl = document.getElementById('tiles');
+const EMOJI = ['🖼️', '🌄', '🎬', '🏙️', '🎞️', '🌌', '🐉', '🏰', '🧝', '🤖', '🌊', '🔥', '🗿', '🌸'];
+const COLORS = ['#f6c9c9', '#c9e4f6', '#d9f6c9', '#f6eec9', '#e3c9f6', '#c9f6ef', '#f6d9c9'];
+const HEIGHTS = [150, 220, 180, 260, 130, 200, 170, 240, 160, 210, 145, 190, 230, 155];
+EMOJI.forEach((e, i) => {
+  const t = document.createElement('div');
+  t.className = 'tile';
+  t.style.height = HEIGHTS[i] + 'px';
+  t.style.background = COLORS[i % COLORS.length];
+  t.textContent = e;
+  tilesEl.appendChild(t);
+});
+
+const hintEl = document.getElementById('hint');
+let hintTimer = 0;
+function showHint(x, y, text) {
+  hintEl.textContent = text;
+  hintEl.style.display = 'block';
+  hintEl.style.left = Math.min(x + 14, window.innerWidth - 280) + 'px';
+  hintEl.style.top = Math.min(y + 14, window.innerHeight - 60) + 'px';
+  hintEl.classList.add('show');
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hintEl.classList.remove('show'); }, 1800);
+}
+
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+function toast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1600);
+}
+
+tilesEl.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  if (document.getElementById('cOffline').checked) {
+    showHint(e.clientX, e.clientY, '未连接 Serpent：请先启动应用并打开资源库');
+    return;
+  }
+  openWheel(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', (e) => { if (S.open) onMove(e.clientX, e.clientY); });
+window.addEventListener('mouseup', () => { if (S.open) onUp(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.open) { e.preventDefault(); closeWheel(); } });
+
+/* ================= 参数面板 ================= */
+function bindRange(id, key, labelId, after) {
+  const el = document.getElementById(id);
+  el.value = CFG[key];
+  document.getElementById(labelId).textContent = CFG[key] + 'px';
+  el.addEventListener('input', () => {
+    CFG[key] = Number(el.value);
+    document.getElementById(labelId).textContent = el.value + 'px';
+    if (after) after();
+    if (S.open) render();
+  });
+}
+bindRange('rHub', 'hub', 'vHub');
+bindRange('rRing', 'ringOut', 'vRing');
+bindRange('rBand', 'band', 'vBand');
+</script>
+</body>
+</html>
