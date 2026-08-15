@@ -533,6 +533,8 @@ interface DatabaseConstructor {
   new (filename: string, options?: {
     readonly?: boolean;
     fileMustExist?: boolean;
+    /** better-sqlite3 statement trace; used only by the test trace seam. */
+    verbose?: (sql: string) => void;
   }): DatabaseConnection;
 }
 
@@ -3259,6 +3261,13 @@ export interface LibraryServiceOptions {
   afterSchemaMigrationTransactionBegin?: () => void;
   /** Test-only override for deterministic SQLite writer-contention tests. */
   sqliteBusyTimeoutMsForTests?: number;
+  /**
+   * Test-only seam (Serpent-xoaz): receives every SQL statement executed on
+   * the open-library connection, used by queue-throughput benchmarks to
+   * assert DB write counts (e.g. batched success UPDATEs). Never set in
+   * production — it adds a callback per statement.
+   */
+  onDbStatement?: (sql: string) => void;
   /** Removes one Serpent trash directory; injectable for platform-error tests. */
   removeTrashPath?: (trashPath: string) => void;
   /**
@@ -3730,7 +3739,16 @@ function readGitignoreText(libraryPath: string): string {
 export function openConfiguredDatabase(
   filename: string,
   busyTimeoutMs = 5_000,
-  options: { readonly?: boolean } = {},
+  options: {
+    readonly?: boolean;
+    /**
+     * Test-only seam (Serpent-xoaz): per-statement trace used to assert DB
+     * write counts in queue-throughput benchmarks. better-sqlite3's `verbose`
+     * callback receives the SQL of every executed statement on this
+     * connection; production callers never pass it.
+     */
+    trace?: (sql: string) => void;
+  } = {},
 ): DatabaseConnection {
   if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > 60_000) {
     throw new Error('SQLite busy timeout must be an integer between 0 and 60000 milliseconds.');
@@ -3740,8 +3758,8 @@ export function openConfiguredDatabase(
   // attempt fails with SQLITE_READONLY — no command needs an explicit gate.
   // journal_mode/synchronous are write PRAGMAs and must be skipped here.
   const connection = options.readonly
-    ? new Database(filename, { readonly: true })
-    : new Database(filename);
+    ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
+    : new Database(filename, options.trace ? { verbose: options.trace } : {});
   try {
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
@@ -20077,6 +20095,13 @@ export class LibraryService {
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
     const queryLimit = limit === undefined ? '' : 'LIMIT ?';
+    // Serpent-xoaz: background fill (no assetIds) drains most-recently
+    // imported assets first (created_at DESC, path as a deterministic
+    // tiebreaker) instead of pure path-alphabetical order — the assets the
+    // user just imported surface their thumbnails first, which is what a
+    // fresh large import actually wants to see. Explicit-id waves (visible /
+    // mutation / linked) are IN-filtered, so the order only stabilizes the
+    // truncation when their id list exceeds the limit.
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.current_revision_id
@@ -20099,7 +20124,7 @@ export class LibraryService {
                 AND j.kind = 'generate_thumbnail'
                 AND j.status IN ('queued', 'running', 'paused')
             )
-          ORDER BY a.relative_file_path
+          ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
       .all(
@@ -20137,7 +20162,7 @@ export class LibraryService {
             AND a.availability = 'available'
             ${selectedSql}
             AND (${videoExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
-          ORDER BY a.relative_file_path
+          ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
       .all(
@@ -20189,7 +20214,7 @@ export class LibraryService {
                  AND j.kind IN ('generate_webm_proxy', 'generate_audio_proxy')
                  AND j.status IN ('queued', 'running', 'paused')
             )
-          ORDER BY a.relative_file_path
+          ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
       .all(
@@ -20257,7 +20282,7 @@ export class LibraryService {
                  AND j.kind = 'generate_contact_sheet'
                  AND j.status IN ('queued', 'running', 'paused')
             )
-          ORDER BY a.relative_file_path
+          ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
       .all(
@@ -20351,7 +20376,29 @@ export class LibraryService {
     const workerCount = Math.min(maxJobs, decodeConcurrency);
     let budget = maxJobs;
     const runWorker = async (): Promise<void> => {
-    while (budget > 0) {
+      // Serpent-xoaz: the per-job terminal UPDATE is the hottest write in the
+      // queue loop (one statement + one WAL commit per job). Batch it: each
+      // worker collects the jobs that reached the success path and flushes a
+      // single multi-row UPDATE when its wave budget is exhausted. The
+      // `status = 'running'` guard is preserved, so a job cancelled/paused or
+      // lease-lost between the final check and the flush is left untouched —
+      // identical semantics to the old per-job UPDATE, far fewer commits.
+      const completedJobIds: string[] = [];
+      const flushCompletedJobs = (): void => {
+        if (completedJobIds.length === 0) return;
+        const placeholders = completedJobIds.map(() => '?').join(',');
+        openLibrary.connection
+          .prepare(
+            `UPDATE jobs
+                SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ?
+              WHERE job_id IN (${placeholders})
+                AND status = 'running'`,
+          )
+          .run(new Date().toISOString(), ...completedJobIds);
+        completedJobIds.length = 0;
+      };
+      try {
+      while (budget > 0) {
       budget -= 1;
       const job = nextJob.get(libraryId) as {
         job_id: string;
@@ -20559,9 +20606,10 @@ export class LibraryService {
           continue;
         }
           jobLease.assertCurrent();
-        openLibrary.connection
-          .prepare("UPDATE jobs SET status = 'succeeded', progress = 1.0, error_code = NULL, error_detail = NULL, updated_at = ? WHERE job_id = ? AND status = 'running'")
-          .run(new Date().toISOString(), job.job_id);
+        // Serpent-xoaz: deferred to the worker's batched flush (see
+        // flushCompletedJobs) — one multi-row UPDATE per worker instead of
+        // one statement + WAL commit per job.
+        completedJobIds.push(job.job_id);
         if (job.kind === 'generate_contact_sheet') {
           const contactSheet = this.getCurrentArtifact(libraryId, job.asset_id, 'contact_sheet');
           if (contactSheet?.status === 'ready') {
@@ -20688,7 +20736,12 @@ export class LibraryService {
       }
       processed += 1;
       if (processed >= maxJobs) return;
-    }
+      }
+      } finally {
+        // Flush this worker's completed jobs before the wave returns so
+        // callers/tests observe terminal `succeeded` state immediately.
+        flushCompletedJobs();
+      }
     };
     await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
 
@@ -29718,7 +29771,10 @@ export class LibraryService {
         connection = openConfiguredDatabase(
           databasePath(canonicalPath),
           this.options.sqliteBusyTimeoutMsForTests,
-          { readonly: true },
+          {
+            readonly: true,
+            ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
+          },
         );
         const libraryRow = connection
           .prepare('SELECT library_id, display_name FROM library LIMIT 1')
@@ -29758,6 +29814,7 @@ export class LibraryService {
       connection = openConfiguredDatabase(
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
+        this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
       );
       migrationAttempted = true;
       migrateDatabase(connection, false, this.options);

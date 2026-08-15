@@ -814,20 +814,34 @@ describe('enqueueThumbnailJobs', () => {
       .filter((asset) => asset.displayName.endsWith('.png'))
       .map((asset) => asset.assetId));
 
+    // Serpent-xoaz: the background fill drains most-recently-imported assets
+    // first (created_at DESC). Stamp distinct import times so the fill picks
+    // a deterministic pair regardless of per-import clock granularity.
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const base = Date.parse('2026-01-01T00:00:00.000Z');
+    const stamp = db.prepare('UPDATE assets SET created_at = ? WHERE asset_id = ?');
+    assetIds.forEach((assetId, index) => {
+      stamp.run(new Date(base + index * 1000).toISOString(), assetId);
+    });
+    db.close();
+
+    // Startup fill (limit 2) takes the two newest assets (last two imported).
     expect(service.enqueueThumbnailJobs(created.libraryId, { limit: 2 })).toBe(2);
+    // The explicit visible range schedules an asset the fill did not pick yet
+    // — the oldest one — at a higher priority.
     expect(service.enqueueThumbnailJobs(created.libraryId, {
-      assetIds: [assetIds[5]!],
+      assetIds: [assetIds[0]!],
       limit: 1,
       priority: 200,
     })).toBe(1);
 
-    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    const jobs = db.prepare(
+    const db2 = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const jobs = db2.prepare(
       "SELECT asset_id, priority FROM jobs WHERE kind = 'generate_thumbnail' ORDER BY priority DESC, created_at",
     ).all() as Array<{ asset_id: string; priority: number }>;
+    db2.close();
     expect(jobs).toHaveLength(3);
-    expect(jobs[0]).toEqual({ asset_id: assetIds[5], priority: 200 });
-    db.close();
+    expect(jobs[0]).toEqual({ asset_id: assetIds[0], priority: 200 });
     service.closeAll();
   });
 
