@@ -1,12 +1,18 @@
 # Serpent
 
-开源（MIT）、跨平台（macOS / Windows）的数字资产管理软件，面向游戏美术、影视后期、平面/UI/品牌设计师。
+![Serpent-Logo](E:\MyRepositories\Serpent\docs\assets\ui\Serpent-Logo.png)
 
-导入、浏览、搜索、标签、合集、3D 模型预览（FBX/OBJ/GLB 等）、HDRI 环境光与 PBR 渲染。数据保存在本地资源库，无云端依赖。
+开源（MIT）、跨平台（macOS / Windows）的数字资产管理软件，面向游戏美术、影视后期、平面/动态图形设计师。
 
-- 英文版：[README.en.md](README.en.md)
-- 使用手册：[docs/user-guide/](docs/user-guide/README.md)
-- 开发者文档：[docs/developer/](docs/developer/README.md)
+## 特性
+
++ 支持**海量**资产类型。支持大多数视频、图像、音频格式。额外支持3D模型、文本类型资产。
++ 资产管理系统。支持对资产添加标签、打分、添加描述等功能。支持快速过滤和搜索。支持添加合集。
++ 支持插件系统。支持用插件扩展Serpent功能。
++ 支持脚本、MCP调用。支持使用脚本控制Serpent。支持Agent通过MCP连接、控制Serpent，以实现自动化管理。
++ 支持AI分析。内置AI分析模块，支持对图像、视频、3D资产进行AI分析。
+
+![Serpent-Preview](E:\MyRepositories\Serpent\docs\assets\ui\Serpent-Preview.png)
 
 ## 安装
 
