@@ -2531,6 +2531,35 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         entries: libraryService.resolveAssetDragInfos(libraryId, assetIds),
       };
     }
+    case 'asset.thumbnail.visible-window': {
+      // Serpent-visible-window: the renderer reports what the user is actually
+      // looking at after scrolling. Two effects, both cheap:
+      // 1) queue-jump — the visible wave (350, light) boosts these assets'
+      //    queued jobs above every other tier, so the current viewport always
+      //    finishes first no matter how the queue was filled;
+      // 2) placeholder sizing — header-probe dimensions land immediately so
+      //    masonry placeholders stop reflowing when thumbnails finish later.
+      const { libraryId, assetIds } = request.command;
+      const dimensions =
+        libraryService.persistVisibleWindowImageDimensions(libraryId, assetIds);
+      for (const item of dimensions) {
+        parentPort?.postMessage({
+          type: 'asset.dimensions.ready',
+          libraryId,
+          assetId: item.assetId,
+          width: item.width,
+          height: item.height,
+        });
+      }
+      scheduleThumbnailScene(
+        libraryId,
+        'visible',
+        assetIds,
+        assetIds.length,
+        { light: true },
+      );
+      return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
+    }
     case 'media.resolve-asset-paths': {
       const assetIds = libraryService.resolveAssetIdsByAbsolutePaths(
         request.command.libraryId,

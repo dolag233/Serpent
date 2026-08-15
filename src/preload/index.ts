@@ -1646,6 +1646,13 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
+  // Serpent-visible-window: fire-and-forget report of the viewport assets —
+  // worker queue-jumps their thumbnail jobs and header-probes dimensions.
+  async reportVisibleWindow({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<void> {
+    if (assetIds.length === 0) return;
+    await request({ type: 'asset.thumbnail.visible-window.request', libraryId, assetIds });
+  },
+
   // Slice C (Serpent-qvc6): 3D viewer renderer request surface. Both requests
   // bridge straight to Worker commands (slices A/B); errors come back as
   // typed protocol error codes.

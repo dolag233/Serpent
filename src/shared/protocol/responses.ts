@@ -1609,6 +1609,10 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('asset.thumbnail.visible-window.acknowledged'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ai.jobs.enqueued'),
     libraryId: nonBlankString,
     enqueued: z.number().int().nonnegative(),
@@ -1787,6 +1791,10 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   // Slice C (Serpent-qvc6): renderer-side results for the 3D viewer requests.
   // The Worker already emits these (workerSuccessResultSchema); Main passes
   // them through untouched, so they must be parseable here too.
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.thumbnail.visible-window.acknowledged'),
+  }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('model.companions'),

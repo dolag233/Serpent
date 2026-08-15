@@ -289,9 +289,11 @@ describe('generateThumbnail (sharp)', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AlphaPNG', selectedParentPath: root });
-    const sharp = require('sharp') as (input: unknown) => unknown;
+    const sharp = require('sharp') as (input: {
+      create: { width: number; height: number; channels: number; background: Record<string, number> };
+    }) => { png(): { toFile(path: string): Promise<unknown> } };
     const sourcePath = path.join(root, 'alpha.png');
-    await (sharp as any)({
+    await sharp({
       create: {
         width: 64,
         height: 48,
@@ -392,9 +394,11 @@ describe('generateThumbnail (sharp)', () => {
 
     // A real opaque JPEG (the old fixture wrote RGBA PNG bytes with a .jpg
     // name, which reads as an alpha image and would take the webp path).
-    const sharp = require('sharp') as (input: unknown) => unknown;
+    const sharp = require('sharp') as (input: {
+      create: { width: number; height: number; channels: number; background: Record<string, number> };
+    }) => { jpeg(): { toFile(path: string): Promise<unknown> } };
     const sourcePath = path.join(root, 'test.jpg');
-    await (sharp as any)({
+    await sharp({
       create: {
         width: 32,
         height: 24,
@@ -1722,6 +1726,83 @@ describe('visible page window covers the whole browse page (Serpent-x9xu)', () =
     for (const assetId of offPageAssetIds) {
       expect(remainingIds.has(assetId)).toBe(true);
     }
+    service.closeAll();
+  });
+});
+
+describe('visible-window header probe (Serpent-visible-window)', () => {
+  it('returns header-probed dimensions for visible images, persists them as extracted_metadata, and skips non-images', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'VisibleWindowProbe', selectedParentPath: root });
+
+    const sharp = require('sharp') as (input: {
+      create: { width: number; height: number; channels: number; background: Record<string, number> };
+    }) => { jpeg(): { toFile(path: string): Promise<unknown> } };
+    const jpegPath = path.join(root, 'viewport.jpg');
+    await sharp({
+      create: {
+        width: 32,
+        height: 24,
+        channels: 3,
+        background: { r: 10, g: 90, b: 200 },
+      },
+    }).jpeg().toFile(jpegPath);
+    const textPath = path.join(root, 'notes.txt');
+    writeFileSync(textPath, 'not an image', 'utf-8');
+    importNoConflict(service, created.libraryId, jpegPath);
+    importNoConflict(service, created.libraryId, textPath);
+
+    const byRelativePath = new Map(
+      service.listAssets({ libraryId: created.libraryId, recursive: true })
+        .map((asset) => [asset.relativeFilePath, asset] as const),
+    );
+    const jpegAsset = byRelativePath.get('viewport.jpg')!;
+    const textAsset = byRelativePath.get('notes.txt')!;
+    expect(jpegAsset).toBeTruthy();
+    expect(textAsset).toBeTruthy();
+
+    // The import already header-probes its first 64 discovered assets, so the
+    // visible-window probe must skip rows that carry extracted_metadata. Clear
+    // the JPEG's metadata first to simulate an asset whose dimensions were
+    // never probed (e.g. beyond the import cap, or imported before the probe
+    // existed).
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const revision = db.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(jpegAsset.assetId) as { current_revision_id: string };
+    db.prepare(
+      "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
+    ).run(revision.current_revision_id);
+
+    const dimensions = service.persistVisibleWindowImageDimensions(created.libraryId, [
+      jpegAsset.assetId,
+      textAsset.assetId,
+      'missing-asset',
+    ]);
+    expect(dimensions).toEqual([{ assetId: jpegAsset.assetId, width: 32, height: 24 }]);
+
+    // The probe must leave a ready extracted_metadata artifact so summaries
+    // and masonry placeholders read the dimensions without waiting for the
+    // thumbnail job.
+    const rows = db.prepare(
+      "SELECT width, height, status FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata' AND invalidated_at IS NULL",
+    ).all(revision.current_revision_id) as Array<{ width: number | null; height: number | null; status: string }>;
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toEqual({ width: 32, height: 24, status: 'ready' });
+
+    // Re-reporting the same visible window must skip the already-probed asset
+    // (no re-probe, no event spam) and keep exactly one metadata artifact.
+    const again = service.persistVisibleWindowImageDimensions(created.libraryId, [
+      jpegAsset.assetId,
+    ]);
+    expect(again).toEqual([]);
+    const count = db.prepare(
+      "SELECT COUNT(*) AS n FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata' AND invalidated_at IS NULL",
+    ).get(revision.current_revision_id) as { n: number };
+    expect(count.n).toBe(1);
+    db.close();
+
     service.closeAll();
   });
 });

@@ -882,6 +882,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.thumbnail.visible-window.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
+  }),
+  z.strictObject({
     type: z.literal('asset.preview.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
@@ -1080,6 +1085,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.change-sequence'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.visible-window'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
   }),
   z.strictObject({
     type: z.literal('history.status'),

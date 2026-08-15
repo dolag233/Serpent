@@ -15,11 +15,16 @@ const temporaryRoots: string[] = [];
 // thumbnail time, unlike the 1x1 fixture images. Pixel content is
 // high-entropy (per-pixel variation), so the JPEG decoder does real work
 // like a photograph would.
+type BenchmarkSharp = (input: unknown, options?: unknown) => {
+  jpeg(options: { quality: number }): { toFile(path: string): Promise<unknown> };
+  png(): { toFile(path: string): Promise<unknown> };
+};
+
 async function buildSourceAssets(
   sourceDir: string,
   largeCount: number,
 ): Promise<void> {
-  const sharp = (await import('sharp')).default as (input: unknown) => unknown;
+  const sharp = (await import('sharp')).default as unknown as BenchmarkSharp;
   mkdirSync(sourceDir, { recursive: true });
   const width = 2400;
   const height = 1800;
@@ -35,13 +40,13 @@ async function buildSourceAssets(
         buffer[offset + 2] = ((x * 11 + y * 5 + seed) % 256) & 0xff;
       }
     }
-    await (sharp as any)(buffer, {
+    await sharp(buffer, {
       raw: { width, height, channels: 3 },
     }).jpeg({ quality: 90 }).toFile(jpegPath);
   }
   for (let index = 0; index < Math.max(4, largeCount / 10); index += 1) {
     const pngPath = path.join(sourceDir, `alpha-${index}a.png`);
-    await (sharp as any)({
+    await sharp({
       create: {
         width: 1600,
         height: 1200,
@@ -101,7 +106,6 @@ describe.skipIf(process.env.SERPENT_THUMB_BENCH !== '1')('thumbnail generation b
     const processed = await service.processThumbnailQueue(created.libraryId, { maxJobs: assetCount });
     const processMs = Date.now() - t1;
 
-    // eslint-disable-next-line no-console
     console.log(
       `[bench] assets=${assetCount} importMs=${importMs} processMs=${processMs} ` +
       `perAssetMs=${(processMs / Math.max(1, processed)).toFixed(1)} processed=${processed}`,

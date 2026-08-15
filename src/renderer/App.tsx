@@ -199,6 +199,7 @@ import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
+import { readPublishedCanvasAssetLayout } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -1647,6 +1648,64 @@ function AppInner() {
     trashedAssets,
     trashedFolders,
   ]);
+
+  // Serpent-visible-window: after scrolling settles, report the viewport
+  // assets (plus one viewport of surrounding runway) to the Worker, which
+  // queue-jumps their thumbnail jobs above every other tier and header-probes
+  // their dimensions so masonry placeholders stop reflowing. The published
+  // full layout gives ids for mounted AND unmounted cards, so scrolling to a
+  // fresh region still prioritizes exactly what is about to be visible.
+  useEffect(() => {
+    if (!api || !library) return;
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    let timer: number | undefined;
+    let lastKey = "";
+    const report = () => {
+      timer = undefined;
+      const canvasRect = canvas.getBoundingClientRect();
+      const scrollTop = canvas.scrollTop;
+      const runway = canvas.clientHeight;
+      const grids = canvas.querySelectorAll<HTMLElement>(
+        ".masonry-columns, .justified-rows",
+      );
+      const ids: string[] = [];
+      for (const grid of grids) {
+        const layout = readPublishedCanvasAssetLayout(grid);
+        if (!layout || layout.length === 0) continue;
+        const gridRect = grid.getBoundingClientRect();
+        const gridContentTop = gridRect.top - canvasRect.top + scrollTop;
+        const viewTop = scrollTop - gridContentTop - runway;
+        const viewBottom = scrollTop + canvas.clientHeight - gridContentTop + runway;
+        for (const item of layout) {
+          if (
+            item.y + item.height >= viewTop &&
+            item.y <= viewBottom
+          ) {
+            ids.push(item.id);
+          }
+        }
+      }
+      if (ids.length === 0) return;
+      const key = ids.join(",");
+      if (key === lastKey) return;
+      lastKey = key;
+      void api.reportVisibleWindow({
+        libraryId: library.libraryId,
+        assetIds: ids.slice(0, 300),
+      });
+    };
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(report, 400);
+    };
+    canvas.addEventListener("scroll", schedule, { passive: true });
+    schedule();
+    return () => {
+      canvas.removeEventListener("scroll", schedule);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [api, library, assetViewMode, assets, trashedAssets]);
 
   const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
     () => buildPluginBrowseScope({

@@ -2607,6 +2607,12 @@ async function commandFor(
         libraryId: request.libraryId,
         assetId: request.assetId,
       };
+    case "asset.thumbnail.visible-window.request":
+      return {
+        type: "asset.thumbnail.visible-window",
+        libraryId: request.libraryId,
+        assetIds: request.assetIds,
+      };
     case "model.resolve-companions.request":
       // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker
       // command already exists (slice A); this is the renderer request bridge.

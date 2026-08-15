@@ -16920,6 +16920,55 @@ export class LibraryService {
     return out;
   }
 
+  /**
+   * Serpent-visible-window: header-probe dimensions for the assets the user
+   * is currently looking at, so masonry placeholders get correct sizes before
+   * their thumbnails finish (no layout reflow glitch), and returns them for
+   * asset.dimensions.ready events.
+   */
+  persistVisibleWindowImageDimensions(
+    libraryId: string,
+    assetIds: string[],
+  ): Array<{ assetId: string; width: number; height: number }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (assetIds.length === 0) return [];
+    const capped = assetIds.slice(0, 64);
+    const placeholders = capped.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, location_kind, linked_folder_id, current_revision_id
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+               WHERE ra.revision_id = assets.current_revision_id
+                 AND ra.kind = 'extracted_metadata'
+                 AND ra.invalidated_at IS NULL
+                 AND ra.width IS NOT NULL
+            )`,
+      )
+      .all(...capped) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        current_revision_id: string | null;
+      }>;
+    const out: Array<{ assetId: string; width: number; height: number }> = [];
+    for (const row of rows) {
+      if (!row.current_revision_id) continue;
+      const size = this.persistSourceImageDimensions(
+        openLibrary,
+        row.current_revision_id,
+        row,
+      );
+      if (size) {
+        out.push({ assetId: row.asset_id, width: size.width, height: size.height });
+      }
+    }
+    return out;
+  }
+
   private persistSourceImageDimensionsForAssets(
     openLibrary: OpenLibrary,
     assetIds: string[],
