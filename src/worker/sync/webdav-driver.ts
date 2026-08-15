@@ -409,9 +409,10 @@ export class WebDAVDriver implements RemoteStorageDriver {
       }
     }
 
-    // 3) ETag / If-Match 条件写：写临时探测文件。
+    // 3) ETag / If-Match 条件写：写临时探测文件（先建父目录）。
     const probeFile = '.serpent-sync/.probe';
     try {
+      await this.request('MKCOL', '.serpent-sync/');
       const written = await this.request('PUT', probeFile, {
         body: Buffer.from(`serpent-probe-${Date.now()}`),
         headers: { 'Content-Type': 'application/octet-stream' },
