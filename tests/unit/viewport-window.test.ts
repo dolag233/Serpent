@@ -61,16 +61,16 @@ describe("quantizeCanvasViewportOffsetPx (Serpent-oq86)", () => {
 });
 
 describe("viewportOverscanPx (Serpent-1s3d)", () => {
-  it("keeps at least three viewports of runway so a fast flick cannot outrun the window", () => {
-    expect(viewportOverscanPx(900)).toBeGreaterThanOrEqual(2700);
-    expect(viewportOverscanPx(1200)).toBeGreaterThanOrEqual(3600);
+  it("keeps at least five viewports of runway so a fast flick cannot outrun the window", () => {
+    expect(viewportOverscanPx(900)).toBeGreaterThanOrEqual(4500);
+    expect(viewportOverscanPx(1200)).toBeGreaterThanOrEqual(6000);
   });
 
   it("grows with large card size because each card consumes more of the overscan budget", () => {
     const compact = viewportOverscanPx(800, 96);
     const fourthStop = viewportOverscanPx(800, 280);
     expect(fourthStop).toBeGreaterThanOrEqual(compact);
-    expect(fourthStop).toBeGreaterThanOrEqual(280 * 8);
+    expect(fourthStop).toBeGreaterThanOrEqual(280 * 12);
   });
 });
 
@@ -123,7 +123,7 @@ describe("windowed viewport coverage (Serpent-1s3d)", () => {
     ).toBeGreaterThan(80);
   });
 
-  it("covers the new viewport when overscan is at least three screens", () => {
+  it("covers the new viewport when overscan is at least five screens", () => {
     const heights = Array.from({ length: 80 }, () => 230);
     const previousScroll = 2000;
     const viewportHeight = 900;

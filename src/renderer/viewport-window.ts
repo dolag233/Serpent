@@ -8,10 +8,11 @@ import {
 export const VIEWPORT_OVERSCAN_PX = 1200;
 
 /**
- * Runway for windowed browse columns. A fast trackpad flick plus one React
- * commit of lag can move several screens; large cards consume that runway
- * faster, which is why the truncated white band is worst around the 4th
- * thumbnail stop (Serpent-1s3d).
+ * Runway for windowed browse columns. A fast trackpad flick can move several
+ * screens before the compositor's scroll event reaches React. Keep five
+ * viewport heights (and twelve card heights for large stops) mounted so the
+ * previous slice still covers the new viewport during that hand-off
+ * (Serpent-1s3d).
  */
 export function viewportOverscanPx(
   viewportHeightPx: number,
@@ -25,8 +26,8 @@ export function viewportOverscanPx(
     Number.isFinite(cardSizePx) && cardSizePx > 0 ? cardSizePx : 0;
   return Math.max(
     VIEWPORT_OVERSCAN_PX,
-    Math.round(view * 3),
-    Math.round(card * 8),
+    Math.round(view * 5),
+    Math.round(card * 12),
   );
 }
 
@@ -42,18 +43,19 @@ export function useCanvasLocalViewport(
     const canvas = element.closest<HTMLElement>(".workspace-canvas");
     if (!canvas) return;
 
-    let raf = 0;
     const update = () => {
-      if (raf !== 0) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        const next = readCanvasLocalViewport(element, canvas, undefined, cardSizePx);
-        setViewport((previous) =>
-          previous.start === next.start && previous.end === next.end
-            ? previous
-            : next,
-        );
-      });
+      // Scroll events can arrive after the compositor has moved the canvas but
+      // before the next paint. Deferring this read to requestAnimationFrame
+      // leaves the previous slice mounted for one more frame; when the user
+      // reverses direction that slice can start below the new viewport and
+      // expose a white band (CANVAS-037). Read and publish in the scroll
+      // handler so React can commit the matching slice before that paint.
+      const next = readCanvasLocalViewport(element, canvas, undefined, cardSizePx);
+      setViewport((previous) =>
+        previous.start === next.start && previous.end === next.end
+          ? previous
+          : next,
+      );
     };
 
     update();
@@ -64,7 +66,6 @@ export function useCanvasLocalViewport(
     return () => {
       canvas.removeEventListener("scroll", update);
       observer.disconnect();
-      if (raf !== 0) cancelAnimationFrame(raf);
     };
   }, [containerRef, cardSizePx]);
 
