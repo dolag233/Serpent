@@ -28,6 +28,7 @@ import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import {
   LibraryService,
   LibraryServiceError,
+  THUMBNAIL_VISIBLE_PAGE_SIZE,
   type ModelThumbnailRenderOutcome,
 } from './library-service';
 import { publicErrorForWorkerFailure } from './public-error';
@@ -562,7 +563,13 @@ function scheduleThumbnailScene(
     // a freshly imported library otherwise waits behind hundreds of priority-300
     // mutation jobs. visible is the highest tier so the user always sees the
     // assets in front of them appear first; the import wave fills in behind.
-    visible: { limit: 100, priority: 350, maxIds: 100 },
+    // Serpent-x9xu: the visible wave covers the WHOLE current browse/search
+    // page (BROWSE_PAGE_SIZE = 300, Serpent-ws4k), not just the first 100
+    // results — otherwise assets 101-300 of the page the user is on wait
+    // behind the path-order backfill. Unbrowsed assets are never included
+    // (callers pass only the returned page ids), so visible slots stay
+    // reserved for what the user is actually looking at.
+    visible: { limit: THUMBNAIL_VISIBLE_PAGE_SIZE, priority: 350, maxIds: THUMBNAIL_VISIBLE_PAGE_SIZE },
     linked: { limit: 50, priority: 250, maxIds: 50 },
     restore: { priority: 250, maxIds: 500 },
     mutation: { priority: 300, maxIds: 500 },

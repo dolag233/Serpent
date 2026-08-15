@@ -13,6 +13,7 @@ vi.mock('../../src/worker/author-from-exif', () => ({
 import {
   LibraryService,
   LibraryServiceError,
+  THUMBNAIL_VISIBLE_PAGE_SIZE,
 } from '../../src/worker/library-service';
 import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
@@ -1580,6 +1581,89 @@ describe('cover-wave priority (Serpent-d0nv)', () => {
     ).get(asset.assetId, 'generate_thumbnail', 'queued') as { priority: number } | undefined;
     db.close();
     expect(after?.priority).toBe(400);
+    service.closeAll();
+  });
+});
+
+describe('visible page window covers the whole browse page (Serpent-x9xu)', () => {
+  it('boosts the entire returned page (300) above the mutation wave and leaves unbrowsed assets at 300', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'VisiblePage', selectedParentPath: root });
+
+    // More assets than the page size so a tail of the library is never part
+    // of the current page. Each file gets distinct trailing bytes so content
+    // dedup does not collapse the batch into copies.
+    const totalCount = THUMBNAIL_VISIBLE_PAGE_SIZE + 20;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    for (let index = 0; index < totalCount; index += 1) {
+      const name = `img-${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + (index % 26))}.png`;
+      const uniqueTrailer = Buffer.from([
+        (index >> 24) & 0xff, (index >> 16) & 0xff, (index >> 8) & 0xff, index & 0xff,
+      ]);
+      writeFileSync(path.join(sourceDir, name), Buffer.concat([VALID_1X1_PNG, uniqueTrailer]));
+    }
+    const prepared = service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'folder',
+      sourcePaths: [sourceDir],
+    });
+    if ('importId' in prepared) {
+      service.resolveImport({
+        importId: prepared.importId,
+        suspectedDuplicate: 'create-copy',
+        nameConflict: 'keep-both',
+      });
+    }
+    const assetIds = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .map((asset) => asset.assetId);
+    expect(assetIds).toHaveLength(totalCount);
+
+    // The import flood has already queued every asset at the mutation tier (300).
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds,
+      priority: 300,
+      limit: totalCount,
+    })).toBe(totalCount);
+
+    // scheduleThumbnailScene('visible', pageAssetIds) semantics: the current
+    // browse page (THUMBNAIL_VISIBLE_PAGE_SIZE assets) is scheduled at 350.
+    const pageAssetIds = assetIds.slice(0, THUMBNAIL_VISIBLE_PAGE_SIZE);
+    const offPageAssetIds = assetIds.slice(THUMBNAIL_VISIBLE_PAGE_SIZE);
+    service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: pageAssetIds,
+      limit: THUMBNAIL_VISIBLE_PAGE_SIZE,
+      priority: 350,
+      repairFailed: true,
+      retryFailed: true,
+    });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const jobs = db.prepare(
+      "SELECT asset_id, priority FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued' ORDER BY priority DESC, created_at",
+    ).all() as Array<{ asset_id: string; priority: number }>;
+    db.close();
+    expect(jobs).toHaveLength(totalCount);
+
+    // The whole page sits in the 350 tier — the old cap of 100 would have
+    // left 200 page assets behind — and it strictly precedes the 300 tier.
+    expect(jobs.map((job) => job.priority)).toEqual([
+      ...Array.from({ length: THUMBNAIL_VISIBLE_PAGE_SIZE }, () => 350),
+      ...Array.from({ length: offPageAssetIds.length }, () => 300),
+    ]);
+    const boostedIds = new Set(
+      jobs.slice(0, THUMBNAIL_VISIBLE_PAGE_SIZE).map((job) => job.asset_id),
+    );
+    for (const assetId of pageAssetIds) {
+      expect(boostedIds.has(assetId)).toBe(true);
+    }
+    // Unbrowsed assets never take a visible slot: they stay at the mutation
+    // tier and none of them appears in the 350 group.
+    const remainingIds = new Set(jobs.slice(THUMBNAIL_VISIBLE_PAGE_SIZE).map((job) => job.asset_id));
+    for (const assetId of offPageAssetIds) {
+      expect(remainingIds.has(assetId)).toBe(true);
+    }
     service.closeAll();
   });
 });

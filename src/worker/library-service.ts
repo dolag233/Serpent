@@ -239,6 +239,15 @@ function requireSharp(): SharpModule {
 const SHARP_VERSION = '0.35.3';
 /** Bumped when GIF still-page selection changes so stale black page-0 thumbs requeue. */
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
+/**
+ * Serpent-x9xu: the current browse/search page size (Serpent-ws4k
+ * BROWSE_PAGE_SIZE = 300). The `visible` thumbnail wave must cover the whole
+ * page the user is looking at — not just the first 100 results — so a freshly
+ * imported library shows the current page first while the import flood
+ * (mutation 300) fills in behind. Bounded: a page is never more than this
+ * many assets, so the visible wave cannot starve the rest of the catalogue.
+ */
+export const THUMBNAIL_VISIBLE_PAGE_SIZE = 300;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
