@@ -16507,8 +16507,10 @@ export class LibraryService {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
-    const artifactRelPath = `${artifactId}.webp`;
-    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    // Serpent-thumb-perf: extension is decided after metadata (jpeg for
+    // opaque images, webp only when alpha must be preserved).
+    let artifactRelPath = `${artifactId}.webp`;
+    let artifactAbsPath = path.join(artifactsDir, artifactRelPath);
     let imageProcessed = false;
 
     try {
@@ -16520,7 +16522,12 @@ export class LibraryService {
         execution.signal,
         async () => {
           const s = this.options.sharpFn ?? requireSharp();
-          const probe = s(assetPath, { failOn: 'none', sequentialRead: true });
+          // Serpent-thumb-perf: random access enables libvips shrink-on-load
+          // for JPEG (a 2400px photo decodes at half/quarter scale before the
+          // 512px resize instead of full resolution). GIF keeps sequential
+          // reads for animation safety; failOn stays 'none' for truncation
+          // tolerance.
+          const probe = s(assetPath, { failOn: 'none', sequentialRead: false });
           const metadata = await probe.metadata();
           const pages = metadata.pages ?? 1;
           const isGif =
@@ -16576,7 +16583,7 @@ export class LibraryService {
 
           const pipeline = isAnimatedGif
             ? s(assetPath, { page, failOn: 'none', sequentialRead: true })
-            : s(assetPath, { failOn: 'none', sequentialRead: true });
+            : s(assetPath, { failOn: 'none', sequentialRead: false });
           const finalMeta = isAnimatedGif ? await pipeline.metadata() : metadata;
           const swapsDimensions = finalMeta.orientation !== undefined
             && finalMeta.orientation >= 5
@@ -16584,7 +16591,15 @@ export class LibraryService {
           const inputWidth = swapsDimensions ? (finalMeta.height ?? 0) : (finalMeta.width ?? 0);
           const inputHeight = swapsDimensions ? (finalMeta.width ?? 0) : (finalMeta.height ?? 0);
 
-          await pipeline
+          const hasAlpha =
+            (finalMeta as { hasAlpha?: boolean }).hasAlpha === true ||
+            (finalMeta as { channels?: number }).channels === 4;
+          // Serpent-thumb-perf: opaque images encode as JPEG (libjpeg-turbo is
+          // several times faster than WebP and the card is a 512px preview);
+          // alpha-bearing images keep WebP so transparency survives.
+          artifactRelPath = hasAlpha ? `${artifactId}.webp` : `${artifactId}.jpg`;
+          artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+          const sized = pipeline
             .rotate()
             .toColourspace('srgb')
             .resize({
@@ -16592,9 +16607,12 @@ export class LibraryService {
               height: 512,
               fit: 'inside',
               withoutEnlargement: true,
-            })
-            .webp({ quality: 80 })
-            .toFile(artifactAbsPath);
+            });
+          if (hasAlpha) {
+            await sized.webp({ quality: 80 }).toFile(artifactAbsPath);
+          } else {
+            await sized.jpeg({ quality: 72 }).toFile(artifactAbsPath);
+          }
           if (execution.signal?.aborted) {
             throw new DOMException('Media job cancelled after image decoding.', 'AbortError');
           }
@@ -16624,11 +16642,13 @@ export class LibraryService {
           `INSERT INTO revision_artifacts
              (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
               width, height, generator_version, status, generated_at)
-           VALUES (?, ?, 'thumbnail', 'image/webp', ?, ?, ?, ?, ?, 'ready', ?)`,
+           VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
         )
         .run(
           artifactId,
           revisionId,
+          // Serpent-thumb-perf: jpeg for opaque sources, webp for alpha.
+          artifactRelPath.endsWith('.jpg') ? 'image/jpeg' : 'image/webp',
           outputStat.size,
           artifactRelPath,
           inputWidth || null,

@@ -251,7 +251,7 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
-  it('generates a WebP thumbnail for a PNG asset', async () => {
+  it('generates a JPEG thumbnail for an opaque PNG asset (Serpent-thumb-perf)', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'PNG', selectedParentPath: root });
@@ -266,8 +266,8 @@ describe('generateThumbnail (sharp)', () => {
     const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
     expect(result.artifactId).toBeTruthy();
 
-    // Verify artifact file exists
-    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.webp`);
+    // Opaque sources encode as JPEG now — several times faster than WebP.
+    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`);
     expect(existsSync(artifactPath)).toBe(true);
 
     // Verify revision_artifacts row
@@ -275,13 +275,39 @@ describe('generateThumbnail (sharp)', () => {
     const row = db.prepare('SELECT kind, status, mime_type, generator_version FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { kind: string; status: string; mime_type: string; generator_version: string };
     expect(row.kind).toBe('thumbnail');
     expect(row.status).toBe('ready');
-    expect(row.mime_type).toBe('image/webp');
+    expect(row.mime_type).toBe('image/jpeg');
     expect(row.generator_version).toContain('sharp@');
     db.close();
 
     const refreshed = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
     expect(refreshed).toMatchObject({ width: 2048, height: 1024 });
 
+    service.closeAll();
+  });
+
+  it('keeps WebP for an alpha PNG so transparency survives (Serpent-thumb-perf)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AlphaPNG', selectedParentPath: root });
+    const sharp = require('sharp') as (input: unknown) => unknown;
+    const sourcePath = path.join(root, 'alpha.png');
+    await (sharp as any)({
+      create: {
+        width: 64,
+        height: 48,
+        channels: 4,
+        background: { r: 10, g: 20, b: 30, alpha: 0.4 },
+      },
+    }).png().toFile(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    const webpPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.webp`);
+    expect(existsSync(webpPath)).toBe(true);
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare('SELECT mime_type FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { mime_type: string };
+    db.close();
+    expect(row.mime_type).toBe('image/webp');
     service.closeAll();
   });
 
@@ -346,7 +372,7 @@ describe('generateThumbnail (sharp)', () => {
       created.libraryPath,
       '.serpent',
       'artifacts',
-      `${result.artifactId}.webp`,
+      `${result.artifactId}.jpg`,
     );
     const metadata = await (require('sharp') as (input: string) => {
       metadata(): Promise<{ width?: number; height?: number; orientation?: number; space?: string }>;
@@ -359,19 +385,29 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
-  it('generates a WebP thumbnail for a JPEG asset', async () => {
+  it('generates a JPEG thumbnail for a JPEG asset (Serpent-thumb-perf)', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'JPEG', selectedParentPath: root });
 
+    // A real opaque JPEG (the old fixture wrote RGBA PNG bytes with a .jpg
+    // name, which reads as an alpha image and would take the webp path).
+    const sharp = require('sharp') as (input: unknown) => unknown;
     const sourcePath = path.join(root, 'test.jpg');
-    createTestImage(sourcePath);
+    await (sharp as any)({
+      create: {
+        width: 32,
+        height: 24,
+        channels: 3,
+        background: { r: 120, g: 80, b: 40 },
+      },
+    }).jpeg().toFile(sourcePath);
     importNoConflict(service, created.libraryId, sourcePath);
 
     const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
     const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: assets[0]!.assetId }))!;
     expect(result.artifactId).toBeTruthy();
-    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.webp`))).toBe(true);
+    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`))).toBe(true);
 
     service.closeAll();
   });
@@ -1374,11 +1410,19 @@ describe('generateThumbnail (animated GIF still page)', () => {
       libraryId: created.libraryId,
       assetId: asset.assetId,
     }))!;
+    // Serpent-thumb-perf: GIF stills encode as webp when the palette reports
+    // alpha, jpeg otherwise — assert through the stored file path instead of
+    // hardcoding an extension.
+    const dbPathForCheck = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const storedPath = (dbPathForCheck.prepare(
+      'SELECT file_path FROM revision_artifacts WHERE artifact_id = ?',
+    ).get(result.artifactId) as { file_path: string }).file_path;
+    dbPathForCheck.close();
     const artifactPath = path.join(
       created.libraryPath,
       '.serpent',
       'artifacts',
-      `${result.artifactId}.webp`,
+      ...storedPath.split('/'),
     );
     expect(existsSync(artifactPath)).toBe(true);
 
