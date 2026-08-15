@@ -10126,6 +10126,26 @@ function AppInner() {
           setNotice(t("toast.librarySettingsSaved"));
           await reloadCurrentContent();
         }}
+        syncCallbacks={{
+          async syncProbe(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncProbe(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+          async syncPreview(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncPreview(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+          async syncRun(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncRun(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+        }}
       />
       <AppLogDialog
         automationCorrelationId={appLogAutomationCorrelationId}

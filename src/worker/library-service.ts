@@ -17262,9 +17262,16 @@ export class LibraryService {
     };
   }
 
-  /** 读取本地 manifest 缓存。 */
-  readSyncManifestCache(libraryId: string): string | null {
+  /** 按 syncId 读取本地资产内容（同步上传用）。 */
+  readSyncAssetContent(libraryId: string, syncId: string): Buffer | null {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = this.assetRowBySyncId(openLibrary, syncId);
+    if (!row) return null;
+    return readFileSync(this.resolveAssetPath(libraryId, row.asset_id));
+  }
+
+  /** 读取本地 manifest 缓存。 */
+  readSyncManifestCache(libraryId: string): string | null {    const openLibrary = this.requireOpenLibrary(libraryId);
     const row = openLibrary.connection
       .prepare('SELECT manifest_json FROM sync_manifest_cache WHERE library_id = ?')
       .get(libraryId) as { manifest_json: string } | undefined;

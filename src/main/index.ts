@@ -1660,6 +1660,31 @@ async function selectPluginPackage(): Promise<string | undefined> {
   return result.canceled || result.filePaths.length === 0 ? undefined : result.filePaths[0];
 }
 
+let cachedSyncDeviceId: string | undefined;
+
+/** Serpent-xffq：每台设备的稳定同步身份（userData 持久化，非敏感）。 */
+function syncDeviceId(): string {
+  if (cachedSyncDeviceId) return cachedSyncDeviceId;
+  const file = path.join(app.getPath('userData'), 'sync-device.json');
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { deviceId?: string };
+    if (typeof parsed.deviceId === 'string' && parsed.deviceId.length > 0) {
+      cachedSyncDeviceId = parsed.deviceId;
+      return parsed.deviceId;
+    }
+  } catch {
+    // 首次运行。
+  }
+  const deviceId = randomUUID();
+  try {
+    writeFileSync(file, JSON.stringify({ deviceId }), 'utf-8');
+  } catch {
+    // 写入失败仍返回本次进程内稳定 ID。
+  }
+  cachedSyncDeviceId = deviceId;
+  return deviceId;
+}
+
 async function commandFor(
   request: RendererRequest,
 ): Promise<WorkerCommand | undefined> {
@@ -2612,6 +2637,34 @@ async function commandFor(
         type: "asset.thumbnail.visible-window",
         libraryId: request.libraryId,
         assetIds: request.assetIds,
+      };
+    case "sync.probe.request":
+      return {
+        type: "sync.probe",
+        baseUrl: request.baseUrl,
+        username: request.username,
+        password: request.password,
+        allowInsecureTls: request.allowInsecureTls,
+      };
+    case "sync.preview.request":
+      return {
+        type: "sync.preview",
+        libraryId: request.libraryId,
+        deviceId: syncDeviceId(),
+        baseUrl: request.baseUrl,
+        username: request.username,
+        password: request.password,
+        allowInsecureTls: request.allowInsecureTls,
+      };
+    case "sync.run.request":
+      return {
+        type: "sync.run",
+        libraryId: request.libraryId,
+        deviceId: syncDeviceId(),
+        baseUrl: request.baseUrl,
+        username: request.username,
+        password: request.password,
+        allowInsecureTls: request.allowInsecureTls,
       };
     case "model.resolve-companions.request":
       // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker

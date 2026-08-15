@@ -8,7 +8,6 @@
  */
 
 import {
-  SYNC_FORMAT_VERSION_FILE,
   SYNC_MANIFEST_FILE,
   SYNC_TRASH_DIR,
   sanitizeSyncDirectoryName,
@@ -187,7 +186,9 @@ export class SyncEngine {
     await driver.mkdir(directoryName === '' ? '.' : directoryName);
     const manifestPath = `${directoryName === '' ? '' : `${directoryName}/`}${SYNC_MANIFEST_FILE}`;
     await driver.write(manifestPath, Buffer.from(serializeManifest(result.manifest), 'utf-8'));
-    await driver.write(`${directoryName === '' ? '' : `${directoryName}/`}${SYNC_FORMAT_VERSION_FILE}`, Buffer.from(String(SYNC_FORMAT_VERSION)));
+    const metaDir = `${directoryName === '' ? '' : `${directoryName}/`}.serpent-sync`;
+    await driver.mkdir(metaDir);
+    await driver.write(`${metaDir}/format-version`, Buffer.from(String(SYNC_FORMAT_VERSION)));
     await this.library.writeSyncManifestCache(libraryId, serializeManifest(result.manifest));
 
     return {

@@ -25,6 +25,9 @@ import {
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
+import { SyncEngine } from './sync/sync-engine';
+import { createLibrarySyncPort } from './sync/library-port';
+import { WebDAVDriver } from './sync/webdav-driver';
 import {
   LibraryService,
   LibraryServiceError,
@@ -128,6 +131,11 @@ const libraryService = new LibraryService({
 // event-loop ref. Development builds happen to have other active handles; a
 // packaged utility process can otherwise exit cleanly immediately after ready.
 const processLifetime = setInterval(() => {}, 60 * 60_000);
+
+/** Serpent-xffq：按设备身份构建同步引擎（deviceId 由 Main 持久化生成）。 */
+function buildSyncEngine(deviceId: string): SyncEngine {
+  return new SyncEngine(createLibrarySyncPort(libraryService), { deviceId });
+}
 
 function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'type' | 'requestId'>): Promise<PluginMediaProviderResult> {
   const requestId = randomUUID();
@@ -892,6 +900,39 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
+    case 'sync.probe': {
+      // Serpent-xffq：连接级能力探测（不触碰库）。
+      const driver = new WebDAVDriver({
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+      });
+      const capabilities = await driver.probe();
+      return { ok: true, type: 'sync.probed', capabilities };
+    }
+    case 'sync.preview': {
+      const engine = buildSyncEngine(request.command.deviceId);
+      const report = await engine.previewSync(request.command.libraryId, {
+        id: 'request',
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+      });
+      return { ok: true, type: 'sync.previewed', report };
+    }
+    case 'sync.run': {
+      const engine = buildSyncEngine(request.command.deviceId);
+      const outcome = await engine.syncOnce(request.command.libraryId, {
+        id: 'request',
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+      });
+      return { ok: true, type: 'sync.completed', report: outcome.report, conflicts: outcome.conflicts };
+    }
     case 'library.change-sequence':
       return {
         ok: true,

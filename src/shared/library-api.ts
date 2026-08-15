@@ -1,4 +1,30 @@
 import type { PublicError, PublicErrorReason } from './protocol/errors';
+
+/** Serpent-xffq：WebDAV 服务端能力探测结果。 */
+export interface SyncCapabilities {
+  auth: 'none' | 'basic' | 'digest';
+  supportsContentTransfer: boolean;
+  supportsDepthInfinity: boolean;
+  supportsEtagIfMatch: boolean;
+  supportsMove: boolean;
+  supportsLock: boolean;
+  quotaBytes?: number;
+  usedBytes?: number;
+  maxUploadBytes?: number;
+}
+
+/** Serpent-xffq：同步差异/结果汇总。 */
+export interface SyncReport {
+  libraryDirectory: string;
+  newLocal: number;
+  newRemote: number;
+  uploads: number;
+  downloads: number;
+  conflicts: number;
+  remoteDeletes: number;
+  localRecycles: number;
+}
+
 import type {
   AssetSummary,
   AiSearchPlan,
@@ -559,6 +585,12 @@ export interface SerpentLibraryApi {
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
   /** Serpent-visible-window: queue-jump + header-probe the viewport assets. */
   reportVisibleWindow(input: { libraryId: string; assetIds: string[] }): Promise<void>;
+  /** Serpent-xffq: WebDAV 连接能力探测（不触碰库）。 */
+  syncProbe(input: { baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncCapabilities>>;
+  /** Serpent-xffq: 首次同步差异预览（不写任何内容）。 */
+  syncPreview(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncReport>>;
+  /** Serpent-xffq: 执行完整双向同步。 */
+  syncRun(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
   requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model

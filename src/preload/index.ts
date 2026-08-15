@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi } from '../shared/library-api';
+import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi, SyncCapabilities, SyncReport } from '../shared/library-api';
 import { summarizePluginJobs } from '../shared/plugin-job-status';
 import type { RecentLibraryEntry } from '../shared/recent-libraries';
 import type { AiApiFormat } from '../shared/ai-endpoints';
@@ -1651,6 +1651,26 @@ const library: SerpentLibraryApi = Object.freeze({
   async reportVisibleWindow({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<void> {
     if (assetIds.length === 0) return;
     await request({ type: 'asset.thumbnail.visible-window.request', libraryId, assetIds });
+  },
+
+  // Serpent-xffq: WebDAV 同步（探测/预览/执行）。结果由 Main 透传 worker 结果。
+  async syncProbe({ baseUrl, username, password, allowInsecureTls }: { baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncCapabilities>> {
+    const result = await request({ type: 'sync.probe.request', baseUrl, username, password, allowInsecureTls });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.probed') throw new Error('Unexpected sync probe response.');
+    return { ok: true, value: result.capabilities };
+  },
+  async syncPreview({ libraryId, baseUrl, username, password, allowInsecureTls }: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncReport>> {
+    const result = await request({ type: 'sync.preview.request', libraryId, baseUrl, username, password, allowInsecureTls });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.previewed') throw new Error('Unexpected sync preview response.');
+    return { ok: true, value: result.report };
+  },
+  async syncRun({ libraryId, baseUrl, username, password, allowInsecureTls }: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
+    const result = await request({ type: 'sync.run.request', libraryId, baseUrl, username, password, allowInsecureTls });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.completed') throw new Error('Unexpected sync run response.');
+    return { ok: true, value: { report: result.report, conflicts: result.conflicts } };
   },
 
   // Slice C (Serpent-qvc6): 3D viewer renderer request surface. Both requests
