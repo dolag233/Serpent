@@ -1,12 +1,34 @@
+<div align="center">
+
+**🇺🇸 English** | [🇨🇳 简体中文](README.md)
+
+</div>
+
 # Serpent
+
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Logo.png" alt="Serpent-Logo" width="30%" />
+
+</div>
 
 Open-source (MIT), cross-platform (macOS / Windows) digital asset manager for game artists, film and post-production teams, and designers.
 
 Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), and render with HDRI environment lighting and PBR. Data stays in a local library — no cloud dependency.
 
-- Chinese version: [README.md](README.md)
-- User guide: [docs/user-guide/README.en.md](docs/user-guide/README.en.md)
-- Developer docs: [docs/developer/README.en.md](docs/developer/README.en.md)
+## Features
+
++ **Massive asset support.** Most video, image, and audio formats, plus 3D models and text assets.
++ **Asset management.** Tags, ratings, descriptions, fast filtering and search, and collections.
++ **Plugin system.** Extend Serpent with plugins.
++ **Scripting & MCP.** Control Serpent with scripts, and let agents connect and automate through MCP.
++ **AI analysis.** Built-in AI module analyzes images, videos, and 3D assets.
+
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Preview.png" alt="Serpent-Preview" />
+
+</div>
 
 ## Install
 

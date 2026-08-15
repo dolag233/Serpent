@@ -1,6 +1,16 @@
+<div align="center">
+
+[🇺🇸 English](README.en.md) | **🇨🇳 简体中文**
+
+</div>
+
 # Serpent
 
-![Serpent-Logo](E:\MyRepositories\Serpent\docs\assets\ui\Serpent-Logo.png)
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Logo.png" alt="Serpent-Logo" width="30%" />
+
+</div>
 
 开源（MIT）、跨平台（macOS / Windows）的数字资产管理软件，面向游戏美术、影视后期、平面/动态图形设计师。
 
@@ -12,7 +22,11 @@
 + 支持脚本、MCP调用。支持使用脚本控制Serpent。支持Agent通过MCP连接、控制Serpent，以实现自动化管理。
 + 支持AI分析。内置AI分析模块，支持对图像、视频、3D资产进行AI分析。
 
-![Serpent-Preview](E:\MyRepositories\Serpent\docs\assets\ui\Serpent-Preview.png)
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Preview.png" alt="Serpent-Preview" />
+
+</div>
 
 ## 安装
 
