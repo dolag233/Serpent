@@ -5745,18 +5745,18 @@ function AppInner() {
       await refreshRecentLibraries(null);
       setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
     } catch (caught) {
-      // Worker closes the library before rm; clear UI even when rm fails —
-      // EXCEPT when the user cancelled the red confirmation: nothing was
-      // deleted and the current library must stay open.
-      if (!(caught instanceof LibraryOperationError
-        && (caught.code === "LIBRARY_NOT_OPEN" || caught.code === "CANCELLED"))) {
-        toreDown = true;
-        applyClosedLibraryUi();
-        await refreshRecentLibraries(null);
-      }
-      if (!(caught instanceof LibraryOperationError && caught.code === "CANCELLED")) {
+      // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
+      // The worker closes the library before rm, but deleteLibraryFromDisk
+      // reopens it on failure — so every failure keeps the current library
+      // browsable and the UI must stay open. Only the user-cancelled red
+      // confirmation (nothing deleted) and a genuinely-closed library skip
+      // the error toast; everything else surfaces a real error.
+      const cancelled =
+        caught instanceof LibraryOperationError && caught.code === "CANCELLED";
+      if (!cancelled) {
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
       }
+      void refreshRecentLibraries(library.displayPath);
     } finally {
       setUiState(toreDown ? "idle" : "ready");
     }
@@ -9397,6 +9397,8 @@ function AppInner() {
                           }
                           const cardActive =
                             activePreviewAssetId === asset.assetId;
+                          const cardThumbFailed =
+                            asset.thumbnailStatus === "failed";
                           if (isCardHoverPreviewable(asset)) {
                             if (
                               thumbCover ||
@@ -9406,6 +9408,7 @@ function AppInner() {
                                 <AssetCardMedia
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
+                                  failed={cardThumbFailed}
                                   isActive={cardActive}
                                   libraryId={library.libraryId}
                                   preview={
@@ -9415,12 +9418,17 @@ function AppInner() {
                               );
                             }
                           } else if (thumbCover) {
+                            // Serpent-2ajm: unify with AssetCardMedia so a
+                            // failed load shows the themed fallback icon
+                            // instead of the browser's broken-image glyph.
                             return (
-                              <img
+                              <AssetCardMedia
                                 alt={asset.displayName}
-                                className="asset-thumbnail"
-                                loading="lazy"
-                                src={thumbCover}
+                                coverUrl={thumbCover}
+                                failed={cardThumbFailed}
+                                isActive={false}
+                                libraryId={library.libraryId}
+                                preview={null}
                               />
                             );
                           }
@@ -9435,7 +9443,12 @@ function AppInner() {
                                   className="asset-card-media is-pending"
                                 />
                               ) : (
-                                <Icon name="file" size={28} />
+                                <Icon
+                                  name={
+                                    cardThumbFailed ? "broken-file" : "file"
+                                  }
+                                  size={28}
+                                />
                               )}
                               {!showExtension &&
                                 shouldShowExtensionBadge(asset.mediaType) && (
@@ -9660,21 +9673,15 @@ function AppInner() {
                 )}
                 {/* Serpent-ws4k: infinite-scroll sentinel — appends the next
                     page once it scrolls into view; hidden when the whole
-                    scope is loaded. */}
+                    scope is loaded. Serpent-6z5r: loading is silent — no
+                    spinner, no "loading more" copy, the sentinel stays an
+                    invisible probe so the user never perceives the load. */}
                 {browsePagination.hasMorePages && (
                   <div
                     ref={browsePagination.sentinelRef}
-                    className={`browse-load-more${browsePagination.loadingMore ? " is-loading" : ""}`}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {browsePagination.loadingMore ? (
-                      <>
-                        <span className="activity-pulse" aria-hidden />
-                        <span>{t("progress.loadingMore")}</span>
-                      </>
-                    ) : null}
-                  </div>
+                    className="browse-load-more"
+                    aria-hidden="true"
+                  />
                 )}
               </>
             ) : (
@@ -10163,6 +10170,9 @@ function AppInner() {
         onOpenRecent={(path) => {
           setDialog(null);
           void openRecentLibrary(path);
+        }}
+        onForgetRecent={(path) => {
+          void forgetRecentLibrary(path);
         }}
         recentLibraries={recentLibraries}
       />

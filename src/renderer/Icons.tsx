@@ -22,6 +22,7 @@ export type IconName =
   | "eye"
   | "eye-off"
   | "file"
+  | "broken-file"
   | "fit-window"
   | "folder"
   | "folder-tree"
@@ -196,6 +197,15 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M6 3h8l4 4v14H6z" />
       <path d="M14 3v5h5" />
+    </>
+  ),
+  // Serpent-2ajm: corrupt/unreadable asset — a file with a crack through it,
+  // visually distinct from the plain default file icon (pending/no thumbnail).
+  "broken-file": (
+    <>
+      <path d="M6 3h8l4 4v14H6z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 9l6 6M15 9l-6 6" />
     </>
   ),
   // Distinct from fullscreen-exit (inward corner brackets): framed box +

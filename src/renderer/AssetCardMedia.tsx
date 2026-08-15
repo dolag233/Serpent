@@ -4,6 +4,7 @@ import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { PreviewResolution } from "../shared/library-api";
 import { coverSrc } from "./asset-card-hover-preview";
 import { resolveLivePreviewMedia } from "./asset-card-hover-preview";
+import { Icon } from "./Icons";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 
 interface AssetCardMediaProps {
@@ -14,6 +15,8 @@ interface AssetCardMediaProps {
   preview: PreviewResolution | null;
   libraryId?: string;
   sequence?: ImageSequenceSummary | null;
+  /** Serpent-2ajm: generation failed — show the cracked-file icon fallback. */
+  failed?: boolean;
 }
 
 /**
@@ -28,11 +31,18 @@ export function AssetCardMedia({
   libraryId,
   preview,
   sequence,
+  failed = false,
 }: AssetCardMediaProps) {
   const isSequence =
     Boolean(sequence) && (sequence?.frameCount ?? 0) >= 3 && Boolean(libraryId);
   const live = resolveLivePreviewMedia(isActive && !isSequence, preview);
   const [sequenceFrame, setSequenceFrame] = useState(0);
+  // Serpent-2ajm: a failed image load must never paint the browser's broken
+  // image glyph — fall back to the themed file/cracked icon instead.
+  const [errored, setErrored] = useState(false);
+  const fallbackIcon = (
+    <Icon name={failed ? "broken-file" : "file"} size={28} />
+  );
 
   useEffect(() => {
     if (!isActive || !isSequence || !sequence) return;
@@ -51,26 +61,32 @@ export function AssetCardMedia({
     if (!isActive) {
       return (
         <div className="asset-card-media">
-          {sequenceUrl ? (
+          {sequenceUrl && !errored ? (
             <img
               alt={alt}
               className="asset-thumbnail"
               loading="lazy"
+              onError={() => setErrored(true)}
               src={sequenceUrl}
             />
-          ) : null}
+          ) : (
+            fallbackIcon
+          )}
         </div>
       );
     }
     return (
       <div className="asset-card-media">
-        {sequenceUrl ? (
+        {sequenceUrl && !errored ? (
           <img
             alt={alt}
             className="asset-thumbnail sequence-card-cover-hidden"
+            onError={() => setErrored(true)}
             src={sequenceUrl}
           />
-        ) : null}
+        ) : (
+          fallbackIcon
+        )}
         <SequenceFrameCanvas
           alt={alt}
           fallbackUrl={sequenceUrl}
@@ -84,14 +100,17 @@ export function AssetCardMedia({
 
   return (
     <div className="asset-card-media">
-      {coverUrl ? (
+      {coverUrl && !errored ? (
         <img
           alt={alt}
           className="asset-thumbnail"
           loading="lazy"
+          onError={() => setErrored(true)}
           src={coverUrl}
         />
-      ) : null}
+      ) : (
+        fallbackIcon
+      )}
       {live.kind === "gif" && live.url ? (
         <img
           alt=""

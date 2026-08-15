@@ -28,6 +28,8 @@ export interface CreateDialogProps {
   onImportLibrary: () => void;
   /** One-click open from the recent list. */
   onOpenRecent: (path: string) => void;
+  /** Serpent-kqgy: remove a library from the recent list (not from disk). */
+  onForgetRecent?: (path: string) => void;
   recentLibraries?: RecentLibraryMenuEntry[];
   busy?: boolean;
   /**
@@ -56,6 +58,7 @@ export function CreateDialog({
   onOpenExisting,
   onImportLibrary,
   onOpenRecent,
+  onForgetRecent,
   recentLibraries = [],
   busy = false,
   required = false,
@@ -176,7 +179,7 @@ export function CreateDialog({
             </div>
             <ul className="create-dialog-recent-list">
               {visibleRecents.map((entry) => (
-                <li key={entry.path}>
+                <li className="create-dialog-recent-row" key={entry.path}>
                   <button
                     className="create-dialog-recent-open"
                     disabled={busy}
@@ -191,6 +194,22 @@ export function CreateDialog({
                       {entry.path}
                     </span>
                   </button>
+                  {onForgetRecent != null && (
+                    <button
+                      className="empty-recent-forget"
+                      disabled={busy}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onForgetRecent(entry.path);
+                      }}
+                      tabIndex={-1}
+                      title={t("shell.forgetRecentLibrary")}
+                      type="button"
+                      {...iconActionAttrs(t("shell.forgetRecentLibrary"))}
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

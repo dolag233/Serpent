@@ -3112,7 +3112,8 @@ input[type="range"] {
   overflow-y: auto;
 }
 
-.empty-recent-row {
+.empty-recent-row,
+.create-dialog-recent-row {
   display: flex;
   align-items: stretch;
   gap: 4px;
