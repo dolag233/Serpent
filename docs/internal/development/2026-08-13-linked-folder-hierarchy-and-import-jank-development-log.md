@@ -119,3 +119,31 @@ npx vitest run tests/unit/asset-drag-preview.test.ts tests/unit/asset-drag-drop.
 3. 缺宽高占位从 `col*0.72` 改为与 `.asset-preview { aspect-ratio: 1.3 }` 一致。
 
 自动化：`tests/unit/viewport-window.test.ts`、`masonry-slot-style.test.ts`、`masonry-preview-frame.test.ts`；E2E `thumbnail-scroll-regression.test.ts` 改为在 Value:3 下断言视口内无 >80px 未覆盖带，不再要求小库挂载全部卡片。2026-08-14 用户复验：仍有类似截断白区，体感略好一点；CANVAS-037 记为人类验收不通过，`Serpent-1s3d` 保持 open。
+
+## 2026-08-15 Serpent-1s3d：修复滚动提交竞态
+
+### 根因与修复
+
+诊断 E2E 在连续跳转 `0.84 → 0.31` 时稳定捕获到：`scrollTop=1378`，但 React 仍提交上一轮
+深处窗口，最前一个槽位落在视口下方，`maxUncoveredBandPx=406`。问题不在媒体缩略图是否
+解码，而在 `useCanvasLocalViewport` 的 `scroll → requestAnimationFrame → setState` 时序：
+反向滚动时，旧窗口会在新视口已经出现后多保留一帧。此前的 `max(1200, view×3, card×8)`
+只覆盖普通跳跃，不能覆盖快速反向跳跃。
+
+本次修复：
+
+1. `src/renderer/viewport-window.ts` 在 scroll handler 内立即读取并发布窗口，去掉中间的 rAF
+   队列，减少一帧陈旧切片。
+2. 窗口跑道调整为 `max(1200, viewport×5, cardSize×12)`，使 compositor 事件到 React 提交
+   的交接期间，上一窗口仍覆盖新视口；没有禁用窗口化，也没有改成全量 eager 缩略图。
+3. `tests/e2e/thumbnail-scroll-regression.test.ts` 的真实跳转序列扩展为 12 次，包含连续下滚、
+   大幅反向跳转和再次下滚；每次在 DOM 更新前立即检查视口内未覆盖带是否 `<80px`。
+
+### 质量证据
+
+| 需求条目 | 实现位置 | 自动化测试 | Computer Use / 平台证据 |
+| --- | --- | --- | --- |
+| 快速滚动时新进入视口的列不出现整片白区 | `src/renderer/viewport-window.ts` 的同步 scroll 发布与 `viewportOverscanPx` | `npx vitest run tests/unit/viewport-window.test.ts tests/unit/masonry-slot-style.test.ts --reporter=dot`：13 passed；`node scripts/run-e2e.mjs tests/e2e/thumbnail-scroll-regression.test.ts`：2 passed | macOS 开发态真实 Electron，`场景原画参考库` 477 项、瀑布流；Value:3 采集 55 帧并执行 10 次快速滚动，Value:2/1 各采集 50 帧并执行 10 次；ScreenCaptureKit 按 100ms 间隔采样，所有帧未见截断白区 |
+
+`npm run typecheck` 和 `npm run lint` 均通过。上述 Computer Use 是 agent 的独立证据，
+不能替代用户本人确认；packaged 与 Windows 未执行，CANVAS-037 转为待人类验收。

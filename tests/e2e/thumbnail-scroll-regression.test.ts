@@ -293,7 +293,22 @@ test("keeps visible masonry cards complete during rapid scroll at the tuned thum
       undecodedImages: [],
     });
 
-    for (const fraction of [0.18, 0.43, 0.67, 0.84, 0.31, 0.76]) {
+    // Include both directions and large reversals. The white band was a
+    // transient stale-window frame, so each jump is sampled immediately.
+    for (const fraction of [
+      0.12,
+      0.28,
+      0.46,
+      0.64,
+      0.82,
+      0.94,
+      0.37,
+      0.71,
+      0.21,
+      0.88,
+      0.49,
+      0.76,
+    ]) {
       await canvas.evaluate((element, value) => {
         element.scrollTo({
           top: (element.scrollHeight - element.clientHeight) * value,
