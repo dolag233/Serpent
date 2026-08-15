@@ -1,43 +1,70 @@
 # AI analysis
 
-## Scope and data boundary
-
-Serpent’s AI analysis connects to a cloud AI service that you provide. Serpent does not provide an account, quota, or local model; enter the key supplied by your provider in Settings. The key is protected by the operating system and is not shown in the interface or normal logs. Read the disclaimer because the image, video contact sheet, or 3D view sheet sent to the provider may incur charges.
-
-The Settings page supports several common AI services. Choose the connection type for your provider, enter its key and model name, and add a custom address if the provider requires one. Models can be loaded from the provider or entered manually.
+Serpent’s AI analysis connects to a cloud AI service that you provide. Prepare a provider account, API key, a vision-capable model, and check the provider’s pricing first.
 
 ## Configure AI
 
-1. Open **Settings → AI**. On Windows use **Main menu → Settings**; macOS also exposes the same command in the native menu.
-2. Choose an API format, enter the key and model, and add a custom Base URL if required.
-3. Choose the output language (Chinese, English, Japanese, or Korean) and click **Test connection**.
-4. Choose which fields AI may write: description, tags, and AI rating. You can also allow the model to use existing tags.
-5. To analyze imports automatically, explicitly enable **Analyze new assets automatically**. It is off by default; without a valid key, model, and API format, imports are not queued.
-6. Save. Advanced settings control concurrency (1–32, default 16), maximum image edge sent to the model (512–4096 px, default 2048), tag/description limits, output style, rating rubric, and custom prompts.
+On Windows open `Main menu → Settings → AI`; on macOS open `Settings → AI` from the system menu.
 
-![AI configuration and Inspector results](../assets/ui/AI-analyze.png)
+![AI configuration](../assets/ui/AI-config.png)
 
-## Supported inputs
+### Connect a provider
+
+- `API format`: choose the provider interface, such as `DashScope Multimodal (native)`, `OpenAI Chat Completions`, `OpenAI Responses`, `Anthropic Messages`, or `Gemini Native`. With a relay, follow the relay’s interface instructions.
+- `Base URL`: usually leave it empty. For a relay or self-hosted gateway, enter the address supplied by that service. DashScope native uses an `/api/v1` root.
+- `API Key`: paste the provider key. The eye icon shows it temporarily; after saving, the full key is not displayed. Enter a new key to replace it.
+- `Model`: enter the provider’s vision model name. With a valid key, the picker can load models; if that fails, enter the name manually.
+- `Language`: choose one language—Chinese, English, Japanese, or Korean—for descriptions and tags.
+- Click `Test connection`, then `Save` after it succeeds.
+
+Never put an API key in a script, plugin, screenshot, issue report, or MCP configuration.
+
+### AI write toggles
+
+- `Description`: describe visual content, style, and mood.
+- `Tags`: generate keywords for type, style, subject, and visual characteristics.
+- `AI rating`: generate a 1–5 reference score.
+- `Force existing tags`: choose only from tags already in the library.
+
+AI content is stored separately from manual content; manual descriptions, tags, and ratings are not overwritten.
+
+### Advanced settings
+
+- `Concurrent analysis limit`: default 16, range 1–32; lower it if the provider rate-limits requests.
+- `Maximum image edge`: default 2048 px, range 512–4096; images are reduced when needed and never enlarged.
+- `Maximum tags`: default 8, range 1–32.
+- `Chinese description limit`: default 100 characters, range 20–500.
+- `English description limit`: default 60 words, range 10–200.
+- `Output style`: `Normal`, `Concise`, or `Rigorous`.
+- `Rating rubric`: define what scores from 1 to 5 mean.
+- `Custom description prompt`: add description guidance such as “focus on composition and lighting”.
+- `Custom tag prompt`: define the tag vocabulary. Never put a key or secret in a prompt.
+
+### Automatic analysis
+
+Accept the disclaimer and enable `Automatically run AI analysis on new assets` to analyze new images, videos, and 3D models in the background; it is off by default and turning it off does not remove existing AI content.
+
+## Supported assets
 
 - Images and camera RAW: a resized image is sent.
-- Video: Serpent creates a timestamped contact sheet and sends that sheet, not the original video.
-- 3D models: Serpent renders a four-view sheet and sends it.
-- Audio, text, and formats outside the image/video/model registries are not supported by AI analysis.
+- Video: a timestamped contact sheet is sent, not the original video.
+- 3D models: a four-view image is sent.
+- Audio, text, and unsupported formats: not analyzed by AI.
 
-## Automatic and manual analysis
+## Manual analysis and results
 
-After import, jobs are queued in the background only when an API format and key are configured and the automatic-analysis switch is on; an empty model name or invalid provider configuration is reported when the job is processed. Browsing is not blocked. Images are processed from the source when possible and fall back to a ready thumbnail only when source decoding fails; videos require a contact sheet and 3D models require a view-sheet derivative. If a derivative is not ready, refresh media previews and run the analysis again. If the app restarts during the derivative-ready event, retry the job from Background jobs.
+Choose `AI analysis` from an asset context menu or use the batch action for a multi-selection. `Analyze unanalyzed assets` skips assets that already have results; use normal `AI analysis` to re-analyze one.
 
-For a manual run, choose **AI analysis** from an asset context menu or use the batch action for a multi-selection. **Analyze unanalyzed assets** skips assets that already have AI content. Choosing the normal action again deliberately re-queues an existing result; a successful run atomically replaces the previous result and does not keep history.
+![Start AI analysis from the asset context menu](../assets/ui/AI-analyze-menu.png)
 
-AI writes a separate description, tag, and rating layer. Human-entered values and tags remain authoritative and are never overwritten. AI and human tag relationships are stored separately but can both be visible on an asset. Clear AI content can target one asset, the current selection, a folder, or the whole library; batch clearing asks for confirmation and does not delete human metadata or tag entities.
+Results appear in the AI section of the asset Inspector. A successful re-analysis replaces the current AI result and does not keep history; clearing AI content does not remove manual content or tag entities.
 
-## Jobs, failures, and retry
+## Jobs and failures
 
-Open **Window → Background jobs** to see queued, running, paused, failed, and completed AI jobs. You can pause/resume the AI queue, cancel it, retry failed items, and open diagnostics.
+Open `Window → Background jobs` to see queued, running, paused, failed, and completed AI jobs. You can pause, resume, cancel, or retry failed items. Network, rate-limit, and timeout failures are usually retryable; configuration, permission, quota, and unsupported-format problems must be fixed first.
 
-Network, rate-limit, timeout, and some invalid-response failures are retried according to the reliability policy. Authentication, permission, quota, and unsupported-format failures need a configuration or source-file fix. Failure messages include a short reason; partial failures are non-blocking notices, while a fully failed batch may show a more prominent failure message without discarding completed results. If a video contact sheet or thumbnail failed, retry media generation before retrying AI.
+If a video contact sheet or thumbnail is not ready, retry media generation from Background jobs before retrying AI. Failure messages include a short reason.
 
 ## Privacy and cost
 
-Serpent does not upload an entire library and does not expose AI search. Only explicitly queued, supported assets are sent to the selected third-party vendor. Consider the vendor terms, data sensitivity, and cost limits before enabling it. Never put an API key in a script, plugin, or MCP payload.
+Serpent does not upload an entire library or provide AI search. Only explicitly submitted, supported assets are sent to the selected provider; check its privacy terms and pricing before enabling AI.

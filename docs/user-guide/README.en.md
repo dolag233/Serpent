@@ -5,7 +5,7 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 - [Install](installation.en.md) — macOS / Windows, browser extension, upgrades
 - [Basics](basics.en.md) — libraries, importing, browsing, organization, file actions, and the viewer
 - [Search and filters](search-and-filters.en.md) — advanced query syntax, filter dimensions, and Shift multi-select
-- [AI analysis](ai.en.md) — connect an AI service, run automatic/manual analysis, and understand privacy
+- [AI analysis](ai.en.md) — supported assets, automatic/manual analysis, jobs, and privacy
 - [Plugin features](plugins.en.md) — install, enable, update, and uninstall plugins, plus the browser extension
 - [Automation](automation.en.md) — automation scripts and MCP client connections
 - [Troubleshooting](troubleshooting.en.md) — common problems and fixes
