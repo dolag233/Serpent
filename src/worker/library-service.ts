@@ -2402,7 +2402,7 @@ const OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM = createHash('sha256')
   .update(OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL)
   .digest('hex');
 
-// Migration v38: keep the per-asset opt-out from import-triggered automatic
+// Migration v37: keep the per-asset opt-out from import-triggered automatic
 // AI durable. Preview generation remains enabled, while reopening a library
 // cannot turn a previous Eagle import back into an AI enqueue.
 const AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL = `
@@ -2518,12 +2518,16 @@ export const MIGRATIONS = [
     sql: OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL,
     checksum: OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM,
   },
-  { version: 37, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
+  // v37 was first consumed by real user data (auto-analysis suppression) before
+  // the sync work landed; the sync migration therefore takes v38 to keep every
+  // existing v37 library (whose schema_migrations row carries the suppression
+  // checksum) openable without touching its history. See Serpent-dw9a.
   {
-    version: 38,
+    version: 37,
     sql: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL,
     checksum: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM,
   },
+  { version: 38, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
