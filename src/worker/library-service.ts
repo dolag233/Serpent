@@ -24136,6 +24136,7 @@ export class LibraryService {
           } finally {
             closeSync(descriptor);
           }
+          this.noteClientFilesystemMutation();
           renameSync(temporaryPath, destinationPath);
           this.failAt('crash-content-replace-batch-after-first-file');
         }

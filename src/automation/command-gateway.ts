@@ -1127,10 +1127,10 @@ export function createAutomationCommandGateway(
         return recordOutcomeAndReleaseSlot({ ok: false, error: toPublicError(error) });
       }
 
-      // Thumbnail jobs and concurrent imports can advance the library
-      // sequence after planning but before apply. Re-plan at most once for the
+      // Thumbnail jobs, concurrent imports, and background library events can advance the
+      // library sequence after planning but before apply. Re-plan at most once for the
       // explicit stale-plan error; never retry an unknown or post-commit error.
-      if (descriptor.commandId === 'file.import'
+      if (descriptor.approvalPolicy === 'plan'
         && !workerResult.ok
         && workerResult.error.code === 'VERSION_CONFLICT'
         && filePlanApprovalHandler !== undefined) {

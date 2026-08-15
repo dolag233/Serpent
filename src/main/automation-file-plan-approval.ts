@@ -176,6 +176,15 @@ function assertPlanCoversCommand(
 export function createDesktopAutomationFilePlanApprovalHandler(
   options: DesktopAutomationFilePlanApprovalOptions,
 ): AutomationFilePlanApprovalHandler {
+  const approvedSummariesByExecutionId = new Map<string, string>();
+
+  function pruneApprovedSummaries(): void {
+    if (approvedSummariesByExecutionId.size > 200) {
+      const firstKey = approvedSummariesByExecutionId.keys().next().value;
+      if (firstKey !== undefined) approvedSummariesByExecutionId.delete(firstKey);
+    }
+  }
+
   return {
     async prepareAndApprove({
       commandId,
@@ -202,13 +211,14 @@ export function createDesktopAutomationFilePlanApprovalHandler(
           blockedCount: 0,
           undoSupported: false,
         };
+        const summaryKey = JSON.stringify(summary);
         // Serpent-8b5b.8: MCP runs plan commands directly (zero dialog);
         // the Worker still validates the plan fence at write time.
         if (source === 'mcp') {
           options.audit?.info?.('mcp.plan-auto-approved', 'MCP library.create plan approved without a desktop prompt.', {
             commandId, operation: 'create', targetCount: 1,
           });
-        } else {
+        } else if (approvedSummariesByExecutionId.get(executionId) !== summaryKey) {
           const approved = options.requestApproval === undefined
             ? await options.confirm(summary, approvalContext)
             : await options.requestApproval({
@@ -222,6 +232,8 @@ export function createDesktopAutomationFilePlanApprovalHandler(
               summary,
             });
           if (!approved) return undefined;
+          pruneApprovedSummaries();
+          approvedSummariesByExecutionId.set(executionId, summaryKey);
         }
         return {
           planHash: createHash('sha256').update(JSON.stringify({
@@ -262,11 +274,12 @@ export function createDesktopAutomationFilePlanApprovalHandler(
           blockedCount,
           undoSupported: true,
         };
+        const summaryKey = JSON.stringify(summary);
         if (source === 'mcp') {
           options.audit?.info?.('mcp.plan-auto-approved', 'MCP file.import plan approved without a desktop prompt.', {
             commandId, operation: 'import', targetCount: summary.targetCount,
           });
-        } else {
+        } else if (approvedSummariesByExecutionId.get(executionId) !== summaryKey) {
           const approved = options.requestApproval === undefined
             ? await options.confirm(summary, approvalContext)
             : await options.requestApproval({
@@ -280,6 +293,8 @@ export function createDesktopAutomationFilePlanApprovalHandler(
               summary,
             });
           if (!approved) return undefined;
+          pruneApprovedSummaries();
+          approvedSummariesByExecutionId.set(executionId, summaryKey);
         }
         const planHash = parsedPlan.planHash;
         return {
@@ -322,11 +337,12 @@ export function createDesktopAutomationFilePlanApprovalHandler(
         ...planSummary,
         ...(hookWarnings.length > 0 ? { hookWarnings } : {}),
       };
+      const summaryKey = JSON.stringify(summaryWithHooks);
       if (source === 'mcp') {
         options.audit?.info?.('mcp.plan-auto-approved', 'MCP file-operation plan approved without a desktop prompt.', {
           commandId, operation: planSummary.operation, targetCount: planSummary.targetCount,
         });
-      } else {
+      } else if (approvedSummariesByExecutionId.get(executionId) !== summaryKey) {
         const approved = options.requestApproval === undefined
           ? await options.confirm(summaryWithHooks, approvalContext)
           : await options.requestApproval({
@@ -340,6 +356,8 @@ export function createDesktopAutomationFilePlanApprovalHandler(
             summary: summaryWithHooks,
           });
         if (!approved) return undefined;
+        pruneApprovedSummaries();
+        approvedSummariesByExecutionId.set(executionId, summaryKey);
       }
 
       if (planned.planHash === undefined) {
