@@ -5,8 +5,9 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 - [Install](installation.en.md) — macOS / Windows, browser extension, upgrades
 - [Basics](basics.en.md) — libraries, importing, browsing, organization, file actions, and the viewer
 - [Search and filters](search-and-filters.en.md) — advanced query syntax, filter dimensions, and Shift multi-select
-- [AI analysis](ai.en.md) — BYOK cloud model setup, automatic/manual analysis, jobs, and privacy
-- [Plugins, scripts and MCP](extensions.en.md) — install, enable, uninstall, and connect clients
+- [AI analysis](ai.en.md) — connect an AI service, run automatic/manual analysis, and understand privacy
+- [Using plugins](plugins.en.md) — install, enable, update, and uninstall plugins, plus the browser extension
+- [Automation](automation.en.md) — automation scripts and MCP client connections
 - [Troubleshooting](troubleshooting.en.md) — common problems and fixes
 
 ## Quick start
@@ -42,4 +43,4 @@ flowchart LR
 
 ## Documentation status
 
-This directory describes the current user-facing product. Implementation specs, development logs, and older QA snapshots under `docs/internal/` are historical evidence, not current step-by-step instructions. For platform caveats, use the current package and [project status](../internal/project-status.md).
+This directory describes the current user-facing product. Screens and available features can change between releases; follow the latest installer and release notes.
