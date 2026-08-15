@@ -17,6 +17,8 @@ export interface LocalAssetSnapshotEntry {
   contentHash: string;
   size: number;
   modifiedAt: string;
+  /** 库内 portable 相对路径。 */
+  path: string;
 }
 
 export type SyncAction =
@@ -88,7 +90,7 @@ export function planSyncActions(input: PlanSyncInput): SyncAction[] {
           type: 'upload',
           assetId,
           entry: {
-            path: localManifest.entries[assetId]?.path ?? '', // 应用层填充实际路径
+            path: localAsset.path,
             contentHash: localAsset.contentHash,
             size: localAsset.size,
             version: 1,

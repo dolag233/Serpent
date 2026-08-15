@@ -85,7 +85,9 @@ function buildContext(driver: MemoryDriver, local: Map<string, Buffer>): {
       recycled.push(assetId);
     },
     saveLocalConflictCopy: async (assetId, _path, body, name) => {
+      const copyMeta = { syncId: `copy-${assetId}`, contentHash: `hash-copy-${assetId}`, size: body.length };
       conflictCopies.push({ assetId, name, body });
+      return copyMeta;
     },
   };
   return { context, writtenLocal, recycled, conflictCopies };
@@ -99,7 +101,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     const { context } = buildContext(driver, local);
 
     const actions = planSyncActions({
-      localAssets: new Map([['a1', { contentHash: 'hash-local', size: 13, modifiedAt: '2026-08-15T10:00:00Z' }]]),
+      localAssets: new Map([['a1', { contentHash: 'hash-local', size: 13, modifiedAt: '2026-08-15T10:00:00Z', path: 'dir/file.bin' }]]),
       localManifest: manifest,
       remoteManifest: createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' }),
       remoteTombstones: new Set(),
@@ -114,7 +116,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     );
 
     expect(result.uploaded).toBe(1);
-    expect(driver.files.get('assets/dir/file.bin')?.toString()).toBe('local-content');
+    expect(driver.files.get('参考库/assets/dir/file.bin')?.toString()).toBe('local-content');
     expect(result.manifest.entries.a1).toMatchObject({
       path: 'dir/file.bin',
       contentHash: 'hash-local',
@@ -125,7 +127,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
 
   it('downloads a remote asset into the local library', async () => {
     const driver = new MemoryDriver();
-    driver.files.set('assets/dir/file.bin', Buffer.from('remote-content'));
+    driver.files.set('参考库/assets/dir/file.bin', Buffer.from('remote-content'));
     const remoteManifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
     remoteManifest.entries.a1 = {
       path: 'dir/file.bin', contentHash: 'hash-remote', size: 14, version: 1,
@@ -149,7 +151,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
 
   it('resolves a conflict with winner=remote: downloads winner, stores both conflict copies', async () => {
     const driver = new MemoryDriver();
-    driver.files.set('assets/dir/file.bin', Buffer.from('remote-winner'));
+    driver.files.set('参考库/assets/dir/file.bin', Buffer.from('remote-winner'));
     const remoteManifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
     remoteManifest.entries.a1 = {
       path: 'dir/file.bin', contentHash: 'hash-remote', size: 13, version: 5,
@@ -164,7 +166,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     const { context, writtenLocal, conflictCopies } = buildContext(driver, local);
 
     const actions = planSyncActions({
-      localAssets: new Map([['a1', { contentHash: 'hash-local', size: 12, modifiedAt: '2026-08-15T11:00:00Z' }]]),
+      localAssets: new Map([['a1', { contentHash: 'hash-local', size: 12, modifiedAt: '2026-08-15T11:00:00Z', path: 'dir/file.bin' }]]),
       localManifest,
       remoteManifest,
       remoteTombstones: new Set(),
@@ -177,13 +179,13 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     expect(writtenLocal.get('a1')?.toString()).toBe('remote-winner');
     // 败者本地内容保存冲突副本（本地 + 远端）。
     expect(conflictCopies[0]!.body.toString()).toBe('local-loser');
-    const conflictRemote = driver.files.get(`assets/${result.conflicts[0]!.conflictCopyPath}`);
+    const conflictRemote = driver.files.get(`参考库/assets/${result.conflicts[0]!.conflictCopyPath}`);
     expect(conflictRemote?.toString()).toBe('local-loser');
   });
 
   it('propagates local deletion as remote delete + tombstone', async () => {
     const driver = new MemoryDriver();
-    driver.files.set('assets/dir/file.bin', Buffer.from('remote'));
+    driver.files.set('参考库/assets/dir/file.bin', Buffer.from('remote'));
     const remoteManifest = createEmptyManifest({ libraryId: 'lib-1', displayName: '参考库', directoryName: '参考库' });
     remoteManifest.entries.a1 = {
       path: 'dir/file.bin', contentHash: 'hash-1', size: 6, version: 1,
@@ -203,8 +205,8 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
 
     expect(result.deletedRemote).toBe(1);
     expect(result.tombstones).toBe(1);
-    expect(driver.files.has('assets/dir/file.bin')).toBe(false);
-    expect(driver.files.has('trash/a1.json')).toBe(true);
+    expect(driver.files.has('参考库/assets/dir/file.bin')).toBe(false);
+    expect(driver.files.has('参考库/trash/a1.json')).toBe(true);
     expect(result.manifest.entries.a1).toBeUndefined();
   });
 
@@ -220,7 +222,7 @@ describe('runSyncActions end-to-end (Serpent-xffq)', () => {
     const { context, recycled } = buildContext(driver, local);
 
     const actions = planSyncActions({
-      localAssets: new Map([['a1', { contentHash: 'hash-1', size: 6, modifiedAt: '2026-08-15T10:00:00Z' }]]),
+      localAssets: new Map([['a1', { contentHash: 'hash-1', size: 6, modifiedAt: '2026-08-15T10:00:00Z', path: 'dir/file.bin' }]]),
       localManifest,
       remoteManifest,
       remoteTombstones: new Set(['a1']),

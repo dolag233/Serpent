@@ -21,7 +21,7 @@ function entry(overrides: Partial<SyncManifestEntry> = {}): SyncManifestEntry {
 }
 
 function asset(hash = 'hash-1', size = 10): LocalAssetSnapshotEntry {
-  return { contentHash: hash, size, modifiedAt: '2026-08-15T10:00:00Z' };
+  return { contentHash: hash, size, modifiedAt: '2026-08-15T10:00:00Z', path: 'a/b.png' };
 }
 
 describe('planSyncActions (Serpent-xffq)', () => {

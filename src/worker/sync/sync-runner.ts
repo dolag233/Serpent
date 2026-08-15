@@ -28,8 +28,17 @@ export interface SyncRunnerContext {
   writeLocalAsset(assetId: string, relativePath: string, body: Buffer): Promise<void>;
   /** 远端墓碑传播：本地资产进回收站。 */
   recycleLocalAsset(assetId: string): Promise<void>;
-  /** 保存冲突副本到本地库。 */
-  saveLocalConflictCopy(assetId: string, relativePath: string, body: Buffer, conflictName: string): Promise<void>;
+  /**
+   * 保存冲突副本到本地库（导入为独立资产），返回该副本的新 syncId 与
+   * 内容指纹；runner 会把它登记进 manifest（path = conflictName），
+   * 使双端下一次同步一致。
+   */
+  saveLocalConflictCopy(
+    assetId: string,
+    relativePath: string,
+    body: Buffer,
+    conflictName: string,
+  ): Promise<{ syncId: string; contentHash: string; size: number }>;
 }
 
 export interface SyncRunResult {
@@ -55,8 +64,8 @@ export function conflictCopyFileName(originalPath: string, now: string): string 
   return dir === '.' ? conflictBase : `${dir}/${conflictBase}`;
 }
 
-function assetsPathOf(entryPath: string): string {
-  return `${SYNC_ASSETS_DIR}/${entryPath}`;
+function assetsPathOf(libraryDirectory: string, entryPath: string): string {
+  return `${libraryDirectory}/${SYNC_ASSETS_DIR}/${entryPath}`;
 }
 
 export async function runSyncActions(
@@ -75,12 +84,14 @@ export async function runSyncActions(
   };
   const { driver } = context;
   const now = context.now();
+  const { libraryDirectory } = context;
+  const assetPath = (entryPath: string) => assetsPathOf(libraryDirectory, entryPath);
 
   for (const action of actions) {
     switch (action.type) {
       case 'upload': {
         const body = await context.readLocalAsset(action.assetId);
-        const remotePath = assetsPathOf(action.entry.path);
+        const remotePath = assetPath(action.entry.path);
         const written = await driver.write(remotePath, body, { ifMatch: action.entry.etag });
         const entry: SyncManifestEntry = { ...action.entry, etag: written.etag, deviceId: context.deviceId, modifiedAt: now };
         manifest.entries[action.assetId] = entry;
@@ -88,7 +99,7 @@ export async function runSyncActions(
         break;
       }
       case 'download': {
-        const remotePath = assetsPathOf(action.entry.path);
+        const remotePath = assetPath(action.entry.path);
         const read = await driver.read(remotePath);
         await context.writeLocalAsset(action.assetId, action.entry.path, read.body);
         manifest.entries[action.assetId] = { ...action.entry, etag: read.etag ?? action.entry.etag };
@@ -100,8 +111,8 @@ export async function runSyncActions(
         if (action.winner === 'local') {
           // 正式版 = 本地内容上传；败者（远端内容）双端存冲突副本。
           const localBody = await context.readLocalAsset(action.assetId);
-          const remoteBody = await driver.read(assetsPathOf(action.remote.path)).then((read) => read.body);
-          const written = await driver.write(assetsPathOf(action.remote.path), localBody, { ifMatch: action.remote.etag });
+          const remoteBody = await driver.read(assetPath(action.remote.path)).then((read) => read.body);
+          const written = await driver.write(assetPath(action.remote.path), localBody, { ifMatch: action.remote.etag });
           manifest.entries[action.assetId] = {
             ...action.remote,
             contentHash: action.local.contentHash,
@@ -111,17 +122,35 @@ export async function runSyncActions(
             modifiedAt: now,
             etag: written.etag,
           };
-          await driver.write(assetsPathOf(conflictName), remoteBody);
-          await context.saveLocalConflictCopy(action.assetId, action.remote.path, remoteBody, conflictName);
+          await driver.write(assetPath(conflictName), remoteBody);
+          const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, remoteBody, conflictName);
+          manifest.entries[copyMeta.syncId] = {
+            path: conflictName,
+            contentHash: copyMeta.contentHash,
+            size: copyMeta.size,
+            version: 1,
+            deviceId: context.deviceId,
+            modifiedAt: now,
+            metadataVersion: 1,
+          };
           result.uploaded += 2;
         } else {
           // 正式版 = 远端内容落本地；败者（本地内容）双端存冲突副本。
-          const remoteBody = await driver.read(assetsPathOf(action.remote.path)).then((read) => read.body);
+          const remoteBody = await driver.read(assetPath(action.remote.path)).then((read) => read.body);
           const localBody = await context.readLocalAsset(action.assetId);
           await context.writeLocalAsset(action.assetId, action.remote.path, remoteBody);
           manifest.entries[action.assetId] = { ...action.remote };
-          await driver.write(assetsPathOf(conflictName), localBody);
-          await context.saveLocalConflictCopy(action.assetId, action.remote.path, localBody, conflictName);
+          await driver.write(assetPath(conflictName), localBody);
+          const copyMeta = await context.saveLocalConflictCopy(action.assetId, action.remote.path, localBody, conflictName);
+          manifest.entries[copyMeta.syncId] = {
+            path: conflictName,
+            contentHash: copyMeta.contentHash,
+            size: copyMeta.size,
+            version: 1,
+            deviceId: context.deviceId,
+            modifiedAt: now,
+            metadataVersion: 1,
+          };
           result.downloaded += 1;
           result.uploaded += 1;
         }
@@ -131,7 +160,7 @@ export async function runSyncActions(
       case 'delete-remote': {
         const entry = manifest.entries[action.assetId];
         if (entry) {
-          await driver.delete(assetsPathOf(entry.path));
+          await driver.delete(assetPath(entry.path));
           result.deletedRemote += 1;
         }
         break;
@@ -144,7 +173,7 @@ export async function runSyncActions(
           deviceId: context.deviceId,
           deletedAt: now,
         });
-        await driver.write(`${SYNC_TRASH_DIR}/${action.assetId}.json`, Buffer.from(tombstone, 'utf-8'));
+        await driver.write(`${libraryDirectory}/${SYNC_TRASH_DIR}/${action.assetId}.json`, Buffer.from(tombstone, 'utf-8'));
         delete manifest.entries[action.assetId];
         result.tombstones += 1;
         break;

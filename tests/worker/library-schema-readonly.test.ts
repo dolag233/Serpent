@@ -43,13 +43,13 @@ function temporaryRoot(): string {
   return root;
 }
 
-/** Bump a current library to a fake newer v37 (structure untouched). */
-function markLibraryAsV37(libraryPath: string): void {
+/** Bump a current library to a fake newer v38 (structure untouched). */
+function markLibraryAsV38(libraryPath: string): void {
   const db = new Database(path.join(libraryPath, '.serpent', 'library.db'));
-  db.pragma('user_version = 37');
+  db.pragma('user_version = 38');
   db.prepare(
     'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
-  ).run(37, 'f'.repeat(64), new Date().toISOString());
+  ).run(38, 'f'.repeat(64), new Date().toISOString());
   db.close();
 }
 
@@ -68,12 +68,12 @@ describe('read-only degrade for newer-schema libraries', () => {
     // createLibrary already opened the library; drop the handle so the
     // reopen below exercises the version probe from scratch.
     service.closeAll();
-    markLibraryAsV37(created.libraryPath);
+    markLibraryAsV38(created.libraryPath);
 
     const summary: InternalLibrarySummary = service.openLibrary(created.libraryPath);
     expect(summary.readOnly).toBe(true);
-    expect(summary.libraryVersion).toBe(37);
-    expect(summary.supportedSchemaVersion).toBe(36);
+    expect(summary.libraryVersion).toBe(38);
+    expect(summary.supportedSchemaVersion).toBe(37);
 
     // Read paths still work.
     expect(service.listLibraries()).toHaveLength(1);
@@ -84,7 +84,7 @@ describe('read-only degrade for newer-schema libraries', () => {
     const service = newService();
     const created = service.createLibrary({ displayName: '只读库', selectedParentPath: root });
     service.closeAll();
-    markLibraryAsV37(created.libraryPath);
+    markLibraryAsV38(created.libraryPath);
     const summary = service.openLibrary(created.libraryPath);
     expect(summary.readOnly).toBe(true);
 
@@ -123,7 +123,7 @@ describe('read-only degrade for newer-schema libraries', () => {
     expect(existsSync(managedAssetPath)).toBe(true);
 
     service.closeAll();
-    markLibraryAsV37(created.libraryPath);
+    markLibraryAsV38(created.libraryPath);
     const summary = service.openLibrary(created.libraryPath);
     expect(summary.readOnly).toBe(true);
 

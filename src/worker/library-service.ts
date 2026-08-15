@@ -6,6 +6,7 @@ import {
   copyFileSync,
   createWriteStream,
   existsSync,
+  mkdtempSync,
   fstatSync,
   fsyncSync,
   lstatSync,
@@ -1971,6 +1972,23 @@ const JOB_LEASE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(JOB_LEASE_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v29: 资源库同步（Serpent-xffq）。
+// - assets.sync_id：跨设备稳定身份（每台设备本地 asset_id 不同），
+//   同步交换格式以 sync_id 为键；NULL 表示尚未参与同步。
+// - sync_manifest_cache：上次同步点的远端 manifest 缓存。
+const SYNC_SCHEMA_SQL = `
+  ALTER TABLE assets ADD COLUMN sync_id TEXT;
+  CREATE INDEX IF NOT EXISTS assets_sync_id ON assets(sync_id);
+  CREATE TABLE IF NOT EXISTS sync_manifest_cache (
+    library_id TEXT NOT NULL PRIMARY KEY,
+    manifest_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+const SYNC_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(SYNC_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2479,6 +2497,7 @@ export const MIGRATIONS = [
     sql: OPERATION_HISTORY_REDO_STACK_SCHEMA_SQL,
     checksum: OPERATION_HISTORY_REDO_STACK_SCHEMA_CHECKSUM,
   },
+  { version: 37, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -16992,6 +17011,284 @@ export class LibraryService {
       if (!row.current_revision_id) continue;
       this.persistSourceImageDimensions(openLibrary, row.current_revision_id, row);
     }
+  }
+
+  // ── 资源库同步（Serpent-xffq）────────────────────────────────────────
+
+  /** 读取/生成资产的跨设备稳定身份（sync_id）。 */
+  private ensureAssetSyncId(openLibrary: OpenLibrary, assetId: string): string {
+    const row = openLibrary.connection
+      .prepare('SELECT sync_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { sync_id: string | null } | undefined;
+    if (row?.sync_id) return row.sync_id;
+    const syncId = randomUUID();
+    openLibrary.connection
+      .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
+      .run(syncId, assetId);
+    return syncId;
+  }
+
+  private assetRowBySyncId(openLibrary: OpenLibrary, syncId: string) {
+    return openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, location_kind, linked_folder_id, current_revision_id
+           FROM assets
+          WHERE sync_id = ? AND deleted_at IS NULL`,
+      )
+      .get(syncId) as
+      | {
+          asset_id: string;
+          relative_file_path: string;
+          location_kind: 'managed' | 'linked';
+          linked_folder_id: string | null;
+          current_revision_id: string | null;
+        }
+      | undefined;
+  }
+
+  /**
+   * 计算当前库的同步快照：每个可用资产的 syncId、内容哈希与路径。
+   * 大库全量哈希耗时由调用方在后台执行；快照是 planSyncActions 的本地输入。
+   */
+  syncSnapshot(libraryId: string): {
+    library: { libraryId: string; displayName: string };
+    assets: Array<{
+      syncId: string;
+      assetId: string;
+      relativePath: string;
+      contentHash: string;
+      size: number;
+      modifiedAt: string;
+    }>;
+  } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const assets = this.listAssets({ libraryId, recursive: true }).filter(
+      (asset) => asset.availability === 'available' && asset.deletedAt === null,
+    );
+    const out: Array<{
+      syncId: string;
+      assetId: string;
+      relativePath: string;
+      contentHash: string;
+      size: number;
+      modifiedAt: string;
+    }> = [];
+    for (const asset of assets) {
+      const absolutePath = this.resolveAssetPath(libraryId, asset.assetId);
+      if (!existsSync(absolutePath)) continue;
+      out.push({
+        syncId: this.ensureAssetSyncId(openLibrary, asset.assetId),
+        assetId: asset.assetId,
+        relativePath: asset.relativeFilePath,
+        contentHash: sha256FileAtPath(absolutePath),
+        size: asset.byteSize,
+        modifiedAt: asset.modifiedAt,
+      });
+    }
+    return {
+      library: { libraryId, displayName: this.libraryDisplayName(libraryId) },
+      assets: out,
+    };
+  }
+
+  /**
+   * 应用远端下载内容：本地无该 syncId 资产时导入为新资产并绑定 syncId；
+   * 已存在时覆盖文件并创建新 revision（external_change 管线，缩略图重建）。
+   * 返回本地 assetId。
+   */
+  applySyncContentUpdate(
+    libraryId: string,
+    syncId: string,
+    relativePath: string,
+    body: Buffer,
+  ): { assetId: string; created: boolean } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const existing = this.assetRowBySyncId(openLibrary, syncId);
+    if (!existing) {
+      // 新资产：临时文件走既有导入管线（revision/搜索索引/缩略图全部正确）。
+      const stageDir = mkdtempSync(path.join(tmpdir(), 'serpent-sync-import-'));
+      const stagePath = path.join(stageDir, path.posix.basename(relativePath));
+      try {
+        writeFileSync(stagePath, body);
+        const prepared = this.prepareOrExecuteImport({
+          libraryId,
+          sourceKind: 'files',
+          sourcePaths: [stagePath],
+        });
+        if ('importId' in prepared) {
+          this.resolveImport({
+            importId: prepared.importId,
+            suspectedDuplicate: 'create-copy',
+            nameConflict: 'keep-both',
+          });
+        }
+      } finally {
+        rmSync(stageDir, { force: true, recursive: true });
+      }
+      const imported = this.assetRowBySyncId(openLibrary, syncId);
+      if (imported) return { assetId: imported.asset_id, created: true };
+      // 导入可能因名字冲突生成新名；按路径找最新资产。
+      const byPath = openLibrary.connection
+        .prepare(
+          `SELECT asset_id, current_revision_id
+             FROM assets
+            WHERE relative_file_path = ? AND deleted_at IS NULL
+            ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(relativePath) as { asset_id: string; current_revision_id: string | null } | undefined;
+      if (!byPath) {
+        throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      const newSyncId = syncId;
+      openLibrary.connection
+        .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
+        .run(newSyncId, byPath.asset_id);
+      return { assetId: byPath.asset_id, created: true };
+    }
+
+    // 已存在：覆盖文件 + 新 revision。
+    const absolutePath = existing.location_kind === 'linked'
+      ? this.linkedAssetPath(openLibrary, existing.linked_folder_id, existing.relative_file_path)
+      : this.folderPath(openLibrary, existing.relative_file_path);
+    mkdirSync(path.dirname(absolutePath), { recursive: true });
+    writeFileSync(absolutePath, body);
+    const stat = statSync(absolutePath);
+    const now = new Date().toISOString();
+    const fingerprint = sha256FileAtPath(absolutePath);
+    const revisionId = randomUUID();
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO revisions
+           (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+            original_filename, origin, accepted_at, content_fingerprint)
+         VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?, ?)`,
+      )
+      .run(
+        revisionId,
+        existing.asset_id,
+        existing.current_revision_id,
+        stat.size,
+        stat.mtime.toISOString(),
+        path.posix.basename(existing.relative_file_path),
+        now,
+        fingerprint,
+      );
+    openLibrary.connection
+      .prepare(
+        `UPDATE assets
+            SET current_revision_id = ?, availability = 'available', updated_at = ?
+          WHERE asset_id = ?`,
+      )
+      .run(revisionId, now, existing.asset_id);
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE revision_id = ? AND invalidated_at IS NULL`,
+      )
+      .run(now, existing.current_revision_id);
+    if (LibraryService.supportsThumbnail(existing.relative_file_path)) {
+      openLibrary.connection
+        .prepare(
+          `INSERT OR IGNORE INTO jobs
+             (job_id, library_id, asset_id, revision_id, kind, status, priority,
+              progress, attempt_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', 300, 0.0, 0, ?, ?)`,
+        )
+        .run(randomUUID(), libraryId, existing.asset_id, revisionId, now, now);
+    }
+    this.syncAssetSearchContent(openLibrary.connection, existing.asset_id);
+    return { assetId: existing.asset_id, created: false };
+  }
+
+  /** 远端墓碑传播：本地资产进回收站（已回收资产为幂等 no-op）。 */
+  applySyncRecycle(libraryId: string, syncId: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = this.assetRowBySyncId(openLibrary, syncId);
+    if (!row) return;
+    this.trashAssets({ libraryId, assetIds: [row.asset_id] });
+  }
+
+  /**
+   * 冲突败者副本落本地库：导入为独立资产（新 syncId，随后登记进 manifest，
+   * 双端一致后不再产生动作）。返回新 syncId 与内容指纹。
+   */
+  applySyncConflictCopy(
+    libraryId: string,
+    relativePath: string,
+    body: Buffer,
+    conflictName: string,
+  ): { syncId: string; contentHash: string; size: number } {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const stageDir = mkdtempSync(path.join(tmpdir(), 'serpent-sync-conflict-'));
+    const stagePath = path.join(stageDir, path.posix.basename(conflictName));
+    try {
+      writeFileSync(stagePath, body);
+      const prepared = this.prepareOrExecuteImport({
+        libraryId,
+        sourceKind: 'files',
+        sourcePaths: [stagePath],
+      });
+      if ('importId' in prepared) {
+        this.resolveImport({
+          importId: prepared.importId,
+          suspectedDuplicate: 'create-copy',
+          nameConflict: 'keep-both',
+        });
+      }
+    } finally {
+      rmSync(stageDir, { force: true, recursive: true });
+    }
+    const imported = openLibrary.connection
+      .prepare(
+        `SELECT asset_id FROM assets
+          WHERE relative_file_path = ? AND deleted_at IS NULL
+          ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(path.posix.basename(conflictName)) as { asset_id: string } | undefined;
+    if (!imported) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
+    }
+    const syncId = randomUUID();
+    openLibrary.connection
+      .prepare('UPDATE assets SET sync_id = ? WHERE asset_id = ?')
+      .run(syncId, imported.asset_id);
+    return {
+      syncId,
+      contentHash: sha256FileAtPath(this.resolveAssetPath(libraryId, imported.asset_id)),
+      size: body.length,
+    };
+  }
+
+  /** 读取本地 manifest 缓存。 */
+  readSyncManifestCache(libraryId: string): string | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare('SELECT manifest_json FROM sync_manifest_cache WHERE library_id = ?')
+      .get(libraryId) as { manifest_json: string } | undefined;
+    return row?.manifest_json ?? null;
+  }
+
+  /** 写入本地 manifest 缓存（上次同步点）。 */
+  writeSyncManifestCache(libraryId: string, manifestJson: string): void {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO sync_manifest_cache (library_id, manifest_json, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(library_id) DO UPDATE SET manifest_json = excluded.manifest_json, updated_at = excluded.updated_at`,
+      )
+      .run(libraryId, manifestJson, new Date().toISOString());
+  }
+
+  private libraryDisplayName(libraryId: string): string {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare('SELECT display_name FROM library WHERE library_id = ?')
+      .get(libraryId) as { display_name: string } | undefined;
+    return row?.display_name ?? '';
   }
 
   private persistSourceImageDimensions(
