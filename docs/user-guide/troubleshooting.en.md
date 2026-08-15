@@ -6,9 +6,9 @@ Development builds may be unsigned. Verify the package source first, then choose
 
 ## Thumbnails or previews fail
 
-Serpent generates derived previews for many image, RAW, video, audio, and 3D formats. Confirm that the source is readable and the library directory is writable, then fully quit and reopen the library so background jobs can retry. Video needs the bundled FFmpeg; FBX also needs the ufbx conversion component. Open **Window → Background jobs** and diagnostics for a typed error.
+Serpent generates previews for many image, RAW, video, audio, and 3D formats. Confirm that the source is readable and the library directory is writable, then fully quit and reopen the library so background jobs can retry. If the problem continues, open **Window → Background jobs** and diagnostics for the message.
 
-Some limits are intentional: video playback may use a compatible proxy; SVG is rendered from its source in the viewer; EXR/PSD/RAW use OIIO; audio first gets a waveform. A corrupt or unsupported source cannot be fixed by retrying alone.
+Different formats may use different preview methods; for example, video may use a compatible playback version and audio first gets a waveform. A corrupt or unsupported source cannot be fixed by retrying alone.
 
 ## AI analysis fails or never starts
 
@@ -22,11 +22,11 @@ Check active filter chips; Shift-selected values can intentionally narrow the re
 
 ## A plugin will not enable
 
-Open **Settings → Plugins** and inspect its package status, permissions, and trust prompt. A library plugin needs trust on each device; a user-wide package is normally trusted automatically. Safe Mode pauses unrestricted plugins. A changed permission or source needs confirmation again. Verify that a local ZIP contains `serpent-plugin.json` and a built entry, with no traversal or symlink entries.
+Open **Settings → Plugins** and check the plugin status and trust prompt. A library plugin needs trust on each device; a user-wide package is normally trusted automatically. Turn the plugin off and on again, or click **Reload**. If it still does not work, contact the plugin author with your Serpent version, operating system, and plugin name.
 
-## MCP will not connect
+## Automation script or MCP will not work
 
-In **Settings → MCP**, ensure the service is enabled and started. The default endpoint is `http://127.0.0.1:47342/mcp`. Stop the service before changing the port. Creating a new configuration creates a new credential; the old token is not shown again. Library-scoped calls need an explicit `libraryId`. MCP does not use stdio, an npm launcher, or a public address; after revoking a credential, copy a new configuration.
+For a script, open a library first and choose **More tools → Automation scripts**. For MCP, open **Settings → MCP**, ensure the service is enabled and started, and paste Serpent’s latest configuration into the client. The default address is `http://127.0.0.1:47342/mcp`. If you revoked a Token, add the client again and copy a new configuration. Connect only a local AI tool you trust.
 
 ## A library will not open
 

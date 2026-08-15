@@ -2,9 +2,9 @@
 
 ## Scope and data boundary
 
-MVP AI is a BYOK cloud feature. Serpent does not provide model accounts, a proxy, quotas, or local-model hosting. Your API key is encrypted by the desktop main process using the operating system secure store; the renderer and normal logs do not echo it. The configuration dialog shows a disclaimer because the image, video contact sheet, or 3D view sheet sent to the selected vendor may incur charges.
+Serpent’s AI analysis connects to a cloud AI service that you provide. Serpent does not provide an account, quota, or local model; enter the key supplied by your provider in Settings. The key is protected by the operating system and is not shown in the interface or normal logs. Read the disclaimer because the image, video contact sheet, or 3D view sheet sent to the provider may incur charges.
 
-Five API protocols are available: DashScope Multimodal, OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Gemini Native. Each can use a custom Base URL, API key, and model name; models can be fetched or entered manually.
+The Settings page supports several common AI services. Choose the connection type for your provider, enter its key and model name, and add a custom address if the provider requires one. Models can be loaded from the provider or entered manually.
 
 ## Configure AI
 
