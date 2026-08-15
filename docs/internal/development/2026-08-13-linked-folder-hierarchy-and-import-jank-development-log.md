@@ -145,5 +145,5 @@ npx vitest run tests/unit/asset-drag-preview.test.ts tests/unit/asset-drag-drop.
 | --- | --- | --- | --- |
 | 快速滚动时新进入视口的列不出现整片白区 | `src/renderer/viewport-window.ts` 的同步 scroll 发布与 `viewportOverscanPx` | `npx vitest run tests/unit/viewport-window.test.ts tests/unit/masonry-slot-style.test.ts --reporter=dot`：13 passed；`node scripts/run-e2e.mjs tests/e2e/thumbnail-scroll-regression.test.ts`：2 passed | macOS 开发态真实 Electron，`场景原画参考库` 477 项、瀑布流；Value:3 采集 55 帧并执行 10 次快速滚动，Value:2/1 各采集 50 帧并执行 10 次；ScreenCaptureKit 按 100ms 间隔采样，所有帧未见截断白区 |
 
-`npm run typecheck` 和 `npm run lint` 均通过。上述 Computer Use 是 agent 的独立证据，
-不能替代用户本人确认；packaged 与 Windows 未执行，CANVAS-037 转为待人类验收。
+`npm run typecheck` 和 `npm run lint` 均通过。2026-08-15 用户本人确认：至少 10 次快速滑动
+未出现截断式白区，CANVAS-037 人类验收通过。packaged 与 Windows 未执行。
