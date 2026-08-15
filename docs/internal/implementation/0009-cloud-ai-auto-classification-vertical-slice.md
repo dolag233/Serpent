@@ -2,7 +2,9 @@
 
 > 状态：部分实现 / fixing（队列可靠性修复已落地；完整队列 UI、真实供应商与跨平台 QA 未完成）
 > 日期：2026-07-13
-> 2026-07-16 产品变更：AI 生成 Label 及其开关已被 ADR 0022 取消；0018 负责协议和兼容迁移，AI 继续生成描述、标签和结构化元信息。
+> 2026-07-16 产品变更：AI 生成 Label 及其开关已被 ADR 0022 取消；0018 负责协议和兼容迁移。
+>
+> **当前实现提示（2026-08-15）**：本文是 0009 的历史切片规格，不能直接当作当前操作说明。当前用户入口和事实以 [`docs/user-guide/ai.md`](../../user-guide/ai.md)、`src/shared/ai-endpoints.ts` 与 `src/shared/ai-analysis-settings.ts` 为准：MVP 为云端 BYOK；支持 DashScope、OpenAI Chat/Responses、Anthropic Messages、Gemini Native 五种 API 格式；输出为描述、标签和 AI 评分；自动分析需要用户显式开启；视频只发送联系表，3D 发送四视图，音频/文本不支持。旧文中的 Label、结构化元信息、poster+contact sheet、三供应商和默认自动运行均为历史内容。
 
 ## 目标
 

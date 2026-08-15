@@ -8,8 +8,8 @@
 > 不保留其构建入口、协议、测试或人类验收项。本文件仅保留为历史决策记录；当前
 > 自动化实现以 [ADR-0025](../adr/0025-automation-core-script-runtime-and-mcp.md) 和
 > [0023 脚本自动化与 MCP 框架](0023-automation-scripting-mcp-framework.md) 为唯一依据。
-> 新功能必须以 Desktop Console 的 JS/TS 脚本与本地 stdio MCP 为入口。未来若重启 CLI
-> 讨论，需要新 ADR，不得从本规格或旧提交恢复代码。
+> 下方仍保留“Desktop Console + 本地 stdio MCP”的旧入口描述，仅用于记录当时的决策；它已被
+> 嵌入式 loopback HTTP MCP 取代。未来若重启 CLI 讨论，需要新 ADR，不得从本规格或旧提交恢复代码。
 
 ## 目标
 

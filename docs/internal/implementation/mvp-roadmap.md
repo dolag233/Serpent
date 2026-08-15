@@ -90,7 +90,7 @@ walking implementation 已存在，但不能等同于切片验收：0003–0010 
 
 ## 2026-07-28 脚本化 + MCP 优先级调整
 
-产品负责人确认：脚本化与 MCP 比 3D/PBR 预览更重要。此前只读 CLI 基础层已经撤回；当前以 Desktop Console 的受控 JS/TS 脚本和本地 stdio MCP 为唯一自动化入口，公共能力全部经过 `Automation Command Gateway`。
+产品负责人确认：脚本化与 MCP 比 3D/PBR 预览更重要。此前只读 CLI 基础层已经撤回；本节早期的 stdio 设计已由 ADR-0029/0030/0031 替代。当前自动化入口是 Desktop Console 的受控 JS/TS 脚本和 Desktop 内嵌的本机 loopback Streamable HTTP MCP，公共能力全部经过 `Automation Command Gateway`。
 
 Beads 跟踪：`Serpent-y51c`，子项 `Serpent-y51c.2`–`.10`；跨进程写协调任务保留为 `Serpent-bb56.2`，但不再属于 CLI。
 
@@ -105,7 +105,7 @@ Beads 跟踪：`Serpent-y51c`，子项 `Serpent-y51c.2`–`.10`；跨进程写�
 
 - 导入、移动、重命名、删除/恢复、标签/合集写入、AI 写回等修改命令。
 - Desktop 与 MCP 并行写入的 per-library 写租约、持久变更序号、崩溃恢复和 detached job 领取。
-- MCP stdio 启动器与 Desktop 脚本运行时的 macOS/Windows 打包、跨平台路径/终止信号处理和完整 packaged QA。
+- （旧设计，已撤回）MCP stdio 启动器与 Desktop 脚本运行时的打包；当前应按内嵌 HTTP MCP 的生命周期、端口和客户端配置验收。
 
 这样可以立即验证脚本化契约和真实使用价值，同时不把当前 v0.1.0 发布收口拖入多套同时变化的写入语义。完整规范以 [`0023-automation-scripting-mcp-framework.md`](0023-automation-scripting-mcp-framework.md) 为准。
 

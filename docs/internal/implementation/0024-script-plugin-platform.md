@@ -58,7 +58,7 @@ Serpent 插件平台要让第三方扩展像原生能力一样参与应用，但
 | 生命周期 | 每次运行形成 Execution | 安装、实例化、setup、dispose | 连接生命周期 |
 | UI/Hook/Provider | 无 | 有 | 无 |
 | 领域操作 | `serpent` SDK → Gateway | 同一 SDK → Gateway | Registry → Gateway |
-| 运行时 | QuickJS | restricted QuickJS / unrestricted Node | 本地 stdio host |
+| 运行时 | QuickJS | restricted QuickJS / unrestricted Node | Desktop 内嵌 loopback Streamable HTTP |
 
 受限插件可复用 Script Runtime 的 QuickJS、TypeScript 转换、RPC 和资源预算实现，但必须拥有独立 Plugin Runtime Contract。不能用“永不结束的脚本”模拟插件，也不能让普通脚本注册常驻 Contribution。
 
@@ -71,7 +71,7 @@ Serpent 插件平台要让第三方扩展像原生能力一样参与应用，但
 - **Plugin Package**：不可变、带完整性摘要的插件成品，包含清单、编译后代码、可选 UI、文档和许可证。
 - **Plugin Installation**：把 Package 放入用户插件存储或资源库插件存储；安装不表示信任或运行。
 - **Plugin Trust Decision**：当前设备针对确定包摘要、来源、运行模式和权限集合做出的决定，不随资源库同步。
-- **Plugin Resolution**：同一插件 ID 同时存在用户级和资源库级版本时，当前设备针对某资源库选择 `use-user | use-library | disabled`。
+- **Plugin Resolution**：同一插件 ID 同时存在用户级和资源库级版本时，当前设备针对某资源库选择 `use-global | use-library | disabled`。
 
 `installationScope = user | library` 只回答“包在哪里”。它不回答运行时是否全局。
 

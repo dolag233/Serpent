@@ -1,75 +1,77 @@
 # Basics
 
-## Create a library
+## Create, open, and configure a library
 
-On first launch the create dialog appears:
+On first launch choose **Create library**, pick a location, and enter a display name. A library contains managed assets, its database, and a `.serpent/` working directory. The display name does not move the library directory.
 
-1. Pick a location
-2. Enter a name and click Create
+Use the upper-left **Main menu → Library** to create, open, import, or export libraries. **Library settings** lets you rename the current library, see its location, and edit its ignore configuration. A description field is not implemented yet.
 
-The library directory contains `Assets/` and `.serpent/`. Use the library menu to create, open or switch libraries.
+The ignore editor uses one rule per line, similar to `.gitignore`; the UI calls it an “ignore configuration file”. Saving immediately affects browsing, search, and scanning:
 
-## Import
+```text
+*.tmp                 # ignore every .tmp file
+references/drafts/    # ignore this folder
+!references/drafts/keep.png  # un-ignore one file
+```
 
-Supported formats: images, video, audio, 3D models (FBX/OBJ/GLB/STL and more), text, RAW.
+The `?` help explains `*`, `?`, `**`, a trailing `/` for directories, a leading `/` for library-root rules, and `!` negation.
 
-- Drag files or folders into the window (folders import recursively)
-- Click Import Files or Import Folder
-- Browser extension: right-click a web image/video and save, or drag it in
+## Import assets
 
-Files are copied into the library's `Assets/` directory and get a stable asset identity. Name or content conflicts open a dialog — choose how to proceed.
+Drop one or more files or folders into Serpent, or use **Import files** / **Import folder**. Folder imports are recursive. The browser extension can save web images and videos from the context menu or by drag-and-drop.
 
-## Browse
+The current product registry includes:
 
-- Sidebar: All assets, Trash, Tag management, Folders, Collections, Smart collections
-- Toolbar: format filters (image/video/audio/3D/text), size filters, sorting
-- Cards show a thumbnail and file name. Hover to preview, click to select, double-click to open the viewer
-- Marquee select by dragging; multi-select with ⌘/Ctrl+click. Batch actions (rating, tags, …) work from the Inspector
+- Images: PNG, JPG/JPEG, GIF, TIFF/TIF, WebP, SVG, BMP, ICO, PSD, EXR, TGA
+- Camera RAW: DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2
+- Video: MP4, MOV, AVI, WMV, WebM, MKV, M4V
+- Audio: WAV, MP3, OGG/OGA, M4A, AAC, FLAC, Opus (waveform cover plus playback)
+- 3D: FBX, OBJ, GLTF, GLB, STL (FBX is converted to a viewable GLB)
+- Text: TXT, Markdown, JSON, CSV, XML, YAML, and common source/config formats
 
-![Masonry canvas, sidebar, and Inspector](../assets/ui/asset-inspector.png)
+Serpent copies managed files into the library and assigns a stable asset ID. Name or content duplicates open a conflict dialog. Thumbnails, technical metadata, and eligible AI analysis are generated in the background, so you can keep browsing immediately.
 
-After selecting an asset, the Inspector stays visible with metadata and editing controls for the current selection.
+## Browse and organize
 
-## Search
+- Sidebar: All assets, Trash, folders, collections, and smart collections. Folders and collections can include descendants; a collection is a many-to-many relationship, so an asset may belong to several collections.
+- Canvas: tile, masonry, and folder/collection cards. Resizing sidebars or card size reflows the layout while preserving the approximate scroll position.
+- Toolbar: search, filters, sorting, view, and card fields. In non-grid pages, irrelevant view controls are hidden.
+- Inspector: file information, tags, rating, favorite, description, source URL, author, technical metadata, color space, and AI content.
 
-The search box supports keyword search across: file name, tags, description, source URL, author, folder path, metadata. Click `?` next to the box for syntax. Search combines with format, size, rating and tag filters.
+Click to select and double-click to open the viewer. Drag on empty canvas space to marquee-select; use `⌘` on macOS or `Ctrl` on Windows while clicking to add to a selection. `Tab` moves focus between assets; `Shift` enables range selection where supported. Folders, collections, and smart collections support context-menu actions, inline `F2` rename, and `Delete`; deleting a non-empty container confirms first, and deleting a collection never deletes its assets.
 
-![Filter and sort panel](../assets/ui/filter-panel.png)
+![Library, Inspector, filters, and AI overview](../assets/ui/Serpent-Preview.png)
 
-## Tags and collections
+## Viewer
 
-- Tags: add from the Inspector or context menu; manage them in Tag management
-- Collections: manual collections (drag assets in); smart collections aggregate by search criteria and update automatically
+Double-click an asset to open the viewer. Images, SVG, RAW, PSD, TIFF, TGA, and EXR use their decoder or a generated derivative; SVG is rendered from its vector source in the viewer, not treated as the thumbnail. Videos loop by default and may use a Serpent-generated compatible proxy. Audio shows a waveform and playback controls. 3D models use the dedicated model viewer.
 
-## Inspector
+The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and rotate/horizontal/vertical mirror transforms for images and video. For formats other than PNG/JPEG, Serpent uses a detected color space when available and lets you choose among supported spaces. EXR can expose multiple planes/parts when present; this is not a professional channel-grading tool.
 
-The right panel shows file info (name, size, dimensions, modified time, path), tags, rating, favorite, description, source link, author, technical info (format, codecs, color space) and AI analysis when available.
+![3D viewer and Inspector](../assets/ui/3D-inspector.png)
 
-## 3D viewer
+## Tags, collections, and smart collections
 
-Double-click a 3D model to open it.
+- Add tags from the Inspector or an asset context menu. The tag picker supports search, recent tags, and batch operations.
+- Collections are manually maintained relationships. Drag assets into a collection or use the **Add to collection** submenu; removing an asset from a collection only removes the relationship.
+- Smart collections save a search, filter, and sort definition and calculate results live.
 
-- Left-drag rotates, scroll zooms, middle-click dollies; right-drag rotates the HDRI light source (Ctrl+left-drag too)
-- Toolbar: HDRI environment presets (4 Poly Haven sets), light intensity, preview mode, display mode
-- FBX goes through the built-in conversion pipeline (ufbx → GLB) with PBR materials
+## Trash and deletion
 
-The viewer keeps the Inspector visible so you can move between previewing an asset and checking its metadata.
-
-![Asset viewer](../assets/ui/asset-viewer.png)
-
-## Trash
-
-Deleted assets go to Trash and stay for 30 days — restore or purge them there. Folders and collections behave similarly.
+Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
 
 ## Shortcuts
 
 | Action | macOS | Windows |
 | --- | --- | --- |
-| Open (viewer) | Enter | Enter |
+| Open viewer | Enter | Enter |
 | Open in external app | ⌘O | Ctrl+O |
-| Reveal in folder | ⌘⇧S | Ctrl+Shift+S |
+| Reveal in file manager | ⌘⇧S | Ctrl+Shift+S |
 | Focus search | ⌘F | Ctrl+F |
 | Rename | F2 | F2 |
-| Move to trash | ⌘⌫ | Delete |
+| Move to Trash | ⌘⌫ | Delete |
 | Delete from disk | ⌥⌘Delete | Shift+Delete |
 | Copy / Paste | ⌘C / ⌘V | Ctrl+C / Ctrl+V |
+| Fit viewer | Numpad `.` | Numpad `.` |
+
+See [Search and filters](search-and-filters.en.md) for query examples and [AI analysis](ai.en.md) for AI setup and jobs.

@@ -10,6 +10,7 @@
 - [构建与打包](build-packaging.md)——package / make / 发布流水线 / 签名
 - [架构](architecture.md)——进程模型、目录结构、关键设计
 - [测试](testing.md)——测试体系与运行方式
+- [分支与开发工作流](workflow.md)——`main`/`dev` 定位、Beads 工单、文档记录、验收和交接经验
 
 其他软件文档：
 

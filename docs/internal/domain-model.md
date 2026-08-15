@@ -228,7 +228,7 @@ AssetMetadata
 
 `author`（Serpent-7x0）是用户可编辑的创作者/作者字段，与 `source_page_url` 共用清空语义（保存空字符串即清空为 `null`）。图片首次生成缩略图时，若 `author` 为空，Worker 会尝试从文件的 EXIF/IPTC/XMP 元数据中提取创作者信息（优先级：XMP `dc:creator` > IPTC By-line/Creator > EXIF `Artist`）并回填，但不覆盖用户已填写或此前已提取过的非空值；这是尽力而为的增强，提取失败或没有相关字段时保持为空，不阻塞缩略图生成。视频等不支持 EXIF 的格式不做自动提取。
 
-AI 生成的单值或结构化内容单独保存：
+AI 描述和评分等单值内容单独保存；AI 标签通过独立的 `AIAssetTag` 关系保存：
 
 ```text
 AIContent

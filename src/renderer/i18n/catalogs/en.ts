@@ -237,7 +237,7 @@ export const en = {
     searchLibrary: "Search library",
     searchPlaceholder: "Search",
     searchSyntax: "Search syntax",
-    searchSyntaxHint: "Advanced search:\n- Use **spaces** to filter by several keywords; every keyword must match\n- Use **|** to search alternatives; either keyword may match\n- Use tag: to search tags and name: to search filenames",
+    searchSyntaxHint: "Advanced search:\n- Use **spaces** for AND and **|** for alternative OR groups\n- Prefix a term with **-** to exclude it; use double quotes to keep spaces and | in a phrase\n- Field aliases: name/filename, tag/tags, desc/description, source/url/link/source_url, author, path/folder/folder_path, meta/metadata/metadata_text\n- Example: name:\"hero concept\" -tag:sketch | author:Jane",
     searchHint: "Example: name:\"hero concept\" -tag:sketch | author:Jane",
     clearSearch: "Clear search",
     searchingFor: "Searching: {query}",
