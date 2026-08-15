@@ -524,4 +524,37 @@ describe('MCP plan auto-approval (Serpent-8b5b.8 regression: asset_trash/file_im
     expect(confirmCalls).toBe(1);
     expect(proof).toBeTruthy();
   });
+
+  it('reuses the prior user confirmation on retry for the same execution when plan summary is unchanged', async () => {
+    const worker = new RecordingWorker(plannedResult);
+    let confirmCalls = 0;
+    const handler = createDesktopAutomationFilePlanApprovalHandler({
+      workerClient: worker,
+      confirm: async () => {
+        confirmCalls += 1;
+        return true;
+      },
+    });
+
+    const firstProof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-retry-1',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newBaseName: 'renamed' },
+      source: 'desktop-console',
+    });
+    expect(confirmCalls).toBe(1);
+    expect(firstProof).toBeTruthy();
+
+    const secondProof = await handler.prepareAndApprove({
+      commandId: 'asset.rename-file',
+      executionId: 'execution-retry-1',
+      libraryId: 'library-1',
+      commandInput: { assetId: 'asset-1', newBaseName: 'renamed' },
+      source: 'desktop-console',
+    });
+    // Should NOT have prompted the user a second time.
+    expect(confirmCalls).toBe(1);
+    expect(secondProof).toBeTruthy();
+  });
 });

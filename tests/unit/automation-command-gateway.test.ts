@@ -2459,4 +2459,47 @@ describe('file.import VERSION_CONFLICT retry negative paths (Serpent-xdt8)', () 
     expect(result).toMatchObject({ ok: false });
     expect(requestCount).toBe(1);
   });
+
+  it('re-plans once and retries when asset.content.replace-batch hits transient VERSION_CONFLICT', async () => {
+    const plan = {
+      planHash: 'c'.repeat(64),
+      expectedChangeSequence: 0,
+      assetStates: [{ assetId: 'asset-1', stateToken: 's'.repeat(64) }],
+    };
+    const replaceCompletion = {
+      operationId: '00000000-0000-4000-8000-000000000099',
+      items: [{ assetId: 'asset-1', revisionId: 'revision-new', byteSize: 1024 }],
+    };
+    const calls: Array<WorkerResult> = [];
+    const worker = {
+      request: async (): Promise<WorkerResult> => {
+        calls.push({ ok: true, type: 'asset.content.batch-replaced', operationId: replaceCompletion.operationId, items: replaceCompletion.items });
+        return calls.length === 1
+          ? { ok: false, error: { code: 'VERSION_CONFLICT', message: 'Stale plan sequence.' } }
+          : { ok: true, type: 'asset.content.batch-replaced', operationId: replaceCompletion.operationId, items: replaceCompletion.items };
+      },
+    } satisfies AutomationWorkerClient;
+    const planApprovals: string[] = [];
+    const commandGateway = createAutomationCommandGateway(worker, resolver({
+      grantedCapabilities: [...allReadCapabilities, 'content.write'],
+    }), {
+      filePlanApprovalHandler: {
+        prepareAndApprove: async () => {
+          planApprovals.push('approve');
+          return plan;
+        },
+      },
+    });
+
+    const result = await commandGateway.execute(request('asset.content.replace-batch', {
+      items: [{
+        assetId: 'asset-1',
+        stagingToken: '00000000-0000-4000-8000-000000000001',
+        expectedRevisionId: 'revision-old',
+      }],
+    }));
+    expect(result).toMatchObject({ ok: true });
+    expect(planApprovals).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
 });
