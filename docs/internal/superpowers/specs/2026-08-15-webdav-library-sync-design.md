@@ -229,17 +229,17 @@ Library Worker（SyncEngine — 同步的唯一所有者，与库数据同进程
 
 | 需求条目 | 验收标准 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- | --- |
-| WebDAV 连接与认证 | HTTPS 强制 + 明文警告；Basic/Digest 自动协商；应用专用密码可用；401/403/404/507/超时给出可读错误；凭据入系统凭据存储且不出现在日志/库文件 | 待填 | 待填 | 待填（Nextcloud/群晖/Apache 至少两种服务端实测） |
-| 单远端根多库 | 一个 WebDAV 根承载多个库（`<根>/<库名>/` 各自独立同步）；库名安全化（非法字符/保留名替换、首尾修剪、空名兜底），displayName 存 manifest；库重命名远端 MOVE 迁移，失败回滚提示；同名不同库（libraryId 不一致）明确报错不自动写 | 待填 | 待填 | 待填 |
-| 能力探测 | 认证方式/递归/ETag/配额/大小限制探测结果可见；不支持递归的服务端分层遍历可用 | 待填 | 待填 | 待填 |
-| 首次同步 | 三向预览（新增/更新/删除/冲突）+ 确认后执行；新设备全量下载后库可完整浏览（含缩略图重建） | 待填 | 待填 | 待填 |
-| 文件级增量同步 | 不同资产同时改互不干扰；上传/下载/重命名/移动正确传播；派生文件不上传 | 待填 | 待填 | 待填 |
-| 同资产冲突 | 双侧修改 → LWW + 冲突副本（命名 `name (conflict-…)`）+ 通知；绝不静默覆盖 | 待填 | 待填 | 待填 |
-| 删除传播 | 墓碑传播；他端进回收站可恢复；清空回收站后他端硬删；空目录不误判全删 | 待填 | 待填 | 待填 |
-| 传输 Job | 暂停/取消/重试；跨重启状态恢复；失败不上报成功；大文件单独排队 | 待填 | 待填 | 待填 |
-| 同步 UI | 设置页配置/测试连接/历史；顶栏角标（进度/冲突/失败）；首次预览对话框；冲突处理入口；中英文 | 待填 | 待填 | 待填（Computer Use） |
-| Story 1 端到端 | 两台设备（Win+macOS）双向同步后库内容一致、缩略图可用 | 待填 | 待填 | 待填（真机双设备） |
-| Story 2 端到端 | 三台以上设备共享参考库，文件级并发修改收敛一致，冲突副本正确 | 待填 | 待填 | 待填（真机多设备） |
+| WebDAV 连接与认证 | HTTPS 强制 + 明文警告；Basic/Digest 自动协商；应用专用密码可用；401/403/404/507/超时给出可读错误；凭据入系统凭据存储且不出现在日志/库文件 | `src/worker/sync/webdav-driver.ts`（Basic/Digest、错误映射、请求级硬超时）；凭据经 Main 内存转发（系统凭据存储列为后续项） | `tests/worker/webdav-driver.test.ts`（Basic/Digest/错误映射/连接失败 8 用例） | 真实端点实测：Basic dev 凭据 ✓、405/401/慢响应超时路径 ✓；Nextcloud/群晖/Apache 待测 |
+| 单远端根多库 | 一个 WebDAV 根承载多个库（`<根>/<库名>/` 各自独立同步）；库名安全化（非法字符/保留名替换、首尾修剪、空名兜底），displayName 存 manifest；库重命名远端 MOVE 迁移，失败回滚提示；同名不同库（libraryId 不一致）明确报错不自动写 | `src/shared/sync-paths.ts` sanitize + `src/worker/sync/sync-engine.ts` 库目录 | `tests/unit/sync-directory-name.test.ts`（6 用例）；libraryId 撞名校验在 `manifest.ts` parse | 真实端点实测：中文库名目录创建/读写 ✓；库重命名 MOVE 与撞名 UI 为后续项 |
+| 能力探测 | 认证方式/递归/ETag/配额/大小限制探测结果可见；不支持递归的服务端分层遍历可用 | `webdav-driver.ts` probe()（短超时递归探测、supportsContentTransfer、ETag/MOVE 实测） | driver 测试能力矩阵（7 用例） | 真实端点全能力矩阵 ✓（basic/content/etag/move/lock/recursive） |
+| 首次同步 | 三向预览（新增/更新/删除/冲突）+ 确认后执行；新设备全量下载后库可完整浏览（含缩略图重建） | `sync-engine.ts` previewSync（零写入）/syncOnce | `tests/worker/sync-engine.test.ts`（预览零写入、新设备下载、无内容传输服务器拒绝） | 真实双设备 E2E：A 上传 2 → B 下载 2（`webdav-sync-e2e-manual.test.ts`） |
+| 文件级增量同步 | 不同资产同时改互不干扰；上传/下载/重命名/移动正确传播；派生文件不上传 | `sync-plan.ts`（条目级决策）+ `sync-runner.ts`（库目录前缀、父目录确保） | plan 8 / runner 6 / engine 6 用例（单侧变更、双侧一致无动作、新资产上传） | 真实 E2E：B 改 1 文件 → A 收到更新 ✓；派生文件不上传由引擎结构保证 |
+| 同资产冲突 | 双侧修改 → LWW + 冲突副本（命名 `name (conflict-…)`）+ 通知；绝不静默覆盖 | `sync-plan.ts` conflict 裁决 + `sync-runner.ts` 双端冲突副本 + manifest 登记收敛 | runner/engine 冲突用例（败者双端保存、conflict 命名） | 待人工双设备冲突场景复验 |
+| 删除传播 | 墓碑传播；他端进回收站可恢复；清空回收站后他端硬删；空目录不误判全删 | `sync-runner.ts` tombstone/delete-local + `library-service.ts` applySyncRecycle | runner 墓碑用例 + `sync-library-integration.test.ts`（回收站可恢复、快照排除已删） | 待人工双设备删除场景复验 |
+| 传输 Job | 暂停/取消/重试；跨重启状态恢复；失败不上报成功；大文件单独排队 | 重试（指数退避 3 次，`sync-runner.ts` withRetry）+ `sync_sessions` 会话记录（`library-service.ts`）；暂停/取消/跨重启队列列为后续项 | driver retryable 错误映射用例 | 待人工弱网场景复验 |
+| 同步 UI | 设置页配置/测试连接/历史；顶栏角标（进度/冲突/失败）；首次预览对话框；冲突处理入口；中英文 | `LibrarySettingsDialog.tsx` 同步页（URL/凭据/不安全 TLS/探测/预览/执行/能力与结果摘要，zh/en） | 组件由人工验收覆盖 | 待人类验收（顶栏角标/同步历史/冲突入口列为后续项） |
+| Story 1 端到端 | 两台设备（Win+macOS）双向同步后库内容一致、缩略图可用 | 全链路（协议→Main deviceId→Worker→引擎→库） | `webdav-sync-e2e-manual.test.ts`（真实双设备往返，A→B→B 改→A 收） | Windows 实机 ✓（本机）；macOS 待验证 |
+| Story 2 端到端 | 三台以上设备共享参考库，文件级并发修改收敛一致，冲突副本正确 | 文件级并发由 plan/runner 条目级保证 | 条目级并发用例 | 待人工多设备复验 |
 
 ## 12. 开放问题
 
