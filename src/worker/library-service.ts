@@ -31782,6 +31782,16 @@ export class LibraryService {
       rmSync(libraryPath, { force: true, recursive: true });
     } catch (error) {
       this.diagnose('library.delete-from-disk', error, { libraryPath });
+      // Serpent-qgm1: the library was closed before rm — if the deletion
+      // fails the user must not be left with a half-open state. Reopen so the
+      // library stays fully usable and the renderer can keep browsing.
+      try {
+        this.openLibrary(libraryPath);
+      } catch (reopenError) {
+        this.diagnose('library.reopen-after-delete-failure', reopenError, {
+          libraryPath,
+        });
+      }
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
         reason: publicReasonFromError(error),
         cause: error,
@@ -31789,6 +31799,13 @@ export class LibraryService {
     }
 
     if (existsSync(libraryPath)) {
+      try {
+        this.openLibrary(libraryPath);
+      } catch (reopenError) {
+        this.diagnose('library.reopen-after-delete-failure', reopenError, {
+          libraryPath,
+        });
+      }
       throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', {
         reason: 'IO_ERROR',
       });
