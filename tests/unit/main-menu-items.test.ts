@@ -9,6 +9,8 @@ function createActions(): MainMenuActions {
   return {
     createLibrary: vi.fn(),
     openLibrary: vi.fn(),
+    openEagleLibrary: vi.fn(),
+    openBillfishLibrary: vi.fn(),
     closeLibrary: vi.fn(),
     removeLibrary: vi.fn(),
     deleteLibraryFromDisk: vi.fn(),
@@ -16,6 +18,8 @@ function createActions(): MainMenuActions {
     importFolder: vi.fn(),
     importLinkedFolder: vi.fn(),
     importLibrary: vi.fn(),
+    importEagleLibrary: vi.fn(),
+    importBillfishLibrary: vi.fn(),
     exportLibrary: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn(),
@@ -123,14 +127,38 @@ describe("main-menu-items (Serpent-bnah)", () => {
     );
   });
 
-  it("places external library importers under the Library menu", () => {
+  it("keeps the Library menu aligned with the library switcher", () => {
     const { sections } = build();
     const file = sections.find((section) => section.id === "file");
     const library = sections.find((section) => section.id === "library");
     expect(file?.items?.some((item) => item.id === "library.import-eagle")).toBe(false);
+    expect(library?.items?.map((item) => item.id)).toEqual([
+      "library.create",
+      "library.open",
+      "library.open-external",
+      "library.import",
+      "library.import-external",
+      "library.remove",
+      "library.delete-from-disk",
+      "library.settings",
+    ]);
+    const openExternal = library?.items?.find((item) => item.id === "library.open-external");
+    expect(openExternal?.submenu?.map((item) => item.id)).toEqual([
+      "library.open-eagle",
+      "library.open-billfish",
+    ]);
+    expect(openExternal?.submenu?.[0]?.label).toBe("打开 Eagle 资源库…");
+    expect(openExternal?.submenu?.[1]?.disabled).toBe(true);
     const external = library?.items?.find((item) => item.id === "library.import-external");
     expect(external?.label).toBe("导入外部资源库");
-    expect(external?.submenu?.map((item) => item.id)).toEqual(["library.import-eagle"]);
-    expect(external?.submenu?.[0]?.label).toBe("导入 Eagle 资源库");
+    expect(external?.submenu?.map((item) => item.id)).toEqual([
+      "library.import-eagle",
+      "library.import-billfish",
+    ]);
+    expect(external?.submenu?.[0]?.label).toBe("导入 Eagle 资源库…");
+    expect(external?.submenu?.[1]?.disabled).toBe(true);
+    expect(library?.items?.find((item) => item.id === "library.delete-from-disk")?.danger).toBe(
+      true,
+    );
   });
 });

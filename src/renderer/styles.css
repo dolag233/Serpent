@@ -1279,7 +1279,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 }
 
 .library-switcher-submenu-wrap {
-  position: relative;
+  position: static;
 }
 
 .library-switcher-submenu-trigger {
@@ -1287,25 +1287,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   cursor: pointer;
 }
 
-.library-switcher-submenu-trigger .icon {
-  flex: 0 0 auto;
-  transform: rotate(90deg);
-  color: var(--tertiary);
-}
-
 .library-switcher-submenu {
-  position: absolute;
-  top: -5px;
-  left: calc(100% + 4px);
-  z-index: var(--ui-layer-menu);
-  display: grid;
-  min-width: 190px;
-  padding: 5px;
-  border: 1px solid var(--menu-surface-border);
-  border-radius: var(--menu-surface-radius);
-  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
-  box-shadow: var(--menu-surface-shadow);
-  backdrop-filter: blur(14px) saturate(120%);
+  /* The secondary surface deliberately shares the main-menu implementation.
+     Keeping this hook lets LibrarySwitcher tests target it without creating a
+     second visual menu system. */
 }
 
 .library-switcher-menu:not(.is-keyboard-navigation) .library-switcher-item:hover:not(:disabled) {
@@ -1333,6 +1318,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .library-switcher-item.is-danger:hover:not(:disabled),
 .library-switcher-menu.is-keyboard-navigation
   .library-switcher-item.is-danger:focus-visible:not(:disabled) {
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
+}
+
+/* The normal library-menu hover selector includes the menu state class, so
+   repeat that scope here to keep destructive text red in pointer navigation. */
+.library-switcher-menu:not(.is-keyboard-navigation)
+  .library-switcher-item.is-danger:hover:not(:disabled) {
   background: var(--menu-danger-hover-background);
   color: var(--menu-danger-color);
 }
@@ -3784,6 +3777,15 @@ body.serpent-modal-open .app-shell {
 
 .context-menu-item.is-danger:hover,
 .context-menu.is-keyboard-navigation .context-menu-item.is-danger:focus {
+  background: var(--menu-danger-hover-background);
+  color: var(--menu-danger-color);
+}
+
+/* The normal pointer-hover selector is scoped by the menu state class, so it
+   otherwise wins on specificity and turns destructive rows back to normal
+   text. Keep every danger-marked asset/folder/collection action red on hover. */
+.context-menu:not(.is-keyboard-navigation)
+  .context-menu-item.is-danger:hover:not(:disabled) {
   background: var(--menu-danger-hover-background);
   color: var(--menu-danger-color);
 }

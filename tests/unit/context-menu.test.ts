@@ -81,4 +81,37 @@ describe("ContextMenu focus lifecycle", () => {
 
     expect(document.activeElement).toBe(items[1]);
   });
+
+  it("marks destructive context-menu actions for the shared danger style", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(
+            ContextMenuProvider,
+            null,
+            createElement(ContextMenu, {
+              ariaLabel: "Asset actions",
+              position: { x: 20, y: 20 },
+              children: createElement(ContextMenuItem, {
+                danger: true,
+                label: "Delete permanently",
+                onAction: () => undefined,
+              }),
+            }),
+          ),
+        ),
+      );
+    });
+
+    const item = container.querySelector<HTMLButtonElement>(
+      '[role="menuitem"]',
+    );
+    expect(item?.classList.contains("is-danger")).toBe(true);
+  });
 });

@@ -8232,6 +8232,7 @@ function AppInner() {
         setDialog("library");
       },
       openLibrary: () => void runLibraryOperation("open"),
+      openEagleLibrary: () => void openEagleLibrary(),
       closeLibrary: () => void closeLibrary(),
       removeLibrary: () => void removeLibrary(),
       deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
@@ -8418,6 +8419,7 @@ function AppInner() {
               }}
               onExportLibrary={() => setExportDialogOpen(true)}
               onImportFolder={() => void importAssets("folder")}
+              onImportEagleLibrary={() => void importEagleLibrary()}
               onImportLibrary={() => setImportLibraryChooserOpen(true)}
               onImportLinkedFolder={() => void importFolderAsLinked()}
               onMenuOpen={() => void refreshRecentLibraries()}
