@@ -5,6 +5,8 @@ import type { SerpentLibraryApi } from "../../src/shared/library-api";
 import {
   fetchBrowseScopeAssetIdsGuarded,
   fetchBrowseScopeIds,
+  isDiscardedBrowseWindowPage,
+  isIgnorableBrowseWindowFailure,
   registerBrowseSearchPage,
   registerBrowseSmartCollectionPage,
   type BrowsePageDefinition,
@@ -231,5 +233,27 @@ describe("registerBrowseSearchPage / registerBrowseSmartCollectionPage (Serpent-
       },
       { items: [asset("s1")], total: 1, offset: 0 },
     );
+  });
+});
+
+describe("discarded browse-window pages (Serpent-87pd)", () => {
+  it("ignores an empty total-0 response that would otherwise shrink a known scope", () => {
+    expect(
+      isDiscardedBrowseWindowPage({ items: [], total: 0 }, 500, 7000),
+    ).toBe(true);
+    expect(
+      isDiscardedBrowseWindowPage({ items: [], total: 0 }, 0, 7000),
+    ).toBe(true);
+    expect(
+      isDiscardedBrowseWindowPage({ items: [], total: 0 }, 0, 0),
+    ).toBe(false);
+    expect(
+      isDiscardedBrowseWindowPage({ items: [asset("a")], total: 0 }, 100, 7000),
+    ).toBe(false);
+  });
+
+  it("does not treat a cancelled window as a load-more failure", () => {
+    expect(isIgnorableBrowseWindowFailure("CANCELLED")).toBe(true);
+    expect(isIgnorableBrowseWindowFailure("FOLDER_NOT_FOUND")).toBe(false);
   });
 });

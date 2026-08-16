@@ -17,7 +17,7 @@ describe("LibrarySwitcher external library action", () => {
     container = undefined;
   });
 
-  it("opens the local library picker directly from the library-name menu", async () => {
+  it("opens the open-library chooser from the library-name menu", async () => {
     const onOpenLibrary = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
@@ -56,75 +56,7 @@ describe("LibrarySwitcher external library action", () => {
     expect(onOpenLibrary).toHaveBeenCalledTimes(1);
   });
 
-  it("exposes Eagle and Billfish open actions as a second-level menu", async () => {
-    const onOpenEagleLibrary = vi.fn();
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-
-    await act(async () => {
-      root?.render(
-        createElement(
-          LocaleProvider,
-          null,
-          createElement(LibrarySwitcher, {
-            libraryName: "Current",
-            libraryOpen: true,
-            onCreateLibrary: vi.fn(),
-            onOpenLibrary: vi.fn(),
-            onOpenEagleLibrary,
-            onCloseLibrary: vi.fn(),
-          }),
-        ),
-      );
-    });
-
-    await act(async () => {
-      container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
-    });
-    const external = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="menuitem"]',
-    )].find((button) => {
-      const text = button.textContent ?? "";
-      return text.includes("打开外部资源库") || text.includes("Open external library");
-    });
-    expect(external).toBeDefined();
-
-    await act(async () => {
-      external?.click();
-    });
-    expect(container.querySelector(".library-switcher-submenu")).toBeNull();
-
-    await act(async () => {
-      external?.dispatchEvent(
-        new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }),
-      );
-    });
-    const billfish = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="menuitem"]',
-    )].find((button) => {
-      const text = button.textContent ?? "";
-      return text.includes("Billfish");
-    });
-    expect(billfish).toBeDefined();
-    expect(billfish?.disabled).toBe(true);
-
-    const eagle = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="menuitem"]',
-    )].find((button) => {
-      const text = button.textContent ?? "";
-      return text.includes("打开 Eagle") || text.includes("Open Eagle");
-    });
-    expect(eagle).toBeDefined();
-
-    await act(async () => {
-      eagle?.click();
-    });
-    expect(onOpenEagleLibrary).toHaveBeenCalledTimes(1);
-  });
-
-  it("exposes Eagle and Billfish import actions on hover", async () => {
-    const onImportEagleLibrary = vi.fn();
+  it("does not keep separate open-external or import-external menu rows", async () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -139,7 +71,7 @@ describe("LibrarySwitcher external library action", () => {
             libraryOpen: true,
             onCreateLibrary: vi.fn(),
             onOpenLibrary: vi.fn(),
-            onImportEagleLibrary,
+            onImportLibrary: vi.fn(),
             onCloseLibrary: vi.fn(),
           }),
         ),
@@ -149,35 +81,13 @@ describe("LibrarySwitcher external library action", () => {
     await act(async () => {
       container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
     });
-    const importExternal = [...container.querySelectorAll<HTMLButtonElement>(
+    const labels = [...container.querySelectorAll<HTMLButtonElement>(
       '[role="menuitem"]',
-    )].find((button) => button.textContent?.includes("导入外部资源库"));
-    expect(importExternal).toBeDefined();
-
-    await act(async () => {
-      importExternal?.click();
-    });
-    expect(container.querySelector(".library-switcher-submenu")).toBeNull();
-
-    await act(async () => {
-      importExternal?.dispatchEvent(
-        new MouseEvent("mouseover", { bubbles: true, relatedTarget: null }),
-      );
-    });
-    const importEagle = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="menuitem"]',
-    )].find((button) => button.textContent?.includes("导入 Eagle"));
-    const importBillfish = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="menuitem"]',
-    )].find((button) => button.textContent?.includes("导入 Billfish"));
-    expect(importEagle).toBeDefined();
-    expect(importBillfish).toBeDefined();
-    expect(importBillfish?.disabled).toBe(true);
-
-    await act(async () => {
-      importEagle?.click();
-    });
-    expect(onImportEagleLibrary).toHaveBeenCalledTimes(1);
+    )].map((button) => button.textContent ?? "");
+    expect(labels.some((text) => text.includes("打开外部资源库"))).toBe(false);
+    expect(labels.some((text) => text.includes("导入外部资源库"))).toBe(false);
+    expect(labels.some((text) => text.includes("Eagle"))).toBe(false);
+    expect(labels.some((text) => text.includes("Billfish"))).toBe(false);
   });
 
   it("keeps the requested library action order and import hint", async () => {
@@ -195,8 +105,6 @@ describe("LibrarySwitcher external library action", () => {
             libraryOpen: true,
             onCreateLibrary: vi.fn(),
             onOpenLibrary: vi.fn(),
-            onOpenEagleLibrary: vi.fn(),
-            onImportEagleLibrary: vi.fn(),
             onImportLibrary: vi.fn(),
             onRemoveLibrary: vi.fn(),
             onDeleteLibraryFromDisk: vi.fn(),
@@ -213,18 +121,13 @@ describe("LibrarySwitcher external library action", () => {
 
     const labels = [
       ...container.querySelectorAll<HTMLButtonElement>(
-        ".library-switcher-menu > button.library-switcher-item, " +
-          ".library-switcher-menu > .library-switcher-submenu-wrap > button.library-switcher-item",
+        ".library-switcher-menu button.library-switcher-item:not(.library-switcher-recent-open)",
       ),
-    ].map((button) =>
-      button.textContent?.trim().replace(/›$/, ""),
-    );
+    ].map((button) => button.textContent?.trim());
     expect(labels).toEqual([
       "新建资源库…",
       "打开资源库…",
-      "打开外部资源库…",
       "导入资源库",
-      "导入外部资源库",
       "移除资源库",
       "从硬盘删除资源库…",
       "重命名资源库",

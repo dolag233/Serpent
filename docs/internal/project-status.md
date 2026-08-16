@@ -3,6 +3,14 @@
 > 更新时间：2026-08-16
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-16 `Serpent-pte2`**：资源库菜单改为「打开资源库」「导入资源库」各进一块选择面板（Serpent + 可展开的 Eagle/Billfish），去掉单独的外部库菜单行；菜单「新建资源库」只创建。无库起始创建面板保持打开/导入 CTA。用户确认 LIB-014 / SHELL-004 通过。
+
+- **2026-08-16 `Serpent-ot5r` / EXTLIB-002**：打开/导入面板 Billfish 入口取消置灰，旅程与 Eagle 相同。用户确认通过。
+
+- **2026-08-16 `Serpent-87pd` / PERF-002 人类验收不通过**：COUNT 占位卡与滑动/重排频繁触发使体验更差。已关单。后继 P1 `Serpent-sa65`：1 万资产库、第四档卡片大小、scroll bar 随机拖到新预览位置须在 **0.5 秒内**完成可见预览图解码；禁止空占位卡；须有真实 Electron 解码 benchmark。
+
+- **2026-08-16 `Serpent-e0dw`**：绘画资源库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
+
 - **2026-08-16 `Serpent-e0dw`**：绘画资源库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
 
 - **2026-08-16 `Serpent-dw9a` / `Serpent-768x` / `Serpent-cljb` 收口中**：

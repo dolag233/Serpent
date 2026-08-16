@@ -218,6 +218,23 @@ export const eagleImportResultSchema = z.strictObject({
 
 export type EagleImportResult = z.infer<typeof eagleImportResultSchema>;
 
+/** Result of importing a Billfish library folder into the current library. */
+export const billfishImportResultSchema = z.strictObject({
+  sourceDisplayName: safeDisplayName,
+  importedCount: z.number().int().nonnegative(),
+  fileCount: z.number().int().nonnegative(),
+  assetCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  replacedCount: z.number().int().nonnegative(),
+  collectionCount: z.number().int().nonnegative(),
+  tagCount: z.number().int().nonnegative(),
+  invalidItemCount: z.number().int().nonnegative(),
+  metadataCount: z.number().int().nonnegative(),
+  assets: z.array(assetSummarySchema).max(300),
+});
+
+export type BillfishImportResult = z.infer<typeof billfishImportResultSchema>;
+
 export const imageSequenceImportCandidateSchema = z.strictObject({
   displayName: safeDisplayName,
   extension: nonBlankString.max(16),
@@ -1440,6 +1457,11 @@ const assetOperationSuccessSchemas = [
     type: z.literal('asset.import-eagle.completed'),
     result: eagleImportResultSchema,
   }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.import-billfish.completed'),
+    result: billfishImportResultSchema,
+  }),
 ] as const;
 
 const workerSuccessResultSchema = z.discriminatedUnion('type', [
@@ -1503,6 +1525,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('library.eagle-inspected'),
+    displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.billfish-inspected'),
     displayName: nonBlankString,
   }),
   z.strictObject({
@@ -1908,6 +1935,15 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.billfish-inspected'),
+    displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.billfish-inspect-cancelled'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.recovery-report.requested'),
     libraryId: nonBlankString,
   }),
@@ -2171,6 +2207,7 @@ const libraryLifecycleOperationSchema = z.enum([
   'open',
   'import',
   'open-eagle',
+  'open-billfish',
 ]);
 
 export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [

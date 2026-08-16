@@ -9087,6 +9087,19 @@ select.ai-config-input.ai-config-languages {
   transition: box-shadow 120ms ease;
 }
 
+.asset-card.is-browse-placeholder {
+  pointer-events: none;
+  cursor: default;
+}
+
+.asset-card.is-browse-placeholder:hover {
+  background: transparent;
+}
+
+.asset-card.is-browse-placeholder .asset-preview {
+  background: var(--raised-2);
+}
+
 /* Hover only lifts the surface — no border flash, so dense grids stay calm
    while the pointer scans across cards. */
 .asset-card:hover {

@@ -588,12 +588,11 @@ function scheduleThumbnailScene(
     // a freshly imported library otherwise waits behind hundreds of priority-300
     // mutation jobs. visible is the highest tier so the user always sees the
     // assets in front of them appear first; the import wave fills in behind.
-    // Serpent-x9xu: the visible wave covers the WHOLE current browse/search
-    // page (BROWSE_PAGE_SIZE = 300, Serpent-ws4k), not just the first 100
-    // results — otherwise assets 101-300 of the page the user is on wait
-    // behind the path-order backfill. Unbrowsed assets are never included
-    // (callers pass only the returned page ids), so visible slots stay
-    // reserved for what the user is actually looking at.
+    // Serpent-x9xu / Serpent-87pd: the visible wave covers the current
+    // browse/search window (BROWSE_PAGE_SIZE = 100), not a stale larger
+    // page. Unbrowsed assets are never included (callers pass only the
+    // returned page ids), so visible slots stay reserved for what the
+    // user is actually looking at.
     visible: { limit: THUMBNAIL_VISIBLE_PAGE_SIZE, priority: 350, maxIds: THUMBNAIL_VISIBLE_PAGE_SIZE },
     linked: { limit: 50, priority: 250, maxIds: 50 },
     restore: { priority: 250, maxIds: 500 },
@@ -1103,6 +1102,24 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       }
       return { ok: true, type: 'library.opened', library };
     }
+    case 'library.inspect-billfish': {
+      const inspected = libraryService.inspectBillfishLibrary(
+        request.command.sourceRootPath,
+      );
+      return {
+        ok: true,
+        type: 'library.billfish-inspected',
+        displayName: inspected.displayName,
+      };
+    }
+    case 'library.open-billfish': {
+      const library = await libraryService.openBillfishLibrary(request.command);
+      if (!library.readOnly) {
+        scheduleThumbnailScene(library.libraryId, 'startup');
+        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      }
+      return { ok: true, type: 'library.opened', library };
+    }
     case 'library.close':
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -1512,6 +1529,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // requests remain the only paths that may encode a source later.
       const result = await libraryService.importEagleLibrary(request.command);
       return { ok: true, type: 'asset.import-eagle.completed', result };
+    }
+    case 'asset.import-billfish': {
+      const result = await libraryService.importBillfishLibrary(request.command);
+      return { ok: true, type: 'asset.import-billfish.completed', result };
     }
     case 'asset.import.resolve': {
       const completion = libraryService.resolveImport(request.command);

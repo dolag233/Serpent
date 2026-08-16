@@ -21,5 +21,6 @@ export function shouldApplyLibraryLifecycleEvent(input: {
 export function shouldDetachLibraryOnOpening(
   event: RendererLifecycleEvent,
 ): boolean {
-  return event.type === 'library.opening' && event.operation === 'open-eagle';
+  return event.type === 'library.opening'
+    && (event.operation === 'open-eagle' || event.operation === 'open-billfish');
 }

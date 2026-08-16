@@ -2,7 +2,6 @@ import {
   Fragment,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -44,17 +43,10 @@ export type LibrarySwitcherProps = {
   libraryName: string | null;
   disabled?: boolean;
   onCreateLibrary: () => void;
+  /** Opens the open-library chooser (existing Serpent + third-party). */
   onOpenLibrary: () => void;
   /** Opens a synced library from a WebDAV server (pulls + creates locally). */
   onOpenSyncLibrary?: () => void;
-  /** Opens an Eagle library as a converted, newly opened Serpent library. */
-  onOpenEagleLibrary?: () => void;
-  /** Reserved external-library entry; disabled until Billfish support lands. */
-  onOpenBillfishLibrary?: () => void;
-  /** Imports an Eagle library into the current library. */
-  onImportEagleLibrary?: () => void;
-  /** Reserved external-library import entry; disabled until Billfish support lands. */
-  onImportBillfishLibrary?: () => void;
   /** @deprecated Kept for callers while the library menu is consolidated. */
   onCloseLibrary: () => void;
   /** Soft remove: close + drop from recents; disk untouched (Serpent-ucx). */
@@ -79,7 +71,7 @@ export type LibrarySwitcherProps = {
   onImportFolder?: () => void;
   onImportLinkedFolder?: () => void;
   onExportLibrary?: () => void;
-  /** Opens second-level chooser (folder vs ZIP). Do not add a separate ZIP menu item. */
+  /** Opens the import-library chooser (folder/ZIP + third-party). */
   onImportLibrary?: () => void;
 };
 
@@ -93,10 +85,6 @@ export function LibrarySwitcher({
   onCreateLibrary,
   onOpenLibrary,
   onOpenSyncLibrary,
-  onOpenEagleLibrary,
-  onOpenBillfishLibrary,
-  onImportEagleLibrary,
-  onImportBillfishLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
   onRenameLibrary,
@@ -111,24 +99,14 @@ export function LibrarySwitcher({
 }: LibrarySwitcherProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
-  const [activeSubmenu, setActiveSubmenu] = useState<
-    "open-external" | "import-external" | null
-  >(null);
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const openExternalTriggerRef = useRef<HTMLButtonElement>(null);
-  const importExternalTriggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
-  const [submenuPosition, setSubmenuPosition] = useState({
-    left: 0,
-    top: 0,
-  });
   const label = libraryName ?? t("shell.chooseLibrary");
 
   function closeMenu(restoreTriggerFocus: boolean) {
     setOpen(false);
-    setActiveSubmenu(null);
     setKeyboardNav(false);
     if (restoreTriggerFocus) {
       requestAnimationFrame(() => triggerRef.current?.focus());
@@ -155,22 +133,6 @@ export function LibrarySwitcher({
     };
   }, [menuId, open]);
 
-  useLayoutEffect(() => {
-    if (!open || !activeSubmenu) return;
-    const root = rootRef.current;
-    const trigger =
-      activeSubmenu === "open-external"
-        ? openExternalTriggerRef.current
-        : importExternalTriggerRef.current;
-    if (!root || !trigger) return;
-    const rootRect = root.getBoundingClientRect();
-    const triggerRect = trigger.getBoundingClientRect();
-    setSubmenuPosition({
-      left: triggerRect.right - rootRect.left,
-      top: triggerRect.top - rootRect.top,
-    });
-  }, [activeSubmenu, open]);
-
   function runMenuAction(handler: () => void) {
     closeMenu(true);
     handler();
@@ -194,11 +156,7 @@ export function LibrarySwitcher({
   }
 
   return (
-    <div
-      className="library-switcher"
-      onMouseLeave={() => setActiveSubmenu(null)}
-      ref={rootRef}
-    >
+    <div className="library-switcher" ref={rootRef}>
       <button
         aria-controls={menuId}
         aria-expanded={open}
@@ -235,12 +193,7 @@ export function LibrarySwitcher({
           id={menuId}
           nodes={LIBRARY_MENU_SURFACE_NODES}
           onKeyDown={onMenuKeyDown}
-          onPointerMove={(event) => {
-            setKeyboardNav(false);
-            if (!(event.target as Element).closest(".library-switcher-submenu-wrap")) {
-              setActiveSubmenu(null);
-            }
-          }}
+          onPointerMove={() => setKeyboardNav(false)}
           renderNode={(node) => (
             <Fragment key={node.id}>
           <button
@@ -275,26 +228,6 @@ export function LibrarySwitcher({
               {t("shell.openSyncLibraryEllipsis")}
             </button>
           ) : null}
-          <div
-            className="library-switcher-submenu-wrap"
-            onFocus={() => setActiveSubmenu("open-external")}
-            onMouseEnter={() => setActiveSubmenu("open-external")}
-          >
-            <button
-              aria-expanded={activeSubmenu === "open-external"}
-              aria-haspopup="menu"
-              className="library-switcher-item library-switcher-submenu-trigger"
-              ref={openExternalTriggerRef}
-              role="menuitem"
-              tabIndex={-1}
-              type="button"
-            >
-              <span>{t("shell.openExternalLibraryEllipsis")}</span>
-              <span aria-hidden="true" className="main-menu-chevron">
-                ›
-              </span>
-            </button>
-          </div>
           <button
             className="library-switcher-item"
             data-hover-tip={t("toolbar.importLibraryHint")}
@@ -308,27 +241,6 @@ export function LibrarySwitcher({
           >
             {t("toolbar.importLibrary")}
           </button>
-          <div
-            className="library-switcher-submenu-wrap"
-            onFocus={() => setActiveSubmenu("import-external")}
-            onMouseEnter={() => setActiveSubmenu("import-external")}
-          >
-            <button
-              aria-expanded={activeSubmenu === "import-external"}
-              aria-haspopup="menu"
-              className="library-switcher-item library-switcher-submenu-trigger"
-              disabled={!libraryOpen || busy}
-              ref={importExternalTriggerRef}
-              role="menuitem"
-              tabIndex={-1}
-              type="button"
-            >
-              <span>{t("toolbar.importExternalLibrary")}</span>
-              <span aria-hidden="true" className="main-menu-chevron">
-                ›
-              </span>
-            </button>
-          </div>
           <button
             className="library-switcher-item"
             disabled={!libraryName || !onRemoveLibrary}
@@ -433,71 +345,6 @@ export function LibrarySwitcher({
             </Fragment>
           )}
         />
-      )}
-      {open && activeSubmenu && (
-        <div
-          aria-label={
-            activeSubmenu === "open-external"
-              ? t("shell.openExternalLibraryEllipsis")
-              : t("toolbar.importExternalLibrary")
-          }
-          className="main-menu-submenu library-switcher-submenu"
-          role="menu"
-          style={submenuPosition}
-        >
-          <button
-            className="main-menu-item"
-            disabled={
-              activeSubmenu === "open-external"
-                ? !onOpenEagleLibrary || busy
-                : !onImportEagleLibrary || !libraryOpen || busy
-            }
-            onClick={() => {
-              const handler =
-                activeSubmenu === "open-external"
-                  ? onOpenEagleLibrary
-                  : onImportEagleLibrary;
-              if (handler) runMenuAction(handler);
-            }}
-            role="menuitem"
-            tabIndex={-1}
-            type="button"
-          >
-            <span className="main-menu-item-label">
-              {t(
-                activeSubmenu === "open-external"
-                  ? "shell.openEagleLibraryEllipsis"
-                  : "shell.importEagleLibraryEllipsis",
-              )}
-            </span>
-          </button>
-          <button
-            className="main-menu-item"
-            disabled={
-              activeSubmenu === "open-external"
-                ? !onOpenBillfishLibrary || busy
-                : !onImportBillfishLibrary || !libraryOpen || busy
-            }
-            onClick={() => {
-              const handler =
-                activeSubmenu === "open-external"
-                  ? onOpenBillfishLibrary
-                  : onImportBillfishLibrary;
-              if (handler) runMenuAction(handler);
-            }}
-            role="menuitem"
-            tabIndex={-1}
-            type="button"
-          >
-            <span className="main-menu-item-label">
-              {t(
-                activeSubmenu === "open-external"
-                  ? "shell.openBillfishLibraryEllipsis"
-                  : "shell.importBillfishLibraryEllipsis",
-              )}
-            </span>
-          </button>
-        </div>
       )}
     </div>
   );

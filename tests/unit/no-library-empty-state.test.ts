@@ -18,6 +18,18 @@ describe("no-library open-existing affordances (Serpent-y0au / Serpent-kipk)", (
     expect(en.dialog.createLibrary.openExisting.toLowerCase()).toContain("open");
     expect(zhCN.dialog.createLibrary.existingSection.length).toBeGreaterThan(0);
     expect(en.dialog.createLibrary.existingSection.length).toBeGreaterThan(0);
+    expect(zhCN.dialog.openEagleLibrary.title).toContain("Eagle");
+    expect(en.dialog.openEagleLibrary.title.toLowerCase()).toContain("eagle");
+    expect(zhCN.dialog.openEagleLibrary.submit).toContain("保存");
+    expect(en.dialog.openEagleLibrary.submit.toLowerCase()).toContain("save");
+    expect(zhCN.progress.openingLibrary).toContain("打开");
+    expect(en.progress.openingLibrary.toLowerCase()).toContain("opening");
+    expect(zhCN.progress.cancelOpen).toContain("取消打开");
+    expect(en.progress.cancelOpen.toLowerCase()).toContain("cancel");
+    expect(zhCN.dialog.importLibraryChooser.external).toContain("外部");
+    expect(en.dialog.importLibraryChooser.external.toLowerCase()).toContain(
+      "external",
+    );
   });
 
   it("shows every recent entry on the no-library surface (no current path)", () => {

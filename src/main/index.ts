@@ -476,6 +476,7 @@ const pendingImportSources = new Map<string, string>();
 // Eagle source chosen and validated; Renderer never receives the path. Cleared
 // after destination is chosen, on inspect cancel, or when a new inspect starts.
 let pendingEagleOpenSourcePath: string | undefined;
+let pendingBillfishOpenSourcePath: string | undefined;
 
 // Pending import libraryId (importId -> libraryId), for auto-analyze after import.
 const pendingImportLibraries = new Map<string, string>();
@@ -1858,6 +1859,7 @@ async function commandFor(
       return { type: "library.recovery-report", libraryId: request.libraryId };
     case "library.inspect-eagle.request": {
       pendingEagleOpenSourcePath = undefined;
+      pendingBillfishOpenSourcePath = undefined;
       const sourceRootPath = await selectOpenDirectory(
         createNativeDialogHost(),
         "openEagleLibrary",
@@ -1867,8 +1869,23 @@ async function commandFor(
         ? { type: "library.inspect-eagle", sourceRootPath }
         : undefined;
     }
+    case "library.inspect-billfish.request": {
+      pendingBillfishOpenSourcePath = undefined;
+      pendingEagleOpenSourcePath = undefined;
+      const sourceRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "openBillfishLibrary",
+        process.env.SERPENT_E2E_OPEN_BILLFISH_LIBRARY,
+      );
+      return sourceRootPath
+        ? { type: "library.inspect-billfish", sourceRootPath }
+        : undefined;
+    }
     case "library.inspect-eagle.cancel.request":
       pendingEagleOpenSourcePath = undefined;
+      return undefined;
+    case "library.inspect-billfish.cancel.request":
+      pendingBillfishOpenSourcePath = undefined;
       return undefined;
     case "library.open-eagle.request": {
       const sourceRootPath = pendingEagleOpenSourcePath;
@@ -1882,6 +1899,24 @@ async function commandFor(
       return selectedParentPath
         ? {
             type: "library.open-eagle",
+            sourceRootPath,
+            selectedParentPath,
+            displayName: request.displayName,
+          }
+        : undefined;
+    }
+    case "library.open-billfish.request": {
+      const sourceRootPath = pendingBillfishOpenSourcePath;
+      if (!sourceRootPath) return undefined;
+      const selectedParentPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "openEagleLibraryDestination",
+        process.env.SERPENT_E2E_OPEN_BILLFISH_PARENT,
+        { createDirectory: true },
+      );
+      return selectedParentPath
+        ? {
+            type: "library.open-billfish",
             sourceRootPath,
             selectedParentPath,
             displayName: request.displayName,
@@ -2066,6 +2101,20 @@ async function commandFor(
       return sourceRootPath
         ? {
             type: "asset.import-eagle",
+            libraryId: request.libraryId,
+            sourceRootPath,
+          }
+        : undefined;
+    }
+    case "asset.import-billfish.request": {
+      const sourceRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "importBillfishLibrary",
+        undefined,
+      );
+      return sourceRootPath
+        ? {
+            type: "asset.import-billfish",
             libraryId: request.libraryId,
             sourceRootPath,
           }
@@ -3005,7 +3054,7 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
-  let operation: "create" | "open" | "import" | "open-eagle" | undefined;
+  let operation: "create" | "open" | "import" | "open-eagle" | "open-billfish" | undefined;
   let clipboardStageDirectory: string | undefined;
   let relinkPreviewContext:
     | { libraryId: string; previewId: string }
@@ -3081,6 +3130,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       return {
         ok: true,
         type: "library.eagle-inspect-cancelled",
+      } satisfies RendererResult;
+    }
+
+    if (request.type === "library.inspect-billfish.cancel.request") {
+      pendingBillfishOpenSourcePath = undefined;
+      return {
+        ok: true,
+        type: "library.billfish-inspect-cancelled",
       } satisfies RendererResult;
     }
 
@@ -3945,6 +4002,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       operation = "open-eagle";
       await closeOpenLibrariesBeforeReplacement();
     }
+    if (command.type === "library.open-billfish") {
+      pendingBillfishOpenSourcePath = undefined;
+      operation = "open-billfish";
+      await closeOpenLibrariesBeforeReplacement();
+    }
     if (operation) publishLifecycle({ type: "library.opening", operation });
 
     const workerResult = await workerClient.request(command);
@@ -4010,6 +4072,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.type === "library.inspect-eagle"
     ) {
       pendingEagleOpenSourcePath = command.sourceRootPath;
+    } else if (
+      workerResult.ok &&
+      workerResult.type === "library.billfish-inspected" &&
+      command.type === "library.inspect-billfish"
+    ) {
+      pendingBillfishOpenSourcePath = command.sourceRootPath;
     } else if (workerResult.ok && workerResult.type === "library.renamed") {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,

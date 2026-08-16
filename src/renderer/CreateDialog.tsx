@@ -5,14 +5,15 @@ import { useT } from "./i18n";
 import type { RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import { DialogShell } from "./ui/patterns";
 
-export type CreateLibraryPhase = "start" | "form" | "eagle";
+export type CreateLibraryPhase = "start" | "form" | "eagle" | "billfish";
 
 export interface CreateDialogProps {
   open: boolean;
   /**
    * Serpent-kipk: `start` is the no-library surface; `form` is the name
-   * prompt for creating a Serpent library; `eagle` is the same name prompt
-   * after a validated Eagle source, before choosing the save location.
+   * prompt for creating a Serpent library; `eagle`/`billfish` are the same
+   * name prompt after a validated external source, before choosing the save
+   * location.
    */
   phase: CreateLibraryPhase;
   value: string;
@@ -44,8 +45,8 @@ export interface CreateDialogProps {
  * Unified create / no-library start dialog (Serpent-kipk / y0au).
  *
  * Renders as a full-window centered modal with backdrop blur so shell chrome
- * and canvas content are defocused. Menu 「创建资源库」 and the no-library
- * start surface share this component.
+ * and canvas content are defocused. The no-library start surface keeps open /
+ * import CTAs. Menu 「新建资源库」 opens the name form only (Serpent-pte2).
  */
 export function CreateDialog({
   open,
@@ -73,26 +74,28 @@ export function CreateDialog({
   // the list container scrolls when the store holds more (cap is 8). Rows
   // always show name + full path (the dialog's original layout).
   const visibleRecents = showRecents ? recentLibraries.slice(0, 5) : [];
-  const isNameForm = phase === "form" || phase === "eagle";
+  const isNameForm = phase === "form" || phase === "eagle" || phase === "billfish";
+  const isBillfish = phase === "billfish";
+  const isExternalLibrary = phase === "eagle" || isBillfish;
   const title =
-    phase === "eagle"
-      ? t("dialog.openEagleLibrary.title")
+    isExternalLibrary
+      ? t(isBillfish ? "dialog.openBillfishLibrary.title" : "dialog.openEagleLibrary.title")
       : t("empty.noLibraryTitle");
   const body =
-    phase === "eagle"
-      ? t("dialog.openEagleLibrary.body")
+    isExternalLibrary
+      ? t(isBillfish ? "dialog.openBillfishLibrary.body" : "dialog.openEagleLibrary.body")
       : t("empty.noLibraryBody");
   const nameLabel =
-    phase === "eagle"
-      ? t("dialog.openEagleLibrary.name")
+    isExternalLibrary
+      ? t(isBillfish ? "dialog.openBillfishLibrary.name" : "dialog.openEagleLibrary.name")
       : t("dialog.createLibrary.name");
   const nameHelp =
-    phase === "eagle"
-      ? t("dialog.openEagleLibrary.help")
+    isExternalLibrary
+      ? t(isBillfish ? "dialog.openBillfishLibrary.help" : "dialog.openEagleLibrary.help")
       : t("dialog.createLibrary.help");
   const submitLabel =
-    phase === "eagle"
-      ? t("dialog.openEagleLibrary.submit")
+    isExternalLibrary
+      ? t(isBillfish ? "dialog.openBillfishLibrary.submit" : "dialog.openEagleLibrary.submit")
       : t("dialog.createLibrary.submit");
 
   return (
@@ -145,14 +148,16 @@ export function CreateDialog({
               <p className="field-help">{nameHelp}</p>
             ) : null}
             <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                disabled={busy}
-                onClick={onBackToStart}
-                type="button"
-              >
-                {t("common.back")}
-              </button>
+              {required || phase === "eagle" ? (
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={onBackToStart}
+                  type="button"
+                >
+                  {t("common.back")}
+                </button>
+              ) : null}
               <button
                 className="primary-button"
                 disabled={busy || !value.trim()}
@@ -173,24 +178,28 @@ export function CreateDialog({
               <Icon name="plus" size={15} />
               {t("shell.createLibrary")}
             </button>
-            <button
-              className="secondary-button"
-              disabled={busy}
-              onClick={onOpenExisting}
-              type="button"
-            >
-              <Icon name="folder" size={15} />
-              {t("shell.openLibrary")}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={busy}
-              onClick={onImportLibrary}
-              type="button"
-            >
-              <Icon name="download" size={15} />
-              {t("toolbar.importLibrary")}
-            </button>
+            {required ? (
+              <>
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={onOpenExisting}
+                  type="button"
+                >
+                  <Icon name="folder" size={15} />
+                  {t("shell.openLibrary")}
+                </button>
+                <button
+                  className="secondary-button"
+                  disabled={busy}
+                  onClick={onImportLibrary}
+                  type="button"
+                >
+                  <Icon name="download" size={15} />
+                  {t("toolbar.importLibrary")}
+                </button>
+              </>
+            ) : null}
           </div>
         )}
 

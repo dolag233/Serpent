@@ -685,6 +685,13 @@ export const zhCN = {
       help: "",
       submit: "选择保存位置"
     },
+    openBillfishLibrary: {
+      title: "打开 Billfish 资源库",
+      body: "将所选 Billfish 资源库转换为 Serpent 资源库。",
+      name: "名称",
+      help: "",
+      submit: "选择保存位置"
+    },
     conflicts: {
       skip: "跳过",
       importAnyway: "仍然导入",
@@ -939,8 +946,16 @@ export const zhCN = {
     importLibraryChooser: {
       title: "导入资源库",
       help: "可以从资源库文件夹或导出的 ZIP 导入，也可以打开 Eagle 资源库并转换为新的 Serpent 资源库。",
+      helpMerge: "将导入的资源库内容添加、合并到当前资源库。也可以导入 Eagle / Billfish。",
       folder: "导入资源库文件夹",
       zip: "导入资源库 ZIP",
+      external: "打开外部资源库",
+      externalImport: "导入外部资源库"
+    },
+    openLibraryChooser: {
+      title: "打开资源库",
+      help: "打开已有的 Serpent 资源库，或将 Eagle / Billfish 转换为新的 Serpent 资源库。",
+      serpent: "打开 Serpent 资源库",
       external: "打开外部资源库"
     }
   },
@@ -1948,6 +1963,7 @@ export const zhCN = {
       AI_INTERNAL_ERROR: "AI 分析内部错误，请查看应用日志。",
       TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
       EAGLE_METADATA_UNREADABLE: "无法解析 Eagle 资源库的 metadata.json 或 images 目录，请确认选择的是 .library 文件夹。",
+      BILLFISH_METADATA_UNREADABLE: "无法读取所选 Billfish 资源库，请确认选择的是资源库文件夹并检查其权限。",
       IMPORT_COPY_FAILED: "复制源文件到资源库时失败。请检查磁盘空间与源文件是否仍可读取，并查看应用日志。",
       IMPORT_REGISTER_FAILED: "文件已开始复制，但登记到资源库时失败。请查看应用日志后重试，不要重复选择同一批已成功的条目。",
       EAGLE_THUMBNAIL_FAILED: "Eagle 静态缩略图未能写入预览缓存；资产文件仍会导入，可稍后刷新缩略图。",

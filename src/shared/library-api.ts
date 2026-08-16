@@ -49,6 +49,7 @@ import type {
   ImportConflictPlan,
   ImageSequenceImportOffer,
   EagleImportResult,
+  BillfishImportResult,
   AssetChangeEvent,
   ExtensionSaveCompletedEvent,
   LibraryChangedEvent,
@@ -199,6 +200,10 @@ export interface SerpentLibraryApi {
   inspectEagle(): Promise<LibraryApiResult<{ displayName: string }>>;
   cancelInspectEagle(): Promise<LibraryApiResult<void>>;
   openEagle(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  /** Convert and open a Billfish library as a new Serpent library. */
+  inspectBillfish(): Promise<LibraryApiResult<{ displayName: string }>>;
+  cancelInspectBillfish(): Promise<LibraryApiResult<void>>;
+  openBillfish(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>>;
   openRecent(input: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   /** Remove a path from the recent list without deleting disk (Serpent-ucx). */
@@ -347,6 +352,9 @@ export interface SerpentLibraryApi {
   importEagleLibrary(input: {
     libraryId: string;
   }): Promise<LibraryApiResult<EagleImportResult>>;
+  importBillfishLibrary(input: {
+    libraryId: string;
+  }): Promise<LibraryApiResult<BillfishImportResult>>;
   importDropped(input: {
     libraryId: string;
     targetFolderId?: string;

@@ -223,14 +223,13 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       filters: searchFilters,
-      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
       limit: BROWSE_PAGE_SIZE,
       offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveTagId(session.scope.id);
     setTagFilter(session.scope.name);
-    setAssets(result.value.items);
     setSearchTotal(result.value.total);
     registerBrowseSearchPage(beginBrowsePage, {
       libraryId: library.libraryId,
@@ -256,13 +255,12 @@ export async function applyStoredBrowserSession(
       libraryId: library.libraryId,
       query: null,
       scope: searchScope,
-      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
       limit: BROWSE_PAGE_SIZE,
       offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveCollectionId(session.scope.id);
-    setAssets(result.value.items);
     setSearchTotal(result.value.total);
     registerBrowseSearchPage(beginBrowsePage, {
       libraryId: library.libraryId,
@@ -286,13 +284,12 @@ export async function applyStoredBrowserSession(
     const result = await api.executeSmartCollection({
       libraryId: library.libraryId,
       collectionId: session.scope.id,
-      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
       limit: BROWSE_PAGE_SIZE,
       offset: 0,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
     setActiveSmartCollectionId(session.scope.id);
-    setAssets(result.value.items);
     setSearchTotal(result.value.total);
     registerBrowseSmartCollectionPage(beginBrowsePage, {
       libraryId: library.libraryId,

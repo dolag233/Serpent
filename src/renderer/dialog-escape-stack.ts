@@ -15,6 +15,7 @@ export type DialogEscapeSnapshot = {
   collectionEditorOpen: boolean;
   exportDialogOpen: boolean;
   importLibraryChooserOpen: boolean;
+  openLibraryChooserOpen: boolean;
   appSettingsOpen: boolean;
   librarySettingsOpen: boolean;
   appLogOpen: boolean;
@@ -46,6 +47,7 @@ export type DialogEscapeAction =
   | { kind: "close-collection-editor" }
   | { kind: "close-export" }
   | { kind: "close-import-library-chooser" }
+  | { kind: "close-open-library-chooser" }
   | { kind: "close-app-settings" }
   | { kind: "close-library-settings" }
   | { kind: "close-app-log" }
@@ -94,6 +96,8 @@ export function resolveDialogEscapeAction(
   if (snapshot.exportDialogOpen) return { kind: "close-export" };
   if (snapshot.importLibraryChooserOpen)
     return { kind: "close-import-library-chooser" };
+  if (snapshot.openLibraryChooserOpen)
+    return { kind: "close-open-library-chooser" };
   if (snapshot.appSettingsOpen) return { kind: "close-app-settings" };
   if (snapshot.librarySettingsOpen) return { kind: "close-library-settings" };
   if (snapshot.appLogOpen) return { kind: "close-app-log" };

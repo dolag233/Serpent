@@ -40,16 +40,12 @@ export type MainMenuSection = {
 export type MainMenuActions = {
   readonly createLibrary: () => void;
   readonly openLibrary: () => void;
-  readonly openEagleLibrary?: () => void;
-  readonly openBillfishLibrary?: () => void;
   readonly closeLibrary: () => void;
   readonly removeLibrary: () => void;
   readonly deleteLibraryFromDisk: () => void;
   readonly renameLibrary: () => void;
   readonly importFiles: () => void;
   readonly importFolder: () => void;
-  readonly importEagleLibrary?: () => void;
-  readonly importBillfishLibrary?: () => void;
   readonly importLinkedFolder: () => void;
   readonly importLibrary: () => void;
   readonly exportLibrary: () => void;
@@ -216,50 +212,10 @@ export function buildMainMenuSections({
           onSelect: actions.openLibrary,
         },
         {
-          id: "library.open-external",
-          label: label(locale, "shell.openExternalLibraryEllipsis"),
-          disabled: appDisabled,
-          onSelect: () => undefined,
-          submenu: [
-            {
-              id: "library.open-eagle",
-              label: label(locale, "shell.openEagleLibraryEllipsis"),
-              disabled: appDisabled || !actions.openEagleLibrary,
-              onSelect: actions.openEagleLibrary ?? (() => undefined),
-            },
-            {
-              id: "library.open-billfish",
-              label: label(locale, "shell.openBillfishLibraryEllipsis"),
-              disabled: true,
-              onSelect: actions.openBillfishLibrary ?? (() => undefined),
-            },
-          ],
-        },
-        {
           id: "library.import",
           label: label(locale, "toolbar.importLibrary"),
           disabled: libraryDisabled,
           onSelect: actions.importLibrary,
-        },
-        {
-          id: "library.import-external",
-          label: label(locale, "toolbar.importExternalLibrary"),
-          disabled: libraryDisabled,
-          onSelect: () => undefined,
-          submenu: [
-            {
-              id: "library.import-eagle",
-              label: label(locale, "shell.importEagleLibraryEllipsis"),
-              disabled: libraryDisabled || !actions.importEagleLibrary,
-              onSelect: actions.importEagleLibrary ?? (() => undefined),
-            },
-            {
-              id: "library.import-billfish",
-              label: label(locale, "shell.importBillfishLibraryEllipsis"),
-              disabled: true,
-              onSelect: actions.importBillfishLibrary ?? (() => undefined),
-            },
-          ],
         },
         {
           id: "library.remove",

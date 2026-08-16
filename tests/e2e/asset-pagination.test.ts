@@ -524,7 +524,7 @@ test("bottom-scroll appends assets beyond the first page (Serpent-ws4k)", async 
   );
   const sourceRoot = path.join(temporaryRoot, "sources");
   const libraryName = "分页追加验收";
-  // Deliberately above BROWSE_PAGE_SIZE (300) so the first render cannot
+  // Deliberately above BROWSE_PAGE_SIZE (100) so the first render cannot
   // contain the whole scope and the tail must arrive through incremental
   // bottom-scroll appends.
   const assetCount = 340;

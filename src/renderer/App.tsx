@@ -59,7 +59,7 @@ import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-br
 import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
-import { ImportLibraryChooserDialog } from "./ImportLibraryChooserDialog";
+import { ImportLibraryChooserDialog, OpenLibraryChooserDialog } from "./ImportLibraryChooserDialog";
 import {
   NavigationSidebar,
 } from "./NavigationSidebar";
@@ -367,6 +367,7 @@ import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
+import { isPendingBrowseAsset } from "./browse-window-slots";
 import {
   BROWSE_PAGE_SIZE,
   registerBrowseSearchPage,
@@ -929,6 +930,7 @@ function AppInner() {
   // downstream useCallback deps do not churn every render.
   const {
     beginPage: beginBrowsePage,
+    ensureVisibleRange: ensureBrowseVisibleRange,
     fetchScopeAssetIds: fetchBrowseScopeAssetIds,
     removeLocally: removeLocallyFromBrowse,
     reset: resetBrowsePagination,
@@ -1245,6 +1247,7 @@ function AppInner() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [importLibraryChooserOpen, setImportLibraryChooserOpen] =
     useState(false);
+  const [openLibraryChooserOpen, setOpenLibraryChooserOpen] = useState(false);
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
@@ -1655,6 +1658,10 @@ function AppInner() {
         )
       : assets;
     if (shuffleSeed === null || showTrash) return base;
+    // Windowed placeholders must keep SQL offset order. Shuffle the fully
+    // loaded subset only; large scopes stay in worker order until a later
+    // ids-only permutation lands.
+    if (base.some(isPendingBrowseAsset)) return base;
     return shuffleArray(base, shuffleSeed);
   }, [
     assets,
@@ -1696,7 +1703,8 @@ function AppInner() {
         for (const item of layout) {
           if (
             item.y + item.height >= viewTop &&
-            item.y <= viewBottom
+            item.y <= viewBottom &&
+            !isPendingBrowseAsset({ assetId: item.id })
           ) {
             ids.push(item.id);
           }
@@ -1722,6 +1730,42 @@ function AppInner() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [api, library, assetViewMode, assets, trashedAssets]);
+
+  // Serpent-87pd: map scrollbar position to a slot index and fetch that
+  // window. A 50ms coalesce is enough to skip rAF spam without making a
+  // jump wait on earlier pages.
+  useEffect(() => {
+    if (!api || !library) return;
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    let timer: number | undefined;
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const total = showTrash ? trashedAssets.length : assets.length;
+        if (total === 0) return;
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        const ratio = maxScroll <= 0 ? 0 : canvas.scrollTop / maxScroll;
+        const center = Math.round(ratio * Math.max(0, total - 1));
+        // Neighbor pages are added by browsePageOffsetsForRange. Passing a
+        // ±page-size span here would queue 3–4 windows behind a jump.
+        void ensureBrowseVisibleRange(center, center);
+      }, 50);
+    };
+    canvas.addEventListener("scroll", schedule, { passive: true });
+    schedule();
+    return () => {
+      canvas.removeEventListener("scroll", schedule);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [
+    api,
+    assets.length,
+    ensureBrowseVisibleRange,
+    library,
+    showTrash,
+    trashedAssets.length,
+  ]);
 
   const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
     () => buildPluginBrowseScope({
@@ -2033,7 +2077,9 @@ function AppInner() {
 
   const browseScopeAssetIds = useMemo(() => {
     const rows = showTrash ? trashedAssets : assets;
-    return rows.map((asset) => asset.assetId);
+    return rows
+      .filter((asset) => !isPendingBrowseAsset(asset))
+      .map((asset) => asset.assetId);
   }, [showTrash, trashedAssets, assets]);
   const workspaceBrowseCount = useMemo(() => {
     if (showTagManagement) return tags.length;
@@ -2735,6 +2781,8 @@ function AppInner() {
               : Promise.resolve(null),
           ])
         : Promise.resolve(null);
+      const includeLibraryCounts =
+        refreshSidebar || trashMode || scope === "all" || scope === "root";
       const results = await Promise.all([
         api.searchAssets({
           ...libId,
@@ -2742,32 +2790,34 @@ function AppInner() {
           filters: opts?.discovery?.filters,
           scope: browseScope,
           sort: opts?.discovery?.sort,
-          // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+          // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
           limit: BROWSE_PAGE_SIZE,
           offset: 0,
           showIgnored: includeIgnored,
         }),
-        trashMode || scope !== "all"
+        includeLibraryCounts && (trashMode || scope !== "all")
           ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
           : Promise.resolve(undefined),
-        !trashMode && scope === "root"
-          ? Promise.resolve(undefined)
-          : api.searchAssets({
+        includeLibraryCounts && (trashMode || scope !== "root")
+          ? api.searchAssets({
               ...libId,
               query: null,
               limit: 1,
               offset: 0,
               scope: { kind: "folder", folderId: null, recursive: false },
               showIgnored: includeIgnored,
-            }),
-        api.searchAssets({
-          ...libId,
-          query: null,
-          limit: 1,
-          offset: 0,
-          scope: { kind: "trash" },
-          showIgnored: includeIgnored,
-        }),
+            })
+          : Promise.resolve(undefined),
+        includeLibraryCounts
+          ? api.searchAssets({
+              ...libId,
+              query: null,
+              limit: 1,
+              offset: 0,
+              scope: { kind: "trash" },
+              showIgnored: includeIgnored,
+            })
+          : Promise.resolve(undefined),
         sidebarPromise,
       ]).catch((caught: unknown) => {
         if (generation !== contentLoadGenerationRef.current) return null;
@@ -2782,7 +2832,7 @@ function AppInner() {
         throw new LibraryOperationError(allResult.error);
       if (rootCountResult && !rootCountResult.ok)
         throw new LibraryOperationError(rootCountResult.error);
-      if (!trashCountResult.ok)
+      if (trashCountResult && !trashCountResult.ok)
         throw new LibraryOperationError(trashCountResult.error);
       if (sidebarResult) {
         const [
@@ -2814,11 +2864,8 @@ function AppInner() {
           setTrashedFolders([]);
         }
       }
-      if (trashMode) {
-        setTrashedAssets(assetResult.value.items);
-      } else {
-        setAssets(assetResult.value.items);
-      }
+      // Serpent-87pd: beginPage owns the canvas (COUNT slots + first window).
+      // Do not replace it with the first page or the scrollbar collapses.
       // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
       setThumbnailFailures((current) => {
         if (current.size === 0) return current;
@@ -2833,14 +2880,22 @@ function AppInner() {
         }
         return next.size === current.size ? current : next;
       });
-      // CU-B2: keep library-wide count fresh even while browsing trash.
-      setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
-      setRootAssetCount(
-        !trashMode && scope === "root"
-          ? assetResult.value.total
-          : rootCountResult?.value.total ?? 0,
-      );
-      setTrashedAssetCount(trashCountResult.value.total);
+      // CU-B2: keep library-wide counts when this load actually fetched them.
+      // Folder-to-folder navigation skips the extra COUNT queries so a 7000-item
+      // search is not queued behind a whole-library scan.
+      if (allResult) {
+        setAllAssetCount(allResult.value.total);
+      } else if (!trashMode && scope === "all") {
+        setAllAssetCount(assetResult.value.total);
+      }
+      if (!trashMode && scope === "root") {
+        setRootAssetCount(assetResult.value.total);
+      } else if (rootCountResult) {
+        setRootAssetCount(rootCountResult.value.total);
+      }
+      if (trashCountResult) {
+        setTrashedAssetCount(trashCountResult.value.total);
+      }
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
@@ -2948,7 +3003,7 @@ function AppInner() {
     // to close before its progress event arrives; without this guard the
     // no-library effect immediately remounts CreateDialog over the picker or
     // import progress (Serpent-o5j3).
-    if (importLibraryChooserOpen || importValidated || importProgress || appSettingsOpen || busy) return;
+    if (importLibraryChooserOpen || openLibraryChooserOpen || importValidated || importProgress || appSettingsOpen || busy) return;
     if (dialog === "library") return;
     queueMicrotask(() => {
       setDialogValue(t("shell.myLibrary"));
@@ -2959,6 +3014,7 @@ function AppInner() {
     library,
     dialog,
     importLibraryChooserOpen,
+    openLibraryChooserOpen,
     importValidated,
     importProgress,
     appSettingsOpen,
@@ -2969,11 +3025,11 @@ function AppInner() {
   // Yield the required create surface while another full-window modal is up.
   useEffect(() => {
     if (library) return;
-    if (!importLibraryChooserOpen && !appSettingsOpen) return;
+    if (!importLibraryChooserOpen && !openLibraryChooserOpen && !appSettingsOpen) return;
     if (dialog === "library") {
       queueMicrotask(() => setDialog(null));
     }
-  }, [library, importLibraryChooserOpen, appSettingsOpen, dialog]);
+  }, [library, importLibraryChooserOpen, openLibraryChooserOpen, appSettingsOpen, dialog]);
   // Dismiss the auto-opened no-library surface once a library becomes available.
   // Do not close a menu-opened create dialog while a library is already open.
   useEffect(() => {
@@ -3394,6 +3450,52 @@ function AppInner() {
     }
   }
 
+  async function openBillfishLibrary() {
+    if (!api || importProgress) return;
+    setDialog(null);
+    const inspect = await api.inspectBillfish();
+    if (!inspect.ok) {
+      if (inspect.error.code === "CANCELLED") return;
+      showBlockingError(
+        t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(
+          new LibraryOperationError(inspect.error),
+          t("toast.openRecentFailed"),
+          locale,
+        ),
+      );
+      return;
+    }
+    setDialogValue(inspect.value.displayName);
+    setCreateLibraryPhase("billfish");
+    setDialog("library");
+  }
+
+  function cancelBillfishInspectFlow() {
+    void api?.cancelInspectBillfish();
+    setCreateLibraryPhase("start");
+  }
+
+  async function submitBillfishLibraryName() {
+    if (!api) return;
+    const displayName = dialogValue.trim();
+    if (!displayName) return;
+    setDialog(null);
+    setLibraryTransferKind("open");
+    setLibraryTransferName(displayName);
+    try {
+      await runLibraryOpenPipeline(
+        "opening",
+        () => api.openBillfish({ displayName }),
+        t("toast.openRecentFailed"),
+      );
+    } finally {
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
+      setCreateLibraryPhase("start");
+    }
+  }
+
   async function revealRecoveryReport() {
     if (!api || !library) return;
     setError(null);
@@ -3602,6 +3704,8 @@ function AppInner() {
     clearDiscoveryControls();
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
+    setAssets([]);
     const folderId = scope === "all" || scope === "root" ? undefined : scope;
     // 不做 folders 列表校验：新建文件夹后自动进入时，新文件夹尚未出现在
     // folders state（异步刷新），校验会误伤并把导入目标降级为根目录。
@@ -3663,6 +3767,8 @@ function AppInner() {
     setActiveSmartCollectionId(null);
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
+    setTrashedAssets([]);
     clearAssetSelection();
     setAssetScope("all");
     clearDiscoveryControls();
@@ -3851,6 +3957,8 @@ function AppInner() {
     setTagFilterMatch(match);
     setSearchOffset(0);
     api.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
     setUiState("loading");
     try {
       const definition = currentQueryDefinition({
@@ -3862,7 +3970,7 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
         offset: 0,
         showIgnored: showIgnoredItems,
@@ -3907,6 +4015,8 @@ function AppInner() {
     setTagFilterMatch("any");
     setSearchOffset(0);
     api.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
     setUiState("loading");
     try {
       const definition = currentQueryDefinition({ tagFilter: tag.name });
@@ -3915,7 +4025,7 @@ function AppInner() {
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
         offset: 0,
         showIgnored: showIgnoredItems,
@@ -4357,6 +4467,8 @@ function AppInner() {
     clearAssetSelection();
     clearDiscoveryControls();
     api?.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
     setUiState("loading");
     try {
       const result = await api.searchAssets({
@@ -4367,7 +4479,7 @@ function AppInner() {
           collectionId,
           recursive,
         },
-        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
         offset: 0,
         showIgnored: showIgnoredItems,
@@ -4659,7 +4771,8 @@ function AppInner() {
       snippets?: Array<{ assetId: string; text: string }>;
     },
   ) {
-    setAssets(result.items);
+    // Serpent-87pd: canvas slots come from beginPage. Replacing the list with
+    // the first window here would collapse the scrollbar to 100 items.
     setSearchTotal(result.total);
     setSearchOffset(result.offset + result.items.length);
     setSearchSnippets(
@@ -5284,7 +5397,7 @@ function AppInner() {
       filters: definition.filters,
       scope: currentSearchScope(),
       sort: definition.sort,
-      // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+      // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
       limit: BROWSE_PAGE_SIZE,
       offset: 0,
       showIgnored: showIgnoredItems,
@@ -5415,11 +5528,13 @@ function AppInner() {
     await closeAssetPreview(false);
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    resetBrowsePagination();
+    setAssets([]);
     try {
       const result = await api.executeSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        // Serpent-ws4k: first page only; the scroll sentinel appends the rest.
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
         offset: 0,
       });
@@ -5630,6 +5745,39 @@ function AppInner() {
     setNotice(null);
     try {
       const result = await api.importEagleLibrary({ libraryId: library.libraryId });
+      if (!result.ok) {
+        if (result.error.code === "CANCELLED") return;
+        throw new LibraryOperationError(result.error);
+      }
+      setNotice(importSummaryMessage(result.value, locale));
+      await reloadCurrentContent();
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setImportProgress(null);
+    }
+  }
+
+  async function importBillfishLibrary() {
+    if (!api || !library || importProgress) return;
+    setLibraryTransferKind("import");
+    setImportProgress({
+      type: "import.progress",
+      importId: "",
+      phase: "validate",
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: 0,
+      bytesProcessed: 0,
+      totalBytes: 0,
+    });
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.importBillfishLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
@@ -7071,6 +7219,7 @@ function AppInner() {
       collectionEditorOpen: Boolean(collectionEditor),
       exportDialogOpen,
       importLibraryChooserOpen,
+      openLibraryChooserOpen,
       appSettingsOpen,
       librarySettingsOpen,
       appLogOpen,
@@ -7096,6 +7245,7 @@ function AppInner() {
     collectionEditor,
     exportDialogOpen,
     importLibraryChooserOpen,
+    openLibraryChooserOpen,
     appSettingsOpen,
     librarySettingsOpen,
     appLogOpen,
@@ -7128,6 +7278,7 @@ function AppInner() {
     setCollectionEditor,
     setExportDialogOpen,
     setImportLibraryChooserOpen,
+    setOpenLibraryChooserOpen,
     setAppSettingsOpen,
     setLibrarySettingsOpen,
     setAppLogOpen,
@@ -7168,6 +7319,7 @@ function AppInner() {
       collectionEditor ||
       exportDialogOpen ||
       importLibraryChooserOpen ||
+      openLibraryChooserOpen ||
       appSettingsOpen ||
       librarySettingsOpen ||
       appLogOpen ||
@@ -8297,11 +8449,13 @@ function AppInner() {
     actions: {
       createLibrary: () => {
         setDialogValue(t("shell.myLibrary"));
-        setCreateLibraryPhase("start");
+        setCreateLibraryPhase("form");
         setDialog("library");
       },
-      openLibrary: () => void runLibraryOperation("open"),
-      openEagleLibrary: () => void openEagleLibrary(),
+      openLibrary: () => {
+        setImportLibraryChooserOpen(false);
+        setOpenLibraryChooserOpen(true);
+      },
       closeLibrary: () => void closeLibrary(),
       removeLibrary: () => void removeLibrary(),
       deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
@@ -8312,9 +8466,11 @@ function AppInner() {
       },
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
-      importEagleLibrary: () => void importEagleLibrary(),
       importLinkedFolder: () => void importFolderAsLinked(),
-      importLibrary: () => setImportLibraryChooserOpen(true),
+      importLibrary: () => {
+        setOpenLibraryChooserOpen(false);
+        setImportLibraryChooserOpen(true);
+      },
       exportLibrary: () => setExportDialogOpen(true),
       openLibrarySettings: () => {
         setAppSettingsOpen(false);
@@ -8495,21 +8651,25 @@ function AppInner() {
               }}
               onCreateLibrary={() => {
                 setDialogValue(t("shell.myLibrary"));
-                setCreateLibraryPhase("start");
+                setCreateLibraryPhase("form");
                 setDialog("library");
               }}
               onExportLibrary={() => setExportDialogOpen(true)}
               onImportFolder={() => void importAssets("folder")}
-              onImportEagleLibrary={() => void importEagleLibrary()}
-              onImportLibrary={() => setImportLibraryChooserOpen(true)}
+              onImportLibrary={() => {
+                setOpenLibraryChooserOpen(false);
+                setImportLibraryChooserOpen(true);
+              }}
               onImportLinkedFolder={() => void importFolderAsLinked()}
               onMenuOpen={() => void refreshRecentLibraries()}
-              onOpenLibrary={() => void runLibraryOperation("open")}
+              onOpenLibrary={() => {
+                setImportLibraryChooserOpen(false);
+                setOpenLibraryChooserOpen(true);
+              }}
               onOpenSyncLibrary={() => {
                 setAppSettingsOpen(false);
                 setOpenSyncLibraryOpen(true);
               }}
-              onOpenEagleLibrary={() => void openEagleLibrary()}
               onOpenRecent={(path) => void openRecentLibrary(path)}
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
               recentLibraries={recentLibraries}
@@ -9469,6 +9629,18 @@ function AppInner() {
                     const showCornerBadges =
                       shouldShowAssetCardBadges(assetCardSize);
                     const renderAssetCard = (asset: AssetSummary) => {
+                      if (isPendingBrowseAsset(asset)) {
+                        return (
+                          <div
+                            aria-hidden="true"
+                            className="asset-card is-browse-placeholder"
+                            data-asset-id={asset.assetId}
+                            key={assetCardKey(library?.libraryId, asset.assetId)}
+                          >
+                            <div className="asset-preview" />
+                          </div>
+                        );
+                      }
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
@@ -10041,11 +10213,9 @@ function AppInner() {
                   })()}
                   </div>
                 )}
-                {/* Serpent-ws4k: infinite-scroll sentinel — appends the next
-                    page once it scrolls into view; hidden when the whole
-                    scope is loaded. Serpent-6z5r: loading is silent — no
-                    spinner, no "loading more" copy, the sentinel stays an
-                    invisible probe so the user never perceives the load. */}
+                {/* Serpent-87pd: invisible tail probe. A jump to the end fills
+                    the last window, not pages 0 → 100 → 200. Serpent-6z5r:
+                    no spinner or "loading more" copy. */}
                 {browsePagination.hasMorePages && (
                   <div
                     ref={browsePagination.sentinelRef}
@@ -10623,11 +10793,24 @@ function AppInner() {
             if (library) setDialog(null);
             return;
           }
+          if (createLibraryPhase === "billfish") {
+            cancelBillfishInspectFlow();
+            if (library) setDialog(null);
+            return;
+          }
+          if (library) {
+            setDialog(null);
+            return;
+          }
           setCreateLibraryPhase("start");
         }}
         onSubmit={() => {
           if (createLibraryPhase === "eagle") {
             void submitEagleLibraryName();
+            return;
+          }
+          if (createLibraryPhase === "billfish") {
+            void submitBillfishLibraryName();
             return;
           }
           setDialog(null);
@@ -10636,6 +10819,9 @@ function AppInner() {
         onCancel={() => {
           if (createLibraryPhase === "eagle") {
             cancelEagleInspectFlow();
+          }
+          if (createLibraryPhase === "billfish") {
+            cancelBillfishInspectFlow();
           }
           setDialog(null);
           setCreateLibraryPhase("start");
@@ -10701,8 +10887,26 @@ function AppInner() {
           }
         />
       )}
+      <OpenLibraryChooserDialog
+        open={openLibraryChooserOpen}
+        onCancel={() => setOpenLibraryChooserOpen(false)}
+        onOpenSerpent={() => {
+          setOpenLibraryChooserOpen(false);
+          if (library) setDialog(null);
+          void runLibraryOperation("open");
+        }}
+        onOpenEagle={() => {
+          setOpenLibraryChooserOpen(false);
+          void openEagleLibrary();
+        }}
+        onOpenBillfish={() => {
+          setOpenLibraryChooserOpen(false);
+          void openBillfishLibrary();
+        }}
+      />
       <ImportLibraryChooserDialog
         open={importLibraryChooserOpen}
+        externalKind={library ? "import" : "open"}
         onCancel={() => setImportLibraryChooserOpen(false)}
         onImportFolder={() => {
           setImportLibraryChooserOpen(false);
@@ -10715,6 +10919,18 @@ function AppInner() {
         onOpenEagle={() => {
           setImportLibraryChooserOpen(false);
           void openEagleLibrary();
+        }}
+        onImportEagle={() => {
+          setImportLibraryChooserOpen(false);
+          void importEagleLibrary();
+        }}
+        onOpenBillfish={() => {
+          setImportLibraryChooserOpen(false);
+          void openBillfishLibrary();
+        }}
+        onImportBillfish={() => {
+          setImportLibraryChooserOpen(false);
+          void importBillfishLibrary();
         }}
       />
       {importValidated && (

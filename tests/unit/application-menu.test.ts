@@ -167,7 +167,6 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
       "file.import-files",
       "file.import-folder",
       "file.import-linked-folder",
-      "library.import-eagle",
       "library.create",
       "library.open",
       "library.close",
@@ -188,19 +187,18 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
     expect(commands).toContain("copy-selection");
   });
 
-  it("nests Import Eagle under Import external library on macOS", () => {
+  it("does not nest Import Eagle under a separate Import external library item on macOS", () => {
     const template = buildApplicationMenuTemplate({
       platform: "darwin",
       showDevTools: false,
       locale: "zh-CN",
     });
     const libraryMenu = template.find((item) => item.labelKey === "shell.mainMenuLibrary");
-    const external = libraryMenu?.submenu?.find(
-      (item) => item.labelKey === "toolbar.importExternalLibrary",
-    );
-    expect(external?.type).toBe("submenu");
-    expect(external?.submenu?.map((item) => item.command)).toEqual(["library.import-eagle"]);
-    expect(external?.submenu?.[0]?.labelKey).toBe("toolbar.importEagleLibrary");
+    expect(
+      libraryMenu?.submenu?.some((item) => item.labelKey === "toolbar.importExternalLibrary"),
+    ).toBe(false);
+    expect(libraryMenu?.submenu?.some((item) => item.command === "library.import")).toBe(true);
+    expect(libraryMenu?.submenu?.some((item) => item.command === "library.open")).toBe(true);
   });
 
   it("uses i18n catalog keys for every custom label (no inline locale strings)", () => {

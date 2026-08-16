@@ -67,10 +67,12 @@ const EXPORT_IMPORT_COMMANDS = new Set([
   // large library can legitimately outlive the ordinary file-operation
   // deadline, just like the archive import path above.
   'asset.import-eagle',
+  'asset.import-billfish',
   // Opening Eagle is the same conversion as import, plus creating a new
   // Serpent library at the user-chosen destination. It must not sit on the
   // 15s default timeout.
   'library.open-eagle',
+  'library.open-billfish',
 ]);
 
 export function requestTimeoutForCommand(

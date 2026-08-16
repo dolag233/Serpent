@@ -26,9 +26,11 @@ export class LatestSearchRequestCoordinator {
 
 /**
  * Parallel browse loads issue several asset.search commands for one library
- * (page, library count, and trash count). They need independent cancellation
- * lanes, while successive queries for the same page lane should supersede
- * each other. The query text is deliberately excluded from the lane key.
+ * (page, library count, and trash count). Count and ids-only queries need
+ * independent cancellation lanes. Paginated summary windows share one
+ * browse-window lane so a folder switch or scrollbar jump cancels the
+ * previous SQLite search regardless of scope/offset. Query text is excluded
+ * so keystroke bursts still coalesce.
  */
 export function searchRequestLaneKey(input: {
   filters?: unknown;
@@ -40,14 +42,34 @@ export function searchRequestLaneKey(input: {
   offset?: number;
   showIgnored?: boolean;
 }): string {
+  if (input.idsOnly) {
+    return JSON.stringify({
+      kind: "ids",
+      filters: input.filters ?? null,
+      scope: input.scope ?? null,
+      showIgnored: input.showIgnored ?? false,
+    });
+  }
+  const limit = input.limit ?? null;
+  if (limit === 0 || limit === 1) {
+    return JSON.stringify({
+      kind: "count",
+      filters: input.filters ?? null,
+      scope: input.scope ?? null,
+      showIgnored: input.showIgnored ?? false,
+    });
+  }
+  if (input.scopeMode) {
+    return JSON.stringify({
+      kind: "scope-mode",
+      filters: input.filters ?? null,
+      scope: input.scope ?? null,
+      sort: input.sort ?? null,
+      showIgnored: input.showIgnored ?? false,
+    });
+  }
   return JSON.stringify({
-    filters: input.filters ?? null,
-    scope: input.scope ?? null,
-    sort: input.sort ?? null,
-    scopeMode: input.scopeMode ?? false,
-    idsOnly: input.idsOnly ?? false,
-    limit: input.limit ?? null,
-    offset: input.offset ?? 0,
+    kind: "browse-window",
     showIgnored: input.showIgnored ?? false,
   });
 }

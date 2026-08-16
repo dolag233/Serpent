@@ -637,7 +637,8 @@ test('collection recursion toggle immediately refreshes the visible collection s
       .locator('.nav-row')
       .filter({ hasText: '父合集' })
       .first();
-    await expect(parentCollectionRow.locator('.nav-child-count')).toHaveText('1');
+    await expect(parentCollectionRow.locator('.nav-count')).toHaveText('0');
+    await expect(parentCollectionRow.locator('.nav-child-count')).toHaveCount(0);
 
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: '添加合集' }).click();

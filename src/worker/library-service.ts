@@ -158,6 +158,11 @@ import {
   type EagleAssetCandidate,
   type EagleFolderNode,
 } from './eagle-library';
+import {
+  BillfishLibraryReadError,
+  readBillfishLibrary,
+  type BillfishAssetCandidate,
+} from './billfish-library';
 
 // sharp is an optional N-API dependency (no rebuild needed for Electron).
 // The Worker loads it lazily so it can still start if sharp is missing.
@@ -258,14 +263,14 @@ const SHARP_VERSION = '0.35.3';
 /** Bumped when GIF still-page selection changes so stale black page-0 thumbs requeue. */
 const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 /**
- * Serpent-x9xu: the current browse/search page size (Serpent-ws4k
- * BROWSE_PAGE_SIZE = 300). The `visible` thumbnail wave must cover the whole
- * page the user is looking at — not just the first 100 results — so a freshly
- * imported library shows the current page first while the import flood
- * (mutation 300) fills in behind. Bounded: a page is never more than this
- * many assets, so the visible wave cannot starve the rest of the catalogue.
+ * Serpent-x9xu / Serpent-87pd: the current browse/search page size
+ * (BROWSE_PAGE_SIZE = 100). The `visible` thumbnail wave must cover the
+ * window the user is looking at so a freshly imported library shows the
+ * current page first while the import flood (mutation 300) fills in behind.
+ * Bounded: a page is never more than this many assets, so the visible wave
+ * cannot starve the rest of the catalogue.
  */
-export const THUMBNAIL_VISIBLE_PAGE_SIZE = 300;
+export const THUMBNAIL_VISIBLE_PAGE_SIZE = 100;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
@@ -406,6 +411,7 @@ import type {
   InternalLibrarySummary,
   ExportProgressEvent,
   EagleImportResult,
+  BillfishImportResult,
   ImportProgressEvent,
 } from '../shared/protocol/responses';
 import {
@@ -2724,6 +2730,7 @@ interface EagleImportedMetadata {
   sourceRootPath: string;
   tagIds: string[];
   thumbnailPath: string | null;
+  thumbnailGeneratorVersion?: string;
 }
 
 interface ManagedRelinkPlacementIdentity {
@@ -30011,6 +30018,93 @@ export class LibraryService {
     }
   }
 
+  private ensureBillfishTags(
+    openLibrary: OpenLibrary,
+    items: readonly BillfishAssetCandidate[],
+    tagIdsByName: Map<string, string>,
+  ): void {
+    const names = new Set(items.flatMap((item) => item.metadata?.tags ?? []));
+    const now = new Date().toISOString();
+    openLibrary.connection.transaction(() => {
+      for (const name of names) {
+        if (tagIdsByName.has(name)) continue;
+        const existing = openLibrary.connection
+          .prepare(
+            'SELECT tag_id FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE LIMIT 1',
+          )
+          .get(openLibrary.summary.libraryId, name) as { tag_id: string } | undefined;
+        if (existing) {
+          tagIdsByName.set(name, existing.tag_id);
+          continue;
+        }
+        const tagId = randomUUID();
+        openLibrary.connection
+          .prepare(
+            'INSERT OR IGNORE INTO tags (tag_id, library_id, name, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(tagId, openLibrary.summary.libraryId, name, now);
+        const inserted = openLibrary.connection
+          .prepare(
+            'SELECT tag_id FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE LIMIT 1',
+          )
+          .get(openLibrary.summary.libraryId, name) as { tag_id: string } | undefined;
+        if (inserted) tagIdsByName.set(name, inserted.tag_id);
+      }
+    })();
+  }
+
+  private billfishImportEntry(
+    sourceRootPath: string,
+    item: BillfishAssetCandidate,
+    tagIdsByName: ReadonlyMap<string, string>,
+  ): ImportSourceEntry | null {
+    try {
+      const canonicalSourcePath = realpathSync(item.sourcePath);
+      if (!pathIsWithin(sourceRootPath, canonicalSourcePath)) {
+        throw new BillfishLibraryReadError('Billfish source escaped its library root.');
+      }
+      const sourceStat = lstatSync(item.sourcePath, { bigint: true });
+      if (
+        sourceStat.isSymbolicLink()
+        || !sourceStat.isFile()
+        || sourceStat.size > BigInt(Number.MAX_SAFE_INTEGER)
+      ) {
+        throw new BillfishLibraryReadError('Billfish source is no longer a regular file.');
+      }
+      const destinationRelativePath = normalizeRelativeAssetPath(item.relativePath);
+      const metadata = item.metadata;
+      const tagIds = [...new Set(
+        (metadata?.tags ?? [])
+          .map((tag) => tagIdsByName.get(tag))
+          .filter((tagId): tagId is string => tagId !== undefined),
+      )];
+      return {
+        byteSize: Number(sourceStat.size),
+        destinationRelativePath,
+        eagleMetadata: metadata
+          ? {
+              collectionIds: [],
+              description: metadata.description,
+              rating: metadata.rating,
+              sourceModifiedAtMs: item.sourceModifiedAtMs,
+              sourcePageUrl: metadata.sourcePageUrl,
+              sourceRootPath,
+              tagIds,
+              thumbnailPath: metadata.thumbnailPath,
+              thumbnailGeneratorVersion: 'billfish-thumbnail@1',
+            }
+          : undefined,
+        sourceSnapshot: sourceSnapshot(sourceStat),
+        sourcePath: item.sourcePath,
+      };
+    } catch (error) {
+      this.diagnose('billfish-import.item-skipped', error, {
+        relativePath: item.relativePath,
+      });
+      return null;
+    }
+  }
+
   private wrapEagleImportStageError(
     error: unknown,
     reason: 'IMPORT_COPY_FAILED' | 'IMPORT_REGISTER_FAILED',
@@ -30091,7 +30185,7 @@ export class LibraryService {
             `INSERT INTO revision_artifacts
                (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
                 width, height, generator_version, status, generated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'eagle-thumbnail@1', 'ready', ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?)`,
           )
           .run(
             artifactId,
@@ -30102,6 +30196,7 @@ export class LibraryService {
             artifactRelPath,
             dimensions?.width ?? null,
             dimensions?.height ?? null,
+            metadata.thumbnailGeneratorVersion ?? 'eagle-thumbnail@1',
             now,
           );
       })();
@@ -30387,6 +30482,242 @@ export class LibraryService {
           rmSync(created.libraryPath, { force: true, recursive: true });
         } catch (cleanupError) {
           this.diagnose('eagle-open.cleanup', cleanupError, {
+            libraryPath: created.libraryPath,
+          });
+        }
+      }
+      throw error;
+    }
+  }
+
+  async importBillfishLibrary(input: {
+    libraryId: string;
+    sourceRootPath: string;
+  }): Promise<BillfishImportResult> {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const importId = randomUUID();
+    const cancelState: TransferCancelState = { cancelled: false };
+    this.activeImports.set(importId, cancelState);
+    let totalFiles = 0;
+    let totalBytes = 0;
+    let filesProcessed = 0;
+    let bytesProcessed = 0;
+    const emitBillfishProgress = (
+      phase: ImportProgressEvent['phase'],
+      processedFiles = filesProcessed,
+      processedBytes = bytesProcessed,
+    ): void => {
+      this.emitProgress({
+        type: 'import.progress',
+        importId,
+        phase,
+        cancelable: true,
+        filesProcessed: processedFiles,
+        totalFiles,
+        bytesProcessed: processedBytes,
+        totalBytes,
+      });
+    };
+    const throwIfCancelled = (): void => {
+      if (!cancelState.cancelled) return;
+      emitBillfishProgress('cancelled');
+      throw new LibraryServiceError('CANCELLED');
+    };
+
+    emitBillfishProgress('validate', 0, 0);
+    let root: ReturnType<typeof readBillfishLibrary>;
+    try {
+      root = readBillfishLibrary(input.sourceRootPath);
+    } catch (error) {
+      emitBillfishProgress('failed');
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'BILLFISH_METADATA_UNREADABLE',
+      });
+    }
+
+    totalFiles = root.items.length;
+    totalBytes = root.items.reduce((total, item) => total + item.byteSize, 0);
+    const tagIdsByName = new Map<string, string>();
+    let importedCount = 0;
+    let skippedCount = root.skippedCount;
+    let replacedCount = 0;
+    let invalidItemCount = root.skippedCount;
+    let metadataCount = 0;
+    const sampleAssets: AssetSummary[] = [];
+    const batchSize = 32;
+
+    try {
+      for (let offset = 0; offset < root.items.length; offset += batchSize) {
+        throwIfCancelled();
+        const items = root.items.slice(offset, offset + batchSize);
+        emitBillfishProgress('validate', offset, bytesProcessed);
+        this.ensureBillfishTags(openLibrary, items, tagIdsByName);
+        const batch: ImportSourceEntry[] = [];
+        for (const item of items) {
+          const entry = this.billfishImportEntry(root.sourceRootPath, item, tagIdsByName);
+          if (entry) {
+            batch.push(entry);
+            if (item.metadata) metadataCount += 1;
+          } else {
+            skippedCount += 1;
+            invalidItemCount += 1;
+          }
+        }
+        const batchBytesBefore = bytesProcessed;
+        let batchBytesCopied = 0;
+        if (batch.length > 0) {
+          let plan: ImportConflictPlan;
+          try {
+            plan = this.prepareImport({
+              libraryId: input.libraryId,
+              sourceKind: 'files',
+              sourcePaths: batch.map((entry) => entry.sourcePath),
+              sourceEntries: batch,
+              sourceDirectories: root.directories,
+              createImageSequence: false,
+              dedupeSameNameByContent: true,
+              skipLibraryDuplicateScan: true,
+              onStagedEntry: (batchProcessed, stagedBytes) => {
+                batchBytesCopied += stagedBytes;
+                filesProcessed = offset + batchProcessed;
+                bytesProcessed = batchBytesBefore + batchBytesCopied;
+                emitBillfishProgress('copy');
+              },
+              suppressAssetChangeEvents: true,
+            });
+          } catch (error) {
+            throw this.wrapEagleImportStageError(error, 'IMPORT_COPY_FAILED');
+          }
+          let completion: ImportCompletion;
+          try {
+            completion = this.resolveImport({
+              importId: plan.importId,
+              suspectedDuplicate: 'skip',
+              nameConflict: 'keep-both',
+            });
+          } catch (error) {
+            throw this.wrapEagleImportStageError(error, 'IMPORT_REGISTER_FAILED');
+          }
+          importedCount += completion.importedCount;
+          skippedCount += completion.skippedCount;
+          replacedCount += completion.replacedCount;
+          this.suppressAutoAnalysisForAssets(
+            input.libraryId,
+            completion.assets.map((asset) => asset.assetId),
+          );
+          if (sampleAssets.length < 300) {
+            sampleAssets.push(...completion.assets.slice(0, 300 - sampleAssets.length));
+          }
+          if (completion.importedCount + completion.replacedCount > 0) {
+            this.options.onAssetsChanged?.({
+              type: 'asset.changed',
+              libraryId: input.libraryId,
+              changedCount: completion.importedCount + completion.replacedCount,
+              missingCount: 0,
+              source: 'client',
+            });
+          }
+        }
+        filesProcessed = Math.min(totalFiles, offset + items.length);
+        bytesProcessed = Math.min(
+          totalBytes,
+          batchBytesBefore + items.reduce((total, item) => total + item.byteSize, 0),
+        );
+        emitBillfishProgress('copy');
+        await transferCheckpoint();
+      }
+      emitBillfishProgress('complete', totalFiles, totalBytes);
+      return {
+        sourceDisplayName: root.displayName,
+        fileCount: root.items.length,
+        importedCount,
+        assetCount: importedCount,
+        skippedCount,
+        replacedCount,
+        collectionCount: 0,
+        tagCount: tagIdsByName.size,
+        invalidItemCount,
+        metadataCount,
+        assets: sampleAssets,
+      };
+    } catch (error) {
+      if (error instanceof LibraryServiceError && error.code === 'CANCELLED') throw error;
+      emitBillfishProgress('failed');
+      throw error;
+    } finally {
+      this.activeImports.delete(importId);
+    }
+  }
+
+  inspectBillfishLibrary(sourceRootPath: string): { displayName: string } {
+    let root: ReturnType<typeof readBillfishLibrary>;
+    try {
+      root = readBillfishLibrary(sourceRootPath);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'BILLFISH_METADATA_UNREADABLE',
+      });
+    }
+    const displayName = root.displayName.trim() || path.basename(root.sourceRootPath);
+    return { displayName };
+  }
+
+  async openBillfishLibrary(input: {
+    sourceRootPath: string;
+    selectedParentPath: string;
+    displayName: string;
+  }): Promise<InternalLibrarySummary> {
+    let root: ReturnType<typeof readBillfishLibrary>;
+    try {
+      root = readBillfishLibrary(input.sourceRootPath);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'BILLFISH_METADATA_UNREADABLE',
+      });
+    }
+
+    let sourceRoot: string;
+    let parentPath: string;
+    try {
+      sourceRoot = realpathSync(normalizeAbsolutePath(input.sourceRootPath));
+      parentPath = normalizeAbsolutePath(input.selectedParentPath);
+      if (existsSync(parentPath) && directoryExists(parentPath)) {
+        parentPath = realpathSync(parentPath);
+      }
+    } catch (error) {
+      throw serviceError(error, 'INVALID_LIBRARY_PATH');
+    }
+    if (pathIsWithin(sourceRoot, parentPath)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+
+    const displayName = input.displayName.trim() || root.displayName.trim() || path.basename(sourceRoot);
+    let created: InternalLibrarySummary | undefined;
+    try {
+      created = this.createLibrary({
+        displayName,
+        selectedParentPath: parentPath,
+      });
+      await this.importBillfishLibrary({
+        libraryId: created.libraryId,
+        sourceRootPath: sourceRoot,
+      });
+      return created;
+    } catch (error) {
+      if (created) {
+        try {
+          this.closeLibrary(created.libraryId);
+        } catch {
+          // Best-effort close before removing a conversion that did not finish.
+        }
+        try {
+          rmSync(created.libraryPath, { force: true, recursive: true });
+        } catch (cleanupError) {
+          this.diagnose('billfish-open.cleanup', cleanupError, {
             libraryPath: created.libraryPath,
           });
         }

@@ -148,6 +148,7 @@ import {
   type ImportConflictPlan,
   type ImageSequenceImportOffer,
   type EagleImportResult,
+  type BillfishImportResult,
   type AssetChangeEvent,
   parseAssetChangeEvent,
   type LibraryChangedEvent,
@@ -279,6 +280,37 @@ const library: SerpentLibraryApi = Object.freeze({
     const result = await request({ type: 'library.open-eagle.request', displayName });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected open-Eagle-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
+  async inspectBillfish(): Promise<LibraryApiResult<{ displayName: string }>> {
+    const result = await request({ type: 'library.inspect-billfish.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.billfish-inspected') {
+      throw new Error('Unexpected inspect-Billfish-library response.');
+    }
+    return { ok: true as const, value: { displayName: result.displayName } };
+  },
+
+  async cancelInspectBillfish(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.inspect-billfish.cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.billfish-inspect-cancelled') {
+      throw new Error('Unexpected cancel-inspect-Billfish-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
+  async openBillfish({
+    displayName,
+  }: {
+    displayName: string;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-billfish.request', displayName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') {
+      throw new Error('Unexpected open-Billfish-library response.');
+    }
     return { ok: true as const, value: result.library };
   },
 
@@ -682,6 +714,15 @@ const library: SerpentLibraryApi = Object.freeze({
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.import-eagle.completed') {
       throw new Error('Unexpected Eagle-library import response.');
+    }
+    return { ok: true, value: result.result };
+  },
+
+  async importBillfishLibrary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<BillfishImportResult>> {
+    const result = await request({ type: 'asset.import-billfish.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.import-billfish.completed') {
+      throw new Error('Unexpected Billfish-library import response.');
     }
     return { ok: true, value: result.result };
   },

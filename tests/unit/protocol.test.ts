@@ -1957,6 +1957,45 @@ describe('worker request protocol', () => {
     ).toThrow();
   });
 
+  it('inspects Billfish without exposing a filesystem path on the renderer request', () => {
+    expect(
+      parseRendererRequest({
+        type: 'library.inspect-billfish.request',
+      }),
+    ).toEqual({ type: 'library.inspect-billfish.request' });
+    expect(() =>
+      parseRendererRequest({
+        type: 'library.inspect-billfish.request',
+        sourceRootPath: '/Users/example/BillfishLibrary',
+      }),
+    ).toThrow();
+    expect(
+      parseRendererRequest({
+        type: 'library.open-billfish.request',
+        displayName: 'Billfish refs',
+      }),
+    ).toEqual({
+      type: 'library.open-billfish.request',
+      displayName: 'Billfish refs',
+    });
+    expect(
+      parseWorkerRequest({
+        requestId: 'req-billfish-01',
+        command: {
+          type: 'library.open-billfish',
+          sourceRootPath: '/Users/example/BillfishLibrary',
+          selectedParentPath: '/Users/example/Libraries',
+          displayName: 'Billfish refs',
+        },
+      }).command,
+    ).toEqual({
+      type: 'library.open-billfish',
+      sourceRootPath: '/Users/example/BillfishLibrary',
+      selectedParentPath: '/Users/example/Libraries',
+      displayName: 'Billfish refs',
+    });
+  });
+
   it('accepts source paths only on the internal prepare-import command', () => {
     expect(
       parseWorkerRequest({
@@ -2079,6 +2118,9 @@ describe('renderer lifecycle events', () => {
     expect(
       parseRendererLifecycleEvent({ type: 'library.opening', operation: 'open-eagle' }),
     ).toEqual({ type: 'library.opening', operation: 'open-eagle' });
+    expect(
+      parseRendererLifecycleEvent({ type: 'library.opening', operation: 'open-billfish' }),
+    ).toEqual({ type: 'library.opening', operation: 'open-billfish' });
     expect(parseRendererLifecycleEvent({
       type: 'library.opened',
       source: 'mcp',

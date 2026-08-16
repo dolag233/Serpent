@@ -45,7 +45,9 @@ export type NativeDialogId =
   | "importFiles"
   | "importFolder"
   | "importEagleLibrary"
+  | "importBillfishLibrary"
   | "openEagleLibrary"
+  | "openBillfishLibrary"
   | "openEagleLibraryDestination"
   | "openSyncLibraryDestination"
   | "createLibrary"
@@ -81,9 +83,17 @@ const EN: DialogCatalog = {
     title: "Import Eagle Library",
     buttonLabel: "Import Eagle Library",
   },
+  importBillfishLibrary: {
+    title: "Import Billfish Library",
+    buttonLabel: "Import Billfish Library",
+  },
   openEagleLibrary: {
     title: "Open Eagle Library",
     buttonLabel: "Open Eagle Library",
+  },
+  openBillfishLibrary: {
+    title: "Open Billfish Library",
+    buttonLabel: "Open Billfish Library",
   },
   openEagleLibraryDestination: {
     title: "Choose where to save the Serpent library",
@@ -164,9 +174,17 @@ const ZH_CN: DialogCatalog = {
     title: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
     buttonLabel: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
   },
+  importBillfishLibrary: {
+    title: "\u5bfc\u5165 Billfish \u8d44\u6e90\u5e93",
+    buttonLabel: "\u5bfc\u5165 Billfish \u8d44\u6e90\u5e93",
+  },
   openEagleLibrary: {
     title: "\u6253\u5f00 Eagle \u8d44\u6e90\u5e93",
     buttonLabel: "\u6253\u5f00 Eagle \u8d44\u6e90\u5e93",
+  },
+  openBillfishLibrary: {
+    title: "\u6253\u5f00 Billfish \u8d44\u6e90\u5e93",
+    buttonLabel: "\u6253\u5f00 Billfish \u8d44\u6e90\u5e93",
   },
   openEagleLibraryDestination: {
     title: "\u9009\u62e9 Serpent \u8d44\u6e90\u5e93\u4fdd\u5b58\u4f4d\u7f6e",

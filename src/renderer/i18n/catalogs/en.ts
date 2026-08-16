@@ -697,6 +697,13 @@ export const en = {
       help: "",
       submit: "Choose save location"
     },
+    openBillfishLibrary: {
+      title: "Open Billfish library",
+      body: "Convert the selected Billfish library into a Serpent library.",
+      name: "Name",
+      help: "",
+      submit: "Choose save location"
+    },
     conflicts: {
       skip: "Skip",
       importAnyway: "Import anyway",
@@ -952,8 +959,16 @@ export const en = {
     importLibraryChooser: {
       title: "Import library",
       help: "Import from a library folder or an exported ZIP, or open an Eagle library as a new Serpent library.",
+      helpMerge: "Adds and merges the imported library contents into the current library. You can also import Eagle / Billfish.",
       folder: "Import library folder",
       zip: "Import library ZIP",
+      external: "Open external library",
+      externalImport: "Import external library"
+    },
+    openLibraryChooser: {
+      title: "Open library",
+      help: "Open an existing Serpent library, or convert Eagle / Billfish into a new Serpent library.",
+      serpent: "Open Serpent library",
       external: "Open external library"
     }
   },
@@ -1967,6 +1982,7 @@ export const en = {
       AI_INTERNAL_ERROR: "Internal AI analysis error. Check the application log.",
       TRANSFER_IN_PROGRESS: "Another library import or export is already using the same library or path.",
       EAGLE_METADATA_UNREADABLE: "Could not parse the Eagle library metadata.json or images folder. Choose a .library directory.",
+      BILLFISH_METADATA_UNREADABLE: "Could not read the selected Billfish library. Choose its library folder and check its permissions.",
       IMPORT_COPY_FAILED: "Copying source files into the library failed. Check disk space and that the source files are still readable, then see the app log.",
       IMPORT_REGISTER_FAILED: "Files started copying, but registering them in the library failed. Check the app log and retry; do not re-import items that already succeeded.",
       EAGLE_THUMBNAIL_FAILED: "Eagle still thumbnails could not be written to the preview cache. The assets still import; refresh thumbnails later.",

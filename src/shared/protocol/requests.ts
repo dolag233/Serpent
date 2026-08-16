@@ -164,6 +164,16 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     displayName: displayNameSchema,
   }),
   z.strictObject({
+    type: z.literal('library.inspect-billfish.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-billfish.cancel.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.open-billfish.request'),
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.close.request'),
     libraryId: identifierSchema,
   }),
@@ -351,6 +361,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.import-eagle.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-billfish.request'),
     libraryId: identifierSchema,
   }),
   // This request is created only inside the preload bridge after Electron's
@@ -1156,6 +1170,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     displayName: displayNameSchema,
   }),
   z.strictObject({
+    type: z.literal('library.inspect-billfish'),
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.open-billfish'),
+    sourceRootPath: selectedPathSchema,
+    selectedParentPath: selectedPathSchema,
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.close'),
     libraryId: identifierSchema,
   }),
@@ -1388,6 +1412,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('asset.import-eagle'),
+    libraryId: identifierSchema,
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-billfish'),
     libraryId: identifierSchema,
     sourceRootPath: selectedPathSchema,
   }),

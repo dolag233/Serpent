@@ -228,13 +228,6 @@ export function buildApplicationMenuTemplate(
         commandItem("library.delete-from-disk", "shell.deleteLibraryFromDisk"),
         { type: "separator" },
         commandItem("library.import", "toolbar.importLibrary"),
-        {
-          type: "submenu",
-          labelKey: "toolbar.importExternalLibrary",
-          submenu: [
-            commandItem("library.import-eagle", "toolbar.importEagleLibrary"),
-          ],
-        },
         commandItem("library.export", "toolbar.exportLibrary"),
         { type: "separator" },
         commandItem("library.rename", "shell.renameLibrary"),

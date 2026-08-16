@@ -246,9 +246,9 @@ describe("NavigationSidebar virtual library root", () => {
     expect(childCollectionRow?.style.paddingLeft).toBe("21px");
     expect(parentCollectionRow?.classList.contains("is-active")).toBe(false);
     expect(childCollectionRow?.classList.contains("is-active")).toBe(true);
-    expect(parentCollectionRow?.querySelectorAll(".nav-count")).toHaveLength(2);
+    expect(parentCollectionRow?.querySelectorAll(".nav-count")).toHaveLength(1);
     expect(parentCollectionRow?.textContent).toContain("4");
-    expect(parentCollectionRow?.textContent).toContain("1");
+    expect(parentCollectionRow?.textContent).not.toContain("1");
     expect(childCollectionRow?.querySelector(".nav-count")?.textContent).toBe("2");
 
     await act(async () => childCollectionRow?.click());
@@ -257,14 +257,15 @@ describe("NavigationSidebar virtual library root", () => {
     expect(onChooseFolder).toHaveBeenCalledWith(childFolderId);
   });
 
-  it("reserves separate grid columns for collection and asset counts", () => {
+  it("reserves one trailing grid column for the asset count", () => {
     const styles = readFileSync(
       resolve(process.cwd(), "src/renderer/styles.css"),
       "utf8",
     );
 
     expect(styles).toMatch(
-      /\.nav-row\s*\{[\s\S]*?grid-template-columns:\s*17px minmax\(0, 1fr\) auto auto;/,
+      /\.nav-row\s*\{[\s\S]*?grid-template-columns:\s*17px minmax\(0, 1fr\) auto;/,
     );
+    expect(styles).not.toContain(".nav-child-count");
   });
 });

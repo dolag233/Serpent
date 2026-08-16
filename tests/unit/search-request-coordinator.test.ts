@@ -41,4 +41,24 @@ describe('LatestSearchRequestCoordinator', () => {
     });
     expect(new Set([page, libraryCount, trashCount]).size).toBe(3);
   });
+
+  it('shares one browse-window lane across scope and offset so jumps preempt', () => {
+    const firstFolder = searchRequestLaneKey({
+      scope: { kind: 'folder', folderId: 'a', recursive: false },
+      limit: 100,
+      offset: 0,
+    });
+    const jumped = searchRequestLaneKey({
+      scope: { kind: 'folder', folderId: 'a', recursive: false },
+      limit: 100,
+      offset: 500,
+    });
+    const otherFolder = searchRequestLaneKey({
+      scope: { kind: 'folder', folderId: 'b', recursive: false },
+      limit: 100,
+      offset: 0,
+    });
+    expect(firstFolder).toBe(jumped);
+    expect(firstFolder).toBe(otherFolder);
+  });
 });

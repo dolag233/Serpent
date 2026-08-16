@@ -6,11 +6,17 @@ import {
 } from "../../src/renderer/library-lifecycle-sync";
 
 describe("library lifecycle detach rules", () => {
-  it("only detaches the current library when opening Eagle, not when switching recents", () => {
+  it("only detaches the current library when opening Eagle or Billfish, not when switching recents", () => {
     expect(
       shouldDetachLibraryOnOpening({
         type: "library.opening",
         operation: "open-eagle",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDetachLibraryOnOpening({
+        type: "library.opening",
+        operation: "open-billfish",
       }),
     ).toBe(true);
     expect(
