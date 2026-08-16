@@ -14,6 +14,7 @@ function createActions(): MainMenuActions {
     closeLibrary: vi.fn(),
     removeLibrary: vi.fn(),
     deleteLibraryFromDisk: vi.fn(),
+    renameLibrary: vi.fn(),
     importFiles: vi.fn(),
     importFolder: vi.fn(),
     importLinkedFolder: vi.fn(),
@@ -140,6 +141,7 @@ describe("main-menu-items (Serpent-bnah)", () => {
       "library.import-external",
       "library.remove",
       "library.delete-from-disk",
+      "library.rename",
       "library.settings",
     ]);
     const openExternal = library?.items?.find((item) => item.id === "library.open-external");
@@ -160,5 +162,15 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(library?.items?.find((item) => item.id === "library.delete-from-disk")?.danger).toBe(
       true,
     );
+  });
+
+  it("routes library rename through the shared action model", () => {
+    const { actions, sections } = build();
+    const item = sections
+      .find((section) => section.id === "library")
+      ?.items?.find((entry) => entry.id === "library.rename");
+
+    item?.onSelect();
+    expect(actions.renameLibrary).toHaveBeenCalledTimes(1);
   });
 });

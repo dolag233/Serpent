@@ -72,7 +72,6 @@ describe('large-library media bytes', () => {
     const first = await createComplexImageBytes(12, 'jpg');
     const second = await createComplexImageBytes(13, 'jpg');
     const firstMeta = await sharp(first).metadata();
-    const secondMeta = await sharp(second).metadata();
     expect(firstMeta.format).toBe('jpeg');
     expect(firstMeta.width).toBeGreaterThan(64);
     expect(firstMeta.height).toBeGreaterThan(64);

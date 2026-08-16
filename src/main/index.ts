@@ -570,6 +570,81 @@ function aiKeyPath(): string {
   return path.join(app.getPath("userData"), "ai-key.enc");
 }
 
+// ── Serpent-xffq: 同步服务器（全局）与库绑定持久化 ───────────────────
+interface SyncServerRecord {
+  id: string;
+  baseUrl: string;
+  username?: string;
+  /** safeStorage 加密后的密码（base64）。 */
+  passwordEncrypted?: string;
+  allowInsecureTls: boolean;
+}
+
+interface SyncBindingRecord {
+  serverId: string;
+  subPath: string;
+}
+
+function syncServersPath(): string {
+  return path.join(app.getPath("userData"), "sync-servers.json");
+}
+
+function syncBindingsPath(): string {
+  return path.join(app.getPath("userData"), "sync-bindings.json");
+}
+
+function readSyncServers(): SyncServerRecord[] {
+  try {
+    const parsed = JSON.parse(readFileSync(syncServersPath(), "utf-8")) as unknown;
+    if (Array.isArray(parsed)) return parsed as SyncServerRecord[];
+  } catch {
+    // 首次运行。
+  }
+  return [];
+}
+
+function writeSyncServers(servers: SyncServerRecord[]): void {
+  writeFileSync(syncServersPath(), JSON.stringify(servers, null, 2), "utf-8");
+}
+
+function readSyncBindings(): Record<string, SyncBindingRecord> {
+  try {
+    const parsed = JSON.parse(readFileSync(syncBindingsPath(), "utf-8")) as unknown;
+    if (parsed && typeof parsed === "object") return parsed as Record<string, SyncBindingRecord>;
+  } catch {
+    // 首次运行。
+  }
+  return {};
+}
+
+function writeSyncBindings(bindings: Record<string, SyncBindingRecord>): void {
+  writeFileSync(syncBindingsPath(), JSON.stringify(bindings, null, 2), "utf-8");
+}
+
+function resolveSyncServerCredentials(serverId: string): {
+  baseUrl: string;
+  username?: string;
+  password?: string;
+  allowInsecureTls: boolean;
+} | null {
+  const server = readSyncServers().find((entry) => entry.id === serverId);
+  if (!server) return null;
+  let password: string | undefined;
+  if (server.passwordEncrypted) {
+    try {
+      password = safeStorage.decryptString(Buffer.from(server.passwordEncrypted, "base64"));
+    } catch {
+      password = undefined;
+    }
+  }
+  return {
+    baseUrl: server.baseUrl,
+    username: server.username,
+    password,
+    allowInsecureTls: server.allowInsecureTls,
+  };
+}
+
 function loadAiConfig(): AiConfig & { hasKey: boolean } {
   try {
     const raw = readFileSync(aiConfigPath(), "utf-8");
@@ -1737,13 +1812,21 @@ async function commandFor(
       // Renderer only receives a shell acknowledgement.
       return { type: "library.recovery-report", libraryId: request.libraryId };
     case "library.open-eagle.request": {
+      const host = createNativeDialogHost();
       const sourceRootPath = await selectOpenDirectory(
-        createNativeDialogHost(),
+        host,
         "openEagleLibrary",
         process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
       );
-      return sourceRootPath
-        ? { type: "library.open-eagle", sourceRootPath }
+      if (!sourceRootPath) return undefined;
+      const selectedParentPath = await selectOpenDirectory(
+        host,
+        "openEagleLibraryDestination",
+        process.env.SERPENT_E2E_OPEN_EAGLE_PARENT,
+        { createDirectory: true },
+      );
+      return selectedParentPath
+        ? { type: "library.open-eagle", sourceRootPath, selectedParentPath }
         : undefined;
     }
     case "library.close.request":
@@ -2693,34 +2776,43 @@ async function commandFor(
         libraryId: request.libraryId,
         assetIds: request.assetIds,
       };
-    case "sync.probe.request":
+    case "sync.probe.request": {
+      const server = resolveSyncServerCredentials(request.serverId);
+      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
       return {
         type: "sync.probe",
-        baseUrl: request.baseUrl,
-        username: request.username,
-        password: request.password,
-        allowInsecureTls: request.allowInsecureTls,
+        baseUrl: server.baseUrl,
+        username: server.username,
+        password: server.password,
+        allowInsecureTls: server.allowInsecureTls,
       };
-    case "sync.preview.request":
+    }
+    case "sync.preview.request": {
+      const server = resolveSyncServerCredentials(request.serverId);
+      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
       return {
         type: "sync.preview",
         libraryId: request.libraryId,
         deviceId: syncDeviceId(),
-        baseUrl: request.baseUrl,
-        username: request.username,
-        password: request.password,
-        allowInsecureTls: request.allowInsecureTls,
+        baseUrl: `${server.baseUrl.replace(/\/$/, "")}/${request.subPath.replace(/^\/+|\/+$/g, "")}/`,
+        username: server.username,
+        password: server.password,
+        allowInsecureTls: server.allowInsecureTls,
       };
-    case "sync.run.request":
+    }
+    case "sync.run.request": {
+      const server = resolveSyncServerCredentials(request.serverId);
+      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
       return {
         type: "sync.run",
         libraryId: request.libraryId,
         deviceId: syncDeviceId(),
-        baseUrl: request.baseUrl,
-        username: request.username,
-        password: request.password,
-        allowInsecureTls: request.allowInsecureTls,
+        baseUrl: `${server.baseUrl.replace(/\/$/, "")}/${request.subPath.replace(/^\/+|\/+$/g, "")}/`,
+        username: server.username,
+        password: server.password,
+        allowInsecureTls: server.allowInsecureTls,
       };
+    }
     case "model.resolve-companions.request":
       // Slice C (Serpent-qvc6): 3D viewer companion-texture index. The worker
       // command already exists (slice A); this is the renderer request bridge.
@@ -2802,6 +2894,13 @@ async function commandFor(
         assetId: request.assetId,
         kind: request.kind,
       };
+    case "sync.servers.list.request":
+    case "sync.servers.upsert.request":
+    case "sync.servers.delete.request":
+    case "sync.library.binding.save.request":
+    case "sync.library.binding.get.request":
+      // Main-owned local config; handled before Worker dispatch.
+      return undefined;
     default:
       return assertNever(request);
   }
@@ -2879,6 +2978,68 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         ok: true,
         type: "library.forgotten",
         libraryPath: request.libraryPath,
+      } satisfies RendererResult;
+    }
+
+    // Serpent-xffq: 同步服务器与库绑定是 Main 本地配置（凭据经 safeStorage）。
+    if (request.type === "sync.servers.list.request") {
+      const servers = readSyncServers().map((server) => ({
+        id: server.id,
+        baseUrl: server.baseUrl,
+        username: server.username,
+        hasPassword: server.passwordEncrypted !== undefined,
+        allowInsecureTls: server.allowInsecureTls,
+      }));
+      return { ok: true, type: "sync.servers.listed", servers } satisfies RendererResult;
+    }
+
+    if (request.type === "sync.servers.upsert.request") {
+      const servers = readSyncServers();
+      const id = request.id ?? randomUUID();
+      const passwordEncrypted = request.password
+        ? safeStorage.encryptString(request.password).toString("base64")
+        : request.id
+          ? (servers.find((entry) => entry.id === id)?.passwordEncrypted)
+          : undefined;
+      const record: SyncServerRecord = {
+        id,
+        baseUrl: request.baseUrl,
+        username: request.username || undefined,
+        passwordEncrypted,
+        allowInsecureTls: request.allowInsecureTls ?? false,
+      };
+      const existing = servers.findIndex((entry) => entry.id === id);
+      if (existing >= 0) servers[existing] = record;
+      else servers.push(record);
+      writeSyncServers(servers);
+      return { ok: true, type: "sync.server.saved", id } satisfies RendererResult;
+    }
+
+    if (request.type === "sync.servers.delete.request") {
+      writeSyncServers(readSyncServers().filter((entry) => entry.id !== request.id));
+      return { ok: true, type: "sync.server.deleted", id: request.id } satisfies RendererResult;
+    }
+
+    if (request.type === "sync.library.binding.save.request") {
+      const bindings = readSyncBindings();
+      bindings[request.libraryId] = { serverId: request.serverId, subPath: request.subPath };
+      writeSyncBindings(bindings);
+      return {
+        ok: true,
+        type: "sync.binding.saved",
+        libraryId: request.libraryId,
+        serverId: request.serverId,
+        subPath: request.subPath,
+      } satisfies RendererResult;
+    }
+
+    if (request.type === "sync.library.binding.get.request") {
+      const binding = readSyncBindings()[request.libraryId] ?? null;
+      return {
+        ok: true,
+        type: "sync.binding.got",
+        libraryId: request.libraryId,
+        binding: binding ? { serverId: binding.serverId, subPath: binding.subPath } : null,
       } satisfies RendererResult;
     }
 

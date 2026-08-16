@@ -67,6 +67,7 @@ export type ApplicationMenuCommand =
   | "library.import"
   | "library.import-eagle"
   | "library.export"
+  | "library.rename"
   | "library.settings"
   | "window.background-jobs"
   | "window.diagnostics"
@@ -236,6 +237,7 @@ export function buildApplicationMenuTemplate(
         },
         commandItem("library.export", "toolbar.exportLibrary"),
         { type: "separator" },
+        commandItem("library.rename", "shell.renameLibrary"),
         commandItem("library.settings", "settings.librarySettings"),
       ]
     : [];

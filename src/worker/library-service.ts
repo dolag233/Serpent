@@ -30283,26 +30283,44 @@ export class LibraryService {
   }
 
   /**
-   * Convert an Eagle library into a sibling Serpent library and open the
-   * converted result. The Eagle directory is never modified; this is the
-   * implementation behind the library-name menu's "Open Eagle library"
-   * action. The caller switches libraries only after this validated handle is
+   * Convert an Eagle library into a new Serpent library at a user-chosen
+   * parent directory and open the converted result. The Eagle directory is
+   * never modified; this is the implementation behind the library-name
+   * menu's "Open Eagle library" action. Main collects two native folders
+   * (Eagle source, then Serpent save location) before this command runs.
+   * The caller switches libraries only after this validated handle is
    * ready, so a cancelled/invalid conversion leaves the current library open.
    */
   async openEagleLibrary(input: {
     sourceRootPath: string;
+    selectedParentPath: string;
   }): Promise<InternalLibrarySummary> {
-    let snapshot: ReturnType<typeof readEagleLibrary>;
+    let root: ReturnType<typeof readEagleLibraryRoot>;
     try {
-      snapshot = readEagleLibrary(input.sourceRootPath);
+      root = readEagleLibraryRoot(input.sourceRootPath);
     } catch (error) {
-      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'EAGLE_METADATA_UNREADABLE',
+      });
     }
 
-    const suffix = ' (Serpent)';
-    const sourceName = snapshot.displayName.trim() || path.basename(input.sourceRootPath);
-    const displayName = `${sourceName.slice(0, 255 - suffix.length)}${suffix}`;
-    const parentPath = path.dirname(input.sourceRootPath);
+    let sourceRoot: string;
+    let parentPath: string;
+    try {
+      sourceRoot = realpathSync(normalizeAbsolutePath(input.sourceRootPath));
+      parentPath = normalizeAbsolutePath(input.selectedParentPath);
+      if (existsSync(parentPath) && directoryExists(parentPath)) {
+        parentPath = realpathSync(parentPath);
+      }
+    } catch (error) {
+      throw serviceError(error, 'INVALID_LIBRARY_PATH');
+    }
+    if (pathIsWithin(sourceRoot, parentPath)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+
+    const displayName = root.displayName.trim() || path.basename(sourceRoot);
     let created: InternalLibrarySummary | undefined;
     try {
       created = this.createLibrary({
@@ -30311,7 +30329,7 @@ export class LibraryService {
       });
       await this.importEagleLibrary({
         libraryId: created.libraryId,
-        sourceRootPath: input.sourceRootPath,
+        sourceRootPath: sourceRoot,
       });
       return created;
     } catch (error) {

@@ -599,12 +599,22 @@ export interface SerpentLibraryApi {
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
   /** Serpent-visible-window: queue-jump + header-probe the viewport assets. */
   reportVisibleWindow(input: { libraryId: string; assetIds: string[] }): Promise<void>;
-  /** Serpent-xffq: WebDAV 连接能力探测（不触碰库）。 */
-  syncProbe(input: { baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncCapabilities>>;
+  /** Serpent-xffq: 同步服务器列表（全局，Main 持有；密码不回传）。 */
+  syncListServers(): Promise<LibraryApiResult<Array<{ id: string; baseUrl: string; username?: string; hasPassword: boolean; allowInsecureTls: boolean }>>>;
+  /** Serpent-xffq: 保存/新增同步服务器（密码经 Main safeStorage 加密）。 */
+  syncSaveServer(input: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>>;
+  /** Serpent-xffq: 删除同步服务器。 */
+  syncDeleteServer(input: { id: string }): Promise<LibraryApiResult<{ id: string }>>;
+  /** Serpent-xffq: 保存库绑定（服务器 + 子路径）。 */
+  syncSaveBinding(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<void>>;
+  /** Serpent-xffq: 读取库绑定。 */
+  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; subPath: string } | null>>;
+  /** Serpent-xffq: 对指定服务器做连接能力探测（不触碰库）。 */
+  syncProbe(input: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>>;
   /** Serpent-xffq: 首次同步差异预览（不写任何内容）。 */
-  syncPreview(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncReport>>;
+  syncPreview(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<SyncReport>>;
   /** Serpent-xffq: 执行完整双向同步。 */
-  syncRun(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
+  syncRun(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
   requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover' | 'proxy-fallback'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model

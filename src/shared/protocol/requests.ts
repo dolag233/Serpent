@@ -899,26 +899,44 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('sync.probe.request'),
-    baseUrl: nonBlankString,
-    username: z.string().optional(),
-    password: z.string().optional(),
-    allowInsecureTls: z.boolean().optional(),
+    serverId: nonBlankString,
   }),
   z.strictObject({
     type: z.literal('sync.preview.request'),
     libraryId: identifierSchema,
+    serverId: nonBlankString,
+    subPath: z.string().default(''),
+  }),
+  z.strictObject({
+    type: z.literal('sync.run.request'),
+    libraryId: identifierSchema,
+    serverId: nonBlankString,
+    subPath: z.string().default(''),
+  }),
+  z.strictObject({
+    type: z.literal('sync.servers.list.request'),
+  }),
+  z.strictObject({
+    type: z.literal('sync.servers.upsert.request'),
+    id: identifierSchema.optional(),
     baseUrl: nonBlankString,
     username: z.string().optional(),
     password: z.string().optional(),
     allowInsecureTls: z.boolean().optional(),
   }),
   z.strictObject({
-    type: z.literal('sync.run.request'),
+    type: z.literal('sync.servers.delete.request'),
+    id: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sync.library.binding.save.request'),
     libraryId: identifierSchema,
-    baseUrl: nonBlankString,
-    username: z.string().optional(),
-    password: z.string().optional(),
-    allowInsecureTls: z.boolean().optional(),
+    serverId: nonBlankString,
+    subPath: z.string().default(''),
+  }),
+  z.strictObject({
+    type: z.literal('sync.library.binding.get.request'),
+    libraryId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.preview.request'),
@@ -1112,6 +1130,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.open-eagle'),
     sourceRootPath: selectedPathSchema,
+    selectedParentPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('library.close'),

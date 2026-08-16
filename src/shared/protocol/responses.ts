@@ -1933,6 +1933,43 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('sync.servers.listed'),
+    servers: z.array(z.strictObject({
+      id: nonBlankString,
+      baseUrl: nonBlankString,
+      username: z.string().optional(),
+      hasPassword: z.boolean(),
+      allowInsecureTls: z.boolean(),
+    })),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.server.saved'),
+    id: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.server.deleted'),
+    id: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.binding.saved'),
+    libraryId: nonBlankString,
+    serverId: nonBlankString,
+    subPath: z.string(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.binding.got'),
+    libraryId: nonBlankString,
+    binding: z.strictObject({
+      serverId: nonBlankString,
+      subPath: z.string(),
+    }).nullable(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('sync.probed'),
     capabilities: z.strictObject({
       auth: z.enum(['none', 'basic', 'digest']),

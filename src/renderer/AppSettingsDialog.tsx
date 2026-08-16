@@ -10,6 +10,7 @@ import {
 } from "./AppSettingsPages";
 import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginSettingsPage } from "./PluginSettingsPage";
+import { SyncSettingsPage, type SyncServerSettingsCallbacks } from "./SyncSettingsPage";
 import {
   PluginSettingsDetailPage,
   usePluginSettingsNavEntries,
@@ -44,6 +45,7 @@ export interface AppSettingsDialogProps {
   pluginContributionRefreshKey?: string | null;
   libraryId?: string;
   mcpApi?: SerpentMcpSettingsApi;
+  syncServerCallbacks: SyncServerSettingsCallbacks;
 }
 
 /**
@@ -68,6 +70,7 @@ export function AppSettingsDialog({
   pluginContributionRefreshKey,
   libraryId,
   mcpApi,
+  syncServerCallbacks,
 }: AppSettingsDialogProps): ReactNode {
   const t = useT();
   const [pluginSettingsPluginId, setPluginSettingsPluginId] = useState<string | null>(null);
@@ -193,6 +196,9 @@ export function AppSettingsDialog({
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "safety" ? <SafetySettingsPage /> : null}
+            {!showingPluginSettings && activeCategory === "sync" ? (
+              <SyncSettingsPage callbacks={syncServerCallbacks} />
+            ) : null}
           </main>
         </div>
       </DialogShell>

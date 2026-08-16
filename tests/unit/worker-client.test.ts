@@ -52,6 +52,7 @@ describe('requestTimeoutForCommand', () => {
 
   it('gives Eagle library imports the long archive-import timeout', () => {
     expect(requestTimeoutForCommand('asset.import-eagle')).toBe(30 * 60_000);
+    expect(requestTimeoutForCommand('library.open-eagle')).toBe(30 * 60_000);
   });
 
   it('gives AI queue processing a long timeout (Serpent-iokf)', () => {

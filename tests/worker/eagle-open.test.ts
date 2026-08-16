@@ -23,51 +23,67 @@ afterEach(() => {
   }
 });
 
-describe('Eagle external-library opening (Serpent-768x)', () => {
-  it('converts root files and nested folders into a sibling Serpent library', async () => {
+function writeEagleFixture(eagleRoot: string): void {
+  const rootItem = path.join(eagleRoot, 'images', 'root-item.info');
+  const nestedItem = path.join(eagleRoot, 'images', 'nested-item.info');
+  mkdirSync(rootItem, { recursive: true });
+  mkdirSync(nestedItem, { recursive: true });
+  writeFileSync(
+    path.join(eagleRoot, 'metadata.json'),
+    JSON.stringify({
+      folders: [{ id: 'folder-1', name: 'Nested', children: [] }],
+    }),
+  );
+  writeFileSync(
+    path.join(rootItem, 'metadata.json'),
+    JSON.stringify({
+      id: 'root-item',
+      name: 'root-item',
+      ext: 'txt',
+      folders: [],
+      tags: ['root-tag'],
+      annotation: 'root annotation',
+    }),
+  );
+  writeFileSync(path.join(rootItem, 'root-item.txt'), 'root bytes');
+  writeFileSync(
+    path.join(nestedItem, 'metadata.json'),
+    JSON.stringify({
+      id: 'nested-item',
+      name: 'nested-item',
+      ext: 'txt',
+      folders: ['folder-1'],
+    }),
+  );
+  writeFileSync(path.join(nestedItem, 'nested-item.txt'), 'nested bytes');
+}
+
+describe('Eagle external-library opening (Serpent-768x.1)', () => {
+  it('converts root files and nested folders into a Serpent library at the chosen parent', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-'));
     roots.push(root);
-    const eagleRoot = path.join(root, 'Reference.library');
-    const rootItem = path.join(eagleRoot, 'images', 'root-item.info');
-    const nestedItem = path.join(eagleRoot, 'images', 'nested-item.info');
-    mkdirSync(rootItem, { recursive: true });
-    mkdirSync(nestedItem, { recursive: true });
-    writeFileSync(
-      path.join(eagleRoot, 'metadata.json'),
-      JSON.stringify({
-        folders: [{ id: 'folder-1', name: 'Nested', children: [] }],
-      }),
-    );
-    writeFileSync(
-      path.join(rootItem, 'metadata.json'),
-      JSON.stringify({
-        id: 'root-item',
-        name: 'root-item',
-        ext: 'txt',
-        folders: [],
-        tags: ['root-tag'],
-        annotation: 'root annotation',
-      }),
-    );
-    writeFileSync(path.join(rootItem, 'root-item.txt'), 'root bytes');
-    writeFileSync(
-      path.join(nestedItem, 'metadata.json'),
-      JSON.stringify({
-        id: 'nested-item',
-        name: 'nested-item',
-        ext: 'txt',
-        folders: ['folder-1'],
-      }),
-    );
-    writeFileSync(path.join(nestedItem, 'nested-item.txt'), 'nested bytes');
+    const eagleParent = path.join(root, 'eagle-source');
+    const destinationParent = path.join(root, 'serpent-destination');
+    mkdirSync(eagleParent);
+    mkdirSync(destinationParent);
+    const eagleRoot = path.join(eagleParent, 'Reference.library');
+    writeEagleFixture(eagleRoot);
     const sourceMetadata = readFileSync(path.join(eagleRoot, 'metadata.json'), 'utf8');
 
     const service = new LibraryService();
     services.push(service);
-    const converted = await service.openEagleLibrary({ sourceRootPath: eagleRoot });
+    const converted = await service.openEagleLibrary({
+      sourceRootPath: eagleRoot,
+      selectedParentPath: destinationParent,
+    });
 
-    expect(converted.displayName).toBe('Reference (Serpent)');
-    expect(converted.libraryPath).toBe(path.join(realpathSync(root), 'Reference (Serpent)'));
+    expect(converted.displayName).toBe('Reference');
+    expect(converted.libraryPath).toBe(
+      path.join(realpathSync(destinationParent), 'Reference'),
+    );
+    expect(converted.libraryPath).not.toBe(
+      path.join(realpathSync(eagleParent), 'Reference'),
+    );
     expect(readFileSync(path.join(eagleRoot, 'metadata.json'), 'utf8')).toBe(sourceMetadata);
 
     const assets = service.listAssets({
@@ -95,5 +111,21 @@ describe('Eagle external-library opening (Serpent-768x)', () => {
         .map((asset) => asset.displayName),
     ).toContain('nested-item.txt');
     expect(service.listTags(converted.libraryId).map((tag) => tag.name)).toContain('root-tag');
+  });
+
+  it('rejects a destination inside the Eagle source directory', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-inside-'));
+    roots.push(root);
+    const eagleRoot = path.join(root, 'Reference.library');
+    writeEagleFixture(eagleRoot);
+
+    const service = new LibraryService();
+    services.push(service);
+    await expect(
+      service.openEagleLibrary({
+        sourceRootPath: eagleRoot,
+        selectedParentPath: eagleRoot,
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_LIBRARY_PATH' });
   });
 });

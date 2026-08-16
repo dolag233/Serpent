@@ -1889,6 +1889,32 @@ describe('worker request protocol', () => {
     ).toThrow();
   });
 
+  it('requires both Eagle source and Serpent destination paths to open Eagle', () => {
+    expect(
+      parseWorkerRequest({
+        requestId: 'req-01',
+        command: {
+          type: 'library.open-eagle',
+          sourceRootPath: '/Users/example/Reference.library',
+          selectedParentPath: '/Users/example/Libraries',
+        },
+      }).command,
+    ).toEqual({
+      type: 'library.open-eagle',
+      sourceRootPath: '/Users/example/Reference.library',
+      selectedParentPath: '/Users/example/Libraries',
+    });
+    expect(() =>
+      parseWorkerRequest({
+        requestId: 'req-01',
+        command: {
+          type: 'library.open-eagle',
+          sourceRootPath: '/Users/example/Reference.library',
+        },
+      }),
+    ).toThrow();
+  });
+
   it('accepts source paths only on the internal prepare-import command', () => {
     expect(
       parseWorkerRequest({

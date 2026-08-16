@@ -38,7 +38,8 @@ export type AppSettingsCategoryId =
   | "ai"
   | "mcp"
   | "plugins"
-  | "safety";
+  | "safety"
+  | "sync";
 
 /**
  * Stable settings information architecture. It deliberately lists only
@@ -55,7 +56,8 @@ export type AppSettingsCategory = {
     | "settings.categoryAi"
     | "settings.categoryMcp"
     | "settings.categoryPlugins"
-    | "settings.categorySafety";
+    | "settings.categorySafety"
+    | "settings.categorySync";
 };
 
 export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
@@ -93,6 +95,11 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "safety",
     icon: "warning",
     labelKey: "settings.categorySafety",
+  },
+  {
+    id: "sync",
+    icon: "refresh",
+    labelKey: "settings.categorySync",
   },
 ];
 

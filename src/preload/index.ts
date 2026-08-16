@@ -1698,21 +1698,53 @@ const library: SerpentLibraryApi = Object.freeze({
     await request({ type: 'asset.thumbnail.visible-window.request', libraryId, assetIds });
   },
 
-  // Serpent-xffq: WebDAV 同步（探测/预览/执行）。结果由 Main 透传 worker 结果。
-  async syncProbe({ baseUrl, username, password, allowInsecureTls }: { baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncCapabilities>> {
-    const result = await request({ type: 'sync.probe.request', baseUrl, username, password, allowInsecureTls });
+  // Serpent-xffq: 同步服务器（全局）与库绑定（Main 本地，密码 safeStorage）。
+  async syncListServers(): Promise<LibraryApiResult<Array<{ id: string; baseUrl: string; username?: string; hasPassword: boolean; allowInsecureTls: boolean }>>> {
+    const result = await request({ type: 'sync.servers.list.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.servers.listed') throw new Error('Unexpected sync servers response.');
+    return { ok: true, value: result.servers };
+  },
+  async syncSaveServer({ id, baseUrl, username, password, allowInsecureTls }: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>> {
+    const result = await request({ type: 'sync.servers.upsert.request', id, baseUrl, username, password, allowInsecureTls });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.server.saved') throw new Error('Unexpected sync server response.');
+    return { ok: true, value: { id: result.id } };
+  },
+  async syncDeleteServer({ id }: { id: string }): Promise<LibraryApiResult<{ id: string }>> {
+    const result = await request({ type: 'sync.servers.delete.request', id });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
+    return { ok: true, value: { id: result.id } };
+  },
+  async syncSaveBinding({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, subPath });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
+    return { ok: true, value: undefined };
+  },
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; subPath: string } | null>> {
+    const result = await request({ type: 'sync.library.binding.get.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');
+    return { ok: true, value: result.binding };
+  },
+
+  // Serpent-xffq: 同步探测/预览/执行（Main 按 serverId 解析 URL 与凭据）。
+  async syncProbe({ serverId }: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>> {
+    const result = await request({ type: 'sync.probe.request', serverId });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.probed') throw new Error('Unexpected sync probe response.');
     return { ok: true, value: result.capabilities };
   },
-  async syncPreview({ libraryId, baseUrl, username, password, allowInsecureTls }: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncReport>> {
-    const result = await request({ type: 'sync.preview.request', libraryId, baseUrl, username, password, allowInsecureTls });
+  async syncPreview({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<SyncReport>> {
+    const result = await request({ type: 'sync.preview.request', libraryId, serverId, subPath });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.previewed') throw new Error('Unexpected sync preview response.');
     return { ok: true, value: result.report };
   },
-  async syncRun({ libraryId, baseUrl, username, password, allowInsecureTls }: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
-    const result = await request({ type: 'sync.run.request', libraryId, baseUrl, username, password, allowInsecureTls });
+  async syncRun({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
+    const result = await request({ type: 'sync.run.request', libraryId, serverId, subPath });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.completed') throw new Error('Unexpected sync run response.');
     return { ok: true, value: { report: result.report, conflicts: result.conflicts } };
@@ -2306,7 +2338,7 @@ const shell: SerpentShellApi = Object.freeze({
         'file.import-files', 'file.import-folder', 'file.import-linked-folder',
         'edit.undo', 'edit.redo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
         'library.create', 'library.open', 'library.close', 'library.remove',
-        'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
+        'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.rename', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
         'about.serpent', 'about.github', 'about.open-source', 'settings',
       ];

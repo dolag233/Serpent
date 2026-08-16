@@ -57,4 +57,17 @@ describe("native dialog i18n (Serpent-bwb)", () => {
     expect(zhExport.title).toBe("\u5bfc\u51fa\u4e3a ZIP");
     expect(zhExport.filterName).toBe("ZIP \u6587\u4ef6");
   });
+
+  it('keeps Eagle open as two folder pickers: source then Serpent save location', () => {
+    const enSource = resolveNativeDialogCopy("en", "openEagleLibrary");
+    const zhSource = resolveNativeDialogCopy("zh-CN", "openEagleLibrary");
+    const enDest = resolveNativeDialogCopy("en", "openEagleLibraryDestination");
+    const zhDest = resolveNativeDialogCopy("zh-CN", "openEagleLibraryDestination");
+    expect(enSource.title).toBe("Open Eagle Library");
+    expect(zhSource.title).toBe("\u6253\u5f00 Eagle \u8d44\u6e90\u5e93");
+    expect(enDest.title).toBe("Choose where to save the Serpent library");
+    expect(zhDest.title).toBe("\u9009\u62e9 Serpent \u8d44\u6e90\u5e93\u4fdd\u5b58\u4f4d\u7f6e");
+    expect(enDest.title).not.toBe(enSource.title);
+    expect(zhDest.title).not.toBe(zhSource.title);
+  });
 });

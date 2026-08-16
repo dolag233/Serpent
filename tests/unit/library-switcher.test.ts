@@ -200,6 +200,7 @@ describe("LibrarySwitcher external library action", () => {
             onImportLibrary: vi.fn(),
             onRemoveLibrary: vi.fn(),
             onDeleteLibraryFromDisk: vi.fn(),
+            onRenameLibrary: vi.fn(),
             onOpenLibrarySettings: vi.fn(),
             onCloseLibrary: vi.fn(),
           }),
@@ -226,6 +227,7 @@ describe("LibrarySwitcher external library action", () => {
       "导入外部资源库",
       "移除资源库",
       "从硬盘删除资源库…",
+      "重命名资源库",
       "资源库设置",
     ]);
 
@@ -238,5 +240,41 @@ describe("LibrarySwitcher external library action", () => {
       '[role="menuitem"]',
     )].find((button) => button.textContent?.includes("从硬盘删除资源库"));
     expect(deleteLibrary?.classList.contains("is-danger")).toBe(true);
+  });
+
+  it("opens the library settings rename entry", async () => {
+    const onRenameLibrary = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(LibrarySwitcher, {
+            libraryName: "Current",
+            libraryOpen: true,
+            onCreateLibrary: vi.fn(),
+            onOpenLibrary: vi.fn(),
+            onRenameLibrary,
+            onCloseLibrary: vi.fn(),
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
+    });
+    const rename = [...container.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((button) => button.textContent?.trim() === "重命名资源库");
+    expect(rename).toBeDefined();
+
+    await act(async () => {
+      rename?.click();
+    });
+    expect(onRenameLibrary).toHaveBeenCalledTimes(1);
   });
 });

@@ -59,6 +59,8 @@ export type LibrarySwitcherProps = {
   onRemoveLibrary?: () => void;
   /** Irreversible delete of the currently open library root (Serpent-9i8). */
   onDeleteLibraryFromDisk?: () => void;
+  /** Opens the library settings where the library name can be edited. */
+  onRenameLibrary?: () => void;
   onOpenLibrarySettings?: () => void;
   /** Recent libraries excluding the open one; the section hides when empty. */
   recentLibraries?: RecentLibraryMenuEntry[];
@@ -94,6 +96,7 @@ export function LibrarySwitcher({
   onImportBillfishLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
+  onRenameLibrary,
   onOpenLibrarySettings,
   recentLibraries = [],
   onOpenRecent,
@@ -334,6 +337,18 @@ export function LibrarySwitcher({
             type="button"
           >
             {t("shell.deleteLibraryFromDisk")}
+          </button>
+          <button
+            className="library-switcher-item"
+            disabled={!libraryName || busy || !onRenameLibrary}
+            onClick={() => {
+              if (onRenameLibrary) runMenuAction(onRenameLibrary);
+            }}
+            role="menuitem"
+            tabIndex={-1}
+            type="button"
+          >
+            {t("shell.renameLibrary")}
           </button>
           <button
             className="library-switcher-item"

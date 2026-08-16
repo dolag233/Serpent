@@ -6,7 +6,7 @@
 
 `Serpent-cljb` 的策略按用户澄清执行：视频不再按“所有资源”预生成 proxy。导入、缩略图波次、打开查看器和普通预览只保留原视频路径；只有原视频在真实媒体元素上报告 codec/decode 错误（`MEDIA_ERR_DECODE` / `MEDIA_ERR_SRC_NOT_SUPPORTED`）后，才为这一项视频显式请求或复用 `webm_proxy`。已有可用 proxy 会先做路径校验并直接复用。代理播放成功后显示可隐藏、可恢复的弱提示。
 
-`Serpent-768x` 的 Eagle“打开”不是把 Eagle 目录当作可写的 Serpent 库，而是创建同级的 `<Eagle 名称> (Serpent)` 转换库，导入完成后再由 Main 切换当前库；源 Eagle 目录不修改。资源库根目录文件通过一个独立的“资源库根目录”虚拟节点浏览，和“所有资产”及真实文件夹分开。
+`Serpent-768x` 的 Eagle“打开”不是把 Eagle 目录当作可写的 Serpent 库，而是读取 Eagle 后转换成新的 Serpent 库。2026-08-16 `Serpent-768x.1`：打开时连续两个目录选择器（Eagle 源 → Serpent 保存位置），不再默认写到 Eagle 同级 `<名称> (Serpent)`。源 Eagle 目录不修改。资源库根目录文件通过一个独立的“资源库根目录”虚拟节点浏览，和“所有资产”及真实文件夹分开。详见 [打开目的地开发日志](./2026-08-16-eagle-open-destination-development-log.md)。
 
 `Serpent-dw9a` 实现了 Phase 1 和行级损坏可见性/重定位的主要 Phase 2 路径。抢救报告由 Worker 写入受保护的 `.serpent/corrupt-backup/`，Renderer 只收到安全摘要（源文件数量、元数据损失类别和报告可用标志），查看报告目录仍由 Main 执行。Inspector 选中缺失资产时只探测已知原路径、链接根路径和回收区；未知位置继续要求用户选择恢复根目录，不把未知位置误判成不可恢复。
 

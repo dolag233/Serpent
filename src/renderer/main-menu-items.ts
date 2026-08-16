@@ -45,6 +45,7 @@ export type MainMenuActions = {
   readonly closeLibrary: () => void;
   readonly removeLibrary: () => void;
   readonly deleteLibraryFromDisk: () => void;
+  readonly renameLibrary: () => void;
   readonly importFiles: () => void;
   readonly importFolder: () => void;
   readonly importEagleLibrary?: () => void;
@@ -272,6 +273,12 @@ export function buildMainMenuSections({
           disabled: libraryDisabled,
           danger: true,
           onSelect: actions.deleteLibraryFromDisk,
+        },
+        {
+          id: "library.rename",
+          label: label(locale, "shell.renameLibrary"),
+          disabled: libraryDisabled,
+          onSelect: actions.renameLibrary,
         },
         {
           id: "library.settings",

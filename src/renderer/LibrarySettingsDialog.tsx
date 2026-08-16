@@ -1,17 +1,21 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
 import type { SyncCapabilities, SyncReport } from "../shared/library-api";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
+import type { SyncServerSummary } from "./sync-settings-types";
 
 type LibrarySettingsCategory = "general" | "ignore" | "sync";
 
 export interface SyncSettingsCallbacks {
-  syncProbe(input: { baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
-  syncPreview(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
-  syncRun(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
+  syncListServers(): Promise<{ ok: true; value: SyncServerSummary[] } | { ok: false; message: string }>;
+  syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
+  syncPreview(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
+  syncRun(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; subPath: string } | null } | { ok: false; message: string }>;
 }
 
 function SyncSettingsSection({
@@ -22,34 +26,40 @@ function SyncSettingsSection({
   callbacks: SyncSettingsCallbacks;
 }): ReactNode {
   const t = useT();
-  const [baseUrl, setBaseUrl] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [allowInsecureTls, setAllowInsecureTls] = useState(false);
-  const [busy, setBusy] = useState<"probe" | "preview" | "run" | null>(null);
+  const [servers, setServers] = useState<SyncServerSummary[]>([]);
+  const [serverId, setServerId] = useState("");
+  const [subPath, setSubPath] = useState("");
+  const [busy, setBusy] = useState<"probe" | "preview" | "run" | "save" | null>(null);
   const [capabilities, setCapabilities] = useState<SyncCapabilities | null>(null);
   const [preview, setPreview] = useState<SyncReport | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const input = () => ({
-    baseUrl: baseUrl.trim(),
-    username: username.trim() || undefined,
-    password: password || undefined,
-    allowInsecureTls: allowInsecureTls || undefined,
-  });
+  useEffect(() => {
+    void (async () => {
+      const listed = await callbacks.syncListServers();
+      if (!listed.ok) return;
+      setServers(listed.value);
+      const binding = await callbacks.syncGetBinding({ libraryId: library.libraryId });
+      if (binding.ok && binding.value) {
+        setServerId(binding.value.serverId);
+        setSubPath(binding.value.subPath);
+      } else if (listed.value.length > 0 && !serverId) {
+        setServerId(listed.value[0]!.id);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library.libraryId]);
 
   const runProbe = async () => {
     setBusy("probe");
     setError(null);
     setCapabilities(null);
     try {
-      const probe = await callbacks.syncProbe(input());
+      const probe = await callbacks.syncProbe({ serverId });
       if (probe.ok) {
         setCapabilities(probe.value);
-        if (!probe.value.supportsContentTransfer) {
-          setError(t("settings.sync.contentTransferUnsupported"));
-        }
+        if (!probe.value.supportsContentTransfer) setError(t("settings.sync.contentTransferUnsupported"));
       } else {
         setError(probe.message);
       }
@@ -63,7 +73,7 @@ function SyncSettingsSection({
     setError(null);
     setPreview(null);
     try {
-      const previewResult = await callbacks.syncPreview({ ...input(), libraryId: library.libraryId });
+      const previewResult = await callbacks.syncPreview({ libraryId: library.libraryId, serverId, subPath });
       if (previewResult.ok) setPreview(previewResult.value);
       else setError(previewResult.message);
     } finally {
@@ -76,22 +86,32 @@ function SyncSettingsSection({
     setError(null);
     setResult(null);
     try {
-      const syncResult = await callbacks.syncRun({ ...input(), libraryId: library.libraryId });
+      const syncResult = await callbacks.syncRun({ libraryId: library.libraryId, serverId, subPath });
       if (syncResult.ok) {
         const report = syncResult.value.report;
-        setResult(
-          t("settings.sync.completedSummary", {
-            uploads: report.uploads,
-            downloads: report.downloads,
-            conflicts: report.conflicts,
-          }),
-        );
+        setResult(t("settings.sync.completedSummary", {
+          uploads: report.uploads,
+          downloads: report.downloads,
+          conflicts: report.conflicts,
+        }));
         if (syncResult.value.conflicts.length > 0) {
           setError(t("settings.sync.conflictsDetected", { count: syncResult.value.conflicts.length }));
         }
       } else {
         setError(syncResult.message);
       }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveBinding = async () => {
+    setBusy("save");
+    setError(null);
+    try {
+      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, subPath });
+      if (!saved.ok) setError(saved.message);
+      else setResult(t("settings.sync.bindingSaved"));
     } finally {
       setBusy(null);
     }
@@ -106,38 +126,39 @@ function SyncSettingsSection({
       <section className="app-settings-card">
         <div className="app-settings-row app-settings-row-stack">
           <div className="app-settings-row-copy">
-            <strong>{t("settings.sync.webdavUrl")}</strong>
-            <span>{t("settings.sync.webdavUrlHint")}</span>
+            <strong>{t("settings.sync.server")}</strong>
+            <span>{t("settings.sync.serverHint")}</span>
           </div>
-          <input className="text-field" aria-label={t("settings.sync.webdavUrl")} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://nas.local/dav/share/" />
+          {servers.length === 0 ? (
+            <p className="library-settings-gitignore-help">{t("settings.sync.noServer")}</p>
+          ) : (
+            <select className="text-field" aria-label={t("settings.sync.server")} value={serverId} onChange={(event) => setServerId(event.target.value)}>
+              {servers.map((server) => (
+                <option key={server.id} value={server.id}>{server.baseUrl}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="app-settings-row app-settings-row-stack">
           <div className="app-settings-row-copy">
-            <strong>{t("settings.sync.credentials")}</strong>
-            <span>{t("settings.sync.credentialsHint")}</span>
+            <strong>{t("settings.sync.subPath")}</strong>
+            <span>{t("settings.sync.subPathHint")}</span>
           </div>
-          <div className="library-settings-name-row">
-            <input className="text-field" aria-label={t("settings.sync.username")} value={username} onChange={(event) => setUsername(event.target.value)} placeholder={t("settings.sync.username")} />
-            <input className="text-field" aria-label={t("settings.sync.password")} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t("settings.sync.password")} />
-          </div>
-        </div>
-        <div className="app-settings-row">
-          <div className="app-settings-row-copy">
-            <strong>{t("settings.sync.insecureTls")}</strong>
-            <span>{t("settings.sync.insecureTlsHint")}</span>
-          </div>
-          <input type="checkbox" checked={allowInsecureTls} onChange={(event) => setAllowInsecureTls(event.target.checked)} />
+          <input className="text-field" aria-label={t("settings.sync.subPath")} value={subPath} onChange={(event) => setSubPath(event.target.value)} placeholder="Share/Serpent" />
         </div>
         <div className="app-settings-card-divider" />
         <div className="library-settings-gitignore-actions">
-          <button className="primary-button" disabled={busy !== null || !baseUrl.trim()} onClick={() => void runProbe()} type="button">
-            {busy === "probe" ? t("text.saving") : t("settings.sync.probe")}
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runProbe()} type="button">
+            {busy === "probe" ? t("common.saving") : t("settings.sync.probe")}
           </button>
-          <button className="primary-button" disabled={busy !== null || !baseUrl.trim()} onClick={() => void runPreview()} type="button">
-            {busy === "preview" ? t("text.saving") : t("settings.sync.preview")}
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runPreview()} type="button">
+            {busy === "preview" ? t("common.saving") : t("settings.sync.preview")}
           </button>
-          <button className="primary-button" disabled={busy !== null || !baseUrl.trim()} onClick={() => void runSync()} type="button">
-            {busy === "run" ? t("text.saving") : t("settings.sync.run")}
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runSync()} type="button">
+            {busy === "run" ? t("common.saving") : t("settings.sync.run")}
+          </button>
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
+            {busy === "save" ? t("common.saving") : t("common.save")}
           </button>
         </div>
         {capabilities ? (
@@ -173,6 +194,7 @@ export function LibrarySettingsDialog({
   gitignoreContent,
   open,
   onClose,
+  focusNameOnOpen = false,
   onSaveName,
   onSaveGitignore,
   syncCallbacks,
@@ -181,6 +203,7 @@ export function LibrarySettingsDialog({
   gitignoreContent: string;
   open: boolean;
   onClose: () => void;
+  focusNameOnOpen?: boolean;
   onSaveName: (name: string) => Promise<void>;
   onSaveGitignore: (content: string) => Promise<void>;
   syncCallbacks: SyncSettingsCallbacks;
@@ -192,6 +215,16 @@ export function LibrarySettingsDialog({
   const [savingName, setSavingName] = useState(false);
   const [savingIgnore, setSavingIgnore] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open || !focusNameOnOpen) return;
+    const frame = requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusNameOnOpen, open]);
 
   if (!open || !library) return null;
 
@@ -248,7 +281,7 @@ export function LibrarySettingsDialog({
                     type="button"
                   >
                     <Icon name={item === "general" ? "settings" : item === "ignore" ? "eye-off" : "refresh"} size={16} />
-                    <span>{t(item === "general" ? "settings.libraryGeneral" : item === "ignore" ? "settings.libraryIgnore" : "sync.title")}</span>
+                    <span>{t(item === "general" ? "settings.libraryGeneral" : item === "ignore" ? "settings.libraryIgnore" : "settings.sync.title")}</span>
                   </button>
                 );
               })}
@@ -272,7 +305,7 @@ export function LibrarySettingsDialog({
                       <span>{t("settings.libraryNameHint")}</span>
                     </div>
                     <div className="library-settings-name-row">
-                      <input className="text-field" value={name} onChange={(event) => setName(event.target.value)} />
+                      <input className="text-field" ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} />
                       <button className="primary-button" disabled={!name.trim() || savingName} onClick={() => void saveName()} type="button">{t("common.save")}</button>
                     </div>
                   </div>
@@ -326,7 +359,7 @@ export function LibrarySettingsDialog({
                   <div className="library-settings-gitignore-actions">
                     <span>{t("settings.gitignoreSaveHint")}</span>
                     <button className="primary-button" disabled={savingIgnore} onClick={() => void saveGitignore()} type="button">
-                      {savingIgnore ? t("text.saving") : t("common.save")}
+                      {savingIgnore ? t("common.saving") : t("common.save")}
                     </button>
                   </div>
                 </section>

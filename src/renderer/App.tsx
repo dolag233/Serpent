@@ -1049,6 +1049,7 @@ function AppInner() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
+  const [focusLibraryNameOnOpen, setFocusLibraryNameOnOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
@@ -3321,12 +3322,26 @@ function AppInner() {
   }
 
   async function openEagleLibrary() {
-    if (!api) return;
-    await runLibraryOpenPipeline(
-      "opening",
-      () => api.openEagle(),
-      t("toast.openRecentFailed"),
-    );
+    if (!api || importProgress) return;
+    setImportProgress({
+      type: "import.progress",
+      importId: "",
+      phase: "validate",
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: 0,
+      bytesProcessed: 0,
+      totalBytes: 0,
+    });
+    try {
+      await runLibraryOpenPipeline(
+        "opening",
+        () => api.openEagle(),
+        t("toast.openRecentFailed"),
+      );
+    } finally {
+      setImportProgress(null);
+    }
   }
 
   async function revealRecoveryReport() {
@@ -8238,6 +8253,11 @@ function AppInner() {
       closeLibrary: () => void closeLibrary(),
       removeLibrary: () => void removeLibrary(),
       deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
+      renameLibrary: () => {
+        setAppSettingsOpen(false);
+        setFocusLibraryNameOnOpen(true);
+        setLibrarySettingsOpen(true);
+      },
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
       importEagleLibrary: () => void importEagleLibrary(),
@@ -8246,6 +8266,7 @@ function AppInner() {
       exportLibrary: () => setExportDialogOpen(true),
       openLibrarySettings: () => {
         setAppSettingsOpen(false);
+        setFocusLibraryNameOnOpen(false);
         setLibrarySettingsOpen(true);
       },
       undo: () => void undoLastFileOp(),
@@ -8410,8 +8431,14 @@ function AppInner() {
               onCloseLibrary={() => void closeLibrary()}
               onRemoveLibrary={() => void removeLibrary()}
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
+              onRenameLibrary={() => {
+                setAppSettingsOpen(false);
+                setFocusLibraryNameOnOpen(true);
+                setLibrarySettingsOpen(true);
+              }}
               onOpenLibrarySettings={() => {
                 setAppSettingsOpen(false);
+                setFocusLibraryNameOnOpen(false);
                 setLibrarySettingsOpen(true);
               }}
               onCreateLibrary={() => {
@@ -10321,13 +10348,43 @@ function AppInner() {
         libraryId={library?.libraryId}
         mcpApi={(window as RendererWindow).serpent?.mcp}
         open={appSettingsOpen}
+        syncServerCallbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+          async syncSaveServer(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncSaveServer(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+          async syncDeleteServer(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncDeleteServer(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true };
+          },
+          async syncProbe(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncProbe(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+        }}
       />
       <LibrarySettingsDialog
         key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
-        onClose={() => setLibrarySettingsOpen(false)}
+        focusNameOnOpen={focusLibraryNameOnOpen}
+        onClose={() => {
+          setFocusLibraryNameOnOpen(false);
+          setLibrarySettingsOpen(false);
+        }}
         onSaveName={async (name) => {
           if (!api || !library) return;
           const result = await api.rename({ libraryId: library.libraryId, displayName: name });
@@ -10350,6 +10407,12 @@ function AppInner() {
           await reloadCurrentContent();
         }}
         syncCallbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
           async syncProbe(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncProbe(input);
@@ -10365,6 +10428,18 @@ function AppInner() {
           async syncRun(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncRun(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true, value: result.value };
+          },
+          async syncSaveBinding(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncSaveBinding(input);
+            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            return { ok: true };
+          },
+          async syncGetBinding(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncGetBinding(input);
             if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
             return { ok: true, value: result.value };
           },
