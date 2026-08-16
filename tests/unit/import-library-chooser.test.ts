@@ -158,6 +158,7 @@ describe("OpenLibraryChooserDialog", () => {
           createElement(OpenLibraryChooserDialog, {
             open: true,
             onOpenSerpent,
+            onOpenSyncLibrary: vi.fn(),
             onOpenEagle,
             onOpenBillfish,
             onCancel: vi.fn(),
@@ -200,5 +201,47 @@ describe("OpenLibraryChooserDialog", () => {
     expect(onOpenSerpent).toHaveBeenCalledTimes(1);
     expect(onOpenEagle).not.toHaveBeenCalled();
     expect(onOpenBillfish).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers 打开同步资源库 as a top-level open action", async () => {
+    const onOpenSerpent = vi.fn();
+    const onOpenSyncLibrary = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(OpenLibraryChooserDialog, {
+            open: true,
+            onOpenSerpent,
+            onOpenSyncLibrary,
+            onOpenEagle: vi.fn(),
+            onOpenBillfish: vi.fn(),
+            onCancel: vi.fn(),
+          }),
+        ),
+      );
+    });
+
+    const findButton = (pattern: RegExp) =>
+      [...container!.querySelectorAll<HTMLButtonElement>("button")].find(
+        (button) => pattern.test(button.textContent ?? ""),
+      );
+
+    const sync = findButton(/打开同步资源库/);
+    expect(sync).toBeDefined();
+    expect(sync?.className).toContain("secondary-button");
+    expect(sync?.dataset.hoverTip).toContain("WebDAV");
+    expect(findButton(/打开 Eagle 资源库/)).toBeUndefined();
+
+    await act(async () => {
+      sync?.click();
+    });
+    expect(onOpenSyncLibrary).toHaveBeenCalledTimes(1);
+    expect(onOpenSerpent).not.toHaveBeenCalled();
   });
 });

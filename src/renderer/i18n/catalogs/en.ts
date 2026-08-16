@@ -967,7 +967,7 @@ export const en = {
     },
     openLibraryChooser: {
       title: "Open library",
-      help: "Open an existing Serpent library, or convert Eagle / Billfish into a new Serpent library.",
+      help: "Open an existing Serpent library, pull one from a sync server, or convert Eagle / Billfish into a new Serpent library.",
       serpent: "Open Serpent library",
       external: "Open external library"
     }

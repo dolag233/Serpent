@@ -29,6 +29,8 @@ export interface ImportLibraryChooserDialogProps {
 export interface OpenLibraryChooserDialogProps {
   open: boolean;
   onOpenSerpent: () => void;
+  /** Pull a library from a configured WebDAV server. */
+  onOpenSyncLibrary?: () => void;
   onOpenEagle?: () => void;
   onOpenBillfish?: () => void;
   onCancel: () => void;
@@ -113,12 +115,13 @@ function useChooserExpanded(open: boolean): {
 }
 
 /**
- * Menu 「打开资源库」chooser (Serpent-pte2): existing Serpent library, plus
- * a collapsed third-party open path (Eagle and Billfish).
+ * Menu 「打开资源库」chooser (Serpent-pte2 / Serpent-7zp0): existing Serpent
+ * library, synced library, plus a collapsed third-party open path.
  */
 export function OpenLibraryChooserDialog({
   open,
   onOpenSerpent,
+  onOpenSyncLibrary,
   onOpenEagle,
   onOpenBillfish,
   onCancel,
@@ -155,6 +158,17 @@ export function OpenLibraryChooserDialog({
             <Icon name="folder" size={15} />
             {t("dialog.openLibraryChooser.serpent")}
           </button>
+          {onOpenSyncLibrary ? (
+            <button
+              className="secondary-button"
+              data-hover-tip={t("shell.openSyncLibraryHint")}
+              onClick={onOpenSyncLibrary}
+              type="button"
+            >
+              <Icon name="globe" size={15} />
+              {t("shell.openSyncLibraryEllipsis")}
+            </button>
+          ) : null}
           <ExternalLibraryDisclosure
             billfishLabel={t("shell.openBillfishLibraryEllipsis")}
             eagleLabel={t("shell.openEagleLibraryEllipsis")}

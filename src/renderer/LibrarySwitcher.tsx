@@ -43,18 +43,14 @@ export type LibrarySwitcherProps = {
   libraryName: string | null;
   disabled?: boolean;
   onCreateLibrary: () => void;
-  /** Opens the open-library chooser (existing Serpent + third-party). */
+  /** Opens the open-library chooser (existing Serpent + third-party + sync). */
   onOpenLibrary: () => void;
-  /** Opens a synced library from a WebDAV server (pulls + creates locally). */
-  onOpenSyncLibrary?: () => void;
   /** @deprecated Kept for callers while the library menu is consolidated. */
   onCloseLibrary: () => void;
   /** Soft remove: close + drop from recents; disk untouched (Serpent-ucx). */
   onRemoveLibrary?: () => void;
   /** Irreversible delete of the currently open library root (Serpent-9i8). */
   onDeleteLibraryFromDisk?: () => void;
-  /** Opens the library settings where the library name can be edited. */
-  onRenameLibrary?: () => void;
   onOpenLibrarySettings?: () => void;
   /** Recent libraries excluding the open one; the section hides when empty. */
   recentLibraries?: RecentLibraryMenuEntry[];
@@ -84,10 +80,8 @@ export function LibrarySwitcher({
   disabled = false,
   onCreateLibrary,
   onOpenLibrary,
-  onOpenSyncLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
-  onRenameLibrary,
   onOpenLibrarySettings,
   recentLibraries = [],
   onOpenRecent,
@@ -215,19 +209,6 @@ export function LibrarySwitcher({
           >
             {t("shell.openLibraryEllipsis")}
           </button>
-          {onOpenSyncLibrary ? (
-            <button
-              className="library-switcher-item"
-              data-hover-tip={t("shell.openSyncLibraryHint")}
-              disabled={busy}
-              onClick={() => runMenuAction(onOpenSyncLibrary)}
-              role="menuitem"
-              tabIndex={-1}
-              type="button"
-            >
-              {t("shell.openSyncLibraryEllipsis")}
-            </button>
-          ) : null}
           <button
             className="library-switcher-item"
             data-hover-tip={t("toolbar.importLibraryHint")}
@@ -265,18 +246,6 @@ export function LibrarySwitcher({
             type="button"
           >
             {t("shell.deleteLibraryFromDisk")}
-          </button>
-          <button
-            className="library-switcher-item"
-            disabled={!libraryName || busy || !onRenameLibrary}
-            onClick={() => {
-              if (onRenameLibrary) runMenuAction(onRenameLibrary);
-            }}
-            role="menuitem"
-            tabIndex={-1}
-            type="button"
-          >
-            {t("shell.renameLibrary")}
           </button>
           <button
             className="library-switcher-item"

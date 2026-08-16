@@ -2413,7 +2413,7 @@ const shell: SerpentShellApi = Object.freeze({
         'file.import-files', 'file.import-folder', 'file.import-linked-folder',
         'edit.undo', 'edit.redo', 'edit.paste', 'edit.select-all', 'edit.clear-selection',
         'library.create', 'library.open', 'library.close', 'library.remove',
-        'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.rename', 'library.settings',
+        'library.delete-from-disk', 'library.import', 'library.import-eagle', 'library.export', 'library.settings',
         'window.background-jobs', 'window.diagnostics',
         'about.serpent', 'about.github', 'about.open-source', 'settings',
       ];

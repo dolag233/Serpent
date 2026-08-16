@@ -199,6 +199,8 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
     ).toBe(false);
     expect(libraryMenu?.submenu?.some((item) => item.command === "library.import")).toBe(true);
     expect(libraryMenu?.submenu?.some((item) => item.command === "library.open")).toBe(true);
+    expect(libraryMenu?.submenu?.some((item) => item.labelKey === "shell.renameLibrary")).toBe(false);
+    expect(libraryMenu?.submenu?.some((item) => item.labelKey === "shell.openSyncLibraryEllipsis")).toBe(false);
   });
 
   it("uses i18n catalog keys for every custom label (no inline locale strings)", () => {

@@ -240,12 +240,21 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
     await expect(
       window.getByRole("menuitem", { name: "导入外部资源库" }),
     ).toHaveCount(0);
+    await expect(
+      window.getByRole("menuitem", { name: "打开同步资源库…" }),
+    ).toHaveCount(0);
+    await expect(
+      window.getByRole("menuitem", { name: "重命名资源库" }),
+    ).toHaveCount(0);
     await window.getByRole("menuitem", { name: "打开资源库…" }).click();
     await expect(
       window.getByRole("dialog", { name: "打开资源库" }),
     ).toBeVisible();
     await expect(
       window.getByRole("button", { name: "打开 Serpent 资源库" }),
+    ).toBeVisible();
+    await expect(
+      window.getByRole("button", { name: "打开同步资源库…" }),
     ).toBeVisible();
     await window.keyboard.press("Escape");
 

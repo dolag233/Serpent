@@ -1060,7 +1060,6 @@ function AppInner() {
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
-  const [focusLibraryNameOnOpen, setFocusLibraryNameOnOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
@@ -8459,11 +8458,6 @@ function AppInner() {
       closeLibrary: () => void closeLibrary(),
       removeLibrary: () => void removeLibrary(),
       deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
-      renameLibrary: () => {
-        setAppSettingsOpen(false);
-        setFocusLibraryNameOnOpen(true);
-        setLibrarySettingsOpen(true);
-      },
       importFiles: () => void importAssets("files"),
       importFolder: () => void importAssets("folder"),
       importLinkedFolder: () => void importFolderAsLinked(),
@@ -8474,7 +8468,6 @@ function AppInner() {
       exportLibrary: () => setExportDialogOpen(true),
       openLibrarySettings: () => {
         setAppSettingsOpen(false);
-        setFocusLibraryNameOnOpen(false);
         setLibrarySettingsOpen(true);
       },
       undo: () => void undoLastFileOp(),
@@ -8639,14 +8632,8 @@ function AppInner() {
               onCloseLibrary={() => void closeLibrary()}
               onRemoveLibrary={() => void removeLibrary()}
               onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
-              onRenameLibrary={() => {
-                setAppSettingsOpen(false);
-                setFocusLibraryNameOnOpen(true);
-                setLibrarySettingsOpen(true);
-              }}
               onOpenLibrarySettings={() => {
                 setAppSettingsOpen(false);
-                setFocusLibraryNameOnOpen(false);
                 setLibrarySettingsOpen(true);
               }}
               onCreateLibrary={() => {
@@ -8665,10 +8652,6 @@ function AppInner() {
               onOpenLibrary={() => {
                 setImportLibraryChooserOpen(false);
                 setOpenLibraryChooserOpen(true);
-              }}
-              onOpenSyncLibrary={() => {
-                setAppSettingsOpen(false);
-                setOpenSyncLibraryOpen(true);
               }}
               onOpenRecent={(path) => void openRecentLibrary(path)}
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
@@ -10612,9 +10595,7 @@ function AppInner() {
         library={library}
         open={librarySettingsOpen}
         gitignoreContent={gitignoreContent}
-        focusNameOnOpen={focusLibraryNameOnOpen}
         onClose={() => {
-          setFocusLibraryNameOnOpen(false);
           setLibrarySettingsOpen(false);
         }}
         onSaveName={async (name) => {
@@ -10894,6 +10875,11 @@ function AppInner() {
           setOpenLibraryChooserOpen(false);
           if (library) setDialog(null);
           void runLibraryOperation("open");
+        }}
+        onOpenSyncLibrary={() => {
+          setOpenLibraryChooserOpen(false);
+          setAppSettingsOpen(false);
+          setOpenSyncLibraryOpen(true);
         }}
         onOpenEagle={() => {
           setOpenLibraryChooserOpen(false);

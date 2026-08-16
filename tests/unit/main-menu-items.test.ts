@@ -12,7 +12,6 @@ function createActions(): MainMenuActions {
     closeLibrary: vi.fn(),
     removeLibrary: vi.fn(),
     deleteLibraryFromDisk: vi.fn(),
-    renameLibrary: vi.fn(),
     importFiles: vi.fn(),
     importFolder: vi.fn(),
     importLinkedFolder: vi.fn(),
@@ -135,9 +134,9 @@ describe("main-menu-items (Serpent-bnah)", () => {
       "library.import",
       "library.remove",
       "library.delete-from-disk",
-      "library.rename",
       "library.settings",
     ]);
+    expect(library?.items?.find((item) => item.id === "library.rename")).toBeUndefined();
     expect(library?.items?.find((item) => item.id === "library.open-external")).toBeUndefined();
     expect(library?.items?.find((item) => item.id === "library.import-external")).toBeUndefined();
     expect(library?.items?.find((item) => item.id === "library.delete-from-disk")?.danger).toBe(
@@ -145,13 +144,9 @@ describe("main-menu-items (Serpent-bnah)", () => {
     );
   });
 
-  it("routes library rename through the shared action model", () => {
-    const { actions, sections } = build();
-    const item = sections
-      .find((section) => section.id === "library")
-      ?.items?.find((entry) => entry.id === "library.rename");
-
-    item?.onSelect();
-    expect(actions.renameLibrary).toHaveBeenCalledTimes(1);
+  it("does not expose a library rename menu item", () => {
+    const { sections } = build();
+    const library = sections.find((section) => section.id === "library");
+    expect(library?.items?.some((item) => item.id === "library.rename")).toBe(false);
   });
 });

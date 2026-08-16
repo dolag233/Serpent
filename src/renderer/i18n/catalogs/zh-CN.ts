@@ -954,7 +954,7 @@ export const zhCN = {
     },
     openLibraryChooser: {
       title: "打开资源库",
-      help: "打开已有的 Serpent 资源库，或将 Eagle / Billfish 转换为新的 Serpent 资源库。",
+      help: "打开已有的 Serpent 资源库、从同步服务器拉取，或将 Eagle / Billfish 转换为新的 Serpent 资源库。",
       serpent: "打开 Serpent 资源库",
       external: "打开外部资源库"
     }
