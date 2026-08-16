@@ -1810,10 +1810,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: 100%;
   height: var(--shell-control-height);
   min-width: 0;
-  /* Collection rows can show both a child-collection count and an asset
-     count. Keep those badges in separate columns so the second badge never
-     creates an implicit grid row and changes the tree's line spacing. */
-  grid-template-columns: 17px minmax(0, 1fr) auto auto;
+  /* Navigation rows expose one trailing count: the number of assets in the
+     current folder or collection. Child-collection totals belong to the
+     tree model, not the row's count column. */
+  grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   padding: 0 7px;
@@ -2289,10 +2289,6 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .main-menu-item.is-danger:focus-visible {
   background: var(--menu-danger-hover-background);
   color: var(--menu-danger-color);
-}
-
-.nav-child-count {
-  color: var(--secondary);
 }
 
 .nav-empty {
@@ -5792,6 +5788,102 @@ body.serpent-modal-open .app-shell {
   }
 }
 
+/* Serpent-xffq: 同步连接/同步状态指示（复用 AI 连接指示的视觉语言）。 */
+.sync-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.sync-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+.sync-status-indicator[data-state="checking"] .sync-status-dot {
+  background: var(--warning);
+  animation: ai-connection-pulse 1.1s ease-in-out infinite;
+}
+
+.sync-status-indicator[data-state="connected"] .sync-status-dot {
+  background: var(--success);
+}
+
+.sync-status-indicator[data-state="failed"] .sync-status-dot {
+  background: var(--danger);
+}
+
+.library-sync-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.library-sync-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.library-settings-gitignore-actions.library-sync-actions {
+  justify-content: flex-end;
+}
+
+.open-sync-library-dialog {
+  width: min(460px, calc(100vw - 40px));
+}
+
+.open-sync-library-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 20px;
+}
+
+.open-sync-library-list {
+  display: flex;
+  max-height: 280px;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.open-sync-library-existing {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.open-sync-library-open {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--pane);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.open-sync-library-open:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .inspector-ai-textarea {
   min-height: 64px;
   resize: vertical;
@@ -7827,6 +7919,14 @@ select.ai-config-input.ai-config-languages {
 .dialog-actions.is-stacked {
   flex-direction: column;
   align-items: stretch;
+}
+
+.dialog-actions.is-stacked .create-dialog-existing-label {
+  margin-top: 8px;
+}
+
+.dialog-actions.is-stacked .import-chooser-disclosure {
+  justify-content: space-between;
 }
 
 .dialog-actions.is-stacked .primary-button,

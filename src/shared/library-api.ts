@@ -196,7 +196,9 @@ export interface SerpentLibraryApi {
     assetId: string;
   }): Promise<LibraryApiResult<MissingAssetRecoveryProbe>>;
   /** Convert and open an Eagle library as a new Serpent library. */
-  openEagle(): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  inspectEagle(): Promise<LibraryApiResult<{ displayName: string }>>;
+  cancelInspectEagle(): Promise<LibraryApiResult<void>>;
+  openEagle(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>>;
   openRecent(input: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   /** Remove a path from the recent list without deleting disk (Serpent-ucx). */
@@ -605,16 +607,20 @@ export interface SerpentLibraryApi {
   syncSaveServer(input: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>>;
   /** Serpent-xffq: 删除同步服务器。 */
   syncDeleteServer(input: { id: string }): Promise<LibraryApiResult<{ id: string }>>;
-  /** Serpent-xffq: 保存库绑定（服务器 + 子路径）。 */
-  syncSaveBinding(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<void>>;
+  /** Serpent-xffq: 保存库绑定（服务器 + 可选同步文件夹名，默认库名）。 */
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<void>>;
   /** Serpent-xffq: 读取库绑定。 */
-  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; subPath: string } | null>>;
+  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string } | null>>;
   /** Serpent-xffq: 对指定服务器做连接能力探测（不触碰库）。 */
   syncProbe(input: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>>;
+  /** Serpent-xffq: 列出服务器上可打开的同步库（读远端 manifest）。 */
+  syncListRemoteLibraries(input: { serverId: string }): Promise<LibraryApiResult<Array<{ libraryId: string; displayName: string; directoryName: string }>>>;
+  /** Serpent-xffq: 从服务器拉取远端库并创建本地库（Main 选择保存位置）。 */
+  syncOpenRemoteLibrary(input: { serverId: string; libraryId: string; displayName: string; directoryName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   /** Serpent-xffq: 首次同步差异预览（不写任何内容）。 */
-  syncPreview(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<SyncReport>>;
+  syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<SyncReport>>;
   /** Serpent-xffq: 执行完整双向同步。 */
-  syncRun(input: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
+  syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
   requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover' | 'proxy-fallback'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model

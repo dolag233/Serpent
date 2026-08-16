@@ -14,6 +14,7 @@ import {
   SYNC_FORMAT_VERSION,
 } from '../../shared/sync-paths';
 import type { DriverCapabilities, RemoteStorageDriver } from './remote-storage';
+import { RemoteStorageError } from './remote-storage';
 import { WebDAVDriver } from './webdav-driver';
 import {
   createEmptyManifest,
@@ -30,6 +31,8 @@ export interface SyncRootConfig {
   username?: string;
   password?: string;
   allowInsecureTls?: boolean;
+  /** 覆盖库名派生的远端目录名（用户可编辑的同步文件夹名称）。 */
+  directoryName?: string;
 }
 
 export interface SyncLibraryPort {
@@ -105,7 +108,7 @@ export class SyncEngine {
     const driver = this.buildDriver(root);
     const capabilities = await driver.probe();
     const snapshot = await this.library.syncSnapshot(libraryId);
-    const directoryName = sanitizeSyncDirectoryName(snapshot.library.displayName, snapshot.library.libraryId);
+    const directoryName = sanitizeSyncDirectoryName(root.directoryName ?? snapshot.library.displayName, snapshot.library.libraryId);
     const { remoteManifest, tombstones } = await this.loadRemoteState(driver, directoryName, snapshot.library.libraryId);
     const localManifest = await this.loadLocalManifest(libraryId, snapshot.library, directoryName);
     const localAssets = this.snapshotToMap(snapshot);
@@ -123,10 +126,10 @@ export class SyncEngine {
     const driver = this.buildDriver(root);
     const capabilities = await driver.probe();
     if (!capabilities.supportsContentTransfer) {
-      throw new Error('该服务器不支持文件上传/下载，无法用于同步。');
+      throw new RemoteStorageError('WRITE_UNSUPPORTED', '服务器不支持上传文件，无法用于同步。');
     }
     const snapshot = await this.library.syncSnapshot(libraryId);
-    const directoryName = sanitizeSyncDirectoryName(snapshot.library.displayName, snapshot.library.libraryId);
+    const directoryName = sanitizeSyncDirectoryName(root.directoryName ?? snapshot.library.displayName, snapshot.library.libraryId);
     const { remoteManifest, tombstones } = await this.loadRemoteState(driver, directoryName, snapshot.library.libraryId);
     const localManifest = await this.loadLocalManifest(libraryId, snapshot.library, directoryName);
     const localAssets = this.snapshotToMap(snapshot);

@@ -1897,12 +1897,14 @@ describe('worker request protocol', () => {
           type: 'library.open-eagle',
           sourceRootPath: '/Users/example/Reference.library',
           selectedParentPath: '/Users/example/Libraries',
+          displayName: 'Reference',
         },
       }).command,
     ).toEqual({
       type: 'library.open-eagle',
       sourceRootPath: '/Users/example/Reference.library',
       selectedParentPath: '/Users/example/Libraries',
+      displayName: 'Reference',
     });
     expect(() =>
       parseWorkerRequest({
@@ -1910,7 +1912,47 @@ describe('worker request protocol', () => {
         command: {
           type: 'library.open-eagle',
           sourceRootPath: '/Users/example/Reference.library',
+          selectedParentPath: '/Users/example/Libraries',
         },
+      }),
+    ).toThrow();
+    expect(() =>
+      parseWorkerRequest({
+        requestId: 'req-01',
+        command: {
+          type: 'library.open-eagle',
+          sourceRootPath: '/Users/example/Reference.library',
+        },
+      }),
+    ).toThrow();
+  });
+
+  it('inspects Eagle without exposing a filesystem path on the renderer request', () => {
+    expect(
+      parseRendererRequest({
+        type: 'library.inspect-eagle.request',
+      }),
+    ).toEqual({ type: 'library.inspect-eagle.request' });
+    expect(() =>
+      parseRendererRequest({
+        type: 'library.inspect-eagle.request',
+        sourceRootPath: '/Users/example/Reference.library',
+      }),
+    ).toThrow();
+    expect(
+      parseRendererRequest({
+        type: 'library.open-eagle.request',
+        displayName: 'Studio refs',
+      }),
+    ).toEqual({
+      type: 'library.open-eagle.request',
+      displayName: 'Studio refs',
+    });
+    expect(() =>
+      parseRendererRequest({
+        type: 'library.open-eagle.request',
+        displayName: 'Studio refs',
+        sourceRootPath: '/Users/example/Reference.library',
       }),
     ).toThrow();
   });
@@ -2034,6 +2076,9 @@ describe('renderer lifecycle events', () => {
     expect(
       parseRendererLifecycleEvent({ type: 'library.opening', operation: 'create' }),
     ).toEqual({ type: 'library.opening', operation: 'create' });
+    expect(
+      parseRendererLifecycleEvent({ type: 'library.opening', operation: 'open-eagle' }),
+    ).toEqual({ type: 'library.opening', operation: 'open-eagle' });
     expect(parseRendererLifecycleEvent({
       type: 'library.opened',
       source: 'mcp',
@@ -2421,5 +2466,70 @@ describe('publicReasonFromError', () => {
     expect(publicReasonFromError(wrapped)).toBe(
       process.platform === 'win32' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
     );
+  });
+});
+
+describe('sync open-remote-libraries protocol (Serpent-xffq)', () => {
+  it('accepts the list-remote-libraries renderer request and worker command', () => {
+    expect(parseRendererRequest({
+      type: 'sync.list-remote-libraries.request',
+      serverId: 'server-01',
+    })).toEqual({ type: 'sync.list-remote-libraries.request', serverId: 'server-01' });
+
+    expect(parseWorkerRequest({
+      requestId: 'list-01',
+      command: {
+        type: 'sync.list-remote-libraries',
+        baseUrl: 'http://127.0.0.1:9000/dav/',
+        username: 'u',
+        password: 'p',
+      },
+    }).command).toEqual({
+      type: 'sync.list-remote-libraries',
+      baseUrl: 'http://127.0.0.1:9000/dav/',
+      username: 'u',
+      password: 'p',
+    });
+  });
+
+  it('validates the remote-libraries response on both worker and renderer surfaces', () => {
+    const payload = {
+      ok: true,
+      type: 'sync.remote-libraries',
+      remoteLibraries: [
+        { libraryId: 'lib-01', displayName: '远端库', directoryName: '远端库' },
+      ],
+    } as const;
+    expect(parseWorkerResponse({ requestId: 'r', result: payload })).toMatchObject({ result: { type: 'sync.remote-libraries' } });
+    expect(parseRendererResult(payload)).toMatchObject({ type: 'sync.remote-libraries' });
+  });
+
+  it('accepts the open-remote-library request and command', () => {
+    expect(parseRendererRequest({
+      type: 'sync.open-remote-library.request',
+      serverId: 'server-01',
+      libraryId: 'lib-01',
+      displayName: '远端库',
+      directoryName: '远端库',
+    })).toMatchObject({ type: 'sync.open-remote-library.request' });
+
+    expect(parseWorkerRequest({
+      requestId: 'open-01',
+      command: {
+        type: 'sync.open-remote-library',
+        baseUrl: 'http://127.0.0.1:9000/dav/',
+        libraryId: 'lib-01',
+        displayName: '远端库',
+        directoryName: '远端库',
+        selectedParentPath: 'C:/Libraries',
+      },
+    }).command).toEqual({
+      type: 'sync.open-remote-library',
+      baseUrl: 'http://127.0.0.1:9000/dav/',
+      libraryId: 'lib-01',
+      displayName: '远端库',
+      directoryName: '远端库',
+      selectedParentPath: 'C:/Libraries',
+    });
   });
 });

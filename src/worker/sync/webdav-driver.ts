@@ -295,9 +295,17 @@ export class WebDAVDriver implements RemoteStorageDriver {
         } catch {
           decoded = entry.href;
         }
-        const relative = decoded.startsWith(base.pathname)
-          ? decoded.slice(base.pathname.length)
-          : decoded;
+        // RFC 4918 允许 href 是绝对 URI（如 http://host/share/x/），
+        // 取 pathname 再与 base 路径比对；相对路径则直接用原文。
+        let pathname: string;
+        try {
+          pathname = new URL(decoded).pathname;
+        } catch {
+          pathname = decoded;
+        }
+        const relative = pathname.startsWith(base.pathname)
+          ? pathname.slice(base.pathname.length)
+          : pathname;
         const normalized = relative.replace(/^\/+/, '');
         return {
           path: normalized,
@@ -411,41 +419,63 @@ export class WebDAVDriver implements RemoteStorageDriver {
 
     // 3) ETag / If-Match 条件写：写临时探测文件（先建父目录）。
     const probeFile = '.serpent-sync/.probe';
+    const hasCredentials = this.config.username !== undefined && this.config.password !== undefined;
     try {
-      await this.request('MKCOL', '.serpent-sync/');
-      const written = await this.request('PUT', probeFile, {
-        body: Buffer.from(`serpent-probe-${Date.now()}`),
-        headers: { 'Content-Type': 'application/octet-stream' },
-      });
-      if (written.status >= 200 && written.status < 300) {
-        capabilities.supportsContentTransfer = true;
-        const etag = written.headers.etag;
-        if (etag) {
-          const conditional = await this.request('PUT', probeFile, {
-            body: Buffer.from('conditional'),
-            ifMatch: etag,
-            headers: { 'Content-Type': 'application/octet-stream' },
-          });
-          capabilities.supportsEtagIfMatch = conditional.status >= 200 && conditional.status < 300;
-          const stale = await this.request('PUT', probeFile, {
-            body: Buffer.from('stale'),
-            ifMatch: '"stale-etag"',
-            headers: { 'Content-Type': 'application/octet-stream' },
-          });
-          if (stale.status === 412) capabilities.supportsEtagIfMatch = true;
-        }
-        // 4) MOVE 支持：只有 2xx 才算真正支持。
-        const moved = await this.request('MOVE', probeFile, {
-          destination: joinWebDAVUrl(this.config.baseUrl, '.serpent-sync/.probe-2'),
-          headers: { Overwrite: 'T' },
-        });
-        capabilities.supportsMove = moved.status >= 200 && moved.status < 300;
-        if (capabilities.supportsMove) await this.request('DELETE', '.serpent-sync/.probe-2');
+      const mkcol = await this.request('MKCOL', '.serpent-sync/');
+      const mkcolOk = [201, 405, 301].includes(mkcol.status);
+      if (!mkcolOk && hasCredentials) {
+        // 带凭据仍无法建目录：认证失败 / 无权限。给出可读原因而非“不支持”。
+        throw this.mapError(mkcol.status, mkcol.body, 'MKCOL');
       }
-    } catch {
-      // 探测失败不致命：保留默认能力。
+      if (mkcolOk) {
+        const written = await this.request('PUT', probeFile, {
+          body: Buffer.from(`serpent-probe-${Date.now()}`),
+          headers: { 'Content-Type': 'application/octet-stream' },
+        });
+        if (written.status >= 200 && written.status < 300) {
+          capabilities.supportsContentTransfer = true;
+          const etag = written.headers.etag;
+          if (etag) {
+            const conditional = await this.request('PUT', probeFile, {
+              body: Buffer.from('conditional'),
+              ifMatch: etag,
+              headers: { 'Content-Type': 'application/octet-stream' },
+            });
+            capabilities.supportsEtagIfMatch = conditional.status >= 200 && conditional.status < 300;
+            const stale = await this.request('PUT', probeFile, {
+              body: Buffer.from('stale'),
+              ifMatch: '"stale-etag"',
+              headers: { 'Content-Type': 'application/octet-stream' },
+            });
+            if (stale.status === 412) capabilities.supportsEtagIfMatch = true;
+          }
+          // 4) MOVE 支持：只有 2xx 才算真正支持。
+          const moved = await this.request('MOVE', probeFile, {
+            destination: joinWebDAVUrl(this.config.baseUrl, '.serpent-sync/.probe-2'),
+            headers: { Overwrite: 'T' },
+          });
+          capabilities.supportsMove = moved.status >= 200 && moved.status < 300;
+          if (capabilities.supportsMove) await this.request('DELETE', '.serpent-sync/.probe-2');
+        } else if (written.status === 405 || written.status === 501) {
+          // 服务器明确不支持 PUT：无法承载文件上传（保留默认 false）。
+          capabilities.supportsContentTransfer = false;
+        } else if (hasCredentials) {
+          // 带凭据仍失败：认证失败 / 无权限 → 抛出可读原因。
+          throw this.mapError(written.status, written.body, 'PUT');
+        } else {
+          // 匿名探测：服务器要求认证（步骤 1 已检测 auth），保持默认 false。
+          capabilities.supportsContentTransfer = false;
+        }
+      }
+    } catch (error) {
+      if (error instanceof RemoteStorageError) throw error;
+      // 其余探测失败不致命：保留默认能力。
     } finally {
-      await this.request('DELETE', probeFile);
+      try {
+        await this.request('DELETE', probeFile);
+      } catch {
+        // 清理失败不影响探测结论。
+      }
     }
 
     // 5) 锁支持：OPTIONS 的 DAV 头。

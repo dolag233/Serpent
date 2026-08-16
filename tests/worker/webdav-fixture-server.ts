@@ -73,7 +73,7 @@ export function startMockWebDAVServer(options: MockWebDAVOptions = {}): Promise<
     <D:href>${entry.href}</D:href>
     <D:propstat>
       <D:prop>
-        <D:resourcetype>${entry.isCollection ? '<D:collection/>' : ''}</D:resourcetype>
+        <D:resourcetype>${entry.isCollection ? '<D:collection xmlns:D="DAV:"/>' : ''}</D:resourcetype>
         <D:getcontentlength>${length}</D:getcontentlength>
         <D:getlastmodified>Sat, 15 Aug 2026 13:00:00 GMT</D:getlastmodified>${etag ? `
         <D:getetag>${etag}</D:getetag>` : ''}

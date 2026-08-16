@@ -5,13 +5,14 @@ import { useT } from "./i18n";
 import type { RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import { DialogShell } from "./ui/patterns";
 
-export type CreateLibraryPhase = "start" | "form";
+export type CreateLibraryPhase = "start" | "form" | "eagle";
 
 export interface CreateDialogProps {
   open: boolean;
   /**
    * Serpent-kipk: `start` is the no-library surface; `form` is the name
-   * prompt. Both share the same full-window modal shell.
+   * prompt for creating a Serpent library; `eagle` is the same name prompt
+   * after a validated Eagle source, before choosing the save location.
    */
   phase: CreateLibraryPhase;
   value: string;
@@ -72,6 +73,27 @@ export function CreateDialog({
   // the list container scrolls when the store holds more (cap is 8). Rows
   // always show name + full path (the dialog's original layout).
   const visibleRecents = showRecents ? recentLibraries.slice(0, 5) : [];
+  const isNameForm = phase === "form" || phase === "eagle";
+  const title =
+    phase === "eagle"
+      ? t("dialog.openEagleLibrary.title")
+      : t("empty.noLibraryTitle");
+  const body =
+    phase === "eagle"
+      ? t("dialog.openEagleLibrary.body")
+      : t("empty.noLibraryBody");
+  const nameLabel =
+    phase === "eagle"
+      ? t("dialog.openEagleLibrary.name")
+      : t("dialog.createLibrary.name");
+  const nameHelp =
+    phase === "eagle"
+      ? t("dialog.openEagleLibrary.help")
+      : t("dialog.createLibrary.help");
+  const submitLabel =
+    phase === "eagle"
+      ? t("dialog.openEagleLibrary.submit")
+      : t("dialog.createLibrary.submit");
 
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -91,14 +113,14 @@ export function CreateDialog({
           ) : null
         }
         style={{ padding: 0 }}
-        title={t("empty.noLibraryTitle")}
+        title={title}
         description={
           <span className="create-library-lead">
-            {t("empty.noLibraryBody")}
+            {body}
           </span>
         }
       >
-        {phase === "form" ? (
+        {isNameForm ? (
           <form
             className="create-library-form"
             onSubmit={(event: FormEvent) => {
@@ -108,7 +130,7 @@ export function CreateDialog({
             }}
           >
             <label className="field-label" htmlFor="dialog-name">
-              {t("dialog.createLibrary.name")}
+              {nameLabel}
             </label>
             <input
               autoFocus
@@ -119,8 +141,8 @@ export function CreateDialog({
               onChange={(event) => onValueChange(event.target.value)}
               value={value}
             />
-            {t("dialog.createLibrary.help").trim() ? (
-              <p className="field-help">{t("dialog.createLibrary.help")}</p>
+            {nameHelp.trim() ? (
+              <p className="field-help">{nameHelp}</p>
             ) : null}
             <div className="dialog-actions">
               <button
@@ -136,7 +158,7 @@ export function CreateDialog({
                 disabled={busy || !value.trim()}
                 type="submit"
               >
-                {t("dialog.createLibrary.submit")}
+                {submitLabel}
               </button>
             </div>
           </form>

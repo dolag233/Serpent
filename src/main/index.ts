@@ -473,6 +473,10 @@ const pendingRelinkPreviews = new RelinkPreviewStore();
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
 
+// Eagle source chosen and validated; Renderer never receives the path. Cleared
+// after destination is chosen, on inspect cancel, or when a new inspect starts.
+let pendingEagleOpenSourcePath: string | undefined;
+
 // Pending import libraryId (importId -> libraryId), for auto-analyze after import.
 const pendingImportLibraries = new Map<string, string>();
 
@@ -582,7 +586,17 @@ interface SyncServerRecord {
 
 interface SyncBindingRecord {
   serverId: string;
-  subPath: string;
+  /** 同步文件夹名称（远端目录名，默认库名）。 */
+  directoryName?: string;
+  /** 旧格式字段：subPath 曾是同步文件夹名（Serpent-xffq 早期）；读取时兼容。 */
+  subPath?: string;
+  /** 上次成功同步时间（ISO 字符串）。 */
+  lastSyncedAt?: string;
+}
+
+/** 兼容旧格式绑定：directoryName 优先，其次旧 subPath。 */
+function effectiveSyncDirectoryName(binding: SyncBindingRecord | undefined): string | undefined {
+  return binding?.directoryName ?? binding?.subPath;
 }
 
 function syncServersPath(): string {
@@ -1351,6 +1365,37 @@ function publishLifecycle(event: RendererLifecycleEvent): void {
   );
 }
 
+async function closeOpenLibrariesBeforeReplacement(): Promise<void> {
+  if (!workerClient) return;
+  try {
+    const listed = await workerClient.request({ type: "library.list" });
+    if (!listed.ok || listed.type !== "library.list") return;
+    for (const library of listed.libraries) {
+      try {
+        const closed = await workerClient.request({
+          type: "library.close",
+          libraryId: library.libraryId,
+        });
+        if (!closed.ok || closed.type !== "library.closed") continue;
+        nativeAssetDragCache.clear(library.libraryId);
+        clearActiveRecentLibrary(recentLibraryPath(), (error) => {
+          logger?.error("recent-library.clear", error);
+        });
+        publishLifecycle({
+          type: "library.closed",
+          libraryId: library.libraryId,
+        });
+      } catch (error) {
+        logger?.error("eagle-open.close-previous", error, {
+          libraryId: library.libraryId,
+        });
+      }
+    }
+  } catch (error) {
+    logger?.error("eagle-open.list-previous", error);
+  }
+}
+
 function publishAssetChange(event: AssetChangeEvent): void {
   const parsed = parseAssetChangeEvent(event);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
@@ -1811,22 +1856,36 @@ async function commandFor(
       // The Worker resolves the report path from its Main-owned library state;
       // Renderer only receives a shell acknowledgement.
       return { type: "library.recovery-report", libraryId: request.libraryId };
-    case "library.open-eagle.request": {
-      const host = createNativeDialogHost();
+    case "library.inspect-eagle.request": {
+      pendingEagleOpenSourcePath = undefined;
       const sourceRootPath = await selectOpenDirectory(
-        host,
+        createNativeDialogHost(),
         "openEagleLibrary",
         process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
       );
+      return sourceRootPath
+        ? { type: "library.inspect-eagle", sourceRootPath }
+        : undefined;
+    }
+    case "library.inspect-eagle.cancel.request":
+      pendingEagleOpenSourcePath = undefined;
+      return undefined;
+    case "library.open-eagle.request": {
+      const sourceRootPath = pendingEagleOpenSourcePath;
       if (!sourceRootPath) return undefined;
       const selectedParentPath = await selectOpenDirectory(
-        host,
+        createNativeDialogHost(),
         "openEagleLibraryDestination",
         process.env.SERPENT_E2E_OPEN_EAGLE_PARENT,
         { createDirectory: true },
       );
       return selectedParentPath
-        ? { type: "library.open-eagle", sourceRootPath, selectedParentPath }
+        ? {
+            type: "library.open-eagle",
+            sourceRootPath,
+            selectedParentPath,
+            displayName: request.displayName,
+          }
         : undefined;
     }
     case "library.close.request":
@@ -2794,10 +2853,11 @@ async function commandFor(
         type: "sync.preview",
         libraryId: request.libraryId,
         deviceId: syncDeviceId(),
-        baseUrl: `${server.baseUrl.replace(/\/$/, "")}/${request.subPath.replace(/^\/+|\/+$/g, "")}/`,
+        baseUrl: server.baseUrl,
         username: server.username,
         password: server.password,
         allowInsecureTls: server.allowInsecureTls,
+        directoryName: request.directoryName,
       };
     }
     case "sync.run.request": {
@@ -2807,10 +2867,45 @@ async function commandFor(
         type: "sync.run",
         libraryId: request.libraryId,
         deviceId: syncDeviceId(),
-        baseUrl: `${server.baseUrl.replace(/\/$/, "")}/${request.subPath.replace(/^\/+|\/+$/g, "")}/`,
+        baseUrl: server.baseUrl,
         username: server.username,
         password: server.password,
         allowInsecureTls: server.allowInsecureTls,
+        directoryName: request.directoryName,
+      };
+    }
+    case "sync.list-remote-libraries.request": {
+      const server = resolveSyncServerCredentials(request.serverId);
+      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
+      return {
+        type: "sync.list-remote-libraries",
+        baseUrl: server.baseUrl,
+        username: server.username,
+        password: server.password,
+        allowInsecureTls: server.allowInsecureTls,
+      };
+    }
+    case "sync.open-remote-library.request": {
+      const server = resolveSyncServerCredentials(request.serverId);
+      if (!server) throw new Error("同步服务器不存在，请先在通用设置中配置。");
+      const host = createNativeDialogHost();
+      const selectedParentPath = await selectOpenDirectory(
+        host,
+        "openSyncLibraryDestination",
+        process.env.SERPENT_E2E_OPEN_SYNC_LIBRARY_PARENT,
+        { createDirectory: true },
+      );
+      if (!selectedParentPath) return undefined;
+      return {
+        type: "sync.open-remote-library",
+        baseUrl: server.baseUrl,
+        username: server.username,
+        password: server.password,
+        allowInsecureTls: server.allowInsecureTls,
+        libraryId: request.libraryId,
+        displayName: request.displayName,
+        directoryName: request.directoryName,
+        selectedParentPath,
       };
     }
     case "model.resolve-companions.request":
@@ -2910,7 +3005,7 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
-  let operation: "create" | "open" | "import" | undefined;
+  let operation: "create" | "open" | "import" | "open-eagle" | undefined;
   let clipboardStageDirectory: string | undefined;
   let relinkPreviewContext:
     | { libraryId: string; previewId: string }
@@ -2981,6 +3076,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
+    if (request.type === "library.inspect-eagle.cancel.request") {
+      pendingEagleOpenSourcePath = undefined;
+      return {
+        ok: true,
+        type: "library.eagle-inspect-cancelled",
+      } satisfies RendererResult;
+    }
+
     // Serpent-xffq: 同步服务器与库绑定是 Main 本地配置（凭据经 safeStorage）。
     if (request.type === "sync.servers.list.request") {
       const servers = readSyncServers().map((server) => ({
@@ -3022,14 +3125,19 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     if (request.type === "sync.library.binding.save.request") {
       const bindings = readSyncBindings();
-      bindings[request.libraryId] = { serverId: request.serverId, subPath: request.subPath };
+      const previous = bindings[request.libraryId];
+      bindings[request.libraryId] = {
+        serverId: request.serverId,
+        directoryName: request.directoryName,
+        lastSyncedAt: previous?.lastSyncedAt,
+      };
       writeSyncBindings(bindings);
       return {
         ok: true,
         type: "sync.binding.saved",
         libraryId: request.libraryId,
         serverId: request.serverId,
-        subPath: request.subPath,
+        directoryName: request.directoryName,
       } satisfies RendererResult;
     }
 
@@ -3039,7 +3147,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         ok: true,
         type: "sync.binding.got",
         libraryId: request.libraryId,
-        binding: binding ? { serverId: binding.serverId, subPath: binding.subPath } : null,
+        binding: binding
+          ? { serverId: binding.serverId, directoryName: effectiveSyncDirectoryName(binding), lastSyncedAt: binding.lastSyncedAt }
+          : null,
       } satisfies RendererResult;
     }
 
@@ -3830,6 +3940,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.type === "library.import-zip"
     )
       operation = "import";
+    if (command.type === "library.open-eagle") {
+      pendingEagleOpenSourcePath = undefined;
+      operation = "open-eagle";
+      await closeOpenLibrariesBeforeReplacement();
+    }
     if (operation) publishLifecycle({ type: "library.opening", operation });
 
     const workerResult = await workerClient.request(command);
@@ -3889,6 +4004,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         workerResult.library.displayName,
         workerResult.library.libraryId,
       );
+    } else if (
+      workerResult.ok &&
+      workerResult.type === "library.eagle-inspected" &&
+      command.type === "library.inspect-eagle"
+    ) {
+      pendingEagleOpenSourcePath = command.sourceRootPath;
     } else if (workerResult.ok && workerResult.type === "library.renamed") {
       rememberOpenedLibrary(
         workerResult.library.libraryPath,
@@ -3905,6 +4026,18 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           logger?.error("recent-library.remove", error);
         },
       );
+    }
+
+    // Serpent-xffq: 同步成功即记录绑定与上次同步时间，供“已同步”状态展示。
+    if (workerResult.ok && request.type === "sync.run.request") {
+      const syncBindings = readSyncBindings();
+      const previous = syncBindings[request.libraryId];
+      syncBindings[request.libraryId] = {
+        serverId: request.serverId,
+        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
+        lastSyncedAt: new Date().toISOString(),
+      };
+      writeSyncBindings(syncBindings);
     }
 
     if (!workerResult.ok && request.type === "asset.import-web.request") {

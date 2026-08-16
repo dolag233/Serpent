@@ -62,8 +62,10 @@ export function parseWebDAVMultistatus(xml: string): WebDAVMultistatusEntry[] {
       const statusMatch = statBlock.match(/<(?:[A-Za-z_][\w.-]*:)?status[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?status>/i);
       const statusGroup = statusMatch ? Number(statusMatch[1]?.trim().split(/\s+/)[1]) : 0;
       const collectionMatch = statBlock.match(/<(?:[A-Za-z_][\w.-]*:)?resourcetype[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?resourcetype>/i);
+      // collection 标签可能带属性（如 <D:collection xmlns:D="DAV:"/>），
+      // 只要求标签名 + 可选的 /> 结尾即可判定。
       const isCollection = collectionMatch
-        ? /<(?:[A-Za-z_][\w.-]*:)?collection\s*\/?>/i.test(collectionMatch[1] ?? '')
+        ? /<(?:[A-Za-z_][\w.-]*:)?collection\b[^>]*\/?>/i.test(collectionMatch[1] ?? '')
         : false;
       const contentLength = childText(statBlock, 'getcontentlength');
       const quotaAvailable = childText(statBlock, 'quota-available-bytes');

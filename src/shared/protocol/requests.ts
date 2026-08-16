@@ -154,7 +154,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('library.inspect-eagle.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-eagle.cancel.request'),
+  }),
+  z.strictObject({
     type: z.literal('library.open-eagle.request'),
+    displayName: displayNameSchema,
   }),
   z.strictObject({
     type: z.literal('library.close.request'),
@@ -905,13 +912,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('sync.preview.request'),
     libraryId: identifierSchema,
     serverId: nonBlankString,
-    subPath: z.string().default(''),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.run.request'),
     libraryId: identifierSchema,
     serverId: nonBlankString,
-    subPath: z.string().default(''),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.servers.list.request'),
@@ -932,11 +939,22 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('sync.library.binding.save.request'),
     libraryId: identifierSchema,
     serverId: nonBlankString,
-    subPath: z.string().default(''),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.library.binding.get.request'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sync.list-remote-libraries.request'),
+    serverId: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('sync.open-remote-library.request'),
+    serverId: nonBlankString,
+    libraryId: identifierSchema,
+    displayName: nonBlankString,
+    directoryName: nonBlankString,
   }),
   z.strictObject({
     type: z.literal('asset.preview.request'),
@@ -1128,9 +1146,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('library.inspect-eagle'),
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.open-eagle'),
     sourceRootPath: selectedPathSchema,
     selectedParentPath: selectedPathSchema,
+    displayName: displayNameSchema,
   }),
   z.strictObject({
     type: z.literal('library.close'),
@@ -1165,6 +1188,24 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     allowInsecureTls: z.boolean().optional(),
   }),
   z.strictObject({
+    type: z.literal('sync.list-remote-libraries'),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.open-remote-library'),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    libraryId: identifierSchema,
+    displayName: nonBlankString,
+    directoryName: nonBlankString,
+    selectedParentPath: selectedPathSchema,
+  }),
+  z.strictObject({
     type: z.literal('sync.preview'),
     libraryId: identifierSchema,
     deviceId: nonBlankString,
@@ -1172,6 +1213,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     username: z.string().optional(),
     password: z.string().optional(),
     allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.run'),
@@ -1181,6 +1223,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     username: z.string().optional(),
     password: z.string().optional(),
     allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     type: z.literal('history.status'),

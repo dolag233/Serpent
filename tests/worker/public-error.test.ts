@@ -4,6 +4,7 @@ import { parseRendererResult, parseWorkerResponse } from '../../src/shared/proto
 import { LibraryServiceError } from '../../src/worker/library-service';
 import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
 import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
+import { RemoteStorageError } from '../../src/worker/sync/remote-storage';
 
 describe('Library Worker public error boundary', () => {
   it('preserves the current entity version for optimistic-lock conflicts', () => {
@@ -82,5 +83,22 @@ describe('Library Worker public error boundary', () => {
         message: 'Serpent could not complete the request.',
       });
     }
+  });
+
+  it('maps sync connection failures to a readable reason (Serpent-xffq)', () => {
+    expect(publicErrorForWorkerFailure(
+      new RemoteStorageError('AUTH_FAILED', '认证失败：用户名或密码不正确。'),
+    )).toEqual({
+      code: 'SYNC_CONNECTION_FAILED',
+      message: 'Serpent could not connect to the sync server.',
+      reason: 'SYNC_AUTH_FAILED',
+    });
+    expect(publicErrorForWorkerFailure(
+      new RemoteStorageError('PERMISSION_DENIED', '没有权限执行该操作，请检查账号权限。'),
+    )).toEqual({
+      code: 'SYNC_CONNECTION_FAILED',
+      message: 'Serpent could not connect to the sync server.',
+      reason: 'SYNC_PERMISSION_DENIED',
+    });
   });
 });

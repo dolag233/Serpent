@@ -8,7 +8,7 @@
 - **2026-08-16 `Serpent-dw9a` / `Serpent-768x` / `Serpent-cljb` 收口中**：
   `dw9a` 已实现主库损坏恢复梯度（主库→两份轮换备份→Assets 抢救，无只读档）、
   行级悬空 revision 可见/自动修复、内容指纹重定位；`768x` 已实现 Eagle
-  外部库导入/打开二级菜单、打开 Eagle 时先选源再选 Serpent 保存位置，以及资源库根目录虚拟节点；
+  外部库导入/打开二级菜单、打开 Eagle 时先校验源再填写名称并选择 Serpent 保存位置，以及资源库根目录虚拟节点；
   `cljb` 已改为视频原始播放优先，只有真实 codec/decode 失败才为该项按需生成或
   复用 proxy。lint、typecheck、定向 Worker/单元与相关 Electron E2E 已通过。
   当前主线门禁已通过（421 个测试文件、3709 个断言；搜索性能 5/5；Electron E2E

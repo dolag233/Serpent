@@ -60,6 +60,15 @@ The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and r
 
 Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
 
+## WebDAV sync
+
+Serpent can sync a library across machines over WebDAV.
+
+- **Global servers (Settings → Sync):** add, edit, and delete WebDAV servers. An address may include a path (e.g. `https://nas.local/dav/share/Serpent`). Passwords are stored encrypted locally and never sent back in plain text. After saving, the connection is tested automatically and shows a status (Connected / Connection failed / Connecting…).
+- **Library binding (Library Settings → Sync):** choose a server for the current library and set the **sync folder name** (defaults to the library name). The remote location is `server address/folder name/`. The page shows sync status (Not synced / Syncing… / Synced), the server connection status, and offers Preview changes, Sync now, and Save.
+- **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files. If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
+- **Open synced library (Library menu → Open synced library…):** choose a server, pick one of the libraries listed on it, and Serpent pulls it down and creates a local library. The server must support file upload/download (PUT/GET).
+
 ## Shortcuts
 
 | Action | macOS | Windows |

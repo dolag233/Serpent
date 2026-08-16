@@ -45,6 +45,8 @@ export type LibrarySwitcherProps = {
   disabled?: boolean;
   onCreateLibrary: () => void;
   onOpenLibrary: () => void;
+  /** Opens a synced library from a WebDAV server (pulls + creates locally). */
+  onOpenSyncLibrary?: () => void;
   /** Opens an Eagle library as a converted, newly opened Serpent library. */
   onOpenEagleLibrary?: () => void;
   /** Reserved external-library entry; disabled until Billfish support lands. */
@@ -90,6 +92,7 @@ export function LibrarySwitcher({
   disabled = false,
   onCreateLibrary,
   onOpenLibrary,
+  onOpenSyncLibrary,
   onOpenEagleLibrary,
   onOpenBillfishLibrary,
   onImportEagleLibrary,
@@ -259,6 +262,19 @@ export function LibrarySwitcher({
           >
             {t("shell.openLibraryEllipsis")}
           </button>
+          {onOpenSyncLibrary ? (
+            <button
+              className="library-switcher-item"
+              data-hover-tip={t("shell.openSyncLibraryHint")}
+              disabled={busy}
+              onClick={() => runMenuAction(onOpenSyncLibrary)}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              {t("shell.openSyncLibraryEllipsis")}
+            </button>
+          ) : null}
           <div
             className="library-switcher-submenu-wrap"
             onFocus={() => setActiveSubmenu("open-external")}

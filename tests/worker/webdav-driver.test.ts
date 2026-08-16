@@ -116,6 +116,13 @@ describe('WebDAVDriver against mock server (Serpent-xffq)', () => {
     expect(capabilities.auth).toBe('basic');
   });
 
+  it('reports wrong credentials as a readable probe failure', async () => {
+    const server = await startMockWebDAVServer({ auth: 'basic', username: 'alice', password: 'secret' });
+    servers.push(server);
+    const wrong = new WebDAVDriver({ baseUrl: server.baseUrl, username: 'alice', password: 'wrong' });
+    await expect(wrong.probe()).rejects.toMatchObject({ code: 'AUTH_FAILED' });
+  });
+
   it('maps transport failures to readable, retryable errors', async () => {
     const driver = new WebDAVDriver({ baseUrl: 'http://127.0.0.1:1/', timeoutMs: 2000 });
     await expect(driver.list('')).rejects.toMatchObject({

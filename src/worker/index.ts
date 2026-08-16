@@ -28,6 +28,12 @@ import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import { SyncEngine } from './sync/sync-engine';
 import { createLibrarySyncPort } from './sync/library-port';
 import { WebDAVDriver } from './sync/webdav-driver';
+import { parseManifest, serializeManifest } from './sync/manifest';
+import {
+  SYNC_MANIFEST_FILE,
+  SYNC_ASSETS_DIR,
+  sanitizeSyncDirectoryName,
+} from '../shared/sync-paths';
 import {
   LibraryService,
   LibraryServiceError,
@@ -945,6 +951,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         username: request.command.username,
         password: request.command.password,
         allowInsecureTls: request.command.allowInsecureTls,
+        directoryName: request.command.directoryName,
       });
       return { ok: true, type: 'sync.previewed', report };
     }
@@ -958,6 +965,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           username: request.command.username,
           password: request.command.password,
           allowInsecureTls: request.command.allowInsecureTls,
+          directoryName: request.command.directoryName,
         });
         libraryService.finishSyncSession(request.command.libraryId, sessionId, 'done');
         return { ok: true, type: 'sync.completed', report: outcome.report, conflicts: outcome.conflicts };
@@ -970,6 +978,71 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         );
         throw error;
       }
+    }
+    case 'sync.list-remote-libraries': {
+      const driver = new WebDAVDriver({
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+      });
+      const entries = await driver.list('', '1');
+      const libraries: Array<{ libraryId: string; displayName: string; directoryName: string }> = [];
+      for (const entry of entries) {
+        // 跳过根目录条目（path 为空）与非目录。
+        if (!entry.isDirectory || entry.path === '') continue;
+        try {
+          const read = await driver.read(`${entry.path}/${SYNC_MANIFEST_FILE}`);
+          const manifest = parseManifest(read.body.toString('utf-8'));
+          libraries.push({
+            libraryId: manifest.libraryId,
+            displayName: manifest.displayName,
+            directoryName: manifest.directoryName,
+          });
+        } catch {
+          // 无有效 manifest 的目录不是同步库，跳过。
+        }
+      }
+      return { ok: true, type: 'sync.remote-libraries', remoteLibraries: libraries };
+    }
+    case 'sync.open-remote-library': {
+      const driver = new WebDAVDriver({
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+      });
+      const directoryName = sanitizeSyncDirectoryName(
+        request.command.directoryName || request.command.displayName,
+        request.command.libraryId,
+      );
+      const manifest = parseManifest(
+        (await driver.read(`${directoryName}/${SYNC_MANIFEST_FILE}`)).body.toString('utf-8'),
+      );
+      const created = libraryService.createLibrary({
+        displayName: request.command.displayName || manifest.displayName,
+        selectedParentPath: request.command.selectedParentPath,
+        libraryId: request.command.libraryId || manifest.libraryId,
+      });
+      try {
+        for (const [syncId, entry] of Object.entries(manifest.entries)) {
+          const read = await driver.read(`${directoryName}/${SYNC_ASSETS_DIR}/${entry.path}`);
+          libraryService.applySyncContentUpdate(created.libraryId, syncId, entry.path, read.body);
+        }
+      } catch (error) {
+        // 下载失败：关闭已创建的库并向上抛，用户可删除部分库后重试。
+        try {
+          libraryService.closeLibrary(created.libraryId);
+        } catch {
+          // 关闭失败不掩盖原始错误。
+        }
+        throw error;
+      }
+      libraryService.writeSyncManifestCache(created.libraryId, serializeManifest(manifest));
+      if (!created.readOnly) {
+        scheduleThumbnailScene(created.libraryId, 'startup');
+      }
+      return { ok: true, type: 'library.opened', library: created };
     }
     case 'library.change-sequence':
       return {
@@ -1012,6 +1085,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         type: 'library.recovery-report',
         reportPath: libraryService.getRecoveryReportPath(request.command.libraryId),
       };
+    case 'library.inspect-eagle': {
+      const inspected = libraryService.inspectEagleLibrary(
+        request.command.sourceRootPath,
+      );
+      return {
+        ok: true,
+        type: 'library.eagle-inspected',
+        displayName: inspected.displayName,
+      };
+    }
     case 'library.open-eagle': {
       const library = await libraryService.openEagleLibrary(request.command);
       if (!library.readOnly) {
@@ -3344,3 +3427,4 @@ process.stdout.write(
   `${JSON.stringify({ scope: 'worker.boot', message: 'worker module loaded, sending ready.' })}\n`,
 );
 parentPort.postMessage({ type: 'worker.ready' });
+

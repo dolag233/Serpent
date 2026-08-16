@@ -253,8 +253,30 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.probe };
   },
 
-  async openEagle(): Promise<LibraryApiResult<RendererLibrarySummary>> {
-    const result = await request({ type: 'library.open-eagle.request' });
+  async inspectEagle(): Promise<LibraryApiResult<{ displayName: string }>> {
+    const result = await request({ type: 'library.inspect-eagle.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.eagle-inspected') {
+      throw new Error('Unexpected inspect-Eagle-library response.');
+    }
+    return { ok: true as const, value: { displayName: result.displayName } };
+  },
+
+  async cancelInspectEagle(): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.inspect-eagle.cancel.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.eagle-inspect-cancelled') {
+      throw new Error('Unexpected cancel-inspect-Eagle-library response.');
+    }
+    return { ok: true as const, value: undefined };
+  },
+
+  async openEagle({
+    displayName,
+  }: {
+    displayName: string;
+  }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-eagle.request', displayName });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.opened') throw new Error('Unexpected open-Eagle-library response.');
     return { ok: true as const, value: result.library };
@@ -1717,13 +1739,13 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
     return { ok: true, value: { id: result.id } };
   },
-  async syncSaveBinding({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<void>> {
-    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, subPath });
+  async syncSaveBinding({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
     return { ok: true, value: undefined };
   },
-  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; subPath: string } | null>> {
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string } | null>> {
     const result = await request({ type: 'sync.library.binding.get.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');
@@ -1737,14 +1759,26 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'sync.probed') throw new Error('Unexpected sync probe response.');
     return { ok: true, value: result.capabilities };
   },
-  async syncPreview({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<SyncReport>> {
-    const result = await request({ type: 'sync.preview.request', libraryId, serverId, subPath });
+  async syncListRemoteLibraries({ serverId }: { serverId: string }): Promise<LibraryApiResult<Array<{ libraryId: string; displayName: string; directoryName: string }>>> {
+    const result = await request({ type: 'sync.list-remote-libraries.request', serverId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'sync.remote-libraries') throw new Error('Unexpected sync remote libraries response.');
+    return { ok: true, value: result.remoteLibraries };
+  },
+  async syncOpenRemoteLibrary({ serverId, libraryId, displayName, directoryName }: { serverId: string; libraryId: string; displayName: string; directoryName: string }): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'sync.open-remote-library.request', serverId, libraryId, displayName, directoryName });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected sync open remote response.');
+    return { ok: true, value: result.library };
+  },
+  async syncPreview({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<SyncReport>> {
+    const result = await request({ type: 'sync.preview.request', libraryId, serverId, directoryName });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.previewed') throw new Error('Unexpected sync preview response.');
     return { ok: true, value: result.report };
   },
-  async syncRun({ libraryId, serverId, subPath }: { libraryId: string; serverId: string; subPath: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
-    const result = await request({ type: 'sync.run.request', libraryId, serverId, subPath });
+  async syncRun({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>> {
+    const result = await request({ type: 'sync.run.request', libraryId, serverId, directoryName });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.completed') throw new Error('Unexpected sync run response.');
     return { ok: true, value: { report: result.report, conflicts: result.conflicts } };
@@ -2619,3 +2653,4 @@ contextBridge.exposeInMainWorld(
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );
+

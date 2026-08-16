@@ -67,6 +67,8 @@ export const zhCN = {
     createLibraryEllipsis: "新建资源库…",
     openLibrary: "打开资源库",
     openLibraryEllipsis: "打开资源库…",
+    openSyncLibraryEllipsis: "打开同步资源库…",
+    openSyncLibraryHint: "从 WebDAV 服务器拉取并创建资源库",
     openExternalLibraryEllipsis: "打开外部资源库…",
     openEagleLibraryEllipsis: "打开 Eagle 资源库…",
     openBillfishLibraryEllipsis: "打开 Billfish 资源库…",
@@ -676,6 +678,13 @@ export const zhCN = {
       existingSection: "已有资源库",
       openExisting: "打开已有资源库…"
     },
+    openEagleLibrary: {
+      title: "打开 Eagle 资源库",
+      body: "将所选 Eagle 资源库转换为 Serpent 资源库。",
+      name: "名称",
+      help: "",
+      submit: "选择保存位置"
+    },
     conflicts: {
       skip: "跳过",
       importAnyway: "仍然导入",
@@ -929,9 +938,10 @@ export const zhCN = {
     },
     importLibraryChooser: {
       title: "导入资源库",
-      help: "可以从资源库文件夹导入，也可以从导出的资源库 ZIP 导入。",
+      help: "可以从资源库文件夹或导出的 ZIP 导入，也可以打开 Eagle 资源库并转换为新的 Serpent 资源库。",
       folder: "导入资源库文件夹",
-      zip: "导入资源库 ZIP"
+      zip: "导入资源库 ZIP",
+      external: "打开外部资源库"
     }
   },
   aiConfig: {
@@ -1293,15 +1303,15 @@ export const zhCN = {
       previewSummary: "差异：上传 {uploads}，下载 {downloads}，冲突 {conflicts}，远端删除 {remoteDeletes}，本地回收 {localRecycles}。",
       completedSummary: "同步完成：上传 {uploads}，下载 {downloads}，冲突 {conflicts}。",
       conflictsDetected: "检测到 {count} 个冲突，冲突副本已保存为「name (conflict-…)」文件。",
-      contentTransferUnsupported: "该服务器不支持文件上传/下载（PUT/GET），无法用于同步。",
+      contentTransferUnsupported: "该服务器不支持上传文件，无法用于同步。",
       server: "同步服务器",
-      serverHint: "从通用设置中已配置的 WebDAV 服务器里选择一个，用于同步此资源库。",
+      serverHint: "选择用于同步此资源库的 WebDAV 服务器。",
+      directoryName: "同步文件夹名称",
+      directoryNameHint: "此资源库在服务器上的文件夹名称，默认使用资源库名称。",
       noServer: "尚未配置同步服务器。请先在「设置 → 同步」中添加服务器。",
-      subPath: "同步子路径",
-      subPathHint: "此资源库在所选服务器上的子路径，例如 Share/Serpent。留空则使用资源库名称。",
       bindingSaved: "已保存此资源库的同步配置。",
       serversTitle: "同步服务器",
-      serversHint: "添加、测试并管理全局 WebDAV 服务器。每个资源库在「资源库设置」中单独选择服务器与子路径。",
+      serversHint: "添加、测试并管理全局 WebDAV 服务器。服务器地址可包含路径（如 …/Share/Serpent），每个资源库会以库名为目录追加到其后。",
       noServers: "尚未配置任何同步服务器。",
       addServer: "添加服务器",
       editServer: "编辑服务器",
@@ -1315,6 +1325,20 @@ export const zhCN = {
       passwordKeepHint: "留空则保持原密码",
       serverSummary: "用户 {username} · {password}",
       serverSummaryAnonymous: "匿名 · {password}",
+      connectionConnected: "已连接",
+      connectionChecking: "连接中",
+      connectionFailed: "连接失败",
+      connectionUnknown: "未测试",
+      status: "同步状态",
+      statusUnsynced: "未同步",
+      statusSyncing: "正在同步",
+      statusSynced: "已同步",
+      lastSyncedAt: "上次同步：{time}",
+      operationFailed: "同步操作失败，请重试。",
+      listRemoteLibraries: "列出服务器上的库",
+      remoteLibrariesTitle: "服务器上的同步库",
+      noRemoteLibraries: "服务器上没有可打开的同步库。",
+      openRemoteLibrary: "打开",
     },
     libraryIgnoreHint: "使用资源库中的忽略配置文件管理不需要显示的文件和文件夹。",
     gitignoreFile: "忽略配置文件",
@@ -1506,8 +1530,10 @@ export const zhCN = {
     opening: "打开中…",
     exportingLibrary: "正在导出资源库：",
     importingLibrary: "导入资源库：",
+    openingLibrary: "正在打开资源库：{name}",
     cancelExport: "取消导出",
     cancelImport: "取消导入",
+    cancelOpen: "取消打开",
     loadingMore: "继续加载资产…"
   },
   tagPicker: {
@@ -1875,7 +1901,8 @@ export const zhCN = {
       HISTORY_NOT_TOP: "该操作已不是当前的撤回或重做目标。",
       HISTORY_NOT_REVERSIBLE: "该操作不能撤回或重做。",
       HISTORY_TRANSITION_IN_PROGRESS: "已有另一个撤回或重做操作正在进行。",
-      HISTORY_STALE: "文件或记录已经变化，无法安全撤回或重做该操作。"
+      HISTORY_STALE: "文件或记录已经变化，无法安全撤回或重做该操作。",
+      SYNC_CONNECTION_FAILED: "无法连接同步服务器。"
     },
     reason: {
       PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
@@ -1923,7 +1950,20 @@ export const zhCN = {
       EAGLE_METADATA_UNREADABLE: "无法解析 Eagle 资源库的 metadata.json 或 images 目录，请确认选择的是 .library 文件夹。",
       IMPORT_COPY_FAILED: "复制源文件到资源库时失败。请检查磁盘空间与源文件是否仍可读取，并查看应用日志。",
       IMPORT_REGISTER_FAILED: "文件已开始复制，但登记到资源库时失败。请查看应用日志后重试，不要重复选择同一批已成功的条目。",
-      EAGLE_THUMBNAIL_FAILED: "Eagle 静态缩略图未能写入预览缓存；资产文件仍会导入，可稍后刷新缩略图。"
+      EAGLE_THUMBNAIL_FAILED: "Eagle 静态缩略图未能写入预览缓存；资产文件仍会导入，可稍后刷新缩略图。",
+      SYNC_AUTH_FAILED: "用户名或密码不正确。",
+      SYNC_PERMISSION_DENIED: "该账号没有上传或下载文件的权限。",
+      SYNC_NOT_FOUND: "服务器上找不到该同步路径。",
+      SYNC_TIMEOUT: "连接超时，请检查地址与网络。",
+      SYNC_TLS: "服务器证书无效或自签名。",
+      SYNC_DNS: "无法解析服务器地址。",
+      SYNC_CONNECTION_REFUSED: "连接被拒绝，请检查服务器与端口。",
+      SYNC_NETWORK: "网络连接失败。",
+      SYNC_QUOTA_EXCEEDED: "服务器存储空间不足。",
+      SYNC_LOCKED: "服务器资源被锁定。",
+      SYNC_CONFLICT: "远端内容已被其他设备修改。",
+      SYNC_METHOD_NOT_ALLOWED: "服务器不支持所需的同步操作。",
+      SYNC_WRITE_UNSUPPORTED: "服务器不支持上传文件，无法用于同步。"
     },
     withReason: "{message} 原因：{reason}"
   },

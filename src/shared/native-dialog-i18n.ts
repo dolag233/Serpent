@@ -47,6 +47,7 @@ export type NativeDialogId =
   | "importEagleLibrary"
   | "openEagleLibrary"
   | "openEagleLibraryDestination"
+  | "openSyncLibraryDestination"
   | "createLibrary"
   | "openLibrary"
   | "linkFolder"
@@ -87,6 +88,10 @@ const EN: DialogCatalog = {
   openEagleLibraryDestination: {
     title: "Choose where to save the Serpent library",
     buttonLabel: "Save here",
+  },
+  openSyncLibraryDestination: {
+    title: "Choose where to create the synced library",
+    buttonLabel: "Create here",
   },
   createLibrary: { title: "Create Library", buttonLabel: "Choose Folder" },
   openLibrary: { title: "Open Library", buttonLabel: "Open" },
@@ -166,6 +171,10 @@ const ZH_CN: DialogCatalog = {
   openEagleLibraryDestination: {
     title: "\u9009\u62e9 Serpent \u8d44\u6e90\u5e93\u4fdd\u5b58\u4f4d\u7f6e",
     buttonLabel: "\u4fdd\u5b58\u5230\u6b64\u5904",
+  },
+  openSyncLibraryDestination: {
+    title: "\u9009\u62e9\u540c\u6b65\u8d44\u6e90\u5e93\u521b\u5efa\u4f4d\u7f6e",
+    buttonLabel: "\u521b\u5efa\u5728\u6b64\u5904",
   },
   createLibrary: {
     title: "\u521b\u5efa\u8d44\u6e90\u5e93",

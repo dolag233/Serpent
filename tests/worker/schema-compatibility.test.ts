@@ -296,6 +296,7 @@ describe('mid-migration failure injection', () => {
 describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
   const autoChecksum = MIGRATIONS.find((migration) => migration.version === 37)!.checksum;
   const syncChecksum = MIGRATIONS.find((migration) => migration.version === 38)!.checksum;
+  const v39Checksum = MIGRATIONS.find((migration) => migration.version === 39)!.checksum;
 
   it('rewrites swapped v37/v38 checksums and opens the library writable', () => {
     const root = temporaryRoot();
@@ -306,7 +307,10 @@ describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
     });
     creating.closeAll();
 
+    // 模拟 v38 分叉库：先把新建库回退到 v38，再交换 v37/v38 校验和。
     const db = new Database(libraryFilePath(created.libraryPath));
+    db.prepare('DELETE FROM schema_migrations WHERE version = 39').run();
+    db.pragma('user_version = 38');
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 37').run(syncChecksum);
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 38').run(autoChecksum);
     db.close();
@@ -329,6 +333,7 @@ describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
     expect(history).toEqual([
       { version: 37, checksum: autoChecksum },
       { version: 38, checksum: syncChecksum },
+      { version: 39, checksum: v39Checksum },
     ]);
   });
 
@@ -374,6 +379,7 @@ describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
     expect(history).toEqual([
       { version: 37, checksum: autoChecksum },
       { version: 38, checksum: syncChecksum },
+      { version: 39, checksum: v39Checksum },
     ]);
   });
 });

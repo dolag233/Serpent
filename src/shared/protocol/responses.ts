@@ -49,6 +49,19 @@ const rendererLibraryRecoverySchema = z.strictObject({
   metadataLosses: z.array(recoveryMetadataLossSchema).optional(),
 });
 
+/** Serpent-xffq: WebDAV 能力探测结果（probe/preview/run 的 report 内均带）。 */
+const syncCapabilitiesSchema = z.strictObject({
+  auth: z.enum(['none', 'basic', 'digest']),
+  supportsContentTransfer: z.boolean(),
+  supportsDepthInfinity: z.boolean(),
+  supportsEtagIfMatch: z.boolean(),
+  supportsMove: z.boolean(),
+  supportsLock: z.boolean(),
+  quotaBytes: z.number().optional(),
+  usedBytes: z.number().optional(),
+  maxUploadBytes: z.number().optional(),
+});
+
 export const missingAssetRecoveryProbeSchema = z.strictObject({
   status: z.enum(['recoverable', 'needs-location', 'not-missing']),
   candidateKind: z.enum(['managed-source', 'trash', 'linked-source']).nullable(),
@@ -1489,6 +1502,11 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.eagle-inspected'),
+    displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.recovery-report'),
     reportPath: nonBlankString,
   }),
@@ -1692,17 +1710,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('sync.probed'),
-    capabilities: z.strictObject({
-      auth: z.enum(['none', 'basic', 'digest']),
-      supportsContentTransfer: z.boolean(),
-      supportsDepthInfinity: z.boolean(),
-      supportsEtagIfMatch: z.boolean(),
-      supportsMove: z.boolean(),
-      supportsLock: z.boolean(),
-      quotaBytes: z.number().optional(),
-      usedBytes: z.number().optional(),
-      maxUploadBytes: z.number().optional(),
-    }),
+    capabilities: syncCapabilitiesSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1716,6 +1724,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
       conflicts: z.number().int().nonnegative(),
       remoteDeletes: z.number().int().nonnegative(),
       localRecycles: z.number().int().nonnegative(),
+      capabilities: syncCapabilitiesSchema,
     }),
   }),
   z.strictObject({
@@ -1730,10 +1739,20 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
       conflicts: z.number().int().nonnegative(),
       remoteDeletes: z.number().int().nonnegative(),
       localRecycles: z.number().int().nonnegative(),
+      capabilities: syncCapabilitiesSchema,
     }),
     conflicts: z.array(z.strictObject({
       syncId: nonBlankString,
       conflictCopyPath: nonBlankString,
+    })),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.remote-libraries'),
+    remoteLibraries: z.array(z.strictObject({
+      libraryId: nonBlankString,
+      displayName: nonBlankString,
+      directoryName: nonBlankString,
     })),
   }),
   z.strictObject({
@@ -1880,6 +1899,15 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.eagle-inspected'),
+    displayName: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.eagle-inspect-cancelled'),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.recovery-report.requested'),
     libraryId: nonBlankString,
   }),
@@ -1957,7 +1985,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('sync.binding.saved'),
     libraryId: nonBlankString,
     serverId: nonBlankString,
-    subPath: z.string(),
+    directoryName: z.string().optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1965,23 +1993,14 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     binding: z.strictObject({
       serverId: nonBlankString,
-      subPath: z.string(),
+      directoryName: z.string().optional(),
+      lastSyncedAt: z.string().optional(),
     }).nullable(),
   }),
   z.strictObject({
     ok: z.literal(true),
     type: z.literal('sync.probed'),
-    capabilities: z.strictObject({
-      auth: z.enum(['none', 'basic', 'digest']),
-      supportsContentTransfer: z.boolean(),
-      supportsDepthInfinity: z.boolean(),
-      supportsEtagIfMatch: z.boolean(),
-      supportsMove: z.boolean(),
-      supportsLock: z.boolean(),
-      quotaBytes: z.number().optional(),
-      usedBytes: z.number().optional(),
-      maxUploadBytes: z.number().optional(),
-    }),
+    capabilities: syncCapabilitiesSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1995,6 +2014,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       conflicts: z.number().int().nonnegative(),
       remoteDeletes: z.number().int().nonnegative(),
       localRecycles: z.number().int().nonnegative(),
+      capabilities: syncCapabilitiesSchema,
     }),
   }),
   z.strictObject({
@@ -2009,10 +2029,20 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       conflicts: z.number().int().nonnegative(),
       remoteDeletes: z.number().int().nonnegative(),
       localRecycles: z.number().int().nonnegative(),
+      capabilities: syncCapabilitiesSchema,
     }),
     conflicts: z.array(z.strictObject({
       syncId: nonBlankString,
       conflictCopyPath: nonBlankString,
+    })),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('sync.remote-libraries'),
+    remoteLibraries: z.array(z.strictObject({
+      libraryId: nonBlankString,
+      displayName: nonBlankString,
+      directoryName: nonBlankString,
     })),
   }),
   z.strictObject({
@@ -2136,10 +2166,17 @@ export function parseRendererResult(input: unknown): RendererResult {
   return rendererResultSchema.parse(input);
 }
 
+const libraryLifecycleOperationSchema = z.enum([
+  'create',
+  'open',
+  'import',
+  'open-eagle',
+]);
+
 export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.opening'),
-    operation: z.enum(['create', 'open', 'import']),
+    operation: libraryLifecycleOperationSchema,
   }),
   z.strictObject({
     type: z.literal('library.opened'),
@@ -2151,7 +2188,7 @@ export const rendererLifecycleEventSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('library.open-failed'),
-    operation: z.enum(['create', 'open', 'import']),
+    operation: libraryLifecycleOperationSchema,
     error: publicErrorSchema,
   }),
   z.strictObject({
@@ -2165,3 +2202,4 @@ export type RendererLifecycleEvent = z.infer<typeof rendererLifecycleEventSchema
 export function parseRendererLifecycleEvent(input: unknown): RendererLifecycleEvent {
   return rendererLifecycleEventSchema.parse(input);
 }
+

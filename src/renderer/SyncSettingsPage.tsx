@@ -12,7 +12,18 @@ export interface SyncServerSettingsCallbacks {
   syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
 }
 
-type BusyState = "save" | "probe" | "delete" | null;
+type BusyState = "save" | "delete" | null;
+
+type ServerConnectionState = "checking" | "connected" | "failed";
+
+interface ServerConnection {
+  state: ServerConnectionState;
+  message?: string;
+}
+
+function ConnectionDot({ state }: { state: ServerConnectionState | "idle" }): ReactNode {
+  return <span className="sync-status-dot" data-state={state} />;
+}
 
 /**
  * Global sync-server management (Serpent-xffq). Servers configured here are
@@ -27,6 +38,7 @@ export function SyncSettingsPage({
 }): ReactNode {
   const t = useT();
   const [servers, setServers] = useState<SyncServerSummary[]>([]);
+  const [connections, setConnections] = useState<Record<string, ServerConnection>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -36,17 +48,42 @@ export function SyncSettingsPage({
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<{ serverId: string; value: SyncCapabilities } | null>(null);
+
+  const probeServer = async (serverId: string) => {
+    setConnections((current) => ({ ...current, [serverId]: { state: "checking" } }));
+    const probe = await callbacks.syncProbe({ serverId });
+    if (!probe.ok) {
+      setConnections((current) => ({ ...current, [serverId]: { state: "failed", message: probe.message } }));
+      return;
+    }
+    if (!probe.value.supportsContentTransfer) {
+      setConnections((current) => ({
+        ...current,
+        [serverId]: { state: "failed", message: t("settings.sync.contentTransferUnsupported") },
+      }));
+      return;
+    }
+    setConnections((current) => ({ ...current, [serverId]: { state: "connected" } }));
+  };
 
   const reload = async () => {
     const listed = await callbacks.syncListServers();
-    if (listed.ok) setServers(listed.value);
+    if (listed.ok) {
+      setServers(listed.value);
+      for (const server of listed.value) {
+        void probeServer(server.id);
+      }
+    }
   };
 
   useEffect(() => {
     void (async () => {
       const listed = await callbacks.syncListServers();
-      if (listed.ok) setServers(listed.value);
+      if (!listed.ok) return;
+      setServers(listed.value);
+      for (const server of listed.value) {
+        void probeServer(server.id);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -57,6 +94,8 @@ export function SyncSettingsPage({
     setUsername("");
     setPassword("");
     setAllowInsecureTls(false);
+    setError(null);
+    setNotice(null);
   };
 
   const startEdit = (server: SyncServerSummary) => {
@@ -90,23 +129,7 @@ export function SyncSettingsPage({
       setNotice(t("settings.sync.saved"));
       resetForm();
       await reload();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const probeServer = async (serverId: string) => {
-    setBusy("probe");
-    setError(null);
-    setNotice(null);
-    setCapabilities(null);
-    try {
-      const probe = await callbacks.syncProbe({ serverId });
-      if (!probe.ok) {
-        setError(probe.message);
-        return;
-      }
-      setCapabilities({ serverId, value: probe.value });
+      void probeServer(saved.value.id);
     } finally {
       setBusy(null);
     }
@@ -135,7 +158,7 @@ export function SyncSettingsPage({
   };
 
   return (
-    <SettingsCard>
+    <SettingsCard className="library-sync-card">
       <div className="app-settings-row-copy">
         <strong>{t("settings.sync.serversTitle")}</strong>
         <span>{t("settings.sync.serversHint")}</span>
@@ -144,52 +167,55 @@ export function SyncSettingsPage({
       {servers.length === 0 ? (
         <p className="app-settings-help-note">{t("settings.sync.noServers")}</p>
       ) : (
-        servers.map((server, index) => (
-          <div key={server.id}>
-            {index > 0 ? <div className="app-settings-card-divider" /> : null}
-            <div className="app-settings-action-row">
-              <div className="app-settings-row-copy">
-                <strong>{server.baseUrl}</strong>
-                <span>
-                  {server.username
-                    ? t("settings.sync.serverSummary", {
-                        username: server.username,
-                        password: server.hasPassword ? t("settings.sync.passwordStored") : t("settings.sync.passwordNone"),
-                      })
-                    : t("settings.sync.serverSummaryAnonymous", {
-                        password: server.hasPassword ? t("settings.sync.passwordStored") : t("settings.sync.passwordNone"),
-                      })}
-                </span>
-                {capabilities?.serverId === server.id ? (
+        servers.map((server, index) => {
+          const connection = connections[server.id];
+          const state = connection?.state ?? "idle";
+          const label = state === "checking"
+            ? t("settings.sync.connectionChecking")
+            : state === "connected"
+              ? t("settings.sync.connectionConnected")
+              : state === "failed"
+                ? t("settings.sync.connectionFailed")
+                : t("settings.sync.connectionUnknown");
+          return (
+            <div key={server.id}>
+              {index > 0 ? <div className="app-settings-card-divider" /> : null}
+              <div className="app-settings-action-row">
+                <div className="app-settings-row-copy">
+                  <strong>{server.baseUrl}</strong>
                   <span>
-                    {t("settings.sync.capabilitySummary", {
-                      auth: capabilities.value.auth,
-                      transfer: capabilities.value.supportsContentTransfer ? t("common.yes") : t("common.no"),
-                      etag: capabilities.value.supportsEtagIfMatch ? t("common.yes") : t("common.no"),
-                      move: capabilities.value.supportsMove ? t("common.yes") : t("common.no"),
-                    })}
+                    {server.username
+                      ? t("settings.sync.serverSummary", {
+                          username: server.username,
+                          password: server.hasPassword ? t("settings.sync.passwordStored") : t("settings.sync.passwordNone"),
+                        })
+                      : t("settings.sync.serverSummaryAnonymous", {
+                          password: server.hasPassword ? t("settings.sync.passwordStored") : t("settings.sync.passwordNone"),
+                        })}
+                    {state === "failed" && connection?.message ? ` · ${connection.message}` : ""}
                   </span>
-                ) : null}
-              </div>
-              <div className="app-settings-option-group">
-                <button className="secondary-button" disabled={busy !== null} onClick={() => void probeServer(server.id)} type="button">
-                  {busy === "probe" ? t("common.saving") : t("settings.sync.probe")}
-                </button>
-                <button className="secondary-button" disabled={busy !== null} onClick={() => startEdit(server)} type="button">
-                  {t("settings.sync.edit")}
-                </button>
-                <button
-                  className="secondary-button"
-                  disabled={busy !== null}
-                  onClick={() => void deleteServer(server.id)}
-                  type="button"
-                >
-                  {confirmingDeleteId === server.id ? t("settings.sync.deleteConfirm") : t("settings.sync.delete")}
-                </button>
+                </div>
+                <div className="app-settings-option-group">
+                  <span className="sync-status-indicator" data-state={state}>
+                    <ConnectionDot state={state} />
+                    <span>{label}</span>
+                  </span>
+                  <button className="secondary-button" disabled={busy !== null} onClick={() => startEdit(server)} type="button">
+                    {t("settings.sync.edit")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={busy !== null}
+                    onClick={() => void deleteServer(server.id)}
+                    type="button"
+                  >
+                    {confirmingDeleteId === server.id ? t("settings.sync.deleteConfirm") : t("settings.sync.delete")}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))
+          );
+        })
       )}
 
       <div className="app-settings-card-divider" />
@@ -220,7 +246,6 @@ export function SyncSettingsPage({
         </div>
         <input type="checkbox" checked={allowInsecureTls} onChange={(event) => setAllowInsecureTls(event.target.checked)} />
       </div>
-      <div className="app-settings-card-divider" />
       {error ? <p className="settings-error-message">{error}</p> : null}
       {notice ? <p className="settings-success-message">{notice}</p> : null}
       <div className="app-settings-action-row">

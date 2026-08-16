@@ -10,3 +10,16 @@ export function shouldApplyLibraryLifecycleEvent(input: {
   return input.event.source === 'mcp'
     || (input.scriptSandboxPreviewOpen && input.currentLibraryId === undefined);
 }
+
+/**
+ * Opening Eagle closes the previous library before conversion. Ordinary
+ * create/open/recent-switch also emit `library.closed` for the previous
+ * handle *after* the replacement is already open — that event must not
+ * clear the renderer, or the no-library create dialog replaces the
+ * library that was just switched to.
+ */
+export function shouldDetachLibraryOnOpening(
+  event: RendererLifecycleEvent,
+): boolean {
+  return event.type === 'library.opening' && event.operation === 'open-eagle';
+}

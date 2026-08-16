@@ -2,10 +2,12 @@ import {
   createPublicError,
   toPublicError,
   type PublicError,
+  type PublicErrorReason,
 } from '../shared/protocol/errors';
 import { LibraryServiceError } from './library-service';
 import { LibraryWriteCoordinatorError } from './library-write-coordinator';
 import { HistoryTransitionError } from './operation-history';
+import { RemoteStorageError } from './sync/remote-storage';
 
 /** Serpent-033e: SQLite rejected a write because the file or connection is read-only. */
 function isSqliteReadonlyFailure(error: unknown): boolean {
@@ -33,6 +35,26 @@ function isSqliteStructureFailure(error: unknown): boolean {
   );
 }
 
+function syncReasonForRemoteStorageCode(code: string): PublicErrorReason | undefined {
+  switch (code) {
+    case 'AUTH_FAILED': return 'SYNC_AUTH_FAILED';
+    case 'PERMISSION_DENIED': return 'SYNC_PERMISSION_DENIED';
+    case 'NOT_FOUND': return 'SYNC_NOT_FOUND';
+    case 'TIMEOUT': return 'SYNC_TIMEOUT';
+    case 'TLS_ERROR': return 'SYNC_TLS';
+    case 'DNS_ERROR': return 'SYNC_DNS';
+    case 'CONNECTION_REFUSED': return 'SYNC_CONNECTION_REFUSED';
+    case 'NETWORK_ERROR': return 'SYNC_NETWORK';
+    case 'QUOTA_EXCEEDED': return 'SYNC_QUOTA_EXCEEDED';
+    case 'LOCKED': return 'SYNC_LOCKED';
+    case 'CONFLICT': return 'SYNC_CONFLICT';
+    case 'PRECONDITION_FAILED': return 'SYNC_CONFLICT';
+    case 'METHOD_NOT_ALLOWED': return 'SYNC_METHOD_NOT_ALLOWED';
+    case 'WRITE_UNSUPPORTED': return 'SYNC_WRITE_UNSUPPORTED';
+    default: return undefined;
+  }
+}
+
 export function publicErrorForWorkerFailure(error: unknown): PublicError {
   if (isSqliteReadonlyFailure(error)) {
     // The SQLite file or connection itself is read-only (OS attribute,
@@ -48,6 +70,12 @@ export function publicErrorForWorkerFailure(error: unknown): PublicError {
   }
   if (error instanceof HistoryTransitionError) {
     return createPublicError(error.code);
+  }
+  if (error instanceof RemoteStorageError) {
+    return createPublicError(
+      'SYNC_CONNECTION_FAILED',
+      syncReasonForRemoteStorageCode(error.code),
+    );
   }
   if (error instanceof LibraryServiceError) {
     try {

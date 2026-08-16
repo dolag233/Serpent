@@ -166,9 +166,13 @@ import {
 } from "../shared/ai-analysis-settings";
 import { AppSettingsDialog } from "./AppSettingsDialog";
 import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
+import { OpenSyncLibraryDialog } from "./OpenSyncLibraryDialog";
 import { AppLogDialog } from "./AppLogDialog";
 import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
-import { shouldApplyLibraryLifecycleEvent } from "./library-lifecycle-sync";
+import {
+  shouldApplyLibraryLifecycleEvent,
+  shouldDetachLibraryOnOpening,
+} from "./library-lifecycle-sync";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import { AppSettingsEntry } from "./AppSettingsEntry";
@@ -296,7 +300,7 @@ import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { resolveMasonryTabTarget } from "./masonry-focus-order";
 import { shuffleArray } from "./client-shuffle";
-import { toMessage, LibraryOperationError } from "./error-utils";
+import { toMessage, messageForPublicError, LibraryOperationError } from "./error-utils";
 
 import type {
   AiSearchPlan,
@@ -1016,6 +1020,10 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const [libraryTransferKind, setLibraryTransferKind] = useState<
+    "import" | "open"
+  >("import");
+  const [libraryTransferName, setLibraryTransferName] = useState("");
 
   // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
@@ -1049,6 +1057,7 @@ function AppInner() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
+  const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
   const [focusLibraryNameOnOpen, setFocusLibraryNameOnOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
@@ -2984,6 +2993,24 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     return api.onLifecycle((event) => {
+      if (shouldDetachLibraryOnOpening(event)) {
+        void (async () => {
+          await closeAssetPreview(false);
+          applyClosedLibraryUi();
+          setLibraryTransferKind("open");
+          setImportProgress({
+            type: "import.progress",
+            importId: "",
+            phase: "validate",
+            cancelable: true,
+            filesProcessed: 0,
+            totalFiles: 0,
+            bytesProcessed: 0,
+            totalBytes: 0,
+          });
+        })();
+        return;
+      }
       if (event.type !== "library.opened") return;
       if (!shouldApplyLibraryLifecycleEvent({
         event,
@@ -3323,24 +3350,47 @@ function AppInner() {
 
   async function openEagleLibrary() {
     if (!api || importProgress) return;
-    setImportProgress({
-      type: "import.progress",
-      importId: "",
-      phase: "validate",
-      cancelable: true,
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
+    setDialog(null);
+    const inspect = await api.inspectEagle();
+    if (!inspect.ok) {
+      if (inspect.error.code === "CANCELLED") return;
+      showBlockingError(
+        t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(
+          new LibraryOperationError(inspect.error),
+          t("toast.openRecentFailed"),
+          locale,
+        ),
+      );
+      return;
+    }
+    setDialogValue(inspect.value.displayName);
+    setCreateLibraryPhase("eagle");
+    setDialog("library");
+  }
+
+  function cancelEagleInspectFlow() {
+    void api?.cancelInspectEagle();
+    setCreateLibraryPhase("start");
+  }
+
+  async function submitEagleLibraryName() {
+    if (!api) return;
+    const displayName = dialogValue.trim();
+    if (!displayName) return;
+    setDialog(null);
+    setLibraryTransferKind("open");
+    setLibraryTransferName(displayName);
     try {
       await runLibraryOpenPipeline(
         "opening",
-        () => api.openEagle(),
+        () => api.openEagle({ displayName }),
         t("toast.openRecentFailed"),
       );
     } finally {
-      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
+      setCreateLibraryPhase("start");
     }
   }
 
@@ -5565,6 +5615,7 @@ function AppInner() {
 
   async function importEagleLibrary() {
     if (!api || !library || importProgress) return;
+    setLibraryTransferKind("import");
     setImportProgress({
       type: "import.progress",
       importId: "",
@@ -7003,6 +7054,7 @@ function AppInner() {
         setImportProgress(event);
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
           setImportProgress(null);
+          setLibraryTransferKind("import");
         }
       }
     });
@@ -8453,6 +8505,10 @@ function AppInner() {
               onImportLinkedFolder={() => void importFolderAsLinked()}
               onMenuOpen={() => void refreshRecentLibraries()}
               onOpenLibrary={() => void runLibraryOperation("open")}
+              onOpenSyncLibrary={() => {
+                setAppSettingsOpen(false);
+                setOpenSyncLibraryOpen(true);
+              }}
               onOpenEagleLibrary={() => void openEagleLibrary()}
               onOpenRecent={(path) => void openRecentLibrary(path)}
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
@@ -9156,7 +9212,11 @@ function AppInner() {
                 <span className="activity-pulse" />
                 <div className="import-progress-body">
                   <span className="activity-strip-message">
-                    {t("progress.importingLibrary")}
+                    {libraryTransferKind === "open"
+                      ? t("progress.openingLibrary", {
+                          name: libraryTransferName,
+                        })
+                      : t("progress.importingLibrary")}
                     {importProgress.phase === "validate"
                       ? importProgress.totalFiles > 0
                         ? t("progress.readingSourceItems", {
@@ -9209,7 +9269,9 @@ function AppInner() {
                     onClick={() => void cancelImport()}
                     type="button"
                   >
-                    {t("progress.cancelImport")}
+                    {libraryTransferKind === "open"
+                      ? t("progress.cancelOpen")
+                      : t("progress.cancelImport")}
                   </button>
                 )}
               </div>
@@ -10352,25 +10414,25 @@ function AppInner() {
           async syncListServers() {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncListServers();
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncSaveServer(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncSaveServer(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncDeleteServer(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncDeleteServer(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true };
           },
           async syncProbe(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncProbe(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
         }}
@@ -10389,7 +10451,7 @@ function AppInner() {
           if (!api || !library) return;
           const result = await api.rename({ libraryId: library.libraryId, displayName: name });
           if (!result.ok) {
-            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            setError(messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")));
             return;
           }
           setLibrary(result.value);
@@ -10399,7 +10461,7 @@ function AppInner() {
           if (!api || !library) return;
           const result = await api.setGitignore({ libraryId: library.libraryId, content });
           if (!result.ok) {
-            setError(toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale));
+            setError(messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")));
             return;
           }
           setGitignoreContent(result.value.content);
@@ -10410,40 +10472,74 @@ function AppInner() {
           async syncListServers() {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncListServers();
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncProbe(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncProbe(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncPreview(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncPreview(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncRun(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncRun(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
           async syncSaveBinding(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncSaveBinding(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true };
           },
           async syncGetBinding(input) {
             if (!api) return { ok: false, message: t("common.unavailable") };
             const result = await api.syncGetBinding(input);
-            if (!result.ok) return { ok: false, message: toMessage(result.error, t("toast.librarySettingsSaveFailed"), locale) };
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
             return { ok: true, value: result.value };
           },
         }}
+      />
+      <OpenSyncLibraryDialog
+        callbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncListRemoteLibraries(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListRemoteLibraries(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncOpenRemoteLibrary(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncOpenRemoteLibrary(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+        }}
+        onClose={() => setOpenSyncLibraryOpen(false)}
+        onOpened={(opened) => {
+          void (async () => {
+            if (!api) return;
+            await runLibraryOpenPipeline(
+              "opening",
+              () => Promise.resolve({ ok: true, value: opened }),
+              t("toast.openRecentFailed"),
+            );
+          })();
+        }}
+        open={openSyncLibraryOpen}
       />
       <AppLogDialog
         automationCorrelationId={appLogAutomationCorrelationId}
@@ -10522,13 +10618,25 @@ function AppInner() {
           setCreateLibraryPhase("form");
         }}
         onBackToStart={() => {
+          if (createLibraryPhase === "eagle") {
+            cancelEagleInspectFlow();
+            if (library) setDialog(null);
+            return;
+          }
           setCreateLibraryPhase("start");
         }}
         onSubmit={() => {
+          if (createLibraryPhase === "eagle") {
+            void submitEagleLibraryName();
+            return;
+          }
           setDialog(null);
           void runLibraryOperation("create");
         }}
         onCancel={() => {
+          if (createLibraryPhase === "eagle") {
+            cancelEagleInspectFlow();
+          }
           setDialog(null);
           setCreateLibraryPhase("start");
         }}
@@ -10603,6 +10711,10 @@ function AppInner() {
         onImportZip={() => {
           setImportLibraryChooserOpen(false);
           void startImportZip();
+        }}
+        onOpenEagle={() => {
+          setImportLibraryChooserOpen(false);
+          void openEagleLibrary();
         }}
       />
       {importValidated && (

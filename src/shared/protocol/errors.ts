@@ -62,6 +62,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   HISTORY_TRANSITION_IN_PROGRESS: 'Another undo or redo operation is already in progress.',
   HISTORY_STALE: 'The files or records changed, so this operation cannot be reversed safely.',
   HISTORY_TOO_LARGE: 'This operation is too large to retain in the undo history.',
+  SYNC_CONNECTION_FAILED: 'Serpent could not connect to the sync server.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;
@@ -110,6 +111,19 @@ export const publicErrorReasonSchema = z.enum([
   'IMPORT_COPY_FAILED',
   'IMPORT_REGISTER_FAILED',
   'EAGLE_THUMBNAIL_FAILED',
+  'SYNC_AUTH_FAILED',
+  'SYNC_PERMISSION_DENIED',
+  'SYNC_NOT_FOUND',
+  'SYNC_TIMEOUT',
+  'SYNC_TLS',
+  'SYNC_DNS',
+  'SYNC_CONNECTION_REFUSED',
+  'SYNC_NETWORK',
+  'SYNC_QUOTA_EXCEEDED',
+  'SYNC_LOCKED',
+  'SYNC_CONFLICT',
+  'SYNC_METHOD_NOT_ALLOWED',
+  'SYNC_WRITE_UNSUPPORTED',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

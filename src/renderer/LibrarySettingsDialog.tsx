@@ -12,10 +12,27 @@ type LibrarySettingsCategory = "general" | "ignore" | "sync";
 export interface SyncSettingsCallbacks {
   syncListServers(): Promise<{ ok: true; value: SyncServerSummary[] } | { ok: false; message: string }>;
   syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
-  syncPreview(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
-  syncRun(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
-  syncSaveBinding(input: { libraryId: string; serverId: string; subPath: string }): Promise<{ ok: true } | { ok: false; message: string }>;
-  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; subPath: string } | null } | { ok: false; message: string }>;
+  syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
+  syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string } | null } | { ok: false; message: string }>;
+}
+
+type ConnectionState = "checking" | "connected" | "failed";
+
+function SyncStatusDot({
+  state,
+  label,
+}: {
+  state: ConnectionState | "idle";
+  label: string;
+}): ReactNode {
+  return (
+    <span className="sync-status-indicator" data-state={state}>
+      <span className="sync-status-dot" />
+      <span>{label}</span>
+    </span>
+  );
 }
 
 function SyncSettingsSection({
@@ -28,12 +45,33 @@ function SyncSettingsSection({
   const t = useT();
   const [servers, setServers] = useState<SyncServerSummary[]>([]);
   const [serverId, setServerId] = useState("");
-  const [subPath, setSubPath] = useState("");
-  const [busy, setBusy] = useState<"probe" | "preview" | "run" | "save" | null>(null);
-  const [capabilities, setCapabilities] = useState<SyncCapabilities | null>(null);
+  const [directoryName, setDirectoryName] = useState(() => library.displayName);
+  const [busy, setBusy] = useState<"preview" | "run" | "save" | null>(null);
+  const [connection, setConnection] = useState<{
+    serverId: string;
+    state: ConnectionState;
+    message?: string;
+  } | null>(null);
   const [preview, setPreview] = useState<SyncReport | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  const probeSelected = async (id: string) => {
+    if (!id) return;
+    setConnection({ serverId: id, state: "checking" });
+    setError(null);
+    const probe = await callbacks.syncProbe({ serverId: id });
+    if (!probe.ok) {
+      setConnection({ serverId: id, state: "failed", message: probe.message });
+      return;
+    }
+    if (!probe.value.supportsContentTransfer) {
+      setConnection({ serverId: id, state: "failed", message: t("settings.sync.contentTransferUnsupported") });
+      return;
+    }
+    setConnection({ serverId: id, state: "connected" });
+  };
 
   useEffect(() => {
     void (async () => {
@@ -43,37 +81,24 @@ function SyncSettingsSection({
       const binding = await callbacks.syncGetBinding({ libraryId: library.libraryId });
       if (binding.ok && binding.value) {
         setServerId(binding.value.serverId);
-        setSubPath(binding.value.subPath);
-      } else if (listed.value.length > 0 && !serverId) {
-        setServerId(listed.value[0]!.id);
+        setDirectoryName(binding.value.directoryName || library.displayName);
+        setLastSyncedAt(binding.value.lastSyncedAt ?? null);
+        void probeSelected(binding.value.serverId);
+      } else if (listed.value.length > 0) {
+        const first = listed.value[0]!.id;
+        setServerId(first);
+        void probeSelected(first);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [library.libraryId]);
-
-  const runProbe = async () => {
-    setBusy("probe");
-    setError(null);
-    setCapabilities(null);
-    try {
-      const probe = await callbacks.syncProbe({ serverId });
-      if (probe.ok) {
-        setCapabilities(probe.value);
-        if (!probe.value.supportsContentTransfer) setError(t("settings.sync.contentTransferUnsupported"));
-      } else {
-        setError(probe.message);
-      }
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const runPreview = async () => {
     setBusy("preview");
     setError(null);
     setPreview(null);
     try {
-      const previewResult = await callbacks.syncPreview({ libraryId: library.libraryId, serverId, subPath });
+      const previewResult = await callbacks.syncPreview({ libraryId: library.libraryId, serverId, directoryName });
       if (previewResult.ok) setPreview(previewResult.value);
       else setError(previewResult.message);
     } finally {
@@ -86,7 +111,7 @@ function SyncSettingsSection({
     setError(null);
     setResult(null);
     try {
-      const syncResult = await callbacks.syncRun({ libraryId: library.libraryId, serverId, subPath });
+      const syncResult = await callbacks.syncRun({ libraryId: library.libraryId, serverId, directoryName });
       if (syncResult.ok) {
         const report = syncResult.value.report;
         setResult(t("settings.sync.completedSummary", {
@@ -94,6 +119,7 @@ function SyncSettingsSection({
           downloads: report.downloads,
           conflicts: report.conflicts,
         }));
+        setLastSyncedAt(new Date().toISOString());
         if (syncResult.value.conflicts.length > 0) {
           setError(t("settings.sync.conflictsDetected", { count: syncResult.value.conflicts.length }));
         }
@@ -109,7 +135,7 @@ function SyncSettingsSection({
     setBusy("save");
     setError(null);
     try {
-      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, subPath });
+      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, directoryName });
       if (!saved.ok) setError(saved.message);
       else setResult(t("settings.sync.bindingSaved"));
     } finally {
@@ -117,22 +143,59 @@ function SyncSettingsSection({
     }
   };
 
+  const connectionState: ConnectionState | "idle" = connection?.serverId === serverId && connection ? connection.state : "idle";
+  const connectionLabel = connectionState === "checking"
+    ? t("settings.sync.connectionChecking")
+    : connectionState === "connected"
+      ? t("settings.sync.connectionConnected")
+      : connectionState === "failed"
+        ? t("settings.sync.connectionFailed")
+        : t("settings.sync.connectionUnknown");
+
+  const syncState = busy === "run" ? "syncing" : lastSyncedAt ? "synced" : "unsynced";
+  const syncLabel = syncState === "syncing"
+    ? t("settings.sync.statusSyncing")
+    : syncState === "synced"
+      ? t("settings.sync.statusSynced")
+      : t("settings.sync.statusUnsynced");
+
   return (
     <>
       <div className="app-settings-page-heading">
         <h3>{t("settings.sync.title")}</h3>
         <p>{t("settings.sync.hint")}</p>
       </div>
-      <section className="app-settings-card">
+      <section className="app-settings-card library-sync-card">
+        <div className="app-settings-row">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.status")}</strong>
+            <span>
+              {syncState === "synced" && lastSyncedAt
+                ? t("settings.sync.lastSyncedAt", { time: new Date(lastSyncedAt).toLocaleString() })
+                : syncLabel}
+            </span>
+          </div>
+          <SyncStatusDot state={syncState === "syncing" ? "checking" : syncState === "synced" ? "connected" : "idle"} label={syncLabel} />
+        </div>
+        <div className="app-settings-card-divider" />
         <div className="app-settings-row app-settings-row-stack">
           <div className="app-settings-row-copy">
             <strong>{t("settings.sync.server")}</strong>
             <span>{t("settings.sync.serverHint")}</span>
           </div>
           {servers.length === 0 ? (
-            <p className="library-settings-gitignore-help">{t("settings.sync.noServer")}</p>
+            <p className="app-settings-help-note">{t("settings.sync.noServer")}</p>
           ) : (
-            <select className="text-field" aria-label={t("settings.sync.server")} value={serverId} onChange={(event) => setServerId(event.target.value)}>
+            <select
+              className="text-field"
+              aria-label={t("settings.sync.server")}
+              value={serverId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setServerId(next);
+                void probeSelected(next);
+              }}
+            >
               {servers.map((server) => (
                 <option key={server.id} value={server.id}>{server.baseUrl}</option>
               ))}
@@ -141,36 +204,36 @@ function SyncSettingsSection({
         </div>
         <div className="app-settings-row app-settings-row-stack">
           <div className="app-settings-row-copy">
-            <strong>{t("settings.sync.subPath")}</strong>
-            <span>{t("settings.sync.subPathHint")}</span>
+            <strong>{t("settings.sync.directoryName")}</strong>
+            <span>{t("settings.sync.directoryNameHint")}</span>
           </div>
-          <input className="text-field" aria-label={t("settings.sync.subPath")} value={subPath} onChange={(event) => setSubPath(event.target.value)} placeholder="Share/Serpent" />
+          <input className="text-field" aria-label={t("settings.sync.directoryName")} value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
         </div>
         <div className="app-settings-card-divider" />
-        <div className="library-settings-gitignore-actions">
-          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runProbe()} type="button">
-            {busy === "probe" ? t("common.saving") : t("settings.sync.probe")}
-          </button>
-          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runPreview()} type="button">
-            {busy === "preview" ? t("common.saving") : t("settings.sync.preview")}
-          </button>
-          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runSync()} type="button">
-            {busy === "run" ? t("common.saving") : t("settings.sync.run")}
-          </button>
-          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
+        <div className="library-settings-gitignore-actions library-sync-actions">
+          <button className="secondary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
             {busy === "save" ? t("common.saving") : t("common.save")}
           </button>
         </div>
-        {capabilities ? (
-          <p className="library-settings-gitignore-help">
-            {t("settings.sync.capabilitySummary", {
-              auth: capabilities.auth,
-              transfer: capabilities.supportsContentTransfer ? t("common.yes") : t("common.no"),
-              etag: capabilities.supportsEtagIfMatch ? t("common.yes") : t("common.no"),
-              move: capabilities.supportsMove ? t("common.yes") : t("common.no"),
-            })}
-          </p>
-        ) : null}
+        <div className="app-settings-card-divider" />
+        <div className="app-settings-row">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.server")}</strong>
+            <span>
+              {connectionState === "failed" && connection?.message ? connection.message : ""}
+            </span>
+          </div>
+          <SyncStatusDot state={connectionState} label={connectionLabel} />
+        </div>
+        <div className="app-settings-card-divider" />
+        <div className="library-settings-gitignore-actions library-sync-actions">
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runPreview()} type="button">
+            {busy === "preview" ? t("common.saving") : t("settings.sync.preview")}
+          </button>
+          <button className="primary-button" disabled={busy !== null || !serverId || connectionState !== "connected"} onClick={() => void runSync()} type="button">
+            {busy === "run" ? t("common.saving") : t("settings.sync.run")}
+          </button>
+        </div>
         {preview ? (
           <p className="library-settings-gitignore-help">
             {t("settings.sync.previewSummary", {
@@ -183,7 +246,7 @@ function SyncSettingsSection({
           </p>
         ) : null}
         {result ? <p className="library-settings-gitignore-help">{result}</p> : null}
-        {error ? <p className="library-settings-gitignore-help">{error}</p> : null}
+        {error ? <p className="settings-error-message">{error}</p> : null}
       </section>
     </>
   );

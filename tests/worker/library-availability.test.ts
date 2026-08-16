@@ -186,6 +186,8 @@ describe('library availability baseline', () => {
     service.closeAll();
 
     const db = new Database(databaseFile(created.libraryPath));
+    db.prepare('DELETE FROM schema_migrations WHERE version = 39').run();
+    db.pragma('user_version = 38');
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 37').run(syncChecksum);
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 38').run(autoChecksum);
     db.close();

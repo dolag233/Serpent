@@ -2034,6 +2034,29 @@ const SYNC_SCHEMA_CHECKSUM = createHash('sha256')
   .update(SYNC_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v39: sync session ledger. The v38 sync migration shipped without
+// the sync_sessions table that beginSyncSession/finishSyncSession write to;
+// adding it as a fresh append-only migration keeps every released v38 checksum
+// immutable (Serpent-xffq).
+const SYNC_SESSIONS_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS sync_sessions (
+    session_id TEXT NOT NULL PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    progress_total INTEGER NOT NULL DEFAULT 0,
+    progress_done INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    error_message TEXT
+  );
+  CREATE INDEX IF NOT EXISTS sync_sessions_library
+    ON sync_sessions(library_id, started_at);
+`;
+const SYNC_SESSIONS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(SYNC_SESSIONS_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2589,6 +2612,7 @@ export const MIGRATIONS = [
     checksum: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM,
   },
   { version: 38, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
+  { version: 39, sql: SYNC_SESSIONS_SCHEMA_SQL, checksum: SYNC_SESSIONS_SCHEMA_CHECKSUM },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -30283,17 +30307,37 @@ export class LibraryService {
   }
 
   /**
+   * Read Eagle root metadata and return the default Serpent display name.
+   * Main keeps the source path; Renderer only receives this name for the
+   * rename panel that precedes choosing a save location.
+   */
+  inspectEagleLibrary(sourceRootPath: string): { displayName: string } {
+    let root: ReturnType<typeof readEagleLibraryRoot>;
+    try {
+      root = readEagleLibraryRoot(sourceRootPath);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'EAGLE_METADATA_UNREADABLE',
+      });
+    }
+    const displayName = root.displayName.trim() || path.basename(root.sourceRootPath);
+    return { displayName };
+  }
+
+  /**
    * Convert an Eagle library into a new Serpent library at a user-chosen
    * parent directory and open the converted result. The Eagle directory is
    * never modified; this is the implementation behind the library-name
-   * menu's "Open Eagle library" action. Main collects two native folders
-   * (Eagle source, then Serpent save location) before this command runs.
-   * The caller switches libraries only after this validated handle is
-   * ready, so a cancelled/invalid conversion leaves the current library open.
+   * menu's "Open Eagle library" action. Main inspects the source, the user
+   * confirms a display name, then Main collects the Serpent save location
+   * before this command runs. After that destination is chosen, Main closes
+   * any previously open library before conversion starts.
    */
   async openEagleLibrary(input: {
     sourceRootPath: string;
     selectedParentPath: string;
+    displayName: string;
   }): Promise<InternalLibrarySummary> {
     let root: ReturnType<typeof readEagleLibraryRoot>;
     try {
@@ -30320,7 +30364,7 @@ export class LibraryService {
       throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
-    const displayName = root.displayName.trim() || path.basename(sourceRoot);
+    const displayName = input.displayName.trim() || root.displayName.trim() || path.basename(sourceRoot);
     let created: InternalLibrarySummary | undefined;
     try {
       created = this.createLibrary({
@@ -31542,6 +31586,8 @@ export class LibraryService {
   createLibrary(input: {
     displayName: string;
     selectedParentPath: string;
+    /** 内部用于「从同步远端恢复库身份」：默认随机生成。 */
+    libraryId?: string;
   }): InternalLibrarySummary {
     let finalPath: string;
     try {
@@ -31574,7 +31620,7 @@ export class LibraryService {
       migrateDatabase(connection, true, this.options);
       connection
         .prepare('INSERT INTO library (library_id, display_name, created_at) VALUES (?, ?, ?)')
-        .run(randomUUID(), displayName, new Date().toISOString());
+        .run(input.libraryId ?? randomUUID(), displayName, new Date().toISOString());
       verifyDatabase(connection);
       connection.close();
       connection = undefined;

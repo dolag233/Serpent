@@ -75,6 +75,7 @@ describe('Eagle external-library opening (Serpent-768x.1)', () => {
     const converted = await service.openEagleLibrary({
       sourceRootPath: eagleRoot,
       selectedParentPath: destinationParent,
+      displayName: 'Reference',
     });
 
     expect(converted.displayName).toBe('Reference');
@@ -113,6 +114,44 @@ describe('Eagle external-library opening (Serpent-768x.1)', () => {
     expect(service.listTags(converted.libraryId).map((tag) => tag.name)).toContain('root-tag');
   });
 
+  it('returns the Eagle library name for the rename panel and honors a custom display name', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-rename-'));
+    roots.push(root);
+    const eagleRoot = path.join(root, 'Reference.library');
+    const destinationParent = path.join(root, 'serpent-destination');
+    mkdirSync(eagleRoot, { recursive: true });
+    mkdirSync(destinationParent);
+    writeEagleFixture(eagleRoot);
+
+    const service = new LibraryService();
+    services.push(service);
+    expect(service.inspectEagleLibrary(eagleRoot)).toEqual({ displayName: 'Reference' });
+
+    const converted = await service.openEagleLibrary({
+      sourceRootPath: eagleRoot,
+      selectedParentPath: destinationParent,
+      displayName: 'Studio refs',
+    });
+    expect(converted.displayName).toBe('Studio refs');
+    expect(converted.libraryPath).toBe(
+      path.join(realpathSync(destinationParent), 'Studio refs'),
+    );
+  });
+
+  it('rejects inspect when the folder is not an Eagle library', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-inspect-invalid-'));
+    roots.push(root);
+    const service = new LibraryService();
+    services.push(service);
+    let thrown: unknown;
+    try {
+      service.inspectEagleLibrary(root);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'INVALID_IMPORT_SOURCE' });
+  });
+
   it('rejects a destination inside the Eagle source directory', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-inside-'));
     roots.push(root);
@@ -125,6 +164,7 @@ describe('Eagle external-library opening (Serpent-768x.1)', () => {
       service.openEagleLibrary({
         sourceRootPath: eagleRoot,
         selectedParentPath: eagleRoot,
+        displayName: 'Reference',
       }),
     ).rejects.toMatchObject({ code: 'INVALID_LIBRARY_PATH' });
   });

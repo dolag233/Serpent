@@ -76,6 +76,8 @@ export const en = {
     createLibraryEllipsis: "New library…",
     openLibrary: "Open library",
     openLibraryEllipsis: "Open library…",
+    openSyncLibraryEllipsis: "Open synced library…",
+    openSyncLibraryHint: "Pull a library from a WebDAV server and create it locally",
     openExternalLibraryEllipsis: "Open external library…",
     openEagleLibraryEllipsis: "Open Eagle library…",
     openBillfishLibraryEllipsis: "Open Billfish library…",
@@ -688,6 +690,13 @@ export const en = {
       existingSection: "Existing library",
       openExisting: "Open existing library…"
     },
+    openEagleLibrary: {
+      title: "Open Eagle library",
+      body: "Convert the selected Eagle library into a Serpent library.",
+      name: "Name",
+      help: "",
+      submit: "Choose save location"
+    },
     conflicts: {
       skip: "Skip",
       importAnyway: "Import anyway",
@@ -942,9 +951,10 @@ export const en = {
     },
     importLibraryChooser: {
       title: "Import library",
-      help: "Import from a library folder, or from an exported library ZIP.",
+      help: "Import from a library folder or an exported ZIP, or open an Eagle library as a new Serpent library.",
       folder: "Import library folder",
-      zip: "Import library ZIP"
+      zip: "Import library ZIP",
+      external: "Open external library"
     }
   },
   aiConfig: {
@@ -1309,15 +1319,15 @@ export const en = {
       previewSummary: "Changes: uploads {uploads}, downloads {downloads}, conflicts {conflicts}, remote deletes {remoteDeletes}, local recycles {localRecycles}.",
       completedSummary: "Sync complete: uploaded {uploads}, downloaded {downloads}, conflicts {conflicts}.",
       conflictsDetected: "{count} conflict(s) detected; losing versions are saved as \"name (conflict-…)\" files.",
-      contentTransferUnsupported: "This server does not allow file upload/download (PUT/GET); it cannot be used for sync.",
+      contentTransferUnsupported: "This server does not support file upload, so it cannot be used for sync.",
       server: "Sync server",
-      serverHint: "Choose a WebDAV server configured under Settings → Sync to sync this library.",
+      serverHint: "Choose the WebDAV server to sync this library to.",
+      directoryName: "Sync folder name",
+      directoryNameHint: "The folder name for this library on the server. Defaults to the library name.",
       noServer: "No sync servers configured yet. Add one under Settings → Sync first.",
-      subPath: "Sync subpath",
-      subPathHint: "The subpath of this library on the selected server, e.g. Share/Serpent. Leave empty to use the library name.",
       bindingSaved: "Saved this library's sync configuration.",
       serversTitle: "Sync servers",
-      serversHint: "Add, test, and manage global WebDAV servers. Each library selects a server and subpath in Library Settings.",
+      serversHint: "Add, test, and manage global WebDAV servers. A server address may include a path (e.g. …/Share/Serpent); each library is placed under it as a folder named after the library.",
       noServers: "No sync servers configured yet.",
       addServer: "Add server",
       editServer: "Edit server",
@@ -1331,6 +1341,20 @@ export const en = {
       passwordKeepHint: "Leave empty to keep the existing password",
       serverSummary: "User {username} · {password}",
       serverSummaryAnonymous: "Anonymous · {password}",
+      connectionConnected: "Connected",
+      connectionChecking: "Connecting…",
+      connectionFailed: "Connection failed",
+      connectionUnknown: "Untested",
+      status: "Sync status",
+      statusUnsynced: "Not synced",
+      statusSyncing: "Syncing…",
+      statusSynced: "Synced",
+      lastSyncedAt: "Last synced: {time}",
+      operationFailed: "The sync operation failed. Please try again.",
+      listRemoteLibraries: "List libraries on server",
+      remoteLibrariesTitle: "Synced libraries on server",
+      noRemoteLibraries: "No openable synced libraries on this server.",
+      openRemoteLibrary: "Open",
     },
     libraryIgnoreHint: "Use the library's ignore configuration file to hide files and folders you do not need to see.",
     gitignoreFile: "Ignore configuration file",
@@ -1523,8 +1547,10 @@ export const en = {
     opening: "Opening…",
     exportingLibrary: "Exporting library:",
     importingLibrary: "Importing library:",
+    openingLibrary: "Opening library: {name}",
     cancelExport: "Cancel export",
     cancelImport: "Cancel import",
+    cancelOpen: "Cancel opening",
     loadingMore: "Loading more assets…"
   },
   tagPicker: {
@@ -1894,7 +1920,8 @@ export const en = {
       HISTORY_NOT_TOP: "That operation is no longer the current undo or redo target.",
       HISTORY_NOT_REVERSIBLE: "This operation cannot be undone or redone.",
       HISTORY_TRANSITION_IN_PROGRESS: "Another undo or redo operation is already in progress.",
-      HISTORY_STALE: "The files or records changed, so this operation cannot be reversed safely."
+      HISTORY_STALE: "The files or records changed, so this operation cannot be reversed safely.",
+      SYNC_CONNECTION_FAILED: "Serpent could not connect to the sync server."
     },
     reason: {
       PERMISSION_DENIED: "The current user lacks permission to read the source or write to the destination.",
@@ -1942,7 +1969,20 @@ export const en = {
       EAGLE_METADATA_UNREADABLE: "Could not parse the Eagle library metadata.json or images folder. Choose a .library directory.",
       IMPORT_COPY_FAILED: "Copying source files into the library failed. Check disk space and that the source files are still readable, then see the app log.",
       IMPORT_REGISTER_FAILED: "Files started copying, but registering them in the library failed. Check the app log and retry; do not re-import items that already succeeded.",
-      EAGLE_THUMBNAIL_FAILED: "Eagle still thumbnails could not be written to the preview cache. The assets still import; refresh thumbnails later."
+      EAGLE_THUMBNAIL_FAILED: "Eagle still thumbnails could not be written to the preview cache. The assets still import; refresh thumbnails later.",
+      SYNC_AUTH_FAILED: "The username or password is incorrect.",
+      SYNC_PERMISSION_DENIED: "This account cannot upload or download files on the server.",
+      SYNC_NOT_FOUND: "The sync path could not be found on the server.",
+      SYNC_TIMEOUT: "The connection timed out. Check the address and network.",
+      SYNC_TLS: "The server certificate is invalid or self-signed.",
+      SYNC_DNS: "The server address could not be resolved.",
+      SYNC_CONNECTION_REFUSED: "The connection was refused. Check the server and port.",
+      SYNC_NETWORK: "The network connection failed.",
+      SYNC_QUOTA_EXCEEDED: "The server is out of storage space.",
+      SYNC_LOCKED: "The server resource is locked.",
+      SYNC_CONFLICT: "The remote content was modified by another device.",
+      SYNC_METHOD_NOT_ALLOWED: "The server does not support the required sync operation.",
+      SYNC_WRITE_UNSUPPORTED: "The server does not support file upload, so it cannot be used for sync."
     },
     withReason: "{message} Reason: {reason}"
   },
