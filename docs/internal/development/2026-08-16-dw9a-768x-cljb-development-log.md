@@ -1,6 +1,6 @@
 # 2026-08-16 `dw9a` / `768x` / `cljb` 实施日志
 
-关联工单：`Serpent-dw9a`、`Serpent-768x`、`Serpent-cljb`。
+关联工单：`Serpent-dw9a`、`Serpent-768x`、`Serpent-cljb`。代码已提交 `996cb3dd`。
 
 ## 这次收口的产品决定
 
