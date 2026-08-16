@@ -73,6 +73,8 @@ npm run make           # 生成平台安装包（macOS dmg / Windows zip）；Wi
 # scripts/rebuild-native.mjs 已强制 VcpkgEnabled=false 并删除 applocal 残留 dll。
 ```
 
+**测试临时产物清理（强制）**：每次测试完成后，必须删除本次测试生成的临时目录、导出包、数据库、媒体文件、截图等产物。只清理能够确认属于本次测试且已没有进程占用的路径；归属不明或可能属于用户的数据不得删除。
+
 ## 进程架构
 
 ```
@@ -148,7 +150,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - **Node**：`>=24 <25`，`.nvmrc` 锁定 24.15.0。
 - **打包后 `.app` 不能从 SMB 运行**：必须先复制到本地 APFS（macOS QA 用）。
 - **共享知识进入仓库**：事故复盘、质量门禁和切片状态不得只留在 Claude memory、聊天或本机忽略文件中。
-- **性能目标（产品质量门）**：大型资源库性能是产品目标，所有性能回归使用 `tests/worker/large-library-performance.test.ts` 的 20,000 资产基线（约 90% 可解码图片、5% 短视频、各 1% 的 3D/文本/音频/不支持格式），并在开发日志记录当次命令和结果。打开库主窗口壳 **1 秒内可交互**；切换文件夹/合集首屏目标 **500 ms** 内并渐进补齐；固定 token 搜索首屏目标 **1 秒** 内且只服务最新请求；Inspector 由 `AssetSummary` 先渲染文件名/尺寸/评分，首屏目标 **500 ms** 内，标签/合集/AI/技术元数据渐进加载；删除/恢复后的选择和可见卡片目标 **200 ms** 内局部更新，后台完成持久化收敛。预算是产品目标，不是把共享 CI 单次波动写成硬性通过条件；缺少真实 Electron、独立进程或 Windows 证据只能写“未验证”。
+- **性能目标（产品质量门）**：大型资源库性能是产品目标，所有性能回归使用 `tests/worker/large-library-performance.test.ts` 的 20,000 资产基线（约 90% 可解码图片：jpg/png/webp/gif/tiff，多种横竖比例；图片长边按游戏美术口径 1% 8K / 3% 4K / 30% 2K / 余量 1K；5% 短视频：mp4/webm/mov；各 1% 的 3D/文本/音频/不支持格式），并在开发日志记录当次命令和结果。打开库主窗口壳 **1 秒内可交互**；切换文件夹/合集首屏目标 **500 ms** 内并渐进补齐；固定 token 搜索首屏目标 **1 秒** 内且只服务最新请求；Inspector 由 `AssetSummary` 先渲染文件名/尺寸/评分，首屏目标 **500 ms** 内，标签/合集/AI/技术元数据渐进加载；删除/恢复后的选择和可见卡片目标 **200 ms** 内局部更新，后台完成持久化收敛。预算是产品目标，不是把共享 CI 单次波动写成硬性通过条件；缺少真实 Electron、独立进程或 Windows 证据只能写“未验证”。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。
 - **标准化 UI（强制，2026-08-12 用户反馈）**：不同地方的同类 UI 必须使用同一套样式。新增/修改任何 UI 元素前，先查找并复用既有样式体系——主题变量（`--text`/`--secondary`/`--raised-2`/`--menu-item-hover-background` 等 token）、既有组件（`Tooltip`/`HoverTipHost`、`MenuSurface`、`DialogShell`、`Icon` 等）与既有 CSS 类。**禁止硬编码颜色/尺寸 fallback**（如 `#2b2d33`、`opacity: 0.62`）——会破坏亮/暗主题。hover 提示必须用标准 `data-hover-tip` / `<Tooltip>`（延迟与主题由 HoverTipHost 统一，~420ms），禁止自造 tooltip 浮层。样式审查是代码审查固定项：核对新样式只依赖主题 token 与既有类。（镜像 AGENTS.md）
 

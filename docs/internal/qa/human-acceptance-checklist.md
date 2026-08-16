@@ -51,7 +51,7 @@
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| LIB-PERF-001 | 大型资源库导航与递归计数 | 待人类验收 | 打开含大量文件夹/合集的资源库，连续切换「所有资产」、文件夹、合集和回收站；观察首屏与侧栏计数 | 导航首屏先可交互，侧栏不因每次切换明显卡顿，父文件夹计数正确 | `Serpent-xtto` / `Serpent-xv0j` / [大型库开发日志](../development/2026-08-15-large-library-development-log.md) / `organization.test.ts` | macOS 定向自动化通过；真实大库人工计时、packaged、Windows 未执行 |
+| LIB-PERF-001 | 大型资源库导航与递归计数 | 待人类验收 | 打开含大量文件夹/合集的资源库，连续切换「所有资产」、文件夹、合集和回收站；观察首屏与侧栏计数 | 导航首屏先可交互，侧栏不因每次切换明显卡顿，父文件夹计数正确 | `Serpent-xtto` / `Serpent-xv0j` / [大型库开发日志](../development/2026-08-15-large-library-development-log.md) / [夹具 v3](../development/2026-08-16-large-library-fixture-v3-development-log.md) / `organization.test.ts` | macOS 定向自动化通过；真实大库人工计时、packaged、Windows 未执行。夹具 v3：噪声马赛克；图片长边 1% 8K / 3% 4K / 30% 2K / 余量 1K；旧目录需 `--reset` |
 | LIB-PERF-002 | 切换资源库后预览与 Inspector 不串库 | 待人类验收 | 建立两个各含图片的资源库，来回切换并快速选择资产 | 旧库卡片/预览/Inspector 不残留；新库图片真实解码，Inspector 不混态 | `Serpent-6q9x` / `Serpent-a6zl` / [切库 E2E](../../../tests/e2e/library-recent.test.ts) / [Inspector E2E](../../../tests/e2e/organization-metadata-persistence.test.ts) | 当次 macOS Electron E2E 通过；Computer Use、Windows、packaged 未执行 |
 | VIEWER-PERF-001 | 查看器渐进升级不重复探针解码 | 待人类验收 | 打开有就绪缩略图的多张大图，快速左右切换，升级前缩放/平移 | 先显示可解码占位图，原图完成后安静替换，不闪黑、不回 Fit | `Serpent-h00q` / [媒体 E2E](../../../tests/e2e/media-preview.test.ts) / viewer 单测 | 当次 macOS Electron 解码 E2E 通过；真实大图体感、Computer Use、Windows、packaged 未执行 |
 

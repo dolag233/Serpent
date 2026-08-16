@@ -5,10 +5,19 @@ import path from 'node:path';
 import sharp from 'sharp';
 
 import { resolveFfmpegPath } from '../../src/worker/binary-resolver';
-import { pad, type LargeLibraryAssetKind } from './large-library-mix';
+import {
+  imageGeometryForIndex,
+  pad,
+  videoGeometry,
+  type LargeLibraryAssetKind,
+  type LargeLibraryImageGeometry,
+} from './large-library-mix';
 
-const IMAGE_WIDTH = 160;
-const IMAGE_HEIGHT = 120;
+/** Pattern is authored as 200×200 noise tiles, then stamped into the asset geometry. */
+export const IMAGE_MOSAIC_TILE_PX = 200;
+const MOSAIC_PALETTE_SIZE = 8;
+const MOSAIC_CELL_TILES = 4;
+const VIDEO_DURATION_SECONDS = 0.5;
 
 function hash32(value: number): number {
   let hash = value >>> 0;
@@ -22,39 +31,116 @@ function channel(seed: number, salt: number): number {
   return hash32(seed * 1103515245 + salt) % 256;
 }
 
-export async function createComplexImageBytes(index: number, extension: string): Promise<Buffer> {
-  const hue = (index * 47) % 360;
+function blitTile(
+  dest: Buffer,
+  destWidth: number,
+  src: Buffer,
+  tileSize: number,
+  destX: number,
+  destY: number,
+): void {
+  for (let y = 0; y < tileSize; y += 1) {
+    const srcStart = y * tileSize * 3;
+    const destStart = ((destY + y) * destWidth + destX) * 3;
+    src.copy(dest, destStart, srcStart, srcStart + tileSize * 3);
+  }
+}
+
+function createNoiseTile(seed: number, size: number): Buffer {
+  const bytes = Buffer.alloc(size * size * 3);
   const background = {
-    r: channel(index, 11),
-    g: channel(index, 29),
-    b: channel(index, 47),
+    r: channel(seed, 11),
+    g: channel(seed, 29),
+    b: channel(seed, 47),
   };
-  const overlay = Buffer.alloc(IMAGE_WIDTH * IMAGE_HEIGHT * 3);
-  for (let y = 0; y < IMAGE_HEIGHT; y += 1) {
-    for (let x = 0; x < IMAGE_WIDTH; x += 1) {
-      const offset = (y * IMAGE_WIDTH + x) * 3;
-      const noise = hash32(index * 997 + x * 13 + y * 29) % 48;
-      const stripe = ((x + y + index) % 17) < 4 ? 40 : 0;
-      const radial = Math.hypot(x - IMAGE_WIDTH / 2, y - IMAGE_HEIGHT / 2);
-      overlay[offset] = Math.min(255, background.r + noise + stripe);
-      overlay[offset + 1] = Math.min(255, background.g + (x % 24) + (radial % 18));
-      overlay[offset + 2] = Math.min(255, background.b + (y % 19) + noise);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const offset = (y * size + x) * 3;
+      const noise = hash32(seed * 997 + x * 13 + y * 29) % 72;
+      bytes[offset] = Math.min(255, background.r + noise);
+      bytes[offset + 1] = Math.min(255, background.g + ((x ^ y) % 28) + (noise % 18));
+      bytes[offset + 2] = Math.min(255, background.b + (y % 19) + noise);
     }
   }
-  const svg = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${IMAGE_WIDTH}" height="${IMAGE_HEIGHT}">
-      <rect x="${8 + (index % 20)}" y="${6 + (index % 15)}" width="48" height="28" fill="hsl(${hue},70%,45%)"/>
-      <circle cx="${40 + (index % 80)}" cy="${40 + (index % 50)}" r="18" fill="hsl(${(hue + 80) % 360},65%,55%)"/>
-      <polygon points="${120},${20 + (index % 30)} ${150},${90} ${90 + (index % 25)},${100}" fill="hsl(${(hue + 160) % 360},60%,40%)"/>
-    </svg>`,
-    'utf8',
-  );
-  const image = sharp(overlay, {
-    raw: { width: IMAGE_WIDTH, height: IMAGE_HEIGHT, channels: 3 },
-  }).composite([{ input: svg }]);
-  if (extension === 'png') return image.png({ compressionLevel: 4 }).toBuffer();
-  if (extension === 'webp') return image.webp({ quality: 72 }).toBuffer();
-  return image.jpeg({ quality: 78 }).toBuffer();
+  return bytes;
+}
+
+async function createMosaicImage(
+  index: number,
+  geometry: LargeLibraryImageGeometry,
+): Promise<sharp.Sharp> {
+  const tileSize = IMAGE_MOSAIC_TILE_PX;
+  const palette = Array.from({ length: MOSAIC_PALETTE_SIZE }, (_, tile) => (
+    createNoiseTile(index * 31 + tile * 17, tileSize)
+  ));
+  const cell = tileSize * MOSAIC_CELL_TILES;
+  const cellBytes = Buffer.alloc(cell * cell * 3);
+  for (let tileY = 0; tileY < MOSAIC_CELL_TILES; tileY += 1) {
+    for (let tileX = 0; tileX < MOSAIC_CELL_TILES; tileX += 1) {
+      const paletteIndex = hash32(index * 13 + tileX * 41 + tileY * 73) % MOSAIC_PALETTE_SIZE;
+      blitTile(
+        cellBytes,
+        cell,
+        palette[paletteIndex]!,
+        tileSize,
+        tileX * tileSize,
+        tileY * tileSize,
+      );
+    }
+  }
+  const cellPng = await sharp(cellBytes, {
+    raw: { width: cell, height: cell, channels: 3 },
+  }).png({ compressionLevel: 1 }).toBuffer();
+  const cols = Math.max(1, Math.ceil(geometry.width / cell));
+  const rows = Math.max(1, Math.ceil(geometry.height / cell));
+  const pieceCache = new Map<string, Buffer>();
+  const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const left = col * cell;
+      const top = row * cell;
+      const pieceWidth = Math.min(cell, geometry.width - left);
+      const pieceHeight = Math.min(cell, geometry.height - top);
+      if (pieceWidth <= 0 || pieceHeight <= 0) continue;
+      const cacheKey = `${pieceWidth}x${pieceHeight}`;
+      let piece = pieceCache.get(cacheKey);
+      if (!piece) {
+        piece = pieceWidth === cell && pieceHeight === cell
+          ? cellPng
+          : await sharp(cellPng)
+            .extract({ left: 0, top: 0, width: pieceWidth, height: pieceHeight })
+            .png({ compressionLevel: 0 })
+            .toBuffer();
+        pieceCache.set(cacheKey, piece);
+      }
+      composites.push({ input: piece, left, top });
+    }
+  }
+  return sharp({
+    create: {
+      width: geometry.width,
+      height: geometry.height,
+      channels: 3,
+      background: { r: channel(index, 11), g: channel(index, 29), b: channel(index, 47) },
+    },
+  }).composite(composites);
+}
+
+export async function createComplexImageBytes(
+  index: number,
+  extension: string,
+  geometry: LargeLibraryImageGeometry = imageGeometryForIndex(index),
+): Promise<Buffer> {
+  const image = await createMosaicImage(index, geometry);
+  const longEdge = Math.max(geometry.width, geometry.height);
+  const highRes = longEdge >= 4096;
+  if (extension === 'png') return image.png({ compressionLevel: 3 }).toBuffer();
+  if (extension === 'webp') return image.webp({ quality: highRes ? 68 : 72, effort: 0 }).toBuffer();
+  if (extension === 'gif') return image.gif().toBuffer();
+  if (extension === 'tiff' || extension === 'tif') {
+    return image.tiff({ compression: 'lzw' }).toBuffer();
+  }
+  return image.jpeg({ quality: highRes ? 68 : 78 }).toBuffer();
 }
 
 export function createToneWavBytes(index: number): Buffer {
@@ -143,10 +229,15 @@ export function createUnsupportedBytes(index: number): Buffer {
   return Buffer.concat([header, noise]);
 }
 
-export async function createAssetBytes(kind: LargeLibraryAssetKind, index: number, extension: string): Promise<Buffer> {
+export async function createAssetBytes(
+  kind: LargeLibraryAssetKind,
+  index: number,
+  extension: string,
+  geometry?: LargeLibraryImageGeometry,
+): Promise<Buffer> {
   switch (kind) {
     case 'image':
-      return createComplexImageBytes(index, extension);
+      return createComplexImageBytes(index, extension, geometry ?? imageGeometryForIndex(index));
     case 'audio':
       return createToneWavBytes(index);
     case 'model':
@@ -162,36 +253,57 @@ export async function createAssetBytes(kind: LargeLibraryAssetKind, index: numbe
   }
 }
 
-export function createUniqueVideoFile(outputPath: string, index: number): void {
-  mkdirSync(path.dirname(outputPath), { recursive: true });
+export function videoDurationMs(): number {
+  return Math.round(VIDEO_DURATION_SECONDS * 1000);
+}
+
+function videoEncoderArgs(extension: string, index: number): string[] {
+  const { width, height } = videoGeometry();
   const hue = (index * 13) % 360;
-  const ffmpeg = resolveFfmpegPath();
-  execFileSync(
-    ffmpeg,
-    [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-y',
-      '-f',
-      'lavfi',
-      '-i',
-      `testsrc2=size=160x90:rate=12:duration=0.5,hue=h=${hue}:s=1.2`,
-      '-an',
+  const common = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc2=size=${width}x${height}:rate=12:duration=${VIDEO_DURATION_SECONDS},hue=h=${hue}:s=1.2`,
+    '-an',
+  ];
+  if (extension === 'webm') {
+    return [
+      ...common,
       '-c:v',
-      'libx264',
+      'libvpx-vp9',
+      '-deadline',
+      'realtime',
+      '-cpu-used',
+      '8',
+      '-b:v',
+      '400k',
       '-pix_fmt',
       'yuv420p',
-      '-preset',
-      'ultrafast',
-      '-crf',
-      '32',
-      '-movflags',
-      '+faststart',
-      outputPath,
-    ],
-    { timeout: 20_000 },
-  );
+    ];
+  }
+  // Product ffmpeg is LGPL: no libx264. mpeg4 is available on both platforms.
+  const mpeg4 = [
+    ...common,
+    '-c:v',
+    'mpeg4',
+    '-q:v',
+    '12',
+    '-pix_fmt',
+    'yuv420p',
+  ];
+  if (extension === 'mov') return [...mpeg4, '-f', 'mov'];
+  return [...mpeg4, '-movflags', '+faststart'];
+}
+
+export function createUniqueVideoFile(outputPath: string, index: number, extension = 'mp4'): void {
+  mkdirSync(path.dirname(outputPath), { recursive: true });
+  const ffmpeg = resolveFfmpegPath();
+  execFileSync(ffmpeg, [...videoEncoderArgs(extension, index), outputPath], { timeout: 30_000 });
 }
 
 export async function imageChannelVariance(bytes: Buffer): Promise<number> {

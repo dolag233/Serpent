@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
@@ -15,15 +16,21 @@ import { normalizeSearchText } from '../../src/worker/search-query';
 import {
   createAssetBytes,
   createUniqueVideoFile,
+  videoDurationMs,
 } from './large-library-media';
 import {
   LARGE_LIBRARY_ASSET_COUNT,
   LARGE_LIBRARY_FIXTURE_VERSION,
   LARGE_LIBRARY_SEARCH_TOKEN,
   extensionForKind,
+  imageGeometryForIndex,
+  imagePoolKey,
   kindForIndex,
   mixCountsFor,
   pad,
+  videoGeometry,
+  type LargeLibraryAssetKind,
+  type LargeLibraryImageGeometry,
   type LargeLibraryMixCounts,
 } from './large-library-mix';
 
@@ -52,6 +59,18 @@ const TAG_NAMES = ['ABCD-A', 'ABCD-B', 'ABCD-C', 'ABCD-D', 'ABCD-E', 'ABCD-F'];
 /** Unique encoded clips copied across the video bucket so generation stays bounded. */
 const VIDEO_POOL_SIZE = 48;
 const FILE_WRITE_CONCURRENCY = 8;
+const EXTRACTED_METADATA_GENERATOR = 'image-header@large-library-v3';
+const VIDEO_METADATA_GENERATOR = 'ffprobe@large-library-v3';
+
+interface PlannedAsset {
+  index: number;
+  kind: LargeLibraryAssetKind;
+  extension: string;
+  folderIndex: number;
+  filename: string;
+  relativePath: string;
+  geometry: LargeLibraryImageGeometry | undefined;
+}
 
 export interface LargeLibraryFixtureManifest {
   version: number;
@@ -113,18 +132,83 @@ async function mapPool<T>(items: T[], concurrency: number, worker: (item: T) => 
   await Promise.all(runners);
 }
 
-function prepareVideoPool(libraryPath: string, videoCount: number): string[] {
-  if (videoCount <= 0) return [];
+function poolFileName(key: string, extension: string): string {
+  return `${key.replaceAll(':', '-')}.${extension}`;
+}
+
+async function prepareImagePool(
+  libraryPath: string,
+  planned: PlannedAsset[],
+): Promise<Map<string, string>> {
+  const images = planned.filter((item) => item.kind === 'image' && item.geometry);
+  if (images.length === 0) return new Map();
+  const poolDir = path.join(libraryPath, '.serpent', 'image-pool');
+  mkdirSync(poolDir, { recursive: true });
+  const unique = new Map<string, PlannedAsset>();
+  for (const item of images) {
+    const key = imagePoolKey(item.extension, item.geometry!);
+    if (!unique.has(key)) unique.set(key, item);
+  }
+  const pool = new Map<string, string>();
+  const uniqueItems = [...unique.values()];
+  const writePoolItem = async (item: PlannedAsset): Promise<void> => {
+    const key = imagePoolKey(item.extension, item.geometry!);
+    const poolPath = path.join(poolDir, poolFileName(key, item.extension));
+    const bytes = await createAssetBytes(item.kind, item.index, item.extension, item.geometry);
+    writeFileSync(poolPath, bytes);
+    pool.set(key, poolPath);
+  };
+  const highRes = uniqueItems.filter((item) => (
+    Math.max(item.geometry!.width, item.geometry!.height) >= 4096
+  ));
+  const lowRes = uniqueItems.filter((item) => (
+    Math.max(item.geometry!.width, item.geometry!.height) < 4096
+  ));
+  await mapPool(lowRes, FILE_WRITE_CONCURRENCY, writePoolItem);
+  await mapPool(highRes, 1, writePoolItem);
+  return pool;
+}
+
+function prepareVideoPool(libraryPath: string, planned: PlannedAsset[]): string[] {
+  const videos = planned.filter((item) => item.kind === 'video');
+  if (videos.length === 0) return [];
   const poolDir = path.join(libraryPath, '.serpent', 'video-pool');
   mkdirSync(poolDir, { recursive: true });
-  const poolSize = Math.min(VIDEO_POOL_SIZE, videoCount);
+  const poolSize = Math.min(VIDEO_POOL_SIZE, videos.length);
   const poolPaths: string[] = [];
   for (let index = 0; index < poolSize; index += 1) {
-    const poolPath = path.join(poolDir, `clip-${pad(index, 2)}.mp4`);
-    createUniqueVideoFile(poolPath, index);
+    const source = videos[index]!;
+    const poolPath = path.join(poolDir, `clip-${pad(index, 2)}.${source.extension}`);
+    createUniqueVideoFile(poolPath, source.index, source.extension);
     poolPaths.push(poolPath);
   }
   return poolPaths;
+}
+
+function writeExtractedMetadataArtifact(
+  artifactsDir: string,
+  revisionId: string,
+  payload: Record<string, unknown>,
+  size: LargeLibraryImageGeometry,
+  durationMs: number | null,
+  generatorVersion: string,
+  insertArtifact: { run(...parameters: unknown[]): { changes: number } },
+): void {
+  const artifactId = randomUUID();
+  const artifactRelPath = `${artifactId}.json`;
+  const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+  writeFileSync(artifactAbsPath, JSON.stringify(payload), 'utf8');
+  insertArtifact.run(
+    artifactId,
+    revisionId,
+    statSync(artifactAbsPath).size,
+    artifactRelPath,
+    size.width,
+    size.height,
+    durationMs,
+    generatorVersion,
+    '2026-08-16T00:00:00.000Z',
+  );
 }
 
 async function seedDatabase(
@@ -168,10 +252,14 @@ async function seedDatabase(
   const insertCollectionAsset = database.prepare(
     'INSERT INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
   );
+  const insertArtifact = database.prepare(
+    `INSERT INTO revision_artifacts
+       (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+        width, height, duration_ms, generator_version, status, generated_at)
+     VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+  );
 
-  const videoPool = writeFiles ? prepareVideoPool(libraryPath, counts.videoCount) : [];
-  const byteSizes = new Map<string, number>();
-  const planned = Array.from({ length: counts.assetCount }, (_, index) => {
+  const planned: PlannedAsset[] = Array.from({ length: counts.assetCount }, (_, index) => {
     const kind = kindForIndex(index, counts);
     const extension = extensionForKind(kind, index);
     const folderIndex = index % folderIds.length;
@@ -179,15 +267,36 @@ async function seedDatabase(
     const childIndex = folderIndex % CHILD_FOLDERS_PER_ROOT;
     const filename = `asset-${pad(index)}.${extension}`;
     const relativePath = `Root-${pad(rootIndex, 2)}/Child-${pad(childIndex, 2)}/${filename}`;
-    return { index, kind, extension, folderIndex, filename, relativePath };
+    const geometry = kind === 'image'
+      ? imageGeometryForIndex(index)
+      : kind === 'video'
+        ? videoGeometry()
+        : undefined;
+    return { index, kind, extension, folderIndex, filename, relativePath, geometry };
   });
+
+  const imagePool = writeFiles ? await prepareImagePool(libraryPath, planned) : new Map<string, string>();
+  const videoPool = writeFiles ? prepareVideoPool(libraryPath, planned) : [];
+  const artifactsDir = path.join(libraryPath, '.serpent', 'artifacts');
+  if (writeFiles) mkdirSync(artifactsDir, { recursive: true });
+  const byteSizes = new Map<string, number>();
 
   if (writeFiles) {
     await mapPool(planned, FILE_WRITE_CONCURRENCY, async (item) => {
       const absolutePath = path.join(libraryPath, 'Assets', item.relativePath);
       if (item.kind === 'video') {
-        const source = videoPool[item.index % videoPool.length];
+        const matching = videoPool.filter((poolPath) => poolPath.endsWith(`.${item.extension}`));
+        const source = matching.length > 0
+          ? matching[item.index % matching.length]
+          : videoPool[item.index % videoPool.length];
         if (!source) throw new Error('Video pool was empty.');
+        copyFileSync(source, absolutePath);
+        byteSizes.set(item.relativePath, statSync(absolutePath).size);
+        return;
+      }
+      if (item.kind === 'image' && item.geometry) {
+        const source = imagePool.get(imagePoolKey(item.extension, item.geometry));
+        if (!source) throw new Error(`Image pool missed ${item.extension} ${item.geometry.width}x${item.geometry.height}.`);
         copyFileSync(source, absolutePath);
         byteSizes.set(item.relativePath, statSync(absolutePath).size);
         return;
@@ -231,6 +340,25 @@ async function seedDatabase(
         now,
       );
       insertRevision.run(revisionId, assetId, byteSize, now, item.filename, now);
+      if (writeFiles && item.geometry && (item.kind === 'image' || item.kind === 'video')) {
+        const durationMs = item.kind === 'video' ? videoDurationMs() : null;
+        writeExtractedMetadataArtifact(
+          artifactsDir,
+          revisionId,
+          item.kind === 'video'
+            ? {
+              width: item.geometry.width,
+              height: item.geometry.height,
+              durationMs,
+              videoCodec: item.extension === 'webm' ? 'vp9' : 'mpeg4',
+            }
+            : { width: item.geometry.width, height: item.geometry.height },
+          item.geometry,
+          durationMs,
+          item.kind === 'video' ? VIDEO_METADATA_GENERATOR : EXTRACTED_METADATA_GENERATOR,
+          insertArtifact,
+        );
+      }
       insertMetadata.run(
         assetId,
         description,

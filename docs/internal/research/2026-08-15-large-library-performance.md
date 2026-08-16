@@ -13,14 +13,15 @@ npm run large-library:generate -- --output <local-apfs-path>
 默认数据集包含：
 
 - 20,000 个资产：视频 5%、3D/文本/音频/不支持各 1%，余量归图片（约 91%）；
-- 图片为 160×120 的非纯色 JPEG/PNG/WebP（噪声 + 几何叠加），每张内容不同；
-- 视频为 lavfi `testsrc2` 短片（约 0.5s、160×90、H.264）。生成器编码 48 条独特 clip，再复制到视频桶，避免 1000 次全量 ffmpeg；
+- 图片为 200×200 噪声马赛克（每张约 8 种独特噪声砖，再铺满画面），不是纯色，也不是逐像素独立噪声。比例含 16:9 / 4:3 / 1:1 / 3:4 / 9:16。长边按游戏美术口径：1% 8K（8192）、3% 4K（4096）、30% 2K（2048）、余量 1K（1024；含用户 60% 加上 1+3+30+60 剩下的 6%）。4K/8K 只用 jpg/webp。生成器先编码独特图再复制，避免 1.8 万次全量 sharp；
+- 视频为 lavfi `testsrc2` 短片（约 0.5s、640×360）。容器含 mp4/mov（mpeg4，LGPL ffmpeg 无 libx264）和 webm（VP9）。生成器编码 48 条独特 clip，再按扩展名复制到视频桶；
+- 图片/视频写入 `extracted_metadata`（宽高，视频另含 durationMs），瀑布流不必等缩略图才有几何；
 - 10 个根文件夹和 150 个子文件夹；
 - 50 个带父子层级的合集；
 - 每个资产至少两个 `ABCD-*` 标签、评分、描述和来源 URL；
 - 固定可检索 token：`serpent-large-library-needle`，同时出现在标签和部分描述中。
 
-manifest 保存在 `<library>/.serpent/large-library-fixture.json`（`version: 2`）。相同版本、种子和资产数量重复运行时直接复用；v1 的 10k stub 目录需要 `--reset` 重建。可用 `--assets` 和 `--seed` 做较小或不同种子的数据集，例如：
+manifest 保存在 `<library>/.serpent/large-library-fixture.json`（`version: 3`）。相同版本、种子和资产数量重复运行时直接复用；v1/v2 目录需要 `--reset` 重建。可用 `--assets` 和 `--seed` 做较小或不同种子的数据集，例如 `Serpent-sa65` 的 10k 解码门槛：
 
 ```bash
 npm run large-library:generate -- --output <local-apfs-path> --assets 1000 --seed 20260816

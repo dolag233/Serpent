@@ -3,6 +3,8 @@
 > 更新时间：2026-08-16
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-16 大型库夹具 v3**：补齐格式多样性（gif/tiff、mp4/webm/mov）、200×200 噪声马赛克，以及图片长边 1% 8K / 3% 4K / 30% 2K / 余量 1K。旧库需 `--reset`。这是 `Serpent-sa65` 的前置，不是该工单本身。
+
 - **2026-08-16 `Serpent-dfgg` / LIB-021 P0**：Windows「从硬盘删除资源库」在缩略图仍打开时 `rmSync` 一次失败（EPERM/ENOTEMPTY），半删后再 reopen 失败并刷 ASSET_NOT_FOUND。已改为删前卸载媒体、中止 `serpent://` 读流、排空媒体任务、WAL checkpoint、重试并改名旁路。待人类验收。
 
 - **2026-08-16 `Serpent-7zp0`**：用户要求把「打开同步资源库」从资源库菜单挪进「打开资源库」选择面板，并删除「重命名资源库」菜单项（改名仍在资源库设置）。用户确认 LIB-020 通过。
