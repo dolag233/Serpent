@@ -1,4 +1,4 @@
-import { renameSync, rmSync } from 'node:fs';
+import { existsSync, renameSync, rmSync } from 'node:fs';
 
 /**
  * Bounded synchronous retries for Windows directory operations.
@@ -28,7 +28,7 @@ export function isRetryableRenameError(error: unknown): boolean {
 }
 
 /** Recursive removals also fail ENOTEMPTY while a child handle lingers. */
-function isRetryableRemoveError(error: unknown): boolean {
+export function isRetryableRemoveError(error: unknown): boolean {
   return (
     isRetryableRenameError(error) ||
     (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOTEMPTY')
@@ -108,5 +108,59 @@ export function removePathWithSyncRetry(
       }
       waitFn(retryDelayMs * (attempt + 1));
     }
+  }
+}
+
+const LIBRARY_ROOT_RETRY_LIMIT = 10;
+const LIBRARY_ROOT_RETRY_DELAY_MS = 200;
+
+export interface RemoveLibraryRootOptions extends RemoveWithRetryOptions {
+  renameFn?: (from: string, to: string) => void;
+  existsFn?: (targetPath: string) => boolean;
+  nowFn?: () => number;
+}
+
+/**
+ * Delete a library root after the Worker has closed SQLite and watchers.
+ *
+ * Windows Chromium (`serpent://` thumbnails), Defender, and Explorer commonly
+ * keep a child handle for a few hundred milliseconds after close. A single
+ * `rmSync` then throws EPERM/ENOTEMPTY and leaves a half-deleted tree.
+ * Retry, then rename the root aside so the original path is gone even if the
+ * aside copy is still draining.
+ */
+export function removeLibraryRootWithRetry(
+  libraryPath: string,
+  options: RemoveLibraryRootOptions = {},
+): void {
+  const retryOptions: RemoveWithRetryOptions = {
+    rmFn: options.rmFn,
+    waitFn: options.waitFn,
+    retryLimit: options.retryLimit ?? LIBRARY_ROOT_RETRY_LIMIT,
+    retryDelayMs: options.retryDelayMs ?? LIBRARY_ROOT_RETRY_DELAY_MS,
+  };
+  const existsFn = options.existsFn ?? existsSync;
+  try {
+    removePathWithSyncRetry(libraryPath, retryOptions);
+    return;
+  } catch (error) {
+    if (!isRetryableRemoveError(error)) throw error;
+    const asidePath = `${libraryPath}.del-${options.nowFn?.() ?? Date.now()}`;
+    try {
+      renamePathWithRetry(libraryPath, asidePath, {
+        renameFn: options.renameFn,
+        waitFn: options.waitFn,
+        retryLimit: retryOptions.retryLimit,
+        retryDelayMs: retryOptions.retryDelayMs,
+      });
+    } catch {
+      throw error;
+    }
+    try {
+      removePathWithSyncRetry(asidePath, retryOptions);
+    } catch {
+      // Original path is gone; leftover aside is best-effort cleanup.
+    }
+    if (existsFn(libraryPath)) throw error;
   }
 }

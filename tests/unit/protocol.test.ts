@@ -1992,7 +1992,22 @@ describe('worker request protocol', () => {
       type: 'library.open-billfish',
       sourceRootPath: '/Users/example/BillfishLibrary',
       selectedParentPath: '/Users/example/Libraries',
-      displayName: 'Billfish refs',
+        displayName: 'Billfish refs',
+      });
+
+    expect(
+      parseWorkerRequest({
+        requestId: 'req-billfish-inspect-01',
+        command: {
+          type: 'library.inspect-billfish',
+          sourceRootPath: '/tmp/billfish',
+          sourceDisplayName: '动画OPED',
+        },
+      }).command,
+    ).toEqual({
+      type: 'library.inspect-billfish',
+      sourceRootPath: '/tmp/billfish',
+      sourceDisplayName: '动画OPED',
     });
   });
 
@@ -2499,6 +2514,12 @@ describe('publicReasonFromError', () => {
     expect(
       publicReasonFromError(Object.assign(new Error('denied'), { code: 'EACCES' })),
     ).toBe('PERMISSION_DENIED');
+  });
+
+  it('maps ENOTEMPTY to FILE_BUSY on Windows (lingering child handle)', () => {
+    expect(
+      publicReasonFromError(Object.assign(new Error('not empty'), { code: 'ENOTEMPTY' })),
+    ).toBe(process.platform === 'win32' ? 'FILE_BUSY' : 'IO_ERROR');
   });
 
   it('walks the cause chain of a wrapped LibraryServiceError', () => {

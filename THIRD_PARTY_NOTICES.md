@@ -23,6 +23,7 @@ Serpent (MIT, see [LICENSE](LICENSE)) 依赖以下开源组件。各组件按其
 | [adm-zip](https://github.com/cthackers/adm-zip) | MIT | ZIP 读取 |
 | [archiver](https://github.com/archiverjs/node-archiver) | MIT | ZIP 写入 |
 | [yauzl](https://github.com/thejoshwolfe/yauzl) | MIT | ZIP 解压 |
+| [libarchive-wasm](https://github.com/ofk/libarchive-wasm) | MIT | ZIP、RAR、7z、TAR 等外部资源库归档读取 |
 | [Zod](https://zod.dev/) | MIT | 跨进程协议运行时校验 |
 | [trash](https://github.com/sindresorhus/trash) | MIT | 系统回收站 |
 | [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk) | MIT | MCP 服务器 |

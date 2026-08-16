@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   isRetryableRenameError,
+  removeLibraryRootWithRetry,
   removePathWithSyncRetry,
   renamePathWithRetry,
 } from '../../src/worker/windows-fs-retry';
@@ -106,5 +107,68 @@ describe('removePathWithSyncRetry (operation-directory cleanup)', () => {
     expect(() => removePathWithSyncRetry('/op', { rmFn, waitFn })).toThrow(notEmpty);
     expect(rmFn).toHaveBeenCalledTimes(5);
     expect(waitFn).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe('removeLibraryRootWithRetry (Serpent-dfgg)', () => {
+  it('retries EPERM then deletes the original path', () => {
+    const rmFn = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error('locked'), { code: 'EPERM' });
+      })
+      .mockImplementationOnce(() => undefined);
+    const waitFn = vi.fn();
+    const renameFn = vi.fn();
+    removeLibraryRootWithRetry('/library', {
+      rmFn,
+      waitFn,
+      renameFn,
+      retryLimit: 4,
+      retryDelayMs: 10,
+    });
+    expect(rmFn).toHaveBeenCalledTimes(2);
+    expect(renameFn).not.toHaveBeenCalled();
+  });
+
+  it('renames the root aside when rm keeps failing and treats the original path as gone', () => {
+    const busy = Object.assign(new Error('not empty'), { code: 'ENOTEMPTY' });
+    const rmFn = vi.fn(() => {
+      throw busy;
+    });
+    const renameFn = vi.fn();
+    const waitFn = vi.fn();
+    const existsFn = vi.fn((targetPath: string) => targetPath === '/library.del-99');
+    removeLibraryRootWithRetry('/library', {
+      rmFn,
+      waitFn,
+      renameFn,
+      existsFn,
+      nowFn: () => 99,
+      retryLimit: 1,
+      retryDelayMs: 10,
+    });
+    expect(renameFn).toHaveBeenCalledWith('/library', '/library.del-99');
+    expect(existsFn).toHaveBeenCalledWith('/library');
+  });
+
+  it('rethrows the original rm error when rename-aside also fails', () => {
+    const busy = Object.assign(new Error('locked'), { code: 'EPERM' });
+    const rmFn = vi.fn(() => {
+      throw busy;
+    });
+    const renameFn = vi.fn(() => {
+      throw Object.assign(new Error('still locked'), { code: 'EPERM' });
+    });
+    const waitFn = vi.fn();
+    expect(() =>
+      removeLibraryRootWithRetry('/library', {
+        rmFn,
+        waitFn,
+        renameFn,
+        retryLimit: 0,
+        retryDelayMs: 10,
+      }),
+    ).toThrow(busy);
   });
 });

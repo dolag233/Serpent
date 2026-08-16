@@ -8,7 +8,7 @@ export default defineConfig({
       fileName: () => 'main.js',
     },
     rollupOptions: {
-      external: ['better-sqlite3', 'koffi'],
+      external: ['better-sqlite3', 'koffi', 'libarchive-wasm'],
     },
   },
 });

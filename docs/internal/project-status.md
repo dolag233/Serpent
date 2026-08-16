@@ -3,6 +3,8 @@
 > 更新时间：2026-08-16
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-16 `Serpent-dfgg` / LIB-021 P0**：Windows「从硬盘删除资源库」在缩略图仍打开时 `rmSync` 一次失败（EPERM/ENOTEMPTY），半删后再 reopen 失败并刷 ASSET_NOT_FOUND。已改为删前卸载媒体、中止 `serpent://` 读流、排空媒体任务、WAL checkpoint、重试并改名旁路。待人类验收。
+
 - **2026-08-16 `Serpent-7zp0`**：用户要求把「打开同步资源库」从资源库菜单挪进「打开资源库」选择面板，并删除「重命名资源库」菜单项（改名仍在资源库设置）。用户确认 LIB-020 通过。
 
 - **2026-08-16 `Serpent-pte2`**：资源库菜单改为「打开资源库」「导入资源库」各进一块选择面板（Serpent + 可展开的 Eagle/Billfish），去掉单独的外部库菜单行；菜单「新建资源库」只创建。无库起始创建面板保持打开/导入 CTA。用户确认 LIB-014 / SHELL-004 通过。

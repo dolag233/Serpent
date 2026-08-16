@@ -1023,7 +1023,7 @@ function AppInner() {
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
   const [libraryTransferKind, setLibraryTransferKind] = useState<
-    "import" | "open"
+    "import" | "open" | "open-billfish"
   >("import");
   const [libraryTransferName, setLibraryTransferName] = useState("");
 
@@ -3049,21 +3049,26 @@ function AppInner() {
     if (!api) return;
     return api.onLifecycle((event) => {
       if (shouldDetachLibraryOnOpening(event)) {
-        void (async () => {
-          await closeAssetPreview(false);
-          applyClosedLibraryUi();
-          setLibraryTransferKind("open");
-          setImportProgress({
-            type: "import.progress",
-            importId: "",
-            phase: "validate",
-            cancelable: true,
-            filesProcessed: 0,
-            totalFiles: 0,
-            bytesProcessed: 0,
-            totalBytes: 0,
-          });
-        })();
+        // Clear the active library synchronously when the replacement starts.
+        // The old viewer is closed asynchronously below, but the browse shell
+        // must stop presenting the previous library while Eagle/Billfish is
+        // being converted.
+        applyClosedLibraryUi();
+        setLibraryTransferKind("open-billfish");
+        if (event.type === "library.opening" && event.operation === "open-billfish") {
+          setNotice(t("progress.validatingBillfishLibrary"));
+        }
+        setImportProgress({
+          type: "import.progress",
+          importId: "",
+          phase: "validate",
+          cancelable: true,
+          filesProcessed: 0,
+          totalFiles: 0,
+          bytesProcessed: 0,
+          totalBytes: 0,
+        });
+        void closeAssetPreview(false);
         return;
       }
       if (event.type !== "library.opened") return;
@@ -3127,6 +3132,7 @@ function AppInner() {
     resetNavHistory,
     scriptSandboxPreviewOpen,
     setError,
+    setNotice,
     t,
   ]);
   useEffect(() => {
@@ -3454,6 +3460,7 @@ function AppInner() {
     setDialog(null);
     const inspect = await api.inspectBillfish();
     if (!inspect.ok) {
+      setImportProgress(null);
       if (inspect.error.code === "CANCELLED") return;
       showBlockingError(
         t("dialog.blockingError.libraryOpenFailed"),
@@ -3465,6 +3472,9 @@ function AppInner() {
       );
       return;
     }
+    // The Main process detached the previous library while it inspected the
+    // selected pack. The name form is now user input, not an active load.
+    setImportProgress(null);
     setDialogValue(inspect.value.displayName);
     setCreateLibraryPhase("billfish");
     setDialog("library");
@@ -3472,6 +3482,7 @@ function AppInner() {
 
   function cancelBillfishInspectFlow() {
     void api?.cancelInspectBillfish();
+    setImportProgress(null);
     setCreateLibraryPhase("start");
   }
 
@@ -6136,12 +6147,34 @@ function AppInner() {
   async function confirmDeleteLibraryFromDisk() {
     if (!api || !library) return;
     const deletedName = library.displayName;
+    const openLibrary = library;
+    const openScope = assetScope;
     setUiState("closing");
     let toreDown = false;
     try {
       await closeAssetPreview(false);
+      // Serpent-dfgg: Chromium keeps serpent:// thumbnail/source files mapped
+      // until <img> unmounts. Drop the browse canvas before asking the Worker
+      // to rm the library root, then wait one paint so handles actually close.
+      flushSync(() => {
+        setAssets([]);
+        setSelectedAssetIds([]);
+        setSelectedAssetId(undefined);
+        setHoveredAssetId(null);
+        resetBrowsePagination();
+      });
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+      if (IS_WINDOWS_PLATFORM) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 120);
+        });
+      }
       const result = await api.deleteLibraryFromDisk({
-        libraryId: library.libraryId,
+        libraryId: openLibrary.libraryId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       toreDown = true;
@@ -6150,17 +6183,29 @@ function AppInner() {
       setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
     } catch (caught) {
       // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
-      // The worker closes the library before rm, but deleteLibraryFromDisk
-      // reopens it on failure — so every failure keeps the current library
-      // browsable and the UI must stay open. Only the user-cancelled red
-      // confirmation (nothing deleted) and a genuinely-closed library skip
-      // the error toast; everything else surfaces a real error.
+      // The worker reopens a still-valid library; a half-deleted tree comes
+      // back as LIBRARY_NOT_FOUND and the UI must close.
       const cancelled =
         caught instanceof LibraryOperationError && caught.code === "CANCELLED";
+      const gone =
+        caught instanceof LibraryOperationError &&
+        (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
       if (!cancelled) {
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
       }
-      void refreshRecentLibraries(library.displayPath);
+      if (gone) {
+        toreDown = true;
+        applyClosedLibraryUi();
+        await refreshRecentLibraries(null);
+      } else {
+        try {
+          await loadContent(openLibrary, openScope, { refreshSidebar: true });
+        } catch {
+          toreDown = true;
+          applyClosedLibraryUi();
+        }
+        void refreshRecentLibraries(openLibrary.displayPath);
+      }
     } finally {
       setUiState(toreDown ? "idle" : "ready");
     }
@@ -9355,7 +9400,9 @@ function AppInner() {
                 <span className="activity-pulse" />
                 <div className="import-progress-body">
                   <span className="activity-strip-message">
-                    {libraryTransferKind === "open"
+                    {libraryTransferKind === "open-billfish"
+                      ? t("progress.validatingBillfishLibrary")
+                      : libraryTransferKind === "open"
                       ? t("progress.openingLibrary", {
                           name: libraryTransferName,
                         })
@@ -9412,7 +9459,8 @@ function AppInner() {
                     onClick={() => void cancelImport()}
                     type="button"
                   >
-                    {libraryTransferKind === "open"
+                    {libraryTransferKind === "open" ||
+                    libraryTransferKind === "open-billfish"
                       ? t("progress.cancelOpen")
                       : t("progress.cancelImport")}
                   </button>

@@ -153,6 +153,32 @@ export async function selectOpenDirectory(
   return result.canceled ? undefined : result.filePaths[0];
 }
 
+/**
+ * Select either a directory or an archive file. Electron's native open panel
+ * supports both choices in one panel; the filter only affects file entries,
+ * while directories remain selectable on every desktop platform.
+ */
+export async function selectOpenLibrarySource(
+  host: NativeDialogHost,
+  dialogId: NativeDialogId,
+  e2ePath: string | undefined,
+  archiveExtensions: readonly string[],
+): Promise<string | undefined> {
+  if (host.isE2e()) return e2ePath;
+  const result = await showOpen(
+    host,
+    openOptionsFor(host.getLocale(), dialogId, ["openFile", "openDirectory"], {
+      filters: [
+        {
+          name: "Library archives",
+          extensions: archiveExtensions.map((extension) => extension.replace(/^\./u, "")),
+        },
+      ],
+    }),
+  );
+  return result.canceled ? undefined : result.filePaths[0];
+}
+
 export async function selectOpenFile(
   host: NativeDialogHost,
   dialogId: NativeDialogId,

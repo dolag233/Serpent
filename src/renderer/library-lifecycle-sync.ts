@@ -12,7 +12,8 @@ export function shouldApplyLibraryLifecycleEvent(input: {
 }
 
 /**
- * Opening Eagle closes the previous library before conversion. Ordinary
+ * Opening/inspecting Eagle or Billfish detaches the previous library before
+ * conversion. Ordinary
  * create/open/recent-switch also emit `library.closed` for the previous
  * handle *after* the replacement is already open — that event must not
  * clear the renderer, or the no-library create dialog replaces the

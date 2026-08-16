@@ -1105,6 +1105,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.inspect-billfish': {
       const inspected = libraryService.inspectBillfishLibrary(
         request.command.sourceRootPath,
+        request.command.sourceDisplayName,
       );
       return {
         ok: true,
@@ -1138,6 +1139,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // deletion. The delete operation itself remains synchronous for its
       // existing recovery/reopen contract.
       await libraryService.createDatabaseBackup(request.command.libraryId);
+      await libraryService.drainLibraryMedia(request.command.libraryId);
       const deleted = libraryService.deleteLibraryFromDisk(request.command.libraryId);
       return {
         ok: true,

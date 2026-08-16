@@ -1563,6 +1563,7 @@ export const en = {
     exportingLibrary: "Exporting library:",
     importingLibrary: "Importing library:",
     openingLibrary: "Opening library: {name}",
+    validatingBillfishLibrary: "Validating Billfish library…",
     cancelExport: "Cancel export",
     cancelImport: "Cancel import",
     cancelOpen: "Cancel opening",

@@ -1546,6 +1546,7 @@ export const zhCN = {
     exportingLibrary: "正在导出资源库：",
     importingLibrary: "导入资源库：",
     openingLibrary: "正在打开资源库：{name}",
+    validatingBillfishLibrary: "正在验证 Billfish 资源库…",
     cancelExport: "取消导出",
     cancelImport: "取消导入",
     cancelOpen: "取消打开",

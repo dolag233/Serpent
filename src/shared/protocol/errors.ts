@@ -190,6 +190,7 @@ export function publicReasonFromError(error: unknown): PublicErrorReason | undef
         // denial, which surfaces as EACCES; FILE_BUSY gives the actionable
         // guidance instead of a misleading permission message.
         EPERM: process.platform === 'win32' ? 'FILE_BUSY' : 'PERMISSION_DENIED',
+        ENOTEMPTY: process.platform === 'win32' ? 'FILE_BUSY' : 'IO_ERROR',
         ENAMETOOLONG: 'PATH_LIMIT_EXCEEDED', ENOSPC: 'DISK_FULL', EDQUOT: 'DISK_FULL',
         EROFS: 'READ_ONLY_FILESYSTEM', ENOENT: 'SOURCE_NOT_FOUND', ENOTDIR: 'SOURCE_NOT_FOUND',
         EINVAL: 'NAME_NOT_SUPPORTED', EIO: 'IO_ERROR', EBUSY: 'FILE_BUSY', EMFILE: 'IO_ERROR',

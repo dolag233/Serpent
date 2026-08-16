@@ -71,6 +71,7 @@ const config: ForgeConfig = {
     asar: {
       unpack:
         '**/node_modules/trash/lib/{macos-trash,windows-trash.exe},' +
+        '**/node_modules/libarchive-wasm/dist/libarchive.wasm,' +
         // Sharp 0.35 ships prebuilt natives under @img/* (e.g.
         // @img/sharp-darwin-arm64/lib/*.node); native modules cannot load
         // from inside app.asar, so they must stay unpacked.

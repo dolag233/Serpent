@@ -1172,6 +1172,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.inspect-billfish'),
     sourceRootPath: selectedPathSchema,
+    sourceDisplayName: displayNameSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.open-billfish'),

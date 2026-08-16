@@ -71,6 +71,19 @@ function replaceZipEntryName(zipPath: string, originalName: string, replacementN
   writeFileSync(zipPath, archive);
 }
 
+function clearZipUtf8Flags(zipPath: string): void {
+  const archive = readFileSync(zipPath);
+  const localHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const centralHeader = Buffer.from([0x50, 0x4b, 0x01, 0x02]);
+  for (const [signature, flagsOffset] of [[localHeader, 6], [centralHeader, 8]] as const) {
+    const offset = archive.indexOf(signature);
+    expect(offset).toBeGreaterThanOrEqual(0);
+    const flags = archive.readUInt16LE(offset + flagsOffset);
+    archive.writeUInt16LE(flags & ~0x0800, offset + flagsOffset);
+  }
+  writeFileSync(zipPath, archive);
+}
+
 async function expectCode(
   operation: () => Promise<unknown>,
   code: ZipImportStreamError['code'],
@@ -128,6 +141,20 @@ describe('extractZipStream', () => {
     expect(progress.filter((event) => event.phase === 'extract' && event.bytesProcessed > 0).length)
       .toBeGreaterThan(1);
   }, 30_000);
+
+  it('decodes UTF-8 names when an archive omits the UTF-8 flag', async () => {
+    const root = temporaryRoot();
+    const zipPath = path.join(root, 'unflagged-utf8.zip');
+    const destinationRoot = path.join(root, 'destination');
+    mkdirSync(destinationRoot);
+    await createZip(zipPath, [{ name: '参考/动画片段.mp4', data: Buffer.from('asset') }]);
+    clearZipUtf8Flags(zipPath);
+
+    await extractZipStream({ sourceZipPath: zipPath, destinationRoot });
+
+    expect(readFileSync(path.join(destinationRoot, '参考', '动画片段.mp4'), 'utf8'))
+      .toBe('asset');
+  });
 
   it('rejects a path-escape entry before writing any archive content', async () => {
     const root = temporaryRoot();

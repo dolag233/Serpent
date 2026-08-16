@@ -47,10 +47,15 @@ import {
   selectImportSources as selectImportSourcesDialog,
   selectLibraryDirectory,
   selectOpenDirectory,
+  selectOpenLibrarySource,
   selectOpenFile,
   selectSavePath,
   type NativeDialogHost,
 } from "./native-dialogs";
+import {
+  materializeExternalLibrarySource,
+  type MaterializedExternalLibrarySource,
+} from "./external-library-archive";
 import {
   mapSystemLocaleToAppLocale,
   tryParseAppLocaleSync,
@@ -280,6 +285,12 @@ import {
 } from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
 import {
+  bindLibraryMediaReadSignal,
+  blockLibraryMediaReads,
+  isLibraryMediaReadBlocked,
+  unblockLibraryMediaReads,
+} from "./library-media-reads";
+import {
   createOffscreenThumbnailRenderer,
   packagedRendererOutDir,
   resolveOffscreenPageUrl,
@@ -473,10 +484,38 @@ const pendingRelinkPreviews = new RelinkPreviewStore();
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
 
-// Eagle source chosen and validated; Renderer never receives the path. Cleared
+// External-library source chosen and validated; Renderer never receives the
+// path. For archive sources this is the extracted temporary root. Cleared
 // after destination is chosen, on inspect cancel, or when a new inspect starts.
 let pendingEagleOpenSourcePath: string | undefined;
 let pendingBillfishOpenSourcePath: string | undefined;
+
+// Archive-backed external libraries are extracted into Main-owned temporary
+// directories. The Worker only receives the extracted root; these callbacks
+// ensure the archive contents do not remain on disk after the operation.
+const externalSourceCleanups = new Map<string, () => Promise<void>>();
+
+function rememberExternalSource(materialized: MaterializedExternalLibrarySource): string {
+  externalSourceCleanups.set(materialized.sourceRootPath, materialized.cleanup);
+  return materialized.sourceRootPath;
+}
+
+async function cleanupExternalSource(sourceRootPath: string | undefined): Promise<void> {
+  if (!sourceRootPath) return;
+  const cleanup = externalSourceCleanups.get(sourceRootPath);
+  if (!cleanup) return;
+  externalSourceCleanups.delete(sourceRootPath);
+  try {
+    await cleanup();
+  } catch (error) {
+    logger?.error("external-library.archive-cleanup", error, { sourceRootPath });
+  }
+}
+
+async function cleanupAllExternalSources(): Promise<void> {
+  const sourceRoots = [...externalSourceCleanups.keys()];
+  await Promise.all(sourceRoots.map((sourceRootPath) => cleanupExternalSource(sourceRootPath)));
+}
 
 // Pending import libraryId (importId -> libraryId), for auto-analyze after import.
 const pendingImportLibraries = new Map<string, string>();
@@ -1387,13 +1426,13 @@ async function closeOpenLibrariesBeforeReplacement(): Promise<void> {
           libraryId: library.libraryId,
         });
       } catch (error) {
-        logger?.error("eagle-open.close-previous", error, {
+        logger?.error("external-library-open.close-previous", error, {
           libraryId: library.libraryId,
         });
       }
     }
   } catch (error) {
-    logger?.error("eagle-open.list-previous", error);
+    logger?.error("external-library-open.list-previous", error);
   }
 }
 
@@ -1835,6 +1874,9 @@ function syncDeviceId(): string {
 
 async function commandFor(
   request: RendererRequest,
+  callbacks?: {
+    onBillfishSourceSelected?: () => void;
+  },
 ): Promise<WorkerCommand | undefined> {
   switch (request.type) {
     case "library.create.request": {
@@ -1858,33 +1900,62 @@ async function commandFor(
       // Renderer only receives a shell acknowledgement.
       return { type: "library.recovery-report", libraryId: request.libraryId };
     case "library.inspect-eagle.request": {
+      await cleanupExternalSource(pendingEagleOpenSourcePath);
       pendingEagleOpenSourcePath = undefined;
+      await cleanupExternalSource(pendingBillfishOpenSourcePath);
       pendingBillfishOpenSourcePath = undefined;
-      const sourceRootPath = await selectOpenDirectory(
+      const selectedSourcePath = await selectOpenLibrarySource(
         createNativeDialogHost(),
         "openEagleLibrary",
         process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
+        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
+      if (!selectedSourcePath) return undefined;
+      const materialized = await materializeExternalLibrarySource({
+        sourcePath: selectedSourcePath,
+        kind: "eagle",
+        tempDirectory: tmpdir(),
+      });
+      const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
         ? { type: "library.inspect-eagle", sourceRootPath }
         : undefined;
     }
     case "library.inspect-billfish.request": {
+      await cleanupExternalSource(pendingBillfishOpenSourcePath);
       pendingBillfishOpenSourcePath = undefined;
+      await cleanupExternalSource(pendingEagleOpenSourcePath);
       pendingEagleOpenSourcePath = undefined;
-      const sourceRootPath = await selectOpenDirectory(
+      const selectedSourcePath = await selectOpenFile(
         createNativeDialogHost(),
         "openBillfishLibrary",
         process.env.SERPENT_E2E_OPEN_BILLFISH_LIBRARY,
+        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
       );
+      if (!selectedSourcePath) return undefined;
+      callbacks?.onBillfishSourceSelected?.();
+      const materialized = await materializeExternalLibrarySource({
+        sourcePath: selectedSourcePath,
+        kind: "billfish",
+        tempDirectory: tmpdir(),
+      });
+      const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
-        ? { type: "library.inspect-billfish", sourceRootPath }
+        ? {
+            type: "library.inspect-billfish",
+            sourceRootPath,
+            ...(materialized.sourceDisplayName === undefined
+              ? {}
+              : { sourceDisplayName: materialized.sourceDisplayName }),
+          }
         : undefined;
     }
     case "library.inspect-eagle.cancel.request":
+      await cleanupExternalSource(pendingEagleOpenSourcePath);
       pendingEagleOpenSourcePath = undefined;
       return undefined;
     case "library.inspect-billfish.cancel.request":
+      await cleanupExternalSource(pendingBillfishOpenSourcePath);
       pendingBillfishOpenSourcePath = undefined;
       return undefined;
     case "library.open-eagle.request": {
@@ -2093,11 +2164,19 @@ async function commandFor(
         : undefined;
     }
     case "asset.import-eagle.request": {
-      const sourceRootPath = await selectOpenDirectory(
+      const selectedSourcePath = await selectOpenLibrarySource(
         createNativeDialogHost(),
         "importEagleLibrary",
-        undefined,
+        process.env.SERPENT_E2E_IMPORT_EAGLE_LIBRARY,
+        ["zip", "eaglepack", "rar", "7z", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz"],
       );
+      if (!selectedSourcePath) return undefined;
+      const materialized = await materializeExternalLibrarySource({
+        sourcePath: selectedSourcePath,
+        kind: "eagle",
+        tempDirectory: tmpdir(),
+      });
+      const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
         ? {
             type: "asset.import-eagle",
@@ -2107,11 +2186,19 @@ async function commandFor(
         : undefined;
     }
     case "asset.import-billfish.request": {
-      const sourceRootPath = await selectOpenDirectory(
+      const selectedSourcePath = await selectOpenFile(
         createNativeDialogHost(),
         "importBillfishLibrary",
-        undefined,
+        process.env.SERPENT_E2E_IMPORT_BILLFISH_LIBRARY,
+        [{ name: "Billfish Pack", extensions: ["billfishpack"] }],
       );
+      if (!selectedSourcePath) return undefined;
+      const materialized = await materializeExternalLibrarySource({
+        sourcePath: selectedSourcePath,
+        kind: "billfish",
+        tempDirectory: tmpdir(),
+      });
+      const sourceRootPath = rememberExternalSource(materialized);
       return sourceRootPath
         ? {
             type: "asset.import-billfish",
@@ -3055,7 +3142,11 @@ function assertNever(value: never): never {
 }
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let operation: "create" | "open" | "import" | "open-eagle" | "open-billfish" | undefined;
+  let lifecyclePublished = false;
   let clipboardStageDirectory: string | undefined;
+  let command: WorkerCommand | undefined;
+  let retainExternalSource = false;
+  let deleteFromDiskLibraryId: string | undefined;
   let relinkPreviewContext:
     | { libraryId: string; previewId: string }
     | undefined;
@@ -3069,6 +3160,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         { requestType: request.type },
       );
       if (!(await confirmCriticalRendererRequest(request))) return cancelled();
+    }
+
+    if (request.type === "library.delete-from-disk.request") {
+      // Drop serpent:// file handles before the Worker tries to rm the root.
+      deleteFromDiskLibraryId = request.libraryId;
+      blockLibraryMediaReads(request.libraryId);
+      nativeAssetDragCache.clear(request.libraryId);
     }
 
     if (request.type === "asset.import-drop-invalid.report") {
@@ -3126,6 +3224,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (request.type === "library.inspect-eagle.cancel.request") {
+      await cleanupExternalSource(pendingEagleOpenSourcePath);
       pendingEagleOpenSourcePath = undefined;
       return {
         ok: true,
@@ -3134,6 +3233,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
 
     if (request.type === "library.inspect-billfish.cancel.request") {
+      await cleanupExternalSource(pendingBillfishOpenSourcePath);
       pendingBillfishOpenSourcePath = undefined;
       return {
         ok: true,
@@ -3621,7 +3721,6 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       } satisfies RendererResult;
     }
 
-    let command: WorkerCommand | undefined;
     if (request.type === "library.open-recent.request") {
       // The renderer may only reopen a library that Main itself recorded in the
       // recent libraries store — never an arbitrary path. This keeps the same
@@ -3931,7 +4030,21 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         } satisfies RendererResult;
       }
     } else {
-      command = await commandFor(request);
+      command = await commandFor(
+        request,
+        request.type === "library.inspect-billfish.request"
+          ? {
+              onBillfishSourceSelected: () => {
+                operation = "open-billfish";
+                lifecyclePublished = true;
+                publishLifecycle({
+                  type: "library.opening",
+                  operation: "open-billfish",
+                });
+              },
+            }
+          : undefined,
+      );
     }
     if (!command) return cancelled();
     if (
@@ -3997,19 +4110,53 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.type === "library.import-zip"
     )
       operation = "import";
+    // Billfish inspection is the first point at which a validated source is
+    // ready to replace the active library. Detach the old library before the
+    // name panel appears, so a slow archive/metadata read is visible as an
+    // opening operation instead of looking like a stale browse session.
+    if (command.type === "library.inspect-billfish") operation = "open-billfish";
+    const replacesCurrentLibrary =
+      command.type === "library.open-eagle" || command.type === "library.open-billfish";
     if (command.type === "library.open-eagle") {
       pendingEagleOpenSourcePath = undefined;
       operation = "open-eagle";
-      await closeOpenLibrariesBeforeReplacement();
-    }
-    if (command.type === "library.open-billfish") {
+    } else if (command.type === "library.open-billfish") {
       pendingBillfishOpenSourcePath = undefined;
       operation = "open-billfish";
+    }
+    if (operation && !lifecyclePublished) publishLifecycle({ type: "library.opening", operation });
+    if (replacesCurrentLibrary) {
       await closeOpenLibrariesBeforeReplacement();
     }
-    if (operation) publishLifecycle({ type: "library.opening", operation });
 
     const workerResult = await workerClient.request(command);
+
+    if (
+      request.type === "library.delete-from-disk.request" &&
+      !workerResult.ok &&
+      workerResult.error.code !== "LIBRARY_NOT_FOUND" &&
+      workerResult.error.code !== "NOT_A_LIBRARY"
+    ) {
+      unblockLibraryMediaReads(request.libraryId);
+    }
+
+    if (
+      command.type === "library.open-eagle" ||
+      command.type === "library.open-billfish" ||
+      command.type === "asset.import-eagle" ||
+      command.type === "asset.import-billfish"
+    ) {
+      await cleanupExternalSource(command.sourceRootPath);
+    } else if (
+      command.type === "library.inspect-eagle" ||
+      command.type === "library.inspect-billfish"
+    ) {
+      const expectedType = command.type === "library.inspect-eagle"
+        ? "library.eagle-inspected"
+        : "library.billfish-inspected";
+      if (workerResult.ok && workerResult.type === expectedType) retainExternalSource = true;
+      else await cleanupExternalSource(command.sourceRootPath);
+    }
 
     // Native file drag must be requested during renderer dragstart.
     // Preheat every card-bearing result before it reaches Renderer; a later
@@ -4703,8 +4850,20 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       }
     }
 
+    // A Billfish archive has no stable library root name after extraction:
+    // the worker sees a temporary `serpent-external-library-*` directory.
+    // Keep the archive stem as the user-facing default all the way through
+    // the Main→Renderer boundary, even if an older worker response falls
+    // back to that temporary directory name.
+    const rendererWorkerResult =
+      workerResult.ok &&
+      workerResult.type === "library.billfish-inspected" &&
+      command.type === "library.inspect-billfish" &&
+      command.sourceDisplayName
+        ? { ...workerResult, displayName: command.sourceDisplayName }
+        : workerResult;
     const result = toRendererResult(
-      workerResult,
+      rendererWorkerResult,
       relinkPreviewContext?.previewId,
     );
     if (!result.ok) {
@@ -4761,6 +4920,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return result;
   } catch (error) {
+    if (deleteFromDiskLibraryId) {
+      unblockLibraryMediaReads(deleteFromDiskLibraryId);
+    }
     if (relinkPreviewContext) {
       pendingRelinkPreviews.cancel(
         relinkPreviewContext.libraryId,
@@ -4778,6 +4940,18 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     return { ok: false, error: publicError };
   } finally {
+    if (!retainExternalSource) {
+      const sourceRootPath =
+        command?.type === "library.inspect-eagle" ||
+        command?.type === "library.open-eagle" ||
+        command?.type === "asset.import-eagle" ||
+        command?.type === "library.inspect-billfish" ||
+        command?.type === "library.open-billfish" ||
+        command?.type === "asset.import-billfish"
+          ? command.sourceRootPath
+          : undefined;
+      await cleanupExternalSource(sourceRootPath);
+    }
     if (clipboardStageDirectory) {
       try {
         cleanupClipboardImage(clipboardStageDirectory);
@@ -6306,6 +6480,9 @@ async function startApplication(): Promise<void> {
         );
         return new Response("Invalid identifiers", { status: 400 });
       }
+      if (isLibraryMediaReadBlocked(libraryId)) {
+        return new Response("Library unavailable", { status: 410 });
+      }
 
       if (!workerClient) {
         logger?.error(
@@ -6336,12 +6513,15 @@ async function startApplication(): Promise<void> {
         });
         if (authorizedSource) {
           try {
+            if (isLibraryMediaReadBlocked(libraryId)) {
+              return new Response("Library unavailable", { status: 410 });
+            }
             return createArtifactResponse(
               authorizedSource.absolutePath,
               authorizedSource.mimeType,
               {
                 rangeHeader: request.headers.get("range"),
-                signal: request.signal,
+                signal: bindLibraryMediaReadSignal(libraryId, request.signal),
                 onStreamError: (error) =>
                   logger?.error("serpent-protocol.model-source-stream", error, {
                     libraryId,
@@ -6374,13 +6554,16 @@ async function startApplication(): Promise<void> {
           );
           return new Response("Source not found", { status: 404 });
         }
+        if (isLibraryMediaReadBlocked(libraryId)) {
+          return new Response("Library unavailable", { status: 410 });
+        }
         try {
           return createArtifactResponse(
             sourceResult.absolutePath,
             sourceResult.mimeType,
             {
               rangeHeader: request.headers.get("range"),
-              signal: request.signal,
+              signal: bindLibraryMediaReadSignal(libraryId, request.signal),
               onStreamError: (error) =>
                 logger?.error("serpent-protocol.source-stream", error, {
                   libraryId,
@@ -6437,13 +6620,17 @@ async function startApplication(): Promise<void> {
       };
       const mimeType = mimeMap[ext] ?? "application/octet-stream";
 
+      if (isLibraryMediaReadBlocked(libraryId)) {
+        return new Response("Library unavailable", { status: 410 });
+      }
+
       try {
         return createArtifactResponse(
           pathResult.absolutePath,
           mimeType,
           {
             rangeHeader: request.headers.get("range"),
-            signal: request.signal,
+            signal: bindLibraryMediaReadSignal(libraryId, request.signal),
             onStreamError: (error) =>
               logger?.error("serpent-protocol.stream", error, {
                 libraryId,
@@ -7033,6 +7220,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    void cleanupAllExternalSources();
     windowsTray?.destroy();
     windowsTray = undefined;
   });

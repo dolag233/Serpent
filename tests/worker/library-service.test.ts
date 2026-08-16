@@ -25,6 +25,7 @@ import {
 } from '../../src/worker/library-service';
 import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
 import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
+import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
 import { build } from 'vite';
 
 const temporaryRoots: string[] = [];
@@ -139,6 +140,18 @@ function startMigrationOpener(
       });
     },
   };
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    if (!child.killed) child.kill();
+  });
 }
 
 function removeWriteCoordinationSchema(database: TestDatabaseConnection): void {
@@ -306,7 +319,7 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removePathWithSyncRetry(root);
   }
 });
 
@@ -631,9 +644,7 @@ describe('LibraryService lifecycle', () => {
       verification.close();
     } finally {
       writeFileSync(releasePath, 'release');
-      for (const opener of [first, second]) {
-        if (!opener.child.killed) opener.child.kill();
-      }
+      await Promise.all([first, second].map((opener) => waitForChildExit(opener.child)));
     }
   });
 
