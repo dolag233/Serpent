@@ -1,6 +1,6 @@
 # 2026-08-16 20k 可解码大型资源库 fixture
 
-关联工单：`Serpent-3kfe.1`（父 epic `Serpent-3kfe`）。输出目录只通过环境变量 / CLI 传入，不把本机路径写进提交文件。
+关联工单：`Serpent-3kfe.1`（父 epic `Serpent-3kfe`）。输出目录只通过环境变量 / CLI 传入，不把本机路径写进提交文件。代码已随 `70b8bb6e` 快进到 `dev`。
 
 ## 变更与四列证据
 

@@ -43,3 +43,11 @@ npx vitest run --config vitest.config.ts tests/unit/clipboard-paste-feedback.tes
 - 不在导入时为整库排队 `generate_webm_proxy`
 - 不把本机 Eagle 路径写进测试
 - 不实现 `Serpent-768x` 的「打开外部资源库 / 打开 Eagle」菜单
+
+## 合入 `dev` 与 beads
+
+- 代码快进：`70b8bb6e`。
+- 合并时本地 Dolt 导出 885 条；当时 Git 镜像 884 条且缺 `Serpent-3kfe.1`。按工单 ID 并集、比较 `updated_at`，增量 `bd import` / `bd export`，不用 ours/theirs，也不重建 Dolt。
+- 结果：`Serpent-3kfe.1` closed（20k 夹具）；`Serpent-9imk` / `Serpent-9imk.1` / `Serpent-3kfe` 保持 in_progress。`Serpent-9imk.1` 验收第 6 条菜单仍归 `Serpent-768x`；`EAGLE-IMPORT-001` 待人类验收。
+- 并集保留其他会话已有状态：`Serpent-768x` / `Serpent-dw9a` in_progress，`Serpent-cljb` closed，`Serpent-bx15` open。
+- 远端 Dolt：`bd dolt push` 已成功；Git 镜像随本提交推到 `origin/dev`。
