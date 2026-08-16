@@ -11,6 +11,7 @@ const gates = [
   'lint',
   'typecheck',
   'extension:verify',
+  'test:library-availability',
   'test',
   'test:perf:search',
   'test:e2e',

@@ -292,3 +292,88 @@ describe('mid-migration failure injection', () => {
     expect(schemaVersionOf(libraryFilePath(libraryPath))).toBe(SUPPORTED_SCHEMA_VERSION);
   });
 });
+
+describe('sync-first v37/v38 migration fork (Serpent-e0dw)', () => {
+  const autoChecksum = MIGRATIONS.find((migration) => migration.version === 37)!.checksum;
+  const syncChecksum = MIGRATIONS.find((migration) => migration.version === 38)!.checksum;
+
+  it('rewrites swapped v37/v38 checksums and opens the library writable', () => {
+    const root = temporaryRoot();
+    const creating = new LibraryService();
+    const created = creating.createLibrary({
+      displayName: 'Swapped history',
+      selectedParentPath: root,
+    });
+    creating.closeAll();
+
+    const db = new Database(libraryFilePath(created.libraryPath));
+    db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 37').run(syncChecksum);
+    db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 38').run(autoChecksum);
+    db.close();
+
+    const service = new LibraryService();
+    const opened = service.openLibrary(created.libraryPath);
+    expect(opened.readOnly).toBeFalsy();
+    expect(opened.recovery).toBeUndefined();
+    service.renameLibrary({
+      libraryId: opened.libraryId,
+      displayName: 'Swapped history writable',
+    });
+    service.closeAll();
+
+    const verified = new Database(libraryFilePath(created.libraryPath));
+    const history = verified
+      .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 37 ORDER BY version')
+      .all() as Array<{ version: number; checksum: string }>;
+    verified.close();
+    expect(history).toEqual([
+      { version: 37, checksum: autoChecksum },
+      { version: 38, checksum: syncChecksum },
+    ]);
+  });
+
+  it('upgrades a sync-first v37 library by applying auto-analysis as canonical v37', () => {
+    const root = temporaryRoot();
+    const creating = new LibraryService();
+    const created = creating.createLibrary({
+      displayName: 'Sync-first v37',
+      selectedParentPath: root,
+    });
+    creating.closeAll();
+
+    const db = new Database(libraryFilePath(created.libraryPath));
+    db.exec('DROP TABLE IF EXISTS asset_auto_analysis_suppression');
+    db.prepare('DELETE FROM schema_migrations WHERE version >= 37').run();
+    db.prepare(
+      'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+    ).run(37, syncChecksum, new Date().toISOString());
+    db.pragma('user_version = 37');
+    db.close();
+
+    const service = new LibraryService();
+    const opened = service.openLibrary(created.libraryPath);
+    expect(opened.readOnly).toBeFalsy();
+    service.renameLibrary({
+      libraryId: opened.libraryId,
+      displayName: 'Sync-first v37 writable',
+    });
+    service.closeAll();
+
+    const verified = new Database(libraryFilePath(created.libraryPath));
+    expect(schemaVersionOf(libraryFilePath(created.libraryPath))).toBe(SUPPORTED_SCHEMA_VERSION);
+    const tables = verified
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'asset_auto_analysis_suppression'",
+      )
+      .all() as Array<{ name: string }>;
+    const history = verified
+      .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 37 ORDER BY version')
+      .all() as Array<{ version: number; checksum: string }>;
+    verified.close();
+    expect(tables).toHaveLength(1);
+    expect(history).toEqual([
+      { version: 37, checksum: autoChecksum },
+      { version: 38, checksum: syncChecksum },
+    ]);
+  });
+});

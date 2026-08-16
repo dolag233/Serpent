@@ -1,7 +1,8 @@
-// Serpent-033e: a library written by a newer build must still open — in
-// read-only mode — instead of throwing LIBRARY_VERSION_TOO_NEW and locking
-// the user out. Writes fail at the SQLite level and map to LIBRARY_READ_ONLY.
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+// A library written by a newer build must still open writable instead of
+// throwing LIBRARY_VERSION_TOO_NEW or trapping the user in a read-only handle.
+// SQLITE_READONLY from the OS or an inspection connection still maps to
+// LIBRARY_READ_ONLY.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -65,8 +66,8 @@ afterEach(() => {
   }
 });
 
-describe('read-only degrade for newer-schema libraries', () => {
-  it('opens a newer-schema library read-only with version info', () => {
+describe('writable open for newer-schema libraries', () => {
+  it('opens a newer-schema library writable with version info', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Newer库', selectedParentPath: root });
@@ -76,40 +77,23 @@ describe('read-only degrade for newer-schema libraries', () => {
     markLibraryAsNewerVersion(created.libraryPath);
 
     const summary: InternalLibrarySummary = service.openLibrary(created.libraryPath);
-    expect(summary.readOnly).toBe(true);
+    expect(summary.readOnly).toBeFalsy();
     expect(summary.libraryVersion).toBe(SUPPORTED_SCHEMA_VERSION + 1);
     expect(summary.supportedSchemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
 
-    // Read paths still work.
-    expect(service.listLibraries()).toHaveLength(1);
-  });
-
-  it('rejects writes on a read-only library with SQLITE_READONLY', () => {
-    const root = temporaryRoot();
-    const service = newService();
-    const created = service.createLibrary({ displayName: '只读库', selectedParentPath: root });
-    service.closeAll();
-    markLibraryAsNewerVersion(created.libraryPath);
-    const summary = service.openLibrary(created.libraryPath);
-    expect(summary.readOnly).toBe(true);
-
-    // A read-only connection (what the worker holds for this library) must
-    // reject any write at the SQLite level.
-    const db = new Database(path.join(created.libraryPath, '.serpent', 'library.db'), {
-      readonly: true,
+    service.renameLibrary({
+      libraryId: summary.libraryId,
+      displayName: 'Newer库已改名',
     });
-    expect(() =>
-      db
-        .prepare('INSERT INTO library (library_id, display_name, created_at) VALUES (?, ?, ?)')
-        .run('00000000-0000-0000-0000-000000000000', 'x', 'now'),
-    ).toThrow(/readonly/iu);
-    db.close();
+    expect(service.listLibraries()).toEqual([
+      expect.objectContaining({ displayName: 'Newer库已改名' }),
+    ]);
   });
 
-  it('rejects disk-delete before touching files or folders in a read-only library', () => {
+  it('keeps filesystem mutations available on a newer-schema library', () => {
     const root = temporaryRoot();
     const service = newService();
-    const created = service.createLibrary({ displayName: '只读磁盘保护', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: '可写磁盘', selectedParentPath: root });
     const source = path.join(root, 'protected.png');
     writeFileSync(source, Buffer.from('protected asset'));
     const folder = service.createManagedFolder({
@@ -123,28 +107,17 @@ describe('read-only degrade for newer-schema libraries', () => {
       targetFolderId: folder.folderId,
     });
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
-    const managedAssetPath = path.join(created.libraryPath, 'Assets', 'Folder', 'protected.png');
-    const managedFolderPath = path.join(created.libraryPath, 'Assets', 'Folder');
-    expect(existsSync(managedAssetPath)).toBe(true);
 
     service.closeAll();
     markLibraryAsNewerVersion(created.libraryPath);
     const summary = service.openLibrary(created.libraryPath);
-    expect(summary.readOnly).toBe(true);
+    expect(summary.readOnly).toBeFalsy();
 
     expect(() => service.deleteAssetsFromDisk({
       libraryId: created.libraryId,
       assetIds: [asset.assetId],
-    })).toThrow('LIBRARY_READ_ONLY');
-    expect(() => service.deleteManagedFolderFromDisk({
-      libraryId: created.libraryId,
-      folderId: folder.folderId,
-    })).toThrow('LIBRARY_READ_ONLY');
-
-    expect(existsSync(managedAssetPath)).toBe(true);
-    expect(existsSync(managedFolderPath)).toBe(true);
-    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(1);
-    expect(service.listManagedFolders(created.libraryId)).toHaveLength(1);
+    })).not.toThrow();
+    expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(0);
   });
 
   it('maps SQLITE_READONLY failures to the LIBRARY_READ_ONLY public code', () => {
@@ -161,8 +134,7 @@ describe('read-only degrade for newer-schema libraries', () => {
     const created = service.createLibrary({ displayName: '普通库', selectedParentPath: root });
 
     const summary = service.openLibrary(created.libraryPath);
-    expect(summary.readOnly).toBeUndefined();
-    // Writes still work on the normal library.
+    expect(summary.readOnly).toBeFalsy();
     const db = new Database(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(() =>
       db
@@ -170,5 +142,31 @@ describe('read-only degrade for newer-schema libraries', () => {
         .run('00000000-0000-0000-0000-000000000000', 'y', 'now'),
     ).not.toThrow();
     db.close();
+  });
+
+  it('closes a newer-schema library and opens a different writable library', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const newerCreated = service.createLibrary({
+      displayName: '新 schema 切库源',
+      selectedParentPath: root,
+    });
+    service.closeAll();
+    markLibraryAsNewerVersion(newerCreated.libraryPath);
+
+    const newer = service.openLibrary(newerCreated.libraryPath);
+    expect(newer.readOnly).toBeFalsy();
+    expect(() => service.cancelJobs(newer.libraryId)).not.toThrow();
+
+    const writable = service.createLibrary({
+      displayName: '可写切库目标',
+      selectedParentPath: root,
+    });
+    expect(writable.readOnly).toBeFalsy();
+    service.closeLibrary(newer.libraryId);
+    service.renameLibrary({
+      libraryId: writable.libraryId,
+      displayName: '可写切库目标已改名',
+    });
   });
 });

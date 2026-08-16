@@ -928,7 +928,7 @@ describe('LibraryService lifecycle', () => {
     expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
   });
 
-  it('opens a database created by a newer schema version read-only (Serpent-033e)', () => {
+  it('opens a database created by a newer schema version writable (Serpent-033e)', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Future', selectedParentPath: root });
@@ -938,8 +938,12 @@ describe('LibraryService lifecycle', () => {
     database.close();
 
     const summary = service.openLibrary(created.libraryPath);
-    expect(summary.readOnly).toBe(true);
+    expect(summary.readOnly).toBeFalsy();
     expect(summary.libraryVersion).toBe(999);
+    service.renameLibrary({
+      libraryId: summary.libraryId,
+      displayName: 'Future writable',
+    });
   });
 
   it('migrates a valid v1 library through v2 to v3 when opening', () => {
@@ -1067,7 +1071,7 @@ describe('LibraryService lifecycle', () => {
     expect(existsSync(previewsPath)).toBe(true);
   });
 
-  it('opens a tampered migration audit record read-only without latching retries', () => {
+  it('rescues a tampered migration audit record without latching retries', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Tampered', selectedParentPath: root });
@@ -1077,7 +1081,8 @@ describe('LibraryService lifecycle', () => {
     database.close();
 
     const recovered = service.openLibrary(created.libraryPath);
-    expect(recovered.recovery).toMatchObject({ mode: 'read-only' });
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(recovered.readOnly).toBeFalsy();
   });
 
   it.runIf(process.platform !== 'win32')(

@@ -25,3 +25,12 @@
 
 - `素材资源库`（user_version=37, AUTO checksum）用当前代码打开 ✓
 - 迁移守护三件套 + readonly 62/62 通过；typecheck / lint 干净。
+
+## 2026-08-16 后续：反向占用的真实库（绘画资源库）
+
+同步线先把 SYNC 写进 v37 后，再被当前代码补上 AUTO 作为 v38 的库（`绘画资源库`）会留下 **v37=SYNC、v38=AUTO** 的对调历史。物理表都在，但 `verifyMigrationHistory` 失败 → 损坏恢复梯度把它当成受损库只读打开。Worker `library.close` 仍对只读连接执行 `cancelJobs` 写入，切到 `meme资源库` 失败并回滚，用户被锁在只读库里。
+
+处理：
+
+- 识别该精确分叉，只改写 `schema_migrations`（及必要时补 AUTO 表），不改已有表结构。
+- 只读关闭/切库必须始终成功；替换库已打开后不得因旧库 close 失败而回滚。

@@ -17,6 +17,12 @@ npm run test:unit                        # 单元（node 环境）
 npm run test:worker                      # worker（Electron 环境）
 ```
 
+任何资源库相关修改（打开/关闭/迁移/schema/损坏恢复/切库）还必须完整跑完：
+
+```bash
+npm run test:library-availability
+```
+
 功能提交（跨进程/大改动）加：
 
 ```bash

@@ -1,42 +1,52 @@
-# ADR-0028：schema 版本兼容——完全兼容旧版本数据为硬目标，只读降级为兜底
+# ADR-0028：schema 版本兼容——完全兼容旧版本数据；不提供只读资源库
 
-> 状态：已采纳（2026-08-07）
-> 触发：Serpent-033e。2026-08-07 真实事故：一个库被未合入代码的 v34 迁移升级后，v33 构建打开时抛 `LIBRARY_VERSION_TOO_NEW` 直接拒绝打开，用户看到模糊的 "The recent library could not be reopened"。产品负责人明确：**项目公开后不允许因 schema 版本问题打不开资源库**；且**完全兼容旧版本数据是硬性要求**——只读模式只是兜底，不是目标。
+> 状态：已修订（2026-08-16，Serpent-e0dw）
+> 原采纳：2026-08-07（Serpent-033e）
+> 触发：2026-08-07 一个库被未合入代码的 v34 迁移升级后，v33 构建打开时抛 `LIBRARY_VERSION_TOO_NEW` 直接拒绝打开。产品负责人明确：**不允许因 schema 版本打不开资源库**；**完全兼容旧版本数据是硬性要求**。
+> 2026-08-16 修订：产品负责人明确 **不允许有只读资源库**——只读库和没有库没有区别。损坏必须自动修复（备份，再从 Assets 抢救），而不是只读打开。
 
 ## 决策
 
-0. **原则（硬目标）**：任何版本都必须完全兼容旧版本数据——新代码打开旧库自动无损迁移到最新，升级后全功能可用（浏览/搜索/预览/编辑）。只读降级是最后防线，不代表"兼容"。
-1. **旧代码打开新版本库 → 只读降级，绝不拒绝打开**：
-   - `openLibrary` 先只读探测 `user_version`；高于 `SUPPORTED_SCHEMA_VERSION` 时以 SQLite `readonly` 连接打开（`openConfiguredDatabase(filename, timeout, { readonly: true })`），跳过迁移、校验、watcher、恢复等全部写路径。
-   - 打开结果携带 `readOnly`、`libraryVersion`、`supportedSchemaVersion`，经 main 透传 renderer，界面显示全局只读提示条（含版本号），写操作失败统一映射为 `LIBRARY_READ_ONLY` 可操作错误。
-   - SQLite 连接级只读保证写入被拒（`SQLITE_READONLY`），因此**无需枚举禁用写命令**；`publicErrorForWorkerFailure` 将 `SQLITE_READONLY` 映射为 `LIBRARY_READ_ONLY`。
-   - 只读库关闭时跳过 `cancelJobs`/watcher/import 回滚等写清理（`closeLibrary` 的 `readOnly` 分支）。
-   - 浏览/搜索/预览等读路径不受影响。
-
-2. **迁移纪律（既保证旧数据升级无损，也使只读降级永远安全）**：
+0. **原则（硬目标）**：任何版本都必须完全兼容旧版本数据——新代码打开旧库自动无损迁移到最新，升级后全功能可用（浏览/搜索/预览/编辑）。Desktop **不提供用户可见的只读资源库**。
+1. **旧代码打开新版本库 → 可写打开，绝不拒绝，也不只读**：
+   - `openLibrary` 先探测 `user_version`；高于 `SUPPORTED_SCHEMA_VERSION` 时仍用可写 SQLite 连接打开，跳过迁移（不能把未知新结构改回去）。
+   - 只校验当前构建认识的规范 `schema_migrations` 前缀；多余的更高版本行忽略。前缀不规范则视为损坏，走备份/抢救，而不是只读。
+   - 打开结果可带 `libraryVersion` / `supportedSchemaVersion` 作诊断；**不设 `readOnly`，不显示只读横幅**。写路径按「只加不改」纪律使用当前认识的列。
+   - `LIBRARY_VERSION_TOO_NEW` 仍存在于非 openLibrary 的写路径（create/import 校验），openLibrary 不抛出。
+   - `SQLITE_READONLY → LIBRARY_READ_ONLY` 只用于操作系统把文件标成只读、或内部 inspection 句柄；不是资源库产品模式。
+2. **损坏 → 自动修复，不是只读**：
+   - 打开梯度：主库 → 校验后的 backup-1 → backup-2 → **从 Assets 抢救重建可写空库**。协议里仍保留 `'read-only'` 枚举以免旧事件解析失败，Desktop **不再发出**。
+   - 迁移连续失败 3 次后，按上次可用 schema **可写**打开（`migrationStuck`），不再锁成只读；升级到更新构建后会再试迁移。
+   - checksum / 结构损坏不重试迁移，直接走备份/抢救。
+3. **迁移纪律（使旧代码打开新库仍然可写）**：
    - 新迁移**只允许**：新增表、新增列（可为 NULL 或有默认值）、新增索引/触发器、放宽 CHECK 约束（通过表重建时保留旧列名与旧列语义）。
    - **禁止**：删除或重命名现有表/列/索引/触发器；改变现有列的类型/语义；收紧 CHECK。
-   - **每个迁移的验收必须证明「旧版本库 → 迁移后全功能可用」**：数据不丢、语义不变、搜索/缩略图/标签等派生数据可重建。违反此纪律的迁移不合并；迁移纪律审查是代码审查固定项（CLAUDE.md「数据兼容性纪律」）。
-   - 版本门禁语义不变：`LIBRARY_VERSION_TOO_NEW` 仍存在于非 openLibrary 的写路径（create/import 校验），openLibrary 不再抛出。
+   - **每个迁移的验收必须证明「旧版本库 → 迁移后全功能可用」**。违反此纪律的迁移不合并。
+   - 切库：替换库已经打开成功后，不得因为旧库 close 失败而回滚新库。
 
 ## 理由
 
-- 用户数据是产品底线：schema 升级造成的「打不开」是发布阻断级缺陷，任何构建顺序（先开旧库再升级）都不应出现。
-- SQLite 连接级只读比命令级 gate 更可靠且零遗漏；写失败由统一错误映射兜底。
-- 「只加不改」的迁移纪律把只读降级的正确性从「运行时验证」变成「结构不变量」，成本远低于对每个新结构做只读兼容测试。
+- 用户数据是产品底线：schema 升级造成的「打不开」是发布阻断级缺陷。
+- 只读资源库把人锁在不能编辑、往往也切不走的状态，和没有库没有区别（2026-08-16 绘画库事故）。
+- 「只加不改」让旧构建可以对新库执行已认识的写入；损坏用备份和 Assets 文件修复，比只读浏览更接近「库永远能用」。
 
 ## 兼容性与风险
 
-- 若未来某个迁移违反纪律（删列/改语义），旧代码只读打开后查询可能报错 → 由纪律审查阻止，出现即视为迁移缺陷。
-- 只读库的 `schema_migrations` 校验被跳过（结构未知时不校验历史，避免误报 LIBRARY_CORRUPT）。
+- 若未来某个迁移违反纪律（删列/改语义），旧代码可写打开后查询或写入可能报错 → 由纪律审查阻止，出现即视为迁移缺陷。
+- 新 schema 上的当前构建不会运行未知迁移；额外列被忽略。
+- 抢救重建会丢失合集/标签/评分等元数据，只保留 Assets 源文件——这是双备份都不可用时的最后修复，不是只读。
 
 ## 测试
 
-- `tests/worker/library-schema-readonly.test.ts`：v34 假迁移库 → 只读打开 + 版本信息；只读连接写拒绝；`SQLITE_READONLY → LIBRARY_READ_ONLY` 映射；正常库不受影响；只读库关闭无写路径。
+- `tests/worker/library-availability.test.ts`：资源库可用性合同（打开/可写/重开/切库/新 schema/分叉/粘滞/备份/抢救）；`npm run test:library-availability` 是资源库相关改动的强制门禁。
+- `tests/worker/library-schema-readonly.test.ts`：假更高版本库可写打开、可改名/删文件；`SQLITE_READONLY → LIBRARY_READ_ONLY` 仍映射操作系统只读。
+- `tests/worker/database-recovery.test.ts`：双备份损坏 → Assets 抢救且可写。
+- `tests/worker/schema-failure.test.ts`：粘滞后可写打开；checksum 损坏 → 抢救。
+- `tests/worker/library-service.test.ts`：未来 schema 可写；篡改 checksum → 抢救。
 
-## 实施补充（Serpent-verg，2026-08-08）
+## 实施补充（Serpent-verg，2026-08-08；e0dw 修订 2026-08-16）
 
-- 正向兼容为主目标的完整实施见 `docs/internal/implementation/0031-schema-compatibility-guarantee.md`：宽容读取（缺列/多列/改列名不崩溃，0031 §1）是主防线，只读降级保持为最后手段。
-- 迁移失败路径（0031 §2.2）：失败回滚 + `.serpent/migration-failed.json` 诊断 + 3 次重试上限 + 粘滞后只读降级（`LIBRARY_MIGRATION_FAILED` / `LIBRARY_MIGRATION_STUCK`）。
-- 迁移纪律静态门禁：`tests/worker/migration-discipline.test.ts`（只加不改、重建例外清单与 worker FK 处理同步）。
-- 全版本链兼容测试：`tests/worker/schema-compatibility.test.ts`（原子性/失败注入）、`tests/worker/schema-downgrade-chain.test.ts`（升级/降级链 + 数据种子断言）。
+- 正向兼容见 `docs/internal/implementation/0031-schema-compatibility-guarantee.md`：宽容读取是主防线。
+- 迁移失败路径（0031 §2.2）：失败回滚 + `.serpent/migration-failed.json` + 3 次重试 + 粘滞后**可写**打开上次可用 schema。
+- 迁移纪律静态门禁：`tests/worker/migration-discipline.test.ts`。
+- 全版本链兼容测试：`tests/worker/schema-compatibility.test.ts`、`tests/worker/schema-downgrade-chain.test.ts`。

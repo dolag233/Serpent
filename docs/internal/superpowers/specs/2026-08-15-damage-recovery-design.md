@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-1. **库永远打得开**：从"主库损坏 → 备份 → 只读降级 → 抢救重建"逐级降级，任何一层都不直接拒绝用户。
+1. **库永远打得开、而且可写**：从"主库损坏 → 备份 → Assets 抢救重建"逐级修复，任何一层都不把用户锁进只读库。
 2. **可恢复即自动恢复**：列缺失（宽容读取）、行缺失（重扫入档）、缩略图/派生物缺失（重排队重建）、文件操作中断（journal 恢复）全部静默自动完成。
 3. **不可恢复即裂开标志**：源文件无处可找、行级数据无法重建的资产，显示统一的"文件损坏"（broken-file 裂开）状态，而不是消失或静默。
 4. **定时备份兜底物理损坏**：每库至多 2 份轮换备份，损坏时自动从备份恢复。
@@ -22,7 +22,7 @@
 | 文件操作中断 | `file_operations` journal + 全套 `recover*`（move/copy/trash/restore/relink/批量替换），重开自动对账 | `recoverFileOperations` 等 |
 | 源文件丢失 | `availability: 'missing'` 建模：卡片 `is-missing` 样式、过滤、hover 禁用、Inspector 缺失行；linked 资产 relink 恢复 | `availability-affordance.ts` 等 |
 | 缩略图失败展示 | `broken-file` 裂开图标 | `AssetCardMedia.tsx:44` |
-| 数据库物理损坏 | 打开时按主库 → backup-1 → backup-2 → 只读 → Assets 抢救降级；失败层写诊断和恢复状态 | `library-service.ts:31426-31764`；`main/index.ts:1490-1497` 恢复状态脱敏 |
+| 数据库物理损坏 | 打开时按主库 → backup-1 → backup-2 → Assets 抢救重建（可写）；失败层写诊断和恢复状态 | `library-service.ts` `openLibrary`；`main/index.ts` 恢复状态脱敏 |
 | SQLite 在线备份能力 | `connection.backup(destinationPath)`（导出场景临时备份） | `library-service.ts:4908` |
 
 ## 3. 差距与设计
@@ -36,10 +36,9 @@
   ├─ 1. 正常打开（quick_check ok → 迁移 → 完整可用）
   ├─ 2. 主库损坏 → 尝试备份库.1（校验后替换主库）→ 成功则打开并通知"已从备份恢复"
   ├─ 3. 备份.1 也坏 → 备份.2
-  ├─ 4. 两份备份都坏 → 只读降级打开（lenient-read 全开，跳过迁移与写入）
-  └─ 5. 只读也打不开 → 抢救重建：损坏库移入 .serpent/corrupt-backup/，
+  └─ 4. 两份备份都坏 → 抢救重建：损坏库移入 .serpent/corrupt-backup/，
        以 Assets/ 目录扫描重建空库（资产文件是数据本体；标签/合集/评分等
-       元数据丢失，重建完成后显示恢复报告）
+       元数据丢失，重建完成后显示恢复报告）。库可写，不是只读。
 ```
 
 每层都需要明确的通知文案（哪一层恢复、丢了什么），遵循冷静文案原则（不阻塞、不焦虑）。
@@ -78,15 +77,15 @@
 
 | 阶段 | 内容 |
 | --- | --- |
-| Phase 1 | 已实现：打开降级链（备份恢复 + 只读降级 + 抢救重建）；定时轮换备份（2 份 + 触发时机 + 校验）。待 packaged/Windows/真实破坏重启证据 |
+| Phase 1 | 已实现：打开降级链（备份恢复 + Assets 抢救重建，无只读档）；定时轮换备份（2 份 + 触发时机 + 校验）。待 packaged/Windows/真实破坏重启证据 |
 | Phase 2 | 已实现主要路径：LEFT JOIN + 裂开标志 + 自动修复；显式选择恢复根目录后的路径/同名/指纹重定位与 Inspector 入口；Inspector 对已知原路径/回收区做指纹候选探测 |
-| Phase 3 | 部分实现：抢救报告写入受保护目录，界面显示源文件数量、元数据损失摘要并可由 Main 打开报告目录；写路径仍以只读/恢复提示为主，真实破坏重启与 packaged/Windows 证据待执行 |
+| Phase 3 | 部分实现：抢救报告写入受保护目录，界面显示源文件数量、元数据损失摘要并可由 Main 打开报告目录；真实破坏重启与 packaged/Windows 证据待执行 |
 
 ## 5. 验收清单（四列，实现时补齐）
 
 | 需求条目 | 验收标准 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- | --- |
-| 打开降级链 | 主库损坏 → 自动用备份恢复并通知；双备份坏 → 只读打开；只读失败 → 抢救重建且库可打开（报告元数据丢失） | `library-service.ts:31426-31764`；`main/index.ts:1490-1497`；`App.tsx:8519-8562` | `tests/worker/database-recovery.test.ts:57-184` | 当次 Worker 注入通过；真实应用完整退出重启、packaged、Windows 待执行 |
+| 打开降级链 | 主库损坏 → 自动用备份恢复并通知；双备份坏 → Assets 抢救重建且库可写（报告元数据丢失） | `library-service.ts` `openLibrary`；`main/index.ts`；`App.tsx` 恢复横幅 | `tests/worker/database-recovery.test.ts` | 当次 Worker 注入覆盖备份/抢救；真实应用完整退出重启、packaged、Windows 待执行 |
 | 定时轮换备份 | 至多 2 份轮换；打开 24h 节流备份；破坏性操作前备份；坏备份不参与轮换；备份 quick_check 校验 | `library-service.ts:5121-5238`；`worker/index.ts:701-727` 破坏性命令备份入口 | `tests/worker/database-recovery.test.ts:57-74,274-305` | macOS Worker 通过；packaged/Windows 未执行 |
 | 行级损坏可见性 | revision 行丢失的资产不消失，显示裂开 + 自动修复（源文件在则重建） | `library-service.ts:12704-12745,22267-22288`；`availability-affordance.ts:32-66`；`InspectorPanel.tsx:965-1012` | `tests/worker/database-recovery.test.ts:186-229`；`tests/unit/availability-affordance.test.ts` | Worker 注入通过；真实损坏库窗口验收待执行 |
 | missing 分级 | 已知原路径/回收区/链接根路径只在选中资产时探测；指纹匹配显示可恢复候选，未知位置继续显式选择根目录，不猜测绑定 | `library-service.ts:22683-22810`；`src/shared/protocol/requests.ts`；`InspectorPanel.tsx:570-599,965-1012`；`App.tsx:6463-6505` | `tests/worker/database-recovery.test.ts:231-272`；`tests/unit/protocol.test.ts`；`tests/e2e/trash-relink-flow.test.ts` | macOS Worker/协议/Electron 提示路径通过；真实损坏库窗口、外部目录、Windows 待执行 |

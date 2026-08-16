@@ -48,6 +48,7 @@ npm run typecheck      # tsc --noEmit
 npm run test           # vitest run（单元 + worker 集成）
 npm run test:unit      # 仅单元测试
 npm run test:worker    # 仅 worker 集成测试
+npm run test:library-availability  # 资源库可用性底线（改资源库相关代码时必须完整跑完）
 npm run test:e2e       # Playwright E2E（library-lifecycle + asset-ingestion + process-lifecycle）
 npm run test:e2e:packaged  # packaged app 启动测试（需先 npm run package）
 npm run package        # 打包到 out/Serpent-<platform>-<arch>/
@@ -155,7 +156,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 10. **禁止补丁式修复**：修复问题或编写需求时必须发掘深层原因，把整个问题和相关所有代码都纳入考量，不得直接打一个补丁以绕过问题。遇到 bug 先定位根因→理解全部影响范围→设计完整方案→一次修到位。
 11. **编码后交叉审查（分级触发）**：仅在完成**大规模「功能性」编码**后（新功能、行为变更、跨模块重构；不含小修复、文案/文档、纯样式微调）才启动交叉审查，且只启动 **1 个审查 agent**（一次审查同时覆盖 Standards 与 Spec 双轴；可按变更性质侧重 regression/安全等视角）。**每次会话可用的 subagent 模型可能不同，启动审查或测试 subagent 前必须先询问用户本次使用哪个模型。**小规模变更由实现者对照门禁自查即可，不得为每次改动都开审查集群。
 12. **测试后台执行**：自动化测试（尤其会弹出窗口的 Electron E2E）一律以后台任务方式运行，不得抢占用户前台窗口、打断用户正在进行的操作；确需前台观察时先征得用户同意。多个 agent/轨道并行时，由主 agent 集中串行运行 E2E，避免同时弹出多个 Electron 实例。
-13. **测试范围分级（默认从简）**：简单编码、文案/文档、纯样式或非功能性 UI 打磨（圆角、阴影、颜色、间距、图标微调等）**默认不跑**全套 `test` / `test:e2e` / `verify:mainline`；实现者自查或最多跑直接相关的定向单测即可。只有完成**大型功能**、跨进程行为变更，或同一会话内**多次功能性开发累计**后，才考虑扩大测试范围；触及核心体验门禁所列路径时仍按该门禁执行，不得用本条规避。
+13. **测试范围分级（默认从简）**：简单编码、文案/文档、纯样式或非功能性 UI 打磨（圆角、阴影、颜色、间距、图标微调等）**默认不跑**全套 `test` / `test:e2e` / `verify:mainline`；实现者自查或最多跑直接相关的定向单测即可。只有完成**大型功能**、跨进程行为变更，或同一会话内**多次功能性开发累计**后，才考虑扩大测试范围；触及核心体验门禁所列路径时仍按该门禁执行，不得用本条规避。**任何资源库相关修改（打开/关闭/迁移/schema/损坏恢复/切库/library-service/library.db）必须完整跑完 `npm run test:library-availability`，不得用本条从简。**
 
 ## 文档入口
 
@@ -184,6 +185,7 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 ## 核心体验回归门禁
 
+- **资源库可用性是项目最重要的底线。** 库必须能打开、可写、关闭后再打开仍能用；Desktop 不提供只读资源库；损坏自动备份/抢救。任何资源库相关修改（`library-service`、schema/`MIGRATIONS`、打开/关闭/切库、损坏恢复、library Worker 协议）都必须完整跑完 `npm run test:library-availability`，不能只跑局部单测或用「测试范围从简」跳过。该套件也是 `verify:mainline` 的先跑门禁。
 - 浏览、缩略图解码、客户端查看、导入、搜索和删除是核心用户旅程。任何跨 Renderer / Preload / Main / Worker、自定义协议、CSP、媒体二进制或打包资源的修改，都必须重跑真实 Electron E2E。
 - 预览测试必须证明媒体被解码：图片检查 `complete && naturalWidth > 0`；视频至少检查元数据和非零尺寸。只断言 DOM、状态或 job 成功不算通过。
 - 持久化必须以“完整退出应用后重新启动”为测试边界；仅关闭窗口或复用同一 Worker 不算重启恢复。

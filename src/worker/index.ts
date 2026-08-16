@@ -989,17 +989,21 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       throw new Error('History group control was not dispatched through its write lease.');
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
-      scheduleThumbnailScene(library.libraryId, 'startup');
+      if (!library.readOnly) {
+        scheduleThumbnailScene(library.libraryId, 'startup');
+      }
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.open': {
       const library = libraryService.openLibrary(request.command.selectedLibraryPath);
-      scheduleThumbnailScene(library.libraryId, 'startup');
-      // Serpent-tumv (LIB-018): deliver the opened response first, then run the
-      // disk-heavy reconciliation (artifact sweep, trash purge, Assets rescan)
-      // in the background so large libraries become interactive without
-      // waiting for a full disk walk.
-      void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      if (!library.readOnly) {
+        scheduleThumbnailScene(library.libraryId, 'startup');
+        // Serpent-tumv (LIB-018): deliver the opened response first, then run the
+        // disk-heavy reconciliation (artifact sweep, trash purge, Assets rescan)
+        // in the background so large libraries become interactive without
+        // waiting for a full disk walk.
+        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      }
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.recovery-report':
@@ -1010,8 +1014,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     case 'library.open-eagle': {
       const library = await libraryService.openEagleLibrary(request.command);
-      scheduleThumbnailScene(library.libraryId, 'startup');
-      void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      if (!library.readOnly) {
+        scheduleThumbnailScene(library.libraryId, 'startup');
+        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      }
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.close':

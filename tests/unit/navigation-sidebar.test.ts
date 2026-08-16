@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -253,5 +255,16 @@ describe("NavigationSidebar virtual library root", () => {
     await act(async () => childFolderRow?.click());
     expect(onChooseCollection).toHaveBeenCalledWith(childCollectionId);
     expect(onChooseFolder).toHaveBeenCalledWith(childFolderId);
+  });
+
+  it("reserves separate grid columns for collection and asset counts", () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), "src/renderer/styles.css"),
+      "utf8",
+    );
+
+    expect(styles).toMatch(
+      /\.nav-row\s*\{[\s\S]*?grid-template-columns:\s*17px minmax\(0, 1fr\) auto auto;/,
+    );
   });
 });

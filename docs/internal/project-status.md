@@ -3,8 +3,10 @@
 > 更新时间：2026-08-16
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
+- **2026-08-16 `Serpent-e0dw`**：绘画资源库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
+
 - **2026-08-16 `Serpent-dw9a` / `Serpent-768x` / `Serpent-cljb` 收口中**：
-  `dw9a` 已实现主库损坏恢复梯度（主库→两份轮换备份→只读→Assets 抢救）、
+  `dw9a` 已实现主库损坏恢复梯度（主库→两份轮换备份→Assets 抢救，无只读档）、
   行级悬空 revision 可见/自动修复、内容指纹重定位；`768x` 已实现 Eagle
   外部库导入/打开二级菜单、同级 `(Serpent)` 转换库和资源库根目录虚拟节点；
   `cljb` 已改为视频原始播放优先，只有真实 codec/decode 失败才为该项按需生成或

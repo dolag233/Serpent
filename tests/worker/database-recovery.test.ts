@@ -86,7 +86,7 @@ describe('database damage recovery (Serpent-dw9a)', () => {
     const reopened = newService();
     const summary = reopened.openLibrary(library.libraryPath);
     expect(summary.recovery).toEqual({ mode: 'backup-1' });
-    expect(summary.readOnly).toBeUndefined();
+    expect(summary.readOnly).toBeFalsy();
     expect(readdirSync(path.join(library.libraryPath, '.serpent', 'corrupt-backup'))
       .some((name) => name.startsWith('library.db.primary-'))).toBe(true);
   });
@@ -107,10 +107,10 @@ describe('database damage recovery (Serpent-dw9a)', () => {
     expect(existsSync(databasePath(library.libraryPath))).toBe(true);
   });
 
-  it('falls back to read-only when both backups are unusable', async () => {
+  it('rebuilds from Assets when both backups are unusable', async () => {
     const service = newService();
     const library = service.createLibrary({
-      displayName: 'Read Only Recovery',
+      displayName: 'Rescue After Bad Backups',
       selectedParentPath: temporaryRoot(),
     });
     await service.createDatabaseBackup(library.libraryId);
@@ -131,11 +131,15 @@ describe('database damage recovery (Serpent-dw9a)', () => {
 
     const reopened = newService();
     const summary = reopened.openLibrary(library.libraryPath);
-    expect(summary.recovery).toEqual({ mode: 'read-only' });
-    expect(summary.readOnly).toBe(true);
+    expect(summary.recovery?.mode).toBe('rescue');
+    expect(summary.readOnly).toBeFalsy();
+    reopened.renameLibrary({
+      libraryId: summary.libraryId,
+      displayName: '抢救后可写',
+    });
   });
 
-  it('rebuilds a database from Assets when the primary and read-only path fail', async () => {
+  it('rebuilds a database from Assets when the primary and backups fail', async () => {
     const service = newService();
     const root = temporaryRoot();
     const library = service.createLibrary({

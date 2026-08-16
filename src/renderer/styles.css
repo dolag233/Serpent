@@ -1810,7 +1810,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   width: 100%;
   height: var(--shell-control-height);
   min-width: 0;
-  grid-template-columns: 17px minmax(0, 1fr) auto;
+  /* Collection rows can show both a child-collection count and an asset
+     count. Keep those badges in separate columns so the second badge never
+     creates an implicit grid row and changes the tree's line spacing. */
+  grid-template-columns: 17px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 7px;
   padding: 0 7px;
@@ -4657,6 +4660,31 @@ body.serpent-modal-open .app-shell {
   user-select: none;
   -webkit-user-drag: none;
   will-change: transform;
+}
+.preview-image-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 24px;
+  overflow: hidden;
+  background: var(--viewer-stage);
+  color: var(--tertiary);
+  text-align: center;
+}
+.preview-image-error .icon {
+  color: var(--tertiary);
+}
+.preview-image-error-name {
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .preview-image-full {
   visibility: hidden;
@@ -9129,6 +9157,8 @@ select.ai-config-input.ai-config-languages {
 .asset-card-media {
   position: absolute;
   inset: 0;
+  display: grid;
+  place-items: center;
   overflow: hidden;
   border-radius: inherit;
   pointer-events: none;

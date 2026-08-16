@@ -20,6 +20,8 @@ const safeDisplayName = nonBlankString.max(255).refine(
   { message: 'Display names must not contain filesystem paths.' },
 );
 
+// 'read-only' remains so older Worker events still parse. Desktop no longer
+// opens a user library in that mode; damage goes to backup then Assets rescue.
 const libraryRecoveryModeSchema = z.enum(['backup-1', 'backup-2', 'read-only', 'rescue']);
 const recoveryMetadataLossSchema = z.enum([
   'collections',
@@ -82,14 +84,14 @@ export const internalLibrarySummarySchema = z.strictObject({
   displayName: nonBlankString,
   libraryPath: nonBlankString,
   // Serpent-033e: the library was written by a newer Serpent build than the
-  // running one. It opens read-only (browse/search/preview work; writes fail
-  // with LIBRARY_READ_ONLY) so a schema bump never locks a user out.
+  // running one. Desktop still opens it writable (additive schema; extra
+  // columns/rows are ignored). libraryVersion/supportedSchemaVersion remain
+  // for diagnostics. Inspection-only handles may still set readOnly.
   readOnly: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
-  // Serpent-verg.5: read-only because the migration failed repeatedly
-  // (LIBRARY_MIGRATION_STUCK), not because the schema is newer. The banner
-  // distinguishes this from the newer-schema case.
+  // True when a migration failed repeatedly and this build skipped further
+  // retries, opening writable at the last good schema version instead.
   migrationStuck: z.boolean().optional(),
   /** Set when the open path recovered or rebuilt a damaged database. */
   recovery: internalLibraryRecoverySchema.optional(),
@@ -104,7 +106,8 @@ export const rendererLibrarySummarySchema = z.strictObject({
   readOnly: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
-  // Serpent-verg.5: read-only because the migration failed repeatedly.
+  // True when a migration failed repeatedly and this build skipped further
+  // retries, opening writable at the last good schema version instead.
   migrationStuck: z.boolean().optional(),
   /** Set when the open path recovered or rebuilt a damaged database. */
   recovery: rendererLibraryRecoverySchema.optional(),

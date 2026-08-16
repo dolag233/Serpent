@@ -151,6 +151,7 @@ export const ZoomableImage = forwardRef<
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
   const [fullDecoded, setFullDecoded] = useState(false);
+  const [imageError, setImageError] = useState(false);
   const [middleState, setMiddleState] = useState<{
     source: string;
     url: string | null;
@@ -213,7 +214,17 @@ export const ZoomableImage = forwardRef<
   // (Serpent-esuj).
   useEffect(() => {
     setFullDecoded(false);
-  }, [src]);
+    setImageError(false);
+  }, [placeholderSrc, src]);
+
+  const handleImageError = useCallback(() => {
+    // Do not leave Chromium's native broken-image glyph and alt text on the
+    // canvas. The viewer owns a consistent, theme-aware failure surface.
+    setImageError(true);
+    setFullDecoded(false);
+    setSourceNatural({ w: 0, h: 0 });
+    sourceNaturalRef.current = { w: 0, h: 0 };
+  }, []);
 
   const display = resolveViewerImageDisplay({
     placeholderUrl: placeholderSrc ?? null,
@@ -343,7 +354,16 @@ export const ZoomableImage = forwardRef<
         ref={viewportRef}
         {...viewportPointerHandlers}
       >
-        {hasFullUpgrade ? (
+        {imageError ? (
+          <div
+            aria-label={alt}
+            className="preview-image-error"
+            role="img"
+          >
+            <Icon name="broken-file" size={42} />
+            <span className="preview-image-error-name">{alt}</span>
+          </div>
+        ) : hasFullUpgrade ? (
           <>
             <img
               alt={middleSrc || fullDecoded ? "" : alt}
@@ -351,7 +371,11 @@ export const ZoomableImage = forwardRef<
               className={`preview-image preview-image-placeholder${middleSrc || fullDecoded ? " is-hidden" : ""}`}
               data-pbr-channel={pbrChannel?.channel}
               draggable={false}
-              onLoad={(event) => measureFromImage(event.currentTarget)}
+              onError={handleImageError}
+              onLoad={(event) => {
+                setImageError(false);
+                measureFromImage(event.currentTarget);
+              }}
               ref={middleSrc || fullDecoded ? undefined : imageRef}
               src={placeholderSrc}
               style={{
@@ -369,7 +393,11 @@ export const ZoomableImage = forwardRef<
                 className={`preview-image preview-image-middle${fullDecoded ? " is-hidden" : " is-visible"}`}
                 data-pbr-channel={pbrChannel?.channel}
                 draggable={false}
-                onLoad={(event) => measureFromImage(event.currentTarget)}
+                onError={handleImageError}
+                onLoad={(event) => {
+                  setImageError(false);
+                  measureFromImage(event.currentTarget);
+                }}
                 ref={fullDecoded ? undefined : imageRef}
                 src={middleSrc}
                 style={{
@@ -387,7 +415,9 @@ export const ZoomableImage = forwardRef<
               className={`preview-image preview-image-full${fullDecoded ? " is-visible" : " is-hidden"}`}
               data-pbr-channel={pbrChannel?.channel}
               draggable={false}
+              onError={handleImageError}
               onLoad={(event) => {
+                setImageError(false);
                 measureFromImage(event.currentTarget);
                 if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
               }}
@@ -408,7 +438,9 @@ export const ZoomableImage = forwardRef<
             className="preview-image"
             data-pbr-channel={pbrChannel?.channel}
             draggable={false}
+            onError={handleImageError}
             onLoad={(event) => {
+              setImageError(false);
               measureFromImage(event.currentTarget);
               if (isDecodedImage(event.currentTarget)) setFullDecoded(true);
             }}

@@ -3366,13 +3366,15 @@ function AppInner() {
       }
       // Opening an external library first gives us a validated replacement;
       // close the old handle immediately before switching the renderer over.
-      // If that close fails, roll back the newly opened handle so two
-      // libraries cannot remain open behind the user's back.
+      // A successful open of the replacement must never be rolled back because
+      // the previous library would not close — that imprisoned users in a
+      // read-only library (Serpent-e0dw). Keep the new library even if close
+      // of the previous handle fails.
       if (previousLibraryId && previousLibraryId !== result.value.libraryId) {
-        const closed = await libraryApi.close({ libraryId: previousLibraryId });
-        if (!closed.ok) {
-          await libraryApi.close({ libraryId: result.value.libraryId });
-          throw new LibraryOperationError(closed.error);
+        try {
+          await libraryApi.close({ libraryId: previousLibraryId });
+        } catch {
+          // Switching away must succeed even if the previous handle cannot close.
         }
       }
       // Opening/creating can replace the entire browse scope while a
@@ -8529,27 +8531,15 @@ function AppInner() {
           <WindowsWindowControls shell={shellApi} />
         ) : null}
       </header>
-      {library?.recovery || library?.readOnly ? (
+      {library?.recovery ? (
         <div className="library-readonly-banner" role="status">
           <Icon name="info" size={14} />
           <span>
-            {library.recovery?.mode === "backup-1"
+            {library.recovery.mode === "backup-1"
               ? t("library.recoveryBackup1")
-              : library.recovery?.mode === "backup-2"
+              : library.recovery.mode === "backup-2"
                 ? t("library.recoveryBackup2")
-                : library.recovery?.mode === "read-only"
-                  ? t("library.recoveryReadonly")
-                  : library.recovery?.mode === "rescue"
-                    ? t("library.recoveryRescue")
-                    : library.migrationStuck
-              ? t("library.readOnlyBannerMigrationStuck")
-                  : library.libraryVersion !== undefined &&
-                      library.supportedSchemaVersion !== undefined
-                ? t("library.readOnlyBannerVersioned", {
-                    libraryVersion: library.libraryVersion,
-                    supportedVersion: library.supportedSchemaVersion,
-                  })
-                : t("library.readOnlyBanner")}
+                : t("library.recoveryRescue")}
           </span>
           {library.recovery?.mode === "rescue" &&
           library.recovery.recoveredAssetCount !== undefined ? (

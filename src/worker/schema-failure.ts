@@ -6,7 +6,7 @@
  * spin the open path on a library that can never migrate. This module keeps
  * a `.serpent/migration-failed.json` record per library: the open path reads
  * it before migrating, retries with a 3-attempt cap, and after the cap opens
- * the library in read-only degrade mode (lenient read) instead of throwing.
+ * the library writable at the last good schema version instead of throwing.
  *
  * verifyMigrationHistory failures (checksum mismatch = damaged history) are
  * NOT recorded here: they stay LIBRARY_CORRUPT and are never retried.

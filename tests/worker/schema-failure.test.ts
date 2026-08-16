@@ -1,8 +1,9 @@
 // Serpent-verg.5 — migration failure diagnosis and retry (0031 §2.2):
 // a rolled-back migration failure is recorded to .serpent/migration-failed.json,
 // retried on the next open, capped at MAX_MIGRATION_ATTEMPTS, and then the
-// library opens read-only (lenient read) instead of failing forever.
-// verifyMigrationHistory failures stay LIBRARY_CORRUPT and are never recorded.
+// library opens writable at the last good schema version instead of failing
+// forever. verifyMigrationHistory failures stay LIBRARY_CORRUPT and go through
+// backup/rescue; they are never recorded as retryable migration failures.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -110,7 +111,7 @@ describe('migration failure record (unit)', () => {
 });
 
 describe('migration failure integration (Serpent-verg.5)', () => {
-  it('records the failure on open and retries up to the cap, then opens read-only', () => {
+  it('records the failure on open and retries up to the cap, then opens writable', () => {
     const root = temporaryRoot();
     const libraryPath = buildV23Library(root);
 
@@ -127,15 +128,17 @@ describe('migration failure integration (Serpent-verg.5)', () => {
       expect(readMigrationFailure(libraryPath)?.fromVersion).toBe(23);
     }
 
-    // Fourth open: no more retries — the library opens read-only (lenient
-    // read) instead of throwing, and the summary carries the stuck marker so
-    // the renderer banner can distinguish it from a newer-schema library.
+    // Fourth open: no more retries — the library stays writable at the last
+    // good version instead of throwing or becoming read-only.
     const stuck = new LibraryService();
     const summary = stuck.openLibrary(libraryPath);
-    expect(summary.readOnly).toBe(true);
+    expect(summary.readOnly).toBeFalsy();
     expect(summary.migrationStuck).toBe(true);
-    const browse = stuck.listAssets({ libraryId: summary.libraryId, recursive: true });
-    expect(browse).toEqual([]);
+    expect(stuck.listAssets({ libraryId: summary.libraryId, recursive: true })).toEqual([]);
+    stuck.renameLibrary({
+      libraryId: summary.libraryId,
+      displayName: '粘滞后仍可写',
+    });
     stuck.closeAll();
   });
 
@@ -154,7 +157,7 @@ describe('migration failure integration (Serpent-verg.5)', () => {
       failing.closeAll();
     }
     const latched = new LibraryService();
-    expect(latched.openLibrary(libraryPath).readOnly).toBe(true);
+    expect(latched.openLibrary(libraryPath).readOnly).toBeFalsy();
     latched.closeAll();
 
     // A newer build (supported schema bumped) must not honour the old
@@ -192,7 +195,7 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     retry.closeAll();
   });
 
-  it('opens verifyMigrationHistory damage read-only without recording a retry latch', () => {
+  it('rescues verifyMigrationHistory damage without recording a retry latch', () => {
     const root = temporaryRoot();
     const libraryPath = buildV23Library(root);
     // Corrupt the checksum history so the pre-migration verification fails.
@@ -202,7 +205,13 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     db.close();
 
     const service = new LibraryService();
-    expect(service.openLibrary(libraryPath).recovery).toMatchObject({ mode: 'read-only' });
+    const recovered = service.openLibrary(libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(recovered.readOnly).toBeFalsy();
+    service.renameLibrary({
+      libraryId: recovered.libraryId,
+      displayName: '损坏后抢救可写',
+    });
     service.closeAll();
     expect(existsSync(migrationFailurePath(libraryPath))).toBe(false);
   });

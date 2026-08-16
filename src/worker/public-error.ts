@@ -7,7 +7,7 @@ import { LibraryServiceError } from './library-service';
 import { LibraryWriteCoordinatorError } from './library-write-coordinator';
 import { HistoryTransitionError } from './operation-history';
 
-/** Serpent-033e: any write against a read-only (newer-schema) library. */
+/** Serpent-033e: SQLite rejected a write because the file or connection is read-only. */
 function isSqliteReadonlyFailure(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -35,9 +35,9 @@ function isSqliteStructureFailure(error: unknown): boolean {
 
 export function publicErrorForWorkerFailure(error: unknown): PublicError {
   if (isSqliteReadonlyFailure(error)) {
-    // A newer build wrote this library; the SQLite-level read-only connection
-    // rejects the write. Surface the actionable code instead of an opaque
-    // INTERNAL_ERROR so the renderer can show the upgrade banner.
+    // The SQLite file or connection itself is read-only (OS attribute,
+    // inspection handle, or a probe connection). Desktop never opens a
+    // user library this way.
     return createPublicError('LIBRARY_READ_ONLY');
   }
   if (isSqliteStructureFailure(error)) {

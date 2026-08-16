@@ -812,7 +812,7 @@ function isAlwaysIgnoredAssetPath(relativePath: string): boolean {
 }
 
 /**
- * Rescue happens only after the normal database and read-only paths failed,
+ * Rescue happens only after the normal database and verified backups failed,
  * so counting the physical source files here is both useful for the report
  * and outside the large-library open/import hot path. Symlinks and Serpent's
  * filesystem noise are excluded to match the managed-source reconciler.
@@ -2580,6 +2580,9 @@ export const MIGRATIONS = [
   // the sync work landed; the sync migration therefore takes v38 to keep every
   // existing v37 library (whose schema_migrations row carries the suppression
   // checksum) openable without touching its history. See Serpent-dw9a.
+  // Libraries opened by the sync-first fork recorded the opposite assignment
+  // (v37=SYNC, v38=AUTO). migrateForkedSyncAutoAnalysisMigrationHistory
+  // rewrites only schema_migrations for that exact history.
   {
     version: 37,
     sql: AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL,
@@ -3994,10 +3997,10 @@ export function openConfiguredDatabase(
   if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0 || busyTimeoutMs > 60_000) {
     throw new Error('SQLite busy timeout must be an integer between 0 and 60000 milliseconds.');
   }
-  // Serpent-033e: read-only degrade (library written by a newer build). SQLite
-  // enforces the read-only guarantee at the connection level, so every write
-  // attempt fails with SQLITE_READONLY — no command needs an explicit gate.
-  // journal_mode/synchronous are write PRAGMAs and must be skipped here.
+  // Serpent-033e: schemaVersionProbe and backup validation open a SQLite
+  // read-only connection so those checks cannot mutate the file. Desktop
+  // never uses this flag for a user-facing library handle. journal_mode /
+  // synchronous are write PRAGMAs and must be skipped here.
   const connection = options.readonly
     ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
     : new Database(filename, options.trace ? { verbose: options.trace } : {});
@@ -4088,7 +4091,7 @@ function verifyMigrationHistory(connection: DatabaseConnection, version: number)
   } catch (error) {
     // A missing history table is structural database damage, not a transient
     // migration failure. Preserve the corruption classification so the open
-    // recovery ladder can try verified backups before read-only/rescue.
+    // recovery ladder can try verified backups before Assets rescue.
     if (error instanceof LibraryServiceError) throw error;
     throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
   }
@@ -4113,6 +4116,7 @@ function hasLegacyPluginMigrationHistory(
   version: number,
 ): boolean {
   if (version !== 28) return false;
+  if (!hasSchemaObject(connection, 'schema_migrations')) return false;
   const history = connection
     .prepare('SELECT version, checksum FROM schema_migrations WHERE version >= 24 ORDER BY version')
     .all() as MigrationRow[];
@@ -4189,6 +4193,96 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
     insert.run(migration.version, migration.checksum, new Date().toISOString());
   }
   connection.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
+}
+
+function hasCanonicalMigrationHistoryThrough(
+  connection: DatabaseConnection,
+  throughVersion: number,
+): boolean {
+  if (!hasSchemaObject(connection, 'schema_migrations')) return false;
+  const migrations = connection
+    .prepare(
+      'SELECT version, checksum FROM schema_migrations WHERE version <= ? ORDER BY version',
+    )
+    .all(throughVersion) as MigrationRow[];
+  const expected = MIGRATIONS.slice(0, throughVersion);
+  return (
+    migrations.length === expected.length &&
+    expected.every(
+      (migration, index) =>
+        migrations[index]?.version === migration.version &&
+        migrations[index]?.checksum === migration.checksum,
+    )
+  );
+}
+
+/**
+ * The WebDAV sync line registered SYNC_SCHEMA as v37 before the merge that
+ * assigned AUTO_ANALYSIS_SUPPRESSION to v37 and SYNC to v38. Real libraries
+ * opened on that fork (e.g. 绘画资源库) contain both physical schemas but
+ * carry swapped checksums. Recognize only that exact history so a healthy
+ * database is not sent down the damage-recovery ladder as LIBRARY_CORRUPT.
+ */
+function hasForkedSyncAutoAnalysisMigrationHistory(
+  connection: DatabaseConnection,
+  version: number,
+): boolean {
+  if (version !== 37 && version !== 38) return false;
+  if (!hasSchemaObject(connection, 'schema_migrations')) return false;
+  if (!hasCanonicalMigrationHistoryThrough(connection, 36)) return false;
+  if (!columnsFor(connection, 'assets').has('sync_id')) return false;
+  if (!hasSchemaObject(connection, 'sync_manifest_cache')) return false;
+
+  const v37 = connection
+    .prepare('SELECT checksum FROM schema_migrations WHERE version = 37')
+    .get() as { checksum: string } | undefined;
+  if (v37?.checksum !== SYNC_SCHEMA_CHECKSUM) return false;
+
+  const v38 = connection
+    .prepare('SELECT checksum FROM schema_migrations WHERE version = 38')
+    .get() as { checksum: string } | undefined;
+
+  if (version === 37) return v38 === undefined;
+
+  return (
+    v38?.checksum === AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM &&
+    hasSchemaObject(connection, 'asset_auto_analysis_suppression')
+  );
+}
+
+/**
+ * Canonicalize the sync-first v37/v38 fork without changing tables. Both
+ * schemas are additive; once the objects exist, only schema_migrations (and
+ * user_version when the fork stopped at v37) needs rewriting. The caller
+ * already owns the v23+ migration transaction.
+ */
+function migrateForkedSyncAutoAnalysisMigrationHistory(
+  connection: DatabaseConnection,
+): void {
+  if (!hasSchemaObject(connection, 'asset_auto_analysis_suppression')) {
+    connection.exec(AUTO_ANALYSIS_SUPPRESSION_SCHEMA_SQL);
+  }
+  ensureSyncSchema(connection);
+  connection
+    .prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 37')
+    .run(AUTO_ANALYSIS_SUPPRESSION_SCHEMA_CHECKSUM);
+  const hasV38 = connection
+    .prepare('SELECT 1 AS present FROM schema_migrations WHERE version = 38 LIMIT 1')
+    .get() !== undefined;
+  if (hasV38) {
+    connection
+      .prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 38')
+      .run(SYNC_SCHEMA_CHECKSUM);
+  } else {
+    connection
+      .prepare(
+        'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+      )
+      .run(38, SYNC_SCHEMA_CHECKSUM, new Date().toISOString());
+  }
+  if (schemaVersion(connection) < 38) {
+    connection.pragma('user_version = 38');
+  }
 }
 
 /**
@@ -4692,12 +4786,11 @@ function buildContextualSearchRank(groups: SearchGroup[]): {
  * needs cross-process protection now.
  */
 /**
- * Serpent-033e: the library was written by a newer build than the running one.
- * openLibrary degrades to read-only instead of refusing to open; other call
- * sites (create/import validation) treat it as LIBRARY_VERSION_TOO_NEW.
+ * Serpent-033e: migrateDatabase refuses to rewrite a newer schema. Desktop
+ * still opens that library writable; create/import validation treats the
+ * same signal as LIBRARY_VERSION_TOO_NEW.
  */
 export interface SchemaTooNewSignal {
-  readonly readOnly: true;
   readonly libraryVersion: number;
 }
 
@@ -4711,7 +4804,7 @@ function migrateDatabase(
 ): SchemaTooNewSignal | null {
   const versionBeforeMigration = schemaVersion(connection);
   if (versionBeforeMigration > SUPPORTED_SCHEMA_VERSION) {
-    return { readOnly: true, libraryVersion: versionBeforeMigration };
+    return { libraryVersion: versionBeforeMigration };
   }
   if (versionBeforeMigration >= 23 && versionBeforeMigration <= SUPPORTED_SCHEMA_VERSION) {
     options?.beforeSchemaMigrationTransaction?.();
@@ -4734,7 +4827,7 @@ function migrateDatabase(
 }
 
 function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh: boolean): void {
-  const currentVersion = schemaVersion(connection);
+  let currentVersion = schemaVersion(connection);
   if (hasLegacyPluginMigrationHistory(connection, currentVersion)) {
     migrateLegacyPluginMigrationHistory(connection);
     verifyMigrationHistory(connection, SUPPORTED_SCHEMA_VERSION);
@@ -4742,6 +4835,10 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
     // column cache must be rebuilt from the new structure.
     invalidateColumnProbe(connection);
     return;
+  }
+  if (hasForkedSyncAutoAnalysisMigrationHistory(connection, currentVersion)) {
+    migrateForkedSyncAutoAnalysisMigrationHistory(connection);
+    currentVersion = schemaVersion(connection);
   }
   if (currentVersion > SUPPORTED_SCHEMA_VERSION) {
     throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
@@ -4838,15 +4935,7 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
   invalidateColumnProbe(connection);
 }
 
-function verifyDatabase(connection: DatabaseConnection): LibraryRow {
-  const version = schemaVersion(connection);
-  if (version > SUPPORTED_SCHEMA_VERSION) {
-    throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
-  }
-  if (version !== SUPPORTED_SCHEMA_VERSION) {
-    throw new LibraryServiceError('LIBRARY_CORRUPT');
-  }
-
+function readLibraryIdentity(connection: DatabaseConnection): LibraryRow {
   const check = connection.pragma('quick_check(1)');
   if (
     !Array.isArray(check) ||
@@ -4858,8 +4947,6 @@ function verifyDatabase(connection: DatabaseConnection): LibraryRow {
   ) {
     throw new LibraryServiceError('LIBRARY_CORRUPT');
   }
-
-  verifyMigrationHistory(connection, version);
 
   const libraryRows = connection
     .prepare('SELECT library_id, display_name FROM library ORDER BY library_id LIMIT 2')
@@ -4877,6 +4964,42 @@ function verifyDatabase(connection: DatabaseConnection): LibraryRow {
   }
 
   return library;
+}
+
+function verifyDatabase(connection: DatabaseConnection): LibraryRow {
+  const version = schemaVersion(connection);
+  if (version > SUPPORTED_SCHEMA_VERSION) {
+    throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
+  }
+  if (version !== SUPPORTED_SCHEMA_VERSION) {
+    throw new LibraryServiceError('LIBRARY_CORRUPT');
+  }
+  verifyMigrationHistory(connection, version);
+  return readLibraryIdentity(connection);
+}
+
+/**
+ * Open a library that we cannot (or should not) migrate right now, but that
+ * is still physically usable. Newer-than-supported schemas keep the canonical
+ * prefix and extra additive rows; a stuck migration keeps the last rolled-back
+ * version. Both stay writable — Serpent does not offer a read-only library.
+ */
+function verifyOpenableSchema(connection: DatabaseConnection): LibraryRow {
+  const version = schemaVersion(connection);
+  if (version <= 0) throw new LibraryServiceError('LIBRARY_CORRUPT');
+  if (version > SUPPORTED_SCHEMA_VERSION) {
+    try {
+      if (!hasCanonicalMigrationHistoryThrough(connection, SUPPORTED_SCHEMA_VERSION)) {
+        throw new LibraryServiceError('LIBRARY_CORRUPT');
+      }
+    } catch (error) {
+      if (error instanceof LibraryServiceError) throw error;
+      throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
+    }
+  } else {
+    verifyMigrationHistory(connection, version);
+  }
+  return readLibraryIdentity(connection);
 }
 
 function closeIgnoringFailure(connection: DatabaseConnection | undefined): void {
@@ -6677,10 +6800,11 @@ export class LibraryService {
   }
 
   /**
-   * Reject mutations before they can touch the filesystem. A newer schema is
-   * opened through a SQLite read-only connection, but file operations happen
-   * before their metadata transaction; relying on SQLite to reject the later
-   * write could leave disk and DB inconsistent.
+   * Reject mutations before they can touch the filesystem. Inspection-only
+   * handles (openLibraryReadOnly) still set readOnly; Desktop open paths
+   * never do. File operations happen before their metadata transaction, so
+   * relying on SQLite to reject the later write could leave disk and DB
+   * inconsistent.
    */
   private assertLibraryWritable(openLibrary: OpenLibrary): void {
     if (openLibrary.readOnly) throw new LibraryServiceError('LIBRARY_READ_ONLY');
@@ -15708,6 +15832,9 @@ export class LibraryService {
     jobIds?: string[],
   ): { cancelledCount: number } {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // ADR-0028: a SQLite-readonly handle cannot accept job-status writes.
+    // Closing or switching away from a read-only library must still succeed.
+    if (openLibrary.readOnly) return { cancelledCount: 0 };
     const result = this.#updateJobStatus(
       openLibrary.connection,
       openLibrary.summary.libraryId,
@@ -20562,7 +20689,7 @@ export class LibraryService {
    */
   async runOpenBackgroundReconciliation(libraryId: string): Promise<void> {
     const openLibrary = this.openById.get(libraryId);
-    if (!openLibrary) return;
+    if (!openLibrary || openLibrary.readOnly) return;
     const yieldTurn = () =>
       new Promise<void>((resolve) => setTimeout(resolve, 0));
     try {
@@ -31572,9 +31699,6 @@ export class LibraryService {
         }
       }
 
-      const readOnly = this.openDamagedLibraryReadOnly(canonicalPath);
-      if (readOnly) return readOnly;
-
       try {
         const rescue = this.rescueLibraryFromAssets(canonicalPath, primaryFailure);
         const summary = this.openLibraryPrimary(canonicalPath);
@@ -31701,66 +31825,6 @@ export class LibraryService {
     }
   }
 
-  private openDamagedLibraryReadOnly(
-    libraryPath: string,
-  ): InternalLibrarySummary | undefined {
-    const filename = databasePath(libraryPath);
-    if (!realFileExists(filename)) return undefined;
-    let connection: DatabaseConnection | undefined;
-    try {
-      connection = openConfiguredDatabase(
-        filename,
-        this.options.sqliteBusyTimeoutMsForTests,
-        { readonly: true },
-      );
-      const row = connection
-        .prepare('SELECT library_id, display_name FROM library LIMIT 1')
-        .get() as LibraryRow | undefined;
-      if (!row || !row.library_id || !row.display_name) {
-        closeIgnoringFailure(connection);
-        connection = undefined;
-        return undefined;
-      }
-      if (this.openById.has(row.library_id)) {
-        closeIgnoringFailure(connection);
-        connection = undefined;
-        return undefined;
-      }
-      const version = schemaVersion(connection);
-      const summary: InternalLibrarySummary = {
-        libraryId: row.library_id,
-        displayName: row.display_name,
-        libraryPath,
-        readOnly: true,
-        ...(Number.isSafeInteger(version) && version > 0
-          ? { libraryVersion: version }
-          : {}),
-        supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
-        recovery: { mode: 'read-only' },
-      };
-      const openLibrary: OpenLibrary = {
-        connection,
-        summary,
-        readOnly: true,
-        changeSubscription: { lastSequence: 0, stop: () => {} },
-        preservedRelinkPathIdentities: new Set(),
-        gitignoreText: '',
-      };
-      this.openById.set(summary.libraryId, openLibrary);
-      this.openIdByPath.set(libraryPath, summary.libraryId);
-      connection = undefined;
-      this.diagnose('library.recovery.read-only', new Error(
-        'Opened a damaged library in read-only mode.',
-      ), { libraryPath });
-      return summary;
-    } catch (error) {
-      this.diagnose('library.recovery.read-only-failed', error, { libraryPath });
-      return undefined;
-    } finally {
-      closeIgnoringFailure(connection);
-    }
-  }
-
   private rescueLibraryFromAssets(
     libraryPath: string,
     primaryFailure: unknown,
@@ -31872,6 +31936,99 @@ export class LibraryService {
     return latest.candidate;
   }
 
+  /**
+   * Register a writable open handle. Desktop never offers a read-only library:
+   * too-new schemas stay writable, stuck migrations stay writable at the last
+   * good version, and physical damage goes through backup/rescue instead.
+   */
+  private adoptWritableOpenLibrary(input: {
+    connection: DatabaseConnection;
+    library: LibraryRow;
+    canonicalPath: string;
+    serpentPath: string;
+    libraryVersion?: number;
+    supportedSchemaVersion?: number;
+    migrationStuck?: boolean;
+    startServices: boolean;
+  }): InternalLibrarySummary {
+    try {
+      for (const directoryName of REGENERABLE_DIRECTORIES) {
+        mkdirSync(path.join(input.serpentPath, directoryName), { recursive: true });
+      }
+    } catch (error) {
+      throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
+    }
+    if (this.openById.get(input.library.library_id)) {
+      closeIgnoringFailure(input.connection);
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+
+    const summary: InternalLibrarySummary = {
+      libraryId: input.library.library_id,
+      displayName: input.library.display_name,
+      libraryPath: input.canonicalPath,
+      readOnly: false,
+      ...(input.libraryVersion === undefined ? {} : { libraryVersion: input.libraryVersion }),
+      ...(input.supportedSchemaVersion === undefined
+        ? {}
+        : { supportedSchemaVersion: input.supportedSchemaVersion }),
+      ...(input.migrationStuck ? { migrationStuck: true } : {}),
+    };
+    const changeSubscription = input.startServices
+      ? new LibraryWriteCoordinator(input.connection, summary.libraryId)
+        .subscribeToChangeSequence({
+          onChange: (changeSequence) => {
+            this.invalidateArtifactPathCache(summary.libraryId);
+            this.options.onLibraryChanged?.({
+              type: 'library.changed',
+              libraryId: summary.libraryId,
+              changeSequence,
+            });
+          },
+        })
+      : { lastSequence: 0, stop: () => {} };
+    const openLibrary: OpenLibrary = {
+      connection: input.connection,
+      summary,
+      readOnly: false,
+      changeSubscription,
+      preservedRelinkPathIdentities: new Set(),
+      gitignoreText: input.startServices ? '\u0000' : '',
+    };
+    this.openById.set(summary.libraryId, openLibrary);
+    this.openIdByPath.set(input.canonicalPath, summary.libraryId);
+    if (!input.startServices) return summary;
+
+    this.armDatabaseBackupTimer(openLibrary);
+    this.reconcileLinkedFolderStatuses(openLibrary);
+    this.recoverFileOperations(openLibrary);
+    this.recoverOperationHistoryTransitions(openLibrary);
+    this.recoverInterruptedAiJobs(openLibrary);
+    this.recoverInterruptedThumbnailJobs(openLibrary);
+    interruptUnfinishedPluginJobs(
+      openLibrary.connection,
+      openLibrary.summary.libraryId,
+      this.applicationSessionId,
+    );
+    this.reconcileDefaultIgnoredAssets(openLibrary);
+    this.startAssetWatcher(openLibrary);
+    this.reconcileLinkedWatchers(openLibrary);
+    // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
+    // steps moved out of the synchronous open path and run in the background
+    // (runOpenBackgroundReconciliation). Opening a large library used to
+    // block on a full artifact-file lstat sweep + expired-trash purge + a
+    // whole Assets-directory rescan before the first frame rendered.
+    this.enqueueThumbnailJobs(summary.libraryId, {
+      limit: 50,
+      priority: 100,
+      repairFailed: true,
+      // Serpent-5xbg: failed artifacts from a previous session (transient
+      // decode errors, killed processes) are retried on the next open.
+      retryFailed: true,
+    });
+    return summary;
+  }
+
   private openLibraryPrimary(selectedLibraryPath: string): InternalLibrarySummary {
     let selectedPath: string;
     try {
@@ -31905,21 +32062,18 @@ export class LibraryService {
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
     try {
-      // Serpent-033e: a library written by a newer build still opens — in
-      // read-only mode (browse/search/preview work; every write fails with
-      // LIBRARY_READ_ONLY at the SQLite level). Schema bumps must never lock
-      // a user out of their library.
-      // Serpent-verg.5 (0031 §2.2): a migration that failed MAX attempts
-      // against the same from-version stops retrying and opens read-only
-      // too (lenient read) instead of failing forever.
+      // Too-new schemas and stuck migrations stay writable. Schema bumps must
+      // never lock a user out; a failed migration must not turn the library
+      // into a read-only trap. Physical damage is repaired by the open ladder
+      // (backup, then Assets rescue) instead of a read-only connection.
       const probedVersion = schemaVersionProbe(databasePath(canonicalPath));
       const migrationFailure = probedVersion === null
         ? null
         : readMigrationFailure(canonicalPath);
-      // Serpent-verg.5 review fix: the stuck latch only holds while the
-      // failure was recorded by this build's supported schema version. After
-      // an upgrade the migration is retried, so a newer build can recover a
-      // library the old build could not migrate (0031 §2.2 失败可恢复).
+      // The stuck latch only holds while the failure was recorded by this
+      // build's supported schema version. After an upgrade the migration is
+      // retried, so a newer build can recover a library the old build could
+      // not migrate (0031 §2.2 失败可恢复).
       const migrationStuck = probedVersion !== null &&
         migrationFailure !== null &&
         migrationFailure.fromVersion === probedVersion &&
@@ -31938,45 +32092,21 @@ export class LibraryService {
         connection = openConfiguredDatabase(
           databasePath(canonicalPath),
           this.options.sqliteBusyTimeoutMsForTests,
-          {
-            readonly: true,
-            ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
-          },
+          this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
         );
-        const libraryRow = connection
-          .prepare('SELECT library_id, display_name FROM library LIMIT 1')
-          .get() as { library_id: string; display_name: string } | undefined;
-        if (!libraryRow) {
-          closeIgnoringFailure(connection);
-          throw new LibraryServiceError('LIBRARY_CORRUPT');
-        }
-        const existingIdentity = this.openById.get(libraryRow.library_id);
-        if (existingIdentity) {
-          closeIgnoringFailure(connection);
-          throw new LibraryServiceError('LIBRARY_CORRUPT');
-        }
-        const summary: InternalLibrarySummary = {
-          libraryId: libraryRow.library_id,
-          displayName: libraryRow.display_name,
-          libraryPath: canonicalPath,
-          readOnly: true,
+        const library = verifyOpenableSchema(connection);
+        return this.adoptWritableOpenLibrary({
+          connection,
+          library,
+          canonicalPath,
+          serpentPath,
           libraryVersion: probedVersion,
           supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
-          // Serpent-verg.5: true when read-only is caused by a stuck
-          // migration rather than a newer schema.
-          migrationStuck: migrationStuck || undefined,
-        };
-        const openLibrary: OpenLibrary = {
-          connection,
-          summary,
-          readOnly: true,
-          changeSubscription: { lastSequence: 0, stop: () => {} },
-          preservedRelinkPathIdentities: new Set(),
-          gitignoreText: '',
-        };
-        this.openById.set(summary.libraryId, openLibrary);
-        this.openIdByPath.set(canonicalPath, summary.libraryId);
-        return summary;
+          migrationStuck,
+          // A stuck library is still on an older schema; skip current-schema
+          // watchers/jobs. A newer schema already contains today's tables.
+          startServices: !migrationStuck,
+        });
       }
       connection = openConfiguredDatabase(
         databasePath(canonicalPath),
@@ -31985,83 +32115,24 @@ export class LibraryService {
       );
       migrationAttempted = true;
       migrateDatabase(connection, false, this.options);
-      // Serpent-verg.5: a successful migration clears the failure record so
-      // the retry counter never leaks into later sessions.
+      // A successful migration clears the failure record so the retry
+      // counter never leaks into later sessions.
       clearMigrationFailure(canonicalPath);
       backfillTrashedFromTombstoneIds(connection);
       const library = verifyDatabase(connection);
-      try {
-        for (const directoryName of REGENERABLE_DIRECTORIES) {
-          mkdirSync(path.join(serpentPath, directoryName), { recursive: true });
-        }
-      } catch (error) {
-        throw new LibraryServiceError('LIBRARY_NOT_WRITABLE', { cause: error });
-      }
-      const existingIdentity = this.openById.get(library.library_id);
-      if (existingIdentity) {
-        closeIgnoringFailure(connection);
-        throw new LibraryServiceError('LIBRARY_CORRUPT');
-      }
-
-      const summary: InternalLibrarySummary = {
-        libraryId: library.library_id,
-        displayName: library.display_name,
-        libraryPath: canonicalPath,
-      };
-      const openLibrary: OpenLibrary = {
+      return this.adoptWritableOpenLibrary({
         connection,
-        summary,
-        readOnly: false,
-          changeSubscription: new LibraryWriteCoordinator(connection, summary.libraryId)
-          .subscribeToChangeSequence({
-            onChange: (changeSequence) => {
-              this.invalidateArtifactPathCache(summary.libraryId);
-              this.options.onLibraryChanged?.({
-                type: 'library.changed',
-                libraryId: summary.libraryId,
-                changeSequence,
-              });
-            },
-          }),
-        preservedRelinkPathIdentities: new Set(),
-        gitignoreText: '\u0000',
-      };
-      this.openById.set(summary.libraryId, openLibrary);
-      this.openIdByPath.set(canonicalPath, summary.libraryId);
-      this.armDatabaseBackupTimer(openLibrary);
-      this.reconcileLinkedFolderStatuses(openLibrary);
-      this.recoverFileOperations(openLibrary);
-      this.recoverOperationHistoryTransitions(openLibrary);
-      this.recoverInterruptedAiJobs(openLibrary);
-      this.recoverInterruptedThumbnailJobs(openLibrary);
-      interruptUnfinishedPluginJobs(
-        openLibrary.connection,
-        openLibrary.summary.libraryId,
-        this.applicationSessionId,
-      );
-      this.reconcileDefaultIgnoredAssets(openLibrary);
-      this.startAssetWatcher(openLibrary);
-      this.reconcileLinkedWatchers(openLibrary);
-      // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
-      // steps moved out of the synchronous open path and run in the background
-      // (runOpenBackgroundReconciliation). Opening a large library used to
-      // block on a full artifact-file lstat sweep + expired-trash purge + a
-      // whole Assets-directory rescan before the first frame rendered.
-      this.enqueueThumbnailJobs(summary.libraryId, {
-        limit: 50,
-        priority: 100,
-        repairFailed: true,
-        // Serpent-5xbg: failed artifacts from a previous session (transient
-        // decode errors, killed processes) are retried on the next open.
-        retryFailed: true,
+        library,
+        canonicalPath,
+        serpentPath,
+        startServices: true,
       });
-      return summary;
     } catch (error) {
-      // Serpent-verg.5 (0031 §2.2): a rolled-back migration failure is
-      // recorded so the next open retries (up to MAX_MIGRATION_ATTEMPTS)
-      // and then degrades to read-only instead of failing forever.
-      // verifyMigrationHistory failures stay LIBRARY_CORRUPT and are never
-      // recorded (damaged history is not retryable).
+      // A rolled-back migration failure is recorded so the next open retries
+      // (up to MAX_MIGRATION_ATTEMPTS) and then opens writable at the last
+      // good version instead of failing forever. verifyMigrationHistory
+      // failures stay LIBRARY_CORRUPT and are never recorded (damaged
+      // history is not retryable; the recovery ladder repairs it).
       if (
         migrationAttempted &&
         !(error instanceof LibraryServiceError && error.code === 'LIBRARY_CORRUPT')
@@ -32088,9 +32159,8 @@ export class LibraryService {
 
   /**
    * Opens a current-schema library without migrations, recovery, filesystem
-   * reconciliation, watchers, or background job scheduling. This is the only
-   * open mode available to read-only clients such as the CLI inspection
-   * process.
+   * reconciliation, watchers, or background job scheduling. Inspection and
+   * CLI clients may use this; Desktop never presents a read-only library.
    */
   openLibraryReadOnly(selectedLibraryPath: string): InternalLibrarySummary {
     let selectedPath: string;
