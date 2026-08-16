@@ -32,8 +32,10 @@ interface UseFolderDeleteActionsParams {
   setUiState: (state: "loading" | "ready") => void;
   closePreview: () => Promise<void>;
   reloadCurrentContent: () => Promise<void>;
+  /** Keep managed-folder navigation rows in sync after a successful mutation. */
+  onManagedFoldersTrashed: (deletedFolderIds: readonly string[]) => void;
   /** Navigate away when the current browse scope was deleted. */
-  onDeletedCurrentScope: () => void;
+  onDeletedCurrentScope: (deletedFolderIds: readonly string[]) => void;
 }
 
 export function useFolderDeleteActions({
@@ -47,6 +49,7 @@ export function useFolderDeleteActions({
   setUiState,
   closePreview,
   reloadCurrentContent,
+  onManagedFoldersTrashed,
   onDeletedCurrentScope,
 }: UseFolderDeleteActionsParams) {
   const afterFolderMutation = useCallback(
@@ -54,7 +57,7 @@ export function useFolderDeleteActions({
       if (
         isBrowseScopeAffectedByFolderTrash(assetScope, deletedFolderIds, folders)
       ) {
-        onDeletedCurrentScope();
+        onDeletedCurrentScope(deletedFolderIds);
         return;
       }
       await reloadCurrentContent();
@@ -76,6 +79,7 @@ export function useFolderDeleteActions({
           }),
           result.value.historyEntryId,
         );
+        onManagedFoldersTrashed([folderId]);
         await afterFolderMutation([folderId]);
       } catch (caught) {
         setError(
@@ -97,6 +101,7 @@ export function useFolderDeleteActions({
       setNotice,
       setError,
       afterFolderMutation,
+      onManagedFoldersTrashed,
     ],
   );
 
@@ -118,6 +123,7 @@ export function useFolderDeleteActions({
               count: result.value.deletedAssetCount,
             }),
           );
+          onManagedFoldersTrashed([target.folderId]);
           await afterFolderMutation([target.folderId]);
           return;
         }
@@ -156,6 +162,7 @@ export function useFolderDeleteActions({
       setError,
       closePreview,
       afterFolderMutation,
+      onManagedFoldersTrashed,
     ],
   );
 

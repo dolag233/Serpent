@@ -451,9 +451,12 @@ test("ordinary browsing continuously appends every asset without page controls",
       return { assetIds, libraryId };
     });
 
-    // Re-entering a normal scope refreshes sidebar organization data.
-    // 筛选面板现在是外部点击即关的浮层：上一轮的作用域点击已将其关闭，
-    // 填写前先重新展开。
+    // The large-library navigation path intentionally keeps sidebar queries
+    // out of every scope click. This fixture mutates collections/tags through
+    // the preload API, so use the explicit refresh command once before
+    // asserting the newly-created organization entries. 筛选面板现在是外部
+    // 点击即关的浮层：刷新后填写前重新展开。
+    await window.getByRole("button", { name: "刷新磁盘变化" }).click();
     await window.getByRole("button", { name: /所有资产/ }).click();
     await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");

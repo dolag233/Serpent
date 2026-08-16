@@ -2024,6 +2024,84 @@ describe('relinkBatchPreview', () => {
     service.closeAll();
   });
 
+  it('recovers a uniquely renamed-folder asset by basename', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Same Name Recovery', selectedParentPath: root });
+    const folder = service.createManagedFolder({ libraryId: created.libraryId, name: 'original' });
+    const source = path.join(root, 'same-name.jpg');
+    writeFileSync(source, 'original bytes');
+    const imported = importNoConflict(service, created.libraryId, source, folder.folderId);
+
+    rmSync(path.join(created.libraryPath, 'Assets', 'original', 'same-name.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+
+    const recoveryRoot = path.join(root, 'recovery');
+    mkdirSync(path.join(recoveryRoot, 'renamed-folder'), { recursive: true });
+    writeFileSync(path.join(recoveryRoot, 'renamed-folder', 'same-name.jpg'), 'replacement bytes');
+
+    const preview = service.relinkBatchPreview({
+      libraryId: created.libraryId,
+      newRootPath: recoveryRoot,
+    });
+    expect(preview).toMatchObject({ matchedCount: 1, unmatchedCount: 0, totalCount: 1 });
+
+    const applied = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: recoveryRoot,
+      keepMetadata: true,
+    });
+    expect(applied).toMatchObject({ restoredCount: 1, unchangedMissingCount: 0 });
+    expect(readFileSync(path.join(created.libraryPath, 'Assets', 'original', 'same-name.jpg'), 'utf8'))
+      .toBe('replacement bytes');
+    expect(applied.assets[0]!.assetId).toBe(imported.assets[0]!.assetId);
+    service.closeAll();
+  });
+
+  it('uses content fingerprints to disambiguate multiple same-name candidates', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Fingerprint Recovery', selectedParentPath: root });
+    const firstFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'first' });
+    const secondFolder = service.createManagedFolder({ libraryId: created.libraryId, name: 'second' });
+    const source = path.join(root, 'fingerprint.jpg');
+    writeFileSync(source, 'first fingerprint bytes');
+    const first = importNoConflict(service, created.libraryId, source, firstFolder.folderId);
+    writeFileSync(source, 'second fingerprint bytes');
+    const second = importNoConflict(service, created.libraryId, source, secondFolder.folderId);
+
+    rmSync(path.join(created.libraryPath, 'Assets', 'first', 'fingerprint.jpg'));
+    rmSync(path.join(created.libraryPath, 'Assets', 'second', 'fingerprint.jpg'));
+    service.refreshManagedAssets(created.libraryId);
+
+    const recoveryRoot = path.join(root, 'fingerprint-recovery');
+    mkdirSync(path.join(recoveryRoot, 'renamed-a'), { recursive: true });
+    mkdirSync(path.join(recoveryRoot, 'renamed-b'), { recursive: true });
+    writeFileSync(path.join(recoveryRoot, 'renamed-a', 'fingerprint.jpg'), 'second fingerprint bytes');
+    writeFileSync(path.join(recoveryRoot, 'renamed-b', 'fingerprint.jpg'), 'first fingerprint bytes');
+
+    const preview = service.relinkBatchPreview({
+      libraryId: created.libraryId,
+      newRootPath: recoveryRoot,
+    });
+    expect(preview).toMatchObject({ matchedCount: 2, unmatchedCount: 0, totalCount: 2 });
+
+    const applied = service.relinkBatchApply({
+      libraryId: created.libraryId,
+      newRootPath: recoveryRoot,
+      keepMetadata: true,
+    });
+    expect(applied).toMatchObject({ restoredCount: 2, unchangedMissingCount: 0 });
+    expect(readFileSync(path.join(created.libraryPath, 'Assets', 'first', 'fingerprint.jpg'), 'utf8'))
+      .toBe('first fingerprint bytes');
+    expect(readFileSync(path.join(created.libraryPath, 'Assets', 'second', 'fingerprint.jpg'), 'utf8'))
+      .toBe('second fingerprint bytes');
+    expect(applied.assets.map((asset) => asset.assetId)).toEqual(
+      expect.arrayContaining([first.assets[0]!.assetId, second.assets[0]!.assetId]),
+    );
+    service.closeAll();
+  });
+
   it('rejects a nonexistent new root', () => {
     const root = temporaryRoot();
     const service = newService();

@@ -84,6 +84,29 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
 
+- **三套存储，禁止混读（2026-08-16 复盘）**：
+  - **本地 Dolt**（`.beads/embeddeddolt`）：`bd show` / `bd ready` 的实际数据源；**不进 git**，**不随 `git checkout` 切换**。
+  - **JSONL 镜像**（`.beads/issues.jsonl`、`.beads/interactions.jsonl`）：随 git 提交/拉取的**被动导出**；另一台机器或 agent 主要靠它恢复工单视图。
+  - **远端 Dolt**（`refs/dolt/data`）：`bd dolt push` / `bd dolt pull` 同步的多设备真相。
+  - **`git pull` 只更新 JSONL，不会自动更新本地 Dolt。** 会话开工前必须对齐，否则会出现「用户已验收、清单已绿，但 `bd ready` 仍显示 `in_progress`」的假象（2026-08-16：`Serpent-vacp` / `g8u9` / `wgl2` / `hf1t` / `lxmx` 即此案例）。
+- **会话开工对齐（每个 agent 会话强制）**：
+  ```bash
+  git pull
+  bd dolt pull                              # 有多设备写入时
+  bd import .beads/issues.jsonl --json      # JSONL 比本地 Dolt 新或有 JSONL-only 记录时（禁止 bd init --from-jsonl 覆盖重建）
+  bd export -o .beads/issues.jsonl          # 核对镜像；若 auto-export 报 JSONL-only 漂移，先 import 再 export
+  bd ready --json
+  bd list --status=in_progress --json
+  ```
+  查队列**只信**对齐后的 `bd show <id>`，**不要**凭聊天记忆、旧 `project-status.md` 或清单滞后行判断工单是否仍 open。
+- **用户验收必须写回 beads（强制）**：产品负责人口头/聊天确认「验收通过」后，实施者或记录者**同一会话内**必须：
+  1. `bd close <id> --reason "用户验收通过；…"`（附清单 ID / 提交哈希；有条件保留写进 reason，不得因此不关单）
+  2. 同步更新 `docs/internal/qa/human-acceptance-checklist.md` 对应条目为「人类验收通过」
+  3. `bd export -o .beads/issues.jsonl` → `bd dolt push` → 与 `.beads/` 变更**同一 git 提交**
+  - **禁止**：只在清单或聊天里记「已通过」却不 `bd close`；**禁止**关单后又无 reason 地 `bd update … --status open`（`Serpent-g8u9` 曾因此回退为 `in_progress`）。
+  - **人类验收清单不是执行队列**：「待人类验收」≠ 未实现；「人类验收不通过」才是缺陷池。关单依据是用户确认 + 四列证据，不是 agent 自测绿。
+- **关单后不得假 reopen**：只有用户明确报回归或证据失效时才 reopen；reopen 必须在 reason/评论写明触发反馈，并同步改清单状态。
+
 - 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
 - **排他认领（强制）**：同一工单同一时间只允许一个 agent 实施。选中后立刻 `bd update <id> --claim`（原子认领：设 assignee + `in_progress`）；不要只改状态却不认领。禁止对已是 `in_progress`、或已有其他 assignee 的工单动手；不确定时先 `bd show <id>` / `bd list --status=in_progress`。不得与其他 agent「一起做」同一工单，也不得绕过 `bd ready` 凭标题或记忆开干。
 - 完成后 `bd close <id> --reason "<完成说明与提交哈希>"`。若中途放弃，把状态改回 `open` 并清掉自己的 assignee，否则会长期挡住 ready 队列。

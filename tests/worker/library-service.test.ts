@@ -906,14 +906,16 @@ describe('LibraryService lifecycle', () => {
     expectServiceError(() => service.openLibrary(root), 'NOT_A_LIBRARY');
   });
 
-  it('rejects a missing database as a non-library', () => {
+  it('rescues a missing database from the Assets tree', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'No Database', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, '.serpent', 'library.db'));
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
+    const summary = service.openLibrary(created.libraryPath);
+    expect(summary.recovery?.mode).toBe('rescue');
+    expect(summary.libraryId).not.toBe(created.libraryId);
   });
 
   it('rejects a library whose required Assets directory was removed', () => {
@@ -1037,18 +1039,21 @@ describe('LibraryService lifecycle', () => {
     after.close();
   });
 
-  it('rejects a corrupt database without leaving the library open', () => {
+  it('rescues a corrupt database without losing the library root', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Corrupt', selectedParentPath: root });
     service.closeAll();
     writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not a sqlite database');
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
-    expect(service.listLibraries()).toEqual([]);
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(service.listLibraries()).toEqual([recovered]);
+    expect(readdirSync(path.join(created.libraryPath, '.serpent', 'corrupt-backup')))
+      .toEqual(expect.arrayContaining([expect.stringMatching(/^library\.db\.primary-/u)]));
   });
 
-  it('does not repair internal directories before a database passes validation', () => {
+  it('recreates regenerable directories after a database rescue', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Read First', selectedParentPath: root });
@@ -1057,11 +1062,12 @@ describe('LibraryService lifecycle', () => {
     rmSync(previewsPath, { recursive: true });
     writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not sqlite');
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
-    expect(existsSync(previewsPath)).toBe(false);
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(existsSync(previewsPath)).toBe(true);
   });
 
-  it('rejects a tampered migration audit record', () => {
+  it('opens a tampered migration audit record read-only without latching retries', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: 'Tampered', selectedParentPath: root });
@@ -1070,7 +1076,8 @@ describe('LibraryService lifecycle', () => {
     database.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 1').run('bad');
     database.close();
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'read-only' });
   });
 
   it.runIf(process.platform !== 'win32')(

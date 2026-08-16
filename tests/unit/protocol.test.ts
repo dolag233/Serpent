@@ -20,6 +20,90 @@ import {
 } from '../../src/shared/protocol/responses';
 
 describe('renderer request protocol', () => {
+  it('keeps recovery report paths on the Worker/Main side', () => {
+    expect(parseRendererRequest({
+      type: 'library.recovery-report.request',
+      libraryId: 'library-01',
+    })).toEqual({
+      type: 'library.recovery-report.request',
+      libraryId: 'library-01',
+    });
+    expect(parseWorkerRequest({
+      requestId: 'recovery-report-01',
+      command: {
+        type: 'library.recovery-report',
+        libraryId: 'library-01',
+      },
+    }).command).toEqual({
+      type: 'library.recovery-report',
+      libraryId: 'library-01',
+    });
+    expect(parseWorkerResponse({
+      requestId: 'recovery-report-01',
+      result: {
+        ok: true,
+        type: 'library.recovery-report',
+        reportPath: '/private/internal/recovery-report.json',
+      },
+    }).result).toHaveProperty('reportPath', '/private/internal/recovery-report.json');
+    expect(parseRendererResult({
+      ok: true,
+      type: 'library.recovery-report.requested',
+      libraryId: 'library-01',
+    })).toEqual({
+      ok: true,
+      type: 'library.recovery-report.requested',
+      libraryId: 'library-01',
+    });
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'library.recovery-report.requested',
+      libraryId: 'library-01',
+      reportPath: '/private/internal/recovery-report.json',
+    })).toThrow();
+  });
+
+  it('round-trips the known-location missing-asset recovery probe', () => {
+    expect(parseRendererRequest({
+      type: 'asset.recovery-probe.request',
+      libraryId: 'library-01',
+      assetId: 'asset-01',
+    })).toMatchObject({ type: 'asset.recovery-probe.request' });
+    expect(parseWorkerRequest({
+      requestId: 'recovery-probe-01',
+      command: {
+        type: 'asset.recovery-probe',
+        libraryId: 'library-01',
+        assetId: 'asset-01',
+      },
+    }).command).toMatchObject({ type: 'asset.recovery-probe' });
+    expect(parseWorkerResponse({
+      requestId: 'recovery-probe-01',
+      result: {
+        ok: true,
+        type: 'asset.recovery-probe',
+        assetId: 'asset-01',
+        probe: {
+          status: 'recoverable',
+          candidateKind: 'managed-source',
+          contentVerified: true,
+          checkedLocations: 1,
+        },
+      },
+    }).result).toMatchObject({ assetId: 'asset-01' });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'asset.recovery-probe.result',
+      assetId: 'asset-01',
+      probe: {
+        status: 'needs-location',
+        candidateKind: null,
+        contentVerified: false,
+        checkedLocations: 2,
+      },
+    })).toMatchObject({ type: 'asset.recovery-probe.result' });
+  });
+
   it('requires an opaque preview token to apply or cancel batch relinking', () => {
     expect(parseRendererRequest({
       type: 'asset.relink-batch.apply.request',
@@ -1936,6 +2020,34 @@ describe('renderer lifecycle events', () => {
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();
+  });
+});
+
+describe('renderer library recovery boundary', () => {
+  it('exposes report availability without leaking the worker report path', () => {
+    expect(parseRendererResult({
+      ok: true,
+      type: 'library.opened',
+      library: {
+        libraryId: 'recovered-library',
+        displayName: 'Recovered library',
+        displayPath: '/libraries/recovered-library',
+        recovery: { mode: 'rescue', reportAvailable: true },
+      },
+    })).toMatchObject({
+      type: 'library.opened',
+      library: { recovery: { mode: 'rescue', reportAvailable: true } },
+    });
+    expect(() => parseRendererResult({
+      ok: true,
+      type: 'library.opened',
+      library: {
+        libraryId: 'recovered-library',
+        displayName: 'Recovered library',
+        displayPath: '/libraries/recovered-library',
+        recovery: { mode: 'rescue', reportPath: '/private/recovery-report.json' },
+      },
+    })).toThrow();
   });
 });
 

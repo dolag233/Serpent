@@ -54,6 +54,7 @@ import type {
   LibraryChangedEvent,
   HistoryStatus,
   RendererLibrarySummary,
+  MissingAssetRecoveryProbe,
   RendererLifecycleEvent,
   ExportProgressEvent,
   ImportProgressEvent,
@@ -187,6 +188,15 @@ export interface PluginJobStatus {
 export interface SerpentLibraryApi {
   create(input: { displayName: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   open(): Promise<LibraryApiResult<RendererLibrarySummary>>;
+  /** Reveal a Main-owned recovery report without exposing its filesystem path. */
+  revealRecoveryReport(input: { libraryId: string }): Promise<LibraryApiResult<void>>;
+  /** Check only known source/trash locations for a selected missing asset. */
+  probeMissingAssetRecovery(input: {
+    libraryId: string;
+    assetId: string;
+  }): Promise<LibraryApiResult<MissingAssetRecoveryProbe>>;
+  /** Convert and open an Eagle library as a new Serpent library. */
+  openEagle(): Promise<LibraryApiResult<RendererLibrarySummary>>;
   listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>>;
   openRecent(input: { path: string }): Promise<LibraryApiResult<RendererLibrarySummary>>;
   /** Remove a path from the recent list without deleting disk (Serpent-ucx). */
@@ -595,7 +605,7 @@ export interface SerpentLibraryApi {
   syncPreview(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<SyncReport>>;
   /** Serpent-xffq: 执行完整双向同步。 */
   syncRun(input: { libraryId: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> }>>;
-  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
+  requestPreview(input: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover' | 'proxy-fallback'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>>;
   closePreview(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<void>>;
   // 3D viewer (slice C, Serpent-qvc6): companion-texture index for model
   // previews. Only library-relative paths + ids; no absolute paths.

@@ -381,6 +381,20 @@ export function VideoPlayerControls({
     fitToWindow();
   }, [fitRequestToken, fitToWindow]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    // Media `error` is a non-bubbling event. Keep a direct listener on the
+    // element so custom-protocol and test-created decode failures reach the
+    // same fallback path even when React's delegated event listener is not
+    // involved.
+    const handleNativeError = () => {
+      onError({ currentTarget: video } as unknown as SyntheticEvent<HTMLVideoElement>);
+    };
+    video.addEventListener("error", handleNativeError);
+    return () => video.removeEventListener("error", handleNativeError);
+  }, [onError]);
+
   // The video keeps its source dimensions; rotation itself swaps the visual
   // bounding box. The rotated dimensions are used only by the fit calculation.
   const displayW =
@@ -414,7 +428,6 @@ export function VideoPlayerControls({
             setDuration(event.currentTarget.duration || 0)
           }
           onEnded={() => setPaused(true)}
-          onError={onError}
           onLoadedMetadata={(event) => {
             const video = event.currentTarget;
             video.playbackRate = playbackRate;

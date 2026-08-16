@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useId,
   useRef,
@@ -50,6 +51,8 @@ export type LibrarySwitcherProps = {
   disabled?: boolean;
   onCreateLibrary: () => void;
   onOpenLibrary: () => void;
+  /** Opens an Eagle library as a converted, newly opened Serpent library. */
+  onOpenEagleLibrary?: () => void;
   onCloseLibrary: () => void;
   /** Soft remove: close + drop from recents; disk untouched (Serpent-ucx). */
   onRemoveLibrary?: () => void;
@@ -84,6 +87,7 @@ export function LibrarySwitcher({
   disabled = false,
   onCreateLibrary,
   onOpenLibrary,
+  onOpenEagleLibrary,
   onCloseLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
@@ -102,6 +106,7 @@ export function LibrarySwitcher({
 }: LibrarySwitcherProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
+  const [externalLibraryOpen, setExternalLibraryOpen] = useState(false);
   const [keyboardNav, setKeyboardNav] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -129,6 +134,7 @@ export function LibrarySwitcher({
 
   function closeMenu(restoreTriggerFocus: boolean) {
     setOpen(false);
+    setExternalLibraryOpen(false);
     setKeyboardNav(false);
     if (restoreTriggerFocus) {
       requestAnimationFrame(() => triggerRef.current?.focus());
@@ -216,8 +222,8 @@ export function LibrarySwitcher({
           nodes={LIBRARY_MENU_SURFACE_NODES}
           onKeyDown={onMenuKeyDown}
           onPointerMove={() => setKeyboardNav(false)}
-          renderNode={() => (
-            <>
+          renderNode={(node) => (
+            <Fragment key={node.id}>
           <button
             className="library-switcher-item"
             onClick={() => runMenuAction(onCreateLibrary)}
@@ -227,15 +233,54 @@ export function LibrarySwitcher({
           >
             {t("shell.createLibraryEllipsis")}
           </button>
-          <button
-            className="library-switcher-item"
-            onClick={() => runMenuAction(onOpenLibrary)}
-            role="menuitem"
-            tabIndex={-1}
-            type="button"
-          >
-            {t("shell.openExternalLibraryEllipsis")}
-          </button>
+          {onOpenEagleLibrary ? (
+            <div className="library-switcher-submenu-wrap">
+              <button
+                aria-expanded={externalLibraryOpen}
+                aria-haspopup="menu"
+                className="library-switcher-item library-switcher-submenu-trigger"
+                onClick={() => setExternalLibraryOpen((current) => !current)}
+                role="menuitem"
+                tabIndex={-1}
+                type="button"
+              >
+                <span>{t("shell.openExternalLibraryEllipsis")}</span>
+                <Icon name="chevron" size={12} />
+              </button>
+              {externalLibraryOpen && (
+                <div className="library-switcher-submenu" role="menu">
+                  <button
+                    className="library-switcher-item"
+                    onClick={() => runMenuAction(onOpenLibrary)}
+                    role="menuitem"
+                    tabIndex={-1}
+                    type="button"
+                  >
+                    {t("shell.openSerpentLibraryEllipsis")}
+                  </button>
+                  <button
+                    className="library-switcher-item"
+                    onClick={() => runMenuAction(onOpenEagleLibrary)}
+                    role="menuitem"
+                    tabIndex={-1}
+                    type="button"
+                  >
+                    {t("shell.openEagleLibraryEllipsis")}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              className="library-switcher-item"
+              onClick={() => runMenuAction(onOpenLibrary)}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              {t("shell.openExternalLibraryEllipsis")}
+            </button>
+          )}
           <button
             className="library-switcher-item"
             disabled={!libraryName}
@@ -363,7 +408,7 @@ export function LibrarySwitcher({
               </div>
             </>
           )}
-            </>
+            </Fragment>
           )}
         />
       )}

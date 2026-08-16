@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  corruptAssetAffordance,
+  isCorruptAsset,
   linkedFolderHoverDetail,
   linkedFolderNavAffordance,
   missingAssetAffordance,
@@ -37,7 +39,38 @@ describe('availability affordance (Serpent-rc9)', () => {
     expect(shouldShowMissingAssetOverlay('available')).toBe(false);
   });
 
-  it('reuses the offline linked-folder disconnect affordance for missing assets', () => {
-    expect(missingAssetAffordance()).toEqual(linkedFolderNavAffordance('offline'));
+  it('uses a cracked-file affordance for missing assets', () => {
+    expect(missingAssetAffordance()).toEqual({
+      icon: 'broken-file',
+      iconColor: 'var(--danger)',
+    });
+  });
+
+  it('distinguishes a dangling revision row from an ordinary missing file', () => {
+    expect(
+      isCorruptAsset({
+        availability: 'missing',
+        currentRevisionId: 'corrupt:asset-1',
+      }),
+    ).toBe(true);
+    expect(
+      isCorruptAsset({
+        availability: 'missing',
+        currentRevisionId: 'revision-1',
+      }),
+    ).toBe(false);
+    expect(
+      isCorruptAsset({
+        availability: 'available',
+        currentRevisionId: 'corrupt:asset-2',
+      }),
+    ).toBe(false);
+  });
+
+  it('uses a warning-colored cracked-file affordance for damaged rows', () => {
+    expect(corruptAssetAffordance()).toEqual({
+      icon: 'broken-file',
+      iconColor: 'var(--warning)',
+    });
   });
 });

@@ -1,7 +1,8 @@
 // Serpent-5xbg: failed derived artifacts (thumbnail/video_poster/contact_sheet/
-// webm_proxy/
 // audio_proxy) are re-opened for regeneration when the asset surfaces —
 // throttled, permanent failures excluded — instead of blocking forever.
+// Video webm_proxy is intentionally excluded: Serpent-cljb only creates it
+// after the viewer reports a real source-playback failure.
 import { createRequire } from 'node:module';
 import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -170,7 +171,7 @@ afterEach(() => {
 });
 
 describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
-  it('re-enqueues a retryable failure older than the backoff window', () => {
+  it('does not auto-reenqueue a video proxy failure', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: '重试库', selectedParentPath: root });
@@ -186,8 +187,8 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     service.openLibrary(created.libraryPath); // startup enqueue retries once
     service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
 
-    expect(queuedJobCount(dbPath, 'generate_webm_proxy')).toBe(1);
-    expect(invalidatedArtifactCount(dbPath)).toBe(1);
+    expect(queuedJobCount(dbPath, 'generate_webm_proxy')).toBe(0);
+    expect(invalidatedArtifactCount(dbPath)).toBe(0);
   });
 
   it('re-enqueues a failed contact sheet when metadata and poster are ready', () => {
@@ -277,7 +278,7 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     expect(invalidatedArtifactCount(dbPath)).toBe(0);
   });
 
-  it('does not duplicate jobs on a second enqueue (idempotent)', () => {
+  it('keeps video proxy retry explicit and idempotent', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: '幂等库', selectedParentPath: root });
@@ -290,10 +291,21 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
       failedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
 
-    service.openLibrary(created.libraryPath); // startup enqueue retries once
+    service.openLibrary(created.libraryPath);
     service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
-    service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const firstJob = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
+    const secondJob = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
 
     expect(queuedJobCount(dbPath, 'generate_webm_proxy')).toBe(1);
+    expect(secondJob).toBe(firstJob);
   });
 });

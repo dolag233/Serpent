@@ -20,7 +20,9 @@ export type UseFolderDragDropHandlersParams = {
   setError: (message: string | null) => void;
   setUiState: (state: 'loading' | 'ready') => void;
   reloadCurrentContent: () => Promise<void>;
-  onDeletedCurrentScope: () => Promise<void>;
+  /** Remove trashed managed-folder rows immediately, independent of browse scope. */
+  onManagedFoldersTrashed: (deletedFolderIds: readonly string[]) => void;
+  onDeletedCurrentScope: (deletedFolderIds: readonly string[]) => Promise<void>;
 };
 
 export function useFolderDragDropHandlers({
@@ -32,6 +34,7 @@ export function useFolderDragDropHandlers({
   setError,
   setUiState,
   reloadCurrentContent,
+  onManagedFoldersTrashed,
   onDeletedCurrentScope,
 }: UseFolderDragDropHandlersParams) {
   const t = useT();
@@ -148,10 +151,15 @@ export function useFolderDragDropHandlers({
             }),
             historyEntryId,
           );
+          // Update the navigation tree immediately. Scope detection below is
+          // only responsible for deciding whether to navigate away; it must
+          // not be the gate that removes rows from the sidebar after a
+          // successful mutation.
+          onManagedFoldersTrashed(folderIds);
           if (
             isBrowseScopeAffectedByFolderTrash(assetScope, folderIds, folders)
           ) {
-            await onDeletedCurrentScope();
+            await onDeletedCurrentScope(folderIds);
           } else {
             await reloadCurrentContent();
           }
@@ -169,6 +177,7 @@ export function useFolderDragDropHandlers({
       folders,
       libraryId,
       locale,
+      onManagedFoldersTrashed,
       onDeletedCurrentScope,
       reloadCurrentContent,
       setError,

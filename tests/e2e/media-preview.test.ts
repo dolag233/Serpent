@@ -410,13 +410,10 @@ test("video preview reports a specific generation failure and persists its diagn
       .getByRole("button")
       .filter({ hasText: "broken-preview.mp4" });
     await expect(assetCard).toBeVisible();
-    await expect(assetCard.getByText("缩略图失败")).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(assetCard.locator(".asset-preview")).toHaveAttribute(
-      "title",
-      /媒体组件不可用|缩略图生成失败/,
-    );
+    // Thumbnail failure is intentionally rendered as the themed generic file
+    // surface (no persistent warning badge); the actionable diagnostic lives
+    // in the viewer and Background Tasks panel below.
+    await expect(assetCard.locator(".asset-preview")).toBeVisible();
     await assetCard.dblclick();
 
     const preview = window.getByRole("region", {
@@ -583,9 +580,40 @@ test("repairs a historical video preview after a full process restart", async ()
       .getByRole("button")
       .filter({ hasText: "repairable-video.mp4" });
     await expect(assetCard).toBeVisible();
-    await expect(assetCard.getByText("缩略图失败")).toBeVisible({
-      timeout: 30_000,
-    });
+    await expect
+      .poll(
+        () =>
+          window.evaluate(async () => {
+            const api = (
+              globalThis as typeof globalThis & {
+                serpent: {
+                  library: {
+                    listOpen(): Promise<{
+                      ok: boolean;
+                      value?: Array<{ libraryId: string }>;
+                    }>;
+                    listMediaJobs(input: { libraryId: string }): Promise<{
+                      ok: boolean;
+                      value?: {
+                        jobs: Array<{ kind: string; status: string }>;
+                      };
+                    }>;
+                  };
+                };
+              }
+            ).serpent.library;
+            const opened = await api.listOpen();
+            const libraryId = opened.value?.[0]?.libraryId;
+            if (!opened.ok || !libraryId) return null;
+            const jobs = await api.listMediaJobs({ libraryId });
+            return (
+              jobs.value?.jobs.find((job) => job.kind === "generate_thumbnail")
+                ?.status ?? null
+            );
+          }),
+        { timeout: 30_000 },
+      )
+      .toBe("failed");
 
     const firstProcess = application.process();
     await application.close();

@@ -52,6 +52,7 @@ import {
   isAllAssetsNavActive,
   isManagedFolderNavActive,
   isPluginSidebarViewNavActive,
+  isRootFolderNavActive,
   isTagManagementNavActive,
   isTrashNavActive,
 } from "./browse-nav-active";
@@ -496,6 +497,8 @@ export interface NavigationSidebarProps {
 
   // --- Data ---
   allAssetCount: number;
+  /** Assets stored directly under the library root (distinct from all assets). */
+  rootAssetCount: number;
   trashedAssetCount: number;
   folders: ManagedFolderSummary[];
   collections: CollectionSummary[];
@@ -640,6 +643,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     showIgnoredItems,
     onToggleShowIgnoredItems,
     allAssetCount,
+    rootAssetCount,
     trashedAssetCount,
     folders,
     collections,
@@ -1303,6 +1307,21 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onClick={() => void onChooseAllAssets()}
           {...(library
             ? assetFolderDropHandlers("root", null)
+            : {
+                onDragOver: onExternalDragOver,
+                onDrop: (event: React.DragEvent<HTMLButtonElement>) =>
+                  onExternalDrop(event, null, undefined),
+            })}
+        />
+        <NavRow
+          active={Boolean(library && isRootFolderNavActive(browseNavFlags))}
+          count={library ? rootAssetCount : undefined}
+          disabled={!library}
+          icon="folder"
+          label={t("scope.rootFolder")}
+          onClick={() => void onChooseFolder("root")}
+          {...(library
+            ? assetFolderDropHandlers("root-assets", null)
             : {
                 onDragOver: onExternalDragOver,
                 onDrop: (event: React.DragEvent<HTMLButtonElement>) =>

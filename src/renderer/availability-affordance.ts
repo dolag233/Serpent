@@ -1,4 +1,5 @@
 import type { IconName } from './Icons';
+import type { AssetSummary } from '../shared/asset-types';
 
 /**
  * Serpent-rc9: linked folders always show a link glyph (online or offline).
@@ -30,14 +31,38 @@ export function shouldShowMissingAssetOverlay(availability: string): boolean {
   return availability === 'missing';
 }
 
-/** Same disconnect glyph + muted color as an offline linked folder row. */
+/**
+ * A missing asset whose revision row disappeared is different from an
+ * ordinary offline file. The Worker keeps this row visible with a synthetic
+ * `corrupt:<assetId>` revision id until refreshManagedAssets can rebuild it.
+ */
+export function isCorruptAsset(
+  asset: Pick<AssetSummary, 'availability' | 'currentRevisionId'>,
+): boolean {
+  return (
+    asset.availability === 'missing' &&
+    asset.currentRevisionId.startsWith('corrupt:')
+  );
+}
+
+/** Cracked-file affordance for a source that is no longer available. */
 export function missingAssetAffordance(): {
   readonly icon: IconName;
   readonly iconColor: string;
 } {
-  const offline = linkedFolderNavAffordance('offline');
   return {
-    icon: offline.icon,
-    iconColor: offline.iconColor ?? 'var(--tertiary)',
+    icon: 'broken-file',
+    iconColor: 'var(--danger)',
+  };
+}
+
+/** Cracked-file affordance for a damaged database row or unreadable revision. */
+export function corruptAssetAffordance(): {
+  readonly icon: IconName;
+  readonly iconColor: string;
+} {
+  return {
+    icon: 'broken-file',
+    iconColor: 'var(--warning)',
   };
 }

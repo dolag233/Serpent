@@ -42,6 +42,11 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     const managedPath = path.join(libraryPath, 'Assets', 'missing.txt');
     rmSync(managedPath);
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
+    await assetCard(window, 'missing.txt').click();
+    const inspectorStatus = window.locator('.inspector-status-row');
+    await expect(inspectorStatus).toBeVisible();
+    await expect(inspectorStatus).toContainText('未在已知位置找到，请选择恢复位置');
+    await expect(inspectorStatus.getByRole('button', { name: '找回资产' })).toBeVisible();
     await expect(window.getByRole('button', { name: '批量重新定位' })).toBeVisible();
 
     await window.getByRole('button', { name: '批量重新定位' }).click();

@@ -1,7 +1,18 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-15
+> 更新时间：2026-08-16
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-16 `Serpent-dw9a` / `Serpent-768x` / `Serpent-cljb` 收口中**：
+  `dw9a` 已实现主库损坏恢复梯度（主库→两份轮换备份→只读→Assets 抢救）、
+  行级悬空 revision 可见/自动修复、内容指纹重定位；`768x` 已实现 Eagle
+  外部库导入/打开二级菜单、同级 `(Serpent)` 转换库和资源库根目录虚拟节点；
+  `cljb` 已改为视频原始播放优先，只有真实 codec/decode 失败才为该项按需生成或
+  复用 proxy。lint、typecheck、定向 Worker/单元与相关 Electron E2E 已通过。
+  当前主线门禁已通过（421 个测试文件、3709 个断言；搜索性能 5/5；Electron E2E
+  80 passed / 3 skipped）；生命周期 guard、导航树层级覆盖和 Inspector 恢复入口断言已追加，
+  真实 Eagle 小库、Windows/packaged、
+  三条工单暂不写成最终关闭。`dw9a` 已补恢复报告摘要/打开入口和已知位置候选探测；候选探测接入后的 Renderer 首帧空白回归已修复，并由 4 项相关 Electron E2E 复跑通过；真实物理损坏重启与平台证据仍保留。
 
 - **2026-08-14 晚间用户反馈（先开单）**：
   THUMB-006 / `Serpent-lpnt` 人类验收通过（残缺/缺失图像能生成正常缩略图；重复单 `Serpent-k2zw` 一并关闭）。

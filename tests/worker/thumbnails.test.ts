@@ -679,7 +679,7 @@ describe('preview availability while derivatives are generated', () => {
     service.closeAll();
   });
 
-  it('waits for a video proxy while it is generating instead of mounting the source', () => {
+  it('keeps a generating video proxy untouched while mounting the source first', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -705,20 +705,24 @@ describe('preview availability while derivatives are generated', () => {
     );
     db.close();
 
-    // REQ-VIEW-002 (8ab6ffb): the viewer plays the original source for
-    // natively playable containers; the proxy-first path lives on the
-    // 'hover' intent, which is what this test exercises.
+    // Serpent-cljb: even an existing in-flight proxy must not steal playback
+    // from the original source. The proxy is only a fallback after a real
+    // media-element failure.
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'video',
-      status: 'pending',
+      status: 'ready',
       kind: 'webm_proxy',
-      mimeType: 'video/webm',
+      mimeType: 'video/mp4',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
     });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
+      .toMatchObject({ status: 'generating', mimeType: 'video/webm' });
 
     service.closeAll();
   });
 
-  it('reports a failed video proxy instead of retrying an unreliable source', () => {
+  it('keeps a failed video proxy as fallback state while mounting the source first', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -746,10 +750,14 @@ describe('preview availability while derivatives are generated', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'video',
-      status: 'failed',
+      status: 'ready',
       kind: 'webm_proxy',
-      errorCode: 'MEDIA_PROCESSING_FAILED',
+      mimeType: 'video/mp4',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
     });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
+      .toMatchObject({ status: 'failed', errorCode: 'MEDIA_PROCESSING_FAILED' });
 
     service.closeAll();
   });

@@ -55,7 +55,12 @@ test('activates the fixed standard Host probe and writes library storage', async
     await installDialog.getByLabel('安装范围').selectOption('library');
     await installDialog.getByRole('button', { name: '本地安装' }).click();
     await expect(dialog.getByText(/Standard Host Probe\s*-\s*v1\.0\.0/)).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('button', { name: '信任', exact: true }).click();
+    // Trust is now granted as part of enabling a library-scoped plugin; the
+    // old standalone「信任」button was removed from the settings card.
+    window.once('dialog', (browserDialog) => browserDialog.accept());
+    // The checkbox input is visually clipped inside the custom toggle. Click
+    // its label so Playwright follows the same hit target as a user.
+    await dialog.locator('label.plugin-settings-enable-toggle').click();
     await expect(dialog.getByRole('checkbox', { name: '启用插件' })).toBeChecked();
     await dialog.getByRole('button', { name: '关闭' }).click();
 

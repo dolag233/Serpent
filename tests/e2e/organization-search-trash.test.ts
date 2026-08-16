@@ -80,8 +80,9 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
     }
 
     // The sidebar no longer enumerates or creates tags (REQ-TAG-001); seed
-    // the tags through the library API, then re-enter 所有资产 so the
-    // Renderer refreshes its tag summaries for the menu picker.
+    // the tags through the library API, then use the explicit refresh command
+    // because large-library scope navigation intentionally skips sidebar
+    // queries.
     await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
@@ -95,6 +96,7 @@ test('organizes, finds, trashes, and restores an imported asset through the UI',
         if (!created.ok) throw new Error(`Could not create tag ${name}`);
       }
     });
+    await window.getByRole('button', { name: '刷新磁盘变化' }).click();
     await window.getByRole('button', { name: /所有资产/ }).click();
 
     await window.getByRole('button', { name: '添加合集' }).click();
@@ -343,8 +345,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await expect(window.locator('.asset-card')).toHaveCount(2);
 
     // The sidebar no longer creates tags (REQ-TAG-001); seed the tag through
-    // the library API, then re-enter 所有资产 so the Renderer refreshes its
-    // tag summaries for the menu picker.
+    // the library API, then refresh the sidebar summaries explicitly.
     await window.evaluate(async () => {
       const api = (globalThis as typeof globalThis & { serpent: { library: {
         listOpen(): Promise<{ ok: boolean; value?: Array<{ libraryId: string }> }>;
@@ -356,6 +357,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
       const created = await api.createTag({ libraryId, name: '批量标签' });
       if (!created.ok) throw new Error('Could not create tag 批量标签');
     });
+    await window.getByRole('button', { name: '刷新磁盘变化' }).click();
     await window.getByRole('button', { name: /所有资产/ }).click();
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('批量合集');

@@ -698,9 +698,33 @@ function publishAiProgress(libraryId: string): void {
   }
 }
 
+function destructiveBackupLibraryId(command: WorkerCommand): string | undefined {
+  switch (command.type) {
+    case 'asset.delete-permanent':
+    case 'asset.delete-from-disk':
+    case 'asset.delete-linked':
+    case 'asset.purge-trash':
+    case 'folder.delete-from-disk':
+    case 'folder.delete-empty':
+    case 'linked-folder.remove':
+    case 'linked-folder.delete-subtree':
+      return command.libraryId;
+    default:
+      return undefined;
+  }
+}
+
 async function handleRequest(request: WorkerRequest): Promise<WorkerResult> {
   const automationResult = dispatchAutomationReadOnlyRequest(libraryService, request);
   if (automationResult) return automationResult;
+
+  const destructiveLibraryId = destructiveBackupLibraryId(request.command);
+  if (destructiveLibraryId) {
+    // Keep a verified online snapshot immediately before an irreversible
+    // command. A failed snapshot is diagnosed by the service, while the
+    // operation itself retains its existing typed error/confirmation path.
+    await libraryService.createDatabaseBackup(destructiveLibraryId);
+  }
 
   if (request.command.type === 'history.group.begin' || request.command.type === 'history.group.complete') {
     const lease = await libraryService.acquireWriteLease(request.command.libraryId);
@@ -978,11 +1002,23 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       void libraryService.runOpenBackgroundReconciliation(library.libraryId);
       return { ok: true, type: 'library.opened', library };
     }
+    case 'library.recovery-report':
+      return {
+        ok: true,
+        type: 'library.recovery-report',
+        reportPath: libraryService.getRecoveryReportPath(request.command.libraryId),
+      };
+    case 'library.open-eagle': {
+      const library = await libraryService.openEagleLibrary(request.command);
+      scheduleThumbnailScene(library.libraryId, 'startup');
+      void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+      return { ok: true, type: 'library.opened', library };
+    }
     case 'library.close':
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
-      libraryService.closeLibrary(request.command.libraryId);
+      await libraryService.closeLibraryAsync(request.command.libraryId);
       return { ok: true, type: 'library.closed', libraryId: request.command.libraryId };
     case 'library.rename': {
       const renamed = libraryService.renameLibrary(request.command);
@@ -992,6 +1028,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
+      // Keep the last verified snapshot before the irreversible library-root
+      // deletion. The delete operation itself remains synchronous for its
+      // existing recovery/reopen contract.
+      await libraryService.createDatabaseBackup(request.command.libraryId);
       const deleted = libraryService.deleteLibraryFromDisk(request.command.libraryId);
       return {
         ok: true,
@@ -2006,6 +2046,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(request.command.libraryId, 'mutation', [asset.assetId]);
       return { ok: true, type: 'asset.relinked', asset, batchFollowUpRoot };
     }
+    case 'asset.recovery-probe':
+      return {
+        ok: true,
+        type: 'asset.recovery-probe',
+        assetId: request.command.assetId,
+        probe: libraryService.probeMissingAssetRecovery(request.command),
+      };
     case 'asset.relink-batch.preview': {
       const preview = libraryService.relinkBatchPreview(request.command);
       return { ok: true, type: 'asset.relink-batch.preview', ...preview };

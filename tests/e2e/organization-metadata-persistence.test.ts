@@ -57,7 +57,8 @@ test("persists organization and metadata across restart and surfaces optimistic-
 
     // The sidebar no longer enumerates or creates tags (REQ-TAG-001); seed
     // the tag through the library API, then re-enter 所有资产 so the
-    // Renderer refreshes its tag summaries for the menu picker.
+    // Large-library scope navigation skips sidebar queries; refresh the
+    // summaries explicitly before opening the tag picker.
     await window.evaluate(async () => {
       const api = (
         globalThis as typeof globalThis & {
@@ -81,6 +82,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
       const created = await api.createTag({ libraryId, name: "持久标签" });
       if (!created.ok) throw new Error("Could not create tag fixture.");
     });
+    await window.getByRole("button", { name: "刷新磁盘变化" }).click();
     await window.getByRole("button", { name: /所有资产/ }).click();
 
     await window.getByRole("button", { name: "添加合集" }).click();

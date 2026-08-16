@@ -12,8 +12,16 @@ export function estimateMasonryPreviewHeightPx(
   height: number | null | undefined,
   columnWidthPx: number,
 ): number {
-  const col = Number.isFinite(columnWidthPx) && columnWidthPx > 0 ? columnWidthPx : 0;
-  if (col <= 0) return 1;
+  // `.asset-card` is a border-box with a transparent 1px border on both
+  // sides. The masonry column owns the outer card width, while the preview
+  // itself occupies the card's content width. Use that content width here so
+  // portrait previews preserve their source ratio at the smallest stops too
+  // (the two-pixel discrepancy is visible on narrow columns).
+  const outerColumn = Number.isFinite(columnWidthPx) && columnWidthPx > 0
+    ? columnWidthPx
+    : 0;
+  if (outerColumn <= 0) return 1;
+  const col = Math.max(1, outerColumn - 2);
   if (!width || !height || width <= 0 || height <= 0) {
     // Match `.asset-preview { aspect-ratio: 1.3 }` so placeholder cards
     // cannot drift away from the windowed slot height (Serpent-1s3d).

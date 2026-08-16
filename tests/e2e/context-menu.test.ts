@@ -681,13 +681,13 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
     await expect(menu).toBeVisible({ timeout: 5_000 });
     await expect(menu.getByText("已选择 2 项", { exact: true })).toBeVisible();
     await expect(menu.getByRole("note")).toHaveText(
-      "移动：将处理 1 / 跳过 1（链接资产）；回收站：将处理 1 / 跳过 1（链接资产）",
+      "移动：将处理 1 / 跳过 1（链接资产）",
     );
     await expect(
       menu.getByRole("menuitem", { name: "移动到文件夹…（1 项）" }),
     ).toBeVisible();
     await expect(
-      menu.getByRole("menuitem", { name: "移入回收站（1 项）" }),
+      menu.getByRole("menuitem", { name: "移入回收站（2 项）" }),
     ).toBeVisible();
   } finally {
     await application.close();
@@ -721,7 +721,9 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
 
     // Create two tags through the library API so the picker has candidates.
     // The sidebar no longer enumerates or creates tags (REQ-TAG-001);
-    // re-entering 所有资产 refreshes the Renderer tag summaries.
+    // The large-library navigation path keeps sidebar queries out of a
+    // same-scope click, so refresh the summaries explicitly after the fixture
+    // API writes.
     await window.evaluate(async () => {
       const api = (
         globalThis as typeof globalThis & {
@@ -752,6 +754,7 @@ test("tag picker searches, survives in-menu scroll, has no back button, and clos
         if (!created.ok) throw new Error(`Could not create tag ${name}.`);
       }
     });
+    await window.getByRole("button", { name: "刷新磁盘变化" }).click();
     await window.getByRole("button", { name: /所有资产/ }).click();
 
     // Enter the tag picker from the asset context menu

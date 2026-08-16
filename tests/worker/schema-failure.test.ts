@@ -192,7 +192,7 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     retry.closeAll();
   });
 
-  it('verifyMigrationHistory damage stays LIBRARY_CORRUPT and is not recorded', () => {
+  it('opens verifyMigrationHistory damage read-only without recording a retry latch', () => {
     const root = temporaryRoot();
     const libraryPath = buildV23Library(root);
     // Corrupt the checksum history so the pre-migration verification fails.
@@ -202,7 +202,7 @@ describe('migration failure integration (Serpent-verg.5)', () => {
     db.close();
 
     const service = new LibraryService();
-    expect(() => service.openLibrary(libraryPath)).toThrow();
+    expect(service.openLibrary(libraryPath).recovery).toMatchObject({ mode: 'read-only' });
     service.closeAll();
     expect(existsSync(migrationFailurePath(libraryPath))).toBe(false);
   });

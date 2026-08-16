@@ -16,6 +16,8 @@ import { iconActionAttrs } from "./icon-action-attrs";
 import { EditTextContextMenuHost } from "./edit-text-context-menu";
 import { HoverTipHost } from "./hover-tip";
 import {
+  corruptAssetAffordance,
+  isCorruptAsset,
   missingAssetAffordance,
   shouldShowMissingAssetOverlay,
 } from "./availability-affordance";
@@ -600,6 +602,7 @@ function AppInner() {
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const managedImportTargetFolderIdRef = useRef<string | undefined>(undefined);
   const [allAssetCount, setAllAssetCount] = useState(0);
+  const [rootAssetCount, setRootAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   // Session persistence must wait until the startup restore has applied the
@@ -2737,6 +2740,16 @@ function AppInner() {
         trashMode || scope !== "all"
           ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
           : Promise.resolve(undefined),
+        !trashMode && scope === "root"
+          ? Promise.resolve(undefined)
+          : api.searchAssets({
+              ...libId,
+              query: null,
+              limit: 1,
+              offset: 0,
+              scope: { kind: "folder", folderId: null, recursive: false },
+              showIgnored: includeIgnored,
+            }),
         api.searchAssets({
           ...libId,
           query: null,
@@ -2753,10 +2766,12 @@ function AppInner() {
       if (results === null || generation !== contentLoadGenerationRef.current) {
         return;
       }
-      const [assetResult, allResult, trashCountResult, sidebarResult] = results;
+      const [assetResult, allResult, rootCountResult, trashCountResult, sidebarResult] = results;
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
       if (allResult && !allResult.ok)
         throw new LibraryOperationError(allResult.error);
+      if (rootCountResult && !rootCountResult.ok)
+        throw new LibraryOperationError(rootCountResult.error);
       if (!trashCountResult.ok)
         throw new LibraryOperationError(trashCountResult.error);
       if (sidebarResult) {
@@ -2810,6 +2825,11 @@ function AppInner() {
       });
       // CU-B2: keep library-wide count fresh even while browsing trash.
       setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
+      setRootAssetCount(
+        !trashMode && scope === "root"
+          ? assetResult.value.total
+          : rootCountResult?.value.total ?? 0,
+      );
       setTrashedAssetCount(trashCountResult.value.total);
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
@@ -3300,6 +3320,24 @@ function AppInner() {
     );
   }
 
+  async function openEagleLibrary() {
+    if (!api) return;
+    await runLibraryOpenPipeline(
+      "opening",
+      () => api.openEagle(),
+      t("toast.openRecentFailed"),
+    );
+  }
+
+  async function revealRecoveryReport() {
+    if (!api || !library) return;
+    setError(null);
+    const result = await api.revealRecoveryReport({ libraryId: library.libraryId });
+    if (!result.ok) {
+      setError(toMessage(new LibraryOperationError(result.error), t("library.recoveryOpenReportFailed"), locale));
+    }
+  }
+
   async function openRecentLibrary(libraryPath: string) {
     if (!api) return;
     await runLibraryOpenPipeline(
@@ -3465,7 +3503,10 @@ function AppInner() {
     }
   }
 
-  async function chooseFolder(scope: AssetScope) {
+  async function chooseFolder(
+    scope: AssetScope,
+    options?: { refreshSidebar?: boolean },
+  ) {
     if (!library) return;
     // REQ-VIEW-004: leave the browse affiliate viewer when the browse scope changes.
     await closeAssetPreview(false);
@@ -3504,7 +3545,16 @@ function AppInner() {
     try {
       await loadContent(library, scope, {
         discovery: { sort: { field: sortField, order: sortOrder } },
-        refreshSidebar: false,
+        // Ordinary navigation keeps sidebar queries out of the hot path for
+        // large libraries. A destructive mutation that removed the current
+        // folder opts in once so the deleted row cannot remain visible.
+        // Re-entering the library-wide/root scopes is also the explicit
+        // refresh boundary for organization changes made through another
+        // window, an extension, or the test bridge. Folder-to-folder
+        // navigation remains cheap for giant libraries, while returning to a
+        // top-level scope cannot leave a newly-created collection hidden.
+        refreshSidebar:
+          options?.refreshSidebar ?? (scope === "all" || scope === "root"),
       });
       recordNavigation(
         scope === "all"
@@ -3554,7 +3604,10 @@ function AppInner() {
     try {
       await loadContent(library, "all", {
         trashMode: true,
-        refreshSidebar: false,
+        // Trash browse renders folder tombstone cards from the sidebar query;
+        // unlike ordinary folder navigation, this transition must refresh
+        // that list after a destructive mutation.
+        refreshSidebar: true,
       });
       recordNavigation({ kind: "trash", tombstoneId });
     } catch (caught) {
@@ -4829,6 +4882,30 @@ function AppInner() {
     activeCollectionId,
   });
 
+  const removeDeletedManagedFoldersFromSidebar = useCallback(
+    (deletedFolderIds: readonly string[]) => {
+      setFolders((current) => {
+        const removed = new Set(deletedFolderIds);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const folder of current) {
+            if (
+              folder.parentFolderId !== null &&
+              removed.has(folder.parentFolderId) &&
+              !removed.has(folder.folderId)
+            ) {
+              removed.add(folder.folderId);
+              changed = true;
+            }
+          }
+        }
+        return current.filter((folder) => !removed.has(folder.folderId));
+      });
+    },
+    [],
+  );
+
   const {
     trashManagedFolder,
     openDiskDelete,
@@ -4845,8 +4922,9 @@ function AppInner() {
     setUiState,
     closePreview: releaseAssetPreviewsBeforeDiskDelete,
     reloadCurrentContent,
+    onManagedFoldersTrashed: removeDeletedManagedFoldersFromSidebar,
     onDeletedCurrentScope: () => {
-      void chooseFolder("root");
+      void chooseFolder("root", { refreshSidebar: true });
       void refreshCollectionSummaries();
     },
   });
@@ -4946,7 +5024,10 @@ function AppInner() {
     setError,
     setUiState,
     reloadCurrentContent,
-    onDeletedCurrentScope: () => chooseFolder("root"),
+    onManagedFoldersTrashed: removeDeletedManagedFoldersFromSidebar,
+    onDeletedCurrentScope: async () => {
+      await chooseFolder("root", { refreshSidebar: true });
+    },
   });
 
   const {
@@ -8341,6 +8422,7 @@ function AppInner() {
               onImportLinkedFolder={() => void importFolderAsLinked()}
               onMenuOpen={() => void refreshRecentLibraries()}
               onOpenLibrary={() => void runLibraryOperation("open")}
+              onOpenEagleLibrary={() => void openEagleLibrary()}
               onOpenRecent={(path) => void openRecentLibrary(path)}
               onForgetRecent={(path) => void forgetRecentLibrary(path)}
               recentLibraries={recentLibraries}
@@ -8445,20 +8527,50 @@ function AppInner() {
           <WindowsWindowControls shell={shellApi} />
         ) : null}
       </header>
-      {library?.readOnly ? (
+      {library?.recovery || library?.readOnly ? (
         <div className="library-readonly-banner" role="status">
           <Icon name="info" size={14} />
           <span>
-            {library.migrationStuck
+            {library.recovery?.mode === "backup-1"
+              ? t("library.recoveryBackup1")
+              : library.recovery?.mode === "backup-2"
+                ? t("library.recoveryBackup2")
+                : library.recovery?.mode === "read-only"
+                  ? t("library.recoveryReadonly")
+                  : library.recovery?.mode === "rescue"
+                    ? t("library.recoveryRescue")
+                    : library.migrationStuck
               ? t("library.readOnlyBannerMigrationStuck")
-              : library.libraryVersion !== undefined &&
-                  library.supportedSchemaVersion !== undefined
+                  : library.libraryVersion !== undefined &&
+                      library.supportedSchemaVersion !== undefined
                 ? t("library.readOnlyBannerVersioned", {
                     libraryVersion: library.libraryVersion,
                     supportedVersion: library.supportedSchemaVersion,
                   })
                 : t("library.readOnlyBanner")}
           </span>
+          {library.recovery?.mode === "rescue" &&
+          library.recovery.recoveredAssetCount !== undefined ? (
+            <span className="library-recovery-report-note">
+              {t("library.recoveryRescueDetails", {
+                count: library.recovery.recoveredAssetCount,
+              })}
+            </span>
+          ) : null}
+          {library.recovery?.reportAvailable ? (
+            <>
+              <span className="library-recovery-report-note">
+                {t("library.recoveryReportAvailable")}
+              </span>
+              <button
+                className="secondary-button library-recovery-report-button"
+                onClick={() => void revealRecoveryReport()}
+                type="button"
+              >
+                {t("library.recoveryOpenReport")}
+              </button>
+            </>
+          ) : null}
         </div>
       ) : null}
       <NavigationSidebar
@@ -8484,6 +8596,7 @@ function AppInner() {
           }
         }}
         allAssetCount={allAssetCount}
+        rootAssetCount={rootAssetCount}
         trashedAssetCount={trashedAssetCount}
         folders={folders}
         collections={collections}
@@ -9337,12 +9450,13 @@ function AppInner() {
                       );
                       const renamingThisAsset =
                         assetRenameDialog?.assetId === asset.assetId;
+                      const corruptAsset = isCorruptAsset(asset);
                       const CardTag = renamingThisAsset ? "div" : "button";
                       return (
                     <CardTag
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
-                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
+                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
                       title={asset.displayName}
                       draggable={!showTrash && !renamingThisAsset}
@@ -9661,12 +9775,22 @@ function AppInner() {
                         )}
                         {shouldShowMissingAssetOverlay(asset.availability) && (
                           <span
-                            aria-label={t("inspector.missing")}
-                            title={t("inspector.missing")}
+                            aria-label={
+                              corruptAsset
+                                ? t("inspector.dataCorrupt")
+                                : t("inspector.missing")
+                            }
+                            title={
+                              corruptAsset
+                                ? t("inspector.dataCorrupt")
+                                : t("inspector.missing")
+                            }
                             className="missing-overlay"
                           >
                             {(() => {
-                              const affordance = missingAssetAffordance();
+                              const affordance = corruptAsset
+                                ? corruptAssetAffordance()
+                                : missingAssetAffordance();
                               return (
                                 <Icon
                                   color={affordance.iconColor}
@@ -9955,6 +10079,7 @@ function AppInner() {
         onAssignTagToAsset={(tagId) => void handleInspectorAssignTag(tagId)}
         onCreateAndAssignTag={(tagName) => void handleInspectorCreateAndAssignTag(tagName)}
         onOpenSourceUrl={handleOpenSourceUrl}
+        onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
         onPaletteColorCopy={(color, copied) => {
           if (copied) {
             setNotice(t("toast.colorCopiedAlt", { color }));

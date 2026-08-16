@@ -99,7 +99,7 @@ afterAll(() => {
  * still the checksum-pinned resource bundle test.
  */
 describe.runIf(canRun)('real common audio/video format matrix', () => {
-  it('turns every MVP audio/video source into a playable owned proxy', async () => {
+  it('keeps video source-first and only creates the audio playback proxy by default', async () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'sources');
     const sourcePaths = buildFixtures(sourceRoot);
@@ -120,16 +120,25 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
       const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
       expect(assets).toHaveLength(sourcePaths.length);
       for (const asset of assets) {
-        const kind = asset.mediaType === 'video' ? 'webm_proxy' : 'audio_proxy';
-        const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, kind);
         const jobs = service.listMediaJobs(library.libraryId).jobs
           .filter((job) => job.assetId === asset.assetId)
           .map(({ kind: jobKind, status, errorCode }) => ({ kind: jobKind, status, errorCode }));
+        if (asset.mediaType === 'video') {
+          expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'webm_proxy'),
+            `${asset.displayName}: video proxy must stay on demand`).toBeNull();
+          expect(jobs.some((job) => job.kind === 'generate_webm_proxy'),
+            `${asset.displayName}: ${JSON.stringify(jobs)}`).toBe(false);
+          expect(service.getPreviewArtifact(library.libraryId, asset.assetId)).toMatchObject({
+            mediaType: 'video',
+            status: 'ready',
+            playbackMode: 'source',
+          });
+          continue;
+        }
+        const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'audio_proxy');
         expect(artifact, `${asset.displayName}: ${JSON.stringify(jobs)}`).toMatchObject({
           status: 'ready',
-          mimeType: asset.mediaType === 'video'
-            ? expect.stringMatching(/^video\/(mp4|webm)$/u)
-            : 'audio/ogg',
+          mimeType: 'audio/ogg',
         });
         const proxyPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'proxy');
         const probe = spawnSync(ffprobePath!, [
@@ -137,16 +146,9 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
         ], { encoding: 'utf8', timeout: 30_000 });
         expect(probe.status, `${asset.displayName}: ${probe.stderr}`).toBe(0);
         const streams = JSON.parse(probe.stdout) as { streams?: Array<{ codec_name?: string; codec_type?: string }> };
-        const expectedAudioCodec = asset.mediaType === 'video'
-          ? (artifact!.mimeType === 'video/mp4' ? 'aac' : 'opus')
-          : 'opus';
+        const expectedAudioCodec = 'opus';
         expect(streams.streams?.some((stream) => stream.codec_name === expectedAudioCodec && stream.codec_type === 'audio'))
           .toBe(true);
-        if (asset.mediaType === 'video') {
-          const videoCodec = artifact!.mimeType === 'video/mp4' ? 'h264' : 'vp9';
-          expect(streams.streams?.some((stream) => stream.codec_name === videoCodec && stream.codec_type === 'video'))
-            .toBe(true);
-        }
       }
     } finally {
       service.closeAll();

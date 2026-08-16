@@ -18,10 +18,6 @@ import type {
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { buildPluginViewerState } from "./plugin-context-state";
-import {
-  DirectPlayCapabilityService,
-  type DirectPlayMediaDescriptor,
-} from "./direct-play-capability";
 import { useT, type TranslateFn } from "./i18n";
 import {
   nextDirectApprovedState,
@@ -56,6 +52,8 @@ import {
 } from "./viewer-display-transform";
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
+import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
+import { createProxyFallbackRunGuard } from "./proxy-fallback-run";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
 
@@ -88,42 +86,6 @@ const PREVIEW_ERROR_KEYS: Record<string, string> = {
   MEDIA_PROCESSING_FAILED: "preview.mediaProcessingFailed",
   UNSUPPORTED_FORMAT: "preview.unsupportedFormat",
 };
-const directPlaybackCapability = new DirectPlayCapabilityService({
-  runtime: {
-    platform: navigator.platform || "unknown",
-    arch: /arm64|aarch64/iu.test(navigator.userAgent)
-      ? "arm64"
-      : /x86_64|x64|win64/iu.test(navigator.userAgent)
-        ? "x64"
-        : "unknown",
-  },
-  canPlayType: (query) => document.createElement("video").canPlayType(query),
-  probeDirectLoad: ({ sourceUrl }) =>
-    new Promise<boolean>((resolve) => {
-      if (!sourceUrl) {
-        resolve(false);
-        return;
-      }
-      const video = document.createElement("video");
-      let settled = false;
-      const finish = (supported: boolean) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timeout);
-        video.removeAttribute("src");
-        video.load();
-        resolve(supported);
-      };
-      const timeout = window.setTimeout(() => finish(false), 5_000);
-      video.preload = "metadata";
-      video.muted = true;
-      video.onloadedmetadata = () => finish(true);
-      video.onerror = () => finish(false);
-      video.src = sourceUrl;
-      video.load();
-    }),
-});
-
 function previewErrorDetail(
   errorCode: string | undefined,
   t: TranslateFn,
@@ -233,6 +195,8 @@ export const AssetPreviewModal = forwardRef<
   const [selectedExrPlane, setSelectedExrPlane] = useState(0);
   const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
+  const [proxyNoticeAvailable, setProxyNoticeAvailable] = useState(false);
+  const [proxyNoticeVisible, setProxyNoticeVisible] = useState(false);
   const [displayTransform, setDisplayTransform] =
     useState<ViewerDisplayTransform>(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
   const [viewerContextMenu, setViewerContextMenu] =
@@ -240,6 +204,11 @@ export const AssetPreviewModal = forwardRef<
   const [fitRequestToken, setFitRequestToken] = useState(0);
   const resolutionRef = useRef<PreviewResolution | null>(null);
   const playbackErrorRef = useRef<string | null>(null);
+  const requestedProxyFallbackRef = useRef<string | null>(null);
+  // An explicit proxy fallback can outlive the media element that requested
+  // it (asset navigation, manual retry, or viewer unmount). Invalidate the
+  // run so its polling loop cannot paint an error into a newer viewer.
+  const proxyFallbackRunGuardRef = useRef(createProxyFallbackRunGuard());
   const directApprovedRef = useRef(false);
   const directGateIdentityRef = useRef<string | null>(null);
   const textViewerRef = useRef<TextViewerControlsHandle>(null);
@@ -259,7 +228,9 @@ export const AssetPreviewModal = forwardRef<
       exrPlane = selectedExrPlane,
       colorSpace = selectedColorSpace,
       preserveError = false,
+      isCurrentRun?: () => boolean,
     ) => {
+      if (isCurrentRun && !isCurrentRun()) return undefined;
       const sequence = ++requestSequence.current;
       if (!quiet) setLoading(true);
       try {
@@ -267,13 +238,18 @@ export const AssetPreviewModal = forwardRef<
           libraryId,
           assetId: asset.assetId,
           mode,
-          // The double-click viewer always plays the ORIGINAL source
-          // (REQ-VIEW-002); proxies are for hover previews only.
-          intent: "viewer",
+          // Start with the original source. Once the media element reports a
+          // real decode failure, switch this same viewer request to the
+          // explicit proxy-fallback intent so a ready derivative can replace
+          // the failed source without any eager encoding.
+          intent: requestedProxyFallbackRef.current
+            ? "proxy-fallback"
+            : "viewer",
           ...(asset.mediaType === "image" ? { exrPlane } : {}),
           ...(colorSpace ? { colorSpace } : {}),
         });
         if (sequence !== requestSequence.current) return result;
+        if (isCurrentRun && !isCurrentRun()) return result;
         if (!result.ok) {
           setError(
             requestFailureMessage(t("preview.cannotOpen"), result.error, t),
@@ -317,39 +293,53 @@ export const AssetPreviewModal = forwardRef<
                 result.value.playbackMode === "proxy" &&
                 result.value.url))
           ) {
-            setError(null);
+              setError(null);
           }
         }
         return result;
       } catch {
-        if (sequence === requestSequence.current) {
+        if (
+          sequence === requestSequence.current &&
+          (!isCurrentRun || isCurrentRun())
+        ) {
           setError(t("preview.cannotOpenNoResponse"));
         }
         return undefined;
       } finally {
-        if (!quiet && sequence === requestSequence.current) setLoading(false);
+        if (
+          !quiet &&
+          sequence === requestSequence.current &&
+          (!isCurrentRun || isCurrentRun())
+        ) {
+          setLoading(false);
+        }
       }
     },
     [api, asset.assetId, asset.mediaType, libraryId, selectedColorSpace, selectedExrPlane, t],
   );
 
   useEffect(() => {
+    const runGuard = proxyFallbackRunGuardRef.current;
+    runGuard.invalidate();
     setSelectedExrPlane(0);
     setSelectedColorSpace(undefined);
     setDisplayTransform(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
     playbackErrorRef.current = null;
+    requestedProxyFallbackRef.current = null;
+    setProxyNoticeAvailable(false);
+    setProxyNoticeVisible(false);
     setManualRetryError(null);
+    return () => {
+      runGuard.invalidate();
+    };
   }, [asset.assetId]);
 
   const ensureProxyFallback = useCallback(
     async (errorCode: string) => {
       const playbackToken = resolution?.playbackToken;
-      if (
-        !playbackToken ||
-        !directPlaybackCapability.claimProxyFallback(playbackToken)
-          .shouldRequestProxy
-      )
-        return;
+      if (!playbackToken || requestedProxyFallbackRef.current === playbackToken) return;
+      requestedProxyFallbackRef.current = playbackToken;
+      const isCurrentRun = proxyFallbackRunGuardRef.current.begin();
       // REQ-VIEW-002: keep the current source/URL mounted. Proxy generation is a
       // quiet background upgrade — do not wipe into a blocking "generating" gate.
       const detail = `Direct playback unavailable: ${errorCode}`;
@@ -366,12 +356,53 @@ export const AssetPreviewModal = forwardRef<
         assetId: asset.assetId,
         kind: "webm_proxy",
       });
+      if (!isCurrentRun()) return;
       if (!result.ok)
         setError(
           requestFailureMessage(t("preview.proxyFailed"), result.error, t),
         );
+      else {
+        // The pending response intentionally keeps the failed source mounted
+        // so the viewer does not flash a blocking generation surface. That
+        // also means the normal "direct playback is approved" polling gate
+        // may stop before the proxy-ready event arrives. An explicit fallback
+        // owns its refresh loop until the ready proxy is observable.
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline) {
+          if (!isCurrentRun()) return;
+          const preview = await resolvePreview(
+            true,
+            "client",
+            selectedExrPlane,
+            selectedColorSpace,
+            false,
+            isCurrentRun,
+          );
+          if (!isCurrentRun()) return;
+          if (
+            preview?.ok &&
+            preview.value.status === "ready" &&
+            preview.value.playbackMode === "proxy" &&
+            preview.value.url
+          ) {
+            return;
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+        }
+        if (!isCurrentRun()) return;
+        setError(t("preview.proxyFailed"));
+      }
     },
-    [api, asset.assetId, libraryId, resolution?.playbackToken, t],
+    [
+      api,
+      asset.assetId,
+      libraryId,
+      resolution?.playbackToken,
+      resolvePreview,
+      selectedColorSpace,
+      selectedExrPlane,
+      t,
+    ],
   );
 
   useEffect(() => {
@@ -438,52 +469,9 @@ export const AssetPreviewModal = forwardRef<
     modalRef.current?.focus({ preventScroll: true });
   }, []);
 
-  useEffect(() => {
-    if (
-      resolution?.mediaType !== "video" ||
-      resolution.playbackMode !== "source" ||
-      !resolution.url
-    ) {
-      return;
-    }
-    if (
-      !resolution.sourceContainer ||
-      !resolution.sourceMimeType ||
-      !resolution.sourceCodecs
-    ) {
-      return;
-    }
-    let cancelled = false;
-    const descriptor: DirectPlayMediaDescriptor = {
-      container: resolution.sourceContainer,
-      mimeType: resolution.sourceMimeType,
-      codecs: resolution.sourceCodecs,
-    };
-    void directPlaybackCapability
-      .decide(descriptor, resolution.url)
-      .then((decision) => {
-        if (cancelled) return;
-        // Always present the source URL immediately (REQ-VIEW-002). Capability is
-        // used to pre-warm proxy when Chromium is unlikely to play the source.
-        setDirectApproved(true);
-        if (decision.mode === "proxy") {
-          void ensureProxyFallback(`VIDEO_${decision.reason.toUpperCase()}`);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    ensureProxyFallback,
-    resolution?.playbackMode,
-    resolution?.mediaType,
-    resolution?.sourceCodecs,
-    resolution?.sourceContainer,
-    resolution?.sourceMimeType,
-    resolution?.url,
-  ]);
-
   async function retry() {
+    proxyFallbackRunGuardRef.current.invalidate();
+    requestedProxyFallbackRef.current = null;
     setRetrying(true);
     setPlaybackRetryGeneration((generation) => generation + 1);
     // For a source-backed video, keep the existing playback error until
@@ -821,6 +809,13 @@ export const AssetPreviewModal = forwardRef<
               onMutedChange={setViewerMuted}
               onReady={() => {
                 setDirectApproved(true);
+                if (
+                  resolution?.mediaType === "video" &&
+                  resolution.playbackMode === "proxy"
+                ) {
+                  setProxyNoticeAvailable(true);
+                  setProxyNoticeVisible(true);
+                }
               }}
               onPlaying={(video) => {
                 // An unsupported custom source can emit `play` immediately
@@ -957,6 +952,13 @@ export const AssetPreviewModal = forwardRef<
               )}
             </div>
           )}
+          {proxyNoticeAvailable ? (
+            <ProxyPlaybackNotice
+              visible={proxyNoticeVisible}
+              onHide={() => setProxyNoticeVisible(false)}
+              onShow={() => setProxyNoticeVisible(true)}
+            />
+          ) : null}
           {viewerError && ready && (
             <div className="preview-playback-error" role="alert">
               <span>{viewerError}</span>

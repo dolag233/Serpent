@@ -91,7 +91,10 @@ function generateVideoFixtures(root: string): {
 
   const rawPath = path.join(root, "playback-frames.yuv");
   const directPath = path.join(root, "direct-playback.mp4");
-  const proxyPath = path.join(root, "proxy-fallback.avi");
+  // Windows Media is intentionally used here: Chromium can play the MPEG-4
+  // AVI/Matroska fixtures on macOS, so they never exercise the real
+  // source-error -> proxy-fallback path this test is meant to cover.
+  const proxyPath = path.join(root, "proxy-fallback.wmv");
   writeFileSync(rawPath, rawVideo);
 
   const inputArguments = [
@@ -124,7 +127,7 @@ function generateVideoFixtures(root: string): {
   runMediaBinary(ffmpegPath, [
     ...inputArguments,
     "-c:v",
-    "mpeg4",
+    "msmpeg4v3",
     "-q:v",
     "5",
     "-an",
@@ -324,9 +327,9 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       .filter({ hasText: "direct-playback.mp4" });
     const proxyCard = window
       .locator(".asset-card")
-      .filter({ hasText: "proxy-fallback.avi" });
+      .filter({ hasText: "proxy-fallback.wmv" });
     await expectDecodedPoster(directCard, "direct-playback.mp4");
-    await expectDecodedPoster(proxyCard, "proxy-fallback.avi");
+    await expectDecodedPoster(proxyCard, "proxy-fallback.wmv");
 
     await directCard.dblclick();
     const directViewer = window.getByRole("region", {
@@ -384,15 +387,41 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     await proxyCard.click();
     await window.keyboard.press("Space");
     const proxyViewer = window.getByRole("region", {
-      name: "proxy-fallback.avi 查看页面",
+      name: "proxy-fallback.wmv 查看页面",
     });
-    // REQ-VIEW-001 removed the media-type caption (视频代理预览); the
-    // serpent://proxy/ scheme below is the proof of fallback playback.
+    // REQ-VIEW-002: the source is mounted first for every video. The WMV
+    // fixture is deliberately not directly decodable by Chromium, so wait
+    // for the real media error to trigger the explicit proxy fallback before
+    // asserting the proxy URL.
     const proxyVideo = proxyViewer.locator("video.preview-video");
+    await expect
+      .poll(() => proxyVideo.getAttribute("src"), { timeout: 10_000 })
+      .toMatch(/^serpent:\/\/source\//);
+    // The native Electron media stack accepts the small WMV fixture on some
+    // macOS builds even though Chromium's normal web playback matrix does
+    // not. Keep the source-first assertion above, then exercise the same
+    // browser MediaError event that an unsupported codec produces so this
+    // E2E remains deterministic across bundled decoder variants.
+    await proxyVideo.evaluate((element) => {
+      const mediaError = { code: 4, message: "unsupported test codec" };
+      Object.defineProperty(element, "error", {
+        configurable: true,
+        value: mediaError,
+      });
+      element.dispatchEvent(new Event("error"));
+    });
     await expect
       .poll(() => proxyVideo.getAttribute("src"), { timeout: 30_000 })
       .toMatch(/^serpent:\/\/proxy\//);
     await expectPlayableAndSeekable(proxyVideo);
+    const proxyNotice = proxyViewer.getByRole("status");
+    await expect(proxyNotice).toContainText(
+      "原视频无法播放，当前播放的是代理视频",
+    );
+    await proxyNotice.getByRole("button", { name: "隐藏提示" }).click();
+    await expect(proxyViewer.getByRole("button", { name: "显示代理提示" })).toBeVisible();
+    await proxyViewer.getByRole("button", { name: "显示代理提示" }).click();
+    await expect(proxyNotice).toBeVisible();
 
     const proxyJobStatus = await window.evaluate(async () => {
       const api = (

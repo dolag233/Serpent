@@ -225,6 +225,41 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result.library };
   },
 
+  async revealRecoveryReport({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'library.recovery-report.request', libraryId });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.recovery-report.requested') {
+      throw new Error('Unexpected recovery-report response.');
+    }
+    return { ok: true, value: undefined };
+  },
+
+  async probeMissingAssetRecovery({
+    libraryId,
+    assetId,
+  }: {
+    libraryId: string;
+    assetId: string;
+  }) {
+    const result = await request({
+      type: 'asset.recovery-probe.request',
+      libraryId,
+      assetId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'asset.recovery-probe.result') {
+      throw new Error('Unexpected recovery-probe response.');
+    }
+    return { ok: true as const, value: result.probe };
+  },
+
+  async openEagle(): Promise<LibraryApiResult<RendererLibrarySummary>> {
+    const result = await request({ type: 'library.open-eagle.request' });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'library.opened') throw new Error('Unexpected open-Eagle-library response.');
+    return { ok: true as const, value: result.library };
+  },
+
   async listRecent(): Promise<LibraryApiResult<RecentLibraryEntry[]>> {
     const result = await request({ type: 'library.list-recent.request' });
     if (!result.ok) return failure(result);
@@ -1722,8 +1757,8 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async requestPreview({ libraryId, assetId, mode, exrPlane, colorSpace }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>> {
-    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode, ...(exrPlane === undefined ? {} : { exrPlane }), ...(colorSpace === undefined ? {} : { colorSpace }) });
+  async requestPreview({ libraryId, assetId, mode, intent, exrPlane, colorSpace }: { libraryId: string; assetId: string; mode: 'client' | 'fullscreen'; intent?: 'viewer' | 'hover' | 'proxy-fallback'; exrPlane?: number; colorSpace?: string }): Promise<LibraryApiResult<PreviewResolution>> {
+    const result = await request({ type: 'asset.preview.request', libraryId, assetId, mode, ...(intent === undefined ? {} : { intent }), ...(exrPlane === undefined ? {} : { exrPlane }), ...(colorSpace === undefined ? {} : { colorSpace }) });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.preview.resolved') throw new Error('Unexpected preview response.');
     return {

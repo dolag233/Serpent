@@ -471,6 +471,16 @@ summary:focus-visible {
   border-bottom: 1px solid var(--divider-soft);
 }
 
+.library-recovery-report-note {
+  color: var(--secondary);
+}
+
+.library-recovery-report-button {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
 .app-toolbar {
   /* Above workspace content so library/settings menus are never covered by
      the asset viewer (REQ-VIEW-004 stacking isolation). */
@@ -1268,6 +1278,36 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   cursor: default;
 }
 
+.library-switcher-submenu-wrap {
+  position: relative;
+}
+
+.library-switcher-submenu-trigger {
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.library-switcher-submenu-trigger .icon {
+  flex: 0 0 auto;
+  transform: rotate(90deg);
+  color: var(--tertiary);
+}
+
+.library-switcher-submenu {
+  position: absolute;
+  top: -5px;
+  left: calc(100% + 4px);
+  z-index: var(--ui-layer-menu);
+  display: grid;
+  min-width: 190px;
+  padding: 5px;
+  border: 1px solid var(--menu-surface-border);
+  border-radius: var(--menu-surface-radius);
+  background: color-mix(in srgb, var(--menu-surface-background) 92%, transparent);
+  box-shadow: var(--menu-surface-shadow);
+  backdrop-filter: blur(14px) saturate(120%);
+}
+
 .library-switcher-menu:not(.is-keyboard-navigation) .library-switcher-item:hover:not(:disabled) {
   background: var(--menu-item-hover-background);
   color: var(--text);
@@ -1804,6 +1844,7 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .nav-tree-row {
   display: grid;
   width: 100%;
+  min-width: 0;
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
   gap: 2px;
@@ -5207,6 +5248,47 @@ body.serpent-modal-open .app-shell {
   background: color-mix(in srgb, var(--warning-muted) 88%, var(--pane));
   color: var(--warning-fg);
   font-size: 11px;
+}
+
+/* Serpent-cljb: the fallback explanation is intentionally quiet. It stays
+   in the viewer rather than becoming a blocking error, and the restore
+   control remains available after the user hides it. */
+.preview-proxy-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 5px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pane) 92%, transparent);
+  color: var(--secondary);
+  font-size: 11px;
+  transform: translateX(-50%);
+}
+
+.preview-proxy-notice button,
+.preview-proxy-notice-restore {
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--tertiary);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.preview-proxy-notice button:hover,
+.preview-proxy-notice-restore:hover {
+  color: var(--text);
+}
+
+.preview-proxy-notice-restore {
+  position: absolute;
+  top: 12px;
+  left: 12px;
 }
 
 .create-dialog {
@@ -9973,6 +10055,23 @@ select.ai-config-input.ai-config-languages {
   font-size: 11px;
 }
 
+.inspector-status-label {
+  min-width: 0;
+}
+
+.inspector-recovery-probe {
+  min-width: 0;
+  color: var(--secondary);
+  font-size: 10px;
+}
+
+.inspector-status-action {
+  margin-left: auto;
+  padding: 3px 7px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .inspector-status-dot {
   width: 7px;
   height: 7px;
@@ -9993,6 +10092,14 @@ select.ai-config-input.ai-config-languages {
 .inspector-status-row[data-tone="missing"] .inspector-status-dot {
   background: var(--danger);
   box-shadow: 0 0 0 3px rgb(199 82 82 / 14%);
+}
+
+.inspector-status-row[data-tone="corrupt"] {
+  color: var(--warning);
+}
+
+.inspector-status-row[data-tone="corrupt"] .inspector-status-dot {
+  background: var(--warning);
 }
 
 .inspector-status-row[data-tone="trash"] .inspector-status-dot {

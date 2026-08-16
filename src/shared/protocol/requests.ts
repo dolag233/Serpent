@@ -150,6 +150,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.open.request'),
   }),
   z.strictObject({
+    type: z.literal('library.recovery-report.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.open-eagle.request'),
+  }),
+  z.strictObject({
     type: z.literal('library.close.request'),
     libraryId: identifierSchema,
   }),
@@ -918,8 +925,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     assetId: identifierSchema,
     mode: z.enum(['client', 'fullscreen']),
-    /** 'viewer' (default) plays the ORIGINAL source; 'hover' prefers the proxy. */
-    intent: z.enum(['viewer', 'hover']).optional(),
+    /** 'viewer' starts at the source; 'proxy-fallback' is used after a real decode error. */
+    intent: z.enum(['viewer', 'hover', 'proxy-fallback']).optional(),
     exrPlane: z.number().int().min(0).max(255).optional(),
     colorSpace: nonBlankString.max(120).optional(),
   }),
@@ -947,6 +954,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     errorCode: nonBlankString.max(120),
     detail: z.string().max(500).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.recovery-probe.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.open-external.request'),
@@ -1092,6 +1104,14 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.open'),
     selectedLibraryPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.recovery-report'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.open-eagle'),
+    sourceRootPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('library.close'),
@@ -2129,6 +2149,11 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.recovery-probe'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.get-asset-paths'),
     libraryId: identifierSchema,
     assetIds: z
@@ -2168,7 +2193,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-preview-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    intent: z.enum(['viewer', 'hover']).optional(),
+    intent: z.enum(['viewer', 'hover', 'proxy-fallback']).optional(),
     exrPlane: z.number().int().min(0).max(255).optional(),
     colorSpace: nonBlankString.max(120).optional(),
   }),

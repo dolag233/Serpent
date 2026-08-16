@@ -45,6 +45,7 @@ export type NativeDialogId =
   | "importFiles"
   | "importFolder"
   | "importEagleLibrary"
+  | "openEagleLibrary"
   | "createLibrary"
   | "openLibrary"
   | "linkFolder"
@@ -77,6 +78,10 @@ const EN: DialogCatalog = {
   importEagleLibrary: {
     title: "Import Eagle Library",
     buttonLabel: "Import Eagle Library",
+  },
+  openEagleLibrary: {
+    title: "Open Eagle Library",
+    buttonLabel: "Open Eagle Library",
   },
   createLibrary: { title: "Create Library", buttonLabel: "Choose Folder" },
   openLibrary: { title: "Open Library", buttonLabel: "Open" },
@@ -148,6 +153,10 @@ const ZH_CN: DialogCatalog = {
   importEagleLibrary: {
     title: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
     buttonLabel: "\u5bfc\u5165 Eagle \u8d44\u6e90\u5e93",
+  },
+  openEagleLibrary: {
+    title: "\u6253\u5f00 Eagle \u8d44\u6e90\u5e93",
+    buttonLabel: "\u6253\u5f00 Eagle \u8d44\u6e90\u5e93",
   },
   createLibrary: {
     title: "\u521b\u5efa\u8d44\u6e90\u5e93",

@@ -1476,6 +1476,25 @@ function toRendererResult(
         supportedSchemaVersion: result.library.supportedSchemaVersion,
         // Serpent-verg.5: read-only because the migration is stuck.
         migrationStuck: result.library.migrationStuck,
+        // Keep the recovery report path inside Main/Worker. Renderer receives
+        // only a boolean affordance so the filesystem boundary stays intact.
+        recovery: result.library.recovery
+          ? {
+              mode: result.library.recovery.mode,
+              ...(result.library.recovery.reportPath
+                ? { reportAvailable: true }
+                : {}),
+              ...(result.library.recovery.recoveredAssetCount === undefined
+                ? {}
+                : { recoveredAssetCount: result.library.recovery.recoveredAssetCount }),
+              ...(result.library.recovery.metadataRecovered === undefined
+                ? {}
+                : { metadataRecovered: result.library.recovery.metadataRecovered }),
+              ...(result.library.recovery.metadataLosses === undefined
+                ? {}
+                : { metadataLosses: result.library.recovery.metadataLosses }),
+            }
+          : undefined,
       },
     });
   }
@@ -1488,6 +1507,14 @@ function toRendererResult(
         displayName: result.library.displayName,
         displayPath: result.library.libraryPath,
       },
+    });
+  }
+  if (result.type === "asset.recovery-probe") {
+    return parseRendererResult({
+      ok: true,
+      type: "asset.recovery-probe.result",
+      assetId: result.assetId,
+      probe: result.probe,
     });
   }
   if (result.type === "library.list") {
@@ -1703,6 +1730,20 @@ async function commandFor(
       const selectedLibraryPath = await selectDirectory("openLibrary");
       return selectedLibraryPath
         ? { type: "library.open", selectedLibraryPath }
+        : undefined;
+    }
+    case "library.recovery-report.request":
+      // The Worker resolves the report path from its Main-owned library state;
+      // Renderer only receives a shell acknowledgement.
+      return { type: "library.recovery-report", libraryId: request.libraryId };
+    case "library.open-eagle.request": {
+      const sourceRootPath = await selectOpenDirectory(
+        createNativeDialogHost(),
+        "openEagleLibrary",
+        process.env.SERPENT_E2E_OPEN_EAGLE_LIBRARY,
+      );
+      return sourceRootPath
+        ? { type: "library.open-eagle", sourceRootPath }
         : undefined;
     }
     case "library.close.request":
@@ -2713,6 +2754,12 @@ async function commandFor(
     case "asset.preview-error.report":
       // Main records this before command dispatch.
       return undefined;
+    case "asset.recovery-probe.request":
+      return {
+        type: "asset.recovery-probe",
+        libraryId: request.libraryId,
+        assetId: request.assetId,
+      };
     case "asset.open-external.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return {
@@ -4269,6 +4316,29 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       void enqueueAutoAnalyzeAfterImport(request.libraryId, [
         workerResult.asset.assetId,
       ]);
+    }
+
+    if (
+      workerResult.ok &&
+      request.type === "library.recovery-report.request" &&
+      workerResult.type === "library.recovery-report"
+    ) {
+      try {
+        // Keep the report path Main-owned. Showing the containing directory
+        // also lets users inspect the quarantined damaged database beside it.
+        shell.showItemInFolder(workerResult.reportPath);
+        return {
+          ok: true,
+          type: "library.recovery-report.requested",
+          libraryId: request.libraryId,
+        } satisfies RendererResult;
+      } catch (error) {
+        logger?.error("main.recovery-report", error);
+        return {
+          ok: false,
+          error: createPublicError("INTERNAL_ERROR"),
+        } satisfies RendererResult;
+      }
     }
 
     const result = toRendererResult(

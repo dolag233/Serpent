@@ -1,6 +1,6 @@
 // Serpent-5xbg: derived-artifact repair for assets that failed generation.
 //
-// The thumbnail/video-poster/contact-sheet/webm-proxy/audio-proxy queues only ever enqueue
+// The thumbnail/video-poster/contact-sheet/audio-proxy queues only ever enqueue
 // assets with NO terminal artifact; a failed artifact (e.g. transient FFmpeg
 // unavailability, a killed process, a cancelled import job) permanently blocks
 // re-enqueue. This module re-opens the queue for *retryable* failures when an
@@ -52,7 +52,11 @@ export interface RetryFailedOptions {
   now?: Date;
 }
 
-const DERIVED_KINDS = "'thumbnail', 'video_poster', 'contact_sheet', 'webm_proxy', 'audio_proxy'";
+// A failed video proxy is not an automatic repair candidate. Its existence is
+// evidence only that some previous path asked for it; it does not prove that
+// the source failed direct playback. The viewer owns the explicit retry after
+// a real media-element error (Serpent-cljb).
+const DERIVED_KINDS = "'thumbnail', 'video_poster', 'contact_sheet', 'audio_proxy'";
 
 /**
  * Invalidate retryable failed derived artifacts so the next thumbnail-queue
@@ -103,7 +107,6 @@ export function requeueRetryableFailedArtifacts(
                AND active.revision_id = ra.revision_id
                AND active.kind = CASE ra.kind
                  WHEN 'contact_sheet' THEN 'generate_contact_sheet'
-                 WHEN 'webm_proxy' THEN 'generate_webm_proxy'
                  WHEN 'audio_proxy' THEN 'generate_audio_proxy'
                  ELSE 'generate_thumbnail'
                END

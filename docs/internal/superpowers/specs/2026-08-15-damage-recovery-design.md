@@ -1,7 +1,7 @@
 # 数据损坏处理与自动恢复设计
 
 > 日期：2026-08-15  
-> 状态：顶层设计完成，待实现认领  
+> 状态：Phase 1 与 Phase 2 主要路径已实现；Phase 3/平台证据待收口
 > 用户理想（2026-08-15）：不论什么内容丢失，资源库都可以正常打开运行；可恢复的内容丢失进入自动恢复流程；不可恢复的显示文件损坏（裂开）标志。数据库物理损坏通过定时备份（至多 2 份）恢复。
 
 ## 1. 目标
@@ -22,14 +22,14 @@
 | 文件操作中断 | `file_operations` journal + 全套 `recover*`（move/copy/trash/restore/relink/批量替换），重开自动对账 | `recoverFileOperations` 等 |
 | 源文件丢失 | `availability: 'missing'` 建模：卡片 `is-missing` 样式、过滤、hover 禁用、Inspector 缺失行；linked 资产 relink 恢复 | `availability-affordance.ts` 等 |
 | 缩略图失败展示 | `broken-file` 裂开图标 | `AssetCardMedia.tsx:44` |
-| 数据库物理损坏 | `quick_check` 失败 → `LIBRARY_CORRUPT` 拒绝打开 | `library-service.ts:4630` 附近 |
+| 数据库物理损坏 | 打开时按主库 → backup-1 → backup-2 → 只读 → Assets 抢救降级；失败层写诊断和恢复状态 | `library-service.ts:31426-31764`；`main/index.ts:1490-1497` 恢复状态脱敏 |
 | SQLite 在线备份能力 | `connection.backup(destinationPath)`（导出场景临时备份） | `library-service.ts:4908` |
 
 ## 3. 差距与设计
 
 ### 3.1 打开降级链（库永远打得开）
 
-当前 `LIBRARY_CORRUPT` 直接拒开。改为逐级降级，每层失败进入下一层并记录诊断：
+当前实现已将 `LIBRARY_CORRUPT` 改为逐级降级，每层失败进入下一层并记录诊断：
 
 ```
 打开库
@@ -64,10 +64,11 @@
 
 ### 3.4 源文件 missing 分级（裂开 + 可恢复入口）
 
-- missing 资产统一显示**裂开图标**（取代/叠加当前灰色样式），区分：
-  - **可恢复**：linked 目录/回收站中找到同名或同指纹文件 → 提示「可恢复」+ 一键恢复（复用 relink 管线）；
-  - **不可恢复**：无处可找 → 裂开图标 + 说明文案，提供「从库中移除」。
-- Inspector 的 missing 状态行同步该分级。
+- missing 资产统一显示**裂开图标**；Inspector 提供进入既有 relink 管线的入口。
+- 用户明确选择恢复根目录后，系统按原相对路径后缀、唯一同名、同名内容指纹顺序匹配；
+  多个同名且指纹不能唯一确认时保持 missing，不猜测绑定。
+- Inspector 选中 missing 资产时只检查已知原路径、已知链接根路径和 Serpent 回收区：有内容指纹且唯一匹配时显示“可恢复候选”；候选存在但不能确认内容或未知位置时，显示需要选择恢复位置，继续进入既有 relink 管线。不在打开大型资源库时递归扫描未知目录，避免把恢复扫描加入大库打开和导入热路径；未知位置不被误判为“不可恢复”。
+- Inspector 的损坏行显示「数据损坏」和裂开图标；missing 的移除动作继续复用既有资产命令/菜单，未新增破坏性快捷操作。
 
 ### 3.5 写路径在损坏库上
 
@@ -77,18 +78,18 @@
 
 | 阶段 | 内容 |
 | --- | --- |
-| Phase 1 | 打开降级链（备份恢复 + 只读降级 + 抢救重建）；定时轮换备份（2 份 + 触发时机 + 校验） |
-| Phase 2 | 行级损坏可见性（LEFT JOIN + 裂开标志 + 自动修复触发）；missing 分级（可恢复/不可恢复 + 一键恢复入口） |
-| Phase 3 | 写路径损坏库指引；恢复报告 UI（丢了什么、恢复了多少）；Windows/macOS 打包态实测 |
+| Phase 1 | 已实现：打开降级链（备份恢复 + 只读降级 + 抢救重建）；定时轮换备份（2 份 + 触发时机 + 校验）。待 packaged/Windows/真实破坏重启证据 |
+| Phase 2 | 已实现主要路径：LEFT JOIN + 裂开标志 + 自动修复；显式选择恢复根目录后的路径/同名/指纹重定位与 Inspector 入口；Inspector 对已知原路径/回收区做指纹候选探测 |
+| Phase 3 | 部分实现：抢救报告写入受保护目录，界面显示源文件数量、元数据损失摘要并可由 Main 打开报告目录；写路径仍以只读/恢复提示为主，真实破坏重启与 packaged/Windows 证据待执行 |
 
 ## 5. 验收清单（四列，实现时补齐）
 
 | 需求条目 | 验收标准 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- | --- |
-| 打开降级链 | 主库损坏 → 自动用备份恢复并通知；双备份坏 → 只读打开；只读失败 → 抢救重建且库可打开（报告元数据丢失） | 待填 | 待填 | 待填 |
-| 定时轮换备份 | 至多 2 份轮换；打开 24h 节流备份；破坏性操作前备份；坏备份不参与轮换；备份 quick_check 校验 | 待填 | 待填 | 待填 |
-| 行级损坏可见性 | revision 行丢失的资产不消失，显示裂开 + 自动修复（源文件在则重建） | 待填 | 待填 | 待填 |
-| missing 分级 | 可恢复（找到同名/同指纹）→ 一键恢复；不可恢复 → 裂开图标 + 可移除 | 待填 | 待填 | 待填 |
+| 打开降级链 | 主库损坏 → 自动用备份恢复并通知；双备份坏 → 只读打开；只读失败 → 抢救重建且库可打开（报告元数据丢失） | `library-service.ts:31426-31764`；`main/index.ts:1490-1497`；`App.tsx:8519-8562` | `tests/worker/database-recovery.test.ts:57-184` | 当次 Worker 注入通过；真实应用完整退出重启、packaged、Windows 待执行 |
+| 定时轮换备份 | 至多 2 份轮换；打开 24h 节流备份；破坏性操作前备份；坏备份不参与轮换；备份 quick_check 校验 | `library-service.ts:5121-5238`；`worker/index.ts:701-727` 破坏性命令备份入口 | `tests/worker/database-recovery.test.ts:57-74,274-305` | macOS Worker 通过；packaged/Windows 未执行 |
+| 行级损坏可见性 | revision 行丢失的资产不消失，显示裂开 + 自动修复（源文件在则重建） | `library-service.ts:12704-12745,22267-22288`；`availability-affordance.ts:32-66`；`InspectorPanel.tsx:965-1012` | `tests/worker/database-recovery.test.ts:186-229`；`tests/unit/availability-affordance.test.ts` | Worker 注入通过；真实损坏库窗口验收待执行 |
+| missing 分级 | 已知原路径/回收区/链接根路径只在选中资产时探测；指纹匹配显示可恢复候选，未知位置继续显式选择根目录，不猜测绑定 | `library-service.ts:22683-22810`；`src/shared/protocol/requests.ts`；`InspectorPanel.tsx:570-599,965-1012`；`App.tsx:6463-6505` | `tests/worker/database-recovery.test.ts:231-272`；`tests/unit/protocol.test.ts`；`tests/e2e/trash-relink-flow.test.ts` | macOS Worker/协议/Electron 提示路径通过；真实损坏库窗口、外部目录、Windows 待执行 |
 | 列缺失兼容（回归） | 现有 lenient-read 路径全部保持（已有测试持续绿） | 已有 | 已有 | 已有 |
 
 ## 6. 开放问题

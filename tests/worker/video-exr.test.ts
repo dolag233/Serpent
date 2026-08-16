@@ -517,6 +517,11 @@ describe('video (ffprobe + ffmpeg)', () => {
       libraryId: created.libraryId,
       recursive: true,
     });
+    const proxyJobId = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
@@ -531,8 +536,17 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(proxyRow!.kind).toBe('webm_proxy');
     expect(proxyRow!.status).toBe('ready');
     expect(proxyRow!.mime_type).toBe('video/mp4');
+    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ jobId: proxyJobId, status: 'succeeded' }),
+    ]));
 
     expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId)).toMatchObject({
+      mediaType: 'video',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'video/x-msvideo',
+    });
+    expect(service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'proxy-fallback')).toMatchObject({
       mediaType: 'video',
       status: 'ready',
       kind: 'webm_proxy',
@@ -664,6 +678,11 @@ describe('video (ffprobe + ffmpeg)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
 
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
@@ -720,6 +739,11 @@ describe('video (ffprobe + ffmpeg)', () => {
     importNoConflict(service, created.libraryId, sourcePath);
 
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
@@ -804,10 +828,10 @@ describe('video (ffprobe + ffmpeg)', () => {
       sourceCodecs: ['h264'],
     });
 
-    // Hover previews keep the proxy-first behavior: with a ready proxy the
-    // 'hover' intent returns the lightweight WebM, never the original source.
+    // An explicit fallback request uses the ready proxy; ordinary viewer and
+    // hover requests still start from the original source.
     expect(
-      service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'hover'),
+      service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'proxy-fallback'),
     ).toMatchObject({
       mediaType: 'video',
       status: 'ready',
@@ -2296,6 +2320,11 @@ describe('independent video derivative jobs', () => {
     writeFileSync(source, Buffer.alloc(1024));
     importNoConflict(service, created.libraryId, source);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     let posterReady!: () => void;
     const ready = new Promise<void>((resolve) => { posterReady = resolve; });
@@ -2333,8 +2362,12 @@ describe('independent video derivative jobs', () => {
     writeFileSync(source, Buffer.alloc(1024));
     importNoConflict(service, created.libraryId, source);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const proxyJobId = service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
-    await service.processThumbnailQueue(created.libraryId, { maxJobs: 3 });
 
     const db = assertDb(created.libraryPath);
     const replacementRevision = randomUUID();
@@ -2350,8 +2383,8 @@ describe('independent video derivative jobs', () => {
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 3 });
     const verified = assertDb(created.libraryPath);
     expect(verified.prepare(
-      "SELECT status, error_code FROM jobs WHERE kind = 'generate_webm_proxy'",
-    ).get()).toMatchObject({ status: 'cancelled', error_code: 'STALE_REVISION' });
+      "SELECT status, error_code FROM jobs WHERE kind = 'generate_webm_proxy' AND job_id = ?",
+    ).get(proxyJobId)).toMatchObject({ status: 'cancelled', error_code: 'STALE_REVISION' });
     expect(verified.prepare(
       "SELECT COUNT(*) AS count FROM revision_artifacts WHERE kind = 'webm_proxy' AND revision_id = ?",
     ).get(asset.currentRevisionId)).toMatchObject({ count: 0 });
@@ -2367,6 +2400,12 @@ describe('independent video derivative jobs', () => {
     const source = path.join(root, 'recover.avi');
     writeFileSync(source, Buffer.alloc(1024));
     importNoConflict(service, created.libraryId, source);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 3 });
     const db = assertDb(created.libraryPath);

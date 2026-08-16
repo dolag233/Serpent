@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -74,30 +74,6 @@ function run(command: string, args: string[]): void {
   });
   expect(result.error).toBeUndefined();
   expect(result.status, `${command} ${args.join(' ')}\n${result.stderr}`).toBe(0);
-}
-
-function probeMedia(mediaPath: string): {
-  format?: { duration?: string };
-  streams?: Array<{
-    codec_name?: string;
-    codec_type?: string;
-    width?: number;
-    height?: number;
-  }>;
-} {
-  const result = spawnSync(ffprobePath, [
-    '-v', 'error',
-    '-show_entries', 'format=duration:stream=codec_name,codec_type,width,height',
-    '-of', 'json',
-    mediaPath,
-  ], {
-    encoding: 'utf8',
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: 30_000,
-  });
-  expect(result.error).toBeUndefined();
-  expect(result.status, `${ffprobePath} ${mediaPath}\n${result.stderr}`).toBe(0);
-  return JSON.parse(result.stdout) as ReturnType<typeof probeMedia>;
 }
 
 function buildFixtureSet(root: string): string[] {
@@ -212,44 +188,15 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
         .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
     }
 
-    const persistedProxies: Array<{
-      assetId: string;
-      artifactId: string;
-      jobIds: string[];
-    }> = [];
-    for (const extension of ['avi', 'wmv']) {
-      const asset = videoAssets.find((candidate) => candidate.displayName === `sample.${extension}`);
-      expect(asset).toBeDefined();
-      const proxy = service.getCurrentArtifact(library.libraryId, asset!.assetId, 'webm_proxy');
-      expect(proxy).toMatchObject({ status: 'ready', mimeType: 'video/mp4' });
-      const proxyPath = service.getArtifactAbsolutePath(
-        library.libraryId,
-        proxy!.artifactId,
-        'proxy',
-      );
-      expect(statSync(proxyPath).size).toBeGreaterThan(0);
-
-      const probe = probeMedia(proxyPath);
-      const video = probe.streams?.find((stream) => stream.codec_type === 'video');
-      const audio = probe.streams?.find((stream) => stream.codec_type === 'audio');
-      const expectedSize = extension === 'avi'
-        ? { width: 64, height: 48 }
-        : { width: 48, height: 64 };
-      expect(video).toMatchObject({ codec_name: 'h264', ...expectedSize });
-      expect(Math.max(video?.width ?? 0, video?.height ?? 0)).toBeLessThanOrEqual(720);
-      expect(audio).toMatchObject({ codec_name: 'aac' });
-      expect(Number(probe.format?.duration)).toBeGreaterThan(0);
-      run(ffmpegPath, [
-        '-hide_banner', '-loglevel', 'error', '-ss', '0.25', '-i', proxyPath,
-        '-map', '0:v:0', '-frames:v', '1', '-f', 'null', '-',
-      ]);
-      persistedProxies.push({
-        assetId: asset!.assetId,
-        artifactId: proxy!.artifactId,
-        jobIds: service.listMediaJobs(library.libraryId).jobs
-          .filter((job) => job.assetId === asset!.assetId && job.kind === 'generate_webm_proxy')
-          .map((job) => job.jobId)
-          .sort(),
+    // Serpent-cljb: importing/browsing never eagerly creates video proxies,
+    // including for AVI/WMV. The real player decides whether a specific source
+    // needs a proxy after it reports a decode failure.
+    for (const asset of videoAssets) {
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'webm_proxy')).toBeNull();
+      expect(service.getPreviewArtifact(library.libraryId, asset.assetId, 'viewer')).toMatchObject({
+        status: 'ready',
+        playbackMode: 'source',
+        sourceRevisionId: asset.currentRevisionId,
       });
     }
 
@@ -267,20 +214,13 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
       expect(reopenedJobs.queued).toBe(0);
       expect(reopenedJobs.running).toBe(0);
       expect(reopenedJobs.failed).toBe(0);
-      for (const persisted of persistedProxies) {
-        expect(reopened.getCurrentArtifact(
-          library.libraryId,
-          persisted.assetId,
-          'webm_proxy',
-        )).toMatchObject({
-          artifactId: persisted.artifactId,
+      for (const asset of videoAssets) {
+        expect(reopened.getCurrentArtifact(library.libraryId, asset.assetId, 'webm_proxy')).toBeNull();
+        expect(reopened.getPreviewArtifact(library.libraryId, asset.assetId, 'viewer')).toMatchObject({
           status: 'ready',
-          mimeType: 'video/mp4',
+          playbackMode: 'source',
+          sourceRevisionId: asset.currentRevisionId,
         });
-        expect(reopenedJobs.jobs
-          .filter((job) => job.assetId === persisted.assetId && job.kind === 'generate_webm_proxy')
-          .map((job) => job.jobId)
-          .sort()).toEqual(persisted.jobIds);
       }
     } finally {
       reopened.closeAll();

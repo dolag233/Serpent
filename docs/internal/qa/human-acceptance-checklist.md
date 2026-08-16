@@ -61,6 +61,15 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | EAGLE-IMPORT-001 | 导入 Eagle 时先出结构再渐进出卡片 | 待人类验收 | 打开一个 Serpent 库，用「导入 Eagle 资源库」选择本机 Eagle `.library`；观察导入过程中的侧栏、画布、进度与取消 | 导入期间主窗口仍可点；合集/文件夹先出现；卡片分批出现；进度能看出读取条目与复制；可取消且已导入项保留；失败时能区分「不是 Eagle 库 / 复制失败 / 登记失败」；视频卡片先用静态封面，不因导入触发整库转码 | `Serpent-9imk.1` / [Eagle 导入开发日志](../development/2026-08-16-eagle-import-progressive-load-development-log.md) / `tests/worker/eagle-import.test.ts` | Worker 定向自动化已覆盖渐进结构、取消、AI 抑制、静态封面与分阶段错误；真实 Eagle 库、Computer Use、Windows、packaged 未执行 |
 
+### 2026-08-16 数据恢复、Eagle 外部库与视频按需代理
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| RECOVERY-001 / `Serpent-dw9a` | 资源库物理损坏恢复与行级损坏可见性 | 待人类验收 | 在资源库副本上制造主库损坏后完整退出并重启；再分别测试两份备份不可用、Assets 仍在的副本；选中悬空 revision 资产并尝试 Inspector 找回；在抢救提示中点击“查看恢复报告” | 主库损坏时自动从备份恢复并给出非阻塞提示；双备份损坏时进入只读；只读失败时以 Assets 抢救重建并显示源文件数量/元数据损失摘要；报告目录可打开；Inspector 对已知位置的匹配候选给出可恢复提示，未知位置要求选择根目录；悬空行不消失，显示裂开/数据损坏，源文件存在时可恢复 | [恢复设计](../superpowers/specs/2026-08-15-damage-recovery-design.md) / [开发日志](../development/2026-08-16-dw9a-768x-cljb-development-log.md) / `tests/worker/database-recovery.test.ts` / `tests/unit/protocol.test.ts` / `tests/unit/availability-affordance.test.ts` / `tests/e2e/trash-relink-flow.test.ts` | macOS Worker/协议自动化通过；Inspector 首帧回归与“未知位置需选择恢复位置”相关 Electron E2E 已补覆盖；真实窗口中的损坏提示、完整物理损坏退出重启、packaged、Windows 未执行 |
+| EXTLIB-001 / `Serpent-768x` | Eagle 外部库导入、打开与资源库根目录 | 待人类验收 | 准备一次性真实 Eagle 小库：从“资源库菜单 → 导入外部资源库 → 导入 Eagle 资源库”导入；再从当前资源库名称菜单进入“打开外部资源库 → 打开 Eagle 资源库”；检查根目录文件、子文件夹、合集、旧库状态和 Eagle 源目录 | 只有一个“资源库根目录”虚拟节点；根文件可选中/查看；Eagle 二级菜单可达；打开成功后旧库关闭且只持有新 Serpent 库；Eagle 源目录不被修改；测试后删除临时转换库 | [Eagle 打开测试](../../../tests/worker/eagle-open.test.ts) / [菜单单测](../../../tests/unit/library-switcher.test.ts) / [根节点单测](../../../tests/unit/navigation-sidebar.test.ts) / [开发日志](../development/2026-08-16-dw9a-768x-cljb-development-log.md) | 当前 macOS 开发态已检查菜单与根节点；本机没有真实 Eagle 小库，真实一次性回归、packaged、Windows 未执行 |
+| VIEWER-CLJB-001 / `Serpent-cljb` | 视频原始播放优先与失败后按需 proxy | 待人类验收 | 打开可直接播放的 MP4，确认首次查看与导入期间无 proxy 任务；再打开一个当前播放器不能解码的视频，等待切到代理；观察提示，分别点隐藏和恢复 | MP4 使用原始视频且不生成/排队 proxy；只有真实播放错误的单个视频生成或复用 proxy；代理成功显示准确提示“原视频无法播放，当前播放的是代理视频”；提示可隐藏并恢复；失败不循环重试 | [视频 E2E](../../../tests/e2e/media-video-playback.test.ts) / [proxy 提示单测](../../../tests/unit/proxy-playback-notice.test.ts) / [视频 Worker 测试](../../../tests/worker/video-exr.test.ts) / [开发日志](../development/2026-08-16-dw9a-768x-cljb-development-log.md) | 当前 macOS 开发态 MP4 source-first 已检查；自动化覆盖实际错误回退与提示组件；真实播放器不支持编码、packaged、Windows 未执行 |
+
+
 ### A0. 应用壳层与导航增量
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

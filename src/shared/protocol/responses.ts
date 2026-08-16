@@ -20,6 +20,42 @@ const safeDisplayName = nonBlankString.max(255).refine(
   { message: 'Display names must not contain filesystem paths.' },
 );
 
+const libraryRecoveryModeSchema = z.enum(['backup-1', 'backup-2', 'read-only', 'rescue']);
+const recoveryMetadataLossSchema = z.enum([
+  'collections',
+  'tags',
+  'ratings',
+  'descriptions',
+  'source-links',
+]);
+
+// Worker/Main may retain the report path for internal diagnostics, but an
+// absolute filesystem path must never cross the renderer boundary.
+const internalLibraryRecoverySchema = z.strictObject({
+  mode: libraryRecoveryModeSchema,
+  reportPath: nonBlankString.optional(),
+  recoveredAssetCount: z.number().int().nonnegative().optional(),
+  metadataRecovered: z.boolean().optional(),
+  metadataLosses: z.array(recoveryMetadataLossSchema).optional(),
+});
+
+const rendererLibraryRecoverySchema = z.strictObject({
+  mode: libraryRecoveryModeSchema,
+  reportAvailable: z.boolean().optional(),
+  recoveredAssetCount: z.number().int().nonnegative().optional(),
+  metadataRecovered: z.boolean().optional(),
+  metadataLosses: z.array(recoveryMetadataLossSchema).optional(),
+});
+
+export const missingAssetRecoveryProbeSchema = z.strictObject({
+  status: z.enum(['recoverable', 'needs-location', 'not-missing']),
+  candidateKind: z.enum(['managed-source', 'trash', 'linked-source']).nullable(),
+  contentVerified: z.boolean(),
+  checkedLocations: z.number().int().nonnegative(),
+});
+
+export type MissingAssetRecoveryProbe = z.infer<typeof missingAssetRecoveryProbeSchema>;
+
 export const workerReadyMessageSchema = z.strictObject({
   type: z.literal(WORKER_READY_MESSAGE_TYPE),
 });
@@ -55,6 +91,8 @@ export const internalLibrarySummarySchema = z.strictObject({
   // (LIBRARY_MIGRATION_STUCK), not because the schema is newer. The banner
   // distinguishes this from the newer-schema case.
   migrationStuck: z.boolean().optional(),
+  /** Set when the open path recovered or rebuilt a damaged database. */
+  recovery: internalLibraryRecoverySchema.optional(),
 });
 
 export type InternalLibrarySummary = z.infer<typeof internalLibrarySummarySchema>;
@@ -68,6 +106,8 @@ export const rendererLibrarySummarySchema = z.strictObject({
   supportedSchemaVersion: z.number().int().positive().optional(),
   // Serpent-verg.5: read-only because the migration failed repeatedly.
   migrationStuck: z.boolean().optional(),
+  /** Set when the open path recovered or rebuilt a damaged database. */
+  recovery: rendererLibraryRecoverySchema.optional(),
 });
 
 export type RendererLibrarySummary = z.infer<typeof rendererLibrarySummarySchema>;
@@ -1446,6 +1486,17 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('library.recovery-report'),
+    reportPath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.recovery-probe'),
+    assetId: nonBlankString,
+    probe: missingAssetRecoveryProbeSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('library.closed'),
     libraryId: nonBlankString,
   }),
@@ -1823,6 +1874,17 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('library.opened'),
     library: rendererLibrarySummarySchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('library.recovery-report.requested'),
+    libraryId: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('asset.recovery-probe.result'),
+    assetId: nonBlankString,
+    probe: missingAssetRecoveryProbeSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
