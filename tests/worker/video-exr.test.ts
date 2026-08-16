@@ -541,7 +541,9 @@ describe('video (ffprobe + ffmpeg)', () => {
 
     // Verify H.264/MP4 proxy args are well-formed.
     const proxyCall = capturedSpawnArgs.find(
-      (c) => c.command === '/fake/ffmpeg' && c.args.includes('h264_videotoolbox'),
+      (c) => c.command === '/fake/ffmpeg'
+        && c.args.includes('h264_videotoolbox')
+        && c.args.includes('-movflags'),
     );
     expect(proxyCall).toBeDefined();
     expect(proxyCall!.args).toContain('-c:v');
@@ -560,6 +562,75 @@ describe('video (ffprobe + ffmpeg)', () => {
     );
 
     db.close();
+    service.closeAll();
+  });
+
+  it('does not treat a listed hardware encoder as usable until a 1-frame probe succeeds', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      spawnFn: async (command, args) => {
+        capturedSpawnArgs.push({ command, args });
+        if (args.includes('-encoders')) {
+          return {
+            stdout: Buffer.from(' V....D h264_videotoolbox H.264 VideoToolbox encoder\n V..... libopenh264\n', 'utf-8'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        const outPath = args[args.length - 1];
+        if (args.includes('h264_videotoolbox') && args.includes('lavfi')) {
+          return { stdout: Buffer.alloc(0), stderr: 'VideoToolbox probe failed', exitCode: 1 };
+        }
+        if (outPath && (outPath.endsWith('.mp4') || outPath.endsWith('.webm') || outPath.endsWith('.jpg') || outPath.endsWith('.json'))) {
+          mkdirSync(path.dirname(outPath), { recursive: true });
+          writeFileSync(outPath, Buffer.from('mock-output-data'));
+        }
+        if (command === '/fake/ffprobe' || command.includes('ffprobe')) {
+          return { stdout: Buffer.from(CANNED_FFPROBE_JSON, 'utf-8'), stderr: '', exitCode: 0 };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'EncoderProbe',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'video.avi');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId);
+
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
+      .toMatchObject({ status: 'ready', mimeType: 'video/mp4' });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      scope: 'video-proxy.encoder-probe-result',
+      context: expect.objectContaining({
+        encoder: 'h264_videotoolbox',
+        encodeOk: false,
+        hardwareNamed: true,
+      }),
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      scope: 'video-proxy.encoder-probe-result',
+      context: expect.objectContaining({
+        encoder: 'libopenh264',
+        encodeOk: true,
+        hardwareNamed: false,
+      }),
+    }));
+    expect(capturedSpawnArgs.some(
+      (call) => call.args.includes('h264_videotoolbox') && call.args.includes('-movflags'),
+    )).toBe(false);
+    expect(capturedSpawnArgs.some(
+      (call) => call.args.includes('libopenh264') && call.args.includes('-movflags'),
+    )).toBe(true);
+
     service.closeAll();
   });
 

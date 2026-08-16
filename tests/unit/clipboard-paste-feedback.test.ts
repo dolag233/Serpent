@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   LibraryOperationError,
   shouldSuppressClipboardPasteFeedback,
+  toMessage,
 } from '../../src/renderer/error-utils';
 
 describe('shouldSuppressClipboardPasteFeedback', () => {
@@ -26,5 +27,43 @@ describe('shouldSuppressClipboardPasteFeedback', () => {
       ),
     ).toBe(false);
     expect(shouldSuppressClipboardPasteFeedback(new Error('boom'))).toBe(false);
+  });
+});
+
+describe('toMessage Eagle import stages', () => {
+  it('appends distinguishable reasons for parse, copy, and register failures', () => {
+    expect(
+      toMessage(
+        new LibraryOperationError({
+          code: 'INVALID_IMPORT_SOURCE',
+          message: '',
+          reason: 'EAGLE_METADATA_UNREADABLE',
+        }),
+        'fallback',
+        'zh-CN',
+      ),
+    ).toContain('metadata.json');
+    expect(
+      toMessage(
+        new LibraryOperationError({
+          code: 'IMPORT_APPLY_FAILED',
+          message: '',
+          reason: 'IMPORT_COPY_FAILED',
+        }),
+        'fallback',
+        'zh-CN',
+      ),
+    ).toContain('复制');
+    expect(
+      toMessage(
+        new LibraryOperationError({
+          code: 'IMPORT_APPLY_FAILED',
+          message: '',
+          reason: 'IMPORT_REGISTER_FAILED',
+        }),
+        'fallback',
+        'zh-CN',
+      ),
+    ).toContain('登记');
   });
 });

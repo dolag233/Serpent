@@ -8,8 +8,8 @@ const valueFor = (name, fallback) => {
 };
 
 const output = valueFor('--output', path.resolve('tmp/serpent-large-library'));
-const assets = valueFor('--assets', '10000');
-const seed = valueFor('--seed', '20260815');
+const assets = valueFor('--assets', '20000');
+const seed = valueFor('--seed', '20260816');
 const reset = args.includes('--reset') ? '1' : '0';
 const child = spawn(process.execPath, [
   'scripts/run-vitest-with-electron.mjs',

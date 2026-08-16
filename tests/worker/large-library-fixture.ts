@@ -1,8 +1,10 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -10,6 +12,20 @@ import path from 'node:path';
 
 import { LibraryService } from '../../src/worker/library-service';
 import { normalizeSearchText } from '../../src/worker/search-query';
+import {
+  createAssetBytes,
+  createUniqueVideoFile,
+} from './large-library-media';
+import {
+  LARGE_LIBRARY_ASSET_COUNT,
+  LARGE_LIBRARY_FIXTURE_VERSION,
+  LARGE_LIBRARY_SEARCH_TOKEN,
+  extensionForKind,
+  kindForIndex,
+  mixCountsFor,
+  pad,
+  type LargeLibraryMixCounts,
+} from './large-library-mix';
 
 const require = createRequire(import.meta.url);
 
@@ -23,44 +39,19 @@ interface DatabaseConnection {
 
 const Database = require('better-sqlite3') as new (filename: string) => DatabaseConnection;
 
-export const LARGE_LIBRARY_FIXTURE_VERSION = 1;
-export const LARGE_LIBRARY_SEARCH_TOKEN = 'serpent-large-library-needle';
-export const LARGE_LIBRARY_ASSET_COUNT = 10_000;
+export {
+  LARGE_LIBRARY_ASSET_COUNT,
+  LARGE_LIBRARY_FIXTURE_VERSION,
+  LARGE_LIBRARY_SEARCH_TOKEN,
+};
 
-const IMAGE_EXTENSIONS = ['jpg', 'png', 'webp', 'gif', 'tiff', 'bmp', 'psd', 'svg'];
-const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov', 'mkv', 'avi'];
-const OTHER_EXTENSIONS = ['txt', 'wav', 'mp3', 'fbx', 'blend', 'obj', 'json'];
 const ROOT_FOLDER_COUNT = 10;
 const CHILD_FOLDERS_PER_ROOT = 15;
 const COLLECTION_COUNT = 50;
 const TAG_NAMES = ['ABCD-A', 'ABCD-B', 'ABCD-C', 'ABCD-D', 'ABCD-E', 'ABCD-F'];
-
-const ONE_PIXEL_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64',
-);
-const FILE_BYTES: Record<string, Buffer> = {
-  jpg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-  png: ONE_PIXEL_PNG,
-  webp: Buffer.from('RIFF\x00\x00\x00\x00WEBP', 'ascii'),
-  gif: Buffer.from('GIF89a', 'ascii'),
-  tiff: Buffer.from('II*\x00\x08\x00\x00\x00', 'ascii'),
-  bmp: Buffer.from('BM', 'ascii'),
-  psd: Buffer.from('8BPS\x00\x01', 'ascii'),
-  svg: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8'),
-  mp4: Buffer.from('ftypisom', 'ascii'),
-  webm: Buffer.from('\x1a\x45\xdf\xa3', 'binary'),
-  mov: Buffer.from('ftypqt', 'ascii'),
-  mkv: Buffer.from('\x1a\x45\xdf\xa3', 'binary'),
-  avi: Buffer.from('RIFF\x00\x00\x00\x00AVI ', 'ascii'),
-  txt: Buffer.from('Serpent large-library fixture\n', 'utf8'),
-  wav: Buffer.from('RIFF\x00\x00\x00\x00WAVE', 'ascii'),
-  mp3: Buffer.from('ID3', 'ascii'),
-  fbx: Buffer.from('; FBX 7.4.0 project file\n', 'utf8'),
-  blend: Buffer.from('BLENDER', 'ascii'),
-  obj: Buffer.from('# Serpent fixture\n', 'utf8'),
-  json: Buffer.from('{"fixture":"serpent-large-library"}\n', 'utf8'),
-};
+/** Unique encoded clips copied across the video bucket so generation stays bounded. */
+const VIDEO_POOL_SIZE = 48;
+const FILE_WRITE_CONCURRENCY = 8;
 
 export interface LargeLibraryFixtureManifest {
   version: number;
@@ -70,7 +61,10 @@ export interface LargeLibraryFixtureManifest {
   assetCount: number;
   imageCount: number;
   videoCount: number;
-  otherCount: number;
+  modelCount: number;
+  textCount: number;
+  audioCount: number;
+  unsupportedCount: number;
   folderCount: number;
   collectionCount: number;
   tagCount: number;
@@ -87,20 +81,6 @@ export interface EnsureLargeLibraryFixtureOptions {
   seed?: number;
   reset?: boolean;
   writeFiles?: boolean;
-}
-
-function pad(value: number, width = 5): string {
-  return value.toString().padStart(width, '0');
-}
-
-function extensionFor(index: number, assetCount: number): string {
-  if (index < assetCount * 0.85) {
-    return IMAGE_EXTENSIONS[index % IMAGE_EXTENSIONS.length]!;
-  }
-  if (index < assetCount * 0.95) {
-    return VIDEO_EXTENSIONS[index % VIDEO_EXTENSIONS.length]!;
-  }
-  return OTHER_EXTENSIONS[index % OTHER_EXTENSIONS.length]!;
 }
 
 function manifestPath(libraryPath: string): string {
@@ -121,16 +101,42 @@ function readExistingManifest(outputPath: string): LargeLibraryFixtureManifest |
   return JSON.parse(readFileSync(file, 'utf8')) as LargeLibraryFixtureManifest;
 }
 
-function seedDatabase(
+async function mapPool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const current = next;
+      next += 1;
+      await worker(items[current]!);
+    }
+  });
+  await Promise.all(runners);
+}
+
+function prepareVideoPool(libraryPath: string, videoCount: number): string[] {
+  if (videoCount <= 0) return [];
+  const poolDir = path.join(libraryPath, '.serpent', 'video-pool');
+  mkdirSync(poolDir, { recursive: true });
+  const poolSize = Math.min(VIDEO_POOL_SIZE, videoCount);
+  const poolPaths: string[] = [];
+  for (let index = 0; index < poolSize; index += 1) {
+    const poolPath = path.join(poolDir, `clip-${pad(index, 2)}.mp4`);
+    createUniqueVideoFile(poolPath, index);
+    poolPaths.push(poolPath);
+  }
+  return poolPaths;
+}
+
+async function seedDatabase(
   libraryPath: string,
   folderIds: string[],
   tagIds: string[],
   collectionIds: string[],
-  assetCount: number,
+  counts: LargeLibraryMixCounts,
   writeFiles: boolean,
-): { searchTokenAssetCount: number; sampleAssetId: string } {
+): Promise<{ searchTokenAssetCount: number; sampleAssetId: string }> {
   const database = new Database(path.join(libraryPath, '.serpent', 'library.db'));
-  const now = '2026-08-15T00:00:00.000Z';
+  const now = '2026-08-16T00:00:00.000Z';
   const insertAsset = database.prepare(
     `INSERT INTO assets (
        asset_id, location_kind, managed_folder_id, linked_folder_id,
@@ -163,77 +169,95 @@ function seedDatabase(
     'INSERT INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
   );
 
+  const videoPool = writeFiles ? prepareVideoPool(libraryPath, counts.videoCount) : [];
+  const byteSizes = new Map<string, number>();
+  const planned = Array.from({ length: counts.assetCount }, (_, index) => {
+    const kind = kindForIndex(index, counts);
+    const extension = extensionForKind(kind, index);
+    const folderIndex = index % folderIds.length;
+    const rootIndex = Math.floor(folderIndex / CHILD_FOLDERS_PER_ROOT);
+    const childIndex = folderIndex % CHILD_FOLDERS_PER_ROOT;
+    const filename = `asset-${pad(index)}.${extension}`;
+    const relativePath = `Root-${pad(rootIndex, 2)}/Child-${pad(childIndex, 2)}/${filename}`;
+    return { index, kind, extension, folderIndex, filename, relativePath };
+  });
+
+  if (writeFiles) {
+    await mapPool(planned, FILE_WRITE_CONCURRENCY, async (item) => {
+      const absolutePath = path.join(libraryPath, 'Assets', item.relativePath);
+      if (item.kind === 'video') {
+        const source = videoPool[item.index % videoPool.length];
+        if (!source) throw new Error('Video pool was empty.');
+        copyFileSync(source, absolutePath);
+        byteSizes.set(item.relativePath, statSync(absolutePath).size);
+        return;
+      }
+      const bytes = await createAssetBytes(item.kind, item.index, item.extension);
+      writeFileSync(absolutePath, bytes);
+      byteSizes.set(item.relativePath, bytes.byteLength);
+    });
+  }
+
   let searchTokenAssetCount = 0;
   const assetIds: string[] = [];
   database.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE');
   try {
-    for (let index = 0; index < assetCount; index += 1) {
-      const assetId = `large-asset-${pad(index)}`;
-      const revisionId = `large-revision-${pad(index)}`;
-      const folderIndex = index % folderIds.length;
-      const rootIndex = Math.floor(folderIndex / CHILD_FOLDERS_PER_ROOT);
-      const childIndex = folderIndex % CHILD_FOLDERS_PER_ROOT;
-      const extension = extensionFor(index, assetCount);
-      const filename = `asset-${pad(index)}.${extension}`;
-      const relativePath = `Root-${pad(rootIndex, 2)}/Child-${pad(childIndex, 2)}/${filename}`;
-      const pathIdentity = relativePath.toLocaleLowerCase('en-US');
-      const description = index % 29 === 0
-        ? `Large library fixture ${index}; ${LARGE_LIBRARY_SEARCH_TOKEN} description`
-        : `Large library fixture asset ${index} with deterministic metadata.`;
-      const hasSearchToken = index % 17 === 0 || index % 29 === 0;
+    for (const item of planned) {
+      const assetId = `large-asset-${pad(item.index)}`;
+      const revisionId = `large-revision-${pad(item.index)}`;
+      const pathIdentity = item.relativePath.toLocaleLowerCase('en-US');
+      const description = item.index % 29 === 0
+        ? `Large library fixture ${item.index}; ${LARGE_LIBRARY_SEARCH_TOKEN} description`
+        : `Large library fixture asset ${item.index} (${item.kind}).`;
+      const hasSearchToken = item.index % 17 === 0 || item.index % 29 === 0;
       if (hasSearchToken) searchTokenAssetCount += 1;
       const tags = [
-        TAG_NAMES[index % TAG_NAMES.length]!,
-        TAG_NAMES[(index + 2) % TAG_NAMES.length]!,
-        ...(index % 17 === 0 ? [LARGE_LIBRARY_SEARCH_TOKEN] : []),
+        TAG_NAMES[item.index % TAG_NAMES.length]!,
+        TAG_NAMES[(item.index + 2) % TAG_NAMES.length]!,
+        ...(item.index % 17 === 0 ? [LARGE_LIBRARY_SEARCH_TOKEN] : []),
       ];
       const tagText = tags.join(' ');
-      const rating = index % 6;
-      const favorite = index % 13 === 0 ? 1 : 0;
-      const byteSize = FILE_BYTES[extension]!.byteLength + (index % 97);
-
-      if (writeFiles) {
-        const absolutePath = path.join(libraryPath, 'Assets', relativePath);
-        writeFileSync(absolutePath, FILE_BYTES[extension]!);
-      }
+      const rating = item.index % 6;
+      const favorite = item.index % 13 === 0 ? 1 : 0;
+      const byteSize = byteSizes.get(item.relativePath) ?? (1024 + (item.index % 97));
 
       insertAsset.run(
         assetId,
-        folderIds[folderIndex],
-        relativePath,
+        folderIds[item.folderIndex],
+        item.relativePath,
         revisionId,
         pathIdentity,
         now,
         now,
       );
-      insertRevision.run(revisionId, assetId, byteSize, now, filename, now);
+      insertRevision.run(revisionId, assetId, byteSize, now, item.filename, now);
       insertMetadata.run(
         assetId,
         description,
         rating,
         favorite,
-        `https://example.test/serpent/large/${pad(index)}`,
+        `https://example.test/serpent/large/${pad(item.index)}`,
         now,
       );
       insertSearchIndex.run(
         assetId,
-        normalizeSearchText(filename),
+        normalizeSearchText(item.filename),
         normalizeSearchText(tagText),
         normalizeSearchText(description),
-        normalizeSearchText(`https://example.test/serpent/large/${pad(index)}`),
-        normalizeSearchText(relativePath),
-        normalizeSearchText(`rating:${rating} type:${extension}`),
+        normalizeSearchText(`https://example.test/serpent/large/${pad(item.index)}`),
+        normalizeSearchText(item.relativePath),
+        normalizeSearchText(`rating:${rating} kind:${item.kind} type:${item.extension}`),
       );
-      for (const tagIndex of [index % TAG_NAMES.length, (index + 2) % TAG_NAMES.length]) {
+      for (const tagIndex of [item.index % TAG_NAMES.length, (item.index + 2) % TAG_NAMES.length]) {
         insertAssetTag.run(assetId, tagIds[tagIndex]);
       }
-      if (index % 17 === 0) {
+      if (item.index % 17 === 0) {
         insertAssetTag.run(assetId, tagIds[tagIds.length - 1]);
       }
       const memberships = new Set([
-        index % collectionIds.length,
-        (index * 7 + 3) % collectionIds.length,
-        (index * 13 + 11) % collectionIds.length,
+        item.index % collectionIds.length,
+        (item.index * 7 + 3) % collectionIds.length,
+        (item.index * 13 + 11) % collectionIds.length,
       ]);
       let position = 0;
       for (const collectionIndex of memberships) {
@@ -255,20 +279,22 @@ function seedDatabase(
   };
 }
 
-export function ensureLargeLibraryFixture(
+export async function ensureLargeLibraryFixture(
   options: EnsureLargeLibraryFixtureOptions,
-): LargeLibraryFixtureManifest {
+): Promise<LargeLibraryFixtureManifest> {
   const outputPath = assertSafeOutputPath(options.outputPath);
   const assetCount = options.assetCount ?? LARGE_LIBRARY_ASSET_COUNT;
-  const seed = options.seed ?? 20260815;
+  const seed = options.seed ?? 20260816;
   const writeFiles = options.writeFiles ?? true;
-  if (!Number.isInteger(assetCount) || assetCount < 1_000) {
-    throw new Error('Large-library fixture assetCount must be an integer >= 1000.');
-  }
+  const counts = mixCountsFor(assetCount);
 
   const existing = readExistingManifest(outputPath);
   if (existing && !options.reset) {
-    if (existing.version !== LARGE_LIBRARY_FIXTURE_VERSION || existing.assetCount !== assetCount || existing.seed !== seed) {
+    if (
+      existing.version !== LARGE_LIBRARY_FIXTURE_VERSION
+      || existing.assetCount !== assetCount
+      || existing.seed !== seed
+    ) {
       throw new Error(
         `Fixture already exists with version=${existing.version}, assets=${existing.assetCount}, seed=${existing.seed}; pass --reset to rebuild.`,
       );
@@ -325,12 +351,12 @@ export function ensureLargeLibraryFixture(
 
     service.closeAll();
     for (const folder of folders) mkdirSync(path.join(library.libraryPath, 'Assets', folder.relativePath), { recursive: true });
-    const seeded = seedDatabase(
+    const seeded = await seedDatabase(
       library.libraryPath,
       folders.map((folder) => folder.folderId),
       [...tags, searchTag].map((tag) => tag.tagId),
       collections.map((collection) => collection.collectionId),
-      assetCount,
+      counts,
       writeFiles,
     );
     const manifest: LargeLibraryFixtureManifest = {
@@ -339,9 +365,12 @@ export function ensureLargeLibraryFixture(
       libraryId: library.libraryId,
       libraryPath: library.libraryPath,
       assetCount,
-      imageCount: Math.floor(assetCount * 0.85),
-      videoCount: Math.floor(assetCount * 0.10),
-      otherCount: assetCount - Math.floor(assetCount * 0.85) - Math.floor(assetCount * 0.10),
+      imageCount: counts.imageCount,
+      videoCount: counts.videoCount,
+      modelCount: counts.modelCount,
+      textCount: counts.textCount,
+      audioCount: counts.audioCount,
+      unsupportedCount: counts.unsupportedCount,
       folderCount: folders.length + ROOT_FOLDER_COUNT,
       collectionCount: collections.length,
       tagCount: tags.length + 1,

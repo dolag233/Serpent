@@ -188,6 +188,21 @@ describe("macOS product menu mirror (Serpent-q0b1)", () => {
     expect(commands).toContain("copy-selection");
   });
 
+  it("nests Import Eagle under Import external library on macOS", () => {
+    const template = buildApplicationMenuTemplate({
+      platform: "darwin",
+      showDevTools: false,
+      locale: "zh-CN",
+    });
+    const libraryMenu = template.find((item) => item.labelKey === "shell.mainMenuLibrary");
+    const external = libraryMenu?.submenu?.find(
+      (item) => item.labelKey === "toolbar.importExternalLibrary",
+    );
+    expect(external?.type).toBe("submenu");
+    expect(external?.submenu?.map((item) => item.command)).toEqual(["library.import-eagle"]);
+    expect(external?.submenu?.[0]?.labelKey).toBe("toolbar.importEagleLibrary");
+  });
+
   it("uses i18n catalog keys for every custom label (no inline locale strings)", () => {
     const template = buildApplicationMenuTemplate({
       platform: "darwin",

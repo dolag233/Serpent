@@ -13,6 +13,7 @@ const child = spawn(process.execPath, [
   '--config',
   'vitest.config.ts',
   'tests/worker/large-library-performance.test.ts',
+  '--disableConsoleIntercept',
 ], {
   env: {
     ...process.env,

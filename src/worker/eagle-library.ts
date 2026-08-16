@@ -53,6 +53,18 @@ export interface EagleLibrarySnapshot {
   invalidCount: number;
 }
 
+export interface EagleLibraryRoot {
+  displayName: string;
+  sourceRootPath: string;
+  folders: EagleFolderNode[];
+  imagesPath: string | null;
+  infoDirectoryNames: string[];
+}
+
+export type EagleItemReadResult =
+  | { item: EagleAssetCandidate }
+  | { skipped: true; invalid: boolean };
+
 interface JsonObject {
   [key: string]: unknown;
 }
@@ -294,11 +306,11 @@ function sourceRootDisplayName(sourceRootPath: string): string {
 }
 
 /**
- * Read Eagle's directory/JSON library format without mutating the source.
- * Item-level corruption is isolated to that item; the root metadata file is
- * the format boundary and therefore fails the import when it is unreadable.
+ * Read Eagle root metadata and the images/*.info directory names only.
+ * Parsing each item's metadata.json is deferred so the importer can publish
+ * folders/collections before touching every asset.
  */
-export function readEagleLibrary(sourceRootPath: string): EagleLibrarySnapshot {
+export function readEagleLibraryRoot(sourceRootPath: string): EagleLibraryRoot {
   let normalizedRoot: string;
   try {
     normalizedRoot = normalizeAbsolutePath(sourceRootPath);
@@ -330,53 +342,81 @@ export function readEagleLibrary(sourceRootPath: string): EagleLibrarySnapshot {
   const folders: EagleFolderNode[] = [];
   flattenFolders(rootMetadata.folders, null, folders, new Set());
 
-  const items: EagleAssetCandidate[] = [];
-  let skippedCount = 0;
-  let invalidCount = 0;
   const imagesPath = path.join(sourceRoot, 'images');
-  let imageEntries: Dirent[] = [];
+  const infoDirectoryNames: string[] = [];
+  let resolvedImagesPath: string | null = null;
   try {
     const imagesStat = lstatSync(imagesPath, { bigint: true });
     if (imagesStat.isSymbolicLink() || !imagesStat.isDirectory()) {
       throw new EagleLibraryReadError('Eagle images directory is invalid.');
     }
-    imageEntries = readdirSync(imagesPath, { withFileTypes: true });
+    resolvedImagesPath = imagesPath;
+    const imageEntries = readdirSync(imagesPath, { withFileTypes: true });
+    for (const entry of imageEntries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!entry.isDirectory() || entry.isSymbolicLink() || !entry.name.toLowerCase().endsWith('.info')) {
+        continue;
+      }
+      infoDirectoryNames.push(entry.name);
+    }
   } catch (error) {
     if (error instanceof EagleLibraryReadError) throw error;
     // An empty Eagle library may not have created images/ yet.
-  }
-
-  for (const entry of imageEntries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory() || entry.isSymbolicLink() || !entry.name.toLowerCase().endsWith('.info')) {
-      continue;
-    }
-    const infoPath = path.join(imagesPath, entry.name);
-    const metadataPath = path.join(infoPath, 'metadata.json');
-    let itemMetadata: JsonObject;
-    try {
-      itemMetadata = readJsonObject(metadataPath);
-    } catch {
-      skippedCount += 1;
-      invalidCount += 1;
-      continue;
-    }
-    if (itemMetadata.isDeleted === true) {
-      skippedCount += 1;
-      continue;
-    }
-    const item = itemFromInfoDirectory(infoPath, itemMetadata);
-    if (!item) {
-      skippedCount += 1;
-      invalidCount += 1;
-      continue;
-    }
-    items.push(item);
   }
 
   return {
     displayName: sourceRootDisplayName(sourceRoot),
     sourceRootPath: sourceRoot,
     folders,
+    imagesPath: resolvedImagesPath,
+    infoDirectoryNames,
+  };
+}
+
+export function readEagleAssetCandidate(
+  imagesPath: string,
+  infoDirectoryName: string,
+): EagleItemReadResult {
+  const infoPath = path.join(imagesPath, infoDirectoryName);
+  const metadataPath = path.join(infoPath, 'metadata.json');
+  let itemMetadata: JsonObject;
+  try {
+    itemMetadata = readJsonObject(metadataPath);
+  } catch {
+    return { skipped: true, invalid: true };
+  }
+  if (itemMetadata.isDeleted === true) {
+    return { skipped: true, invalid: false };
+  }
+  const item = itemFromInfoDirectory(infoPath, itemMetadata);
+  if (!item) return { skipped: true, invalid: true };
+  return { item };
+}
+
+/**
+ * Read Eagle's directory/JSON library format without mutating the source.
+ * Item-level corruption is isolated to that item; the root metadata file is
+ * the format boundary and therefore fails the import when it is unreadable.
+ */
+export function readEagleLibrary(sourceRootPath: string): EagleLibrarySnapshot {
+  const root = readEagleLibraryRoot(sourceRootPath);
+  const items: EagleAssetCandidate[] = [];
+  let skippedCount = 0;
+  let invalidCount = 0;
+  if (root.imagesPath) {
+    for (const infoDirectoryName of root.infoDirectoryNames) {
+      const result = readEagleAssetCandidate(root.imagesPath, infoDirectoryName);
+      if ('item' in result) {
+        items.push(result.item);
+        continue;
+      }
+      skippedCount += 1;
+      if (result.invalid) invalidCount += 1;
+    }
+  }
+  return {
+    displayName: root.displayName,
+    sourceRootPath: root.sourceRootPath,
+    folders: root.folders,
     items,
     skippedCount,
     invalidCount,

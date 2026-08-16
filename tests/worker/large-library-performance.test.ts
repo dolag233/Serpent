@@ -24,7 +24,7 @@ function benchmark(operation: () => unknown): number {
   return samples[1]!;
 }
 
-describe.skipIf(!fixturePath)('10k asset large-library performance baseline', () => {
+describe.skipIf(!fixturePath)('20k asset large-library performance baseline', () => {
   beforeAll(() => {
     const manifestFile = `${fixturePath}/.serpent/large-library-fixture.json`;
     if (!existsSync(manifestFile)) throw new Error(`Missing fixture manifest: ${manifestFile}`);
@@ -63,7 +63,7 @@ describe.skipIf(!fixturePath)('10k asset large-library performance baseline', ()
     expect(beforeDelete.total).toBe(manifest.assetCount);
 
     console.info(JSON.stringify({
-      suite: 'large-library-10k',
+      suite: 'large-library-20k',
       assets: manifest.assetCount,
       startupMs: Number(startupMs.toFixed(1)),
       folderSwitchMs: Number(folderSwitchMs.toFixed(1)),

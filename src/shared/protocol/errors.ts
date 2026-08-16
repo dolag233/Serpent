@@ -106,6 +106,10 @@ export const publicErrorReasonSchema = z.enum([
   'AI_REFUSED',
   'THUMBNAIL_REQUIRED',
   'TRANSFER_IN_PROGRESS',
+  'EAGLE_METADATA_UNREADABLE',
+  'IMPORT_COPY_FAILED',
+  'IMPORT_REGISTER_FAILED',
+  'EAGLE_THUMBNAIL_FAILED',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;

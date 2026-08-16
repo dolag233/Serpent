@@ -55,6 +55,12 @@ import {
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
 import { workerMediaDecodeConcurrency, workerMediaDecodeWaveSize } from './media-concurrency';
+import {
+  encoderUsesHardwareName,
+  ffmpegOneFrameEncodeArgs,
+  listedH264ProxyEncoders,
+  parseFfmpegEncoderTokens,
+} from './video-proxy-encoder';
 import { readImageDimensionsSync } from './image-dimensions';
 import {
   collectLinkedDirectoryPrefixes,
@@ -143,7 +149,8 @@ import {
 import { assertRegisteredHistoryRecipePair, assertRegisteredHistoryRecipe } from './operation-history-recipes';
 import {
   EagleLibraryReadError,
-  readEagleLibrary,
+  readEagleAssetCandidate,
+  readEagleLibraryRoot,
   type EagleAssetCandidate,
   type EagleFolderNode,
 } from './eagle-library';
@@ -262,14 +269,6 @@ const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVE
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
 const VIDEO_PROXY_SCALE_FILTER =
   'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2';
-const H264_PROXY_ENCODERS = [
-  'h264_videotoolbox',
-  'h264_mf',
-  'h264_nvenc',
-  'h264_qsv',
-  'h264_amf',
-  'libopenh264',
-] as const;
 type VideoProxyProfile = {
   codec: 'h264' | 'vp9';
   encoder: string;
@@ -4795,7 +4794,7 @@ export class LibraryService {
   private readonly exrPlanesByRevision = new Map<string, ExrPlaneDescriptor[]>();
   /** Color metadata probes are immutable for a revision. */
   private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
-  /** Cache the first H.264-capable encoder discovered for each FFmpeg binary. */
+  /** Cache the first H.264 encoder that actually encodes a 1-frame probe. */
   private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
   /**
    * Serving a serpent:// preview used to repeat one artifact lookup and four
@@ -18495,31 +18494,76 @@ export class LibraryService {
     };
   }
 
+  /**
+   * Listing an encoder in `ffmpeg -encoders` is not a capability proof.
+   * Probe a 1-frame lavfi encode and keep the first encoder that writes a
+   * non-empty file. Hardware names that fail fall through to the next listed
+   * candidate, then to VP9.
+   */
+  private async probeVideoProxyEncoder(
+    ffmpegPath: string,
+    execution: MediaExecutionContext,
+  ): Promise<string | null> {
+    let listed: string[] = [];
+    try {
+      const result = await this.runFfmpeg(
+        ffmpegPath,
+        ['-hide_banner', '-encoders'],
+        { timeoutMs: 30_000, signal: execution.signal },
+      );
+      if (result.exitCode === 0) {
+        listed = listedH264ProxyEncoders(
+          parseFfmpegEncoderTokens(`${result.stdout.toString('utf8')}\n${result.stderr}`),
+        );
+      }
+    } catch (error) {
+      this.diagnose('video-proxy.encoder-list', error, { ffmpegPath });
+    }
+
+    const probeRoot = mkdtempSync(path.join(tmpdir(), 'serpent-proxy-encoder-'));
+    try {
+      for (const candidate of listed) {
+        const outputPath = path.join(probeRoot, `${candidate}.mp4`);
+        let encodeOk = false;
+        let probeError: unknown = null;
+        try {
+          const result = await this.runFfmpeg(
+            ffmpegPath,
+            ffmpegOneFrameEncodeArgs(candidate, outputPath),
+            { timeoutMs: 20_000, signal: execution.signal },
+          );
+          encodeOk = result.exitCode === 0
+            && existsSync(outputPath)
+            && statSync(outputPath).size > 0;
+          if (!encodeOk) {
+            probeError = new Error(
+              result.stderr.slice(-200) || `ffmpeg probe exited ${result.exitCode}`,
+            );
+          }
+        } catch (error) {
+          probeError = error;
+        }
+        this.diagnose('video-proxy.encoder-probe-result', probeError, {
+          ffmpegPath,
+          encoder: candidate,
+          encodeOk,
+          hardwareNamed: encoderUsesHardwareName(candidate),
+        });
+        if (encodeOk) return candidate;
+      }
+    } finally {
+      rmSync(probeRoot, { force: true, recursive: true });
+    }
+    return null;
+  }
+
   private async resolveVideoProxyProfiles(
     ffmpegPath: string,
     execution: MediaExecutionContext,
   ): Promise<VideoProxyProfile[]> {
     let encoder = this.videoProxyEncoderByFfmpegPath.get(ffmpegPath);
     if (encoder === undefined) {
-      encoder = null;
-      try {
-        const result = await this.runFfmpeg(
-          ffmpegPath,
-          ['-hide_banner', '-encoders'],
-          { timeoutMs: 30_000, signal: execution.signal },
-        );
-        if (result.exitCode === 0) {
-          const available = new Set(
-            `${result.stdout.toString('utf8')}\n${result.stderr}`.split(/\s+/u),
-          );
-          encoder = H264_PROXY_ENCODERS.find((candidate) => available.has(candidate)) ?? null;
-        }
-      } catch (error) {
-        // The actual encode remains the source of truth. If capability probing
-        // is unavailable, try the fast VP9 fallback instead of blocking proxy
-        // generation on a best-effort metadata query.
-        this.diagnose('video-proxy.encoder-probe', error, { ffmpegPath });
-      }
+      encoder = await this.probeVideoProxyEncoder(ffmpegPath, execution);
       this.videoProxyEncoderByFfmpegPath.set(ffmpegPath, encoder);
     }
 
@@ -29235,12 +29279,13 @@ export class LibraryService {
   private ensureEagleTags(
     openLibrary: OpenLibrary,
     items: readonly EagleAssetCandidate[],
-  ): Map<string, string> {
+    tagIdsByName: Map<string, string>,
+  ): void {
     const names = new Set(items.flatMap((item) => item.tags));
-    const tagIdsByName = new Map<string, string>();
     const now = new Date().toISOString();
     openLibrary.connection.transaction(() => {
       for (const name of names) {
+        if (tagIdsByName.has(name)) continue;
         const existing = openLibrary.connection
           .prepare(
             'SELECT tag_id FROM tags WHERE library_id = ? AND name = ? COLLATE NOCASE LIMIT 1',
@@ -29264,18 +29309,17 @@ export class LibraryService {
         if (inserted) tagIdsByName.set(name, inserted.tag_id);
       }
     })();
-    return tagIdsByName;
   }
 
   private eagleImportEntry(
-    snapshot: ReturnType<typeof readEagleLibrary>,
+    sourceRootPath: string,
     item: EagleAssetCandidate,
     collectionIdsByFolder: ReadonlyMap<string, string>,
     tagIdsByName: ReadonlyMap<string, string>,
   ): ImportSourceEntry | null {
     try {
       const canonicalSourcePath = realpathSync(item.sourcePath);
-      if (!pathIsWithin(snapshot.sourceRootPath, canonicalSourcePath)) {
+      if (!pathIsWithin(sourceRootPath, canonicalSourcePath)) {
         throw new EagleLibraryReadError('Eagle source escaped its library root.');
       }
       const sourceStat = lstatSync(item.sourcePath, { bigint: true });
@@ -29307,7 +29351,7 @@ export class LibraryService {
           rating: item.rating,
           sourceModifiedAtMs: item.sourceModifiedAtMs,
           sourcePageUrl: item.sourcePageUrl,
-          sourceRootPath: snapshot.sourceRootPath,
+          sourceRootPath,
           tagIds,
           thumbnailPath: item.thumbnailPath,
         },
@@ -29318,6 +29362,22 @@ export class LibraryService {
       this.diagnose('eagle-import.item-skipped', error, { itemId: item.itemId });
       return null;
     }
+  }
+
+  private wrapEagleImportStageError(
+    error: unknown,
+    reason: 'IMPORT_COPY_FAILED' | 'IMPORT_REGISTER_FAILED',
+  ): LibraryServiceError {
+    if (error instanceof LibraryServiceError && error.code === 'CANCELLED') {
+      return error;
+    }
+    if (error instanceof LibraryServiceError && error.reason) {
+      return new LibraryServiceError('IMPORT_APPLY_FAILED', {
+        cause: error,
+        reason: error.reason,
+      });
+    }
+    return new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error, reason });
   }
 
   /**
@@ -29400,7 +29460,10 @@ export class LibraryService {
       })();
     } catch (error) {
       if (artifactAbsPath) rmSync(artifactAbsPath, { force: true });
-      this.diagnose('eagle-import.thumbnail-skipped', error, { assetId });
+      this.diagnose('eagle-import.thumbnail-skipped', error, {
+        assetId,
+        reason: 'EAGLE_THUMBNAIL_FAILED',
+      });
     }
   }
 
@@ -29411,6 +29474,8 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     const importId = randomUUID();
+    const cancelState: TransferCancelState = { cancelled: false };
+    this.activeImports.set(importId, cancelState);
     let totalFiles = 0;
     let totalBytes = 0;
     let filesProcessed = 0;
@@ -29424,55 +29489,88 @@ export class LibraryService {
         type: 'import.progress',
         importId,
         phase,
-        cancelable: false,
+        cancelable: true,
         filesProcessed: processedFiles,
         totalFiles,
         bytesProcessed: processedBytes,
         totalBytes,
       });
     };
+    const throwIfCancelled = (): void => {
+      if (!cancelState.cancelled) return;
+      emitEagleProgress('cancelled');
+      throw new LibraryServiceError('CANCELLED');
+    };
 
     emitEagleProgress('validate', 0, 0);
-    let snapshot: ReturnType<typeof readEagleLibrary>;
+    let root: ReturnType<typeof readEagleLibraryRoot>;
     try {
-      snapshot = readEagleLibrary(input.sourceRootPath);
+      root = readEagleLibraryRoot(input.sourceRootPath);
     } catch (error) {
       emitEagleProgress('failed');
-      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+      throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+        cause: error,
+        reason: 'EAGLE_METADATA_UNREADABLE',
+      });
     }
 
-    totalFiles = snapshot.items.length;
-    totalBytes = snapshot.items.reduce((total, item) => total + item.byteSize, 0);
-    emitEagleProgress('copy', 0, 0);
+    totalFiles = root.infoDirectoryNames.length;
+    emitEagleProgress('validate', 0, 0);
     try {
-      const collectionIdsByFolder = this.ensureEagleCollections(openLibrary, snapshot.folders);
-      const tagIdsByName = this.ensureEagleTags(openLibrary, snapshot.items);
-      // Publish the structure before the first copy batch. The renderer can
-      // load collections/tags/folders while assets are still being copied.
-      this.options.onAssetsChanged?.({
-        type: 'asset.changed',
-        libraryId: input.libraryId,
-        changedCount: 0,
-        missingCount: 0,
-        source: 'client',
-      });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      throwIfCancelled();
+      const collectionIdsByFolder = this.ensureEagleCollections(openLibrary, root.folders);
+      emitEagleProgress('validate', 0, bytesProcessed);
+      await transferCheckpoint();
+      throwIfCancelled();
       let importedCount = 0;
-      let skippedCount = snapshot.skippedCount;
+      let skippedCount = 0;
       let replacedCount = 0;
-      let invalidItemCount = snapshot.invalidCount;
+      let invalidItemCount = 0;
       const sampleAssets: AssetSummary[] = [];
-      // Keep batches small enough that the UI receives useful progress updates.
+      const tagIdsByName = new Map<string, string>();
       const batchSize = 32;
 
-      for (let offset = 0; offset < snapshot.items.length; offset += batchSize) {
-        // Validate only the next batch. This is deliberately inside the copy
-        // loop: a broken item near the end of a large Eagle library must not
-        // prevent the first valid batches from appearing in the UI.
-        const rawBatch = snapshot.items.slice(offset, offset + batchSize);
+      const imagesPath = root.imagesPath;
+      if (!imagesPath || root.infoDirectoryNames.length === 0) {
+        emitEagleProgress('complete', 0, 0);
+        return {
+          sourceDisplayName: root.displayName,
+          fileCount: 0,
+          importedCount: 0,
+          assetCount: 0,
+          skippedCount: 0,
+          replacedCount: 0,
+          collectionCount: collectionIdsByFolder.size,
+          tagCount: 0,
+          invalidItemCount: 0,
+          assets: [],
+        };
+      }
+
+      for (let offset = 0; offset < root.infoDirectoryNames.length; offset += batchSize) {
+        throwIfCancelled();
+        const infoNames = root.infoDirectoryNames.slice(offset, offset + batchSize);
+        emitEagleProgress('validate', offset, bytesProcessed);
+        const items: EagleAssetCandidate[] = [];
+        for (const infoDirectoryName of infoNames) {
+          const result = readEagleAssetCandidate(imagesPath, infoDirectoryName);
+          if ('item' in result) {
+            items.push(result.item);
+            totalBytes += result.item.byteSize;
+            continue;
+          }
+          skippedCount += 1;
+          if (result.invalid) invalidItemCount += 1;
+        }
+        this.ensureEagleTags(openLibrary, items, tagIdsByName);
         const batch: ImportSourceEntry[] = [];
-        for (const item of rawBatch) {
-          const entry = this.eagleImportEntry(snapshot, item, collectionIdsByFolder, tagIdsByName);
+        for (const item of items) {
+          const entry = this.eagleImportEntry(
+            root.sourceRootPath,
+            item,
+            collectionIdsByFolder,
+            tagIdsByName,
+          );
           if (entry) batch.push(entry);
           else {
             skippedCount += 1;
@@ -29482,28 +29580,38 @@ export class LibraryService {
         const batchBytesBefore = bytesProcessed;
         let batchBytesCopied = 0;
         if (batch.length > 0) {
-          const plan = this.prepareImport({
-            libraryId: input.libraryId,
-            sourceKind: 'files',
-            sourcePaths: batch.map((entry) => entry.sourcePath),
-            sourceEntries: batch,
-            sourceDirectories: [],
-            createImageSequence: false,
-            dedupeSameNameByContent: true,
-            skipLibraryDuplicateScan: true,
-            onStagedEntry: (batchProcessed, stagedBytes) => {
-              batchBytesCopied += stagedBytes;
-              filesProcessed = offset + batchProcessed;
-              bytesProcessed = batchBytesBefore + batchBytesCopied;
-              emitEagleProgress('copy');
-            },
-            suppressAssetChangeEvents: true,
-          });
-          const completion = this.resolveImport({
-            importId: plan.importId,
-            suspectedDuplicate: 'skip',
-            nameConflict: 'keep-both',
-          });
+          let plan;
+          try {
+            plan = this.prepareImport({
+              libraryId: input.libraryId,
+              sourceKind: 'files',
+              sourcePaths: batch.map((entry) => entry.sourcePath),
+              sourceEntries: batch,
+              sourceDirectories: [],
+              createImageSequence: false,
+              dedupeSameNameByContent: true,
+              skipLibraryDuplicateScan: true,
+              onStagedEntry: (batchProcessed, stagedBytes) => {
+                batchBytesCopied += stagedBytes;
+                filesProcessed = offset + batchProcessed;
+                bytesProcessed = batchBytesBefore + batchBytesCopied;
+                emitEagleProgress('copy');
+              },
+              suppressAssetChangeEvents: true,
+            });
+          } catch (error) {
+            throw this.wrapEagleImportStageError(error, 'IMPORT_COPY_FAILED');
+          }
+          let completion;
+          try {
+            completion = this.resolveImport({
+              importId: plan.importId,
+              suspectedDuplicate: 'skip',
+              nameConflict: 'keep-both',
+            });
+          } catch (error) {
+            throw this.wrapEagleImportStageError(error, 'IMPORT_REGISTER_FAILED');
+          }
           importedCount += completion.importedCount;
           skippedCount += completion.skippedCount;
           replacedCount += completion.replacedCount;
@@ -29524,17 +29632,15 @@ export class LibraryService {
             });
           }
         }
-        filesProcessed = Math.min(totalFiles, offset + rawBatch.length);
-        bytesProcessed = Math.min(totalBytes, batchBytesBefore + rawBatch.reduce((total, item) => total + item.byteSize, 0));
+        filesProcessed = Math.min(totalFiles, offset + infoNames.length);
+        bytesProcessed = Math.min(totalBytes, batchBytesBefore + items.reduce((total, item) => total + item.byteSize, 0));
         emitEagleProgress('copy');
-        // Yield to the Worker IPC loop so list/search requests and renderer
-        // refreshes are serviced between import batches.
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await transferCheckpoint();
       }
       emitEagleProgress('complete', totalFiles, totalBytes);
       return {
-        sourceDisplayName: snapshot.displayName,
-        fileCount: snapshot.items.length,
+        sourceDisplayName: root.displayName,
+        fileCount: root.infoDirectoryNames.length,
         importedCount,
         assetCount: importedCount,
         skippedCount,
@@ -29545,8 +29651,11 @@ export class LibraryService {
         assets: sampleAssets,
       };
     } catch (error) {
+      if (error instanceof LibraryServiceError && error.code === 'CANCELLED') throw error;
       emitEagleProgress('failed');
       throw error;
+    } finally {
+      this.activeImports.delete(importId);
     }
   }
 

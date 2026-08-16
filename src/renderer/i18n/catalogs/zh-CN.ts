@@ -1456,6 +1456,7 @@ export const zhCN = {
     compressing: "压缩中",
     copyingFiles: "复制中 {processed}/{total} · {bytesProcessed}/{bytesTotal}",
     validating: "验证中…",
+    readingSourceItems: "读取条目 {processed}/{total}…",
     copying: "复制中…",
     opening: "打开中…",
     exportingLibrary: "正在导出资源库：",
@@ -1873,7 +1874,11 @@ export const zhCN = {
       CONTACT_SHEET_REQUIRED: "视频分镜/封面尚未就绪，Serpent 将在就绪后自动重试。",
       NO_AI_FIELDS_TO_WRITE: "没有可写入的 AI 字段（例如已有人工描述且未开启标签/评分）。",
       AI_INTERNAL_ERROR: "AI 分析内部错误，请查看应用日志。",
-      TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。"
+      TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
+      EAGLE_METADATA_UNREADABLE: "无法解析 Eagle 资源库的 metadata.json 或 images 目录，请确认选择的是 .library 文件夹。",
+      IMPORT_COPY_FAILED: "复制源文件到资源库时失败。请检查磁盘空间与源文件是否仍可读取，并查看应用日志。",
+      IMPORT_REGISTER_FAILED: "文件已开始复制，但登记到资源库时失败。请查看应用日志后重试，不要重复选择同一批已成功的条目。",
+      EAGLE_THUMBNAIL_FAILED: "Eagle 静态缩略图未能写入预览缓存；资产文件仍会导入，可稍后刷新缩略图。"
     },
     withReason: "{message} 原因：{reason}"
   },

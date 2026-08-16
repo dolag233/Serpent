@@ -55,6 +55,12 @@
 | LIB-PERF-002 | 切换资源库后预览与 Inspector 不串库 | 待人类验收 | 建立两个各含图片的资源库，来回切换并快速选择资产 | 旧库卡片/预览/Inspector 不残留；新库图片真实解码，Inspector 不混态 | `Serpent-6q9x` / `Serpent-a6zl` / [切库 E2E](../../../tests/e2e/library-recent.test.ts) / [Inspector E2E](../../../tests/e2e/organization-metadata-persistence.test.ts) | 当次 macOS Electron E2E 通过；Computer Use、Windows、packaged 未执行 |
 | VIEWER-PERF-001 | 查看器渐进升级不重复探针解码 | 待人类验收 | 打开有就绪缩略图的多张大图，快速左右切换，升级前缩放/平移 | 先显示可解码占位图，原图完成后安静替换，不闪黑、不回 Fit | `Serpent-h00q` / [媒体 E2E](../../../tests/e2e/media-preview.test.ts) / viewer 单测 | 当次 macOS Electron 解码 E2E 通过；真实大图体感、Computer Use、Windows、packaged 未执行 |
 
+### 2026-08-16 Eagle 外部库导入
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| EAGLE-IMPORT-001 | 导入 Eagle 时先出结构再渐进出卡片 | 待人类验收 | 打开一个 Serpent 库，用「导入 Eagle 资源库」选择本机 Eagle `.library`；观察导入过程中的侧栏、画布、进度与取消 | 导入期间主窗口仍可点；合集/文件夹先出现；卡片分批出现；进度能看出读取条目与复制；可取消且已导入项保留；失败时能区分「不是 Eagle 库 / 复制失败 / 登记失败」；视频卡片先用静态封面，不因导入触发整库转码 | `Serpent-9imk.1` / [Eagle 导入开发日志](../development/2026-08-16-eagle-import-progressive-load-development-log.md) / `tests/worker/eagle-import.test.ts` | Worker 定向自动化已覆盖渐进结构、取消、AI 抑制、静态封面与分阶段错误；真实 Eagle 库、Computer Use、Windows、packaged 未执行 |
+
 ### A0. 应用壳层与导航增量
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

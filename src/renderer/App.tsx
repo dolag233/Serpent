@@ -1011,6 +1011,8 @@ function AppInner() {
     useState<ExportProgressEvent | null>(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressEvent | null>(null);
+  const importProgressRef = useRef(importProgress);
+  importProgressRef.current = importProgress;
 
   // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
@@ -5464,8 +5466,17 @@ function AppInner() {
   }
 
   async function importEagleLibrary() {
-    if (!api || !library) return;
-    setUiState("importing");
+    if (!api || !library || importProgress) return;
+    setImportProgress({
+      type: "import.progress",
+      importId: "",
+      phase: "validate",
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: 0,
+      bytesProcessed: 0,
+      totalBytes: 0,
+    });
     setError(null);
     setNotice(null);
     try {
@@ -5482,7 +5493,7 @@ function AppInner() {
         toMessage(caught, t("toast.importFailed"), locale),
       );
     } finally {
-      setUiState("ready");
+      setImportProgress(null);
     }
   }
 
@@ -6796,7 +6807,7 @@ function AppInner() {
       void refreshOperationHistory();
       // Serpent-yqrl: while a user import is applying, each committed asset
       // triggers a silent canvas refresh so cards appear one-by-one.
-      if (uiStateRef.current === "importing") {
+      if (uiStateRef.current === "importing" || importProgressRef.current) {
         scheduleSilentReload();
         return;
       }
@@ -6855,7 +6866,7 @@ function AppInner() {
       scheduleHistoryRefresh();
       // Cross-process change-sequence bumps are not asset mutation counts.
       // Refresh silently without forging an asset.changed payload.
-      if (uiStateRef.current === "importing") {
+      if (uiStateRef.current === "importing" || importProgressRef.current) {
         scheduleSilentReload();
         return;
       }
@@ -9015,7 +9026,12 @@ function AppInner() {
                   <span className="activity-strip-message">
                     {t("progress.importingLibrary")}
                     {importProgress.phase === "validate"
-                      ? t("progress.validating")
+                      ? importProgress.totalFiles > 0
+                        ? t("progress.readingSourceItems", {
+                            processed: importProgress.filesProcessed,
+                            total: importProgress.totalFiles,
+                          })
+                        : t("progress.validating")
                       : importProgress.phase === "copy"
                         ? importProgress.totalFiles > 0
                           ? t("progress.copyingFiles", {

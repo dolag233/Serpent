@@ -217,7 +217,7 @@ export const importProgressEventSchema = z.strictObject({
   type: z.literal('import.progress'),
   importId: nonBlankString,
   phase: z.enum(['validate', 'copy', 'extract', 'verify', 'open', 'complete', 'failed', 'cancelled']),
-  /** Eagle imports are synchronous and cannot be cancelled mid-batch yet. */
+  /** True when the import can be cancelled between batches. */
   cancelable: z.boolean().optional(),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),

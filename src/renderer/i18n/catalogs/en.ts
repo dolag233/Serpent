@@ -1473,6 +1473,7 @@ export const en = {
     compressing: "Compressing",
     copyingFiles: "Copying {processed}/{total} · {bytesProcessed}/{bytesTotal}",
     validating: "Validating…",
+    readingSourceItems: "Reading items {processed}/{total}…",
     copying: "Copying…",
     opening: "Opening…",
     exportingLibrary: "Exporting library:",
@@ -1892,7 +1893,11 @@ export const en = {
       CONTACT_SHEET_REQUIRED: "Video contact sheet/poster is not ready yet; Serpent will retry automatically.",
       NO_AI_FIELDS_TO_WRITE: "No AI fields left to write (for example a human description already exists and tags/rating are off).",
       AI_INTERNAL_ERROR: "Internal AI analysis error. Check the application log.",
-      TRANSFER_IN_PROGRESS: "Another library import or export is already using the same library or path."
+      TRANSFER_IN_PROGRESS: "Another library import or export is already using the same library or path.",
+      EAGLE_METADATA_UNREADABLE: "Could not parse the Eagle library metadata.json or images folder. Choose a .library directory.",
+      IMPORT_COPY_FAILED: "Copying source files into the library failed. Check disk space and that the source files are still readable, then see the app log.",
+      IMPORT_REGISTER_FAILED: "Files started copying, but registering them in the library failed. Check the app log and retry; do not re-import items that already succeeded.",
+      EAGLE_THUMBNAIL_FAILED: "Eagle still thumbnails could not be written to the preview cache. The assets still import; refresh thumbnails later."
     },
     withReason: "{message} Reason: {reason}"
   },
