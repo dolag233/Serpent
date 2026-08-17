@@ -1200,22 +1200,22 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
-  async executeSmartCollection({ libraryId, collectionId, scopeMode, idsOnly, limit, offset }: { libraryId: string; collectionId: string; scopeMode?: boolean; idsOnly?: boolean; limit?: number; offset?: number }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; assetIds?: string[] }>> {
-    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, scopeMode, idsOnly, limit, offset });
+  async executeSmartCollection({ libraryId, collectionId, scopeMode, idsOnly, layoutOnly, limit, offset }: { libraryId: string; collectionId: string; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number }) {
+    const result = await request({ type: 'smart-collection.execute.request', libraryId, collectionId, scopeMode, idsOnly, layoutOnly, limit, offset });
     if (!result.ok) return failure(result);
     if (result.type !== 'smart-collection.executed') throw new Error('Unexpected execute-smart-collection response.');
-    return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, ...(result.assetIds ? { assetIds: result.assetIds } : {}) } };
+    return { ok: true as const, value: { items: result.items, total: result.total, offset: result.offset, ...(result.assetIds ? { assetIds: result.assetIds } : {}), ...(result.layout ? { layout: result.layout } : {}) } };
   },
 
-  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, idsOnly, limit, offset, showIgnored }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; idsOnly?: boolean; limit?: number; offset?: number; showIgnored?: boolean }): Promise<LibraryApiResult<{ items: AssetSummary[]; total: number; offset: number; snippets?: { assetId: string; text: string }[]; assetIds?: string[] }>> {
+  async searchAssets({ libraryId, query, filters, scope, sort, scopeMode, idsOnly, layoutOnly, limit, offset, showIgnored }: { libraryId: string; query?: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; scopeMode?: boolean; idsOnly?: boolean; layoutOnly?: boolean; limit?: number; offset?: number; showIgnored?: boolean }) {
     const parsedQuery = searchQuerySchema.safeParse(query ?? null);
     if (!parsedQuery.success) {
-      return { ok: false, error: createPublicError('INVALID_SEARCH_QUERY') };
+      return { ok: false as const, error: createPublicError('INVALID_SEARCH_QUERY') };
     }
-    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, idsOnly, limit, offset, showIgnored });
+    const result = await request({ type: 'asset.search.request', libraryId, query: parsedQuery.data, filters, scope, sort, scopeMode, idsOnly, layoutOnly, limit, offset, showIgnored });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.search.result') throw new Error('Unexpected search-assets response.');
-    return { ok: true, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets, ...(result.assetIds ? { assetIds: result.assetIds } : {}) } };
+    return { ok: true as const, value: { items: result.items, total: result.total, offset: result.offset, snippets: result.snippets, ...(result.assetIds ? { assetIds: result.assetIds } : {}), ...(result.layout ? { layout: result.layout } : {}) } };
   },
 
   async planAiSearch({ naturalQuery }: { naturalQuery: string }): Promise<LibraryApiResult<{ plan: AiSearchPlan; apiFormat: AiApiFormat; model: string }>> {
@@ -2694,4 +2694,3 @@ contextBridge.exposeInMainWorld(
     ...(e2eEnabled ? { e2e: e2eDiagnostics } : {}),
   }),
 );
-

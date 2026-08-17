@@ -8778,6 +8778,10 @@ select.ai-config-input.ai-config-languages {
   flex-direction: column;
 }
 
+.asset-card.is-layout-preview {
+  pointer-events: none;
+}
+
 .masonry-card-slot .asset-preview {
   flex: 0 0 var(--masonry-preview-height, auto);
   width: 100%;
@@ -9085,19 +9089,6 @@ select.ai-config-input.ai-config-languages {
   text-align: left;
   cursor: pointer;
   transition: box-shadow 120ms ease;
-}
-
-.asset-card.is-browse-placeholder {
-  pointer-events: none;
-  cursor: default;
-}
-
-.asset-card.is-browse-placeholder:hover {
-  background: transparent;
-}
-
-.asset-card.is-browse-placeholder .asset-preview {
-  background: var(--raised-2);
 }
 
 /* Hover only lifts the surface — no border flash, so dense grids stay calm

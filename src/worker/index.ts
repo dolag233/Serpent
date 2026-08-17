@@ -107,6 +107,8 @@ const analysisControls = new Map<string, {
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
+const deferredStartupThumbnailQueues = new Map<string, ReturnType<typeof setTimeout>>();
+const primaryThumbnailIdleUntil = new Map<string, number>();
 const latestAssetSearchRequests = new LatestSearchRequestCoordinator();
 const pendingPluginMediaProviderRequests = new Map<string, {
   resolve: (result: PluginMediaProviderResult) => void;
@@ -491,10 +493,17 @@ function scheduleThumbnailQueue(
       };
       // Image thumbs share a CPU-derived Sharp semaphore. Video/OIIO stay
       // separately bounded. Claim a wave of 2× concurrency so the pool stays
-      // full instead of draining and waiting for the next setTimeout.
+      // full instead of draining and waiting for the next setTimeout. A light
+      // visible-window request claims the whole reported window in one queue
+      // call; the service still caps actual decoder concurrency, but this
+      // avoids inserting a timer/query boundary between visible thumbnails.
       const thumbnailWaveSize = workerMediaDecodeWaveSize();
+      const processWaveSize = options.skipStaleRepair && options.assetIds
+        ? Math.min(100, Math.max(thumbnailWaveSize, options.assetIds.length))
+        : thumbnailWaveSize;
       const processed = await libraryService.processThumbnailQueue(libraryId, {
-        maxJobs: thumbnailWaveSize,
+        maxJobs: processWaveSize,
+        jobKinds: ['generate_thumbnail', 'generate_video_poster'],
         onResult,
         onAiInputReady: (event) => {
           parentPort?.postMessage({
@@ -519,7 +528,7 @@ function scheduleThumbnailQueue(
         modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
       });
-      continueImmediately = processed === thumbnailWaveSize;
+      continueImmediately = processed === processWaveSize;
       if (!continueImmediately) {
         const filled = libraryService.enqueueThumbnailJobs(libraryId, {
           limit: 500,
@@ -555,6 +564,7 @@ function scheduleThumbnailQueue(
       return;
     }
     activeThumbnailQueues.delete(libraryId);
+    scheduleSecondaryMediaQueue(libraryId);
     if (rescheduledThumbnailQueues.delete(libraryId)) {
       activeThumbnailQueues.add(libraryId);
       setTimeout(() => void runBatch(), 0);
@@ -563,6 +573,92 @@ function scheduleThumbnailQueue(
 
   setTimeout(() => void runBatch(), 0);
   return enqueued;
+}
+
+const STARTUP_THUMBNAIL_DELAY_MS = 1_000;
+
+/**
+ * Do not let the library-open backfill claim the primary decoder before the
+ * renderer has had a chance to report its first visible window. Re-arm the
+ * delay whenever interactive media work extends the idle window below.
+ */
+function deferStartupThumbnailScene(libraryId: string): void {
+  const previous = deferredStartupThumbnailQueues.get(libraryId);
+  if (previous !== undefined) clearTimeout(previous);
+
+  const attempt = () => {
+    deferredStartupThumbnailQueues.delete(libraryId);
+    const waitMs = Math.max(
+      0,
+      (primaryThumbnailIdleUntil.get(libraryId) ?? 0) - Date.now(),
+    );
+    if (waitMs > 0) {
+      const timer = setTimeout(attempt, waitMs);
+      deferredStartupThumbnailQueues.set(libraryId, timer);
+      return;
+    }
+    scheduleThumbnailScene(libraryId, 'startup');
+  };
+
+  deferredStartupThumbnailQueues.set(
+    libraryId,
+    setTimeout(attempt, STARTUP_THUMBNAIL_DELAY_MS),
+  );
+}
+
+function cancelDeferredStartupThumbnailScene(libraryId: string): void {
+  const timer = deferredStartupThumbnailQueues.get(libraryId);
+  if (timer !== undefined) clearTimeout(timer);
+  deferredStartupThumbnailQueues.delete(libraryId);
+  primaryThumbnailIdleUntil.delete(libraryId);
+}
+
+const SECONDARY_MEDIA_JOB_KINDS = [
+  'extract_metadata',
+  'generate_contact_sheet',
+  'generate_webm_proxy',
+  'generate_audio_proxy',
+  'extract_palette',
+] as const;
+const activeSecondaryMediaQueues = new Set<string>();
+const secondaryMediaIdleUntil = new Map<string, number>();
+
+function noteInteractiveMediaRequest(libraryId: string): void {
+  const idleUntil = Date.now() + 1_000;
+  secondaryMediaIdleUntil.set(libraryId, idleUntil);
+  primaryThumbnailIdleUntil.set(libraryId, idleUntil);
+  libraryService.noteInteractiveActivity(libraryId);
+}
+
+/**
+ * Secondary derivatives remain automatic, but drain one at a time and only
+ * after an interactive idle window. They used to share the CPU-3 preview
+ * wave, allowing palette/proxy work to monopolize a large-library Worker.
+ */
+function scheduleSecondaryMediaQueue(libraryId: string): void {
+  if (activeSecondaryMediaQueues.has(libraryId)) return;
+  activeSecondaryMediaQueues.add(libraryId);
+  const runOne = async (): Promise<void> => {
+    const waitMs = (secondaryMediaIdleUntil.get(libraryId) ?? 0) - Date.now();
+    if (waitMs > 0) {
+      setTimeout(() => void runOne(), waitMs);
+      return;
+    }
+    try {
+      const processed = await libraryService.processThumbnailQueue(libraryId, {
+        maxJobs: 1,
+        jobKinds: SECONDARY_MEDIA_JOB_KINDS,
+      });
+      if (processed > 0) {
+        setTimeout(() => void runOne(), 50);
+        return;
+      }
+    } catch (error) {
+      libraryService.reportDiagnostic('secondary-media-schedule.process', error, { libraryId });
+    }
+    activeSecondaryMediaQueues.delete(libraryId);
+  };
+  setTimeout(() => void runOne(), 1_000);
 }
 
 type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation' | 'cover';
@@ -1039,7 +1135,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       }
       libraryService.writeSyncManifestCache(created.libraryId, serializeManifest(manifest));
       if (!created.readOnly) {
-        scheduleThumbnailScene(created.libraryId, 'startup');
+        deferStartupThumbnailScene(created.libraryId);
       }
       return { ok: true, type: 'library.opened', library: created };
     }
@@ -1062,14 +1158,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.create': {
       const library = libraryService.createLibrary(request.command);
       if (!library.readOnly) {
-        scheduleThumbnailScene(library.libraryId, 'startup');
+        deferStartupThumbnailScene(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.open': {
       const library = libraryService.openLibrary(request.command.selectedLibraryPath);
       if (!library.readOnly) {
-        scheduleThumbnailScene(library.libraryId, 'startup');
+        deferStartupThumbnailScene(library.libraryId);
         // Serpent-tumv (LIB-018): deliver the opened response first, then run the
         // disk-heavy reconciliation (artifact sweep, trash purge, Assets rescan)
         // in the background so large libraries become interactive without
@@ -1097,7 +1193,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.open-eagle': {
       const library = await libraryService.openEagleLibrary(request.command);
       if (!library.readOnly) {
-        scheduleThumbnailScene(library.libraryId, 'startup');
+        deferStartupThumbnailScene(library.libraryId);
         void libraryService.runOpenBackgroundReconciliation(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
@@ -1116,12 +1212,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'library.open-billfish': {
       const library = await libraryService.openBillfishLibrary(request.command);
       if (!library.readOnly) {
-        scheduleThumbnailScene(library.libraryId, 'startup');
+        deferStartupThumbnailScene(library.libraryId);
         void libraryService.runOpenBackgroundReconciliation(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
     }
     case 'library.close':
+      cancelDeferredStartupThumbnailScene(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
@@ -1132,6 +1229,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'library.renamed', library: renamed };
     }
     case 'library.delete-from-disk': {
+      cancelDeferredStartupThumbnailScene(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
@@ -1769,25 +1867,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         sort: request.command.sort ?? null,
         scopeMode: request.command.scopeMode ?? false,
         idsOnly: request.command.idsOnly ?? false,
+        layoutOnly: request.command.layoutOnly ?? false,
         showIgnored: request.command.showIgnored === true,
         limit: request.command.scopeMode ? null : (request.command.limit ?? 50),
         offset: request.command.scopeMode ? 0 : (request.command.offset ?? 0),
       });
-      // Serpent-x9xu redesign: only the FIRST page schedules the visible wave
-      // (and lightly — no repair/stale sweeps per page). Append pages must not
-      // re-boost or re-scan: the renderer reports the actual visible window
-      // (asset.thumbnail.visible-window) as the user scrolls.
-      if ((request.command.offset ?? 0) === 0 && !request.command.idsOnly) {
-        scheduleThumbnailScene(
-          request.command.libraryId,
-          'visible',
-          result.items.flatMap((asset) =>
-            asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-          ),
-          undefined,
-          { light: true },
-        );
-      }
       return {
         ok: true,
         type: 'asset.search.result',
@@ -1796,6 +1880,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         offset: result.offset,
         snippets: result.snippets,
         ...(result.assetIds ? { assetIds: result.assetIds } : {}),
+        ...(result.layout ? { layout: result.layout } : {}),
       };
     }
     case 'smart-collection.list':
@@ -1820,11 +1905,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     case 'smart-collection.execute': {
       const result = libraryService.executeSmartCollection(request.command);
-      scheduleThumbnailScene(
-        request.command.libraryId,
-        'visible',
-        result.items.map((asset) => asset.assetId),
-      );
       return {
         ok: true,
         type: 'smart-collection.executed',
@@ -1832,6 +1912,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         total: result.total,
         offset: result.offset,
         ...(result.assetIds ? { assetIds: result.assetIds } : {}),
+        ...(result.layout ? { layout: result.layout } : {}),
       };
     }
     case 'asset.trash': {
@@ -2646,6 +2727,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       );
       return { ok: true, type: 'media.artifact-path', artifactId: request.command.artifactId, absolutePath };
     }
+    case 'media.get-artifact-paths': {
+      const entries = libraryService.getArtifactAbsolutePaths(
+        request.command.libraryId,
+        request.command.artifactIds,
+        request.command.usage,
+      );
+      return { ok: true, type: 'media.artifact-paths', entries };
+    }
     case 'media.get-source-path': {
       const source = libraryService.getCurrentMediaSource(
         request.command.libraryId,
@@ -3412,11 +3501,14 @@ parentPort.on('message', async (event) => {
   try {
     const request = parseWorkerRequest(input);
     if (request.command.type === 'asset.search') {
+      noteInteractiveMediaRequest(request.command.libraryId);
       latestAssetSearchRequests.mark(
         request.command.libraryId,
         searchRequestLaneKey(request.command),
         request.requestId,
       );
+    } else if (request.command.type === 'asset.thumbnail.visible-window') {
+      noteInteractiveMediaRequest(request.command.libraryId);
     }
     response = { requestId: request.requestId, result: await handleRequest(request) };
   } catch (error) {
@@ -3450,4 +3542,3 @@ process.stdout.write(
   `${JSON.stringify({ scope: 'worker.boot', message: 'worker module loaded, sending ready.' })}\n`,
 );
 parentPort.postMessage({ type: 'worker.ready' });
-

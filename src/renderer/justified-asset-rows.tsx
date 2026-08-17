@@ -1,12 +1,13 @@
 import {
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 
-import type { AssetSummary } from "../shared/asset-types";
+import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
 import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
@@ -49,12 +50,16 @@ export function justifiedSlotStyle(
 
 export function JustifiedAssetRows({
   assets,
+  layout,
   cardSize,
   renderCard,
+  renderLayoutPreview,
 }: {
   assets: AssetSummary[];
+  layout: BrowseLayoutEntry[];
   cardSize: number;
   renderCard: (asset: AssetSummary) => ReactNode;
+  renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
   /**
    * @deprecated Ignored. Preview height is locked to layout placement;
    * caption renders at natural height below (Serpent-5p45).
@@ -75,24 +80,50 @@ export function JustifiedAssetRows({
     return () => observer.disconnect();
   }, []);
 
-  const assetById = new Map(assets.map((asset) => [asset.assetId, asset] as const));
-  const rows = layoutJustifiedRows(
-    assets.map((asset) => ({
-      id: asset.assetId,
-      aspectRatio: aspectRatioForAsset(asset.width, asset.height),
-    })),
-    availableWidth,
-    cardSize,
-    ASSET_GRID_GAP_PX,
+  const fallbackLayout = useMemo(
+    () => assets.map((asset) => ({
+        assetId: asset.assetId,
+        width: asset.width,
+        height: asset.height,
+        previewArtifactId: asset.thumbnailArtifactId,
+      })),
+    [assets],
+  );
+  const layoutEntries = layout.length > 0 ? layout : fallbackLayout;
+  const assetById = useMemo(
+    () => new Map(assets.map((asset) => [asset.assetId, asset] as const)),
+    [assets],
+  );
+  const layoutById = useMemo(
+    () => new Map(layoutEntries.map((entry) => [entry.assetId, entry] as const)),
+    [layoutEntries],
+  );
+  const rows = useMemo(
+    () => layoutJustifiedRows(
+      layoutEntries.map((asset) => ({
+        id: asset.assetId,
+        aspectRatio: aspectRatioForAsset(asset.width, asset.height),
+      })),
+      availableWidth,
+      cardSize,
+      ASSET_GRID_GAP_PX,
+    ),
+    [availableWidth, cardSize, layoutEntries],
   );
   const captionBandPx = JUSTIFIED_CAPTION_BAND_PX;
-  const layoutRects = layoutJustifiedAssetRects(
-    assets,
-    availableWidth,
-    cardSize,
-    captionBandPx,
+  const layoutRects = useMemo(
+    () => layoutJustifiedAssetRects(
+      layoutEntries,
+      availableWidth,
+      cardSize,
+      captionBandPx,
+    ),
+    [availableWidth, captionBandPx, cardSize, layoutEntries],
   );
-  const rowBodies = rows.map((row) => row.height + captionBandPx);
+  const rowBodies = useMemo(
+    () => rows.map((row) => row.height + captionBandPx),
+    [captionBandPx, rows],
+  );
   const rowWindow = columnWindow(
     stackItemHeights(rowBodies),
     viewport.start,
@@ -128,14 +159,16 @@ export function JustifiedAssetRows({
           >
             {row.items.map((placement) => {
               const asset = assetById.get(placement.id);
-              if (!asset) return null;
+              const layoutEntry = layoutById.get(placement.id)!;
               return (
                 <div
+                  aria-hidden={asset ? undefined : true}
                   className="justified-card-slot"
+                  data-layout-asset-id={placement.id}
                   key={placement.id}
                   style={justifiedSlotStyle(placement)}
                 >
-                  {renderCard(asset)}
+                  {asset ? renderCard(asset) : renderLayoutPreview?.(layoutEntry)}
                 </div>
               );
             })}

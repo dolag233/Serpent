@@ -664,6 +664,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     scopeMode: z.boolean().optional(),
     /** Serpent-ws4k: return only `assetIds` for the whole scope (select-all); limit/offset ignored. */
     idsOnly: z.boolean().optional(),
+    /** Serpent-sa65: compact full-scope real-asset geometry index. */
+    layoutOnly: z.boolean().optional(),
     limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
     showIgnored: z.boolean().optional(),
@@ -701,6 +703,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     collectionId: identifierSchema,
     scopeMode: z.boolean().optional(),
     idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
     limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
@@ -1670,6 +1673,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     sort: sortDefinitionSchema.optional(),
     scopeMode: z.boolean().optional(),
     idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
     limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
     showIgnored: z.boolean().optional(),
@@ -1703,6 +1707,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     collectionId: identifierSchema,
     scopeMode: z.boolean().optional(),
     idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
     limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
@@ -2029,6 +2034,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-artifact-path'),
     libraryId: identifierSchema,
     artifactId: identifierSchema,
+    usage: z.enum(['preview', 'proxy']),
+  }),
+  z.strictObject({
+    type: z.literal('media.get-artifact-paths'),
+    libraryId: identifierSchema,
+    artifactIds: z.array(identifierSchema).min(1).max(500),
     usage: z.enum(['preview', 'proxy']),
   }),
   z.strictObject({

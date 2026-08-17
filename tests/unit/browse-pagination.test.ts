@@ -5,6 +5,7 @@ import type { SerpentLibraryApi } from "../../src/shared/library-api";
 import {
   fetchBrowseScopeAssetIdsGuarded,
   fetchBrowseScopeIds,
+  fetchBrowseLayout,
   isDiscardedBrowseWindowPage,
   isIgnorableBrowseWindowFailure,
   registerBrowseSearchPage,
@@ -104,6 +105,38 @@ describe("fetchBrowseScopeIds (Serpent-ws4k select-all id set)", () => {
     } as unknown as SerpentLibraryApi;
 
     expect(await fetchBrowseScopeIds({ api, definition: searchDefinition })).toBeNull();
+  });
+});
+
+describe("fetchBrowseLayout (Serpent-sa65 compact geometry index)", () => {
+  it("requests layoutOnly without materializing AssetSummary rows", async () => {
+    const layout = [{ assetId: "a", width: 1600, height: 900 }];
+    const searchAssets = vi.fn(async () => ({
+      ok: true as const,
+      value: { items: [], total: 1, offset: 0, layout },
+    }));
+    const api = {
+      searchAssets,
+      executeSmartCollection: vi.fn(),
+    } as unknown as SerpentLibraryApi;
+
+    expect(await fetchBrowseLayout({ api, definition: searchDefinition })).toEqual(layout);
+    expect(searchAssets).toHaveBeenCalledWith(
+      expect.objectContaining({ libraryId: "lib-1", layoutOnly: true }),
+    );
+  });
+
+  it("keeps the current layout when a response omits the layout field", async () => {
+    const searchAssets = vi.fn(async () => ({
+      ok: true as const,
+      value: { items: [], total: 1, offset: 0 },
+    }));
+    const api = {
+      searchAssets,
+      executeSmartCollection: vi.fn(),
+    } as unknown as SerpentLibraryApi;
+
+    expect(await fetchBrowseLayout({ api, definition: searchDefinition })).toBeNull();
   });
 });
 

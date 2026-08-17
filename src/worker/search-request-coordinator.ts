@@ -28,9 +28,9 @@ export class LatestSearchRequestCoordinator {
  * Parallel browse loads issue several asset.search commands for one library
  * (page, library count, and trash count). Count and ids-only queries need
  * independent cancellation lanes. Paginated summary windows share one
- * browse-window lane so a folder switch or scrollbar jump cancels the
- * previous SQLite search regardless of scope/offset. Query text is excluded
- * so keystroke bursts still coalesce.
+ * browse-window offset gets its own lane. Folder/search changes at the same
+ * offset still coalesce, while independent viewport pages cannot cancel one
+ * another during a masonry jump or a concurrent refresh.
  */
 export function searchRequestLaneKey(input: {
   filters?: unknown;
@@ -38,6 +38,7 @@ export function searchRequestLaneKey(input: {
   sort?: unknown;
   scopeMode?: boolean;
   idsOnly?: boolean;
+  layoutOnly?: boolean;
   limit?: number | null;
   offset?: number;
   showIgnored?: boolean;
@@ -47,6 +48,15 @@ export function searchRequestLaneKey(input: {
       kind: "ids",
       filters: input.filters ?? null,
       scope: input.scope ?? null,
+      showIgnored: input.showIgnored ?? false,
+    });
+  }
+  if (input.layoutOnly) {
+    return JSON.stringify({
+      kind: "layout",
+      filters: input.filters ?? null,
+      scope: input.scope ?? null,
+      sort: input.sort ?? null,
       showIgnored: input.showIgnored ?? false,
     });
   }
@@ -70,6 +80,7 @@ export function searchRequestLaneKey(input: {
   }
   return JSON.stringify({
     kind: "browse-window",
+    offset: input.offset ?? 0,
     showIgnored: input.showIgnored ?? false,
   });
 }

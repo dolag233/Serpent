@@ -1,47 +1,6 @@
-/**
- * Serpent-87pd: the browse canvas owns one slot per asset in the current
- * scope so the scrollbar reflects the full COUNT, not the loaded page.
- * Unfetched slots are cheap placeholders; window fetches replace them in
- * place by SQL offset. Renderer never ships these stubs across the bridge.
- */
+/** Serpent-sa65: page math and real-summary merging for virtualized browse. */
 
-import type { AssetSummary } from "../shared/asset-types";
-import { BROWSE_SCOPE_MAX_ASSETS } from "../shared/browse-scope";
-
-export const PENDING_BROWSE_ASSET_PREFIX = "__pending:";
-
-export function isPendingBrowseAsset(
-  asset: Pick<AssetSummary, "assetId">,
-): boolean {
-  return asset.assetId.startsWith(PENDING_BROWSE_ASSET_PREFIX);
-}
-
-export function createPendingBrowseAsset(index: number): AssetSummary {
-  const token = `${PENDING_BROWSE_ASSET_PREFIX}${index}`;
-  return {
-    assetId: token,
-    locationKind: "managed",
-    managedFolderId: null,
-    relativeFilePath: `pending/${index}.bin`,
-    displayName: "…",
-    currentRevisionId: token,
-    byteSize: 0,
-    modifiedAt: "1970-01-01T00:00:00.000Z",
-    availability: "available",
-    rating: 0,
-    favorite: false,
-    deletedAt: null,
-    trashedFromPath: null,
-    trashedFromTombstoneId: null,
-    remainingDays: null,
-    thumbnailStatus: "pending",
-    thumbnailArtifactId: null,
-    mediaType: "image",
-    width: null,
-    height: null,
-    durationMs: null,
-  };
-}
+import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
 
 export function browsePageOffset(
   index: number,
@@ -49,6 +8,25 @@ export function browsePageOffset(
 ): number {
   if (index <= 0 || pageSize <= 0) return 0;
   return Math.floor(index / pageSize) * pageSize;
+}
+
+/** Group missing page offsets into runs that can be fetched in one request. */
+export function contiguousBrowsePageRuns(
+  offsets: readonly number[],
+  pageSize: number,
+): number[][] {
+  const step = Math.max(1, Math.trunc(pageSize));
+  const sorted = [...new Set(offsets)].sort((left, right) => left - right);
+  const runs: number[][] = [];
+  for (const offset of sorted) {
+    const previous = runs.at(-1)?.at(-1);
+    if (previous === undefined || offset !== previous + step) {
+      runs.push([offset]);
+    } else {
+      runs.at(-1)!.push(offset);
+    }
+  }
+  return runs;
 }
 
 /**
@@ -84,30 +62,27 @@ export function browsePageOffsetsForRange(input: {
   return [primary, ...offsets.filter((offset) => offset !== primary)];
 }
 
-export function mergeBrowseWindow(input: {
+/**
+ * Merge real summaries only. The compact layout index owns full-scope order
+ * and scrollbar geometry; unloaded assets never become fake AssetSummary
+ * cards and therefore cannot flash `__pending:` placeholders.
+ */
+export function mergeLoadedBrowsePage(input: {
   current: readonly AssetSummary[];
-  total: number;
-  offset: number;
   items: readonly AssetSummary[];
+  layout: readonly BrowseLayoutEntry[];
 }): AssetSummary[] {
-  const length = Math.min(
-    BROWSE_SCOPE_MAX_ASSETS,
-    Math.max(0, Math.floor(input.total)),
+  const byId = new Map(input.current.map((asset) => [asset.assetId, asset]));
+  for (const asset of input.items) byId.set(asset.assetId, asset);
+  const rank = new Map(
+    input.layout.map((entry, index) => [entry.assetId, index] as const),
   );
-  const slots: AssetSummary[] = new Array(length);
-  const previous = input.current.length === length ? input.current : [];
-  for (let index = 0; index < length; index += 1) {
-    const prior = previous[index];
-    slots[index] =
-      prior && !isPendingBrowseAsset(prior)
-        ? prior
-        : createPendingBrowseAsset(index);
-  }
-  for (let index = 0; index < input.items.length; index += 1) {
-    const slotIndex = input.offset + index;
-    if (slotIndex >= 0 && slotIndex < length) {
-      slots[slotIndex] = input.items[index]!;
-    }
-  }
-  return slots;
+  return [...byId.values()].sort((left, right) => {
+    const leftRank = rank.get(left.assetId);
+    const rightRank = rank.get(right.assetId);
+    if (leftRank === undefined && rightRank === undefined) return 0;
+    if (leftRank === undefined) return 1;
+    if (rightRank === undefined) return -1;
+    return leftRank - rightRank;
+  });
 }

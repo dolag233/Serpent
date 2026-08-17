@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
@@ -1006,6 +1006,7 @@ const assetOperationSuccessSchemas = [
     offset: z.number().int().nonnegative(),
     /** Serpent-ws4k: present when the request used idsOnly (select-all). */
     assetIds: z.array(nonBlankString).optional(),
+    layout: z.array(browseLayoutEntrySchema).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1021,6 +1022,7 @@ const assetOperationSuccessSchemas = [
     ).optional(),
     /** Serpent-ws4k: present when the request used idsOnly (select-all). */
     assetIds: z.array(nonBlankString).optional(),
+    layout: z.array(browseLayoutEntrySchema).optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1623,6 +1625,14 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('media.artifact-path'),
     artifactId: nonBlankString,
     absolutePath: nonBlankString,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('media.artifact-paths'),
+    entries: z.array(z.strictObject({
+      artifactId: nonBlankString,
+      absolutePath: nonBlankString,
+    })),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2239,4 +2249,3 @@ export type RendererLifecycleEvent = z.infer<typeof rendererLifecycleEventSchema
 export function parseRendererLifecycleEvent(input: unknown): RendererLifecycleEvent {
   return rendererLifecycleEventSchema.parse(input);
 }
-

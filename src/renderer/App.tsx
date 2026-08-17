@@ -305,6 +305,7 @@ import { toMessage, messageForPublicError, LibraryOperationError } from "./error
 import type {
   AiSearchPlan,
   AssetSummary,
+  BrowseLayoutEntry,
   AssetMetadataResult,
   CollectionSummary,
   FilterClause,
@@ -367,7 +368,7 @@ import {
   FOLDER_CARD_ROW_INLINE_PADDING_PX,
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
-import { isPendingBrowseAsset } from "./browse-window-slots";
+import { BrowseLayoutPreview } from "./BrowseLayoutPreview";
 import {
   BROWSE_PAGE_SIZE,
   registerBrowseSearchPage,
@@ -586,6 +587,11 @@ function AppInner() {
     targetFolderId: string;
   }>({ folderId: "", name: "", targetFolderId: "" });
   const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [browseLayout, setBrowseLayout] = useState<BrowseLayoutEntry[]>([]);
+  const [layoutThumbnailArtifacts, setLayoutThumbnailArtifacts] = useState<{
+    libraryId: string;
+    ids: Map<string, string>;
+  }>({ libraryId: "", ids: new Map() });
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
   // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
   // when the current browse parent is a managed folder or the managed root.
@@ -920,6 +926,7 @@ function AppInner() {
     api: api ?? null,
     setAssets,
     setTrashedAssets,
+    setBrowseLayout,
     setSearchTotal,
     setSearchOffset,
     setSearchSnippets,
@@ -1298,6 +1305,7 @@ function AppInner() {
     [assetCardSize, canvasWidthPx],
   );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  const reportedVisibleWindowKeyRef = useRef("");
   // Serpent-wgl2: the marquee box div is always mounted and moved directly
   // through this ref — never through React state (per-frame state re-renders
   // the whole non-memoized grid).
@@ -1657,10 +1665,6 @@ function AppInner() {
         )
       : assets;
     if (shuffleSeed === null || showTrash) return base;
-    // Windowed placeholders must keep SQL offset order. Shuffle the fully
-    // loaded subset only; large scopes stay in worker order until a later
-    // ids-only permutation lands.
-    if (base.some(isPendingBrowseAsset)) return base;
     return shuffleArray(base, shuffleSeed);
   }, [
     assets,
@@ -1671,99 +1675,117 @@ function AppInner() {
     trashedFolders,
   ]);
 
-  // Serpent-visible-window: after scrolling settles, report the viewport
-  // assets (plus one viewport of surrounding runway) to the Worker, which
-  // queue-jumps their thumbnail jobs above every other tier and header-probes
-  // their dimensions so masonry placeholders stop reflowing. The published
-  // full layout gives ids for mounted AND unmounted cards, so scrolling to a
-  // fresh region still prioritizes exactly what is about to be visible.
+  // Report mounted cards and real layout slots. A fresh scrollbar destination
+  // can queue its thumbnail work before the page summaries mount, while the
+  // compact-layout scroll listener below fetches those summaries in parallel.
   useEffect(() => {
     if (!api || !library) return;
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
-    let timer: number | undefined;
-    let lastKey = "";
+    let frame: number | undefined;
     const report = () => {
-      timer = undefined;
+      frame = undefined;
       const canvasRect = canvas.getBoundingClientRect();
-      const scrollTop = canvas.scrollTop;
-      const runway = canvas.clientHeight;
-      const grids = canvas.querySelectorAll<HTMLElement>(
-        ".masonry-columns, .justified-rows",
-      );
+      // Queue only the viewport plus a small decode runway. A full viewport
+      // above and below used to enqueue up to 3x the work needed for the
+      // interaction, allowing below-fold thumbnails to compete with cards the
+      // user can already see.
+      const runway = Math.round(canvas.clientHeight * 0.25);
       const ids: string[] = [];
-      for (const grid of grids) {
-        const layout = readPublishedCanvasAssetLayout(grid);
-        if (!layout || layout.length === 0) continue;
-        const gridRect = grid.getBoundingClientRect();
-        const gridContentTop = gridRect.top - canvasRect.top + scrollTop;
-        const viewTop = scrollTop - gridContentTop - runway;
-        const viewBottom = scrollTop + canvas.clientHeight - gridContentTop + runway;
-        for (const item of layout) {
-          if (
-            item.y + item.height >= viewTop &&
-            item.y <= viewBottom &&
-            !isPendingBrowseAsset({ assetId: item.id })
-          ) {
-            ids.push(item.id);
-          }
+      const seenIds = new Set<string>();
+      for (const slot of canvas.querySelectorAll<HTMLElement>(
+        ".asset-card[data-asset-id], [data-layout-asset-id]",
+      )) {
+        const rect = slot.getBoundingClientRect();
+        if (rect.bottom < canvasRect.top - runway || rect.top > canvasRect.bottom + runway) {
+          continue;
+        }
+        const assetId = slot.dataset.assetId ?? slot.dataset.layoutAssetId;
+        if (assetId && !seenIds.has(assetId)) {
+          seenIds.add(assetId);
+          ids.push(assetId);
         }
       }
       if (ids.length === 0) return;
-      const key = ids.join(",");
-      if (key === lastKey) return;
-      lastKey = key;
+      const key = `${library.libraryId}:${ids.join(",")}`;
+      if (key === reportedVisibleWindowKeyRef.current) return;
+      reportedVisibleWindowKeyRef.current = key;
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
         assetIds: ids.slice(0, 300),
       });
     };
     const schedule = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(report, 400);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(report);
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
-      if (timer !== undefined) window.clearTimeout(timer);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
     };
-  }, [api, library, assetViewMode, assets, trashedAssets]);
+  }, [api, library, assetViewMode, browseLayout, assets, trashedAssets]);
 
-  // Serpent-87pd: map scrollbar position to a slot index and fetch that
-  // window. A 50ms coalesce is enough to skip rAF spam without making a
-  // jump wait on earlier pages.
+  // Map the scrollbar to the compact real-asset index. One-frame coalescing
+  // avoids request spam without spending 50ms of the 500ms loading budget.
   useEffect(() => {
     if (!api || !library) return;
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
-    let timer: number | undefined;
+    const rankById = new Map(
+      browseLayout.map((entry, index) => [entry.assetId, index] as const),
+    );
+    let frame: number | undefined;
     const schedule = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const total = showTrash ? trashedAssets.length : assets.length;
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        const total = browseLayout.length;
         if (total === 0) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const visibleRanks: number[] = [];
+        for (const grid of canvas.querySelectorAll<HTMLElement>(
+          ".masonry-columns, .justified-rows",
+        )) {
+          const layout = readPublishedCanvasAssetLayout(grid);
+          if (!layout) continue;
+          const gridRect = grid.getBoundingClientRect();
+          const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
+          const viewTop = canvas.scrollTop - gridContentTop;
+          const viewBottom = viewTop + canvas.clientHeight;
+          for (const item of layout) {
+            if (item.y + item.height < viewTop || item.y > viewBottom) continue;
+            const rank = rankById.get(item.id);
+            if (rank !== undefined) visibleRanks.push(rank);
+          }
+        }
+        if (visibleRanks.length > 0) {
+          void ensureBrowseVisibleRange(
+            Math.min(...visibleRanks),
+            Math.max(...visibleRanks),
+          );
+          return;
+        }
         const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
         const ratio = maxScroll <= 0 ? 0 : canvas.scrollTop / maxScroll;
         const center = Math.round(ratio * Math.max(0, total - 1));
         // Neighbor pages are added by browsePageOffsetsForRange. Passing a
         // ±page-size span here would queue 3–4 windows behind a jump.
         void ensureBrowseVisibleRange(center, center);
-      }, 50);
+      });
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
-      if (timer !== undefined) window.clearTimeout(timer);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
     };
   }, [
     api,
-    assets.length,
+    browseLayout,
     ensureBrowseVisibleRange,
     library,
-    showTrash,
-    trashedAssets.length,
   ]);
 
   const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
@@ -2076,9 +2098,7 @@ function AppInner() {
 
   const browseScopeAssetIds = useMemo(() => {
     const rows = showTrash ? trashedAssets : assets;
-    return rows
-      .filter((asset) => !isPendingBrowseAsset(asset))
-      .map((asset) => asset.assetId);
+    return rows.map((asset) => asset.assetId);
   }, [showTrash, trashedAssets, assets]);
   const workspaceBrowseCount = useMemo(() => {
     if (showTagManagement) return tags.length;
@@ -2863,8 +2883,8 @@ function AppInner() {
           setTrashedFolders([]);
         }
       }
-      // Serpent-87pd: beginPage owns the canvas (COUNT slots + first window).
-      // Do not replace it with the first page or the scrollbar collapses.
+      // Serpent-sa65: beginPage owns the first summaries and starts the compact
+      // real-asset layout fetch that gives the virtual canvas full geometry.
       // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
       setThumbnailFailures((current) => {
         if (current.size === 0) return current;
@@ -3138,16 +3158,47 @@ function AppInner() {
   useEffect(() => {
     if (!api) return;
     const pending = new Map<string, AssetThumbnailPatch>();
+    const pendingLayoutArtifactIds = new Map<string, string | null>();
     let frame = 0;
     const flush = () => {
       frame = 0;
-      if (pending.size === 0) return;
+      if (pending.size === 0 && pendingLayoutArtifactIds.size === 0) return;
       const batch = new Map(pending);
       pending.clear();
-      setAssets((current) => applyAssetThumbnailPatches(current, batch));
+      if (batch.size > 0) {
+        setAssets((current) => applyAssetThumbnailPatches(current, batch));
+      }
+      if (pendingLayoutArtifactIds.size > 0) {
+        const layoutBatch = new Map(pendingLayoutArtifactIds);
+        pendingLayoutArtifactIds.clear();
+        const libraryId = library?.libraryId ?? "";
+        setLayoutThumbnailArtifacts((current) => {
+          const ids = current.libraryId === libraryId
+            ? new Map(current.ids)
+            : new Map<string, string>();
+          for (const [assetId, artifactId] of layoutBatch) {
+            if (artifactId) ids.set(assetId, artifactId);
+            else ids.delete(assetId);
+          }
+          while (ids.size > 512) {
+            const oldest = ids.keys().next().value as string | undefined;
+            if (oldest === undefined) break;
+            ids.delete(oldest);
+          }
+          return { libraryId, ids };
+        });
+      }
     };
     const queuePatch = (assetId: string, patch: AssetThumbnailPatch) => {
       pending.set(assetId, mergeAssetThumbnailPatch(pending.get(assetId), patch));
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(flush);
+    };
+    const queueLayoutArtifactPatch = (
+      assetId: string,
+      artifactId: string | null,
+    ) => {
+      pendingLayoutArtifactIds.set(assetId, artifactId);
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(flush);
     };
@@ -3171,6 +3222,7 @@ function AppInner() {
         return;
       }
       if (event.type === "asset.thumbnail.failed") {
+        queueLayoutArtifactPatch(event.assetId, null);
         const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
         setThumbnailFailures((failures) => {
           const next = new Map(failures);
@@ -3195,6 +3247,9 @@ function AppInner() {
         return;
       }
       if (event.type === "asset.thumbnail.ready") {
+        if (event.artifactId) {
+          queueLayoutArtifactPatch(event.assetId, event.artifactId);
+        }
         setThumbnailFailures((failures) => {
           if (!failures.has(event.assetId)) return failures;
           const next = new Map(failures);
@@ -7145,6 +7200,10 @@ function AppInner() {
     };
     const unsubscribe = api.onAssetsChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
+      setLayoutThumbnailArtifacts({
+        libraryId: library.libraryId,
+        ids: new Map(),
+      });
       void refreshOperationHistory();
       // Serpent-yqrl: while a user import is applying, each committed asset
       // triggers a silent canvas refresh so cards appear one-by-one.
@@ -9660,18 +9719,6 @@ function AppInner() {
                     const showCornerBadges =
                       shouldShowAssetCardBadges(assetCardSize);
                     const renderAssetCard = (asset: AssetSummary) => {
-                      if (isPendingBrowseAsset(asset)) {
-                        return (
-                          <div
-                            aria-hidden="true"
-                            className="asset-card is-browse-placeholder"
-                            data-asset-id={asset.assetId}
-                            key={assetCardKey(library?.libraryId, asset.assetId)}
-                          >
-                            <div className="asset-preview" />
-                          </div>
-                        );
-                      }
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
@@ -9719,14 +9766,21 @@ function AppInner() {
                         searchSnippets.get(asset.assetId),
                         asset.displayName,
                       );
+                      const layoutThumbnailArtifactId =
+                        layoutThumbnailArtifacts.libraryId === library?.libraryId
+                          ? layoutThumbnailArtifacts.ids.get(asset.assetId)
+                          : undefined;
                       const cardCover = resolveAssetCardCoverUrl({
                         libraryId: library?.libraryId,
                         assetId: asset.assetId,
                         mediaType: asset.mediaType,
                         availability: asset.availability,
                         deletedAt: asset.deletedAt,
-                        thumbnailStatus: asset.thumbnailStatus,
-                        thumbnailArtifactId: asset.thumbnailArtifactId,
+                        thumbnailStatus: layoutThumbnailArtifactId
+                          ? "ready"
+                          : asset.thumbnailStatus,
+                        thumbnailArtifactId:
+                          layoutThumbnailArtifactId ?? asset.thumbnailArtifactId,
                       });
                       const showThumbnailFailure = shouldShowThumbnailFailureBadge(
                         asset,
@@ -9961,7 +10015,8 @@ function AppInner() {
                           const cardActive =
                             activePreviewAssetId === asset.assetId;
                           const cardThumbFailed =
-                            asset.thumbnailStatus === "failed";
+                            asset.thumbnailStatus === "failed"
+                            && !layoutThumbnailArtifactId;
                           if (isCardHoverPreviewable(asset)) {
                             if (
                               thumbCover ||
@@ -10221,8 +10276,22 @@ function AppInner() {
                         {assetViewMode === "masonry" ? (
                           <MasonryColumns
                             assets={section.assets}
+                            layout={browseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
+                            renderLayoutPreview={(entry) =>
+                              library ? (
+                                <BrowseLayoutPreview
+                                  entry={entry}
+                                  libraryId={library.libraryId}
+                                  previewArtifactId={
+                                    layoutThumbnailArtifacts.libraryId === library.libraryId
+                                      ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                />
+                              ) : null
+                            }
                             showCaption={
                               canvasPrefs.fields.name ||
                               canvasPrefs.fields.size ||
@@ -10235,8 +10304,22 @@ function AppInner() {
                         ) : (
                           <JustifiedAssetRows
                             assets={section.assets}
+                            layout={browseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
+                            renderLayoutPreview={(entry) =>
+                              library ? (
+                                <BrowseLayoutPreview
+                                  entry={entry}
+                                  libraryId={library.libraryId}
+                                  previewArtifactId={
+                                    layoutThumbnailArtifacts.libraryId === library.libraryId
+                                      ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                />
+                              ) : null
+                            }
                           />
                         )}
                       </div>

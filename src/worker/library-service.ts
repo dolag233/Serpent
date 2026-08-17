@@ -113,7 +113,7 @@ import {
   CONTENT_REPLACE_MAX_BYTES,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
   createAutomationFilePlanHash,
@@ -5092,6 +5092,8 @@ export class LibraryService {
    * entries are never shared across libraries or usages.
    */
   private readonly artifactPathCache = new Map<string, ArtifactPathCacheEntry>();
+  /** Disk-heavy open maintenance yields while the user is actively browsing. */
+  private readonly interactiveIdleUntilByLibrary = new Map<string, number>();
   /**
    * Open automation groups are keyed by their Main-owned execution source.
    * The value is an in-memory reservation until the first real step is
@@ -5109,6 +5111,25 @@ export class LibraryService {
   private suppressWatcherNotifyUntilMs = 0;
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
+
+  noteInteractiveActivity(libraryId: string, idleMs = 1_000): void {
+    this.interactiveIdleUntilByLibrary.set(
+      libraryId,
+      Math.max(
+        this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0,
+        Date.now() + idleMs,
+      ),
+    );
+  }
+
+  private async yieldForInteractiveIdle(libraryId: string): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    while (this.openById.has(libraryId)) {
+      const waitMs = (this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0) - Date.now();
+      if (waitMs <= 0) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(waitMs, 1_000)));
+    }
+  }
 
   /**
    * Mark imported assets as preview-only. This is deliberately kept in the
@@ -20286,6 +20307,48 @@ export class LibraryService {
     return absolutePath;
   }
 
+  /** Resolve a burst of virtual-card previews with one query/root check. */
+  getArtifactAbsolutePaths(
+    libraryId: string,
+    artifactIds: readonly string[],
+    usage: 'preview' | 'proxy',
+  ): Array<{ artifactId: string; absolutePath: string }> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const ids = [...new Set(artifactIds)].slice(0, 500);
+    if (ids.length === 0) return [];
+    const rows = openLibrary.connection.prepare(
+      `SELECT ra.artifact_id, ra.file_path, ra.kind
+         FROM revision_artifacts ra
+         JOIN assets a ON a.current_revision_id = ra.revision_id
+        WHERE ra.artifact_id IN (${ids.map(() => '?').join(',')})
+          AND ra.status = 'ready'
+          AND ra.invalidated_at IS NULL`,
+    ).all(...ids) as Array<{ artifact_id: string; file_path: string; kind: string }>;
+    const byId = new Map(rows.map((row) => [row.artifact_id, row] as const));
+    const artifactsRoot = this.artifactRootPath(openLibrary);
+    const changeSequence = openLibrary.changeSubscription.lastSequence;
+    const entries: Array<{ artifactId: string; absolutePath: string }> = [];
+    for (const artifactId of ids) {
+      const row = byId.get(artifactId);
+      if (!row) continue;
+      try {
+        this.assertArtifactUsage(row.kind, usage);
+      } catch {
+        // Preserve the single-artifact 404 semantics for one stale or
+        // incompatible id without discarding valid siblings in the batch.
+        continue;
+      }
+      const absolutePath = this.artifactFilePathFromRoot(artifactsRoot, row.file_path);
+      this.artifactPathCache.set(`${libraryId}\u0000${artifactId}`, {
+        absolutePath,
+        kind: row.kind,
+        changeSequence,
+      });
+      entries.push({ artifactId, absolutePath });
+    }
+    return entries;
+  }
+
   private assertArtifactUsage(kind: string, usage?: 'preview' | 'proxy'): void {
     if (!usage) return;
     const allowedKinds = usage === 'proxy'
@@ -20332,18 +20395,30 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     relativeFilePath: string,
   ): string {
+    return this.artifactFilePathFromRoot(
+      this.artifactRootPath(openLibrary),
+      relativeFilePath,
+    );
+  }
+
+  private artifactRootPath(openLibrary: OpenLibrary): string {
     const artifactsDir = this.artifactsDir(openLibrary);
-    let artifactsRoot: string;
     try {
       const rootEntry = lstatSync(artifactsDir);
       if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
         throw new LibraryServiceError('INVALID_LIBRARY_PATH');
       }
-      artifactsRoot = realpathSync(artifactsDir);
+      return realpathSync(artifactsDir);
     } catch (error) {
       if (error instanceof LibraryServiceError) throw error;
       throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
     }
+  }
+
+  private artifactFilePathFromRoot(
+    artifactsRoot: string,
+    relativeFilePath: string,
+  ): string {
     const targetPath = path.resolve(artifactsRoot, ...relativeFilePath.split('/'));
     const relation = path.relative(artifactsRoot, targetPath);
     if (
@@ -20738,12 +20813,12 @@ export class LibraryService {
   async runOpenBackgroundReconciliation(libraryId: string): Promise<void> {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary.readOnly) return;
-    const yieldTurn = () =>
-      new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const yieldTurn = () => this.yieldForInteractiveIdle(libraryId);
     try {
       // Establish the pre-reconciliation safety point before expired-trash
       // cleanup or any other background write can run. A second call below is
       // throttled to the same 24-hour slot when the rescan changes metadata.
+      await yieldTurn();
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
       await yieldTurn();
       await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
@@ -21241,6 +21316,14 @@ export class LibraryService {
       enqueued += inserted.changes;
     }
 
+    if (options.skipStaleRepair) {
+      // Light visible-window waves are only allowed to claim the primary
+      // preview lane. Metadata, palette, proxy, and contact-sheet work is
+      // secondary and must not make a scrollbar jump wait behind extra SQL
+      // scans or newly queued derivatives.
+      return enqueued;
+    }
+
     // Video AI consumes the timestamped contact sheet, not the browsing
     // poster. Probe metadata is therefore its own durable, higher-priority
     // job: it can enqueue a contact sheet immediately while poster and WebM
@@ -21415,6 +21498,8 @@ export class LibraryService {
     libraryId: string,
     options: {
       maxJobs?: number;
+      /** Restrict a pump to one media lane; omitted preserves full-queue behavior. */
+      jobKinds?: readonly MediaJobKind[];
       onResult?: (result: {
         assetId: string;
         artifactId?: string;
@@ -21447,13 +21532,13 @@ export class LibraryService {
       this.modelAiViewsRenderer = options.modelAiViewsRenderer;
     }
     const openLibrary = this.requireOpenLibrary(libraryId);
+    const jobKinds = options.jobKinds ?? MEDIA_JOB_KINDS;
+    if (jobKinds.length === 0) return 0;
     const nextJob = openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count
          FROM jobs
         WHERE library_id = ?
-          AND kind IN ('generate_thumbnail', 'generate_video_poster',
-                       'extract_metadata', 'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
-                       'extract_palette')
+          AND kind IN (${jobKinds.map(() => '?').join(',')})
           AND status = 'queued'
         ORDER BY priority DESC, created_at
         LIMIT 1`,
@@ -21500,7 +21585,7 @@ export class LibraryService {
       try {
       while (budget > 0) {
       budget -= 1;
-      const job = nextJob.get(libraryId) as {
+      const job = nextJob.get(libraryId, ...jobKinds) as {
         job_id: string;
         asset_id: string;
         revision_id: string;
@@ -22107,6 +22192,8 @@ export class LibraryService {
      * plus `assetIds` (capped at the browse-scope cap like scopeMode).
      */
     idsOnly?: boolean | null;
+    /** Compact full-scope real-asset geometry for virtualized layout. */
+    layoutOnly?: boolean | null;
     showIgnored?: boolean;
   }): {
     items: AssetSummary[];
@@ -22114,6 +22201,7 @@ export class LibraryService {
     offset: number;
     snippets?: Array<{ assetId: string; text: string }>;
     assetIds?: string[];
+    layout?: BrowseLayoutEntry[];
   } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const connection = openLibrary.connection;
@@ -22130,10 +22218,11 @@ export class LibraryService {
     const hasSearchFts = hasTable(connection, 'asset_search');
     const scopeMode = input.scopeMode === true;
     const idsOnly = input.idsOnly === true;
-    const limit = scopeMode || idsOnly
+    const layoutOnly = input.layoutOnly === true;
+    const limit = scopeMode || idsOnly || layoutOnly
       ? BROWSE_SCOPE_MAX_ASSETS
       : (input.limit ?? 50);
-    const offset = scopeMode || idsOnly ? 0 : (input.offset ?? 0);
+    const offset = scopeMode || idsOnly || layoutOnly ? 0 : (input.offset ?? 0);
 
     const searchGroups = input.query ? normalizedSearchGroups(input.query) : [];
     const hasQuery = searchGroups.length > 0;
@@ -22333,12 +22422,37 @@ export class LibraryService {
       ? `JOIN asset_search_index sc ON a.asset_id = sc.asset_id
          ${useTrigramIndex && hasSearchFts ? 'JOIN asset_search s ON sc.rowid = s.rowid' : ''}`
       : '';
+    const hasLayoutDimensions =
+      artifactColumns.has('width') && artifactColumns.has('height');
+    const layoutArtifactJoins = layoutOnly && hasLayoutDimensions
+      ? `LEFT JOIN revision_artifacts layout_metadata
+           ON layout_metadata.revision_id = a.current_revision_id
+          AND layout_metadata.kind = 'extracted_metadata'
+          ${artifactColumns.has('status') ? "AND layout_metadata.status = 'ready'" : ''}
+          AND layout_metadata.invalidated_at IS NULL
+         LEFT JOIN revision_artifacts layout_preview
+           ON layout_preview.revision_id = a.current_revision_id
+          AND layout_preview.kind = CASE
+            WHEN LOWER(a.relative_file_path) LIKE '%.mp4'
+              OR LOWER(a.relative_file_path) LIKE '%.webm'
+              OR LOWER(a.relative_file_path) LIKE '%.mov'
+              OR LOWER(a.relative_file_path) LIKE '%.avi'
+              OR LOWER(a.relative_file_path) LIKE '%.wmv'
+              OR LOWER(a.relative_file_path) LIKE '%.mkv'
+              OR LOWER(a.relative_file_path) LIKE '%.m4v'
+            THEN 'video_poster'
+            ELSE 'thumbnail'
+          END
+          ${artifactColumns.has('status') ? "AND layout_preview.status = 'ready'" : ''}
+          AND layout_preview.invalidated_at IS NULL`
+      : '';
     const dataFrom = `FROM assets a
          LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
          LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
          ${durationMetaJoin}
          ${paletteMetaJoin}
          ${technicalThumbnailJoin}
+         ${layoutArtifactJoins}
          ${searchJoins}`;
     // COUNT only retains joins referenced by the WHERE clause. Revisions are
     // display-only, while metadata is needed only for rating/favourite/URL
@@ -22516,7 +22630,17 @@ export class LibraryService {
     // Data query. ids-only mode (Serpent-ws4k) fetches just the stable id
     // column so select-all/invert can cover the whole scope without shipping
     // AssetSummary rows over three process hops.
-    const dataColumnsForFetch = idsOnly ? 'a.asset_id' : dataColumns;
+    const layoutColumns = hasLayoutDimensions
+      ? `a.asset_id,
+         COALESCE(layout_metadata.width, layout_preview.width) AS layout_width,
+         COALESCE(layout_metadata.height, layout_preview.height) AS layout_height,
+         layout_preview.artifact_id AS layout_preview_artifact_id`
+      : 'a.asset_id, NULL AS layout_width, NULL AS layout_height, NULL AS layout_preview_artifact_id';
+    const dataColumnsForFetch = idsOnly
+      ? 'a.asset_id'
+      : layoutOnly
+        ? layoutColumns
+        : dataColumns;
     const dataSql = `SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
@@ -22535,6 +22659,9 @@ export class LibraryService {
         trashed_from_relative_path?: string | null;
         trashed_from_tombstone_id?: string | null;
         snippet_text?: string;
+        layout_width?: number | null;
+        layout_height?: number | null;
+        layout_preview_artifact_id?: string | null;
       }>;
 
     if (idsOnly) {
@@ -22543,6 +22670,20 @@ export class LibraryService {
         total,
         offset: 0,
         assetIds: rows.map((row) => row.asset_id),
+      };
+    }
+
+    if (layoutOnly) {
+      return {
+        items: [],
+        total,
+        offset: 0,
+        layout: rows.map((row) => ({
+          assetId: row.asset_id,
+          width: row.layout_width ?? null,
+          height: row.layout_height ?? null,
+          previewArtifactId: row.layout_preview_artifact_id ?? null,
+        })),
       };
     }
 
@@ -22802,7 +22943,8 @@ export class LibraryService {
     offset?: number;
     scopeMode?: boolean | null;
     idsOnly?: boolean | null;
-  }): { items: AssetSummary[]; total: number; offset: number; assetIds?: string[] } {
+    layoutOnly?: boolean | null;
+  }): { items: AssetSummary[]; total: number; offset: number; assetIds?: string[]; layout?: BrowseLayoutEntry[] } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const sc = openLibrary.connection
       .prepare(
@@ -22823,6 +22965,7 @@ export class LibraryService {
       sort: definition.sort ?? null,
       scopeMode: input.scopeMode ?? false,
       idsOnly: input.idsOnly ?? false,
+      layoutOnly: input.layoutOnly ?? false,
       limit: input.scopeMode ? null : (input.limit ?? 50),
       offset: input.scopeMode ? 0 : (input.offset ?? 0),
     });

@@ -1,4 +1,4 @@
-import type { AssetSummary } from "../shared/asset-types";
+import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
 import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
@@ -84,7 +84,7 @@ export function stackItemHeights(bodies: readonly number[]): number[] {
 }
 
 export function layoutMasonryAssetRects(
-  assets: readonly AssetSummary[],
+  assets: readonly BrowseLayoutEntry[],
   availableWidth: number,
   cardSize: number,
   showCaption: boolean,
@@ -117,7 +117,7 @@ export function layoutMasonryAssetRects(
 }
 
 export function layoutJustifiedAssetRects(
-  assets: readonly AssetSummary[],
+  assets: readonly BrowseLayoutEntry[],
   availableWidth: number,
   cardSize: number,
   captionBandPx: number = DEFAULT_JUSTIFIED_CAPTION_BAND_PX,

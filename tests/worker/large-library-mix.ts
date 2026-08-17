@@ -30,6 +30,21 @@ export interface LargeLibraryMixCounts {
   unsupportedCount: number;
 }
 
+export function imageOnlyCountsFor(assetCount: number): LargeLibraryMixCounts {
+  if (!Number.isInteger(assetCount) || assetCount < 100) {
+    throw new Error('Large-library image-only profile requires an integer assetCount >= 100.');
+  }
+  return {
+    assetCount,
+    imageCount: assetCount,
+    videoCount: 0,
+    modelCount: 0,
+    textCount: 0,
+    audioCount: 0,
+    unsupportedCount: 0,
+  };
+}
+
 /** q3pg original mix: jpg/png/webp/gif/tiff, not just three web-safe stills. */
 export const IMAGE_EXTENSIONS = ['jpg', 'png', 'webp', 'gif', 'tiff'] as const;
 export const VIDEO_EXTENSIONS = ['mp4', 'webm', 'mov'] as const;

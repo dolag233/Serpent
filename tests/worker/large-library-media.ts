@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 
 import { resolveFfmpegPath } from '../../src/worker/binary-resolver';
 import {
@@ -68,7 +68,7 @@ function createNoiseTile(seed: number, size: number): Buffer {
 async function createMosaicImage(
   index: number,
   geometry: LargeLibraryImageGeometry,
-): Promise<sharp.Sharp> {
+): Promise<Sharp> {
   const tileSize = IMAGE_MOSAIC_TILE_PX;
   const palette = Array.from({ length: MOSAIC_PALETTE_SIZE }, (_, tile) => (
     createNoiseTile(index * 31 + tile * 17, tileSize)

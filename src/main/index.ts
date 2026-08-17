@@ -375,6 +375,63 @@ let mainWindow: BrowserWindow | undefined;
 /** Effective UI locale for native dialogs; synced from Renderer (Serpent-bwb). */
 let appLocale: AppLocale = "en";
 let workerClient: LibraryWorkerClient | undefined;
+type ArtifactPathBatchWaiter = {
+  artifactId: string;
+  resolve: (absolutePath: string) => void;
+  reject: (error: Error) => void;
+};
+const artifactPathBatches = new Map<string, ArtifactPathBatchWaiter[]>();
+
+function resolveArtifactPathBatched(
+  libraryId: string,
+  artifactId: string,
+  usage: "preview" | "proxy",
+): Promise<string> {
+  const key = `${libraryId}\u0000${usage}`;
+  return new Promise<string>((resolve, reject) => {
+    const batch = artifactPathBatches.get(key) ?? [];
+    batch.push({ artifactId, resolve, reject });
+    artifactPathBatches.set(key, batch);
+    if (batch.length > 1) return;
+    setTimeout(() => {
+      const pending = artifactPathBatches.get(key) ?? [];
+      artifactPathBatches.delete(key);
+      const client = workerClient;
+      if (!client) {
+        const error = new Error("Library Worker is unavailable.");
+        for (const waiter of pending) waiter.reject(error);
+        return;
+      }
+      void (async () => {
+        for (let index = 0; index < pending.length; index += 500) {
+          const chunk = pending.slice(index, index + 500);
+          try {
+            const result = await client.request({
+              type: "media.get-artifact-paths",
+              libraryId,
+              artifactIds: chunk.map((waiter) => waiter.artifactId),
+              usage,
+            });
+            if (!result.ok || result.type !== "media.artifact-paths") {
+              throw new Error("Artifact path batch lookup failed.");
+            }
+            const paths = new Map(
+              result.entries.map((entry) => [entry.artifactId, entry.absolutePath]),
+            );
+            for (const waiter of chunk) {
+              const absolutePath = paths.get(waiter.artifactId);
+              if (absolutePath) waiter.resolve(absolutePath);
+              else waiter.reject(new Error("Artifact was absent from path batch."));
+            }
+          } catch (error) {
+            const failure = error instanceof Error ? error : new Error(String(error));
+            for (const waiter of chunk) waiter.reject(failure);
+          }
+        }
+      })();
+    }, 2);
+  });
+}
 const nativeAssetDragCache = new NativeAssetDragCache();
 /** Slice E: shared offscreen window that renders model thumbnails (Serpent-hnmg). */
 let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
@@ -2493,6 +2550,7 @@ async function commandFor(
         sort: request.sort,
         scopeMode: request.scopeMode,
         idsOnly: request.idsOnly,
+        layoutOnly: request.layoutOnly,
         limit: request.limit,
         offset: request.offset,
         showIgnored: request.showIgnored,
@@ -2532,6 +2590,7 @@ async function commandFor(
         collectionId: request.collectionId,
         scopeMode: request.scopeMode,
         idsOnly: request.idsOnly,
+        layoutOnly: request.layoutOnly,
         limit: request.limit,
         offset: request.offset,
       };
@@ -6580,27 +6639,12 @@ async function startApplication(): Promise<void> {
         }
       }
 
-      const pathResult = await workerClient.request({
-        type: "media.get-artifact-path",
+      const absoluteArtifactPath = await resolveArtifactPathBatched(
         libraryId,
         artifactId,
-        usage: url.hostname,
-      });
-
-      if (!pathResult.ok || pathResult.type !== "media.artifact-path") {
-        logger?.error(
-          "serpent-protocol.resolve",
-          new Error("Artifact lookup failed."),
-          {
-            libraryId,
-            artifactId,
-            resultType: pathResult.ok ? pathResult.type : pathResult.error.code,
-          },
-        );
-        return new Response("Artifact not found", { status: 404 });
-      }
-
-      const ext = path.extname(pathResult.absolutePath).toLowerCase();
+        url.hostname,
+      );
+      const ext = path.extname(absoluteArtifactPath).toLowerCase();
       const mimeMap: Record<string, string> = {
         ".webp": "image/webp",
         ".jpg": "image/jpeg",
@@ -6626,7 +6670,7 @@ async function startApplication(): Promise<void> {
 
       try {
         return createArtifactResponse(
-          pathResult.absolutePath,
+          absoluteArtifactPath,
           mimeType,
           {
             rangeHeader: request.headers.get("range"),

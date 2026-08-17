@@ -24,6 +24,7 @@ import {
   LARGE_LIBRARY_SEARCH_TOKEN,
   extensionForKind,
   imageGeometryForIndex,
+  imageOnlyCountsFor,
   imagePoolKey,
   kindForIndex,
   mixCountsFor,
@@ -92,6 +93,7 @@ export interface LargeLibraryFixtureManifest {
   sampleAssetId: string;
   sampleFolderId: string;
   generatedAt: string;
+  assetProfile?: 'mixed' | 'images-only';
 }
 
 export interface EnsureLargeLibraryFixtureOptions {
@@ -100,6 +102,7 @@ export interface EnsureLargeLibraryFixtureOptions {
   seed?: number;
   reset?: boolean;
   writeFiles?: boolean;
+  assetProfile?: 'mixed' | 'images-only';
 }
 
 function manifestPath(libraryPath: string): string {
@@ -414,7 +417,10 @@ export async function ensureLargeLibraryFixture(
   const assetCount = options.assetCount ?? LARGE_LIBRARY_ASSET_COUNT;
   const seed = options.seed ?? 20260816;
   const writeFiles = options.writeFiles ?? true;
-  const counts = mixCountsFor(assetCount);
+  const assetProfile = options.assetProfile ?? 'mixed';
+  const counts = assetProfile === 'images-only'
+    ? imageOnlyCountsFor(assetCount)
+    : mixCountsFor(assetCount);
 
   const existing = readExistingManifest(outputPath);
   if (existing && !options.reset) {
@@ -422,9 +428,10 @@ export async function ensureLargeLibraryFixture(
       existing.version !== LARGE_LIBRARY_FIXTURE_VERSION
       || existing.assetCount !== assetCount
       || existing.seed !== seed
+      || (existing.assetProfile ?? 'mixed') !== assetProfile
     ) {
       throw new Error(
-        `Fixture already exists with version=${existing.version}, assets=${existing.assetCount}, seed=${existing.seed}; pass --reset to rebuild.`,
+        `Fixture already exists with version=${existing.version}, assets=${existing.assetCount}, seed=${existing.seed}, profile=${existing.assetProfile ?? 'mixed'}; pass --reset to rebuild.`,
       );
     }
     return existing;
@@ -507,6 +514,7 @@ export async function ensureLargeLibraryFixture(
       sampleAssetId: seeded.sampleAssetId,
       sampleFolderId: folders[0]!.folderId,
       generatedAt: new Date().toISOString(),
+      assetProfile,
     };
     writeFileSync(manifestPath(library.libraryPath), `${JSON.stringify(manifest, null, 2)}\n`);
     return manifest;

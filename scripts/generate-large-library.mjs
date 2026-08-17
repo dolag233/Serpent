@@ -11,6 +11,9 @@ const output = valueFor('--output', path.resolve('tmp/serpent-large-library'));
 const assets = valueFor('--assets', '20000');
 const seed = valueFor('--seed', '20260816');
 const reset = args.includes('--reset') ? '1' : '0';
+const requestedAssetProfile = valueFor('--asset-profile', undefined);
+const assetProfile = requestedAssetProfile
+  ?? (args.includes('--images-only') ? 'images-only' : 'mixed');
 const child = spawn(process.execPath, [
   'scripts/run-vitest-with-electron.mjs',
   'run',
@@ -24,6 +27,7 @@ const child = spawn(process.execPath, [
     SERPENT_LARGE_LIBRARY_ASSETS: assets,
     SERPENT_LARGE_LIBRARY_SEED: seed,
     SERPENT_LARGE_LIBRARY_RESET: reset,
+    SERPENT_LARGE_LIBRARY_ASSET_PROFILE: assetProfile,
   },
   stdio: 'inherit',
 });

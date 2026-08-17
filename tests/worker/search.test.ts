@@ -1666,6 +1666,49 @@ describe('pagination', () => {
     service.closeAll();
   });
 
+  it('returns a compact real-asset geometry index when layoutOnly is true (Serpent-sa65)', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets ORDER BY asset_id',
+    ).all() as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 2, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    revisions.forEach((row, index) => {
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `layout-${index}.json`,
+        1600 + index,
+        900 + index,
+        new Date().toISOString(),
+      );
+    });
+    db.close();
+
+    const result = service.searchAssets({
+      libraryId,
+      layoutOnly: true,
+      limit: 1,
+      offset: 1,
+    });
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+    expect(result.layout).toHaveLength(2);
+    expect(result.layout?.map((entry) => entry.assetId).sort()).toEqual(
+      [assetId, secondAssetId].sort(),
+    );
+    expect(result.layout?.every((entry) => entry.width && entry.height)).toBe(true);
+
+    service.closeAll();
+  });
+
   it('idsOnly respects the scope (trash) and keeps soft-deleted assets out of normal ids', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
     service.trashAssets({ libraryId, assetIds: [assetId] });

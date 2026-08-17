@@ -26,6 +26,7 @@ import {
   VIDEO_EXTENSIONS,
   extensionForKind,
   imageGeometryForIndex,
+  imageOnlyCountsFor,
   imagePoolKey,
   kindForIndex,
   mixCountsFor,
@@ -33,6 +34,21 @@ import {
 } from '../worker/large-library-mix';
 
 describe('large-library mix', () => {
+  it('supports a strict all-previewable image benchmark profile', () => {
+    const counts = imageOnlyCountsFor(10_000);
+    expect(counts).toEqual({
+      assetCount: 10_000,
+      imageCount: 10_000,
+      videoCount: 0,
+      modelCount: 0,
+      textCount: 0,
+      audioCount: 0,
+      unsupportedCount: 0,
+    });
+    expect(kindForIndex(0, counts)).toBe('image');
+    expect(kindForIndex(9_999, counts)).toBe('image');
+  });
+
   it('keeps 5/1/1/1/1 percent buckets and puts the remainder on images', () => {
     const counts = mixCountsFor(20_000);
     expect(counts).toMatchObject({

@@ -42,7 +42,7 @@ describe('LatestSearchRequestCoordinator', () => {
     expect(new Set([page, libraryCount, trashCount]).size).toBe(3);
   });
 
-  it('shares one browse-window lane across scope and offset so jumps preempt', () => {
+  it('isolates browse-window offsets while coalescing scope changes at one offset', () => {
     const firstFolder = searchRequestLaneKey({
       scope: { kind: 'folder', folderId: 'a', recursive: false },
       limit: 100,
@@ -58,7 +58,7 @@ describe('LatestSearchRequestCoordinator', () => {
       limit: 100,
       offset: 0,
     });
-    expect(firstFolder).toBe(jumped);
+    expect(firstFolder).not.toBe(jumped);
     expect(firstFolder).toBe(otherFolder);
   });
 });

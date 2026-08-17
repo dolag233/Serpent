@@ -1,12 +1,13 @@
 import {
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 
-import type { AssetSummary } from "../shared/asset-types";
+import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
 import {
   ASSET_GRID_GAP_PX,
   countFittingColumns,
@@ -40,16 +41,20 @@ export function masonryCardSlotStyle(args: {
 
 export function MasonryColumns({
   assets,
+  layout,
   cardSize,
   showCaption,
   suspendScrollRestoration = false,
   renderCard,
+  renderLayoutPreview,
 }: {
   assets: AssetSummary[];
+  layout: BrowseLayoutEntry[];
   cardSize: number;
   showCaption: boolean;
   suspendScrollRestoration?: boolean;
   renderCard: (asset: AssetSummary) => ReactNode;
+  renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -170,18 +175,51 @@ export function MasonryColumns({
     };
   }, []);
 
+  const fallbackLayout = useMemo(
+    () => assets.map((asset) => ({
+        assetId: asset.assetId,
+        width: asset.width,
+        height: asset.height,
+        previewArtifactId: asset.thumbnailArtifactId,
+      })),
+    [assets],
+  );
+  const layoutEntries = layout.length > 0 ? layout : fallbackLayout;
+  const assetById = useMemo(
+    () => new Map(assets.map((asset) => [asset.assetId, asset])),
+    [assets],
+  );
+  const rankByAssetId = useMemo(
+    () => new Map(layoutEntries.map((entry, index) => [entry.assetId, index] as const)),
+    [layoutEntries],
+  );
   const columnCount = countFittingColumns(availableWidth, cardSize);
   const columnWidth = masonryColumnWidthPx(availableWidth, columnCount);
-  const distributed = distributeMasonryItems(
-    assets,
-    columnCount,
-    (asset) => estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
+  const distributed = useMemo(
+    () => distributeMasonryItems(
+      layoutEntries,
+      columnCount,
+      (asset) => estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
+    ),
+    [columnCount, columnWidth, layoutEntries, showCaption],
   );
-  const layoutRects = layoutMasonryAssetRects(
-    assets,
-    availableWidth,
-    cardSize,
-    showCaption,
+  const layoutRects = useMemo(
+    () => layoutMasonryAssetRects(
+      layoutEntries,
+      availableWidth,
+      cardSize,
+      showCaption,
+    ),
+    [availableWidth, cardSize, layoutEntries, showCaption],
+  );
+  const columnMetrics = useMemo(
+    () => distributed.map((column) => ({
+      bodies: column.items.map((asset) =>
+        estimateMasonryCardBodyPx(asset, columnWidth, showCaption)),
+      previews: column.items.map((asset) =>
+        estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidth)),
+    })),
+    [columnWidth, distributed, showCaption],
   );
 
   useLayoutEffect(() => {
@@ -197,12 +235,8 @@ export function MasonryColumns({
       style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
     >
       {distributed.map((column, index) => {
-        const previews = column.items.map((asset) =>
-          estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidth),
-        );
-        const bodies = column.items.map((asset) =>
-          estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
-        );
+        const previews = columnMetrics[index]!.previews;
+        const bodies = columnMetrics[index]!.bodies;
         const visibleWindow = columnWindow(
           stackItemHeights(bodies),
           viewport.start,
@@ -223,20 +257,23 @@ export function MasonryColumns({
                 style={{ height: visibleWindow.spacerBefore, flexShrink: 0 }}
               />
             ) : null}
-            {column.items.slice(visibleWindow.start, visibleWindow.end).map((asset, offset) => {
+            {column.items.slice(visibleWindow.start, visibleWindow.end).map((entry, offset) => {
               const itemIndex = visibleWindow.start + offset;
               const isLast = itemIndex === column.items.length - 1;
+              const asset = assetById.get(entry.assetId);
               return (
                 <div
                   className="masonry-card-slot"
-                  key={asset.assetId}
+                  data-layout-asset-id={entry.assetId}
+                  data-layout-rank={rankByAssetId.get(entry.assetId)}
+                  key={entry.assetId}
                   style={masonryCardSlotStyle({
                     previewHeightPx: previews[itemIndex]!,
                     bodyHeightPx: bodies[itemIndex]!,
                     isLast,
                   })}
                 >
-                  {renderCard(asset)}
+                  {asset ? renderCard(asset) : renderLayoutPreview?.(entry)}
                 </div>
               );
             })}

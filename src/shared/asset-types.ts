@@ -167,6 +167,17 @@ export const assetSummarySchema = z.strictObject({
 
 export type AssetSummary = z.infer<typeof assetSummarySchema>;
 
+/** Compact real-asset geometry index used by virtualized large-library browse. */
+export const browseLayoutEntrySchema = z.strictObject({
+  assetId: nonBlankString,
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  /** Ready persistent preview; lets an unseen virtual slot paint before its full summary. */
+  previewArtifactId: nonBlankString.nullable().optional(),
+});
+
+export type BrowseLayoutEntry = z.infer<typeof browseLayoutEntrySchema>;
+
 export const tagSummarySchema = z.strictObject({
   tagId: nonBlankString,
   name: nonBlankString,

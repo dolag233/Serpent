@@ -4,9 +4,8 @@ import type { AssetSummary } from "../../src/shared/asset-types";
 import {
   browsePageOffset,
   browsePageOffsetsForRange,
-  createPendingBrowseAsset,
-  isPendingBrowseAsset,
-  mergeBrowseWindow,
+  contiguousBrowsePageRuns,
+  mergeLoadedBrowsePage,
 } from "../../src/renderer/browse-window-slots";
 
 function asset(assetId: string): AssetSummary {
@@ -35,7 +34,7 @@ function asset(assetId: string): AssetSummary {
   };
 }
 
-describe("browse window slots (Serpent-87pd)", () => {
+describe("browse window virtualization (Serpent-sa65)", () => {
   it("aligns an index to its page offset", () => {
     expect(browsePageOffset(0, 100)).toBe(0);
     expect(browsePageOffset(99, 100)).toBe(0);
@@ -54,40 +53,37 @@ describe("browse window slots (Serpent-87pd)", () => {
     ).toEqual([200, 100, 300]);
   });
 
-  it("expands the first page to the full COUNT so the scrollbar is not stuck at 100", () => {
-    const slots = mergeBrowseWindow({
+  it("splits missing pages around an in-flight gap", () => {
+    expect(contiguousBrowsePageRuns([0, 100, 300, 500, 400, 300], 100)).toEqual([
+      [0, 100],
+      [300, 400, 500],
+    ]);
+  });
+
+  it("keeps only real summaries instead of expanding COUNT into placeholders", () => {
+    const loaded = mergeLoadedBrowsePage({
       current: [],
-      total: 250,
-      offset: 0,
       items: [asset("a"), asset("b")],
+      layout: Array.from({ length: 250 }, (_, index) => ({
+        assetId: index === 0 ? "a" : index === 1 ? "b" : `real-${index}`,
+        width: 1,
+        height: 1,
+      })),
     });
-    expect(slots).toHaveLength(250);
-    expect(slots[0]?.assetId).toBe("a");
-    expect(slots[1]?.assetId).toBe("b");
-    expect(isPendingBrowseAsset(slots[2]!)).toBe(true);
-    expect(isPendingBrowseAsset(slots[249]!)).toBe(true);
+    expect(loaded.map((item) => item.assetId)).toEqual(["a", "b"]);
   });
 
-  it("fills a jumped window without requiring earlier pages to load first", () => {
-    const first = mergeBrowseWindow({
-      current: [],
-      total: 250,
-      offset: 0,
-      items: [asset("a")],
+  it("merges a jumped page in compact-layout order without fake intervening rows", () => {
+    const jumped = mergeLoadedBrowsePage({
+      current: [asset("tail")],
+      items: [asset("a"), asset("middle")],
+      layout: [
+        { assetId: "a", width: 1, height: 1 },
+        { assetId: "unloaded", width: 1, height: 1 },
+        { assetId: "middle", width: 1, height: 1 },
+        { assetId: "tail", width: 1, height: 1 },
+      ],
     });
-    const jumped = mergeBrowseWindow({
-      current: first,
-      total: 250,
-      offset: 200,
-      items: [asset("tail")],
-    });
-    expect(jumped[0]?.assetId).toBe("a");
-    expect(jumped[200]?.assetId).toBe("tail");
-    expect(isPendingBrowseAsset(jumped[100]!)).toBe(true);
-  });
-
-  it("does not treat a locally created placeholder as a real asset id", () => {
-    expect(isPendingBrowseAsset(createPendingBrowseAsset(3))).toBe(true);
-    expect(isPendingBrowseAsset(asset("real"))).toBe(false);
+    expect(jumped.map((item) => item.assetId)).toEqual(["a", "middle", "tail"]);
   });
 });

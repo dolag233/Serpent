@@ -55,6 +55,10 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       limit: 50,
       offset: 0,
     }));
+    const layoutMs = benchmark(() => service.searchAssets({
+      libraryId: manifest.libraryId,
+      layoutOnly: true,
+    }));
     const inspectorMs = benchmark(() => {
       service.getAssetMetadata({ libraryId: manifest.libraryId, assetId: manifest.sampleAssetId });
       service.listAssetCollectionMemberships({ libraryId: manifest.libraryId, assetIds: [manifest.sampleAssetId] });
@@ -68,11 +72,13 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       startupMs: Number(startupMs.toFixed(1)),
       folderSwitchMs: Number(folderSwitchMs.toFixed(1)),
       searchMs: Number(searchMs.toFixed(1)),
+      layoutMs: Number(layoutMs.toFixed(1)),
       inspectorMs: Number(inspectorMs.toFixed(1)),
       deleteRefreshMs: null,
       deleteRefreshNote: 'Not exercised by this baseline; Serpent-x710 is explicitly excluded.',
     }));
     expect(searchMs).toBeLessThan(5_000);
+    expect(layoutMs).toBeLessThan(5_000);
     expect(folderSwitchMs).toBeLessThan(5_000);
     expect(inspectorMs).toBeLessThan(5_000);
   }, 120_000);

@@ -1,10 +1,9 @@
 /**
- * Serpent-ws4k / Serpent-87pd: paginated browse/search loading controller.
+ * Serpent-ws4k / Serpent-sa65: virtualized browse/search loading controller.
  *
- * First page (BROWSE_PAGE_SIZE) paints immediately; the canvas is expanded to
- * `total` placeholder slots so the scrollbar matches the scope. Scroll jumps
- * fetch the window at that offset instead of appending 0, 100, 200… in order.
- * Select-all / invert still resolve the full scope id set on demand (idsOnly).
+ * First page paints immediately; a compact full-scope identity/geometry index
+ * owns scrollbar layout. Scroll jumps fetch only the contiguous real-summary
+ * pages intersecting the viewport. No synthetic AssetSummary cards exist.
  */
 
 import {
@@ -18,6 +17,7 @@ import {
 
 import type {
   AssetSummary,
+  BrowseLayoutEntry,
   FilterClause,
   SearchQuery,
   SearchScope,
@@ -30,9 +30,15 @@ import {
 } from "./asset-browse-load-more";
 import {
   browsePageOffset,
-  browsePageOffsetsForRange,
-  mergeBrowseWindow,
+  contiguousBrowsePageRuns,
+  mergeLoadedBrowsePage,
 } from "./browse-window-slots";
+
+const browseDiagnosticsEnabled = Boolean(
+  (globalThis as typeof globalThis & {
+    serpent?: { e2e?: unknown };
+  }).serpent?.e2e,
+);
 
 /** Page size for browse/search first load and window fetches. */
 export const BROWSE_PAGE_SIZE = 100;
@@ -93,6 +99,32 @@ export async function fetchBrowseScopeIds(options: {
     idsOnly: true,
   });
   return result.ok ? (result.value.assetIds ?? []) : null;
+}
+
+/** Fetch only the full-scope identity + geometry index used by virtual layout. */
+export async function fetchBrowseLayout(options: {
+  api: SerpentLibraryApi;
+  definition: BrowsePageDefinition;
+}): Promise<BrowseLayoutEntry[] | null> {
+  const { api, definition } = options;
+  const result = definition.kind === "smart-collection"
+    ? await api.executeSmartCollection({
+        libraryId: definition.libraryId,
+        collectionId: definition.collectionId,
+        layoutOnly: true,
+      })
+    : await api.searchAssets({
+        libraryId: definition.libraryId,
+        query: definition.query,
+        filters: definition.filters ?? undefined,
+        scope: definition.scope ?? undefined,
+        sort: definition.sort ?? undefined,
+        showIgnored: definition.showIgnored,
+        layoutOnly: true,
+      });
+  return result.ok && result.value.layout !== undefined
+    ? result.value.layout
+    : null;
 }
 
 /**
@@ -187,6 +219,7 @@ export type UseBrowsePaginationArgs = {
   api: SerpentLibraryApi | null;
   setAssets: Dispatch<SetStateAction<AssetSummary[]>>;
   setTrashedAssets: Dispatch<SetStateAction<AssetSummary[]>>;
+  setBrowseLayout: Dispatch<SetStateAction<BrowseLayoutEntry[]>>;
   setSearchTotal: Dispatch<SetStateAction<number | null>>;
   setSearchOffset: Dispatch<SetStateAction<number>>;
   setSearchSnippets: Dispatch<SetStateAction<Map<string, string>>>;
@@ -195,7 +228,7 @@ export type UseBrowsePaginationArgs = {
 };
 
 export type UseBrowsePaginationResult = {
-  /** Register a brand-new query/scope; expands the canvas to `total` slots. */
+  /** Register a brand-new query/scope and begin its compact layout fetch. */
   beginPage: (definition: BrowsePageDefinition, firstPage: BrowseFirstPage) => void;
   /** Fetch the page covering this index range (scrollbar jumps, not sequential). */
   ensureVisibleRange: (startIndex: number, endIndex: number) => Promise<void>;
@@ -245,6 +278,7 @@ export function useBrowsePagination(
     api,
     setAssets,
     setTrashedAssets,
+    setBrowseLayout,
     setSearchTotal,
     setSearchOffset,
     setSearchSnippets,
@@ -253,8 +287,8 @@ export function useBrowsePagination(
 
   const definitionRef = useRef<BrowsePageDefinition | null>(null);
   const generationRef = useRef(0);
-  const visibleRangeGenerationRef = useRef(0);
   const totalRef = useRef(0);
+  const layoutRef = useRef<BrowseLayoutEntry[]>([]);
   const filledOffsetsRef = useRef<Set<number>>(new Set());
   const inFlightOffsetsRef = useRef<Set<number>>(new Set());
   const deletedIdsRef = useRef<Set<string>>(new Set());
@@ -282,10 +316,17 @@ export function useBrowsePagination(
     (definition: BrowsePageDefinition, firstPage: BrowseFirstPage) => {
       definitionRef.current = definition;
       generationRef.current += 1;
-      visibleRangeGenerationRef.current += 1;
       inFlightOffsetsRef.current = new Set();
       deletedIdsRef.current = new Set();
       totalRef.current = firstPage.total;
+      const initialLayout = firstPage.items.map((asset) => ({
+        assetId: asset.assetId,
+        width: asset.width,
+        height: asset.height,
+        previewArtifactId: asset.thumbnailArtifactId,
+      }));
+      layoutRef.current = initialLayout;
+      setBrowseLayout(initialLayout);
       const filled = new Set<number>();
       filled.add(browsePageOffset(firstPage.offset, BROWSE_PAGE_SIZE));
       filledOffsetsRef.current = filled;
@@ -293,25 +334,44 @@ export function useBrowsePagination(
       setSearchOffset(firstPage.offset + firstPage.items.length);
       setSearchTotal(firstPage.total);
       refreshHasMore(firstPage.total, filled);
-      applyTarget(definition)(
-        mergeBrowseWindow({
-          current: [],
-          total: firstPage.total,
-          offset: firstPage.offset,
-          items: firstPage.items,
-        }),
-      );
+      applyTarget(definition)([...firstPage.items]);
+      const generation = generationRef.current;
+      if (api) {
+        void fetchBrowseLayout({ api, definition }).then((layout) => {
+          // A superseded/failed layout response must never erase the compact
+          // geometry that currently owns the scrollbar. An actually empty
+          // scope is valid only when the first page also reported total=0.
+          if (
+            !layout
+            || generation !== generationRef.current
+            || (layout.length === 0 && totalRef.current > 0)
+          ) return;
+          layoutRef.current = layout;
+          setBrowseLayout(layout);
+          applyTarget(definition)((current) =>
+            mergeLoadedBrowsePage({ current, items: [], layout }),
+          );
+        });
+      }
     },
-    [applyTarget, refreshHasMore, setSearchOffset, setSearchTotal],
+    [api, applyTarget, refreshHasMore, setBrowseLayout, setSearchOffset, setSearchTotal],
   );
 
   const fetchPageAt = useCallback(
-    async (offset: number, generation: number) => {
+    async (offset: number, generation: number, limit = BROWSE_PAGE_SIZE) => {
       const definition = definitionRef.current;
       if (!definition || !api) return;
-      if (filledOffsetsRef.current.has(offset)) return;
-      if (inFlightOffsetsRef.current.has(offset)) return;
-      inFlightOffsetsRef.current.add(offset);
+      const coveredOffsets: number[] = [];
+      for (
+        let covered = offset;
+        covered < Math.min(totalRef.current, offset + limit);
+        covered += BROWSE_PAGE_SIZE
+      ) {
+        coveredOffsets.push(covered);
+      }
+      if (coveredOffsets.every((covered) => filledOffsetsRef.current.has(covered))) return;
+      if (coveredOffsets.some((covered) => inFlightOffsetsRef.current.has(covered))) return;
+      for (const covered of coveredOffsets) inFlightOffsetsRef.current.add(covered);
       setLoadingMore(true);
       try {
         const result =
@@ -319,7 +379,7 @@ export function useBrowsePagination(
             ? await api.executeSmartCollection({
                 libraryId: definition.libraryId,
                 collectionId: definition.collectionId,
-                limit: BROWSE_PAGE_SIZE,
+                limit,
                 offset,
               })
             : await api.searchAssets({
@@ -329,9 +389,21 @@ export function useBrowsePagination(
                 scope: definition.scope ?? undefined,
                 sort: definition.sort ?? undefined,
                 showIgnored: definition.showIgnored,
-                limit: BROWSE_PAGE_SIZE,
+                limit,
                 offset,
               });
+        if (browseDiagnosticsEnabled) {
+          window.dispatchEvent(new CustomEvent("serpent:e2e-browse-result", {
+            detail: {
+              requestOffset: offset,
+              requestLimit: limit,
+              ok: result.ok,
+              errorCode: result.ok ? null : result.error.code,
+              currentGeneration: generationRef.current,
+              requestGeneration: generation,
+            },
+          }));
+        }
         if (generation !== generationRef.current) return;
         if (!result.ok) {
           if (isIgnorableBrowseWindowFailure(result.error.code)) return;
@@ -345,6 +417,18 @@ export function useBrowsePagination(
           offset: number;
           snippets?: Array<{ assetId: string; text: string }>;
         };
+        if (browseDiagnosticsEnabled) {
+          window.dispatchEvent(new CustomEvent("serpent:e2e-browse-page", {
+            detail: {
+              requestOffset: offset,
+              requestLimit: limit,
+              resultOffset: page.offset,
+              itemCount: page.items.length,
+              firstAssetId: page.items[0]?.assetId ?? null,
+              lastAssetId: page.items.at(-1)?.assetId ?? null,
+            },
+          }));
+        }
         if (isDiscardedBrowseWindowPage(page, offset, totalRef.current)) return;
         const liveItems = excludeLocallyDeletedAssets(
           page.items,
@@ -355,7 +439,9 @@ export function useBrowsePagination(
         } else if (page.total > totalRef.current) {
           totalRef.current = page.total;
         }
-        filledOffsetsRef.current.add(offset);
+        for (let index = 0; index < page.items.length; index += BROWSE_PAGE_SIZE) {
+          filledOffsetsRef.current.add(offset + index);
+        }
         setSearchTotal(totalRef.current);
         setSearchOffset(offset + page.items.length);
         refreshHasMore(totalRef.current, filledOffsetsRef.current);
@@ -370,15 +456,16 @@ export function useBrowsePagination(
           });
         }
         applyTarget(definition)((current) =>
-          mergeBrowseWindow({
+          mergeLoadedBrowsePage({
             current,
-            total: totalRef.current,
-            offset,
             items: liveItems,
+            layout: layoutRef.current,
           }),
         );
       } finally {
-        inFlightOffsetsRef.current.delete(offset);
+        for (const covered of coveredOffsets) {
+          inFlightOffsetsRef.current.delete(covered);
+        }
         if (inFlightOffsetsRef.current.size === 0) setLoadingMore(false);
       }
     },
@@ -398,21 +485,41 @@ export function useBrowsePagination(
       const definition = definitionRef.current;
       if (!definition || !api) return;
       const generation = generationRef.current;
-      visibleRangeGenerationRef.current += 1;
-      const rangeGeneration = visibleRangeGenerationRef.current;
-      const offsets = browsePageOffsetsForRange({
-        startIndex,
-        endIndex,
-        total: totalRef.current,
-        pageSize: BROWSE_PAGE_SIZE,
-      }).filter((offset) => !filledOffsetsRef.current.has(offset));
-      if (offsets.length === 0) return;
-      for (const offset of offsets) {
-        if (generation !== generationRef.current) return;
-        if (rangeGeneration !== visibleRangeGenerationRef.current) return;
-        await fetchPageAt(offset, generation);
-        if (rangeGeneration !== visibleRangeGenerationRef.current) return;
+      const firstOffset = browsePageOffset(
+        Math.max(0, Math.min(startIndex, endIndex)),
+        BROWSE_PAGE_SIZE,
+      );
+      const lastOffset = browsePageOffset(
+        Math.min(totalRef.current - 1, Math.max(startIndex, endIndex)),
+        BROWSE_PAGE_SIZE,
+      );
+      const offsets: number[] = [];
+      for (let offset = firstOffset; offset <= lastOffset; offset += BROWSE_PAGE_SIZE) {
+        if (
+          !filledOffsetsRef.current.has(offset)
+          && !inFlightOffsetsRef.current.has(offset)
+        ) offsets.push(offset);
       }
+      if (offsets.length === 0) return;
+      // Do not let an older in-flight page block a new destination. Split the
+      // missing pages around in-flight gaps, then request the contiguous run
+      // nearest the viewport center. This keeps the latest search lane
+      // serialized while still allowing a jump from page A to page B to make
+      // progress when A is already being fetched.
+      const runs = contiguousBrowsePageRuns(offsets, BROWSE_PAGE_SIZE);
+      const center = (startIndex + endIndex) / 2;
+      runs.sort((left, right) => {
+        const leftCenter = ((left[0] ?? center) + (left.at(-1) ?? center)) / 2;
+        const rightCenter = ((right[0] ?? center) + (right.at(-1) ?? center)) / 2;
+        return Math.abs(leftCenter - center) - Math.abs(rightCenter - center);
+      });
+      const selectedRun = runs[0]!;
+      const requestOffset = selectedRun[0]!;
+      const requestLimit = Math.min(
+        500,
+        selectedRun.at(-1)! - requestOffset + BROWSE_PAGE_SIZE,
+      );
+      await fetchPageAt(requestOffset, generation, requestLimit);
     },
     [api, fetchPageAt],
   );
@@ -443,23 +550,27 @@ export function useBrowsePagination(
         deletedIdsRef.current.add(assetId);
       }
       totalRef.current = Math.max(0, totalRef.current - removedCount);
-      setHasMorePages(
-        [...filledOffsetsRef.current].length * BROWSE_PAGE_SIZE < totalRef.current,
+      const removed = new Set(assetIds);
+      layoutRef.current = layoutRef.current.filter(
+        (entry) => !removed.has(entry.assetId),
       );
+      setBrowseLayout(layoutRef.current);
+      refreshHasMore(totalRef.current, filledOffsetsRef.current);
     },
-    [],
+    [refreshHasMore, setBrowseLayout],
   );
 
   const reset = useCallback(() => {
     definitionRef.current = null;
     generationRef.current += 1;
-    visibleRangeGenerationRef.current += 1;
     totalRef.current = 0;
+    layoutRef.current = [];
+    setBrowseLayout([]);
     filledOffsetsRef.current = new Set();
     inFlightOffsetsRef.current = new Set();
     setLoadingMore(false);
     setHasMorePages(false);
-  }, []);
+  }, [setBrowseLayout]);
 
   const sentinelRef = useCallback((node: HTMLDivElement | null) => {
     setSentinelNode(node);
