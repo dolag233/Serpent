@@ -18,7 +18,7 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 3. Drag images, videos, audio, 3D models, or text into the window, or click Import
 4. Assets appear on the canvas. Double-click to open the viewer; right-click for more actions. Thumbnails, metadata, and AI analysis complete progressively in the background
 
-All data stays in your local library directory — no cloud sync.
+Data stays in your local library directory; for syncing across machines, use WebDAV cloud sync (see [Sync](sync.en.md)).
 
 ## Interface at a glance
 
