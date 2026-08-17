@@ -25,6 +25,8 @@ Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), 
 + **Plugin system.** Extend Serpent with plugins.
 + **Scripting & MCP.** Control Serpent with scripts, and let agents connect and automate through MCP.
 + **AI analysis.** Built-in AI module analyzes images, videos, and 3D assets.
++ **WebDAV cloud sync.** Two-way library sync across machines, with auto-sync and a configurable poll interval.
++ **External libraries.** Open Eagle / Billfish libraries directly and browse and search them seamlessly after conversion.
 
 <div align="center">
 

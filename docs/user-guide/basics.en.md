@@ -22,7 +22,7 @@ The `?` help explains `*`, `?`, `**`, a trailing `/` for directories, a leading 
 
 1. Pick the source library (an Eagle/Billfish library folder or its archive);
 2. choose where Serpent should create the local library;
-3. Serpent converts the source and creates a local library at the destination, showing progress while converting (a large Eagle library can take several minutes on first conversion; you can wait or cancel).
+3. Serpent converts the source and creates a local library at the destination (a large Eagle library can take several minutes on first conversion).
 
 After conversion, browsing, search, tags, AI analysis, and everything else work exactly like a local library, and the original files are left untouched.
 
