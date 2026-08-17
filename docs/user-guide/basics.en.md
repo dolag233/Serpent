@@ -16,6 +16,18 @@ references/drafts/    # ignore this folder
 
 The `?` help explains `*`, `?`, `**`, a trailing `/` for directories, a leading `/` for library-root rules, and `!` negation.
 
+### Open external libraries (Eagle / Billfish)
+
+**Open library** → **Open external library…** → choose **Eagle** or **Billfish**:
+
+1. Pick the source library (an Eagle/Billfish library folder or its archive);
+2. choose where Serpent should create the local library;
+3. Serpent converts the source and creates a local library at the destination, showing progress while converting (a large Eagle library can take several minutes on first conversion; you can wait or cancel).
+
+After conversion, browsing, search, tags, AI analysis, and everything else work exactly like a local library, and the original files are left untouched.
+
+![Open external library](../assets/ui/open-external-library.png)
+
 ## Import assets
 
 Drop one or more files or folders into Serpent, or use **Import files** / **Import folder**. Folder imports are recursive. The browser extension can save web images and videos from the context menu or by drag-and-drop.
@@ -60,14 +72,9 @@ The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and r
 
 Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
 
-## WebDAV sync
+## WebDAV cloud sync
 
-Serpent can sync a library across machines over WebDAV.
-
-- **Global servers (Settings → Sync):** add, edit, and delete WebDAV servers. An address may include a path (e.g. `https://nas.local/dav/share/Serpent`). Passwords are stored encrypted locally and never sent back in plain text. After saving, the connection is tested automatically and shows a status (Connected / Connection failed / Connecting…).
-- **Library binding (Library Settings → Sync):** choose a server for the current library and set the **sync folder name** (defaults to the library name). The remote location is `server address/folder name/`. The page shows sync status (Not synced / Syncing… / Synced), the server connection status, and offers Preview changes, Sync now, and Save.
-- **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files. If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
-- **Open synced library (Library menu → Open synced library…):** choose a server, pick one of the libraries listed on it, and Serpent pulls it down and creates a local library. The server must support file upload/download (PUT/GET).
+Serpent can sync a library across machines over WebDAV: configure servers globally, bind each library, set auto-sync and the poll interval, and open remote synced libraries. See [Sync and external libraries](sync.en.md).
 
 ## Shortcuts
 

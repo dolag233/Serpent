@@ -1,6 +1,6 @@
-# Sync and External Libraries
+# WebDAV Cloud Sync
 
-Serpent can two-way sync a library through a WebDAV server, and can open external libraries such as Eagle and Billfish directly.
+Serpent can sync a library across machines over WebDAV. Configure servers globally, bind each library individually, and Serpent syncs both ways automatically: local changes upload, remote changes pull.
 
 ## Sync overview
 
@@ -26,12 +26,18 @@ Open **Library settings** → **Sync**:
 
 - **Sync status**: shows not synced / syncing / last synced time.
 - **Server**: the server this library binds to; switching servers tests the connection automatically.
-- **Sync folder name**: the remote folder name, defaults to the library name.
+- **Sync folder name**: the remote folder name, defaults to the library name. The remote location is `server address/folder name/`.
 - **Auto sync**: when on, local changes upload and remote changes pull automatically.
 - **Poll interval (seconds)**: how often remote changes are checked, 5 seconds by default. **For large libraries, consider a longer interval** to avoid frequent checks weighing on the network and disk.
 - **Save**: persists the binding; turning auto-sync on triggers a sync immediately.
 
 ![Library sync settings](../assets/ui/library-sync.png)
+
+## Sync behavior
+
+- **The first sync uploads assets, metadata, and a manifest to the server**; later syncs transfer only changed files.
+- If two machines edit the same file, the losing version is kept as a “name (conflict-…)” copy instead of being silently overwritten.
+- Auto-sync and manual sync are mutually exclusive; a failed sync only writes a log entry and does not interrupt you.
 
 ## Open a synced library
 
@@ -41,16 +47,6 @@ Open **Library settings** → **Sync**:
 2. the panel lists synced libraries on that server (recognized by their remote manifest, so you can continue on another device);
 3. pick a local destination and open — remote content is downloaded locally.
 
+The server must support file upload/download (PUT/GET).
+
 ![Open synced library](../assets/ui/open-sync-library.png)
-
-## Open external libraries (Eagle / Billfish)
-
-**Open library** → **Open external library…** → choose **Eagle** or **Billfish**:
-
-1. Pick the source library (an Eagle/Billfish library folder or its archive);
-2. choose where Serpent should create the local library;
-3. Serpent converts the source and creates a local library at the destination, showing progress while converting (a large Eagle library can take several minutes on first conversion; you can wait or cancel).
-
-After conversion, browsing, search, tags, AI analysis, and everything else work exactly like a local library, and the original files are left untouched.
-
-![Open external library](../assets/ui/open-external-library.png)
