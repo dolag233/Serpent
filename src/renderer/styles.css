@@ -1244,10 +1244,10 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   flex: 0 0 auto;
 }
 
-/* 已连接：淡绿色（--success 派生，亮/暗主题自适应；用户反馈
-   2026-08-18 提高可见度）；断连/未启用：灰色。 */
+/* 已连接：绿色（--success 派生，亮/暗主题自适应；用户反馈
+   2026-08-18 两次加深：52% → 68% → 84%）；断连/未启用：灰色。 */
 .library-switcher-sync-status[data-state="enabled"] {
-  color: color-mix(in srgb, var(--success) 68%, transparent);
+  color: color-mix(in srgb, var(--success) 84%, transparent);
 }
 
 .library-switcher-sync-status[data-state="disabled"] {
