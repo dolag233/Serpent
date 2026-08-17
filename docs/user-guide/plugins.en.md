@@ -1,4 +1,4 @@
-# Using plugins
+# Plugin features
 
 Plugins add tools, menus, or workflows to Serpent. They are not ordinary library assets and can be enabled or disabled at any time.
 

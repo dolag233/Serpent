@@ -6,8 +6,8 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 - [Basics](basics.en.md) — libraries, importing, browsing, organization, file actions, and the viewer
 - [Search and filters](search-and-filters.en.md) — advanced query syntax, filter dimensions, and Shift multi-select
 - [WebDAV cloud sync](sync.en.md) — server configuration, library binding, auto-sync, opening remote synced libraries
-- [AI analysis](ai.en.md) — connect an AI service, run automatic/manual analysis, and understand privacy
-- [Using plugins](plugins.en.md) — install, enable, update, and uninstall plugins, plus the browser extension
+- [AI analysis](ai.en.md) — supported assets, automatic/manual analysis, jobs, and privacy
+- [Plugin features](plugins.en.md) — install, enable, update, and uninstall plugins, plus the browser extension
 - [Automation](automation.en.md) — automation scripts and MCP client connections
 - [Troubleshooting](troubleshooting.en.md) — common problems and fixes
 
@@ -18,7 +18,7 @@ A Serpent usage guide for end users. Chinese version: [README.md](README.md)
 3. Drag images, videos, audio, 3D models, or text into the window, or click Import
 4. Assets appear on the canvas. Double-click to open the viewer; right-click for more actions. Thumbnails, metadata, and AI analysis complete progressively in the background
 
-All data stays in your local library directory — no cloud sync.
+Data stays in your local library directory; for syncing across machines, use WebDAV cloud sync (see [Sync](sync.en.md)).
 
 ## Interface at a glance
 

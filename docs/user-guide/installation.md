@@ -37,7 +37,7 @@ xattr -cr /Applications/Serpent.app
 - macOS：`Serpent.app/Contents/Resources/extension`
 - Windows：安装目录下的 `resources/extension`
 
-加载后可在网页图片或视频上右键保存到 Serpent，也可以直接拖拽保存。插件和扩展的使用方式见[插件使用](plugins.md)。
+加载后可在网页图片或视频上右键保存到 Serpent，也可以直接拖拽保存。插件和扩展的使用方式见[插件功能](plugins.md)。
 
 ## 升级
 
