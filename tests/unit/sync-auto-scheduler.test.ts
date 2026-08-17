@@ -169,4 +169,32 @@ describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('respects a per-binding pollIntervalMs override (user setting)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { options, client } = makeOptions({ pollTickMs: 500 });
+      options.readBindings = () => ({
+        'lib-enabled': {
+          serverId: 'server-1',
+          directoryName: '目录',
+          enabled: true,
+          pollIntervalMs: 2_000,
+        },
+        'lib-disabled': { serverId: 'server-1', directoryName: '目录', enabled: false },
+      });
+      const scheduler = new SyncAutoScheduler(options);
+      scheduler.start();
+      const pollsBefore = client.posts.filter((post) => post.type === 'sync.poll-remote').length;
+      // 1.5 秒内（间隔 2s 未到）无新轮询。
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote').length).toBe(pollsBefore);
+      // 累计 2.5 秒后按绑定间隔触发轮询。
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote').length).toBe(pollsBefore + 1);
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

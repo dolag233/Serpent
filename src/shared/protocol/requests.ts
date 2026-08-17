@@ -959,6 +959,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     directoryName: z.string().optional(),
     /** 自动同步开关（Serpent-bfsb 后续：打开远程库后默认开启）。 */
     enabled: z.boolean().optional(),
+    /** 云端变化轮询间隔（毫秒；缺省 5000）。 */
+    pollIntervalMs: z.number().int().min(1000).max(3_600_000).optional(),
   }),
   z.strictObject({
     type: z.literal('sync.library.binding.get.request'),

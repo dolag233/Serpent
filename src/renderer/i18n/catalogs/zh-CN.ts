@@ -82,6 +82,8 @@ export const zhCN = {
     renameLibrary: "重命名资源库",
     currentLibrary: "当前资源库 {name}",
     libraryNamed: "资源库：{name}",
+    syncConnected: "已连接同步服务器，自动同步开启",
+    syncDisconnected: "已绑定同步服务器，自动同步未开启",
     readOnlyBanner: "该资源库由更新版本的 Serpent 创建，当前为只读模式。升级 Serpent 后可继续编辑。",
     readOnlyBannerMigrationStuck: "该资源库多次尝试迁移均失败，现为只读模式。请保留当前版本的 Serpent，待新版可用后再升级。",
     readOnlyBannerVersioned:
@@ -1324,6 +1326,8 @@ export const zhCN = {
       directoryName: "同步文件夹名称",
       directoryNameHint: "此资源库在服务器上的文件夹名称，默认使用资源库名称。",
       autoSync: "自动同步",
+      pollInterval: "轮询间隔（秒）",
+      pollIntervalHint: "云端变化检查间隔；资源库较大时建议填写更长的轮询时间。",
       autoSyncHint: "开启后，本库资产变动会自动同步到服务器，也会自动拉取服务器上的改动。",
       transferProgress: "同步中：文件 {filesDone}/{filesTotal}，已传输 {bytesDone}/{bytesTotal}。",
       noServer: "尚未配置同步服务器。请先在「设置 → 同步」中添加服务器。",

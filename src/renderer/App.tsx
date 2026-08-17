@@ -1077,6 +1077,11 @@ function AppInner() {
   const [gitignoreContent, setGitignoreContent] = useState("");
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
+  /** 同步完成后的短暂提示（3 秒后消失），让用户感知自动同步发生过。 */
+  const [syncDone, setSyncDone] = useState<{ label: string } | null>(null);
+  const syncDoneTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** 当前库的同步绑定状态（库切换器 link/link-off 图标）。 */
+  const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -7362,8 +7367,16 @@ function AppInner() {
       } else if (event.type === "sync.progress") {
         if (event.phase === "complete") {
           setSyncProgress(null);
+          // 完成事件 filesDone=0（worker 不携带 report），只显示中性
+          // 「已同步」提示，3 秒后消失；新一轮同步开始即清除。
+          if (syncDoneTimer.current) clearTimeout(syncDoneTimer.current);
+          setSyncDone({ label: t("settings.sync.statusSynced") });
+          syncDoneTimer.current = setTimeout(() => {
+            setSyncDone(null);
+          }, 3_000);
         } else {
           setSyncProgress(event);
+          setSyncDone(null);
         }
       }
     });
@@ -7653,6 +7666,27 @@ function AppInner() {
   useEffect(() => {
     managedImportTargetFolderIdRef.current = undefined;
   }, [library?.libraryId]);
+
+  // 打开库后拉取同步绑定状态（库切换器 link/link-off 图标）。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!api || !library) {
+        if (!cancelled) setSyncBindingStatus("none");
+        return;
+      }
+      const result = await api.syncGetBinding({ libraryId: library.libraryId });
+      if (cancelled) return;
+      if (result.ok && result.value) {
+        setSyncBindingStatus(result.value.enabled ? "enabled" : "disabled");
+      } else {
+        setSyncBindingStatus("none");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, library?.libraryId]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -8793,10 +8827,15 @@ function AppInner() {
                   total: syncProgress.filesTotal,
                 })}
               </span>
+            ) : syncDone ? (
+              <span className="sync-toolbar-indicator sync-toolbar-indicator-done" role="status" aria-live="polite">
+                {syncDone.label}
+              </span>
             ) : null}
             <LibrarySwitcher
               busy={busy}
               disabled={busy}
+              syncStatus={syncBindingStatus}
               importMenuCopy={importMenuCopy}
               libraryName={library?.displayName ?? null}
               libraryOpen={Boolean(library)}

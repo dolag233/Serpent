@@ -2072,6 +2072,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       directoryName: z.string().optional(),
       lastSyncedAt: z.string().optional(),
       enabled: z.boolean().optional(),
+      pollIntervalMs: z.number().int().min(1000).max(3_600_000).optional(),
     }).nullable(),
   }),
   z.strictObject({

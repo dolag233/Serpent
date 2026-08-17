@@ -699,6 +699,8 @@ interface SyncBindingRecord {
   lastSyncedAt?: string;
   /** 自动同步开关（用户决定：在资源库设置里开启/关闭）。 */
   enabled?: boolean;
+  /** 云端变化轮询间隔（毫秒，用户可设置；缺省 5000）。 */
+  pollIntervalMs?: number;
 }
 
 /** 兼容旧格式绑定：directoryName 优先，其次旧 subPath。 */
@@ -3456,6 +3458,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         directoryName: request.directoryName,
         lastSyncedAt: previous?.lastSyncedAt,
         enabled: request.enabled ?? previous?.enabled ?? false,
+        pollIntervalMs: request.pollIntervalMs ?? previous?.pollIntervalMs,
       };
       writeSyncBindings(bindings);
       // Serpent-7405ef: 保存绑定（含开启自动同步）后立即触发一次同步，
@@ -3486,6 +3489,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
               directoryName: effectiveSyncDirectoryName(binding),
               lastSyncedAt: binding.lastSyncedAt,
               enabled: binding.enabled ?? false,
+              pollIntervalMs: binding.pollIntervalMs,
             }
           : null,
       } satisfies RendererResult;

@@ -5,6 +5,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
+import { Switch } from "./ui/primitives";
 import { formatBytes } from "./format-file-meta";
 import type { SyncServerSummary } from "./sync-settings-types";
 
@@ -15,8 +16,8 @@ export interface SyncSettingsCallbacks {
   syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
   syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
   syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
-  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean }): Promise<{ ok: true } | { ok: false; message: string }>;
-  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean } | null } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null } | { ok: false; message: string }>;
 }
 
 type ConnectionState = "checking" | "connected" | "failed";
@@ -51,6 +52,8 @@ function SyncSettingsSection({
   const [serverId, setServerId] = useState("");
   const [directoryName, setDirectoryName] = useState(() => library.displayName);
   const [enabled, setEnabled] = useState(false);
+  /** 轮询间隔输入（秒，字符串便于清空/编辑）。 */
+  const [pollIntervalSeconds, setPollIntervalSeconds] = useState("5");
   const [busy, setBusy] = useState<"preview" | "run" | "save" | null>(null);
   const [connection, setConnection] = useState<{
     serverId: string;
@@ -89,6 +92,7 @@ function SyncSettingsSection({
         setDirectoryName(binding.value.directoryName || library.displayName);
         setLastSyncedAt(binding.value.lastSyncedAt ?? null);
         setEnabled(binding.value.enabled ?? false);
+        setPollIntervalSeconds(String(Math.round((binding.value.pollIntervalMs ?? 5_000) / 1_000)));
         void probeSelected(binding.value.serverId);
       } else if (listed.value.length > 0) {
         const first = listed.value[0]!.id;
@@ -140,8 +144,19 @@ function SyncSettingsSection({
   const saveBinding = async () => {
     setBusy("save");
     setError(null);
+    // 轮询间隔（秒 → 毫秒）：空或非法回落 5 秒默认；上限 1 小时。
+    const parsedSeconds = Number(pollIntervalSeconds);
+    const pollIntervalMs = Number.isFinite(parsedSeconds) && parsedSeconds >= 1
+      ? Math.min(Math.round(parsedSeconds * 1_000), 3_600_000)
+      : 5_000;
     try {
-      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, directoryName, enabled });
+      const saved = await callbacks.syncSaveBinding({
+        libraryId: library.libraryId,
+        serverId,
+        directoryName,
+        enabled,
+        pollIntervalMs,
+      });
       if (!saved.ok) setError(saved.message);
       else setResult(t("settings.sync.bindingSaved"));
     } finally {
@@ -216,19 +231,32 @@ function SyncSettingsSection({
           <input className="text-field" aria-label={t("settings.sync.directoryName")} value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
         </div>
         <div className="app-settings-card-divider" />
+        <label className="app-settings-toggle-row">
+          <span className="app-settings-row-copy">
+            <strong>{t("settings.sync.autoSync")}</strong>
+            <span>{t("settings.sync.autoSyncHint")}</span>
+          </span>
+          <Switch
+            aria-label={t("settings.sync.autoSync")}
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
+        </label>
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.pollInterval")}</strong>
+            <span>{t("settings.sync.pollIntervalHint")}</span>
+          </div>
+          <input
+            className="text-field sync-poll-interval-input"
+            aria-label={t("settings.sync.pollInterval")}
+            inputMode="numeric"
+            value={pollIntervalSeconds}
+            onChange={(event) => setPollIntervalSeconds(event.target.value)}
+          />
+        </div>
+        <div className="app-settings-card-divider" />
         <div className="library-settings-gitignore-actions library-sync-actions">
-          <label className="sync-auto-toggle" title={t("settings.sync.autoSyncHint")}>
-            <span className="toggle-switch">
-              <input
-                aria-label={t("settings.sync.autoSync")}
-                checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
-                type="checkbox"
-              />
-              <span className="toggle-switch-thumb" />
-            </span>
-            <span>{t("settings.sync.autoSync")}</span>
-          </label>
           <button className="secondary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
             {busy === "save" ? t("common.saving") : t("common.save")}
           </button>

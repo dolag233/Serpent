@@ -61,6 +61,8 @@ export type LibrarySwitcherProps = {
   onMenuOpen?: () => void;
   /** True when a library is open (gates library-scoped transfer actions). */
   libraryOpen?: boolean;
+  /** 同步连接状态（Serpent-ae7257 后续）：link / link-off 图标提示。 */
+  syncStatus?: "none" | "disabled" | "enabled";
   busy?: boolean;
   /** @deprecated Asset-level imports now live in the File menu. */
   importMenuCopy?: ImportMenuCopy;
@@ -88,6 +90,7 @@ export function LibrarySwitcher({
   onForgetRecent,
   onMenuOpen,
   libraryOpen = false,
+  syncStatus = "none",
   busy = false,
   onImportLibrary,
 }: LibrarySwitcherProps) {
@@ -179,6 +182,18 @@ export function LibrarySwitcher({
         type="button"
       >
         <span className="library-switcher-name">{label}</span>
+        {syncStatus !== "none" ? (
+          <span
+            className="library-switcher-sync-status"
+            data-hover-tip={
+              syncStatus === "enabled"
+                ? t("shell.syncConnected")
+                : t("shell.syncDisconnected")
+            }
+          >
+            <Icon name={syncStatus === "enabled" ? "link" : "link-off"} size={12} />
+          </span>
+        ) : null}
         <Icon name="chevron" size={13} />
       </button>
       {open && (

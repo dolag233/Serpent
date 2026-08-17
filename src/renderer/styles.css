@@ -1238,6 +1238,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   white-space: nowrap;
 }
 
+.library-switcher-sync-status {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--secondary);
+}
+
+.library-switcher-sync-status:hover {
+  color: var(--text);
+}
+
 .library-switcher-trigger .icon {
   flex: 0 0 auto;
   transform: rotate(90deg);
@@ -5857,63 +5868,12 @@ body.serpent-modal-open .app-shell {
   to { transform: rotate(360deg); }
 }
 
-/* 自动同步 toggle（Serpent-768b48）：与保存按钮同行，主题 token 驱动，
-   不硬编码颜色；:has() 由 Electron 内置 Chromium 支持。 */
-.sync-auto-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.toggle-switch {
-  position: relative;
-  width: 34px;
-  height: 18px;
-  border-radius: 9px;
-  background: var(--raised-2);
-  transition: background 120ms ease;
-  flex-shrink: 0;
-}
-
-.toggle-switch input {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.toggle-switch-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text);
-  transition: transform 120ms ease;
-  pointer-events: none;
-}
-
-.toggle-switch:has(input:checked) {
-  background: var(--accent);
-}
-
-.toggle-switch:has(input:checked) .toggle-switch-thumb {
-  transform: translateX(16px);
-}
-
-.toggle-switch:has(input:focus-visible) {
-  outline: 2px solid var(--accent-ring);
-  outline-offset: 1px;
-}
-
 .open-sync-library-dialog {
   width: min(460px, calc(100vw - 40px));
+}
+
+.sync-poll-interval-input {
+  width: 96px;
 }
 
 .open-sync-library-body {

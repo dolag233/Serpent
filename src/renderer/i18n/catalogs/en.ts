@@ -91,6 +91,8 @@ export const en = {
     renameLibrary: "Rename library",
     currentLibrary: "Current library {name}",
     libraryNamed: "Library: {name}",
+    syncConnected: "Connected to sync server, auto-sync on",
+    syncDisconnected: "Bound to sync server, auto-sync off",
     readOnlyBanner:
       "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
     readOnlyBannerMigrationStuck:
@@ -1341,6 +1343,8 @@ export const en = {
       directoryNameHint: "The folder name for this library on the server. Defaults to the library name.",
       autoSync: "Auto sync",
       autoSyncHint: "When enabled, local asset changes are uploaded automatically and remote changes are pulled automatically.",
+      pollInterval: "Poll interval (seconds)",
+      pollIntervalHint: "How often remote changes are checked. For large libraries, consider a longer interval.",
       transferProgress: "Syncing: file {filesDone}/{filesTotal}, {bytesDone}/{bytesTotal} transferred.",
       noServer: "No sync servers configured yet. Add one under Settings → Sync first.",
       bindingSaved: "Saved this library's sync configuration.",
