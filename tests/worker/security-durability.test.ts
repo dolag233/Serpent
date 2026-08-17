@@ -111,6 +111,7 @@ describe('database and path hardening', () => {
     expect(database.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(database.pragma('synchronous', { simple: true })).toBe(2);
     expect(database.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(database.pragma('busy_timeout', { simple: true })).toBe(5_000);
     database.close();
   });
 

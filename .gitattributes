@@ -1,0 +1,4 @@
+# ufbx WASM 组件随仓库分发，prepackage/premake 门禁（verify-ufbx-wasm.mjs）
+# 按字节 SHA-256 校验。任何行尾转换（CRLF）都会导致哈希漂移、打包失败，
+# 因此整个目录标记为 -text（不做换行符转换）。
+resources/ufbx/* -text

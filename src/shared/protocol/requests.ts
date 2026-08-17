@@ -1,6 +1,20 @@
 import { z } from 'zod';
 
-import { filterClauseSchema, linkedFolderRuleSchema, searchQuerySchema, searchScopeSchema, sortDefinitionSchema } from '../asset-types';
+import {
+  filterClauseSchema,
+  linkedFolderRuleSchema,
+  portableRelativePathSchema,
+  searchQuerySchema,
+  searchScopeSchema,
+  sortDefinitionSchema,
+} from '../asset-types';
+import {
+  CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_BATCH_MAX_ITEMS,
+  CONTENT_REPLACE_MAX_BYTES,
+  CONTENT_REPLACE_MAX_BASE64_LENGTH,
+  CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
+} from '../content-replace';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -8,9 +22,32 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+/**
+ * Linked-folder subtree path. Empty string means the linked folder root
+ * (OS trash / disk delete of the whole linked tree).
+ */
+const linkedSubtreeRelativePathSchema = z.union([
+  z.literal(''),
+  portableRelativePathSchema,
+]);
+/** Browse/search/reveal ids may be virtual linked paths: `lfv:{rootId}/{relativePath}`. */
+const folderScopeIdSchema = nonBlankString.max(4096);
+// Schema layer rejects only obvious injection shapes (separators, control
+// characters, dot segments, blank/overlong input). The portable-name semantics
+// (reserved DOS names, trailing space/period, UTF-8 byte limit) are enforced
+// by the Worker service layer.
+const assetFileBaseNameSchema = nonBlankString.max(255)
+  .refine((value) => !/[\\/]/u.test(value), {
+    message: 'File base name must not contain path separators.',
+  })
+  .refine((value) => !/[\p{Cc}]/u.test(value), {
+    message: 'File base name must not contain control characters.',
+  })
+  .refine((value) => value.trim() !== '.' && value.trim() !== '..', {
+    message: "File base name must not be '.' or '..'.",
+  });
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
-const optionalClearableIdentifierSchema = z.string().max(255).optional();
 const optionalClearableDescriptionSchema = z.string().max(10000).optional();
 const queryDefinitionJsonSchema = nonBlankString.max(65_536);
 export const manualPaletteColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/u, {
@@ -31,9 +68,78 @@ export const sourcePageUrlSchema = z.union([
     message: 'Source-page URLs must not include surrounding whitespace.',
   }),
 ]);
+// Author/creator (Serpent-7x0) mirrors sourcePageUrl's clear-with-empty-string
+// contract, without the URL-shape constraint.
+export const assetAuthorSchema = z.union([
+  z.literal(''),
+  nonBlankString.max(255).refine((value) => value === value.trim(), {
+    message: 'Author must not include surrounding whitespace.',
+  }),
+]);
 
 export const suspectedDuplicateDecisionSchema = z.enum(['skip', 'merge', 'create-copy']);
 export const nameConflictDecisionSchema = z.enum(['keep-both', 'replace', 'skip']);
+
+const automationFileOperationSchema = z.enum([
+  'trash',
+  'replace-content',
+  'move',
+  'rename-file',
+  'rename-files',
+  'restore-if-original-vacant',
+]);
+const automationFilePlanAssetStateSchema = z.strictObject({
+  assetId: identifierSchema,
+  stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+});
+const automationFilePlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  assetStates: z.array(automationFilePlanAssetStateSchema).min(1).max(10_000),
+});
+export const automationImportPlanProofSchema = z.strictObject({
+  planHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  expectedChangeSequence: z.number().int().nonnegative(),
+  sourceStates: z.array(z.strictObject({
+    sourcePath: selectedPathSchema,
+    stateToken: z.string().regex(/^[a-f0-9]{64}$/u),
+  })).max(1_000),
+});
+
+
+const aiApiFormatSchema = z.enum([
+  'dashscope_native',
+  'openai_chat',
+  'openai_responses',
+  'anthropic',
+  'gemini_native',
+]);
+const aiLanguageIdSchema = z.enum(['zh-CN', 'en', 'ja', 'ko']);
+const aiLanguagesSchema = z.array(aiLanguageIdSchema).min(1).max(8);
+const aiEnabledFieldsSchema = z.strictObject({
+  description: z.boolean(),
+  tags: z.boolean(),
+  rating: z.boolean(),
+});
+const aiAnalysisSettingsSchema = z.strictObject({
+  forceExistingTags: z.boolean(),
+  maxTags: z.number().int().min(1).max(32),
+  maxDescriptionCharsZh: z.number().int().min(20).max(500),
+  maxDescriptionWordsEn: z.number().int().min(10).max(200),
+  outputStyle: z.enum(['normal', 'concise', 'rigorous']),
+  ratingRubric: z.string().min(1).max(4_000),
+  customDescriptionPrompt: z.string().max(4_000),
+  customTagPrompt: z.string().max(4_000),
+});
+const aiConcurrencyLimitSchema = z.number().int().min(1).max(32);
+const aiAnalysisImageEdgeSchema = z.number().int().min(512).max(4096);
+const aiReliabilitySettingsSchema = z.strictObject({
+  requestTimeoutMs: z.number().int().min(15_000).max(600_000),
+  maxAttempts: z.number().int().min(1).max(10),
+  retryBaseDelayMs: z.number().int().min(100).max(60_000),
+  retryMaxDelayMs: z.number().int().min(1_000).max(600_000),
+  retryJitterRatio: z.number().min(0).max(0.5),
+});
 
 export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
@@ -44,11 +150,73 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('library.open.request'),
   }),
   z.strictObject({
+    type: z.literal('library.recovery-report.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-eagle.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-eagle.cancel.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.open-eagle.request'),
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-billfish.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-billfish.cancel.request'),
+  }),
+  z.strictObject({
+    type: z.literal('library.open-billfish.request'),
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.close.request'),
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('library.rename.request'),
+    libraryId: identifierSchema,
+    displayName: displayNameSchema,
+  }),
+  // Irreversible: close then delete the library root on disk (Serpent-9i8).
+  z.strictObject({
+    type: z.literal('library.delete-from-disk.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.list.request'),
+  }),
+  z.strictObject({
+    type: z.literal('history.status.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.undo.request'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.redo.request'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.list-recent.request'),
+  }),
+  // The renderer may only name a library path that Main itself recorded in the
+  // recent libraries store; Main re-validates membership before dispatching.
+  z.strictObject({
+    type: z.literal('library.open-recent.request'),
+    libraryPath: selectedPathSchema,
+  }),
+  // Soft-forget: drop from recent list only; disk untouched (Serpent-ucx).
+  z.strictObject({
+    type: z.literal('library.forget-recent.request'),
+    libraryPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('folder.create.request'),
@@ -56,15 +224,130 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     parentFolderId: optionalIdentifierSchema,
     name: displayNameSchema,
   }),
+  // Renaming a managed folder is identified by folder id plus the new display
+  // name only; no filesystem path may cross this boundary. The portable-name
+  // semantics are enforced by the Worker service layer.
+  z.strictObject({
+    type: z.literal('folder.rename.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    newName: displayNameSchema,
+  }),
+  // Folder shell actions (REQ-MENU-006) are identified by folder id only; no
+  // filesystem path may cross this boundary (REQ-COMMAND-003). The Worker
+  // resolves the absolute path and Main performs the shell/clipboard action.
+  z.strictObject({
+    type: z.literal('folder.open-in-file-manager.request'),
+    libraryId: identifierSchema,
+    folderId: folderScopeIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.open-with.request'),
+    libraryId: identifierSchema,
+    folderId: folderScopeIdSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.copy-path.request'),
+    libraryId: identifierSchema,
+    folderId: folderScopeIdSchema,
+  }),
+  // Clarification #5 / Serpent-vgp: OS file clipboard (Finder/Explorer).
+  z.strictObject({
+    type: z.literal('folder.copy.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.paste.request'),
+    libraryId: identifierSchema,
+    /** Omit or null to paste into library Assets root. */
+    folderId: optionalIdentifierSchema.nullable().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.clone.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.move.request'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+    targetParentFolderId: identifierSchema.nullable(),
+    conflictStrategy: z.enum(['keep-both', 'skip']).default('keep-both'),
+  }),
   z.strictObject({
     type: z.literal('folder.list.request'),
     libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.browse-entries.request'),
+    libraryId: identifierSchema,
+    parentFolderId: z.string().min(1).max(4096).nullable(),
+    showIgnored: z.boolean().optional(),
+  }),
+  // Clarification #7 / Serpent-ekj: managed folder trash / permanent disk delete.
+  z.strictObject({
+    type: z.literal('folder.trash.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('selection.trash.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).max(10_000),
+    folderIds: z.array(identifierSchema).max(10_000),
+  }).refine((value) => value.assetIds.length > 0 || value.folderIds.length > 0, {
+    message: 'A trash selection must contain an asset or folder.',
+  }),
+  z.strictObject({
+    type: z.literal('folder.delete-from-disk.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.remove.request'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.delete-subtree.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.list.request'),
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
     recursive: z.boolean(),
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.create.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(3).max(10_000),
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve.request'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve-batch.request'),
+    libraryId: identifierSchema,
+    sequenceIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (sequenceIds) => new Set(sequenceIds).size === sequenceIds.length,
+      { message: 'sequenceIds must not contain duplicates.' },
+    ),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.set-fps.request'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+    fps: z.number().min(1).max(240),
   }),
   z.strictObject({
     type: z.literal('asset.import-files.request'),
@@ -76,6 +359,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
   }),
+  z.strictObject({
+    type: z.literal('asset.import-eagle.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-billfish.request'),
+    libraryId: identifierSchema,
+  }),
   // This request is created only inside the preload bridge after Electron's
   // webUtils has resolved genuine renderer File objects. Renderer code never
   // accepts or constructs these paths directly.
@@ -85,10 +376,38 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     targetFolderId: optionalIdentifierSchema,
     targetCollectionId: optionalIdentifierSchema,
     sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+    imageSequenceDecision: z
+      .strictObject({
+        action: z.enum(['import-sequence', 'import-selected']),
+        firstFrame: z.number().int().nonnegative().optional(),
+        fps: z.number().int().min(1).max(240).optional(),
+        lastFrame: z.number().int().nonnegative().optional(),
+        sequenceIndex: z.number().int().nonnegative().optional(),
+        applyToRest: z.boolean().optional(),
+      })
+      .optional(),
+  }),
+  // Created by preload after resolving native File handles. Paths never
+  // originate from Renderer code; Main/Worker map them back to asset ids.
+  z.strictObject({
+    type: z.literal('asset.resolve-dropped-paths.request'),
+    libraryId: identifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('asset.import-drop-invalid.report'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-sequence.confirm'),
+    libraryId: identifierSchema,
+    offerId: identifierSchema,
+    action: z.enum(['import-sequence', 'import-selected']),
+    sequenceIndex: z.number().int().nonnegative().optional(),
+    firstFrame: z.number().int().nonnegative().optional(),
+    lastFrame: z.number().int().nonnegative().optional(),
+    fps: z.number().int().min(1).max(240).optional(),
+    applyToRest: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-web.request'),
@@ -149,6 +468,28 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     rules: z.array(linkedFolderRuleSchema).max(200),
   }),
   z.strictObject({
+    type: z.literal('ignore.list.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.get.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.set.request'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
+  }),
+  z.strictObject({
+    type: z.literal('ignore.set.request'),
+    libraryId: identifierSchema,
+    locationKind: z.enum(['managed', 'linked']),
+    linkedFolderId: optionalIdentifierSchema,
+    relativePath: z.string().max(4096),
+    pathKind: z.enum(['asset', 'folder', 'extension']),
+    ignored: z.boolean(),
+  }),
+  z.strictObject({
     type: z.literal('linked-folder.assets.copy.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -182,6 +523,24 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     tagId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('tag.delete-many.request'),
+    libraryId: identifierSchema,
+    tagIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('tag.merge.request'),
+    libraryId: identifierSchema,
+    sourceTagIds: z.array(identifierSchema).min(2),
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tag.cooccurrence.request'),
+    libraryId: identifierSchema,
+    minWeight: z.number().int().positive().optional(),
+    maxNodes: z.number().int().positive().max(500).optional(),
+    maxEdges: z.number().int().positive().max(2000).optional(),
+  }),
+  z.strictObject({
     type: z.literal('tag.assign.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
@@ -208,6 +567,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
+    parentId: identifierSchema.nullable().optional(),
     description: nonBlankString.max(10_000).nullable().optional(),
     coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
@@ -247,9 +607,26 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     recursive: z.boolean(),
   }),
   z.strictObject({
+    // CU-B4: direct memberships for selected assets (context-menu filtering).
+    type: z.literal('collection.assets.memberships.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.get.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.extracted-metadata.get.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.color-space.set.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    colorSpace: z.union([nonBlankString.max(120), z.null()]),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.set.request'),
@@ -257,16 +634,24 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalClearableIdentifierSchema,
     description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
     palette: manualPaletteSchema.optional(),
     sourcePageUrl: sourcePageUrlSchema.optional(),
+    author: assetAuthorSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill.request'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    // Batch rating write (REQ-MENU-007): last-write-wins across the whole
+    // multi-selection, so no expectedVersion participates in this contract.
+    type: z.literal('asset.rating.set.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    rating: z.number().int().min(0).max(5),
   }),
   z.strictObject({
     type: z.literal('asset.search.request'),
@@ -275,8 +660,15 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
     sort: sortDefinitionSchema.optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    /** When true, return the full browse scope (up to browse-scope cap); limit/offset ignored. */
+    scopeMode: z.boolean().optional(),
+    /** Serpent-ws4k: return only `assetIds` for the whole scope (select-all); limit/offset ignored. */
+    idsOnly: z.boolean().optional(),
+    /** Serpent-sa65: compact full-scope real-asset geometry index. */
+    layoutOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('ai.search-plan.request'),
@@ -309,7 +701,10 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.execute.request'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
-    limit: z.number().int().positive().max(200).optional(),
+    scopeMode: z.boolean().optional(),
+    idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
@@ -323,6 +718,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetIds: z.array(identifierSchema).min(1),
     targetFolderId: identifierSchema.nullable().optional(),
     conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.restore-preview.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: identifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move.request'),
@@ -341,13 +742,69 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
   z.strictObject({
+    type: z.literal('asset.copy.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-undo.request'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id and
+  // extension-less base name only; no filesystem path may cross this boundary.
+  z.strictObject({
+    type: z.literal('asset.rename-file.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    newBaseName: assetFileBaseNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.read.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(2_097_152).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.save.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    content: z.string().max(1_048_576),
+    expectedRevisionId: identifierSchema.optional(),
+    /** When true, insert a new revision row (exit-from-editor commit). */
+    createRevision: z.boolean().optional(),
+  }),
+  z.strictObject({
     type: z.literal('asset.delete-permanent.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
+    type: z.literal('asset.delete-from-disk.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+  }),
+  z.strictObject({
     type: z.literal('trash.list.request'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('trash.list-folders.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('trash.restore-folder.request'),
+    libraryId: identifierSchema,
+    tombstoneId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('trash.purge.request'),
@@ -366,6 +823,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.relink.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.relink-batch.preview-at-root.request'),
+    libraryId: identifierSchema,
+    newRootPath: selectedPathSchema,
+    keepMetadata: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.relink-batch.request'),
@@ -388,6 +851,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     format: z.enum(['folder', 'zip']),
     includeLinkedContent: z.boolean(),
+    libraryName: displayNameSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.export.cancel.request'),
@@ -416,18 +880,26 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ai.config.set.request'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
+    /** Empty or omitted = official default endpoint for the API format. */
+    baseUrl: z.string().max(2048).optional(),
     apiKey: nonBlankString.optional(),
-    enabledFields: z.strictObject({
-      label: z.boolean(),
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }).optional(),
+    enabledFields: aiEnabledFieldsSchema.optional(),
+    analysisSettings: aiAnalysisSettingsSchema.optional(),
+    languages: aiLanguagesSchema.optional(),
+    /** @deprecated Prefer languages[]. */
     language: nonBlankString.optional(),
+    concurrencyLimit: aiConcurrencyLimitSchema.optional(),
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
+    reliabilitySettings: aiReliabilitySettingsSchema.optional(),
     autoAnalyzeEnabled: z.boolean(),
     disclaimerAccepted: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.content.get.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('asset.analyze.request'),
@@ -435,18 +907,101 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('assets.analyze.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000),
+  }),
+  z.strictObject({
     type: z.literal('asset.thumbnail.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.visible-window.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
+  }),
+  z.strictObject({
+    type: z.literal('sync.probe.request'),
+    serverId: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('sync.preview.request'),
+    libraryId: identifierSchema,
+    serverId: nonBlankString,
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.run.request'),
+    libraryId: identifierSchema,
+    serverId: nonBlankString,
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.servers.list.request'),
+  }),
+  z.strictObject({
+    type: z.literal('sync.servers.upsert.request'),
+    id: identifierSchema.optional(),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.servers.delete.request'),
+    id: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sync.library.binding.save.request'),
+    libraryId: identifierSchema,
+    serverId: nonBlankString,
+    directoryName: z.string().optional(),
+    /** 自动同步开关（Serpent-bfsb 后续：打开远程库后默认开启）。 */
+    enabled: z.boolean().optional(),
+    /** 云端变化轮询间隔（毫秒；缺省 5000）。 */
+    pollIntervalMs: z.number().int().min(1000).max(3_600_000).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.library.binding.get.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sync.list-remote-libraries.request'),
+    serverId: nonBlankString,
+  }),
+  z.strictObject({
+    type: z.literal('sync.open-remote-library.request'),
+    serverId: nonBlankString,
+    libraryId: identifierSchema,
+    displayName: nonBlankString,
+    directoryName: nonBlankString,
   }),
   z.strictObject({
     type: z.literal('asset.preview.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
     mode: z.enum(['client', 'fullscreen']),
+    /** 'viewer' starts at the source; 'proxy-fallback' is used after a real decode error. */
+    intent: z.enum(['viewer', 'hover', 'proxy-fallback']).optional(),
+    exrPlane: z.number().int().min(0).max(255).optional(),
+    colorSpace: nonBlankString.max(120).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.close-preview.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  // Slice C (Serpent-qvc6): renderer request surface for the 3D viewer. The
+  // Worker commands (model.resolve-companions / model.convert-fbx) already
+  // exist; these entries let the preload bridge reach them.
+  z.strictObject({
+    type: z.literal('model.resolve-companions.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('model.convert-fbx.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
@@ -458,18 +1013,55 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     detail: z.string().max(500).optional(),
   }),
   z.strictObject({
+    type: z.literal('asset.recovery-probe.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.open-external.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('asset.open-with.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.reveal-in-folder.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-file-path.request'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  // Clarification #5 / Serpent-bkef: OS file clipboard for asset files.
+  z.strictObject({
+    type: z.literal('asset.copy-files.request'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
+  }),
+  z.strictObject({
     type: z.literal('asset.retry-artifact.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    kind: z.enum(['thumbnail', 'webm_proxy']),
+    kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
     type: z.literal('media.list-jobs.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.list-jobs.request'),
     libraryId: identifierSchema,
   }),
   z.strictObject({
@@ -494,9 +1086,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('ai.test-connection.request'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
-    apiKey: nonBlankString,
+    /** Omit or blank to use the stored encrypted key. */
+    apiKey: z.string().max(512).optional(),
+    baseUrl: z.string().max(2048).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.list-models.request'),
+    apiFormat: aiApiFormatSchema,
+    /** Omit or blank to use the stored encrypted key. */
+    apiKey: z.string().max(512).optional(),
+    baseUrl: z.string().max(2048).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.clear-content.request'),
@@ -507,6 +1108,11 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       folderId: identifierSchema.optional(),
     }),
     confirm: z.boolean(),
+    /** When set, only these AI layers are cleared (Serpent-u7hz). Omit = all. */
+    fields: z
+      .array(z.enum(['description', 'rating', 'tags']))
+      .min(1)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('ai.pause-jobs.request'),
@@ -531,6 +1137,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ai.status.request'),
     libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).max(10_000).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.pending-assets.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
   }),
 ]);
 
@@ -551,11 +1163,132 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     selectedLibraryPath: selectedPathSchema,
   }),
   z.strictObject({
+    type: z.literal('library.recovery-report'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-eagle'),
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.open-eagle'),
+    sourceRootPath: selectedPathSchema,
+    selectedParentPath: selectedPathSchema,
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.inspect-billfish'),
+    sourceRootPath: selectedPathSchema,
+    sourceDisplayName: displayNameSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('library.open-billfish'),
+    sourceRootPath: selectedPathSchema,
+    selectedParentPath: selectedPathSchema,
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.close'),
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('library.rename'),
+    libraryId: identifierSchema,
+    displayName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('library.delete-from-disk'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('library.list'),
+  }),
+  z.strictObject({
+    type: z.literal('library.change-sequence'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.visible-window'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(300),
+  }),
+  z.strictObject({
+    type: z.literal('sync.probe'),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.list-remote-libraries'),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.open-remote-library'),
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    libraryId: identifierSchema,
+    displayName: nonBlankString,
+    directoryName: nonBlankString,
+    selectedParentPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('sync.preview'),
+    libraryId: identifierSchema,
+    deviceId: nonBlankString,
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.run'),
+    libraryId: identifierSchema,
+    deviceId: nonBlankString,
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.poll-remote'),
+    libraryId: identifierSchema,
+    deviceId: nonBlankString,
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('history.status'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.undo'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.redo'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.group.begin'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('history.group.complete'),
+    libraryId: identifierSchema,
+    expectedHistoryEntryId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('folder.create'),
@@ -564,14 +1297,123 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     name: displayNameSchema,
   }),
   z.strictObject({
+    type: z.literal('folder.rename'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+    newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.clone'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.move'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+    targetParentFolderId: identifierSchema.nullable(),
+    conflictStrategy: z.enum(['keep-both', 'skip']).default('keep-both'),
+  }),
+  // Resolves the absolute path of a managed or linked folder. Only Main may
+  // consume the result (shell/clipboard); it never reaches the Renderer.
+  z.strictObject({
+    type: z.literal('folder.get-path'),
+    libraryId: identifierSchema,
+    folderId: folderScopeIdSchema,
+  }),
+  z.strictObject({
     type: z.literal('folder.list'),
     libraryId: identifierSchema,
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.browse-entries'),
+    libraryId: identifierSchema,
+    parentFolderId: folderScopeIdSchema.nullable(),
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('folder.list-trashed'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.restore-trashed'),
+    libraryId: identifierSchema,
+    tombstoneId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.trash'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('selection.trash'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).max(10_000),
+    folderIds: z.array(identifierSchema).max(10_000),
+  }).refine((value) => value.assetIds.length > 0 || value.folderIds.length > 0, {
+    message: 'A trash selection must contain an asset or folder.',
+  }),
+  z.strictObject({
+    type: z.literal('folder.delete-from-disk'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('folder.delete-empty'),
+    libraryId: identifierSchema,
+    folderIds: z.array(identifierSchema).min(1).max(10_000),
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.remove'),
+    libraryId: identifierSchema,
+    folderId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.delete-subtree'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('asset.list'),
     libraryId: identifierSchema,
-    folderId: optionalIdentifierSchema,
+    folderId: folderScopeIdSchema.optional(),
     recursive: z.boolean(),
+    showIgnored: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.create'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(3).max(10_000),
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.dissolve-batch'),
+    libraryId: identifierSchema,
+    sequenceIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (sequenceIds) => new Set(sequenceIds).size === sequenceIds.length,
+      { message: 'sequenceIds must not contain duplicates.' },
+    ),
+  }),
+  z.strictObject({
+    type: z.literal('asset.sequence.set-fps'),
+    libraryId: identifierSchema,
+    sequenceId: identifierSchema,
+    fps: z.number().min(1).max(240),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import.probe-sequences'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    targetCollectionId: optionalIdentifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
   }),
   z.strictObject({
     type: z.literal('asset.import.prepare'),
@@ -579,6 +1421,22 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     targetFolderId: optionalIdentifierSchema,
     sourceKind: z.enum(['files', 'folder']),
     sourcePaths: z.array(selectedPathSchema).min(1),
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    /** When true, expand single selected frames to continuous sibling runs. */
+    expandImageSequences: z.boolean().optional(),
+    /** Explicitly disable automatic sequence creation for a normal import. */
+    createImageSequence: z.boolean().optional(),
+    automationPlan: automationImportPlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-eagle'),
+    libraryId: identifierSchema,
+    sourceRootPath: selectedPathSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.import-billfish'),
+    libraryId: identifierSchema,
+    sourceRootPath: selectedPathSchema,
   }),
   z.strictObject({
     type: z.literal('asset.import.resolve'),
@@ -622,6 +1480,28 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     rules: z.array(linkedFolderRuleSchema).max(200),
   }),
   z.strictObject({
+    type: z.literal('ignore.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.get'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('ignore.gitignore.set'),
+    libraryId: identifierSchema,
+    content: z.string().max(1_000_000),
+  }),
+  z.strictObject({
+    type: z.literal('ignore.set'),
+    libraryId: identifierSchema,
+    locationKind: z.enum(['managed', 'linked']),
+    linkedFolderId: optionalIdentifierSchema,
+    relativePath: z.string().max(4096),
+    pathKind: z.enum(['asset', 'folder', 'extension']),
+    ignored: z.boolean(),
+  }),
+  z.strictObject({
     type: z.literal('linked-folder.assets.copy'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
@@ -655,6 +1535,24 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     tagId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('tag.delete-many'),
+    libraryId: identifierSchema,
+    tagIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('tag.merge'),
+    libraryId: identifierSchema,
+    sourceTagIds: z.array(identifierSchema).min(2),
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('tag.cooccurrence'),
+    libraryId: identifierSchema,
+    minWeight: z.number().int().positive().optional(),
+    maxNodes: z.number().int().positive().max(500).optional(),
+    maxEdges: z.number().int().positive().max(2000).optional(),
+  }),
+  z.strictObject({
     type: z.literal('tag.assign'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
@@ -681,6 +1579,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     collectionId: identifierSchema,
     name: optionalIdentifierSchema,
+    parentId: identifierSchema.nullable().optional(),
     description: nonBlankString.max(10_000).nullable().optional(),
     coverAssetId: identifierSchema.nullable().optional(),
     position: z.number().int().nonnegative().optional(),
@@ -720,9 +1619,25 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     recursive: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('collection.assets.memberships'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
     type: z.literal('asset.metadata.get'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.extracted-metadata.get'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.color-space.set'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    colorSpace: z.union([nonBlankString.max(120), z.null()]),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.set'),
@@ -730,16 +1645,38 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
     // A metadata row is created with expectedVersion 0, then increments on updates.
     expectedVersion: z.number().int().min(0),
-    label: optionalClearableIdentifierSchema,
     description: optionalClearableDescriptionSchema,
     rating: z.number().int().min(0).max(5).optional(),
     favorite: z.boolean().optional(),
     palette: manualPaletteSchema.optional(),
     sourcePageUrl: sourcePageUrlSchema.optional(),
+    author: assetAuthorSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.metadata.set-many'),
+    libraryId: identifierSchema,
+    items: z.array(z.strictObject({
+      assetId: identifierSchema,
+      expectedVersion: z.number().int().min(0),
+      description: optionalClearableDescriptionSchema,
+      rating: z.number().int().min(0).max(5).optional(),
+      favorite: z.boolean().optional(),
+      palette: manualPaletteSchema.optional(),
+      sourcePageUrl: sourcePageUrlSchema.optional(),
+      author: assetAuthorSchema.optional(),
+    })).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('asset.metadata.backfill'),
     libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    // Batch counterpart of the rating field on 'asset.metadata.set'. The
+    // Worker validates the same 0–5 integer contract for direct clients.
+    type: z.literal('asset.rating.set'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    rating: z.number().int().min(0).max(5),
   }),
   z.strictObject({
     type: z.literal('asset.search'),
@@ -748,8 +1685,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
     sort: sortDefinitionSchema.optional(),
-    limit: z.number().int().positive().max(200).optional(),
+    scopeMode: z.boolean().optional(),
+    idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
+    showIgnored: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('smart-collection.list'),
@@ -778,13 +1719,63 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('smart-collection.execute'),
     libraryId: identifierSchema,
     collectionId: identifierSchema,
-    limit: z.number().int().positive().max(200).optional(),
+    scopeMode: z.boolean().optional(),
+    idsOnly: z.boolean().optional(),
+    layoutOnly: z.boolean().optional(),
+    limit: z.number().int().positive().max(500).optional(),
     offset: z.number().int().nonnegative().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.trash'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.replace'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_MAX_BASE64_LENGTH),
+    expectedRevisionId: identifierSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.stage'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    stagingToken: identifierSchema.optional(),
+    dataBase64: z.string().min(1).max(CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH),
+    complete: z.boolean(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.replace-batch'),
+    libraryId: identifierSchema,
+    items: z.array(z.union([
+      z.strictObject({
+        assetId: identifierSchema,
+        dataBase64: z.string().min(1).max(CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH),
+        expectedRevisionId: identifierSchema,
+      }),
+      z.strictObject({
+        assetId: identifierSchema,
+        stagingToken: identifierSchema,
+        expectedRevisionId: identifierSchema,
+      }),
+    ])).min(1).max(CONTENT_REPLACE_BATCH_MAX_ITEMS).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ).refine(
+      (items) => items.reduce((total, item) => total + ('dataBase64' in item ? item.dataBase64.length : 0), 0)
+        <= CONTENT_REPLACE_BATCH_INLINE_MAX_BASE64_LENGTH,
+      { message: 'Inline batch content exceeds the IPC payload budget; use staging tokens.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.content.read'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(CONTENT_REPLACE_MAX_BYTES),
   }),
   z.strictObject({
     type: z.literal('asset.restore'),
@@ -792,6 +1783,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetIds: z.array(identifierSchema).min(1),
     targetFolderId: identifierSchema.nullable().optional(),
     conflictStrategy: z.enum(['keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.restore-preview'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
+    targetFolderId: identifierSchema.nullable().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move'),
@@ -802,6 +1799,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     ),
     targetFolderId: identifierSchema.nullable(),
     conflictStrategy: nameConflictDecisionSchema.optional(),
+    automationPlan: automationFilePlanProofSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('asset.move-undo'),
@@ -810,9 +1808,125 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
   z.strictObject({
+    type: z.literal('asset.trash-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    targetFolderId: identifierSchema.nullable(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.copy-undo'),
+    libraryId: identifierSchema,
+    operationId: identifierSchema,
+    conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.rename-file'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    newBaseName: assetFileBaseNameSchema,
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.rename-files'),
+    libraryId: identifierSchema,
+    items: z.array(z.strictObject({
+      assetId: identifierSchema,
+      newBaseName: assetFileBaseNameSchema,
+    })).min(1).max(10_000).refine(
+      (items) => new Set(items.map((item) => item.assetId)).size === items.length,
+      { message: 'items must not contain duplicate assetIds.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Automation-only recovery operation: restore only assets whose original
+  // managed folder still exists and whose original destination is vacant.
+  // It intentionally has no target-folder or overwrite option.
+  z.strictObject({
+    type: z.literal('asset.restore-if-original-vacant'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    automationPlan: automationFilePlanProofSchema.optional(),
+  }),
+  // Main-only preflight used by the Automation Gateway before a file write.
+  // It returns opaque state tokens rather than paths and has no side effects.
+  z.strictObject({
+    type: z.literal('automation.file-operation-plan'),
+    libraryId: identifierSchema,
+    operation: automationFileOperationSchema,
+    assetIds: z.array(identifierSchema).min(1).max(10_000).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+    newBaseName: assetFileBaseNameSchema.optional(),
+    renameItems: z.array(z.strictObject({
+      assetId: identifierSchema,
+      newBaseName: assetFileBaseNameSchema,
+    })).min(1).max(10_000).optional(),
+    targetFolderId: identifierSchema.nullable().optional(),
+    conflictStrategy: nameConflictDecisionSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('automation.file-import-plan'),
+    libraryId: identifierSchema,
+    sourceKind: z.enum(['files', 'folder']),
+    sourcePaths: z.array(selectedPathSchema).min(1).max(1_000),
+    targetFolderId: optionalIdentifierSchema,
+    imageSequenceFps: z.number().int().min(1).max(240).optional(),
+    expandImageSequences: z.boolean().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.palette.aggregate-recent'),
+    libraryId: identifierSchema,
+    days: z.number().int().min(1).max(3_650).default(2),
+    limit: z.number().int().min(1).max(24).default(12),
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.read'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    maxBytes: z.number().int().positive().max(2_097_152).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.text.save'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+    content: z.string().max(1_048_576),
+    expectedRevisionId: identifierSchema.optional(),
+    createRevision: z.boolean().optional(),
+  }),
+  // Slice A (Serpent-fu2i): companion-texture index for model assets. The
+  // Worker returns relative paths + asset ids for the model's directory
+  // (recursive); only the renderer 3D loader consumes it. Read-only, no
+  // absolute paths cross this boundary.
+  z.strictObject({
+    type: z.literal('model.resolve-companions'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.delete-permanent'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1),
+  }),
+  z.strictObject({
+    type: z.literal('asset.delete-from-disk'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1).refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
   }),
   z.strictObject({
     type: z.literal('asset.delete-linked'),
@@ -857,6 +1971,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     mediaType: z.string().optional(),
   }),
   z.strictObject({
+    type: z.literal('extension.save-from-file'),
+    libraryId: identifierSchema,
+    targetFolderId: optionalIdentifierSchema,
+    sourcePageUrl: httpUrlSchema.optional(),
+    mediaUrl: httpUrlSchema.optional(),
+    stagedFilePath: selectedPathSchema,
+    contentType: z.string().min(1).max(128),
+    filename: z.string().min(1).max(255),
+  }),
+  z.strictObject({
     type: z.literal('library.export'),
     libraryId: identifierSchema,
     destinationPath: selectedPathSchema,
@@ -890,16 +2014,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.analyze'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
     apiKey: nonBlankString,
-    enabledFields: z.strictObject({
-      label: z.boolean(),
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }),
-    language: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
+    enabledFields: aiEnabledFieldsSchema,
+    analysisSettings: aiAnalysisSettingsSchema,
+    languages: aiLanguagesSchema,
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
+  }),
+  z.strictObject({
+    type: z.literal('ai.content.get'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
   }),
   z.strictObject({
     type: z.literal('media.generate-thumbnail'),
@@ -907,15 +2034,26 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     assetId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('model.convert-fbx'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.retry-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    kind: z.enum(['thumbnail', 'webm_proxy']),
+    kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
     type: z.literal('media.get-artifact-path'),
     libraryId: identifierSchema,
     artifactId: identifierSchema,
+    usage: z.enum(['preview', 'proxy']),
+  }),
+  z.strictObject({
+    type: z.literal('media.get-artifact-paths'),
+    libraryId: identifierSchema,
+    artifactIds: z.array(identifierSchema).min(1).max(500),
     usage: z.enum(['preview', 'proxy']),
   }),
   z.strictObject({
@@ -957,9 +2095,211 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     jobIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
+    type: z.literal('plugin.jobs.enqueue'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    pluginHandlerId: z.string().min(1).max(128),
+    payload: z.record(z.string(), z.unknown()).default({}),
+    recoveryStrategy: z.enum(['idempotent', 'checkpoint']).default('idempotent'),
+    priority: z.number().int().min(-1000).max(1000).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.list'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.claim-next'),
+    libraryId: identifierSchema,
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.complete'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    status: z.enum(['succeeded', 'failed', 'cancelled']),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+    progress: z.number().min(0).max(1).optional(),
+    completed: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
+    phase: z.string().max(128).optional(),
+    message: z.string().max(1_024).optional(),
+    itemResults: z.array(z.strictObject({
+      itemId: identifierSchema,
+      assetId: identifierSchema.optional(),
+      status: z.enum(['succeeded', 'failed', 'cancelled', 'skipped']),
+      errorCode: z.string().min(1).max(128).optional(),
+      errorDetail: z.string().max(4_096).optional(),
+      retryInput: z.record(z.string(), z.unknown()).optional(),
+    })).max(100_000).optional(),
+    failedAssetIds: z.array(identifierSchema).max(100_000).optional(),
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+    checkpoint: z.strictObject({
+      version: z.string().min(1).max(64),
+      cursor: z.string().max(4_096).optional(),
+      data: z.record(z.string(), z.unknown()).default({}),
+      savedAt: z.string().datetime(),
+    }).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.cancel'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    reason: z.string().max(1_024).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.pause'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    capabilities: z.strictObject({
+      handlerId: identifierSchema,
+      resumable: z.boolean(),
+      checkpointVersion: identifierSchema.optional(),
+    }),
+    checkpoint: z.strictObject({
+      version: identifierSchema,
+      cursor: z.string().max(4_096).optional(),
+      data: z.record(z.string(), z.unknown()).default({}),
+      savedAt: z.string().datetime(),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.resume'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    capabilities: z.strictObject({
+      handlerId: identifierSchema,
+      resumable: z.boolean(),
+      checkpointVersion: identifierSchema.optional(),
+    }),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.retry'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    retryInput: z.record(z.string(), z.unknown()).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.report-progress'),
+    libraryId: identifierSchema,
+    jobId: z.string().uuid(),
+    ownerPluginId: z.string().min(1).max(255),
+    ownerPackageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    ownerPluginInstanceId: identifierSchema,
+    ownerScope: z.enum(['library', 'global']),
+    ownerLibraryId: identifierSchema,
+    completed: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+    phase: z.string().max(128),
+    message: z.string().max(1_024),
+    progress: z.number().min(0).max(1).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.jobs.pause-owners'),
+    libraryId: identifierSchema,
+    owners: z.array(z.strictObject({
+      pluginId: z.string().min(1).max(255),
+      packageHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    })).min(1).max(256),
+    errorCode: z.string().min(1).max(128).optional(),
+    errorDetail: z.string().max(4_096).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.materialize'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    fieldType: z.enum(['string', 'number', 'boolean', 'date', 'json']),
+    values: z.array(z.strictObject({
+      assetId: identifierSchema,
+      value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    })).max(256),
+  }),
+  z.strictObject({
+    type: z.literal('plugin.derived-fields.query'),
+    libraryId: identifierSchema,
+    pluginId: identifierSchema,
+    packageHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    fieldId: z.string().min(1).max(128),
+    operator: z.enum(['equals', 'contains', 'gt', 'gte', 'lt', 'lte']),
+    value: z.union([z.string().max(16_384), z.number().finite(), z.boolean(), z.null()]),
+    limit: z.number().int().positive().max(256).optional(),
+    offset: z.number().int().nonnegative().optional(),
+  }),
+  z.strictObject({
     type: z.literal('media.get-asset-path'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('asset.recovery-probe'),
+    libraryId: identifierSchema,
+    assetId: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal('media.get-asset-paths'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
+  }),
+  // Main-only cache primer for OS-native asset drag. The Worker resolves the
+  // paths before dragstart, so Main can start the platform drag synchronously.
+  z.strictObject({
+    type: z.literal('media.get-asset-drag-infos'),
+    libraryId: identifierSchema,
+    assetIds: z
+      .array(identifierSchema)
+      .min(1)
+      .max(10_000)
+      .refine(
+        (assetIds) => new Set(assetIds).size === assetIds.length,
+        { message: 'assetIds must not contain duplicates.' },
+      ),
+  }),
+  z.strictObject({
+    type: z.literal('media.resolve-asset-paths'),
+    libraryId: identifierSchema,
+    sourcePaths: z.array(selectedPathSchema).min(1).max(10_000),
   }),
   z.strictObject({
     type: z.literal('media.get-thumbnail-artifact'),
@@ -970,45 +2310,68 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('media.get-preview-artifact'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
+    intent: z.enum(['viewer', 'hover', 'proxy-fallback']).optional(),
+    exrPlane: z.number().int().min(0).max(255).optional(),
+    colorSpace: nonBlankString.max(120).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.configure'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     encryptedApiKeyBase64: nonBlankString,
     model: nonBlankString,
-    labelEnabled: z.boolean().optional(),
+    baseUrl: z.string().max(2048).optional(),
     descriptionEnabled: z.boolean().optional(),
     tagEnabled: z.boolean().optional(),
-    structuredMetadataEnabled: z.boolean().optional(),
+    ratingEnabled: z.boolean().optional(),
+    analysisSettings: aiAnalysisSettingsSchema.optional(),
+    languages: aiLanguagesSchema.optional(),
     language: nonBlankString.optional(),
     autoAnalyzeEnabled: z.boolean(),
   }),
   z.strictObject({
     type: z.literal('ai.test-connection'),
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
-    encryptedApiKeyBase64: nonBlankString,
+    apiFormat: aiApiFormatSchema,
+    /** Ephemeral plaintext key on the private Main→Worker channel (same as asset.analyze). */
+    apiKey: nonBlankString,
     model: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
   }),
   z.strictObject({
     type: z.literal('ai.enqueue-analysis'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).optional(),
     folderId: identifierSchema.optional(),
+    /** Manual analysis may resume jobs intentionally paused by the user. */
+    resumePaused: z.boolean().optional(),
+    /** Manual analysis may intentionally replace an existing AI result. */
+    forceExisting: z.boolean().optional(),
+  }),
+  z.strictObject({
+    // 多选菜单「AI分析未分析项」：返回选中里没有任何 AI 生成数据的资产。
+    type: z.literal('ai.pending-assets.request'),
+    libraryId: identifierSchema,
+    assetIds: z.array(identifierSchema).min(1),
   }),
   z.strictObject({
     type: z.literal('ai.process-queue'),
     libraryId: identifierSchema,
-    provider: z.enum(['openai', 'gemini', 'anthropic']),
+    apiFormat: aiApiFormatSchema,
     model: nonBlankString,
     apiKey: nonBlankString,
-    enabledFields: z.strictObject({
-      label: z.boolean(),
-      description: z.boolean(),
-      tags: z.boolean(),
-      structuredMetadata: z.boolean(),
-    }),
-    language: nonBlankString,
+    baseUrl: z.string().max(2048).optional(),
+    enabledFields: aiEnabledFieldsSchema,
+    analysisSettings: aiAnalysisSettingsSchema,
+    languages: aiLanguagesSchema,
+    concurrencyLimit: aiConcurrencyLimitSchema,
+    maxAnalysisImageEdgePx: aiAnalysisImageEdgeSchema.optional(),
+    requestTimeoutMs: z.number().int().min(15_000).max(600_000),
+    maxAttempts: z.number().int().min(1).max(10),
     maxJobs: z.number().int().min(1).max(100).default(20),
+  }),
+  z.strictObject({
+    /** Applies the persisted global cap to a live Worker without restarting it. */
+    type: z.literal('ai.set-concurrency-limit'),
+    concurrencyLimit: aiConcurrencyLimitSchema,
   }),
   z.strictObject({
     type: z.literal('ai.clear-content'),
@@ -1019,6 +2382,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
       folderId: identifierSchema.optional(),
     }),
     confirm: z.boolean(),
+    fields: z
+      .array(z.enum(['description', 'rating', 'tags']))
+      .min(1)
+      .optional(),
   }),
   z.strictObject({
     type: z.literal('ai.pause-jobs'),
@@ -1043,6 +2410,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('ai.status'),
     libraryId: identifierSchema,
+    jobIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
 ]);
 
@@ -1053,21 +2421,76 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /** Origin metadata is non-secret and only affects the history projection. */
+  historyContext: z.strictObject({
+    source: z.enum(['desktop', 'script', 'mcp', 'plugin']),
+    sourceReference: identifierSchema.nullable().optional(),
+    /** Worker-issued history group used by one automation execution. */
+    historyGroupId: identifierSchema.optional(),
+  }).optional(),
+  /**
+   * Automation reads share the Worker protocol but must not inherit desktop
+   * side effects such as thumbnail scheduling. Only Main-owned transports can
+   * construct this envelope; Renderer requests remain on their existing path.
+   */
+  dispatch: z.enum(['automation-readonly']).optional(),
 });
 
 export type WorkerRequest = z.infer<typeof workerRequestSchema>;
+export type WorkerHistoryContext = NonNullable<WorkerRequest['historyContext']>;
+
+/**
+ * Renderer → Main only. This is intentionally separate from RendererRequest:
+ * it is sent one-way from dragstart and never waits on the Worker.
+ */
+export const nativeAssetDragRequestSchema = z.strictObject({
+  libraryId: identifierSchema,
+  assetIds: z
+    .array(identifierSchema)
+    .min(1)
+    .max(10_000)
+    .refine(
+      (assetIds) => new Set(assetIds).size === assetIds.length,
+      { message: 'assetIds must not contain duplicates.' },
+    ),
+});
+
+export type NativeAssetDragRequest = z.infer<typeof nativeAssetDragRequestSchema>;
 
 export function parseWorkerRequest(input: unknown): WorkerRequest {
   return workerRequestSchema.parse(input);
 }
 
+export function parseNativeAssetDragRequest(input: unknown): NativeAssetDragRequest {
+  return nativeAssetDragRequestSchema.parse(input);
+}
+
 export const activeContextSchema = z.strictObject({
   libraryId: z.string().nullable(),
-  selectedFolderId: optionalIdentifierSchema,
+  selectedFolderId: folderScopeIdSchema.optional(),
 });
 
 export type ActiveContext = z.infer<typeof activeContextSchema>;
 
 export function parseActiveContext(input: unknown): ActiveContext {
   return activeContextSchema.parse(input);
+}
+
+export type ActiveContextParseResult =
+  | { ok: true; context: ActiveContext }
+  | { ok: false; code: 'malformed'; issuePaths: string[] };
+
+/**
+ * safeParse 包装：失败时只暴露 issue path（不含用户/payload 值），供 Main 结构化日志。
+ */
+export function tryParseActiveContext(input: unknown): ActiveContextParseResult {
+  const parsed = activeContextSchema.safeParse(input);
+  if (parsed.success) return { ok: true, context: parsed.data };
+  return {
+    ok: false,
+    code: 'malformed',
+    issuePaths: parsed.error.issues.map((issue) =>
+      issue.path.length === 0 ? '(root)' : issue.path.map(String).join('.'),
+    ),
+  };
 }

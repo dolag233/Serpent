@@ -1,29 +1,315 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type Dispatch,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
-  type SetStateAction,
 } from "react";
+import { createPortal, flushSync } from "react-dom";
+
+import { Icon, type IconName } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
+import { EditTextContextMenuHost } from "./edit-text-context-menu";
+import { HoverTipHost } from "./hover-tip";
+import {
+  corruptAssetAffordance,
+  isCorruptAsset,
+  missingAssetAffordance,
+  shouldShowMissingAssetOverlay,
+} from "./availability-affordance";
+import {
+  assetTypeBadgeLabel,
+  fileExtensionLabel,
+  formatSequenceDuration,
+  shouldShowAssetCardBadges,
+  shouldShowDurationBadge,
+  shouldShowExtensionBadge,
+  shouldShowTypeBadgeAlongsideExtension,
+} from "./asset-card-badges";
+import {
+  resolveAssetSourceBadgeLabel,
+  shouldShowAssetSourceBadge,
+} from "./asset-source-badge";
+import {
+  assetCardKey,
+  isCardHoverPreviewable,
+  isCardSequencePlayable,
+  resolveAssetCardCoverUrl,
+} from "./asset-card-hover-preview";
+import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
+import {
+  assetSupportsThumbnail,
+  isBenignThumbnailErrorCode,
+} from "../shared/thumbnail-support";
+import { AssetCardMedia } from "./AssetCardMedia";
+import { useAssetCardHoverPreview } from "./use-asset-card-hover-preview";
+import { resolveSearchSnippetCaption } from "./search-snippet-caption";
+import { parseSearchExpression, splitSearchHighlights } from "./search-expression";
+import { ConvertLinkedDialog } from "./ConvertLinkedDialog";
+import { LinkedRulesDialog } from "./LinkedRulesDialog";
+import { TagManagementWorkspace } from "./TagManagementWorkspace";
+import { useFolderDeleteActions } from "./use-folder-delete-actions";
+import { useFolderOrganizeActions } from "./use-folder-organize-actions";
+import { useFolderCommandShortcuts } from "./use-folder-command-shortcuts";
+import { useWindowsBrowseShortcutBridge } from "./use-windows-browse-shortcut-bridge";
+import { useCollectionCommandShortcuts } from "./use-collection-command-shortcuts";
+import { ExportDialog } from "./ExportDialog";
+import { ImportDialog } from "./ImportDialog";
+import { ImportLibraryChooserDialog, OpenLibraryChooserDialog } from "./ImportLibraryChooserDialog";
+import {
+  NavigationSidebar,
+} from "./NavigationSidebar";
+import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
+import { MainMenu } from "./MainMenu";
+import {
+  buildMainMenuSections,
+  SERPENT_VERSION,
+  type MainMenuItem,
+} from "./main-menu-items";
+import { CanvasToolbarControls } from "./CanvasToolbarControls";
+import { ScopeHistoryButtons } from "./ScopeHistoryButtons";
+import {
+  ScopeBreadcrumbs,
+  buildScopeBreadcrumbSegments,
+} from "./ScopeBreadcrumbs";
+import {
+  buildLinkedFolderBreadcrumbTrail,
+  buildManagedFolderBreadcrumbTrail,
+} from "./folder-breadcrumb-trail";
+import { folderBrowseScope } from "./folder-browse-scope";
+import {
+  linkedDirectoryName,
+  parseLinkedVirtualFolderId,
+} from "../shared/linked-folder-tree";
+import {
+  resolveBrowseCanvasBodyLayout,
+  resolveFolderBrowseParentId,
+} from "./folder-browse-canvas";
+import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
+import {
+  decrementScopeCount,
+  removeAssetIdsLocally,
+} from "./asset-local-refresh";
+import { FolderCard } from "./FolderCard";
+import {
+  isFolderRecursiveEnabled,
+  loadFolderRecursivePreferences,
+  saveFolderRecursivePreferences,
+  withFolderRecursiveEnabled,
+} from "./folder-recursive-preferences";
+import { useT, useLocale, translateForLocale, type AppLocale } from "./i18n";
+import type { AiApiFormat } from "../shared/ai-endpoints";
+import type { ApplicationMenuCommand } from "../shared/application-menu";
+import type { SerpentMcpSettingsApi } from "../shared/mcp";
+import type { HistoryStatus } from "../shared/protocol/responses";
+import { isEditableTextTarget } from "../shared/edit-context-menu";
+import type { SearchQuery } from "../shared/asset-types";
+import {
+  createWorkspaceNavHistory,
+  type WorkspaceNavLocation,
+} from "./workspace-nav-history";
+import { mergeAssetSummaries } from "./merge-asset-summaries";
+import {
+  RelinkPreview,
+  type BatchRelinkPreviewSession,
+  formatRelinkExamplePath,
+} from "./RelinkPreview";
+import { MoveDialog } from "./MoveDialog";
+import { RestoreDialog } from "./RestoreDialog";
+import { ImageSequenceDialog } from "./ImageSequenceDialog";
+import { ImageSequenceImportDialog } from "./ImageSequenceImportDialog";
+import {
+  isImageSequenceImportOffer,
+  isImportConflictPlan,
+} from "../shared/import-outcome";
+import { DEFAULT_IMAGE_SEQUENCE_FPS } from "../shared/image-sequence";
+import { NameConflictDialog } from "./NameConflictDialog";
+import { ContentDuplicateDialog } from "./ContentDuplicateDialog";
+import {
+  loadImportConflictPreferences,
+  rememberDuplicateDecision,
+  rememberNameConflictDecision,
+  type RememberedDuplicateDecision,
+  type RememberedNameConflictDecision,
+} from "./import-conflict-preferences";
+import {
+  nextImportConflictPhaseAfterName,
+  resolveImportConflictPresentation,
+  type ImportConflictPhase,
+} from "./import-conflict-flow";
+import { RenameDialog } from "./RenameDialog";
+import {
+  CreateDialog,
+  type CreateLibraryPhase,
+} from "./CreateDialog";
+import { CollectionEditorDialog } from "./CollectionEditorDialog";
+import {
+  AiConfigDialog,
+  type AiConnectionState,
+} from "./AiConfigDialog";
+import {
+  cancellationAffectsAiBatch,
+  collectRecentAiFailureCodes,
+  computeAiBatchProgressForJobs,
+  type AiBatchProgressSnapshot,
+} from "./ai-analyze-progress";
+import { summarizeAiFailureCodes } from "./ai-job-error-message";
+import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  normalizeAiAnalysisSettings,
+  toWireAiAnalysisSettings,
+  type AiAnalysisSettingsWire,
+} from "../shared/ai-analysis-settings";
+import { AppSettingsDialog } from "./AppSettingsDialog";
+import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
+import { OpenSyncLibraryDialog } from "./OpenSyncLibraryDialog";
+import { AppLogDialog } from "./AppLogDialog";
+import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
+import {
+  shouldApplyLibraryLifecycleEvent,
+  shouldDetachLibraryOnOpening,
+} from "./library-lifecycle-sync";
+import { AboutDialog } from "./AboutDialog";
+import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
+import { AppSettingsEntry } from "./AppSettingsEntry";
+import type { AppSettingsCategoryId } from "./app-settings-sections";
+import {
+  loadAiUiPreferences,
+  saveAiUiPreferences,
+  type AiUiPreferences,
+} from "./ai-ui-preferences";
+import {
+  SmartCollectionSettingsDialog,
+  type SmartCollectionSettingsTarget,
+} from "./SmartCollectionSettingsDialog";
+import { MediaJobsDialog } from "./MediaJobsDialog";
+import { PluginJobActivityBanner } from "./PluginJobActivityBanner";
+import { AiConnectionFailureDialog } from "./AiConnectionFailureDialog";
+import { FatalAlertDialog } from "./FatalAlertDialog";
+import { useAiConnectionFailure } from "./use-ai-connection-failure";
+import {
+  hasActivePluginJobs,
+  selectPluginJobActivity,
+} from "./plugin-job-activity";
+import { useScrollbarActivity } from "./use-scrollbar-activity";
+import { splitFilenameForDisplay } from "./filename-display";
 
 import {
-  ContextMenu,
-  ContextMenuBackdrop,
-  ContextMenuItem,
   ContextMenuProvider,
   useContextMenu,
 } from "./context-menu";
+import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
+import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
+import { useAssetSelection } from "./useAssetSelection";
+import { buildMarqueeLayoutKey } from "./marquee-layout-key";
+import { readPublishedCanvasAssetLayout } from "./canvas-asset-layout";
+import { useSelectionKeyboard } from "./use-selection-keyboard";
+import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
+import { resolveBrowsePasteDestination } from "./browse-paste-target";
+import { useWorkspaceMouseNavigation } from "./use-workspace-mouse-navigation";
+import {
+  shouldOpenTrashRestoreDialog,
+  silentTrashRestoreRequest,
+  type TrashRestoreRequest,
+} from "./trash-restore-flow";
+import { isBrowseScopeAffectedByFolderTrash } from "./folder-trash-scope";
+import {
+  useBrowserSessionPersist,
+  useBrowserSessionRestore,
+  usePendingRestoredAssetFocus,
+} from "./use-browser-session-restore";
+import { useExtensionActiveContext } from "./use-extension-active-context";
+import { useExtensionSaveReveal } from "./use-extension-save-reveal";
+import { usePendingAssetReveal } from "./use-pending-asset-reveal";
+import {
+  currentScopeShowsRevealAssets,
+  pendingRevealFromAssets,
+  sharedBrowseScopeForAssets,
+  type PendingAssetReveal,
+} from "./pending-asset-reveal";
+import { resolveInspectorTagTarget } from "./inspector-tag-target";
+import { useBatchActions } from "./useBatchActions";
+import { useShellFileActions } from "./use-shell-file-actions";
+import { useInspectorMultiEdit } from "./use-inspector-multi-edit";
+import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
+import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
+import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
+import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
+import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
+import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
+import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
+import { usePluginInputCaptureModalSeam } from "./use-plugin-input-capture-modal-seam";
+import {
+  isPluginSidebarViewsEnabled,
+  PluginSidebarViewPanel,
+  usePluginSidebarViews,
+} from "./plugin-sidebar-views";
+import { PluginWorkspaceViews } from "./plugin-workspace-views";
+import { useExternalImportHandlers } from "./use-external-import-handlers";
+import { useFolderDragDropHandlers } from "./use-folder-drag-drop-handlers";
+import { WorkspaceNoticeBanner } from "./WorkspaceNoticeBanner";
+import { WorkspaceToolsOverflow } from "./WorkspaceToolsOverflow";
+import {
+  MANAGED_FOLDERS_DRAG_TYPE,
+  resolveDraggedFolderIds,
+} from "./folder-drag-drop";
+import { importSummaryMessage } from "./import-summary";
+import { automationCommandToast } from "./automation-command-toast";
+import type { DialogEscapeSnapshot } from "./dialog-escape-stack";
+import { useAssetRename } from "./useAssetRename";
+import { useInlineFolderEdit } from "./use-inline-folder-edit";
+import { useInlineSmartCollectionEdit } from "./use-inline-smart-collection-edit";
+import { usePanelResize } from "./use-panel-resize";
+import { useToastNotifications } from "./useToastNotifications";
+import {
+  AI_CONNECTION_HEARTBEAT_MS,
+  aiAnalyzeConnectionReady,
+  aiAnalyzeShowsDisconnectGlyph,
+  shouldRunAiConnectionHeartbeat,
+} from "./ai-connection-heartbeat";
+import {
+  MANAGED_ASSETS_DRAG_TYPE,
+  resolveDragDropMode,
+  resolveDraggedAssetIds,
+} from "./asset-drag-drop";
+import {
+  ASSET_DRAG_PREVIEW_HEIGHT,
+  ASSET_DRAG_PREVIEW_WIDTH,
+  dismissAssetDragPreview,
+  setAssetDragPreviewCopyMode,
+  showAssetDragPreview,
+} from "./asset-drag-preview";
+import { DimensionFilterBar } from "./DimensionFilterBar";
+import {
+  buildActiveFilterChips,
+  type ClearableFilterId,
+} from "./active-discovery-filters";
+import { resolveBrowseEmptyState, resolveImportMenuCopy } from "./browse-empty-state";
+import { trashedFromLabel } from "./trashed-from-label";
+import {
+  buildTrashBreadcrumbHops,
+  filterTrashedAssetsAtTombstone,
+  filterTrashedFoldersAtTombstone,
+} from "./trash-browse";
+import { invertSelection } from "./invert-selection";
+import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
+import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
+import { resolveMasonryTabTarget } from "./masonry-focus-order";
+import { shuffleArray } from "./client-shuffle";
+import { toMessage, messageForPublicError, LibraryOperationError } from "./error-utils";
 
 import type {
   AiSearchPlan,
   AssetSummary,
+  BrowseLayoutEntry,
   AssetMetadataResult,
   CollectionSummary,
   FilterClause,
+  FolderBrowseEntry,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -31,27 +317,43 @@ import type {
   SmartCollectionSummary,
   SortDefinition,
   TagSummary,
+  TrashedFolderSummary,
 } from "../shared/asset-types";
+import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
+import { expandFormatFilterTokens } from "../shared/text-media";
 import type {
   SerpentLibraryApi,
-  RelinkBatchPreviewResult,
+  LibraryApiResult,
   ImportValidatedResult,
   MediaJobStatus,
   AiJobStatus,
+  PluginJobStatus,
 } from "../shared/library-api";
-import type { SerpentExtensionPairingApi } from "../shared/extension-pairing";
-import type {
-  PublicError,
-  PublicErrorCode,
-  PublicErrorReason,
-} from "../shared/protocol/errors";
+import type { SerpentShellApi } from "../shared/external-url";
+import type { SerpentAutomationScriptApi } from '../shared/automation-script-api';
+import type { SerpentPluginManagerApi } from '../shared/plugin-manager-api';
+import type { PluginContributionContext } from "../plugins/plugin-context";
+import type { AppLogEntry, ReadAppLogResult } from "../shared/app-log";
 import type {
   ImportConflictPlan,
+  ImageSequenceImportOffer,
   RendererLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
+  SyncProgressEvent,
 } from "../shared/protocol/responses";
-import { AssetPreviewModal } from "./AssetPreviewModal";
+import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewModal";
+import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
+import { WindowsWindowControls } from "./WindowsWindowControls";
+import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { useDialogFocusTrap } from "./use-dialog-focus-trap";
+import { AssetContextMenu } from "./AssetContextMenu";
+import {
+  buildPluginBrowseScope,
+  buildPluginViewerState,
+} from "./plugin-context-state";
+import { createPluginMenuContributionContext } from "./plugin-contribution-context";
+import { InspectorPanel } from "./InspectorPanel";
 import {
   CARD_SIZE_MAX,
   CARD_SIZE_MIN,
@@ -59,11 +361,88 @@ import {
   saveCanvasPreferences,
   type CanvasPreferences,
 } from "./canvas-preferences";
+import {
+  loadBrowseSortPreferences,
+  saveBrowseSortPreferences,
+} from "./browse-sort-preferences";
+import {
+  FOLDER_CARD_ROW_INLINE_PADDING_PX,
+  masonryAlignedFolderWidthPx,
+} from "./folder-card-width";
+import { BrowseLayoutPreview } from "./BrowseLayoutPreview";
+import { assetSummaryFromLayoutEntry } from "./browse-window-slots";
+import { formatBytes, formatShortDate } from "./format-file-meta";
+import {
+  isLibraryOpenTransferKind,
+  libraryTransferHeadlineKey,
+  libraryTransferKindFromOperation,
+  type LibraryTransferKind,
+} from "./library-transfer-progress";
+import {
+  BROWSE_PAGE_SIZE,
+  registerBrowseSearchPage,
+  registerBrowseSmartCollectionPage,
+  useBrowsePagination,
+} from "./use-browse-pagination";
+import {
+  enumerateDiscreteCardSizes,
+  nearestDiscreteCardSize,
+  nextDiscreteCardSizeFromWheelDelta,
+  stepDiscreteCardSize,
+} from "./card-size-stops";
+import { assetGridLayoutStyle } from "./asset-grid-layout";
+import { JustifiedAssetRows } from "./justified-asset-rows";
+import { MasonryColumns } from "./masonry-columns";
+import {
+  applyAssetThumbnailPatches,
+  mergeAssetThumbnailPatch,
+  type AssetThumbnailPatch,
+} from "./asset-thumbnail-patches";
+import {
+  captureAnchor,
+  pickNearestCard,
+  rectLikeFromDomRect,
+  type AnchorCard,
+  type CanvasAnchor,
+} from "./canvas-scroll-anchor";
+import {
+  captureReflowAnchorFromCards,
+  retainReflowAnchor,
+  scheduleAnchorRestore,
+  type ScrollOffsetSnapshot,
+} from "./canvas-reflow-restore";
+import {
+  captureBrowseViewSnapshot,
+  resolveBrowseRestoreScroll,
+  type BrowseViewSnapshot,
+} from "./view-restore";
+import {
+  isMacPlatform,
+  type CommandPlatform,
+} from "./commands/command-types";
+import { resolveRendererPlatform } from "./renderer-platform";
+import {
+  defaultKeyboardCardSize,
+  matchGlobalZoomShortcut,
+  shouldIgnoreGlobalZoomShortcut,
+} from "./global-zoom-shortcuts";
+
+const IS_MAC_PLATFORM = isMacPlatform(navigator.userAgent);
+const IS_WINDOWS_PLATFORM =
+  resolveRendererPlatform(navigator.userAgent) === "windows";
+
+const SHORTCUT_PLATFORM: CommandPlatform = IS_MAC_PLATFORM ? "mac" : "windows";
 
 type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
-    extensionPairing?: SerpentExtensionPairingApi;
+    shell?: SerpentShellApi;
+    automation?: SerpentAutomationScriptApi;
+    plugins?: SerpentPluginManagerApi;
+    mcp?: SerpentMcpSettingsApi;
+    e2e?: {
+      getRequestCount: (type: string) => number;
+    };
   };
 };
 type UiState =
@@ -75,214 +454,85 @@ type UiState =
   | "loading"
   | "importing"
   | "ready";
-type DialogKind = "library" | "folder" | "tag" | "collection" | null;
+type QueryNumericRangeState = {
+  min: string;
+  max: string;
+  exclude: boolean;
+};
+type QueryFilterSnapshot = {
+  formatFilter: string;
+  excludeFormatFilter: boolean;
+  tagFilter: string;
+  excludeTagFilter: boolean;
+  tagFilterMatch: "any" | "all";
+  ratingFilter: string;
+  excludeRatingFilter: boolean;
+  favoriteFilter: "any" | "yes" | "no";
+  sourceUrlFilter: "any" | "yes" | "no";
+  availabilityFilter: "any" | "available" | "missing";
+  excludeAvailabilityFilter: boolean;
+  widthRange: QueryNumericRangeState;
+  heightRange: QueryNumericRangeState;
+  aspectRatioRange: QueryNumericRangeState;
+  longEdgeRange: QueryNumericRangeState;
+  durationRange: QueryNumericRangeState;
+};
+// REQ-FOLDER-007 removed the "folder" kind: folder create/rename now happens
+// inline in the directory tree (use-inline-folder-edit), not in a dialog.
+type DialogKind = "library" | "tag" | "collection" | null;
 type AssetScope = "all" | "root" | string;
-type OrganizationKind = "tag" | "collection" | "smart";
+type OrganizationKind = "collection" | "smart";
 type OrganizationRenameTarget = {
   kind: OrganizationKind;
   id: string;
   name: string;
 };
+function renderFilenameHighlights(value: string, searchValue: string, keyPrefix: string): ReactNode {
+  const segments = splitSearchHighlights(value, searchValue, "filename");
+  // Keep the ordinary, non-search path as a text node. Wrapping every
+  // segment in an inline span prevents text-overflow from producing the
+  // intended middle ellipsis inside the flex prefix.
+  if (segments.length === 1 && !segments[0]!.matched) {
+    return segments[0]!.text;
+  }
+  return segments.map((segment, index) =>
+    segment.matched ? (
+      <mark className="search-text-highlight" key={`${keyPrefix}-match-${index}`}>
+        {segment.text}
+      </mark>
+    ) : (
+      <span key={`${keyPrefix}-text-${index}`}>{segment.text}</span>
+    ),
+  );
+}
+
+function renderMiddleEllipsisFilename(name: string, searchValue: string): ReactNode {
+  const parts = splitFilenameForDisplay(name);
+  return (
+    <>
+      <span className="asset-filename-prefix">
+        {renderFilenameHighlights(parts.prefix, searchValue, "filename-prefix")}
+      </span>
+      {parts.tail ? (
+        <span className="asset-filename-tail">
+          {renderFilenameHighlights(parts.tail, searchValue, "filename-tail")}
+        </span>
+      ) : null}
+      {parts.extension ? (
+        <span className="asset-filename-extension">
+          {renderFilenameHighlights(parts.extension, searchValue, "filename-extension")}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 type SearchDefinition = {
-  search?: {
-    clauses: Array<{
-      field: string | null;
-      values: string[];
-      exclude: boolean;
-    }>;
-  };
+  search?: SearchQuery;
   filters?: FilterClause[];
   sort?: SortDefinition;
 };
-type StoredBrowserSession = {
-  version: 1;
-  scope:
-    | { kind: "all" | "root" | "trash" }
-    | {
-        kind: "folder" | "tag" | "collection" | "smart";
-        id: string;
-        name?: string;
-      };
-  selectedAssetId: string;
-  selectedAssetName: string;
-};
-const ASSET_PAGE_SIZE = 50;
 
-function browserSessionKey(libraryId: string): string {
-  return `serpent.browser-session.v1.${libraryId}`;
-}
-
-function readBrowserSession(libraryId: string): StoredBrowserSession | null {
-  try {
-    const value = JSON.parse(
-      window.localStorage.getItem(browserSessionKey(libraryId)) ?? "null",
-    ) as unknown;
-    if (!value || typeof value !== "object") return null;
-    const session = value as Partial<StoredBrowserSession>;
-    if (
-      session.version !== 1 ||
-      typeof session.selectedAssetId !== "string" ||
-      typeof session.selectedAssetName !== "string" ||
-      !session.scope ||
-      typeof session.scope !== "object" ||
-      ![
-        "all",
-        "root",
-        "trash",
-        "folder",
-        "tag",
-        "collection",
-        "smart",
-      ].includes(session.scope.kind)
-    )
-      return null;
-    if (
-      ["folder", "tag", "collection", "smart"].includes(session.scope.kind) &&
-      !("id" in session.scope && typeof session.scope.id === "string")
-    )
-      return null;
-    return session as StoredBrowserSession;
-  } catch {
-    return null;
-  }
-}
-type IconName =
-  | "archive"
-  | "chevron"
-  | "close"
-  | "collection"
-  | "collapse-left"
-  | "collapse-right"
-  | "file"
-  | "folder"
-  | "grid"
-  | "heart"
-  | "info"
-  | "link"
-  | "menu"
-  | "plus"
-  | "refresh"
-  | "search"
-  | "smart"
-  | "star"
-  | "tag"
-  | "trash"
-  | "upload"
-  | "warning";
-
-const iconPaths: Record<IconName, ReactNode> = {
-  archive: (
-    <>
-      <path d="M4 7h16v12H4z" />
-      <path d="M3 4h18v3H3zM9 11h6" />
-    </>
-  ),
-  chevron: <path d="m9 18 6-6-6-6" />,
-  close: <path d="m7 7 10 10M17 7 7 17" />,
-  collection: (
-    <>
-      <rect x="4" y="5" width="16" height="14" rx="1.5" />
-      <path d="m8 14 3-3 5 5 2-2 2 2" />
-    </>
-  ),
-  "collapse-left": (
-    <>
-      <path d="M5 4h14v16H5zM10 4v16" />
-      <path d="m15 9-3 3 3 3" />
-    </>
-  ),
-  "collapse-right": (
-    <>
-      <path d="M5 4h14v16H5zM14 4v16" />
-      <path d="m9 9 3 3-3 3" />
-    </>
-  ),
-  file: (
-    <>
-      <path d="M6 3h8l4 4v14H6z" />
-      <path d="M14 3v5h5" />
-    </>
-  ),
-  folder: <path d="M3 6.5h7l2 2h9v10H3z" />,
-  grid: (
-    <>
-      <rect x="4" y="4" width="6" height="6" />
-      <rect x="14" y="4" width="6" height="6" />
-      <rect x="4" y="14" width="6" height="6" />
-      <rect x="14" y="14" width="6" height="6" />
-    </>
-  ),
-  heart: (
-    <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.8 1.1-1.1a5.5 5.5 0 0 0 0-7.8Z" />
-  ),
-  info: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 11v6M12 7h.01" />
-    </>
-  ),
-  link: (
-    <>
-      <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.2 1.2" />
-      <path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.2-1.2" />
-    </>
-  ),
-  menu: <path d="M4 7h16M4 12h16M4 17h16" />,
-  plus: <path d="M12 5v14M5 12h14" />,
-  refresh: (
-    <>
-      <path d="M20 7v5h-5" />
-      <path d="M18.4 16a8 8 0 1 1 1.3-8.5L20 12" />
-    </>
-  ),
-  search: (
-    <>
-      <circle cx="10.5" cy="10.5" r="6.5" />
-      <path d="m16 16 4 4" />
-    </>
-  ),
-  smart: (
-    <path d="m12 3 1.7 5.3H19l-4.3 3.2 1.6 5.2-4.3-3.2-4.3 3.2 1.6-5.2L5 8.3h5.3z" />
-  ),
-  star: (
-    <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1z" />
-  ),
-  tag: <path d="M4 5h7l9 9-6 6-9-9zM8 8h.01" />,
-  trash: (
-    <>
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-      <path d="M10 11v6M14 11v6" />
-    </>
-  ),
-  upload: (
-    <>
-      <path d="M12 16V4m0 0L7 9m5-5 5 5" />
-      <path d="M4 14v6h16v-6" />
-    </>
-  ),
-  warning: (
-    <>
-      <path d="M12 3 2.8 20h18.4z" />
-      <path d="M12 9v5m0 3h.01" />
-    </>
-  ),
-};
-
-function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className="icon"
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-    >
-      {iconPaths[name]}
-    </svg>
-  );
-}
 function ToolButton({
   label,
   icon,
@@ -298,157 +548,43 @@ function ToolButton({
 }) {
   return (
     <button
-      aria-label={label}
       aria-pressed={pressed}
       className="tool-button"
       disabled={disabled}
       onClick={onClick}
-      title={label}
       type="button"
+      {...iconActionAttrs(label)}
     >
       <Icon name={icon} />
     </button>
   );
 }
-function NavRow({
-  icon,
-  label,
-  count,
-  active,
-  onClick,
-  onContextMenu,
-  onDragOver,
-  onDrop,
-  depth = 0,
-  disabled,
-}: {
-  icon: IconName;
-  label: string;
-  count?: number;
-  active?: boolean;
-  onClick?: () => void;
-  onContextMenu?: (e: React.MouseEvent) => void;
-  onDragOver?: (e: React.DragEvent<HTMLButtonElement>) => void;
-  onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
-  depth?: number;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      className={`nav-row${active ? " is-active" : ""}`}
-      disabled={disabled}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      style={{ paddingLeft: 7 + depth * 14 }}
-      type="button"
-    >
-      <Icon name={icon} size={15} />
-      <span>{label}</span>
-      {count !== undefined && <span className="nav-count">{count}</span>}
-    </button>
-  );
-}
-function Section({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  action?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="nav-section">
-      <div className="nav-section-heading">
-        <span>{title}</span>
-        {action && (
-          <button
-            aria-label={`添加${title}`}
-            className="tiny-action"
-            onClick={action}
-            type="button"
-          >
-            <Icon name="plus" size={13} />
-          </button>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-type TechnicalRangeInput = { min: string; max: string; exclude: boolean };
-function TechnicalRangeFilter({
-  label,
-  range,
-  setRange,
-  step = "1",
-}: {
-  label: string;
-  range: TechnicalRangeInput;
-  setRange: Dispatch<SetStateAction<TechnicalRangeInput>>;
-  step?: string;
-}) {
-  return (
-    <label>
-      {label}
-      <div className="numeric-filter-range">
-        <input
-          aria-label={`${label}最小值`}
-          className="text-field"
-          min="0"
-          onChange={(event) =>
-            setRange((current) => ({ ...current, min: event.target.value }))
-          }
-          placeholder="最小"
-          step={step}
-          type="number"
-          value={range.min}
-        />
-        <span>–</span>
-        <input
-          aria-label={`${label}最大值`}
-          className="text-field"
-          min="0"
-          onChange={(event) =>
-            setRange((current) => ({ ...current, max: event.target.value }))
-          }
-          placeholder="最大"
-          step={step}
-          type="number"
-          value={range.max}
-        />
-      </div>
-      <span>
-        <input
-          aria-label={`排除${label}范围`}
-          checked={range.exclude}
-          disabled={!range.min && !range.max}
-          onChange={(event) =>
-            setRange((current) => ({
-              ...current,
-              exclude: event.target.checked,
-            }))
-          }
-          type="checkbox"
-        />
-        排除
-      </span>
-    </label>
-  );
-}
 
 function AppInner() {
+  const t = useT();
+  const { locale } = useLocale();
   const api = (window as RendererWindow).serpent?.library;
-  const extensionPairingApi = (window as RendererWindow).serpent
-    ?.extensionPairing;
+  const shellApi = (window as RendererWindow).serpent?.shell;
+
+  useEffect(() => {
+    document.body.classList.toggle("platform-darwin", IS_MAC_PLATFORM);
+  }, []);
+
+  useScrollbarActivity();
+
+  // Keep AI readiness (hasKey) in sync without requiring the settings dialog.
+  useEffect(() => {
+    if (!api) return;
+    void loadAiConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once per api identity
+  }, [api]);
   // Library / folder / assets (existing)
   const [library, setLibrary] = useState<RendererLibrarySummary | null>(null);
+  const [recentLibraries, setRecentLibraries] = useState<
+    RecentLibraryMenuEntry[]
+  >([]);
   const [folders, setFolders] = useState<ManagedFolderSummary[]>([]);
   const [linkedFolders, setLinkedFolders] = useState<LinkedFolderSummary[]>([]);
-  const [copyLinkedTargetId, setCopyLinkedTargetId] = useState("");
   const [linkedRulesEditor, setLinkedRulesEditor] = useState<{
     folderId: string;
     name: string;
@@ -460,13 +596,42 @@ function AppInner() {
     targetFolderId: string;
   }>({ folderId: "", name: "", targetFolderId: "" });
   const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [browseLayout, setBrowseLayout] = useState<BrowseLayoutEntry[]>([]);
+  const [layoutThumbnailArtifacts, setLayoutThumbnailArtifacts] = useState<{
+    libraryId: string;
+    ids: Map<string, string>;
+  }>({ libraryId: "", ids: new Map() });
   const [assetScope, setAssetScope] = useState<AssetScope>("all");
+  // REQ-FOLDER-001/002/003/010: direct child folder cards shown above assets
+  // when the current browse parent is a managed folder or the managed root.
+  const [folderBrowseEntries, setFolderBrowseEntries] = useState<FolderBrowseEntry[]>([]);
+  // Serpent-d0nv: bump to re-fetch folder browse entries when a cover
+  // candidate's thumbnail becomes ready (progressive cover refresh).
+  const [folderBrowseRefreshToken, setFolderBrowseRefreshToken] = useState(0);
+  const folderCoverCandidateAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
+  /** Full trash tombstone list for hierarchy browse (Serpent-6pcd). */
+  const [trashedFolders, setTrashedFolders] = useState<TrashedFolderSummary[]>(
+    [],
+  );
+  const [trashBrowseTombstoneId, setTrashBrowseTombstoneId] = useState<
+    string | null
+  >(null);
+  const [masonryGridWidth, setMasonryGridWidth] = useState(0);
+  const assetGridRef = useRef<HTMLDivElement | null>(null);
+  const [fatalDialogTitle, setFatalDialogTitle] = useState<string | null>(null);
+  const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const managedImportTargetFolderIdRef = useRef<string | undefined>(undefined);
   const [allAssetCount, setAllAssetCount] = useState(0);
+  const [rootAssetCount, setRootAssetCount] = useState(0);
   const [selectedAssetId, setSelectedAssetId] = useState<string | undefined>();
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const selectionAnchorRef = useRef<string | null>(null);
+  // Session persistence must wait until the startup restore has applied the
+  // saved scope and selection; otherwise the initial empty React state can
+  // overwrite the last browsed asset in localStorage.
+  const [browserSessionReady, setBrowserSessionReady] = useState(false);
   const [uiState, setUiState] = useState<UiState>("booting");
+  const uiStateRef = useRef(uiState);
+  uiStateRef.current = uiState;
   const busy = [
     "booting",
     "creating",
@@ -475,21 +640,122 @@ function AppInner() {
     "loading",
     "importing",
   ].includes(uiState);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Toast + fatal alert (REQ-SHELL-010 / Serpent-99lv): controller owns
+  // auto-dismiss, stack ordering, and the toast closing lifecycle.
+  const {
+    renderedStack: renderedToastStack,
+    fatal: fatalAlertMessage,
+    setError,
+    setWarning,
+    setNotice,
+    setFatal,
+    dismissToast,
+    handleToastTransitionEnd,
+  } = useToastNotifications();
+  const topVisibleToastId = renderedToastStack.find(
+    (entry) => !entry.closing,
+  )?.id;
+  const dismissFatalAlert = useCallback(() => {
+    setFatalDialogTitle(null);
+    setFatal(null);
+  }, [setFatal]);
+
+  const showBlockingError = useCallback(
+    (title: string, message: string) => {
+      setFatalDialogTitle(title);
+      setFatal(message);
+    },
+    [setFatal],
+  );
   const [dialog, setDialog] = useState<DialogKind>(null);
-  const [dialogValue, setDialogValue] = useState("我的资源库");
+  const [createLibraryPhase, setCreateLibraryPhase] =
+    useState<CreateLibraryPhase>("start");
+  const hadLibraryRef = useRef(false);
+  const [dialogValue, setDialogValue] = useState(() => t("shell.myLibrary"));
   const [conflicts, setConflicts] = useState<ImportConflictPlan | null>(null);
-  const [duplicateDecision, setDuplicateDecision] = useState<
-    "skip" | "merge" | "create-copy"
-  >("skip");
-  const [nameDecision, setNameDecision] = useState<
-    "keep-both" | "replace" | "skip"
-  >("keep-both");
-  const [externalDropActive, setExternalDropActive] = useState(false);
-  const externalDragDepth = useRef(0);
+  const [imageSequenceImportOffer, setImageSequenceImportOffer] =
+    useState<ImageSequenceImportOffer | null>(null);
+  const [imageSequenceImportIndex, setImageSequenceImportIndex] = useState(0);
+  const imageSequenceOfferIdRef = useRef<string | null>(null);
+  const [imageSequenceImportError, setImageSequenceImportError] = useState<
+    string | null
+  >(null);
+  const [imageSequenceImportSubmitting, setImageSequenceImportSubmitting] =
+    useState(false);
+
+  useEffect(() => {
+    const offerId = imageSequenceImportOffer?.offerId ?? null;
+    if (offerId !== imageSequenceOfferIdRef.current) {
+      imageSequenceOfferIdRef.current = offerId;
+      setImageSequenceImportIndex(0);
+    }
+  }, [imageSequenceImportOffer]);
+  const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
+    null,
+  );
+  const [duplicateDecision, setDuplicateDecision] =
+    useState<RememberedDuplicateDecision>("skip");
+  const [nameDecision, setNameDecision] =
+    useState<RememberedNameConflictDecision>("keep-both");
+  const [rememberNameConflict, setRememberNameConflict] = useState(false);
+  const [rememberDuplicate, setRememberDuplicate] = useState(false);
+  const resolveImportConflictsRef = useRef<
+    (
+      plan: ImportConflictPlan,
+      name: RememberedNameConflictDecision,
+      duplicate: RememberedDuplicateDecision,
+    ) => Promise<void>
+  >(async () => {});
+  const presentImportConflicts = useCallback((plan: ImportConflictPlan) => {
+    const prefs = loadImportConflictPreferences();
+    const presentation = resolveImportConflictPresentation(plan, prefs);
+    setConflicts(plan);
+    setNameDecision(presentation.nameDecision);
+    setDuplicateDecision(presentation.duplicateDecision);
+    setRememberNameConflict(false);
+    setRememberDuplicate(false);
+    setConflictPhase(presentation.phase);
+    if (presentation.phase === null) {
+      void resolveImportConflictsRef.current(
+        plan,
+        presentation.nameDecision,
+        presentation.duplicateDecision,
+      );
+    }
+  }, []);
+  const clearImportConflictsUi = useCallback(() => {
+    setConflicts(null);
+    setConflictPhase(null);
+  }, []);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 800);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 1020);
+  const panelResizeReleaseRef = useRef<() => void>(() => undefined);
+  // REQ-SHELL-007 / REQ-SHELL-011: draggable nav/inspector pane widths + auto-hide.
+  const {
+    navPanelWidth,
+    inspectorPanelWidth,
+    resizing: panelResizing,
+    shellStyle: panelResizeShellStyle,
+    beginResize: beginPanelResize,
+    beginEdgeRestore: beginPanelEdgeRestore,
+    resetPanel: resetPanelWidth,
+  } = usePanelResize({
+    onAutoHide: (panel) => {
+      if (panel === "nav") setLeftOpen(false);
+      else setRightOpen(false);
+    },
+    onEdgeRestore: (panel) => {
+      if (panel === "nav") setLeftOpen(true);
+      else setRightOpen(true);
+    },
+    onResizeEnd: () => panelResizeReleaseRef.current(),
+  });
+  const navHistoryRef = useRef(createWorkspaceNavHistory());
+  const suppressNavHistoryRef = useRef(false);
+  const [navHistoryUi, setNavHistoryUi] = useState({
+    canBack: false,
+    canForward: false,
+  });
 
   // Tags
   const [tags, setTags] = useState<TagSummary[]>([]);
@@ -502,6 +768,12 @@ function AppInner() {
   );
   const [collectionRecursive, setCollectionRecursive] = useState(true);
   const collectionRecursiveRef = useRef(collectionRecursive);
+  // REQ-FOLDER-009: folder browse/search recurse only when explicitly enabled.
+  const [folderRecursive, setFolderRecursive] = useState(false);
+  const folderRecursiveRef = useRef(folderRecursive);
+  const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
+    loadFolderRecursivePreferences(),
+  );
   const [collectionEditor, setCollectionEditor] = useState<{
     collectionId: string;
     description: string;
@@ -511,14 +783,6 @@ function AppInner() {
     null,
   );
   const [draggedMemberId, setDraggedMemberId] = useState<string | null>(null);
-  const [marqueeBox, setMarqueeBox] = useState<{
-    left: number; top: number; width: number; height: number;
-  } | null>(null);
-  const marqueeStartRef = useRef({ x: 0, y: 0 });
-  const marqueeHitIdsRef = useRef<string[]>([]);
-  const lastMousedownButtonRef = useRef(0);
-  const [batchTagId, setBatchTagId] = useState("");
-  const [batchCollectionId, setBatchCollectionId] = useState("");
 
   // Smart collections
   const [smartCollections, setSmartCollections] = useState<
@@ -528,10 +792,17 @@ function AppInner() {
     string | null
   >(null);
   const [searchValue, setSearchValue] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
+  const [colorFilter, setColorFilter] = useState("");
+  const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
+  // Serpent-eaxs: tag-management AND search ("包含 N 个标签") splits the tag
+  // names into separate clauses (clauses are ANDed; values within one clause
+  // are ORed). Any explicit filter-bar edit resets this to "any".
+  const [tagFilterMatch, setTagFilterMatch] = useState<"any" | "all">("any");
   const [ratingFilter, setRatingFilter] = useState("");
   const [excludeRatingFilter, setExcludeRatingFilter] = useState(false);
   const [favoriteFilter, setFavoriteFilter] = useState<"any" | "yes" | "no">(
@@ -560,39 +831,59 @@ function AppInner() {
     max: "",
     exclude: false,
   });
+  /** Shape/aspect preset OR ranges (Serpent-gp4). */
+  const [aspectRatioRanges, setAspectRatioRanges] = useState<
+    Array<{ min: string; max: string }>
+  >([]);
+  // REQ-FILTER-010: resolution buckets filter on the longer edge (long_edge).
+  const [longEdgeRange, setLongEdgeRange] = useState({
+    min: "",
+    max: "",
+    exclude: false,
+  });
   const [durationRange, setDurationRange] = useState({
     min: "",
     max: "",
     exclude: false,
   });
-  const [sortField, setSortField] = useState<
-    "relevance" | SortDefinition["field"]
-  >("relevance");
-  const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>("asc");
+  const [sortField, setSortField] = useState<SortDefinition["field"]>(
+    () => loadBrowseSortPreferences().field,
+  );
+  const [sortOrder, setSortOrder] = useState<SortDefinition["order"]>(
+    () => loadBrowseSortPreferences().order,
+  );
+  /** Serpent-hm28: null = normal sort; otherwise client shuffle seed. */
+  const [shuffleSeed, setShuffleSeed] = useState<number | null>(null);
   const [, setSearchOffset] = useState(0);
   const [searchTotal, setSearchTotal] = useState<number | null>(null);
   const [searchSnippets, setSearchSnippets] = useState<Map<string, string>>(
     new Map(),
   );
-  const [aiSearchEnabled, setAiSearchEnabled] = useState(false);
-  const [aiSearchLoading, setAiSearchLoading] = useState(false);
-  const [activeAiSearchDefinition, setActiveAiSearchDefinition] =
-    useState<SearchDefinition | null>(null);
-  const [aiSearchPlanSummary, setAiSearchPlanSummary] = useState<string | null>(
-    null,
-  );
-  const [smartCollectionName, setSmartCollectionName] = useState("");
-  const { open: openContextMenu, close: closeContextMenu, active: activeContextMenu } =
+  const { open: openContextMenu, close: closeContextMenu } =
     useContextMenu();
   const hadDiscoveryInput = useRef(false);
+  // Auto-search requests can resolve out of order while the user is still
+  // typing. Only the newest first-page request may replace the canvas.
+  const searchRequestGenerationRef = useRef(0);
+  // Browse loads can overlap a destructive folder mutation. An older request
+  // may then reject with FOLDER_NOT_FOUND after the UI has already navigated
+  // away from that scope. Ignore every result (including errors) from a load
+  // generation that is no longer current so stale reads cannot cover the
+  // undoable mutation receipt with a misleading error toast.
+  const contentLoadGenerationRef = useRef(0);
   const reloadCurrentContentRef = useRef<() => Promise<void>>(
+    async () => undefined,
+  );
+  const loadAiContentForAssetRef = useRef<(assetId: string) => Promise<void>>(
+    async () => undefined,
+  );
+  const refreshAfterAiRef = useRef<(assetId: string) => Promise<void>>(
     async () => undefined,
   );
 
   // Metadata editor
   const [assetMetadata, setAssetMetadata] =
     useState<AssetMetadataResult | null>(null);
-  const [metadataLoading, setMetadataLoading] = useState(false);
   const [versionConflict, setVersionConflict] = useState(false);
   const selectedAssetIdRef = useRef(selectedAssetId);
   useEffect(() => {
@@ -600,38 +891,97 @@ function AppInner() {
   }, [selectedAssetId]);
   const metadataByAssetRef = useRef(new Map<string, AssetMetadataResult>());
   const metadataConflictAssetIdsRef = useRef(new Set<string>());
-  const metadataSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Pending edit values
-  const [editLabel, setEditLabel] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editRating, setEditRating] = useState(0);
   const [editFavorite, setEditFavorite] = useState(false);
   const [editSourceUrl, setEditSourceUrl] = useState("");
-  const [editPalette, setEditPalette] = useState("");
+  const [editAuthor, setEditAuthor] = useState("");
+  // REQ-SELECT-004: UE-style multi-select Inspector model (null when <2 selected).
+  const selectedAssetIdsRef = useRef(selectedAssetIds);
+  useEffect(() => {
+    selectedAssetIdsRef.current = selectedAssetIds;
+  }, [selectedAssetIds]);
 
-  // Inline tag/collection editors
-  const [showTagInput, setShowTagInput] = useState(false);
-  const [tagInputValue, setTagInputValue] = useState("");
+  // Inline collection editors
   const [showCollectionInput, setShowCollectionInput] = useState(false);
   const [collectionInputValue, setCollectionInputValue] = useState("");
   const [newCollectionParentId, setNewCollectionParentId] = useState<
     string | null
   >(null);
+  const [inlineCollectionRename, setInlineCollectionRename] = useState<{
+    collectionId: string;
+    value: string;
+  } | null>(null);
   const [renameTarget, setRenameTarget] =
     useState<OrganizationRenameTarget | null>(null);
 
   // Trash / Delete / Relink state
   const [showTrash, setShowTrash] = useState(false);
+  useEffect(() => {
+    if (!showTrash) {
+      queueMicrotask(() => setTrashBrowseTombstoneId(null));
+    }
+  }, [showTrash]);
+  const [showTagManagement, setShowTagManagement] = useState(false);
+  const [activePluginSidebarViewId, setActivePluginSidebarViewId] = useState<string | null>(null);
   const [trashedAssets, setTrashedAssets] = useState<AssetSummary[]>([]);
-  const [deleteLinkedDialog, setDeleteLinkedDialog] = useState<{
-    assetIds: string[];
-    displayNames: string;
-    deleteSourceFile: boolean;
-    canDeleteSourceFile: boolean;
-  } | null>(null);
-  const [permanentDeleteDialog, setPermanentDeleteDialog] = useState<
-    string[] | null
-  >(null);
+  const [trashedAssetCount, setTrashedAssetCount] = useState(0);
+
+  // Serpent-ws4k: paginated browse/search loading. First pages render
+  // immediately; a scroll sentinel appends the next page; select-all/invert
+  // resolve the full scope id set on demand (idsOnly).
+  const browsePagination = useBrowsePagination({
+    api: api ?? null,
+    setAssets,
+    setTrashedAssets,
+    setBrowseLayout,
+    setSearchTotal,
+    setSearchOffset,
+    setSearchSnippets,
+    onLoadMoreFailed: () =>
+      setError(t("toast.loadMoreFailed")),
+  });
+  // All controller members are stable useCallback identities; destructure so
+  // downstream useCallback deps do not churn every render.
+  const {
+    beginPage: beginBrowsePage,
+    ensureVisibleRange: ensureBrowseVisibleRange,
+    fetchScopeAssetIds: fetchBrowseScopeAssetIds,
+    removeLocally: removeLocallyFromBrowse,
+    reset: resetBrowsePagination,
+  } = browsePagination;
+
+  const {
+    multiEdit,
+    rebuildAndApplyMultiEdit,
+    saveMetadataForSelection,
+    batchSetRatingForSelection,
+  } = useInspectorMultiEdit({
+    api: api ?? null,
+    library,
+    selectedAssetIds,
+    selectedAssetIdRef,
+    metadataByAssetRef,
+    metadataConflictAssetIdsRef,
+    setEditDescription,
+    setEditRating,
+    setEditFavorite,
+    setEditSourceUrl,
+    setEditAuthor,
+    setAssetMetadata,
+    setAssets,
+    setTrashedAssets,
+    setNotice,
+    setError,
+  });
+  // Serpent-c9r3: bridge the multi-edit rebuilder into the ai.content.cleared
+  // event effect (whose deps intentionally exclude it) via a ref, matching the
+  // reloadCurrentContentRef / refreshAfterAiRef pattern.
+  const rebuildAndApplyMultiEditRef = useRef<(ids: string[]) => void>(
+    () => undefined,
+  );
+
   const [restoreDialog, setRestoreDialog] = useState<{
     assetIds: string[];
     target: "original" | "root" | string;
@@ -639,18 +989,46 @@ function AppInner() {
   } | null>(null);
   const [moveDialog, setMoveDialog] = useState<{
     assetIds: string[];
+    folderIds: string[];
     targetFolderId: string | null;
     conflictStrategy: "keep-both" | "replace" | "skip";
   } | null>(null);
-  const [lastMoveOperationId, setLastMoveOperationId] = useState<string | null>(
-    null,
-  );
-  const [undoMoveDialog, setUndoMoveDialog] = useState<{
-    operationId: string;
-    conflictStrategy: "keep-both" | "replace" | "skip";
+  const [operationHistory, setOperationHistory] = useState<HistoryStatus | null>(null);
+  const [editableTextFocused, setEditableTextFocused] = useState(false);
+  useEffect(() => {
+    const update = (target: EventTarget | null) => {
+      setEditableTextFocused(isEditableTextTarget(target));
+    };
+    const onFocusIn = (event: FocusEvent) => update(event.target);
+    update(document.activeElement);
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  const refreshOperationHistory = useCallback(async () => {
+    if (!api || !library) {
+      setOperationHistory(null);
+      return;
+    }
+    const result = await api.getOperationHistoryStatus({ libraryId: library.libraryId });
+    if (result.ok) setOperationHistory(result.value);
+  }, [api, library]);
+  useEffect(() => {
+    const refreshTimer = window.setTimeout(() => {
+      void refreshOperationHistory();
+    }, 0);
+    return () => window.clearTimeout(refreshTimer);
+  }, [refreshOperationHistory]);
+  const [imageSequenceDialog, setImageSequenceDialog] = useState<{
+    assetIds: string[];
+    mode: "create" | "update";
+    sequenceId?: string;
+    frameCount?: number;
+    fps: number;
+    submitting: boolean;
+    error: string | null;
   } | null>(null);
   const [batchRelinkPreview, setBatchRelinkPreview] =
-    useState<RelinkBatchPreviewResult | null>(null);
+    useState<BatchRelinkPreviewSession | null>(null);
   const [batchRelinkKeepMetadata, setBatchRelinkKeepMetadata] = useState(true);
 
   // Export / Import state
@@ -658,71 +1036,636 @@ function AppInner() {
     useState<ExportProgressEvent | null>(null);
   const [importProgress, setImportProgress] =
     useState<ImportProgressEvent | null>(null);
+  const importProgressRef = useRef(importProgress);
+  importProgressRef.current = importProgress;
+  const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
+  const [libraryTransferName, setLibraryTransferName] = useState("");
+
+  // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [appSettingsCategory, setAppSettingsCategory] =
+    useState<AppSettingsCategoryId>("general");
+  const [pluginContributionEpoch, setPluginContributionEpoch] = useState(0);
+  const pluginContributionRefreshKey = `${appSettingsOpen ? "settings" : "browse"}:${pluginContributionEpoch}`;
+  const pluginSidebarRefreshKey = pluginContributionRefreshKey;
+  useEffect(() => {
+    const api = (window as RendererWindow).serpent?.plugins;
+    if (api?.onContributionsChanged === undefined) return;
+    return api.onContributionsChanged(() => {
+      setPluginContributionEpoch((current) => current + 1);
+    });
+  }, []);
+  const pluginSidebarViews = usePluginSidebarViews(
+    (window as RendererWindow).serpent?.plugins,
+    library?.libraryId,
+    isPluginSidebarViewsEnabled(library?.libraryId),
+    pluginSidebarRefreshKey,
+  );
+  const activePluginSidebarView = useMemo(
+    () => pluginSidebarViews.find((view) => view.id === activePluginSidebarViewId),
+    [activePluginSidebarViewId, pluginSidebarViews],
+  );
+  const showPluginSidebarView = activePluginSidebarView !== undefined;
+  const [smartCollectionSettings, setSmartCollectionSettings] =
+    useState<SmartCollectionSettingsTarget | null>(null);
+  const [appLogOpen, setAppLogOpen] = useState(false);
+  const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
+  const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
+  const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
+  const [gitignoreContent, setGitignoreContent] = useState("");
+  /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
+  const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
+  /** 当前库的同步绑定状态（库切换器 link/link-off 图标）。 */
+  const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
+  /** 本次同步是否已弹过「正在同步」toast（有实际传输才提示）。 */
+  const syncRunNotifiedRef = useRef(false);
+  const [showIgnoredItems, setShowIgnoredItems] = useState(false);
+  const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
+  const [appLogLoading, setAppLogLoading] = useState(false);
+  const [appLogAutomationCorrelationId, setAppLogAutomationCorrelationId] = useState("");
+  const [appLogErrorCode, setAppLogErrorCode] = useState<
+    Extract<ReadAppLogResult, { ok: false }>["code"] | null
+  >(null);
+
+  async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
+    const bridge = (window as RendererWindow).serpent?.shell;
+    if (!bridge?.readAppLog) {
+      setAppLogEntries([]);
+      setAppLogErrorCode("read_failure");
+      return;
+    }
+    setAppLogLoading(true);
+    try {
+      const correlationId = automationCorrelationId.trim();
+      const result = await bridge.readAppLog(correlationId === "" ? undefined : correlationId);
+      if (result.ok) {
+        setAppLogEntries(result.entries);
+        setAppLogErrorCode(null);
+      } else {
+        setAppLogEntries([]);
+        setAppLogErrorCode(result.code);
+      }
+    } finally {
+      setAppLogLoading(false);
+    }
+  }
+
+  function openAppLog(automationCorrelationId = ""): void {
+    setAppSettingsOpen(false);
+    setMediaJobsOpen(false);
+    setAppLogAutomationCorrelationId(automationCorrelationId);
+    setAppLogOpen(true);
+    void refreshAppLog(automationCorrelationId);
+  }
 
   // AI analysis state
-  const [aiConfigOpen, setAiConfigOpen] = useState(false);
-  const [aiProvider, setAiProvider] = useState<
-    "openai" | "gemini" | "anthropic"
-  >("openai");
-  const [aiModel, setAiModel] = useState("gpt-4o-mini");
+  const [aiApiFormat, setAiApiFormat] = useState<AiApiFormat>("dashscope_native");
+  const [aiModel, setAiModel] = useState("qwen3-vl-plus");
+  const [aiBaseUrl, setAiBaseUrl] = useState("");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiHasKey, setAiHasKey] = useState(false);
-  const [aiLabelEnabled, setAiLabelEnabled] = useState(true);
   const [aiDescriptionEnabled, setAiDescriptionEnabled] = useState(true);
   const [aiTagsEnabled, setAiTagsEnabled] = useState(true);
-  const [aiStructuredEnabled, setAiStructuredEnabled] = useState(false);
-  const [aiLanguage, setAiLanguage] = useState("auto");
+  const [aiRatingEnabled, setAiRatingEnabled] = useState(true);
+  const [aiForceExistingTags, setAiForceExistingTags] = useState(false);
+  const [aiAnalysisSettings, setAiAnalysisSettings] =
+    useState<AiAnalysisSettingsWire>(() =>
+      toWireAiAnalysisSettings(DEFAULT_AI_ANALYSIS_SETTINGS),
+    );
+  const [aiLanguages, setAiLanguages] = useState<
+    Array<"zh-CN" | "en" | "ja" | "ko">
+  >(["zh-CN"]);
+  const [aiConcurrencyLimit, setAiConcurrencyLimit] = useState(16);
+  const [aiMaxAnalysisImageEdgePx, setAiMaxAnalysisImageEdgePx] = useState(2048);
   const [aiAutoAnalyzeEnabled, setAiAutoAnalyzeEnabled] = useState(false);
   const [aiDisclaimerAccepted, setAiDisclaimerAccepted] = useState(false);
-  const [extensionPairingOpen, setExtensionPairingOpen] = useState(false);
-  const [extensionPairingToken, setExtensionPairingToken] = useState("");
-  const [extensionPairingError, setExtensionPairingError] = useState<
-    string | null
-  >(null);
+  const [aiConnectionState, setAiConnectionState] =
+    useState<AiConnectionState>("idle");
+  const [aiConnectionReason, setAiConnectionReason] = useState<
+    string | undefined
+  >(undefined);
+  const [aiSaveVerifying, setAiSaveVerifying] = useState(false);
+  const aiAutoConnectAttemptedRef = useRef(false);
+  /** Fingerprint of credentials last proven by a successful probe. */
+  const aiVerifiedFingerprintRef = useRef<string | null>(null);
+  const aiConfigPersistDraftRef = useRef({
+    apiFormat: "dashscope_native" as AiApiFormat,
+    model: "qwen3-vl-plus",
+    baseUrl: "",
+    apiKey: "",
+    hasKey: false,
+    descriptionEnabled: true,
+    tagsEnabled: true,
+    ratingEnabled: true,
+    forceExistingTags: false,
+    analysisSettings: toWireAiAnalysisSettings(DEFAULT_AI_ANALYSIS_SETTINGS),
+    languages: ["zh-CN"] as Array<"zh-CN" | "en" | "ja" | "ko">,
+    concurrencyLimit: 16,
+    maxAnalysisImageEdgePx: 2048,
+    autoAnalyzeEnabled: false,
+    disclaimerAccepted: false,
+  });
+
+  useEffect(() => {
+    aiConfigPersistDraftRef.current = {
+      apiFormat: aiApiFormat,
+      model: aiModel,
+      baseUrl: aiBaseUrl,
+      apiKey: aiApiKey,
+      hasKey: aiHasKey,
+      descriptionEnabled: aiDescriptionEnabled,
+      tagsEnabled: aiTagsEnabled,
+      ratingEnabled: aiRatingEnabled,
+      forceExistingTags: aiForceExistingTags,
+      analysisSettings: aiAnalysisSettings,
+      languages: aiLanguages,
+      concurrencyLimit: aiConcurrencyLimit,
+      maxAnalysisImageEdgePx: aiMaxAnalysisImageEdgePx,
+      autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
+      disclaimerAccepted: aiDisclaimerAccepted,
+    };
+  }, [
+    aiAnalysisSettings,
+    aiApiFormat,
+    aiApiKey,
+    aiAutoAnalyzeEnabled,
+    aiBaseUrl,
+    aiConcurrencyLimit,
+    aiDescriptionEnabled,
+    aiDisclaimerAccepted,
+    aiForceExistingTags,
+    aiHasKey,
+    aiLanguages,
+    aiMaxAnalysisImageEdgePx,
+    aiModel,
+    aiRatingEnabled,
+    aiTagsEnabled,
+  ]);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const aiAnalyzingRef = useRef(false);
+  const [aiProgressBannerVisible, setAiProgressBannerVisible] = useState(true);
   const [aiContent, setAiContent] = useState<{
-    label?: string;
+    assetId: string;
     description?: string;
     tags?: string[];
-    structuredMetadata?: Record<string, unknown>;
+    rating?: number;
     modelVersion?: string;
   } | null>(null);
+  const aiContentRef = useRef(aiContent);
+  aiContentRef.current = aiContent;
+  /** Description editor is showing AI-layer text (human description empty). */
+  const [descriptionIsAi, setDescriptionIsAi] = useState(false);
+
+  const {
+    loadMetadata,
+    loadAiContentForAsset,
+    saveMetadata,
+    applyLoadedMetadata,
+  } = useInspectorAssetMetadata({
+    api: api ?? null,
+    library,
+    selectedAssetId,
+    selectedAssetIdRef,
+    selectedAssetIdsRef,
+    metadataByAssetRef,
+    metadataConflictAssetIdsRef,
+    assetMetadata,
+    setAssetMetadata,
+    setVersionConflict,
+    setEditDescription,
+    setEditRating,
+    setEditFavorite,
+    setEditSourceUrl,
+    setEditAuthor,
+    setDescriptionIsAi,
+    aiContentRef,
+    setAiContent,
+    setAssets,
+    setTrashedAssets,
+    setNotice,
+    setError,
+  });
+
+  const analyzingAssetIdRef = useRef<string | null>(null);
+  const analyzingBatchSizeRef = useRef(0);
+  const aiBatchJobIdsRef = useRef<string[]>([]);
+  const aiBatchSkippedCountRef = useRef(0);
+  const lastAiBatchJobIdsRef = useRef<string[]>([]);
+  const lastAiBatchAssetIdRef = useRef<string | null>(null);
+  const aiBatchStatusRequestRef = useRef(0);
+  const refreshAiBatchStatusRef = useRef<() => void>(() => undefined);
+  const [aiBatchProgress, setAiBatchProgress] =
+    useState<AiBatchProgressSnapshot | null>(null);
+  const [aiUiPrefs, setAiUiPrefs] = useState<AiUiPreferences>(() =>
+    loadAiUiPreferences(),
+  );
   const [importValidated, setImportValidated] =
     useState<ImportValidatedResult | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [includeLinkedContent, setIncludeLinkedContent] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"folder" | "zip">("folder");
+  const [importLibraryChooserOpen, setImportLibraryChooserOpen] =
+    useState(false);
+  const [openLibraryChooserOpen, setOpenLibraryChooserOpen] = useState(false);
 
   // Thumbnail / Preview state
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  // Keep the browse surface visually hidden while the viewer close path
+  // restores its scroll anchor. Revealing the grid before the two-frame
+  // restoration causes a one-frame flash and can make Chromium paint at the
+  // top of the canvas during a rapid open/close.
+  const [previewRestoring, setPreviewRestoring] = useState(false);
+  const previewModalRef = useRef<AssetPreviewModalHandle>(null);
+  // REQ-CANVAS-019: read synchronously inside the canvas ResizeObserver
+  // callback (which is created once and does not close over fresh state)
+  // to skip the reflow-anchor logic while the viewer hides the canvas.
+  const previewAssetRef = useRef<AssetSummary | null>(null);
+  const previewRestoringRef = useRef(false);
+  useLayoutEffect(() => {
+    previewAssetRef.current = previewAsset;
+  }, [previewAsset]);
+  // Serpent-njoy: owned here (not inside AssetPreviewModal, which remounts
+  // per-asset via `key`) so switching assets never resets idle by itself.
+  // While preview is open, any keyboard/pointer/wheel input wakes chrome;
+  // `wakeViewerChrome` also runs when the viewer first opens.
+  const {
+    idle: viewerChromeIdle,
+    onActivity: onViewerChromeActivity,
+    wake: wakeViewerChrome,
+  } = useViewerChromeIdle(undefined, Boolean(previewAsset));
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
   const assetViewMode = canvasPrefs.viewMode;
   const assetCardSize = canvasPrefs.cardSize;
-  const [loadingMoreAssets, setLoadingMoreAssets] = useState(false);
+  const [canvasWidthPx, setCanvasWidthPx] = useState(0);
+  const cardSizeStops = useMemo(
+    () => enumerateDiscreteCardSizes(canvasWidthPx),
+    [canvasWidthPx],
+  );
+  // Serpent-l67w: folder cards share the flush masonry column width so the
+  // folder row lines up with waterfall columns (raw slider size can leave
+  // leftover that `1fr` columns absorb).
+  const folderCardWidthPx = useMemo(
+    () =>
+      masonryAlignedFolderWidthPx(
+        Math.max(
+          0,
+          canvasWidthPx - FOLDER_CARD_ROW_INLINE_PADDING_PX * 2,
+        ),
+        assetCardSize,
+      ),
+    [assetCardSize, canvasWidthPx],
+  );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
-  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
-  const loadMoreAssetsRef = useRef<() => Promise<void>>(async () => undefined);
+  const reportedVisibleWindowKeyRef = useRef("");
+  // Serpent-wgl2: the marquee box div is always mounted and moved directly
+  // through this ref — never through React state (per-frame state re-renders
+  // the whole non-memoized grid).
+  const marqueeBoxRef = useRef<HTMLDivElement>(null);
+  // REQ-CANVAS-019: rAF handle for the card-size-slider anchor restore.
+  const cardSizeRestoreFrameRef = useRef<number | null>(null);
+  // REQ-CANVAS-019: rAF handle for the container-width (sidebar/window
+  // resize) anchor restore; separate from the card-size one above so the
+  // two triggers never cancel each other's in-flight restoration.
+  const reflowRestoreFrameRef = useRef<number | null>(null);
+  const cardResizeAnchorRef = useRef<CanvasAnchor | null>(null);
+  const cardResizeScrollSnapshotRef = useRef<ScrollOffsetSnapshot | null>(null);
+  const reflowAnchorRef = useRef<CanvasAnchor | null>(null);
+  const reflowScrollSnapshotRef = useRef<ScrollOffsetSnapshot | null>(null);
+  const panelResizeLockRef = useRef(false);
+  const panelReflowFrozenWidthRef = useRef<number | null>(null);
+  const panelWidthSnapshotRef = useRef({ nav: navPanelWidth, inspector: inspectorPanelWidth });
+  const panelResizingRef = useRef(panelResizing);
+  useLayoutEffect(() => {
+    panelResizingRef.current = panelResizing;
+  }, [panelResizing]);
+
+  const capturePanelResizeAnchor = useCallback((lock = true) => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    canvas.classList.remove("is-reflow-restoring");
+    const cards: AnchorCard[] = Array.from(
+      canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+    ).map((el) => ({
+      assetId: el.dataset.assetId!,
+      ...rectLikeFromDomRect(el.getBoundingClientRect()),
+    }));
+    reflowAnchorRef.current = captureReflowAnchorFromCards(
+      cards,
+      rectLikeFromDomRect(canvas.getBoundingClientRect()),
+    );
+    reflowScrollSnapshotRef.current = {
+      left: canvas.scrollLeft,
+      top: canvas.scrollTop,
+    };
+    panelReflowFrozenWidthRef.current = canvas.clientWidth;
+    canvas.classList.add("is-reflow-frozen");
+    canvas.style.setProperty(
+      "--reflow-frozen-width",
+      `${panelReflowFrozenWidthRef.current}px`,
+    );
+    panelResizeLockRef.current = lock;
+  }, []);
+
+  const restorePanelAfterResize = useCallback(() => {
+    panelResizeLockRef.current = false;
+    const canvas = workspaceCanvasRef.current;
+    const anchor = reflowAnchorRef.current;
+    if (!canvas || !anchor) {
+      canvas?.classList.remove("is-reflow-restoring");
+      return;
+    }
+    // Keep the child layout observers suspended until the outer anchor has
+    // converged. Removing the frozen width is what allows the real reflow;
+    // this second class prevents Masonry's legacy raw-scroll loop from
+    // racing the anchor compensation during that reflow.
+    canvas.classList.remove("is-reflow-frozen");
+    canvas.classList.add("is-reflow-restoring");
+    scheduleAnchorRestore(
+      canvas,
+      anchor,
+      reflowRestoreFrameRef,
+      12,
+      () => {
+        canvas.classList.remove("is-reflow-restoring");
+        reflowAnchorRef.current = null;
+        reflowScrollSnapshotRef.current = null;
+      },
+      reflowScrollSnapshotRef.current ?? undefined,
+    );
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("pointerup", restorePanelAfterResize);
+    return () => window.removeEventListener("pointerup", restorePanelAfterResize);
+  }, [restorePanelAfterResize]);
+
+  useLayoutEffect(() => {
+    panelResizeReleaseRef.current = restorePanelAfterResize;
+    return () => {
+      panelResizeReleaseRef.current = () => undefined;
+    };
+  }, [restorePanelAfterResize]);
+
+  useLayoutEffect(() => {
+    if (!panelResizing) {
+      panelReflowFrozenWidthRef.current = null;
+      const canvas = workspaceCanvasRef.current;
+      canvas?.classList.remove("is-reflow-frozen");
+      canvas?.style.removeProperty("--reflow-frozen-width");
+    }
+  }, [panelResizing]);
+
+  useLayoutEffect(() => {
+    const previous = panelWidthSnapshotRef.current;
+    if (
+      previous.nav === navPanelWidth &&
+      previous.inspector === inspectorPanelWidth
+    ) {
+      return;
+    }
+    panelWidthSnapshotRef.current = {
+      nav: navPanelWidth,
+      inspector: inspectorPanelWidth,
+    };
+    if (!reflowAnchorRef.current) return;
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    const snapshot = reflowScrollSnapshotRef.current;
+    if (snapshot) {
+      canvas.scrollLeft = Math.min(
+        Math.max(0, snapshot.left),
+        Math.max(0, canvas.scrollWidth - canvas.clientWidth),
+      );
+      canvas.scrollTop = Math.min(
+        Math.max(0, snapshot.top),
+        Math.max(0, canvas.scrollHeight - canvas.clientHeight),
+      );
+    }
+    // During a drag, keep the raw offset fixed. Applying anchor deltas on
+    // every width tick makes the viewport visibly slide with the divider.
+    if (panelResizeLockRef.current) return;
+    scheduleAnchorRestore(
+      canvas,
+      reflowAnchorRef.current,
+      reflowRestoreFrameRef,
+      10,
+      () => {
+        if (!panelResizingRef.current) {
+          reflowAnchorRef.current = null;
+          reflowScrollSnapshotRef.current = null;
+        }
+      },
+      snapshot ?? undefined,
+    );
+  }, [inspectorPanelWidth, navPanelWidth]);
+  useEffect(
+    () => () => {
+      if (cardSizeRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      }
+      if (reflowRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      }
+      reflowAnchorRef.current = null;
+      reflowScrollSnapshotRef.current = null;
+    },
+    [],
+  );
+  // 筛选与排序面板：外点 / Esc 自动关闭（现代浮层语义），summary 切换不变。
   const pendingRestoredFocusRef = useRef<string | null>(null);
+  const pendingRevealRef = useRef<PendingAssetReveal | null>(null);
+  const chooseFolderRef = useRef<(scope: AssetScope) => Promise<void>>(
+    async () => undefined,
+  );
+  const revealAfterImportRef = useRef<
+    (completion: { assets: AssetSummary[] }) => Promise<void>
+  >(async () => undefined);
   const previewFocusReturnRef = useRef<string | null>(null);
+  // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
+  // card's on-screen anchor, captured when the viewer opens so the close
+  // path can correct for any reflow that happened while viewing (e.g. the
+  // inspector panel toggled and changed the grid's available width).
+  const previewScrollSnapshotRef = useRef<BrowseViewSnapshot | null>(null);
   const closingPreviewRef = useRef<string | null>(null);
+  // Incremented whenever a viewer open/close supersedes a pending close. This
+  // prevents a stale rAF/API completion from clearing the restoring state or
+  // focusing the previous card after a rapid reopen of the same asset.
+  const previewCloseGenerationRef = useRef(0);
+  const previewRestoreFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (previewRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      }
+    },
+    [],
+  );
+  // REQ-DND-003: the custom drag ghost node mounted by showAssetDragPreview,
+  // kept so onDragEnd can remove it from the document.
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
+  // HTML5-only drag selection snapshot for internal targets. Native OS drags
+  // are resolved from their returned File handles instead; retaining a native
+  // drag's ids here would leak a completed session into a later external drop.
+  const managedAssetDragIdsRef = useRef<readonly string[] | null>(null);
+  const getManagedAssetDragIds = useCallback(
+    () =>
+      managedAssetDragIdsRef.current
+        ? [...managedAssetDragIdsRef.current]
+        : null,
+    [],
+  );
+  // Escape cancels the renderer-side drag session immediately. Native OS
+  // drags are cancelled by Electron/the operating system; this also clears
+  // the custom ghost and internal selection fallback so a cancelled gesture
+  // cannot leak into the next drop.
+  useEffect(() => {
+    const handleDragCancel = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (
+        !managedAssetDragIdsRef.current &&
+        !dragPreviewRef.current &&
+        draggedMemberId === null
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggedMemberId(null);
+      managedAssetDragIdsRef.current = null;
+      dismissAssetDragPreview(dragPreviewRef.current);
+      dragPreviewRef.current = null;
+    };
+    window.addEventListener("keydown", handleDragCancel);
+    return () => window.removeEventListener("keydown", handleDragCancel);
+  }, [draggedMemberId]);
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
+  const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
+  const [hiddenPluginJobActivityId, setHiddenPluginJobActivityId] = useState<string | null>(null);
   const [mediaJobsLoading, setMediaJobsLoading] = useState(false);
+  const pluginJobsActive = hasActivePluginJobs(pluginJobs);
+  const pluginJobActivityCandidate = selectPluginJobActivity(pluginJobs);
+  const pluginJobActivity =
+    pluginJobActivityCandidate?.jobId === hiddenPluginJobActivityId
+      ? null
+      : pluginJobActivityCandidate;
+  const backgroundJobsActive = useMemo(() => {
+    if (aiAnalyzing) return true;
+    const mediaActive =
+      (mediaJobs?.queued ?? 0) + (mediaJobs?.running ?? 0) > 0;
+    const aiActive = (aiJobs?.queued ?? 0) + (aiJobs?.running ?? 0) > 0;
+    return mediaActive || aiActive || pluginJobsActive;
+  }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
+  const openMediaJobs = useCallback(() => setMediaJobsOpen(true), []);
+  const hidePluginJobActivity = useCallback((jobId: string) => {
+    setHiddenPluginJobActivityId(jobId);
+  }, []);
+  const controlAiJobsRef = useRef<
+    (action: "pause" | "resume" | "cancel" | "retry", jobIds?: string[]) => Promise<void>
+  >(async () => undefined);
+  const {
+    gate: aiConnectionFailureGate,
+    notifyBatchStarted: notifyAiConnectionBatchStarted,
+    onRetry: onAiConnectionFailureRetry,
+    onAbort: onAiConnectionFailureAbort,
+  } = useAiConnectionFailure({
+    api: api ?? null,
+    libraryId: library?.libraryId,
+    failedCount: aiJobs?.failed ?? 0,
+    queuedCount: aiJobs?.queued ?? 0,
+    runningCount: aiJobs?.running ?? 0,
+    aiAnalyzing,
+    controlAiJobs: useCallback(
+      async (action, jobIds) => {
+        await controlAiJobsRef.current(action, jobIds);
+      },
+      [],
+    ),
+  });
+  const handleAiConnectionFailureRetry = useCallback(async () => {
+    const retryJobIds = aiConnectionFailureGate.failedJobIds.filter((jobId) =>
+      lastAiBatchJobIdsRef.current.includes(jobId),
+    );
+    // Wait for Worker retry to persist `queued` before re-arming. Otherwise a
+    // status refresh can observe the old terminal `failed` state and finish
+    // the retried batch immediately.
+    await onAiConnectionFailureRetry();
+    if (retryJobIds.length === 0) return;
+    aiBatchStatusRequestRef.current++;
+    aiBatchJobIdsRef.current = retryJobIds;
+    aiBatchSkippedCountRef.current = 0;
+    analyzingAssetIdRef.current = lastAiBatchAssetIdRef.current;
+    analyzingBatchSizeRef.current = retryJobIds.length;
+    setAiBatchProgress(computeAiBatchProgressForJobs(retryJobIds, []));
+    flushSync(() => {
+      aiAnalyzingRef.current = true;
+      setAiAnalyzing(true);
+      setAiProgressBannerVisible(true);
+    });
+    void refreshAiBatchStatusRef.current();
+  }, [aiConnectionFailureGate.failedJobIds, onAiConnectionFailureRetry]);
+
 
   const selectedFolderId =
     assetScope === "all" || assetScope === "root" ? undefined : assetScope;
   const selectedFolder = folders.find(
     (folder) => folder.folderId === selectedFolderId,
   );
-  const selectedAsset = showTrash
+  const selectedAssetFromList = showTrash
     ? trashedAssets.find((a) => a.assetId === selectedAssetId)
     : assets.find((asset) => asset.assetId === selectedAssetId);
+  const selectedLayoutEntry = selectedAssetId
+    ? browseLayout.find((entry) => entry.assetId === selectedAssetId)
+    : undefined;
+  const selectedAsset = selectedAssetFromList
+    ?? (selectedLayoutEntry ? assetSummaryFromLayoutEntry(selectedLayoutEntry) : undefined);
+
+  const {
+    handleMetadataDescriptionInput,
+    handleMetadataDescriptionSave,
+    handleRatingClick,
+    handleFavoriteToggle,
+    handleSourceUrlInput,
+    handleSourceUrlSave,
+    handleAuthorInput,
+    handleAuthorSave,
+    handleOpenSourceUrl,
+  } = useInspectorFieldHandlers({
+    api: api ?? null,
+    shellApi,
+    library,
+    selectedAsset,
+    selectedAssetId,
+    selectedAssetIds,
+    assetMetadata,
+    multiEdit,
+    editDescription,
+    editFavorite,
+    editSourceUrl,
+    editAuthor,
+    descriptionIsAi,
+    aiContent,
+    setEditDescription,
+    setEditRating,
+    setEditFavorite,
+    setEditSourceUrl,
+    setEditAuthor,
+    setDescriptionIsAi,
+    setAiContent,
+    saveMetadata,
+    saveMetadataForSelection,
+    batchSetRatingForSelection,
+    loadMetadata,
+    setNotice,
+    setError,
+  });
+
   const displayedPalette = assetMetadata?.effectivePalette ?? [];
   const automaticPaletteRatios = new Map(
     (assetMetadata?.automaticPalette ?? []).map((color) => [
@@ -732,99 +1675,815 @@ function AppInner() {
   );
 
   const visibleAssets = useMemo(() => {
-    if (showTrash) return trashedAssets;
-    return assets;
-  }, [assets, trashedAssets, showTrash]);
+    const base = showTrash
+      ? filterTrashedAssetsAtTombstone(
+          trashedAssets,
+          trashedFolders,
+          trashBrowseTombstoneId,
+        )
+      : assets;
+    if (shuffleSeed === null || showTrash) return base;
+    return shuffleArray(base, shuffleSeed);
+  }, [
+    assets,
+    showTrash,
+    shuffleSeed,
+    trashBrowseTombstoneId,
+    trashedAssets,
+    trashedFolders,
+  ]);
+
+  // Report mounted cards and real layout slots. A fresh scrollbar destination
+  // can queue its thumbnail work before the page summaries mount, while the
+  // compact-layout scroll listener below fetches those summaries in parallel.
+  useEffect(() => {
+    if (!api || !library) return;
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    let frame: number | undefined;
+    const report = () => {
+      frame = undefined;
+      const canvasRect = canvas.getBoundingClientRect();
+      // Queue only the viewport plus a small decode runway. A full viewport
+      // above and below used to enqueue up to 3x the work needed for the
+      // interaction, allowing below-fold thumbnails to compete with cards the
+      // user can already see.
+      const runway = Math.round(canvas.clientHeight * 0.25);
+      const ids: string[] = [];
+      const seenIds = new Set<string>();
+      for (const slot of canvas.querySelectorAll<HTMLElement>(
+        ".asset-card[data-asset-id], [data-layout-asset-id]",
+      )) {
+        const rect = slot.getBoundingClientRect();
+        if (rect.bottom < canvasRect.top - runway || rect.top > canvasRect.bottom + runway) {
+          continue;
+        }
+        const assetId = slot.dataset.assetId ?? slot.dataset.layoutAssetId;
+        if (assetId && !seenIds.has(assetId)) {
+          seenIds.add(assetId);
+          ids.push(assetId);
+        }
+      }
+      if (ids.length === 0) return;
+      const key = `${library.libraryId}:${ids.join(",")}`;
+      if (key === reportedVisibleWindowKeyRef.current) return;
+      reportedVisibleWindowKeyRef.current = key;
+      void api.reportVisibleWindow({
+        libraryId: library.libraryId,
+        assetIds: ids.slice(0, 300),
+      });
+    };
+    const schedule = () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(report);
+    };
+    canvas.addEventListener("scroll", schedule, { passive: true });
+    schedule();
+    return () => {
+      canvas.removeEventListener("scroll", schedule);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [api, library, assetViewMode, browseLayout, assets, trashedAssets]);
+
+  // Map the scrollbar to the compact real-asset index. One-frame coalescing
+  // avoids request spam without spending 50ms of the 500ms loading budget.
+  useEffect(() => {
+    if (!api || !library) return;
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    const rankById = new Map(
+      browseLayout.map((entry, index) => [entry.assetId, index] as const),
+    );
+    let frame: number | undefined;
+    const schedule = () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        const total = browseLayout.length;
+        if (total === 0) return;
+        const canvasRect = canvas.getBoundingClientRect();
+        const visibleRanks: number[] = [];
+        for (const grid of canvas.querySelectorAll<HTMLElement>(
+          ".masonry-columns, .justified-rows",
+        )) {
+          const layout = readPublishedCanvasAssetLayout(grid);
+          if (!layout) continue;
+          const gridRect = grid.getBoundingClientRect();
+          const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
+          const viewTop = canvas.scrollTop - gridContentTop;
+          const viewBottom = viewTop + canvas.clientHeight;
+          for (const item of layout) {
+            if (item.y + item.height < viewTop || item.y > viewBottom) continue;
+            const rank = rankById.get(item.id);
+            if (rank !== undefined) visibleRanks.push(rank);
+          }
+        }
+        if (visibleRanks.length > 0) {
+          void ensureBrowseVisibleRange(
+            Math.min(...visibleRanks),
+            Math.max(...visibleRanks),
+          );
+          return;
+        }
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        const ratio = maxScroll <= 0 ? 0 : canvas.scrollTop / maxScroll;
+        const center = Math.round(ratio * Math.max(0, total - 1));
+        // Neighbor pages are added by browsePageOffsetsForRange. Passing a
+        // ±page-size span here would queue 3–4 windows behind a jump.
+        void ensureBrowseVisibleRange(center, center);
+      });
+    };
+    canvas.addEventListener("scroll", schedule, { passive: true });
+    schedule();
+    return () => {
+      canvas.removeEventListener("scroll", schedule);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [
+    api,
+    browseLayout,
+    ensureBrowseVisibleRange,
+    library,
+  ]);
+
+  const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
+    () => buildPluginBrowseScope({
+      selectedFolderId,
+      showTrash,
+      collectionId: activeCollectionId ?? activeSmartCollectionId,
+      tagId: activeTagId,
+      searchValue,
+      filter: {
+        colorFilter,
+        excludeColorFilter,
+        formatFilter,
+        excludeFormatFilter,
+        tagFilter,
+        excludeTagFilter,
+        tagFilterMatch,
+        ratingFilter,
+        excludeRatingFilter,
+        favoriteFilter,
+        sourceUrlFilter,
+        availabilityFilter,
+        excludeAvailabilityFilter,
+        widthRange,
+        heightRange,
+        aspectRatioRange,
+        aspectRatioRanges,
+        longEdgeRange,
+        durationRange,
+      },
+    }),
+    [
+      activeCollectionId,
+      activeSmartCollectionId,
+      activeTagId,
+      aspectRatioRange,
+      aspectRatioRanges,
+      availabilityFilter,
+      colorFilter,
+      durationRange,
+      excludeAvailabilityFilter,
+      excludeColorFilter,
+      excludeFormatFilter,
+      excludeRatingFilter,
+      excludeTagFilter,
+      favoriteFilter,
+      formatFilter,
+      heightRange,
+      ratingFilter,
+      searchValue,
+      selectedFolderId,
+      showTrash,
+      sourceUrlFilter,
+      tagFilter,
+      tagFilterMatch,
+      widthRange,
+      longEdgeRange,
+    ],
+  );
+  const pluginViewerState = useMemo<Partial<PluginContributionContext["viewer"]>>(
+    () => buildPluginViewerState(previewAsset, Boolean(document.fullscreenElement)),
+    [previewAsset],
+  );
+  const pluginSurfaceContext = useMemo(() => createPluginMenuContributionContext({
+    descriptor: { type: "workspace", assetIds: [...selectedAssetIds] },
+    assets: visibleAssets,
+    libraryId: library?.libraryId,
+    busy,
+    locale,
+    browse: pluginBrowseScope,
+    viewer: pluginViewerState,
+  }), [busy, library?.libraryId, locale, pluginBrowseScope, pluginViewerState, selectedAssetIds, visibleAssets]);
+
+  // Serpent-6pcd: assets at the current trash hop only (no source-folder grouping).
+  const assetRenderSections = useMemo(
+    () => [{ key: "", label: null as string | null, assets: visibleAssets }],
+    [visibleAssets],
+  );
+  // CU-U1: origin chip context for recursive folder / mixed-folder surfaces.
+  const sourceBadgeContext = useMemo(() => {
+    const mixedFolderBrowse =
+      Boolean(searchValue.trim()) ||
+      Boolean(activeTagId) ||
+      Boolean(activeCollectionId) ||
+      Boolean(activeSmartCollectionId);
+    return {
+      assetScope,
+      mixedFolderBrowse,
+    };
+  }, [
+    assetScope,
+    searchValue,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+  ]);
+
+  const organizationBrowseScope = activeSmartCollectionId
+    ? ("smart-collection" as const)
+    : activeCollectionId
+      ? ("collection" as const)
+      : ("folder" as const);
+  const importMenuCopy = resolveImportMenuCopy(organizationBrowseScope);
+
+  const browseEmptyState = useMemo(() => {
+    const discoverySnapshot = {
+      colorFilter,
+      excludeColorFilter,
+      formatFilter,
+      excludeFormatFilter,
+      tagFilter,
+      excludeTagFilter,
+      ratingFilter,
+      excludeRatingFilter,
+      favoriteFilter,
+      sourceUrlFilter,
+      availabilityFilter,
+      excludeAvailabilityFilter,
+      widthRange,
+      heightRange,
+      aspectRatioRange,
+      aspectRatioRanges,
+      longEdgeRange,
+      durationRange,
+    };
+    const hasActiveDiscovery =
+      searchValue.trim() !== "" ||
+      buildActiveFilterChips(discoverySnapshot).length > 0;
+    return resolveBrowseEmptyState({
+      showTrash,
+      hasActiveDiscovery,
+      hasSelectedFolder: Boolean(selectedFolder),
+      organizationScope: organizationBrowseScope,
+    });
+  }, [
+    showTrash,
+    searchValue,
+    selectedFolder,
+    organizationBrowseScope,
+    colorFilter,
+    excludeColorFilter,
+    formatFilter,
+    excludeFormatFilter,
+    tagFilter,
+    excludeTagFilter,
+    ratingFilter,
+    excludeRatingFilter,
+    favoriteFilter,
+    sourceUrlFilter,
+    availabilityFilter,
+    excludeAvailabilityFilter,
+    widthRange,
+    heightRange,
+    aspectRatioRange,
+    aspectRatioRanges,
+    longEdgeRange,
+    durationRange,
+  ]);
+
+  // CANVAS-022: folders-only (recursive off, zero direct assets) must not
+  // mount an empty asset grid — its min-height:100% left a large void.
+  const canvasFolderBrowseEntries = useMemo(() => {
+    if (!showTrash) return folderBrowseEntries;
+    return trashedFoldersToBrowseEntries(
+      filterTrashedFoldersAtTombstone(trashedFolders, trashBrowseTombstoneId),
+    );
+  }, [folderBrowseEntries, showTrash, trashBrowseTombstoneId, trashedFolders]);
+  const trashBreadcrumbHops = useMemo(
+    () =>
+      showTrash
+        ? buildTrashBreadcrumbHops(
+            trashedFolders,
+            trashBrowseTombstoneId,
+            t("scope.trash"),
+          )
+        : [],
+    [showTrash, t, trashBrowseTombstoneId, trashedFolders],
+  );
+  const browseCanvasBodyLayout = resolveBrowseCanvasBodyLayout(
+    visibleAssets.length,
+    canvasFolderBrowseEntries.length,
+  );
+
+  const visibleAssetById = useMemo(() => {
+    const map = new Map<string, (typeof visibleAssets)[number]>();
+    for (const asset of visibleAssets) {
+      map.set(asset.assetId, asset);
+    }
+    return map;
+  }, [visibleAssets]);
+
+  const isHoverPreviewable = useCallback(
+    (assetId: string) => {
+      const asset = visibleAssetById.get(assetId);
+      return asset ? isCardHoverPreviewable(asset) : false;
+    },
+    [visibleAssetById],
+  );
+
+  const {
+    hoveredAssetId,
+    setHoveredAssetId,
+    clearHoveredAssetId,
+    activePreviewAssetId,
+    activeResolution,
+  } = useAssetCardHoverPreview({
+    api,
+    libraryId: library?.libraryId,
+    primarySelectedAssetId: selectedAssetId,
+    isPreviewable: isHoverPreviewable,
+  });
+
+  const selectionAssetIds = useMemo(() => {
+    if (assetViewMode !== "masonry") return undefined;
+    return computeMasonrySelectionAssetIds(
+      visibleAssets,
+      masonryGridWidth,
+      assetCardSize,
+      canvasPrefs.fields.name ||
+        canvasPrefs.fields.size ||
+        canvasPrefs.fields.date,
+    );
+  }, [
+    assetCardSize,
+    assetViewMode,
+    canvasPrefs.fields.date,
+    canvasPrefs.fields.name,
+    canvasPrefs.fields.size,
+    masonryGridWidth,
+    visibleAssets,
+  ]);
+
+  useLayoutEffect(() => {
+    if (assetViewMode !== "masonry") return;
+    const element = assetGridRef.current;
+    if (!element) return;
+    const updateWidth = () => setMasonryGridWidth(element.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [assetViewMode, visibleAssets.length, canvasFolderBrowseEntries.length]);
+
+  // REQ-FOLDER-010 / Serpent-nu6o: selection order must match the canvas,
+  // including trash tombstone cards (folderBrowseEntries is empty in trash).
+  const visibleFolderIds = useMemo(
+    () => canvasFolderBrowseEntries.map((entry) => entry.folderId),
+    [canvasFolderBrowseEntries],
+  );
+  const marqueeLayoutKey = useMemo(
+    () =>
+      buildMarqueeLayoutKey({
+        viewMode: assetViewMode,
+        cardSize: assetCardSize,
+        masonryGridWidth,
+        fields: canvasPrefs.fields,
+        assetIds:
+          selectionAssetIds ?? visibleAssets.map((asset) => asset.assetId),
+        folderIds: visibleFolderIds,
+      }),
+    [
+      assetCardSize,
+      assetViewMode,
+      canvasPrefs.fields,
+      masonryGridWidth,
+      selectionAssetIds,
+      visibleAssets,
+      visibleFolderIds,
+    ],
+  );
+  const {
+    handleCanvasMouseDown,
+    clearAssetSelection,
+    selectionAnchorRef,
+    setAssetSelectionAnchor,
+    handleCardClick,
+    handleFolderCardClick,
+    cardMouseDownRef,
+    selectedIdSet,
+  } = useAssetSelection({
+    assets: visibleAssets,
+    selectedAssetIds,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    previewAsset,
+    draggedMemberId,
+    draggedCollectionId,
+    workspaceCanvasRef,
+    marqueeBoxRef,
+    folderIds: visibleFolderIds,
+    selectionAssetIds,
+    masonryShiftSelection: assetViewMode === "masonry",
+    marqueeLayoutKey,
+    selectedFolderIds,
+    setSelectedFolderIds,
+    onSelectionCleared: () => {
+      setHoveredAssetId(null);
+      // An import reveal intentionally re-applies selection once its first
+      // content refresh settles. A deliberate blank-canvas click must cancel
+      // that pending action, otherwise a just-imported sequence is impossible
+      // to deselect for the next 280 ms.
+      pendingRevealRef.current = null;
+      pendingRestoredFocusRef.current = null;
+    },
+  });
+  const selectedFolderIdSet = useMemo(
+    () => new Set(selectedFolderIds),
+    [selectedFolderIds],
+  );
+
+  const browseScopeAssetIds = useMemo(() => {
+    const rows = showTrash ? trashedAssets : assets;
+    return rows.map((asset) => asset.assetId);
+  }, [showTrash, trashedAssets, assets]);
+  const workspaceBrowseCount = useMemo(() => {
+    if (showTagManagement) return tags.length;
+    if (searchTotal !== null) return searchTotal;
+    return showTrash ? trashedAssets.length : visibleAssets.length;
+  }, [
+    showTagManagement,
+    tags.length,
+    searchTotal,
+    showTrash,
+    trashedAssets.length,
+    visibleAssets.length,
+  ]);
+  // Serpent-ws4k: select-all / invert cover the *whole* browse scope, not just
+  // the loaded page, so they resolve the full id set on demand (idsOnly).
+  // A stale id set (scope switched mid-fetch) and a null/empty resolve are
+  // both no-ops — matching the pre-pagination synchronous guards, they never
+  // clear an existing selection.
+  const selectAllBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    setSelectedAssetIds([...ids]);
+    setSelectedAssetId(ids.at(-1));
+    setAssetSelectionAnchor(ids[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
+  const invertBrowseScope = useCallback(async () => {
+    const ids = await fetchBrowseScopeAssetIds();
+    if (!ids || ids.length === 0) return;
+    const next = invertSelection(ids, selectedAssetIds);
+    setSelectedAssetIds(next);
+    setSelectedAssetId(next.at(-1));
+    setAssetSelectionAnchor(next[0] ?? null);
+  }, [
+    fetchBrowseScopeAssetIds,
+    selectedAssetIds,
+    setAssetSelectionAnchor,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  ]);
+
+  useSelectionKeyboard({
+    enabled: Boolean(library),
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    browseScopeAssetIds,
+    selectedAssetIds,
+    clearAssetSelection,
+    onSelectAll: () => void selectAllBrowseScope(),
+    onInvert: () => void invertBrowseScope(),
+  });
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onInvertSelection(() => {
+      if (previewAsset) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (browseScopeAssetIds.length === 0) return;
+      void invertBrowseScope();
+    });
+  }, [
+    shellApi,
+    previewAsset,
+    browseScopeAssetIds,
+    invertBrowseScope,
+    setAssetSelectionAnchor,
+  ]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onShellNotify((payload) => {
+      if (payload.mode === 'dialog') {
+        const title = payload.title?.trim()
+          || (payload.severity === 'warning'
+            ? t('dialog.blockingError.automationWarning')
+            : payload.severity === 'info'
+              ? t('dialog.blockingError.automationNotice')
+              : t('dialog.blockingError.automationError'));
+        showBlockingError(title, payload.message);
+        return;
+      }
+      if (payload.severity === 'error') setError(payload.message);
+      else if (payload.severity === 'warning') setWarning(payload.message);
+      else setNotice(payload.message);
+    });
+  }, [shellApi, setError, setWarning, setNotice, showBlockingError, t]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onCommandCompleted((payload) => {
+      // Serpent-fmbr: MCP operations show the same toasts as manual ones —
+      // composed here from the structured result, never MCP-specific wording.
+      const toast = automationCommandToast(payload, locale);
+      if (toast !== undefined) setNotice(toast.message, toast.historyEntryId);
+    });
+  }, [shellApi, locale, setNotice]);
+
+  // REQ-FOLDER-001/002/003/010: load direct child folder cards whenever the
+  // browse parent is a managed folder or the managed root; cleared for
+  // trash/tag/collection/smart-collection/search/linked-only views.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFolderBrowseEntries() {
+      const parentFolderId =
+        api && library
+          ? resolveFolderBrowseParentId({
+              assetScope,
+              showTrash,
+              activeTagId,
+              activeCollectionId,
+              activeSmartCollectionId,
+              folders,
+              linkedFolders,
+              searchActive: Boolean(searchValue.trim()),
+            })
+          : undefined;
+      if (!api || !library || parentFolderId === undefined) {
+        if (!cancelled) setFolderBrowseEntries([]);
+        return;
+      }
+      const result = await api.listFolderBrowseEntries({
+        libraryId: library.libraryId,
+        parentFolderId,
+        showIgnored: showIgnoredItems,
+      });
+      if (!cancelled && result.ok) setFolderBrowseEntries(result.value);
+    }
+    void loadFolderBrowseEntries();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    api,
+    library,
+    assetScope,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+    folders,
+    linkedFolders,
+    searchValue,
+    showIgnoredItems,
+    // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
+    // the row re-fetches and the generated cover appears without navigation.
+    folderBrowseRefreshToken,
+  ]);
+
+  // Serpent-d0nv: keep the cover-candidate asset set (from the last browse
+  // entries response) visible to the thumbnail event subscriber so a ready
+  // cover refreshes the folder-card row without a full reload.
+  useEffect(() => {
+    folderCoverCandidateAssetIdsRef.current = collectFolderCoverCandidateAssetIds(
+      folderBrowseEntries,
+    );
+  }, [folderBrowseEntries]);
+
   const previewIndex = previewAsset
     ? visibleAssets.findIndex((asset) => asset.assetId === previewAsset.assetId)
     : -1;
-  const selectedIdSet = useMemo(
-    () => new Set(selectedAssetIds),
-    [selectedAssetIds],
-  );
   const selectedAssets = useMemo(
     () => visibleAssets.filter((asset) => selectedIdSet.has(asset.assetId)),
     [selectedIdSet, visibleAssets],
   );
-
+  const diskDeleteKeyboardTargets = useMemo(() => {
+    const report = buildMultiAssetMenuSkipReport(
+      selectedAssetIds,
+      visibleAssets,
+      selectedFolderIds,
+    );
+    const trashIdSet = new Set(report.trash.processAssetIds);
+    return {
+      assetIds: visibleAssets
+        .filter(
+          (asset) =>
+            trashIdSet.has(asset.assetId) && asset.locationKind === "managed",
+        )
+        .map((asset) => asset.assetId),
+      folderIds: [...report.trash.processFolderIds],
+    };
+  }, [selectedAssetIds, visibleAssets, selectedFolderIds]);
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
-      const nextSize = Math.min(
-        CARD_SIZE_MAX,
-        Math.max(CARD_SIZE_MIN, Math.round(requestedSize)),
+      const width = root?.clientWidth ?? 0;
+      const stops = enumerateDiscreteCardSizes(width);
+      const nextSize = nearestDiscreteCardSize(
+        Math.min(
+          CARD_SIZE_MAX,
+          Math.max(CARD_SIZE_MIN, Math.round(requestedSize)),
+        ),
+        stops,
       );
       if (!root || nextSize === assetCardSize) return;
 
       const rootRect = root.getBoundingClientRect();
       const anchorX = clientX ?? rootRect.left + rootRect.width / 2;
       const anchorY = clientY ?? rootRect.top + rootRect.height / 2;
-      const cards = Array.from(
+      const cardEls = Array.from(
         root.querySelectorAll<HTMLElement>("[data-asset-id]"),
       );
+      const cards: AnchorCard[] = cardEls.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          assetId: el.dataset.assetId!,
+          ...rectLikeFromDomRect(rect),
+        };
+      });
       const pointed = document
         .elementFromPoint(anchorX, anchorY)
         ?.closest<HTMLElement>("[data-asset-id]");
-      const anchor =
-        (pointed && root.contains(pointed) ? pointed : null) ??
-        cards
-          .filter((card) => {
-            const rect = card.getBoundingClientRect();
-            return rect.bottom > rootRect.top && rect.top < rootRect.bottom;
-          })
-          .sort((left, right) => {
-            const a = left.getBoundingClientRect();
-            const b = right.getBoundingClientRect();
-            const ad = Math.hypot(
-              a.left + a.width / 2 - anchorX,
-              a.top + a.height / 2 - anchorY,
-            );
-            const bd = Math.hypot(
-              b.left + b.width / 2 - anchorX,
-              b.top + b.height / 2 - anchorY,
-            );
-            return ad - bd;
-          })[0];
-      const anchorRect = anchor?.getBoundingClientRect();
-      const anchorState =
-        anchor && anchorRect
-          ? {
-              assetId: anchor.dataset.assetId!,
-              ratioX: anchorRect.width
-                ? (anchorX - anchorRect.left) / anchorRect.width
-                : 0.5,
-              ratioY: anchorRect.height
-                ? (anchorY - anchorRect.top) / anchorRect.height
-                : 0.5,
-              clientX: anchorX,
-              clientY: anchorY,
-            }
-          : null;
+      const pointedInRoot = pointed && root.contains(pointed) ? pointed : null;
+      const anchorCard = pointedInRoot
+        ? cards.find((card) => card.assetId === pointedInRoot.dataset.assetId) ?? null
+        : pickNearestCard(cards, rootRect, anchorX, anchorY);
+      const anchorState = anchorCard
+        ? captureAnchor(anchorCard, anchorX, anchorY)
+        : null;
+      if (!cardResizeAnchorRef.current) {
+        cardResizeAnchorRef.current = anchorState;
+        cardResizeScrollSnapshotRef.current = {
+          left: root.scrollLeft,
+          top: root.scrollTop,
+        };
+      }
 
       setCanvasPrefs((p) => ({ ...p, cardSize: nextSize }));
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          if (!anchorState || !workspaceCanvasRef.current) return;
-          const restored = Array.from(
-            workspaceCanvasRef.current.querySelectorAll<HTMLElement>(
-              "[data-asset-id]",
-            ),
-          ).find((card) => card.dataset.assetId === anchorState.assetId);
-          if (!restored) return;
-          const rect = restored.getBoundingClientRect();
-          workspaceCanvasRef.current.scrollLeft +=
-            rect.left + rect.width * anchorState.ratioX - anchorState.clientX;
-          workspaceCanvasRef.current.scrollTop +=
-            rect.top + rect.height * anchorState.ratioY - anchorState.clientY;
-        });
-      });
+      // Serpent-32p: always re-anchor after settle; width/size reflow may reset
+      // scrollTop mid-wait, and bailing left the visible set wrong.
+      scheduleAnchorRestore(
+        root,
+        cardResizeAnchorRef.current,
+        cardSizeRestoreFrameRef,
+        30,
+        () => {
+          cardResizeAnchorRef.current = null;
+          cardResizeScrollSnapshotRef.current = null;
+        },
+        cardResizeScrollSnapshotRef.current ?? undefined,
+      );
     },
     [assetCardSize],
   );
 
+  // REQ-CANVAS-019: dragging the sidebar or resizing the window changes the
+  // canvas's available width, which the grid/masonry/justified layouts react
+  // to by reflowing (different column/row placement). Left unhandled, that
+  // reflow leaves the raw scroll offset pointing at a different area of the
+  // grid. Watch the canvas's own box size (not the preview toggle, which
+  // moves the host to a full-size overlay while preserving the canvas
+  // viewport) and re-anchor scroll the same way the card-size slider does.
+  useEffect(() => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return;
+    let lastWidth: number | null = null;
+    const host = canvas.parentElement;
+    const observer = new ResizeObserver(() => {
+      // The host is the flex item whose width changes when a divider moves.
+      // Read the canvas's current width instead of trusting observer entry
+      // ordering when both elements resize in the same notification.
+      const width = canvas.clientWidth;
+      // The viewer overlay preserves the canvas width. View-restore.ts owns
+      // scroll restoration for the viewer close path, so a preview transition
+      // must never be interpreted as a reflow.
+      if (width <= 0) {
+        lastWidth = null;
+        return;
+      }
+      setCanvasWidthPx(Math.round(width));
+      if (lastWidth === null) {
+        lastWidth = width;
+        return;
+      }
+      if (
+        width === lastWidth ||
+        previewAssetRef.current ||
+        previewRestoringRef.current
+      ) {
+        lastWidth = width;
+        return;
+      }
+      lastWidth = width;
+
+      const rootRect = canvas.getBoundingClientRect();
+      const cards: AnchorCard[] = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).map((el) => ({
+        assetId: el.dataset.assetId!,
+        ...rectLikeFromDomRect(el.getBoundingClientRect()),
+      }));
+      // Prefer topmost visible card so the leading visible set (A/B/C) stays
+      // after column-count changes — center-nearest jumped too easily.
+      reflowAnchorRef.current = retainReflowAnchor(
+        reflowAnchorRef.current,
+        cards,
+        rectLikeFromDomRect(rootRect),
+      );
+      if (!reflowScrollSnapshotRef.current) {
+        reflowScrollSnapshotRef.current = {
+          left: canvas.scrollLeft,
+          top: canvas.scrollTop,
+        };
+      }
+      if (panelResizeLockRef.current) {
+        const snapshot = reflowScrollSnapshotRef.current;
+        if (snapshot) {
+          canvas.scrollLeft = snapshot.left;
+          canvas.scrollTop = snapshot.top;
+        }
+        return;
+      }
+      scheduleAnchorRestore(
+        canvas,
+        reflowAnchorRef.current,
+        reflowRestoreFrameRef,
+        10,
+        () => {
+          if (!panelResizingRef.current) {
+      canvas.classList.remove("is-reflow-restoring");
+      reflowAnchorRef.current = null;
+      reflowScrollSnapshotRef.current = null;
+      cardResizeAnchorRef.current = null;
+      cardResizeScrollSnapshotRef.current = null;
+          }
+        },
+        reflowScrollSnapshotRef.current ?? undefined,
+      );
+    });
+    observer.observe(canvas);
+    if (host) observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!previewAsset && !previewRestoring) return;
+    if (cardSizeRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cardSizeRestoreFrameRef.current = null;
+    }
+    if (reflowRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      reflowRestoreFrameRef.current = null;
+    }
+    cardResizeAnchorRef.current = null;
+    cardResizeScrollSnapshotRef.current = null;
+    reflowAnchorRef.current = null;
+    reflowScrollSnapshotRef.current = null;
+  }, [previewAsset, previewRestoring]);
+
   useEffect(() => {
     saveCanvasPreferences(canvasPrefs);
   }, [canvasPrefs]);
+  useEffect(() => {
+    saveBrowseSortPreferences({
+      version: 1,
+      field: sortField,
+      order: sortOrder,
+    });
+  }, [sortField, sortOrder]);
+  useEffect(() => {
+    saveAiUiPreferences(aiUiPrefs);
+  }, [aiUiPrefs]);
 
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
@@ -832,245 +2491,265 @@ function AppInner() {
     const handleWheel = (event: WheelEvent) => {
       if (!event.ctrlKey || previewAsset) return;
       event.preventDefault();
+      const wheelSample = {
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        deltaMode: event.deltaMode,
+      };
+      // Mouse notches: sign-only (one stop). Trackpad pinch: normalize LINE/PAGE
+      // into pixels for the continuous high-gain path (Serpent-fvpi / Serpent-7ny).
       const delta =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? event.deltaY * 16
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? event.deltaY * canvas.clientHeight
             : event.deltaY;
+      const stops = enumerateDiscreteCardSizes(canvas.clientWidth);
+      const nextSize = nextDiscreteCardSizeFromWheelDelta(
+        assetCardSize,
+        delta,
+        stops,
+        wheelSample,
+      );
+      const rect = canvas.getBoundingClientRect();
       resizeAssetCards(
-        assetCardSize * Math.exp(-delta * 0.002),
-        event.clientX,
-        event.clientY,
+        nextSize,
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
       );
     };
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-  function clearAssetSelection() {
-    setSelectedAssetId(undefined);
-    setSelectedAssetIds([]);
-    selectionAnchorRef.current = null;
-  }
-
-  function selectAsset(event: React.MouseEvent, assetId: string) {
-    // Suppress clicks triggered by non-left-button interactions (e.g., the
-    // synthetic click dispatched during a right-click in Playwright tests).
-    if (lastMousedownButtonRef.current !== 0) {
-      lastMousedownButtonRef.current = 0;
-      return;
-    }
-    const visibleIds = visibleAssets.map((asset) => asset.assetId);
-    if (event.shiftKey && selectionAnchorRef.current) {
-      const anchorIndex = visibleIds.indexOf(selectionAnchorRef.current);
-      const targetIndex = visibleIds.indexOf(assetId);
-      if (anchorIndex >= 0 && targetIndex >= 0) {
-        const range = visibleIds.slice(
-          Math.min(anchorIndex, targetIndex),
-          Math.max(anchorIndex, targetIndex) + 1,
-        );
-        setSelectedAssetIds(
-          event.metaKey || event.ctrlKey
-            ? (current) => [...new Set([...current, ...range])]
-            : range,
-        );
-        setSelectedAssetId(assetId);
-        return;
-      }
-    }
-    if (event.metaKey || event.ctrlKey) {
-      setSelectedAssetIds((current) => {
-        if (current.includes(assetId)) {
-          const next = current.filter((id) => id !== assetId);
-          setSelectedAssetId(next.at(-1));
-          if (next.length === 0) selectionAnchorRef.current = null;
-          return next;
-        }
-        setSelectedAssetId(assetId);
-        return [...current, assetId];
-      });
-      selectionAnchorRef.current = assetId;
-      return;
-    }
-    setSelectedAssetIds([assetId]);
-    setSelectedAssetId(assetId);
-    selectionAnchorRef.current = assetId;
-  }
-
-  // Marquee drag-select helpers
-  const marqueeActiveRef = useRef(false);
-
-  const handleCanvasMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement;
-      if (target.closest(".asset-card, .batch-action-strip, .external-drop-overlay, .asset-loading-more"))
-        return;
-      if (previewAsset) return;
-      if (draggedMemberId || draggedCollectionId) return;
-      // Only left-button drags start a marquee
-      if (e.button !== 0) return;
-
-      marqueeStartRef.current = { x: e.clientX, y: e.clientY };
-      setMarqueeBox({
-        left: e.clientX,
-        top: e.clientY,
-        width: 0,
-        height: 0,
-      });
-      marqueeActiveRef.current = true;
-    },
-    [previewAsset, draggedMemberId, draggedCollectionId],
-  );
-
-  // Marquee document-level mousemove + mouseup when active
+  // Browse canvas Cmd/Ctrl+=|-|0 — discrete card stops; 0 = default size
+  // (Serpent-46i9 / Serpent-7ny). Viewer owns the chord while preview is open.
   useEffect(() => {
-    const canvas = workspaceCanvasRef.current;
-    if (!canvas) return;
-
-    const AUTO_SCROLL_ZONE = 40; // px from top/bottom edge
-    const MAX_SCROLL_SPEED = 8; // px per frame at edge
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!marqueeActiveRef.current) return;
-
-      const start = marqueeStartRef.current;
-      const left = Math.min(start.x, e.clientX);
-      const top = Math.min(start.y, e.clientY);
-      const width = Math.abs(e.clientX - start.x);
-      const height = Math.abs(e.clientY - start.y);
-
-      setMarqueeBox({ left, top, width, height });
-
-      // Intersect marquee box with visible asset cards
-      const canvasRect = canvas.getBoundingClientRect();
-      const cards =
-        canvas.querySelectorAll<HTMLElement>("[data-asset-id]");
-      const marqueeRect = {
-        left,
-        top,
-        right: left + width,
-        bottom: top + height,
-      };
-      const hitIds: string[] = [];
-      for (const card of cards) {
-        const rect = card.getBoundingClientRect();
-        // Box-overlap intersection (works for both grid and masonry)
-        if (
-          rect.left < marqueeRect.right &&
-          rect.right > marqueeRect.left &&
-          rect.top < marqueeRect.bottom &&
-          rect.bottom > marqueeRect.top
-        ) {
-          const id = card.dataset.assetId;
-          if (id) hitIds.push(id);
-        }
-      }
-      marqueeHitIdsRef.current = hitIds;
-
-      if (e.metaKey || e.ctrlKey || e.shiftKey) {
-        setSelectedAssetIds((current) => [
-          ...new Set([...current, ...hitIds]),
-        ]);
-      } else {
-        setSelectedAssetIds(hitIds);
-      }
-      if (hitIds.length > 0) {
-        setSelectedAssetId(hitIds[0]!);
-      }
-
-      // Auto-scroll when pointer is near canvas top/bottom edges
-      if (
-        e.clientY >= canvasRect.top &&
-        e.clientY <= canvasRect.bottom
-      ) {
-        if (e.clientY < canvasRect.top + AUTO_SCROLL_ZONE) {
-          const dist = canvasRect.top + AUTO_SCROLL_ZONE - e.clientY;
-          const speed = Math.round(
-            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
-          );
-          if (speed > 0) canvas.scrollTop -= speed;
-        } else if (
-          e.clientY > canvasRect.bottom - AUTO_SCROLL_ZONE
-        ) {
-          const dist =
-            e.clientY - (canvasRect.bottom - AUTO_SCROLL_ZONE);
-          const speed = Math.round(
-            (dist / AUTO_SCROLL_ZONE) * MAX_SCROLL_SPEED,
-          );
-          if (speed > 0) canvas.scrollTop += speed;
-        }
-      }
-    };
-
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!marqueeActiveRef.current) return;
-      marqueeActiveRef.current = false;
-
-      const start = marqueeStartRef.current;
-      const dx = Math.abs(e.clientX - start.x);
-      const dy = Math.abs(e.clientY - start.y);
-
-      // Tiny drag (< 5px) is a click on empty canvas, clear selection
-      if (dx < 5 && dy < 5) {
-        clearAssetSelection();
-        setMarqueeBox(null);
+    if (previewAsset) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldIgnoreGlobalZoomShortcut(event.target)) return;
+      const action = matchGlobalZoomShortcut(event, SHORTCUT_PLATFORM);
+      if (!action) return;
+      event.preventDefault();
+      const canvas = workspaceCanvasRef.current;
+      const rect = canvas?.getBoundingClientRect();
+      const centerX = rect
+        ? rect.left + rect.width / 2
+        : undefined;
+      const centerY = rect
+        ? rect.top + rect.height / 2
+        : undefined;
+      if (action === "reset") {
+        resizeAssetCards(defaultKeyboardCardSize(), centerX, centerY);
         return;
       }
-
-      // Finalize selection — already set during mousemove;
-      // on a no-modifier marquee that hit nothing, clear too
-      if (!(e.metaKey || e.ctrlKey || e.shiftKey)) {
-        if (marqueeHitIdsRef.current.length === 0) clearAssetSelection();
-      }
-
-      // Set anchor for subsequent Shift+click range-extension
-      if (marqueeHitIdsRef.current.length > 0) {
-        selectionAnchorRef.current = marqueeHitIdsRef.current[0]!;
-      }
-
-      setMarqueeBox(null);
+      const stops = enumerateDiscreteCardSizes(canvas?.clientWidth ?? 0);
+      resizeAssetCards(
+        stepDiscreteCardSize(
+          assetCardSize,
+          action === "in" ? 1 : -1,
+          stops,
+        ),
+        centerX,
+        centerY,
+      );
     };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [assetCardSize, previewAsset, resizeAssetCards]);
 
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      marqueeActiveRef.current = false;
-    };
-  }, []);
-
-  function openAssetPreview(asset: AssetSummary) {
+  const openAssetPreview = useCallback((asset: AssetSummary) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    // Serpent-ayf: entering the viewer always shows chrome, regardless of
+    // whatever idle state accumulated while browsing; only opening (not
+    // navigateAssetPreview) wakes it.
+    wakeViewerChrome();
+    if (previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
+    previewCloseGenerationRef.current += 1;
+    closingPreviewRef.current = null;
+    previewRestoringRef.current = false;
+    setPreviewRestoring(false);
+    // A card-size or panel reflow may still have an anchor-restoration frame
+    // queued when the user opens the viewer immediately after resizing. That
+    // stale callback must not overwrite the viewer-close snapshot later.
+    if (cardSizeRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(cardSizeRestoreFrameRef.current);
+      cardSizeRestoreFrameRef.current = null;
+    }
+    if (reflowRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(reflowRestoreFrameRef.current);
+      reflowRestoreFrameRef.current = null;
+    }
+    cardResizeAnchorRef.current = null;
+    cardResizeScrollSnapshotRef.current = null;
+    reflowAnchorRef.current = null;
+    reflowScrollSnapshotRef.current = null;
     previewFocusReturnRef.current = asset.assetId;
+    const canvas = workspaceCanvasRef.current;
+    if (canvas) {
+      const card = Array.from(
+        canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+      ).find((el) => el.dataset.assetId === asset.assetId);
+      previewScrollSnapshotRef.current = captureBrowseViewSnapshot(
+        asset.assetId,
+        card?.getBoundingClientRect() ?? null,
+        canvas.scrollLeft,
+        canvas.scrollTop,
+      );
+    } else {
+      previewScrollSnapshotRef.current = null;
+    }
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }
+  }, [selectionAnchorRef, wakeViewerChrome]);
 
-  function navigateAssetPreview(asset: AssetSummary) {
+  const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
+    if (!api || !library) return;
+    const result = await api.setAssetColorSpaceOverride({
+      libraryId: library.libraryId,
+      assetId,
+      colorSpace,
+    });
+    if (!result.ok) {
+      setError(t("toast.colorSpaceSaveFailed"));
+      return;
+    }
+    setNotice(t("toast.colorSpaceSaved"));
+  }, [api, library, setError, setNotice, t]);
+
+  const navigateAssetPreview = useCallback((asset: AssetSummary) => {
     setSelectedAssetIds([asset.assetId]);
     setSelectedAssetId(asset.assetId);
     selectionAnchorRef.current = asset.assetId;
     previewFocusReturnRef.current = asset.assetId;
     setPreviewAsset(asset);
-  }
+  }, [selectionAnchorRef]);
 
-  const closeAssetPreview = useCallback(async () => {
+  const closeAssetPreview = useCallback(async (restoreBrowsePosition = true) => {
+    // A scope transition can arrive after React has already cleared
+    // `previewAsset` but before the two-frame browse restoration runs. Cancel
+    // that stale restoration even when there is no longer an asset to close,
+    // otherwise the previous scope can scroll/focus the newly selected scope.
+    if (!restoreBrowsePosition && previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
     const closingAsset = previewAsset;
     if (!closingAsset) return;
     if (closingPreviewRef.current === closingAsset.assetId) return;
+    const closeGeneration = ++previewCloseGenerationRef.current;
     closingPreviewRef.current = closingAsset.assetId;
+    previewRestoringRef.current = restoreBrowsePosition;
+    setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
     const assetId = previewFocusReturnRef.current;
+    const scrollSnapshot = previewScrollSnapshotRef.current;
     previewFocusReturnRef.current = null;
-    window.requestAnimationFrame(() => {
-      workspaceCanvasRef.current
-        ?.querySelector<HTMLElement>(`[data-asset-id="${assetId ?? ""}"]`)
-        ?.focus({ preventScroll: true });
+    previewScrollSnapshotRef.current = null;
+    if (previewRestoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(previewRestoreFrameRef.current);
+      previewRestoreFrameRef.current = null;
+    }
+    if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      if (closeGeneration !== previewCloseGenerationRef.current) return;
+      // React must first commit the collapsed viewer host. A second frame
+      // restores scroll against the visible canvas; restoring in the first
+      // frame can be discarded by layout and jump back to the top.
+      previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+        if (closeGeneration !== previewCloseGenerationRef.current) return;
+        const canvas = workspaceCanvasRef.current;
+        if (canvas && scrollSnapshot) {
+          // REQ-VIEW-008: the grid may have reflowed while the viewer was
+          // open (e.g. inspector panel width changed). Land on the raw
+          // captured position first, measure where the previewed card
+          // actually ended up, then correct the delta so it returns to the
+          // exact spot it occupied before entering the viewer.
+          canvas.scrollTo({ left: scrollSnapshot.scrollLeft, top: scrollSnapshot.scrollTop });
+          const restoredCard = scrollSnapshot.anchor
+            ? Array.from(
+                canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
+              ).find((el) => el.dataset.assetId === scrollSnapshot.anchor!.assetId)
+            : null;
+          const target = resolveBrowseRestoreScroll(
+            scrollSnapshot,
+            restoredCard?.getBoundingClientRect() ?? null,
+            {
+              scrollWidth: canvas.scrollWidth,
+              scrollHeight: canvas.scrollHeight,
+              clientWidth: canvas.clientWidth,
+              clientHeight: canvas.clientHeight,
+            },
+          );
+          canvas.scrollTo({ left: target.left, top: target.top });
+        }
+        if (closeGeneration === previewCloseGenerationRef.current) {
+          previewRestoringRef.current = false;
+          setPreviewRestoring(false);
+          // The restoring class intentionally hides and disables the canvas.
+          // Wait several frames for layout/reflow restoration to settle before
+          // returning focus; focusing while the ancestor is hidden is ignored
+          // by the browser and leaves keyboard users on <body>. Re-checking
+          // each frame also prevents a pending card-size/masonry reflow from
+          // moving the focused card out of view immediately after close.
+          const settleRestoredFocus = (remaining: number): void => {
+            if (closeGeneration !== previewCloseGenerationRef.current) return;
+            const currentCanvas = workspaceCanvasRef.current;
+            const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
+              `[data-asset-id="${assetId ?? ""}"]`,
+            );
+            if (currentCanvas && restoredFocusTarget) {
+              const canvasRect = currentCanvas.getBoundingClientRect();
+              const cardRect = restoredFocusTarget.getBoundingClientRect();
+              const cardIsVisible =
+                cardRect.bottom > canvasRect.top &&
+                cardRect.top < canvasRect.bottom &&
+                cardRect.right > canvasRect.left &&
+                cardRect.left < canvasRect.right;
+              if (!cardIsVisible) {
+                const cardTop =
+                  currentCanvas.scrollTop + cardRect.top - canvasRect.top;
+                const cardBottom = cardTop + cardRect.height;
+                const nextTop =
+                  cardTop < currentCanvas.scrollTop
+                    ? cardTop
+                    : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
+                      ? cardBottom - currentCanvas.clientHeight
+                      : currentCanvas.scrollTop;
+                currentCanvas.scrollTo({
+                  left: Math.max(
+                    0,
+                    currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
+                  ),
+                  top: Math.max(0, nextTop),
+                });
+              }
+              if (remaining <= 0) {
+                restoredFocusTarget.focus({ preventScroll: true });
+                previewRestoreFrameRef.current = null;
+                return;
+              }
+            } else if (!currentCanvas || remaining <= 0) {
+              previewRestoreFrameRef.current = null;
+              return;
+            }
+            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+              settleRestoredFocus(remaining - 1),
+            );
+          };
+          previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+            settleRestoredFocus(12),
+          );
+        } else {
+          previewRestoreFrameRef.current = null;
+        }
+      });
     });
+    if (!restoreBrowsePosition) setPreviewRestoring(false);
     try {
       if (api && library) {
         await api.closePreview({
@@ -1081,7 +2760,10 @@ function AppInner() {
     } catch {
       // Closing the local viewer must still work while Main is shutting down.
     } finally {
-      if (closingPreviewRef.current === closingAsset.assetId) {
+      if (
+        closingPreviewRef.current === closingAsset.assetId &&
+        closeGeneration === previewCloseGenerationRef.current
+      ) {
         closingPreviewRef.current = null;
       }
     }
@@ -1100,65 +2782,6 @@ function AppInner() {
     return byParent;
   }, [collections]);
 
-  function renderCollectionNodes(
-    parentId: string | null,
-    depth: number,
-  ): ReactNode {
-    const children = collectionTree.get(parentId) ?? [];
-    return children.map((c) => (
-      <div
-        className="collection-drop-target"
-        draggable
-        key={c.collectionId}
-        onDragEnd={() => setDraggedCollectionId(null)}
-        onDragOver={(event) => {
-          if (
-            draggedCollectionId ||
-            supportsExternalImportTransfer(event.dataTransfer)
-          )
-            event.preventDefault();
-        }}
-        onDragStart={(event) => {
-          event.stopPropagation();
-          setDraggedCollectionId(c.collectionId);
-          event.dataTransfer.effectAllowed = "move";
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (draggedCollectionId) {
-            void reorderCollectionSibling(draggedCollectionId, c.collectionId);
-          } else if (supportsExternalImportTransfer(event.dataTransfer)) {
-            const payload = externalImportPayload(event.dataTransfer);
-            void importDroppedFiles(
-              payload.files,
-              undefined,
-              c.collectionId,
-              payload,
-            );
-          }
-        }}
-      >
-        <NavRow
-          icon="collection"
-          label={c.name}
-          count={c.assetCount}
-          active={activeCollectionId === c.collectionId && !activeTagId}
-          depth={depth}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            openContextMenu(
-              { type: "organization", orgKind: "collection", id: c.collectionId, name: c.name },
-              { x: e.clientX, y: e.clientY },
-            );
-          }}
-          onClick={() => void chooseCollection(c.collectionId)}
-        />
-        {renderCollectionNodes(c.collectionId, depth + 1)}
-      </div>
-    ));
-  }
-
   const loadContent = useCallback(
     async (
       activeLibrary: RendererLibrarySummary,
@@ -1167,366 +2790,539 @@ function AppInner() {
         trashMode?: boolean;
         discovery?: SearchDefinition;
         searchScope?: SearchScope;
+        showIgnored?: boolean;
+        /** Navigation keeps sidebar data; mutations/library open opt in to refresh. */
+        refreshSidebar?: boolean;
       },
     ) => {
       if (!api) return;
       const trashMode = opts?.trashMode ?? false;
+      const includeIgnored = opts?.showIgnored ?? showIgnoredItems;
+      const refreshSidebar = opts?.refreshSidebar ?? true;
       const browseScope: SearchScope | undefined =
         opts?.searchScope ??
         (trashMode
           ? { kind: "trash" }
-          : scope === "all"
-            ? undefined
-            : scope === "root"
-              ? { kind: "folder", folderId: null, recursive: false }
-              : { kind: "folder", folderId: scope, recursive: false });
+          : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
-      const [
-        folderResult,
-        assetResult,
-        allResult,
-        linkedResult,
-        tagResult,
-        collectionResult,
-        smartResult,
-      ] = await Promise.all([
-        api.listFolders(libId),
+      const generation = ++contentLoadGenerationRef.current;
+      const sidebarPromise = refreshSidebar
+        ? Promise.all([
+            api.listFolders({ ...libId, showIgnored: includeIgnored }),
+            api.listLinkedFolders(libId),
+            api.listTags(libId),
+            api.listCollections(libId),
+            api.listSmartCollections(libId),
+            trashMode
+              ? api.listTrashedFolders(libId)
+              : Promise.resolve(null),
+          ])
+        : Promise.resolve(null);
+      const includeLibraryCounts =
+        refreshSidebar || trashMode || scope === "all" || scope === "root";
+      const results = await Promise.all([
         api.searchAssets({
           ...libId,
           query: opts?.discovery?.search ?? null,
           filters: opts?.discovery?.filters,
           scope: browseScope,
           sort: opts?.discovery?.sort,
-          limit: ASSET_PAGE_SIZE,
+          // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+          limit: BROWSE_PAGE_SIZE,
           offset: 0,
+          showIgnored: includeIgnored,
         }),
-        trashMode || scope === "all"
-          ? Promise.resolve(undefined)
-          : api.searchAssets({ ...libId, query: null, limit: 1, offset: 0 }),
-        api.listLinkedFolders(libId),
-        api.listTags(libId),
-        api.listCollections(libId),
-        api.listSmartCollections(libId),
-      ]);
-      if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+        includeLibraryCounts && (trashMode || scope !== "all")
+          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
+          : Promise.resolve(undefined),
+        includeLibraryCounts && (trashMode || scope !== "root")
+          ? api.searchAssets({
+              ...libId,
+              query: null,
+              limit: 1,
+              offset: 0,
+              scope: { kind: "folder", folderId: null, recursive: false },
+              showIgnored: includeIgnored,
+            })
+          : Promise.resolve(undefined),
+        includeLibraryCounts
+          ? api.searchAssets({
+              ...libId,
+              query: null,
+              limit: 1,
+              offset: 0,
+              scope: { kind: "trash" },
+              showIgnored: includeIgnored,
+            })
+          : Promise.resolve(undefined),
+        sidebarPromise,
+      ]).catch((caught: unknown) => {
+        if (generation !== contentLoadGenerationRef.current) return null;
+        throw caught;
+      });
+      if (results === null || generation !== contentLoadGenerationRef.current) {
+        return;
+      }
+      const [assetResult, allResult, rootCountResult, trashCountResult, sidebarResult] = results;
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
       if (allResult && !allResult.ok)
         throw new LibraryOperationError(allResult.error);
-      if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
-      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
-      if (!collectionResult.ok)
-        throw new LibraryOperationError(collectionResult.error);
-      if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
-      setFolders(folderResult.value);
-      if (trashMode) {
-        setTrashedAssets(assetResult.value.items);
-      } else {
-        setAssets(assetResult.value.items);
+      if (rootCountResult && !rootCountResult.ok)
+        throw new LibraryOperationError(rootCountResult.error);
+      if (trashCountResult && !trashCountResult.ok)
+        throw new LibraryOperationError(trashCountResult.error);
+      if (sidebarResult) {
+        const [
+          folderResult,
+          linkedResult,
+          tagResult,
+          collectionResult,
+          smartResult,
+          trashedFoldersResult,
+        ] = sidebarResult;
+        if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+        if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
+        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+        if (!collectionResult.ok) {
+          throw new LibraryOperationError(collectionResult.error);
+        }
+        if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
+        setFolders(folderResult.value);
+        setLinkedFolders(linkedResult.value);
+        setTags(tagResult.value);
+        setCollections(collectionResult.value);
+        setSmartCollections(smartResult.value);
+        if (trashMode) {
+          if (trashedFoldersResult && !trashedFoldersResult.ok) {
+            throw new LibraryOperationError(trashedFoldersResult.error);
+          }
+          setTrashedFolders(trashedFoldersResult?.value ?? []);
+        } else {
+          setTrashedFolders([]);
+        }
       }
-      if (!trashMode) {
-        setAllAssetCount(allResult?.value.total ?? assetResult.value.total);
+      // Serpent-sa65: beginPage owns the first summaries and starts the compact
+      // real-asset layout fetch that gives the virtual canvas full geometry.
+      // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
+      setThumbnailFailures((current) => {
+        if (current.size === 0) return current;
+        const next = new Map(current);
+        for (const asset of assetResult.value.items) {
+          if (
+            asset.thumbnailStatus === "ready" ||
+            !assetSupportsThumbnail(asset)
+          ) {
+            next.delete(asset.assetId);
+          }
+        }
+        return next.size === current.size ? current : next;
+      });
+      // CU-B2: keep library-wide counts when this load actually fetched them.
+      // Folder-to-folder navigation skips the extra COUNT queries so a 7000-item
+      // search is not queued behind a whole-library scan.
+      if (allResult) {
+        setAllAssetCount(allResult.value.total);
+      } else if (!trashMode && scope === "all") {
+        setAllAssetCount(assetResult.value.total);
+      }
+      if (!trashMode && scope === "root") {
+        setRootAssetCount(assetResult.value.total);
+      } else if (rootCountResult) {
+        setRootAssetCount(rootCountResult.value.total);
+      }
+      if (trashCountResult) {
+        setTrashedAssetCount(trashCountResult.value.total);
       }
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
       setSearchSnippets(new Map());
-      setLinkedFolders(linkedResult.value);
-      setTags(tagResult.value);
-      setCollections(collectionResult.value);
-      setSmartCollections(smartResult.value);
+      // Serpent-ws4k: register the paginated query so the scroll sentinel can
+      // append the next page with the exact same scope/sort/filters.
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: activeLibrary.libraryId,
+        query: opts?.discovery?.search ?? null,
+        filters: opts?.discovery?.filters,
+        scope: browseScope,
+        sort: opts?.discovery?.sort,
+        showIgnored: includeIgnored,
+        target: trashMode ? "trash" : "assets",
+        items: assetResult.value.items,
+        total: assetResult.value.total,
+        offset: assetResult.value.offset,
+      });
       return assetResult.value.items;
     },
-    [api],
+    [api, beginBrowsePage, showIgnoredItems],
   );
 
-  const restore = useCallback(async () => {
-    if (!api) {
-      setError("无法连接到 Serpent 桌面服务。请重新启动应用。");
-      setUiState("idle");
+  useBrowserSessionRestore({
+    api: api ?? null,
+    loadContent,
+    collectionRecursiveRef,
+    folderRecursiveRef,
+    setFolderRecursive,
+    setLibrary,
+    setShowTrash,
+    setTrashedAssets,
+    setAssetScope,
+    setActiveTagId,
+    setTagFilter,
+    setActiveCollectionId,
+    setActiveSmartCollectionId,
+    setAssets,
+    setSearchTotal,
+    beginBrowsePage,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+    setAssetSelectionAnchor,
+    setBrowserSessionReady,
+    pendingRestoredFocusRef,
+    navHistoryRef,
+    setNavHistoryUi,
+    setUiState,
+    setError,
+  });
+  useExtensionActiveContext({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    showTrash,
+    activeTagId,
+    activeCollectionId,
+    activeSmartCollectionId,
+    assetScope,
+  });
+  useBrowserSessionPersist({
+    library,
+    browserSessionReady,
+    selectedAsset,
+    showTrash,
+    activeTagId,
+    tags,
+    activeCollectionId,
+    activeSmartCollectionId,
+    assetScope,
+  });
+  usePendingRestoredAssetFocus({
+    pendingRestoredFocusRef,
+    workspaceCanvasRef,
+    assets,
+    trashedAssets,
+    selectedAssetId,
+  });
+  usePendingAssetReveal({
+    pendingRevealRef,
+    assets,
+    setSelectedAssetIds,
+    setSelectedAssetId,
+    setAssetSelectionAnchor,
+    pendingRestoredFocusRef,
+  });
+  useExtensionSaveReveal({
+    api: api ?? null,
+    libraryId: library?.libraryId,
+    chooseFolderRef,
+    pendingRevealRef,
+  });
+  // Serpent-y0au: keep recent libraries warm on the no-library start surface.
+  useEffect(() => {
+    if (!api || library) return;
+    void refreshRecentLibraries(null);
+    // refreshRecentLibraries closes over library; null path is intentional.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when api/library identity changes
+  }, [api, library]);
+  // Serpent-kipk: no-library surface is the shared create dialog (start phase),
+  // full-window centered with backdrop — not a card inside the canvas.
+  useEffect(() => {
+    if (library) return;
+    if (scriptSandboxPreviewOpen) return;
+    // Keep the required start surface closed while any import flow owns the
+    // foreground. The native ZIP picker can take long enough for the chooser
+    // to close before its progress event arrives; without this guard the
+    // no-library effect immediately remounts CreateDialog over the picker or
+    // import progress (Serpent-o5j3).
+    if (importLibraryChooserOpen || openLibraryChooserOpen || importValidated || importProgress || appSettingsOpen || busy) return;
+    if (dialog === "library") return;
+    queueMicrotask(() => {
+      setDialogValue(t("shell.myLibrary"));
+      setCreateLibraryPhase("start");
+      setDialog("library");
+    });
+  }, [
+    library,
+    dialog,
+    importLibraryChooserOpen,
+    openLibraryChooserOpen,
+    importValidated,
+    importProgress,
+    appSettingsOpen,
+    busy,
+    scriptSandboxPreviewOpen,
+    t,
+  ]);
+  // Yield the required create surface while another full-window modal is up.
+  useEffect(() => {
+    if (library) return;
+    if (!importLibraryChooserOpen && !openLibraryChooserOpen && !appSettingsOpen) return;
+    if (dialog === "library") {
+      queueMicrotask(() => setDialog(null));
+    }
+  }, [library, importLibraryChooserOpen, openLibraryChooserOpen, appSettingsOpen, dialog]);
+  // Dismiss the auto-opened no-library surface once a library becomes available.
+  // Do not close a menu-opened create dialog while a library is already open.
+  useEffect(() => {
+    if (!library) {
+      hadLibraryRef.current = false;
       return;
     }
-    let activeLibrary: RendererLibrarySummary | null = null;
-    try {
-      const result = await api.listOpen();
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      activeLibrary = result.value[0] ?? null;
-      setLibrary(activeLibrary);
-      setShowTrash(false);
-      setTrashedAssets([]);
-      if (activeLibrary) {
-        let restoredItems = (await loadContent(activeLibrary, "all")) ?? [];
-        const session = readBrowserSession(activeLibrary.libraryId);
-        if (session) {
-          try {
-            let searchScope: SearchScope | undefined;
-            let searchFilters: FilterClause[] | undefined;
-            if (session.scope.kind === "trash") {
-              setShowTrash(true);
-              setAssetScope("all");
-              restoredItems =
-                (await loadContent(activeLibrary, "all", {
-                  trashMode: true,
-                })) ?? [];
-              searchScope = { kind: "trash" };
-            } else if (session.scope.kind === "root") {
-              setAssetScope("root");
-              restoredItems = (await loadContent(activeLibrary, "root")) ?? [];
-              searchScope = {
-                kind: "folder",
-                folderId: null,
-                recursive: false,
-              };
-            } else if (session.scope.kind === "folder") {
-              setAssetScope(session.scope.id);
-              restoredItems =
-                (await loadContent(activeLibrary, session.scope.id)) ?? [];
-              searchScope = {
-                kind: "folder",
-                folderId: session.scope.id,
-                recursive: false,
-              };
-            } else if (session.scope.kind === "tag" && session.scope.name) {
-              searchFilters = [
-                { field: "tag", values: [session.scope.name], exclude: false },
-              ];
-              const result = await api.searchAssets({
-                libraryId: activeLibrary.libraryId,
-                query: null,
-                filters: searchFilters,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveTagId(session.scope.id);
-              setTagFilter(session.scope.name);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-            } else if (session.scope.kind === "collection") {
-              searchScope = {
-                kind: "collection",
-                collectionId: session.scope.id,
-                recursive: collectionRecursiveRef.current,
-              };
-              const result = await api.searchAssets({
-                libraryId: activeLibrary.libraryId,
-                query: null,
-                scope: searchScope,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveCollectionId(session.scope.id);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-            } else if (session.scope.kind === "smart") {
-              const result = await api.executeSmartCollection({
-                libraryId: activeLibrary.libraryId,
-                collectionId: session.scope.id,
-                limit: ASSET_PAGE_SIZE,
-                offset: 0,
-              });
-              if (!result.ok) throw new LibraryOperationError(result.error);
-              setActiveSmartCollectionId(session.scope.id);
-              setAssets(result.value.items);
-              setSearchTotal(result.value.total);
-              restoredItems = result.value.items;
-            }
-
-            let restoredAsset = restoredItems.find(
-              (asset) => asset.assetId === session.selectedAssetId,
+    if (!hadLibraryRef.current && dialog === "library") {
+      setDialog(null);
+      setCreateLibraryPhase("start");
+    }
+    hadLibraryRef.current = true;
+  }, [library, dialog]);
+  // MCP can switch the library behind an already-open renderer. Ordinary
+  // renderer requests still update state from their response, so only tagged
+  // MCP events (plus the legacy script-preview bootstrap path) are applied.
+  useEffect(() => {
+    if (!api) return;
+    return api.onLifecycle((event) => {
+      if (shouldDetachLibraryOnOpening(event)) {
+        // Clear the active library synchronously when the replacement starts.
+        // The old viewer is closed asynchronously below, but the browse shell
+        // must stop presenting the previous library while Eagle/Billfish is
+        // being converted.
+        applyClosedLibraryUi();
+        const transferKind = libraryTransferKindFromOperation(
+          event.type === "library.opening" ? event.operation : undefined,
+        );
+        setLibraryTransferKind(transferKind);
+        if (event.type === "library.opening" && event.operation === "open-eagle") {
+          setNotice(t("progress.validatingEagleLibrary"));
+        } else if (event.type === "library.opening" && event.operation === "open-billfish") {
+          setNotice(t("progress.validatingBillfishLibrary"));
+        }
+        setImportProgress({
+          type: "import.progress",
+          importId: "",
+          phase: "validate",
+          cancelable: true,
+          filesProcessed: 0,
+          totalFiles: 0,
+          bytesProcessed: 0,
+          totalBytes: 0,
+        });
+        void closeAssetPreview(false);
+        return;
+      }
+      if (event.type === "library.open-failed") {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        setLibraryTransferName("");
+        return;
+      }
+      if (event.type !== "library.opened") return;
+      if (!shouldApplyLibraryLifecycleEvent({
+        event,
+        currentLibraryId: library?.libraryId,
+        scriptSandboxPreviewOpen,
+      })) return;
+      void (async () => {
+        try {
+          await closeAssetPreview(false);
+          // P1 (2026-08-15): switching libraries must not keep the previous
+          // library's asset cards on the canvas even for a frame — their
+          // serpent://preview URLs would be rebuilt with the NEW libraryId and
+          // every card would flash "file missing". Clear the lists before the
+          // new library id lands.
+          setAssets([]);
+          setTrashedAssets([]);
+          setFolders([]);
+          setLinkedFolders([]);
+          setFolderBrowseEntries([]);
+          setTrashedFolders([]);
+          setTags([]);
+          setCollections([]);
+          setSmartCollections([]);
+          setSelectedFolderIds([]);
+          setSelectedAssetId(undefined);
+          setSelectedAssetIds([]);
+          setAssetMetadata(null);
+          setAiContent(null);
+          metadataByAssetRef.current.clear();
+          metadataConflictAssetIdsRef.current.clear();
+          setSearchTotal(null);
+          setAllAssetCount(0);
+          resetBrowsePagination();
+          setLibrary(event.library);
+          setPluginJobs(null);
+          setHiddenPluginJobActivityId(null);
+          setAssetScope("all");
+          setActiveTagId(null);
+          setActiveCollectionId(null);
+          setActiveSmartCollectionId(null);
+          resetNavHistory({ kind: "all" });
+          api.setActiveContext(event.library.libraryId);
+          await loadContent(event.library, "all");
+          await refreshRecentLibraries(event.library.displayPath);
+          setImportProgress(null);
+          setLibraryTransferKind("import");
+          setLibraryTransferName("");
+        } catch (caught) {
+          setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        }
+      })();
+    });
+    // loadContent is intentionally read from the current render; adding its
+    // per-render function identity would resubscribe the lifecycle bridge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    api,
+    closeAssetPreview,
+    library?.libraryId,
+    locale,
+    refreshRecentLibraries,
+    resetNavHistory,
+    scriptSandboxPreviewOpen,
+    setError,
+    setNotice,
+    t,
+  ]);
+  useEffect(() => {
+    if (!api) return;
+    const pending = new Map<string, AssetThumbnailPatch>();
+    const pendingLayoutArtifactIds = new Map<string, string | null>();
+    let frame = 0;
+    const flush = () => {
+      frame = 0;
+      if (pending.size === 0 && pendingLayoutArtifactIds.size === 0) return;
+      const batch = new Map(pending);
+      pending.clear();
+      if (batch.size > 0) {
+        setAssets((current) => applyAssetThumbnailPatches(current, batch));
+      }
+      if (pendingLayoutArtifactIds.size > 0) {
+        const layoutBatch = new Map(pendingLayoutArtifactIds);
+        pendingLayoutArtifactIds.clear();
+        const libraryId = library?.libraryId ?? "";
+        setLayoutThumbnailArtifacts((current) => {
+          const ids = current.libraryId === libraryId
+            ? new Map(current.ids)
+            : new Map<string, string>();
+          for (const [assetId, artifactId] of layoutBatch) {
+            if (artifactId) ids.set(assetId, artifactId);
+            else ids.delete(assetId);
+          }
+          while (ids.size > 512) {
+            const oldest = ids.keys().next().value as string | undefined;
+            if (oldest === undefined) break;
+            ids.delete(oldest);
+          }
+          return { libraryId, ids };
+        });
+      }
+    };
+    const queuePatch = (assetId: string, patch: AssetThumbnailPatch) => {
+      pending.set(assetId, mergeAssetThumbnailPatch(pending.get(assetId), patch));
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(flush);
+    };
+    const queueLayoutArtifactPatch = (
+      assetId: string,
+      artifactId: string | null,
+    ) => {
+      pendingLayoutArtifactIds.set(assetId, artifactId);
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(flush);
+    };
+    // Serpent-d0nv: a burst of cover thumbnail.ready events collapses into a
+    // single folder-browse-entries re-fetch (one IPC for the current parent).
+    let folderBrowseRefreshFrame = 0;
+    const scheduleFolderBrowseRefresh = () => {
+      if (folderBrowseRefreshFrame !== 0) return;
+      folderBrowseRefreshFrame = window.requestAnimationFrame(() => {
+        folderBrowseRefreshFrame = 0;
+        setFolderBrowseRefreshToken((token) => token + 1);
+      });
+    };
+    const unsubscribe = api.onThumbnailEvent((event) => {
+      if (event.libraryId !== library?.libraryId) return;
+      if (event.type === "asset.dimensions.ready") {
+        queuePatch(event.assetId, {
+          width: event.width,
+          height: event.height,
+        });
+        return;
+      }
+      if (event.type === "asset.thumbnail.failed") {
+        queueLayoutArtifactPatch(event.assetId, null);
+        const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
+        setThumbnailFailures((failures) => {
+          const next = new Map(failures);
+          if (suppressFailure) {
+            next.delete(event.assetId);
+          } else {
+            next.set(
+              event.assetId,
+              event.reason ?? t("toast.thumbnailFailed"),
             );
-            if (!restoredAsset && session.scope.kind === "smart") {
-              for (
-                let offset = ASSET_PAGE_SIZE;
-                !restoredAsset;
-                offset += ASSET_PAGE_SIZE
-              ) {
-                const result = await api.executeSmartCollection({
-                  libraryId: activeLibrary.libraryId,
-                  collectionId: session.scope.id,
-                  limit: ASSET_PAGE_SIZE,
-                  offset,
-                });
-                if (!result.ok || result.value.items.length === 0) break;
-                restoredAsset = result.value.items.find(
-                  (asset) => asset.assetId === session.selectedAssetId,
-                );
-                if (offset + result.value.items.length >= result.value.total)
-                  break;
-              }
-            } else if (!restoredAsset) {
-              for (let offset = 0; !restoredAsset; offset += 200) {
-                const result = await api.searchAssets({
-                  libraryId: activeLibrary.libraryId,
-                  query: {
-                    clauses: [
-                      {
-                        field: "filename",
-                        values: [session.selectedAssetName],
-                        exclude: false,
-                      },
-                    ],
-                  },
-                  filters: searchFilters,
-                  scope: searchScope,
-                  limit: 200,
-                  offset,
-                });
-                if (!result.ok || result.value.items.length === 0) break;
-                restoredAsset = result.value.items.find(
-                  (asset) => asset.assetId === session.selectedAssetId,
-                );
-                if (offset + result.value.items.length >= result.value.total)
-                  break;
-              }
-            }
-            if (restoredAsset) {
-              if (session.scope.kind === "trash") {
-                setTrashedAssets((current) =>
-                  current.some(
-                    (asset) => asset.assetId === restoredAsset!.assetId,
-                  )
-                    ? current
-                    : [...current, restoredAsset!],
-                );
-              } else {
-                setAssets((current) =>
-                  current.some(
-                    (asset) => asset.assetId === restoredAsset!.assetId,
-                  )
-                    ? current
-                    : [...current, restoredAsset!],
-                );
-              }
-              setSelectedAssetId(restoredAsset.assetId);
-              setSelectedAssetIds([restoredAsset.assetId]);
-              selectionAnchorRef.current = restoredAsset.assetId;
-              pendingRestoredFocusRef.current = restoredAsset.assetId;
-            }
-          } catch (sessionError) {
-            console.warn(
-              "Saved browser session could not be restored.",
-              sessionError,
-            );
-            setShowTrash(false);
-            setAssetScope("all");
-            setActiveTagId(null);
-            setActiveCollectionId(null);
-            setActiveSmartCollectionId(null);
-            await loadContent(activeLibrary, "all");
+          }
+          return next;
+        });
+        if (!suppressFailure) {
+          queuePatch(event.assetId, {
+            thumbnailStatus: "failed",
+            thumbnailArtifactId: null,
+            ...(event.width === undefined ? {} : { width: event.width }),
+            ...(event.height === undefined ? {} : { height: event.height }),
+          });
+        }
+        return;
+      }
+      if (event.type === "asset.thumbnail.ready") {
+        if (event.artifactId) {
+          queueLayoutArtifactPatch(event.assetId, event.artifactId);
+        }
+        setThumbnailFailures((failures) => {
+          if (!failures.has(event.assetId)) return failures;
+          const next = new Map(failures);
+          next.delete(event.assetId);
+          return next;
+        });
+        if (event.artifactId) {
+          queuePatch(event.assetId, {
+            thumbnailStatus: "ready",
+            thumbnailArtifactId: event.artifactId,
+            ...(event.width === undefined ? {} : { width: event.width }),
+            ...(event.height === undefined ? {} : { height: event.height }),
+            ...(event.durationMs === undefined
+              ? {}
+              : { durationMs: event.durationMs }),
+            sequenceFrameArtifactId: event.artifactId,
+          });
+          // Serpent-d0nv: when a cover candidate of the current folder-card
+          // row finishes generating, re-fetch the browse entries so the card
+          // shows its cover immediately instead of staying on the empty
+          // folder icon until navigation.
+          if (folderCoverCandidateAssetIdsRef.current.has(event.assetId)) {
+            scheduleFolderBrowseRefresh();
           }
         }
       }
-      setUiState(activeLibrary ? "ready" : "idle");
-    } catch (caught) {
-      setError(toMessage(caught, "无法恢复工作区。"));
-      setUiState(activeLibrary ? "ready" : "idle");
-    }
-  }, [api, loadContent, setError]);
-  useEffect(() => {
-    void Promise.resolve().then(restore);
-  }, [restore]);
-  useEffect(() => {
-    if (!library || !selectedAsset) return;
-    const scope: StoredBrowserSession["scope"] = showTrash
-      ? { kind: "trash" }
-      : activeTagId
-        ? {
-            kind: "tag",
-            id: activeTagId,
-            name: tags.find((tag) => tag.tagId === activeTagId)?.name,
-          }
-        : activeCollectionId
-          ? { kind: "collection", id: activeCollectionId }
-          : activeSmartCollectionId
-            ? { kind: "smart", id: activeSmartCollectionId }
-            : assetScope === "all" || assetScope === "root"
-              ? { kind: assetScope }
-              : { kind: "folder", id: assetScope };
-    const session: StoredBrowserSession = {
-      version: 1,
-      scope,
-      selectedAssetId: selectedAsset.assetId,
-      selectedAssetName: selectedAsset.displayName,
+    });
+    return () => {
+      unsubscribe();
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      if (folderBrowseRefreshFrame !== 0) {
+        window.cancelAnimationFrame(folderBrowseRefreshFrame);
+      }
     };
-    window.localStorage.setItem(
-      browserSessionKey(library.libraryId),
-      JSON.stringify(session),
-    );
-  }, [
-    activeCollectionId,
-    activeSmartCollectionId,
-    activeTagId,
-    assetScope,
-    library,
-    selectedAsset,
-    showTrash,
-    tags,
-  ]);
-  useEffect(() => {
-    const assetId = pendingRestoredFocusRef.current;
-    if (!assetId) return;
-    const frame = window.requestAnimationFrame(() => {
-      const card = Array.from(
-        workspaceCanvasRef.current?.querySelectorAll<HTMLElement>(
-          "[data-asset-id]",
-        ) ?? [],
-      ).find((candidate) => candidate.dataset.assetId === assetId);
-      if (!card) return;
-      card.scrollIntoView({ block: "center", inline: "center" });
-      card.focus({ preventScroll: true });
-      pendingRestoredFocusRef.current = null;
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [assets, trashedAssets, selectedAssetId]);
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 5_000);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-  useEffect(() => {
-    if (!error) return;
-    const timer = window.setTimeout(() => setError(null), 10_000);
-    return () => window.clearTimeout(timer);
-  }, [error]);
-  useEffect(() => {
-    if (!api) return;
-    return api.onThumbnailEvent((event) => {
-      if (event.libraryId !== library?.libraryId) return;
-      setThumbnailFailures((current) => {
-        const next = new Map(current);
-        if (event.type === "asset.thumbnail.failed") {
-          next.set(
-            event.assetId,
-            event.reason ?? "缩略图生成失败。请检查源文件后重试。",
-          );
-        } else next.delete(event.assetId);
-        return next;
-      });
-      setAssets((current) =>
-        current.map((asset) => {
-          if (asset.assetId !== event.assetId) return asset;
-          if (event.type === "asset.thumbnail.ready" && event.artifactId) {
-            return {
-              ...asset,
-              thumbnailStatus: "ready",
-              thumbnailArtifactId: event.artifactId,
-            };
-          }
-          return {
-            ...asset,
-            thumbnailStatus: "failed",
-            thumbnailArtifactId: null,
-          };
-        }),
-      );
-    });
-  }, [api, library?.libraryId]);
+  }, [api, library?.libraryId, t]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
       if (event.libraryId !== library.libraryId) return;
+      // Serpent-u0tn: do not arm analyzing UI for background/import auto jobs
+      // when no user-initiated batch size was set (JOBS-007 rollback residue).
       setAiJobs((current) =>
         current
           ? {
@@ -1536,63 +3332,372 @@ function AppInner() {
               succeeded: event.succeeded,
               failed: event.failed,
             }
-          : current,
+          : {
+              queued: event.queued,
+              running: event.running,
+              succeeded: event.succeeded,
+              failed: event.failed,
+              paused: 0,
+              cancelled: 0,
+              jobs: [],
+            },
       );
+      if (aiAnalyzingRef.current) refreshAiBatchStatusRef.current();
     });
     const unsubscribeCompleted = api.onAiCompleted((event) => {
       if (event.libraryId !== library.libraryId) return;
-      setNotice(
-        `AI 分析完成：写入 ${event.fieldCount} 个字段、${event.tagCount} 个标签。`,
-      );
+      // Refresh only — completion toast is owned by queue-drain (Serpent-4i18).
       void reloadCurrentContentRef.current();
+      if (selectedAssetIdRef.current === event.assetId) {
+        // Serpent-c9r3: refreshAfterAi refreshes the primary's metadata and
+        // (for multi-selections) every selected asset's metadata, then
+        // rebuilds the batch-edit Inspector model — without the rebuild the
+        // multiEdit chips stay stale after a batch AI analysis completes.
+        void refreshAfterAiRef.current(event.assetId);
+      }
     });
     const unsubscribeCleared = api.onAiCleared((event) => {
       if (event.libraryId !== library.libraryId) return;
-      setNotice(`已清除 ${event.affectedAssetCount} 项资产的 AI 内容。`);
-      void reloadCurrentContentRef.current();
+      setAiContent(null);
+      setNotice(t("toast.aiContentCleared", { count: event.affectedAssetCount }));
+      // Serpent-c9r3: clearing AI must NOT disturb the browsing view, selection
+      // or scroll position — so we deliberately do NOT call reloadCurrentContent
+      // here (a full grid refetch resets the canvas). Grid cards carry no AI
+      // badges, so skipping the grid reload leaves no visible AI residue. The
+      // only surface that shows AI provenance is the Inspector, so refresh just
+      // that: when the current selection (primary, or any member of a
+      // multi-selection) was among the cleared assets, reload its metadata +
+      // tags + AI content so the Inspector drops the stale AI description /
+      // badge / tags / rating immediately instead of waiting for a reselect.
+      const affected = new Set(event.affectedAssetIds);
+      const selectedIds = selectedAssetIdsRef.current;
+      const primary = selectedAssetIdRef.current;
+      const selectedAffected =
+        (primary != null && affected.has(primary)) ||
+        selectedIds.some((id) => affected.has(id));
+      if (selectedAffected && primary) {
+        void refreshAfterAiRef.current(primary).then(() => {
+          if (selectedAssetIdsRef.current.length >= 2) {
+            rebuildAndApplyMultiEditRef.current([...selectedAssetIdsRef.current]);
+          }
+        });
+      }
     });
     return () => {
       unsubscribeProgress();
       unsubscribeCompleted();
       unsubscribeCleared();
     };
-  }, [api, library]);
+  }, [api, library, locale, setError, setFatal, setNotice, t]);
+
+  function syncNavHistoryUi() {
+    setNavHistoryUi({
+      canBack: navHistoryRef.current.canBack,
+      canForward: navHistoryRef.current.canForward,
+    });
+  }
+
+  function resetNavHistory(initial: WorkspaceNavLocation = { kind: "all" }) {
+    navHistoryRef.current.clear(initial);
+    syncNavHistoryUi();
+  }
+
+  function recordNavigation(location: WorkspaceNavLocation) {
+    if (suppressNavHistoryRef.current) return;
+    navHistoryRef.current.push(location);
+    syncNavHistoryUi();
+  }
+
+  async function applyWorkspaceLocation(location: WorkspaceNavLocation) {
+    switch (location.kind) {
+      case "all":
+        await chooseFolder("all");
+        return;
+      case "root":
+        await chooseFolder("root");
+        return;
+      case "folder":
+        await chooseFolder(location.folderId);
+        return;
+      case "tag":
+        await chooseTag(location.tagId);
+        return;
+      case "collection":
+        await chooseCollection(location.collectionId, location.recursive);
+        return;
+      case "smart-collection":
+        await chooseSmartCollection(location.collectionId);
+        return;
+      case "trash":
+        await enterTrashAt(location.tombstoneId);
+        return;
+    }
+  }
+
+  async function goWorkspaceBack() {
+    if (previewAsset) {
+      await closeAssetPreview();
+      return;
+    }
+    const location = navHistoryRef.current.back();
+    if (!location) return;
+    syncNavHistoryUi();
+    suppressNavHistoryRef.current = true;
+    try {
+      await applyWorkspaceLocation(location);
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+  }
+
+  async function goWorkspaceForward() {
+    if (previewAsset) {
+      await closeAssetPreview();
+      return;
+    }
+    const location = navHistoryRef.current.forward();
+    if (!location) return;
+    syncNavHistoryUi();
+    suppressNavHistoryRef.current = true;
+    try {
+      await applyWorkspaceLocation(location);
+    } finally {
+      suppressNavHistoryRef.current = false;
+    }
+  }
+
+  async function refreshRecentLibraries(currentLibraryPath?: string | null) {
+    if (!api) return;
+    try {
+      const result = await api.listRecent();
+      if (!result.ok) return;
+      setRecentLibraries(
+        buildRecentLibraryMenuEntries(
+          result.value,
+          currentLibraryPath === undefined
+            ? (library?.displayPath ?? null)
+            : currentLibraryPath,
+        ),
+      );
+    } catch {
+      // 最近资源库列表读取失败不影响菜单主功能，保持现有列表。
+    }
+  }
 
   async function runLibraryOperation(kind: "create" | "open") {
     if (!api) return;
+    await runLibraryOpenPipeline(
+      kind === "create" ? "creating" : "opening",
+      () =>
+        kind === "create"
+          ? api.create({ displayName: dialogValue.trim() })
+          : api.open(),
+      t("toast.libraryOpFailed"),
+    );
+  }
+
+  async function openEagleLibrary() {
+    if (!api) return;
+    // A real transfer has a Worker importId. The synthetic opening spinner uses
+    // an empty id; if it was left behind after a failed destination, allow retry
+    // instead of trapping the user on "validating…".
+    if (importProgress?.importId) return;
+    setImportProgress(null);
+    setDialog(null);
+    const inspect = await api.inspectEagle();
+    if (!inspect.ok) {
+      setImportProgress(null);
+      if (inspect.error.code === "CANCELLED") return;
+      showBlockingError(
+        t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(
+          new LibraryOperationError(inspect.error),
+          t("toast.openRecentFailed"),
+          locale,
+        ),
+      );
+      return;
+    }
+    setDialogValue(inspect.value.displayName);
+    setCreateLibraryPhase("eagle");
+    setDialog("library");
+  }
+
+  function cancelEagleInspectFlow() {
+    void api?.cancelInspectEagle();
+    setCreateLibraryPhase("start");
+  }
+
+  async function submitEagleLibraryName() {
+    if (!api) return;
+    const displayName = dialogValue.trim();
+    if (!displayName) return;
+    setDialog(null);
+    setLibraryTransferKind("open-eagle");
+    setLibraryTransferName(displayName);
+    try {
+      await runLibraryOpenPipeline(
+        "opening",
+        () => api.openEagle({ displayName }),
+        t("toast.openRecentFailed"),
+      );
+    } finally {
+      setCreateLibraryPhase("start");
+    }
+  }
+
+  async function openBillfishLibrary() {
+    if (!api) return;
+    if (importProgress?.importId) return;
+    setImportProgress(null);
+    setDialog(null);
+    const inspect = await api.inspectBillfish();
+    if (!inspect.ok) {
+      setImportProgress(null);
+      if (inspect.error.code === "CANCELLED") return;
+      showBlockingError(
+        t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(
+          new LibraryOperationError(inspect.error),
+          t("toast.openRecentFailed"),
+          locale,
+        ),
+      );
+      return;
+    }
+    // The Main process detached the previous library while it inspected the
+    // selected pack. The name form is now user input, not an active load.
+    setImportProgress(null);
+    setDialogValue(inspect.value.displayName);
+    setCreateLibraryPhase("billfish");
+    setDialog("library");
+  }
+
+  function cancelBillfishInspectFlow() {
+    void api?.cancelInspectBillfish();
+    setImportProgress(null);
+    setCreateLibraryPhase("start");
+  }
+
+  async function submitBillfishLibraryName() {
+    if (!api) return;
+    const displayName = dialogValue.trim();
+    if (!displayName) return;
+    setDialog(null);
+    setLibraryTransferKind("open-billfish");
+    setLibraryTransferName(displayName);
+    try {
+      await runLibraryOpenPipeline(
+        "opening",
+        () => api.openBillfish({ displayName }),
+        t("toast.openRecentFailed"),
+      );
+    } finally {
+      setCreateLibraryPhase("start");
+    }
+  }
+
+  async function revealRecoveryReport() {
+    if (!api || !library) return;
     setError(null);
-    setUiState(kind === "create" ? "creating" : "opening");
+    const result = await api.revealRecoveryReport({ libraryId: library.libraryId });
+    if (!result.ok) {
+      setError(toMessage(new LibraryOperationError(result.error), t("library.recoveryOpenReportFailed"), locale));
+    }
+  }
+
+  async function openRecentLibrary(libraryPath: string) {
+    if (!api) return;
+    await runLibraryOpenPipeline(
+      "opening",
+      () => api.openRecent({ path: libraryPath }),
+      t("toast.openRecentFailed"),
+    );
+  }
+
+  async function runLibraryOpenPipeline(
+    busyState: "creating" | "opening",
+    action: () => Promise<LibraryApiResult<RendererLibrarySummary>>,
+    failureMessage: string,
+  ) {
+    if (!api) return;
+    setError(null);
+    setUiState(busyState);
+    const previousLibraryId = library?.libraryId;
+    const libraryApi = api;
     let opened = false;
     try {
-      const result =
-        kind === "create"
-          ? await api.create({ displayName: dialogValue.trim() })
-          : await api.open();
+      const result = await action();
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setImportProgress(null);
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
+      // Opening an external library first gives us a validated replacement;
+      // close the old handle immediately before switching the renderer over.
+      // A successful open of the replacement must never be rolled back because
+      // the previous library would not close — that imprisoned users in a
+      // read-only library (Serpent-e0dw). Keep the new library even if close
+      // of the previous handle fails.
+      if (previousLibraryId && previousLibraryId !== result.value.libraryId) {
+        try {
+          await libraryApi.close({ libraryId: previousLibraryId });
+        } catch {
+          // Switching away must succeed even if the previous handle cannot close.
+        }
+      }
+      // Opening/creating can replace the entire browse scope while a
+      // two-frame viewer restoration is still pending. Cancel only after the
+      // picker succeeds so cancelling the picker leaves the current viewer
+      // untouched.
+      await closeAssetPreview(false);
       opened = true;
       setLibrary(result.value);
+      setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
       setAssetScope("all");
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(null);
+      resetNavHistory({ kind: "all" });
       api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, "all");
+      await refreshRecentLibraries(result.value.displayPath);
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
     } catch (caught) {
-      setError(toMessage(caught, "资源库操作失败。"));
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
+      showBlockingError(
+        busyState === "creating"
+          ? t("dialog.blockingError.libraryCreateFailed")
+          : t("dialog.blockingError.libraryOpenFailed"),
+        toMessage(caught, failureMessage),
+      );
+      // Serpent-s0oq: opening an invalid library removes it from the recent
+      // store in Main — refresh so the switcher menu and the no-library
+      // create dialog both drop it immediately.
+      void refreshRecentLibraries();
     } finally {
       setUiState(opened ? "ready" : "idle");
+      if (!opened) {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        setLibraryTransferName("");
+      }
     }
   }
 
   function clearDiscoveryControls() {
     setSearchValue("");
-    setActiveAiSearchDefinition(null);
-    setAiSearchPlanSummary(null);
     setFormatFilter("");
     setExcludeFormatFilter(false);
+    setColorFilter("");
+    setExcludeColorFilter(false);
     setTagFilter("");
     setExcludeTagFilter(false);
     setRatingFilter("");
@@ -1604,18 +3709,109 @@ function AppInner() {
     setWidthRange({ min: "", max: "", exclude: false });
     setHeightRange({ min: "", max: "", exclude: false });
     setAspectRatioRange({ min: "", max: "", exclude: false });
+    setAspectRatioRanges([]);
     setDurationRange({ min: "", max: "", exclude: false });
-    setSortField("relevance");
-    setSortOrder("asc");
+    setLongEdgeRange({ min: "", max: "", exclude: false });
     hadDiscoveryInput.current = false;
   }
 
-  async function chooseFolder(scope: AssetScope) {
+  function clearDiscoveryFiltersOnly() {
+    setFormatFilter("");
+    setExcludeFormatFilter(false);
+    setColorFilter("");
+    setExcludeColorFilter(false);
+    setTagFilter("");
+    setExcludeTagFilter(false);
+    setRatingFilter("");
+    setExcludeRatingFilter(false);
+    setFavoriteFilter("any");
+    setSourceUrlFilter("any");
+    setAvailabilityFilter("any");
+    setExcludeAvailabilityFilter(false);
+    setWidthRange({ min: "", max: "", exclude: false });
+    setHeightRange({ min: "", max: "", exclude: false });
+    setAspectRatioRange({ min: "", max: "", exclude: false });
+    setAspectRatioRanges([]);
+    setDurationRange({ min: "", max: "", exclude: false });
+    setLongEdgeRange({ min: "", max: "", exclude: false });
+  }
+
+  function clearDiscoveryFilter(id: ClearableFilterId) {
+    switch (id) {
+      case "all":
+        clearDiscoveryFiltersOnly();
+        return;
+      case "color":
+        setColorFilter("");
+        setExcludeColorFilter(false);
+        return;
+      case "format":
+        setFormatFilter("");
+        setExcludeFormatFilter(false);
+        return;
+      case "tag":
+        setTagFilter("");
+        setExcludeTagFilter(false);
+        setActiveTagId(null);
+        return;
+      case "rating":
+        setRatingFilter("");
+        setExcludeRatingFilter(false);
+        return;
+      case "favorite":
+        setFavoriteFilter("any");
+        return;
+      case "source_url":
+        setSourceUrlFilter("any");
+        return;
+      case "availability":
+        setAvailabilityFilter("any");
+        setExcludeAvailabilityFilter(false);
+        return;
+      case "aspect_ratio":
+        setAspectRatioRange({ min: "", max: "", exclude: false });
+        setAspectRatioRanges([]);
+        return;
+      case "long_edge":
+        setLongEdgeRange({ min: "", max: "", exclude: false });
+        return;
+      case "width":
+        setWidthRange({ min: "", max: "", exclude: false });
+        return;
+      case "height":
+        setHeightRange({ min: "", max: "", exclude: false });
+        return;
+      case "duration":
+        setDurationRange({ min: "", max: "", exclude: false });
+        return;
+    }
+  }
+
+  async function chooseFolder(
+    scope: AssetScope,
+    options?: { refreshSidebar?: boolean },
+  ) {
     if (!library) return;
+    // REQ-VIEW-004: leave the browse affiliate viewer when the browse scope changes.
+    await closeAssetPreview(false);
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setAssetScope(scope);
+    if (scope !== "all" && scope !== "root") {
+      const enabled = isFolderRecursiveEnabled(
+        folderRecursivePrefs,
+        library.libraryId,
+        scope,
+      );
+      folderRecursiveRef.current = enabled;
+      setFolderRecursive(enabled);
+    } else {
+      folderRecursiveRef.current = false;
+      setFolderRecursive(false);
+    }
     clearAssetSelection();
     setActiveTagId(null);
     setActiveCollectionId(null);
@@ -1623,121 +3819,293 @@ function AppInner() {
     clearDiscoveryControls();
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
+    setAssets([]);
     const folderId = scope === "all" || scope === "root" ? undefined : scope;
-    managedImportTargetFolderIdRef.current =
-      folderId && folders.some((folder) => folder.folderId === folderId)
-        ? folderId
-        : undefined;
+    // 不做 folders 列表校验：新建文件夹后自动进入时，新文件夹尚未出现在
+    // folders state（异步刷新），校验会误伤并把导入目标降级为根目录。
+    // folderId 来源可信（创建结果/导航），loadContent 会处理无效值。
+    managedImportTargetFolderIdRef.current = folderId ?? undefined;
     api?.setActiveContext(library.libraryId, folderId);
     setUiState("loading");
     try {
-      await loadContent(library, scope);
+      await loadContent(library, scope, {
+        discovery: { sort: { field: sortField, order: sortOrder } },
+        // Ordinary navigation keeps sidebar queries out of the hot path for
+        // large libraries. A destructive mutation that removed the current
+        // folder opts in once so the deleted row cannot remain visible.
+        // Re-entering the library-wide/root scopes is also the explicit
+        // refresh boundary for organization changes made through another
+        // window, an extension, or the test bridge. Folder-to-folder
+        // navigation remains cheap for giant libraries, while returning to a
+        // top-level scope cannot leave a newly-created collection hidden.
+        refreshSidebar:
+          options?.refreshSidebar ?? (scope === "all" || scope === "root"),
+      });
+      recordNavigation(
+        scope === "all"
+          ? { kind: "all" }
+          : scope === "root"
+            ? { kind: "root" }
+            : { kind: "folder", folderId: scope },
+      );
     } catch (caught) {
-      setError(toMessage(caught, "无法读取资产。"));
+      setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
     } finally {
       setUiState("ready");
     }
   }
+  chooseFolderRef.current = chooseFolder;
 
   async function enterTrash() {
+    await enterTrashAt(null);
+  }
+
+  async function enterTrashAt(tombstoneId: string | null) {
     if (!library) return;
+    await closeAssetPreview(false);
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    if (showTrash) {
+      setTrashBrowseTombstoneId(tombstoneId);
+      clearAssetSelection();
+      if (!suppressNavHistoryRef.current) {
+        recordNavigation({ kind: "trash", tombstoneId });
+      }
+      return;
+    }
     setShowTrash(true);
+    setTrashBrowseTombstoneId(tombstoneId);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
     setSearchTotal(null);
     setSearchSnippets(new Map());
+    resetBrowsePagination();
+    setTrashedAssets([]);
     clearAssetSelection();
     setAssetScope("all");
     clearDiscoveryControls();
     api?.setActiveContext(library.libraryId);
     setUiState("loading");
     try {
-      await loadContent(library, "all", { trashMode: true });
+      await loadContent(library, "all", {
+        trashMode: true,
+        // Trash browse renders folder tombstone cards from the sidebar query;
+        // unlike ordinary folder navigation, this transition must refresh
+        // that list after a destructive mutation.
+        refreshSidebar: true,
+      });
+      recordNavigation({ kind: "trash", tombstoneId });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取回收站。"));
+      setError(toMessage(caught, t("toast.readTrashFailed"), locale));
     } finally {
       setUiState("ready");
     }
   }
 
-  // --- Tag CRUD ---
-
-  async function createTag() {
-    if (!api || !library || !tagInputValue.trim()) return;
+  async function enterTagManagement() {
+    if (!library) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTagManagement(true);
+    setActivePluginSidebarViewId(null);
+    setShowTrash(false);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setAssetScope("all");
+    clearAssetSelection();
+    clearDiscoveryControls();
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    api?.setActiveContext(library.libraryId);
     setUiState("loading");
+    try {
+      if (!api) return;
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function enterPluginSidebarView(viewId: string) {
+    if (!library) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(viewId);
+    setAssetScope("all");
+    clearAssetSelection();
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    clearDiscoveryControls();
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    api?.setActiveContext(library.libraryId);
+  }
+
+  async function handleCreateTagInManagement(name: string): Promise<boolean> {
+    if (!api || !library) return false;
     try {
       const result = await api.createTag({
         libraryId: library.libraryId,
-        name: tagInputValue.trim(),
+        name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setShowTagInput(false);
-      setTagInputValue("");
-      await reloadCurrentContent();
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagCreated", { name }), result.value.historyEntryId);
+      return true;
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "创建"));
-    } finally {
-      setUiState("ready");
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
+      return false;
     }
   }
 
-  async function deleteTag(tagId: string) {
-    if (!api || !library) return;
-    setUiState("loading");
-    try {
-      const result = await api.deleteTag({
-        libraryId: library.libraryId,
-        tagId,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      if (activeTagId === tagId) {
-        setActiveTagId(null);
-        clearDiscoveryControls();
-        await loadContent(library, assetScope);
-      } else {
-        // Refresh tag list only
-        const tagResult = await api.listTags({ libraryId: library.libraryId });
-        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
-        setTags(tagResult.value);
-      }
-      setError(null);
-      setNotice("标签已删除。");
-    } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "删除"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function renameTag() {
-    if (
-      !api ||
-      !library ||
-      !renameTarget ||
-      renameTarget.kind !== "tag" ||
-      !renameTarget.name.trim()
-    )
-      return;
-    setUiState("loading");
+  async function handleRenameTagInManagement(
+    tagId: string,
+    name: string,
+  ): Promise<boolean> {
+    if (!api || !library) return false;
     try {
       const result = await api.renameTag({
         libraryId: library.libraryId,
-        tagId: renameTarget.id,
-        name: renameTarget.name.trim(),
+        tagId,
+        name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setTags((current) =>
-        current.map((tag) =>
-          tag.tagId === result.value.tagId ? result.value : tag,
-        ),
-      );
-      setRenameTarget(null);
-      setError(null);
-      setNotice("标签已重命名。");
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagRenamed", { name }), result.value.historyEntryId);
+      return true;
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "tag", "重命名"));
+      setError(toMessage(caught, t("toast.renameTagFailed"), locale));
+      return false;
+    }
+  }
+
+  async function handleDeleteTagsInManagement(
+    tagIds: string[],
+  ): Promise<boolean> {
+    if (!api || !library || tagIds.length === 0) return false;
+    try {
+      const result =
+        tagIds.length === 1
+          ? await api.deleteTag({
+              libraryId: library.libraryId,
+              tagId: tagIds[0]!,
+            })
+          : await api.deleteTags({ libraryId: library.libraryId, tagIds });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(
+        tagIds.length === 1
+          ? t("toast.tagDeleted")
+          : t("toast.tagsDeleted", { count: tagIds.length }),
+        result.value.historyEntryId,
+      );
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.deleteTagFailed"), locale));
+      return false;
+    }
+  }
+
+  async function handleMergeTagsInManagement(
+    tagIds: string[],
+    name: string,
+  ): Promise<boolean> {
+    if (!api || !library || tagIds.length < 2 || !name.trim()) return false;
+    try {
+      const result = await api.mergeTags({
+        libraryId: library.libraryId,
+        sourceTagIds: tagIds,
+        name: name.trim(),
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      const tagResult = await api.listTags({ libraryId: library.libraryId });
+      if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+      setTags(tagResult.value);
+      setNotice(t("toast.tagMerged", { name: name.trim() }), result.value.historyEntryId);
+      return true;
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.mergeTagsFailed"), locale));
+      return false;
+    }
+  }
+
+  // Serpent-eaxs: tag-management AND/OR jump — leave management, scope to all
+  // assets and apply the selected tag names as one OR clause (any) or one
+  // clause per tag (all).
+  async function handleSearchTagsFromManagement(
+    tagNames: string[],
+    match: "all" | "any",
+  ) {
+    if (!api || !library || tagNames.length === 0) return;
+    await closeAssetPreview(false);
+    closeContextMenu();
+    const joined = tagNames.join(", ");
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setAssetScope("all");
+    clearAssetSelection();
+    setTagFilter(joined);
+    setTagFilterMatch(match);
+    setSearchOffset(0);
+    api.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
+    setUiState("loading");
+    try {
+      const definition = currentQueryDefinition({
+        tagFilter: joined,
+        tagFilterMatch: match,
+      });
+      const result = await api.searchAssets({
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
+        showIgnored: showIgnoredItems,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      applySearchResult(result.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1745,43 +4113,55 @@ function AppInner() {
 
   async function chooseTag(tagId: string) {
     if (!api || !library) return;
+    await closeAssetPreview(false);
     closeContextMenu();
     const tag = tags.find((candidate) => candidate.tagId === tagId);
     if (!tag) return;
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveTagId(tagId);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
     setAssetScope("all");
     clearAssetSelection();
     setTagFilter(tag.name);
+    setTagFilterMatch("any");
     setSearchOffset(0);
     api.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
     setUiState("loading");
     try {
-      const definition = activeAiSearchDefinition
-        ? {
-            ...activeAiSearchDefinition,
-            filters: [
-              ...(activeAiSearchDefinition.filters ?? []),
-              { field: "tag" as const, values: [tag.name], exclude: false },
-            ],
-          }
-        : currentQueryDefinition({ tagFilter: tag.name });
-      if (activeAiSearchDefinition) setActiveAiSearchDefinition(definition);
+      const definition = currentQueryDefinition({ tagFilter: tag.name });
       const result = await api.searchAssets({
         libraryId: library.libraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
-        limit: ASSET_PAGE_SIZE,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
         offset: 0,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: definition.search ?? null,
+        filters: definition.filters,
+        sort: definition.sort,
+        scope: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
+      recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取标签资产。"));
+      setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -1796,66 +4176,183 @@ function AppInner() {
         tagIds: [tagId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
-      setNotice("标签已添加。");
+      await refreshTagAndMetadataState(assetId);
+      setNotice(t("toast.tagAdded"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "添加标签失败。"));
+      setError(toMessage(caught, t("toast.addTagFailed"), locale));
     }
   }
 
-  async function updateSelectionTags(remove: boolean) {
-    if (!api || !library || !batchTagId || selectedAssetIds.length === 0)
-      return;
-    setUiState("loading");
+  async function handleRemoveTagFromAsset(tagId: string) {
+    if (!api || !library || !selectedAssetId) return;
+    const targetAssetId = selectedAssetId;
     try {
-      const result = remove
-        ? await api.removeTags({
-            libraryId: library.libraryId,
-            assetIds: selectedAssetIds,
-            tagIds: [batchTagId],
-          })
-        : await api.assignTags({
-            libraryId: library.libraryId,
-            assetIds: selectedAssetIds,
-            tagIds: [batchTagId],
-          });
+      const result = await api.removeTags({
+        libraryId: library.libraryId,
+        assetIds: [targetAssetId],
+        tagIds: [tagId],
+      });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const tagResult = await api.listTags({ libraryId: library.libraryId });
-      if (tagResult.ok) setTags(tagResult.value);
-      if (remove && activeTagId === batchTagId) {
-        await chooseTag(batchTagId);
-      }
+      await refreshTagAndMetadataState(targetAssetId);
+      setNotice(t("toast.tagRemoved"), result.value.historyEntryId);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.removeTagFailed"), locale));
+    }
+  }
+
+  async function handleCreateAndAssignTag(tagName: string) {
+    if (!api || !library || !selectedAssetId || !tagName.trim()) return;
+    const targetAssetId = selectedAssetId;
+    try {
+      const createResult = await api.createTag({
+        libraryId: library.libraryId,
+        name: tagName.trim(),
+      });
+      if (!createResult.ok) throw new LibraryOperationError(createResult.error);
+      const assignResult = await api.assignTags({
+        libraryId: library.libraryId,
+        assetIds: [targetAssetId],
+        tagIds: [createResult.value.tagId],
+      });
+      if (!assignResult.ok) throw new LibraryOperationError(assignResult.error);
+      await refreshTagAndMetadataState(targetAssetId);
       setNotice(
-        `已为 ${selectedAssetIds.length} 项资产${remove ? "移除" : "添加"}标签。`,
+        t("toast.tagCreatedAssigned", { name: tagName.trim() }),
+        assignResult.value.historyEntryId,
       );
     } catch (caught) {
-      setError(
-        toMessage(caught, remove ? "批量移除标签失败。" : "批量添加标签失败。"),
-      );
-    } finally {
-      setUiState("ready");
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
     }
+  }
+
+  // REQ-MENU-007: multi-selection path — create the tag once, then assign it
+  // to the whole selection via the shared batch helper (which reports its own
+  // "已为 N 项资产添加标签。" notice or a batch error).
+  async function handleCreateAndAssignTagToSelection(
+    tagName: string,
+    assetIds: string[],
+  ) {
+    if (!api || !library || assetIds.length === 0 || !tagName.trim()) return;
+    try {
+      const createResult = await api.createTag({
+        libraryId: library.libraryId,
+        name: tagName.trim(),
+      });
+      if (!createResult.ok) throw new LibraryOperationError(createResult.error);
+      await batchAssignTagToSelection(createResult.value.tagId, assetIds);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.createTagFailed"), locale));
+    }
+  }
+
+  async function refreshTagAndMetadataState(assetId: string) {
+    if (!api || !library) return;
+    const targetLibraryId = library.libraryId;
+    const [tagResult, metadataResult] = await Promise.all([
+      api.listTags({ libraryId: targetLibraryId }),
+      api.getAssetMetadata({ libraryId: targetLibraryId, assetId }),
+    ]);
+    if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
+    if (!metadataResult.ok) throw new LibraryOperationError(metadataResult.error);
+    setTags(tagResult.value);
+    // Keep cache and Inspector editor fields coherent. Updating only
+    // `assetMetadata` leaves editRating/editFavorite stale, which made a
+    // completed script look as though its metadata write had not applied.
+    applyLoadedMetadata(assetId, metadataResult.value);
+  }
+
+  // REQ-MENU-007: Inspector tag operations apply to the whole multi-selection.
+  // The shared batch helpers only refresh the tag list, so after a batch op
+  // also refresh the primary asset's metadata to keep the Inspector's tag
+  // chips in sync (single-asset handlers already do this themselves).
+  async function refreshInspectorTagStateAfterBatch() {
+    const ids =
+      selectedAssetIds.length >= 2
+        ? [...new Set(selectedAssetIds)]
+        : selectedAssetId
+          ? [selectedAssetId]
+          : [];
+    if (ids.length === 0) return;
+    try {
+      for (const assetId of ids) {
+        await refreshTagAndMetadataState(assetId);
+      }
+      if (ids.length >= 2) {
+        rebuildAndApplyMultiEdit(ids);
+      }
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.tagUpdatedRefreshFailed"), locale));
+    }
+  }
+
+  async function handleInspectorAssignTag(tagId: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await assignAssetToTag(target.assetId, tagId);
+      return;
+    }
+    await batchAssignTagToSelection(tagId, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
+  }
+
+  async function handleInspectorRemoveTag(tagId: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await handleRemoveTagFromAsset(tagId);
+      return;
+    }
+    await batchRemoveTagFromSelection(tagId, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
+  }
+
+  async function handleInspectorCreateAndAssignTag(tagName: string) {
+    const target = resolveInspectorTagTarget(selectedAssetIds, selectedAssetId);
+    if (!target) return;
+    if (target.kind === "single") {
+      await handleCreateAndAssignTag(tagName);
+      return;
+    }
+    await handleCreateAndAssignTagToSelection(tagName, target.assetIds);
+    await refreshInspectorTagStateAfterBatch();
   }
 
   // --- Collection CRUD ---
 
   async function createCollection() {
-    if (!api || !library || !collectionInputValue.trim()) return;
+    if (!api || !library) return;
+    const name = collectionInputValue.trim();
+    if (!name) {
+      setShowCollectionInput(false);
+      setCollectionInputValue("");
+      setNewCollectionParentId(null);
+      return;
+    }
     setUiState("loading");
     try {
       const result = await api.createCollection({
         libraryId: library.libraryId,
         parentId: newCollectionParentId ?? undefined,
-        name: collectionInputValue.trim(),
+        name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowCollectionInput(false);
       setCollectionInputValue("");
       setNewCollectionParentId(null);
-      await reloadCurrentContent();
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
+      if (!collectionResult.ok) {
+        throw new LibraryOperationError(collectionResult.error);
+      }
+      setCollections(collectionResult.value);
+      // Creation should land in the new collection immediately, matching
+      // folder and smart-collection creation instead of leaving the user in
+      // the previous browse scope.
+      await chooseCollection(result.value.collectionId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "创建"));
+      setError(toOrganizationMessage(caught, "collection", "create", locale));
     } finally {
       setUiState("ready");
     }
@@ -1886,6 +4383,7 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       if (activeCollectionId && deletedCollectionIds.has(activeCollectionId)) {
+        await closeAssetPreview(false);
         setActiveCollectionId(null);
         await loadContent(library, assetScope);
       } else {
@@ -1896,9 +4394,9 @@ function AppInner() {
         setCollections(colResult.value);
       }
       setError(null);
-      setNotice("合集已删除。");
+      setNotice(t("toast.collectionDeleted"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "删除"));
+      setError(toOrganizationMessage(caught, "collection", "delete", locale));
     } finally {
       setUiState("ready");
     }
@@ -1930,9 +4428,9 @@ function AppInner() {
       );
       setRenameTarget(null);
       setError(null);
-      setNotice("合集已重命名。");
+      setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "重命名"));
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
       setUiState("ready");
     }
@@ -1965,9 +4463,9 @@ function AppInner() {
         ),
       );
       setCollectionEditor(null);
-      setNotice("合集详情已更新。");
+      setNotice(t("toast.collectionDetailsUpdated"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "重命名"));
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
     } finally {
       setUiState("ready");
     }
@@ -1983,7 +4481,7 @@ function AppInner() {
     );
     setDraggedCollectionId(null);
     if (!source || !target || source.parentId !== target.parentId) {
-      setError("当前版本仅支持在同一层级内拖拽排序合集。");
+      setError(t("toast.collectionReorderSameLevelOnly"));
       return;
     }
     const siblings = [...(collectionTree.get(source.parentId) ?? [])];
@@ -2010,9 +4508,9 @@ function AppInner() {
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setCollections(result.value);
-      setNotice("合集顺序已更新。");
+      setNotice(t("toast.collectionOrderUpdated"), reordered.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "合集排序失败。"));
+      setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -2034,7 +4532,7 @@ function AppInner() {
       const sourceIndex = orderedIds.indexOf(sourceId);
       const targetIndex = orderedIds.indexOf(targetId);
       if (sourceIndex < 0 || targetIndex < 0)
-        throw new Error("只能对当前合集的直接成员排序。");
+        throw new Error(t("toast.collectionMemberDirectOnly"));
       const [moved] = orderedIds.splice(sourceIndex, 1);
       if (!moved) return;
       orderedIds.splice(targetIndex, 0, moved);
@@ -2058,9 +4556,9 @@ function AppInner() {
         next.splice(currentTargetIndex, 0, currentMoved);
         return next;
       });
-      setNotice("合集成员顺序已更新。");
+      setNotice(t("toast.collectionMemberOrderUpdated"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "合集成员排序失败。"));
+      setError(toMessage(caught, t("toast.collectionMemberReorderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -2071,9 +4569,12 @@ function AppInner() {
     recursive = collectionRecursive,
   ) {
     if (!api || !library) return;
+    await closeAssetPreview(false);
     closeContextMenu();
     workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
     setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     setActiveCollectionId(collectionId);
     setActiveTagId(null);
     setActiveSmartCollectionId(null);
@@ -2081,6 +4582,8 @@ function AppInner() {
     clearAssetSelection();
     clearDiscoveryControls();
     api?.setActiveContext(library.libraryId);
+    resetBrowsePagination();
+    setAssets([]);
     setUiState("loading");
     try {
       const result = await api.searchAssets({
@@ -2091,22 +4594,32 @@ function AppInner() {
           collectionId,
           recursive,
         },
-        limit: ASSET_PAGE_SIZE,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
         offset: 0,
+        showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       applySearchResult(result.value);
-      // Also refresh sidebar metadata
-      const [tagResult, collectionResult, smartResult] = await Promise.all([
-        api.listTags({ libraryId: library.libraryId }),
-        api.listCollections({ libraryId: library.libraryId }),
-        api.listSmartCollections({ libraryId: library.libraryId }),
-      ]);
-      if (tagResult.ok) setTags(tagResult.value);
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      if (smartResult.ok) setSmartCollections(smartResult.value);
+      registerBrowseSearchPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        query: null,
+        scope: { kind: "collection", collectionId, recursive },
+        sort: null,
+        filters: null,
+        showIgnored: showIgnoredItems,
+        target: "assets",
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
+      recordNavigation({
+        kind: "collection",
+        collectionId,
+        recursive,
+      });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取合集内容。"));
+      setError(toMessage(caught, t("toast.readCollectionFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -2125,74 +4638,24 @@ function AppInner() {
         libraryId: library.libraryId,
       });
       if (collectionResult.ok) setCollections(collectionResult.value);
-      setNotice("资产已加入合集。");
+      setNotice(t("toast.addedToCollection"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "加入合集失败。"));
+      setError(toMessage(caught, t("toast.addToCollectionFailed"), locale));
     }
   }
 
-  async function updateSelectionCollection(remove: boolean) {
-    if (!api || !library || !batchCollectionId || selectedAssetIds.length === 0)
-      return;
-    setUiState("loading");
-    try {
-      let affectedAssetIds = selectedAssetIds;
-      if (remove) {
-        const directMembers = await api.listCollectionAssets({
-          libraryId: library.libraryId,
-          collectionId: batchCollectionId,
-          recursive: false,
-        });
-        if (!directMembers.ok)
-          throw new LibraryOperationError(directMembers.error);
-        const directMemberIds = new Set(
-          directMembers.value.map((asset) => asset.assetId),
-        );
-        affectedAssetIds = selectedAssetIds.filter((assetId) =>
-          directMemberIds.has(assetId),
-        );
-        if (affectedAssetIds.length === 0) {
-          setError(
-            "无需从目标合集移除：所选资产都不是该合集的直接成员。",
-          );
-          return;
-        }
-      }
-      const result = remove
-        ? await api.removeCollectionAssets({
-            libraryId: library.libraryId,
-            collectionId: batchCollectionId,
-            assetIds: affectedAssetIds,
-          })
-        : await api.addCollectionAssets({
-            libraryId: library.libraryId,
-            collectionId: batchCollectionId,
-            assetIds: affectedAssetIds,
-          });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const collectionResult = await api.listCollections({
+  const loadCollectionMemberships = useCallback(
+    async (assetIds: string[]) => {
+      if (!api || !library || assetIds.length === 0) return [];
+      const result = await api.listAssetCollectionMemberships({
         libraryId: library.libraryId,
+        assetIds,
       });
-      if (collectionResult.ok) setCollections(collectionResult.value);
-      if (remove && activeCollectionId === batchCollectionId)
-        await chooseCollection(
-          batchCollectionId,
-          collectionRecursiveRef.current,
-        );
-      const skippedCount = selectedAssetIds.length - affectedAssetIds.length;
-      setNotice(
-        remove && skippedCount > 0
-          ? `已将 ${affectedAssetIds.length} 项直接成员移出合集；${skippedCount} 项不是该合集的直接成员，未改动。`
-          : `已将 ${affectedAssetIds.length} 项资产${remove ? "移出" : "加入"}合集。`,
-      );
-    } catch (caught) {
-      setError(
-        toMessage(caught, remove ? "批量移出合集失败。" : "批量加入合集失败。"),
-      );
-    } finally {
-      setUiState("ready");
-    }
-  }
+      if (!result.ok) return [];
+      return result.value;
+    },
+    [api, library],
+  );
 
   async function removeAssetFromCollection(
     assetId: string,
@@ -2209,9 +4672,7 @@ function AppInner() {
       if (!directMembers.ok)
         throw new LibraryOperationError(directMembers.error);
       if (!directMembers.value.some((asset) => asset.assetId === assetId)) {
-        setError(
-          "无法从当前合集移除：该资产属于子合集，请进入对应子合集后再移除。",
-        );
+        setError(t("toast.removeFromChildCollection"));
         return;
       }
       const result = await api.removeCollectionAssets({
@@ -2220,113 +4681,200 @@ function AppInner() {
         assetIds: [assetId],
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      const [assetResult, collectionResult] = await Promise.all([
-        api.searchAssets({
-          libraryId: library.libraryId,
-          query: null,
-          scope: {
-            kind: "collection",
-            collectionId,
-            recursive: collectionRecursive,
-          },
-          limit: ASSET_PAGE_SIZE,
-          offset: 0,
-        }),
-        api.listCollections({ libraryId: library.libraryId }),
-      ]);
-      if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
+      const collectionResult = await api.listCollections({
+        libraryId: library.libraryId,
+      });
       if (!collectionResult.ok)
         throw new LibraryOperationError(collectionResult.error);
-      applySearchResult(assetResult.value);
       setCollections(collectionResult.value);
+      // CU-B1: refresh the *current* browse scope — do not force a collection search
+      // when the user is still on All assets / a folder (that emptied the grid).
+      if (activeCollectionId === collectionId) {
+        await chooseCollection(collectionId);
+      } else {
+        await reloadCurrentContent();
+      }
       clearAssetSelection();
       setError(null);
-      setNotice("资产已从合集移除。");
+      setNotice(t("toast.removedFromCollection"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toOrganizationMessage(caught, "collection", "移除资产"));
+      setError(toOrganizationMessage(caught, "collection", "removeAsset", locale));
     } finally {
       setUiState("ready");
     }
   }
 
   function currentQueryDefinition(
-    overrides: { tagFilter?: string; includeTextSearch?: boolean } = {},
+    overrides: {
+      tagFilter?: string;
+      tagFilterMatch?: "any" | "all";
+      searchValue?: string | null;
+      colorFilter?: string | null;
+      excludeColorFilter?: boolean;
+      sortField?: SortDefinition["field"];
+      sortOrder?: SortDefinition["order"];
+      filtersSnapshot?: QueryFilterSnapshot;
+    } = {},
   ): SearchDefinition {
+    const filtersState = overrides.filtersSnapshot ?? {
+      formatFilter,
+      excludeFormatFilter,
+      tagFilter,
+      excludeTagFilter,
+      tagFilterMatch,
+      ratingFilter,
+      excludeRatingFilter,
+      favoriteFilter,
+      sourceUrlFilter,
+      availabilityFilter,
+      excludeAvailabilityFilter,
+      widthRange,
+      heightRange,
+      aspectRatioRange,
+      longEdgeRange,
+      durationRange,
+    };
     const filters: FilterClause[] = [];
-    const formats = formatFilter
-      .split(",")
-      .map((value) => value.trim().replace(/^\./, ""))
-      .filter(Boolean);
-    const selectedTags = (overrides.tagFilter ?? tagFilter)
+    const formats = expandFormatFilterTokens(
+      filtersState.formatFilter
+        .split(",")
+        .map((value) => value.trim().replace(/^\./, ""))
+        .filter(Boolean),
+    );
+    const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const ratings = ratingFilter
+    const ratings = filtersState.ratingFilter
       .split(",")
       .map((value) => value.trim())
       .filter((value) => /^[0-5]$/.test(value));
+    const effectiveColorFilter = overrides.colorFilter === undefined
+      ? colorFilter
+      : overrides.colorFilter ?? "";
+    const colors = effectiveColorFilter
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (colors.length > 0)
+      filters.push({
+        field: "color",
+        values: colors,
+        exclude: overrides.excludeColorFilter ?? excludeColorFilter,
+      });
     if (formats.length > 0)
       filters.push({
         field: "format",
         values: formats,
-        exclude: excludeFormatFilter,
+        exclude: filtersState.excludeFormatFilter,
       });
-    if (selectedTags.length > 0)
-      filters.push({
-        field: "tag",
-        values: selectedTags,
-        exclude: excludeTagFilter,
-      });
+    if (selectedTags.length > 0) {
+      const matchAll =
+        (overrides.tagFilterMatch ?? filtersState.tagFilterMatch) === "all" &&
+        selectedTags.length > 1;
+      // AND semantics ("包含 N 个标签"): one clause per tag — separate
+      // clauses are ANDed, values within a clause are ORed.
+      if (matchAll) {
+        for (const tag of selectedTags) {
+          filters.push({
+            field: "tag",
+            values: [tag],
+            exclude: filtersState.excludeTagFilter,
+          });
+        }
+      } else {
+        filters.push({
+          field: "tag",
+          values: selectedTags,
+          exclude: filtersState.excludeTagFilter,
+        });
+      }
+    }
     if (ratings.length > 0)
       filters.push({
         field: "rating",
         values: ratings,
-        exclude: excludeRatingFilter,
+        exclude: filtersState.excludeRatingFilter,
       });
-    if (favoriteFilter !== "any")
+    if (filtersState.favoriteFilter !== "any")
       filters.push({
         field: "favorite",
         values: [],
-        exclude: favoriteFilter === "no",
+        exclude: filtersState.favoriteFilter === "no",
       });
-    if (sourceUrlFilter !== "any")
+    if (filtersState.sourceUrlFilter !== "any")
       filters.push({
         field: "source_url",
         values: [],
-        exclude: sourceUrlFilter === "no",
+        exclude: filtersState.sourceUrlFilter === "no",
       });
-    if (availabilityFilter !== "any")
+    if (filtersState.availabilityFilter !== "any")
       filters.push({
         field: "availability",
-        values: [availabilityFilter],
-        exclude: excludeAvailabilityFilter,
+        values: [filtersState.availabilityFilter],
+        exclude: filtersState.excludeAvailabilityFilter,
       });
     const technicalRanges: Array<{
-      field: "width" | "height" | "aspect_ratio" | "duration_ms";
+      field: "width" | "height" | "aspect_ratio" | "duration_ms" | "long_edge";
       input: { min: string; max: string; exclude: boolean };
       scale?: number;
       integer?: boolean;
     }> = [
-      { field: "width", input: widthRange },
-      { field: "height", input: heightRange },
-      { field: "aspect_ratio", input: aspectRatioRange, integer: false },
-      { field: "duration_ms", input: durationRange, scale: 1_000 },
+      { field: "width", input: filtersState.widthRange },
+      { field: "height", input: filtersState.heightRange },
+      { field: "long_edge", input: filtersState.longEdgeRange },
+      { field: "duration_ms", input: filtersState.durationRange, scale: 1_000 },
     ];
+    const aspectInputs =
+      overrides.filtersSnapshot
+        ? (
+          filtersState.aspectRatioRange.min || filtersState.aspectRatioRange.max
+            ? [{
+              min: filtersState.aspectRatioRange.min,
+              max: filtersState.aspectRatioRange.max,
+            }]
+            : []
+        )
+        : aspectRatioRanges.length > 0
+          ? aspectRatioRanges
+          : aspectRatioRange.min || aspectRatioRange.max
+            ? [{ min: aspectRatioRange.min, max: aspectRatioRange.max }]
+            : [];
+    const aspectExclude = overrides.filtersSnapshot
+      ? filtersState.aspectRatioRange.exclude
+      : aspectRatioRange.exclude;
+    const aspectParsed = aspectInputs
+      .map((input) => parseNumericRange(input.min, input.max, 1, false))
+      .filter((range): range is NonNullable<typeof range> => range !== null);
+    if (aspectParsed.length > 0) {
+      filters.push({
+        field: "aspect_ratio",
+        ranges: aspectParsed,
+        exclude: aspectExclude,
+      });
+    }
     for (const { field, input, scale = 1, integer = true } of technicalRanges) {
       const range = parseNumericRange(input.min, input.max, scale, integer);
       if (range)
         filters.push({ field, ranges: [range], exclude: input.exclude });
     }
     return {
-      ...(overrides.includeTextSearch !== false && searchValue.trim()
+      ...((overrides.searchValue === undefined
+        ? searchValue
+        : overrides.searchValue ?? "").trim()
         ? {
-            search: { clauses: parseSearchExpression(searchValue) },
+            search: parseSearchExpression(
+              overrides.searchValue === undefined
+                ? searchValue
+                : overrides.searchValue ?? "",
+            ),
           }
         : {}),
       ...(filters.length > 0 ? { filters } : {}),
-      ...(sortField !== "relevance"
-        ? { sort: { field: sortField, order: sortOrder } }
-        : {}),
+      sort: {
+        field: overrides.sortField ?? sortField,
+        order: overrides.sortOrder ?? sortOrder,
+      },
     };
   }
 
@@ -2337,29 +4885,17 @@ function AppInner() {
       offset: number;
       snippets?: Array<{ assetId: string; text: string }>;
     },
-    append = false,
   ) {
-    setAssets((current) =>
-      append
-        ? [
-            ...current,
-            ...result.items.filter(
-              (item) =>
-                !current.some((existing) => existing.assetId === item.assetId),
-            ),
-          ]
-        : result.items,
-    );
+    // Serpent-87pd: canvas slots come from beginPage. Replacing the list with
+    // the first window here would collapse the scrollbar to 100 items.
     setSearchTotal(result.total);
     setSearchOffset(result.offset + result.items.length);
     setSearchSnippets(
-      (current) =>
-        new Map([
-          ...(append ? current.entries() : []),
-          ...(result.snippets ?? []).map(
-            (snippet) => [snippet.assetId, snippet.text] as const,
-          ),
-        ]),
+      new Map(
+        (result.snippets ?? []).map(
+          (snippet) => [snippet.assetId, snippet.text] as const,
+        ),
+      ),
     );
   }
 
@@ -2373,14 +4909,19 @@ function AppInner() {
     if (assetScope === "root")
       return { kind: "folder", folderId: null, recursive: false };
     if (assetScope !== "all")
-      return { kind: "folder", folderId: assetScope, recursive: false };
+      // REQ-FOLDER-009 / REQ-FILTER-012: folder search follows the same switch.
+      return {
+        kind: "folder",
+        folderId: assetScope,
+        recursive: folderRecursive,
+      };
     return undefined;
   }
 
   async function reloadCurrentContent() {
     if (!library) return;
     if (activeSmartCollectionId) {
-      await chooseSmartCollection(activeSmartCollectionId, 0);
+      await chooseSmartCollection(activeSmartCollectionId);
       return;
     }
     if (showTrash) {
@@ -2401,106 +4942,632 @@ function AppInner() {
       searchScope: currentSearchScope(),
     });
   }
+
+  // Serpent-关联刷新: asset/folder deletions must clear cards immediately
+  // instead of waiting for a full searchAssets round trip (~10s on large
+  // libraries). Remove ids locally, adjust scope counts, and quietly
+  // re-reconcile once in the background (derived sidebar/folder data stays
+  // fresh without blocking the user).
+  const deferredReconcileTimerRef = useRef<number | undefined>(undefined);
+  const applyLocalAssetRemoval = useCallback(
+    (assetIds: string[], options?: { removedCount?: number }) => {
+      const removed = new Set(assetIds);
+      const removedCount = options?.removedCount ?? assetIds.length;
+      setAssets((current) => removeAssetIdsLocally(current, removed));
+      setTrashedAssets((current) => removeAssetIdsLocally(current, removed));
+      setSearchTotal((current) => decrementScopeCount(current, removedCount));
+      setAllAssetCount((current) => Math.max(0, current - removedCount));
+      // Serpent-关联刷新: fold the deletion into the pagination bookkeeping so
+      // an in-flight append cannot resurrect the removed rows.
+      removeLocallyFromBrowse(assetIds, removedCount);
+      if (deferredReconcileTimerRef.current !== undefined) {
+        window.clearTimeout(deferredReconcileTimerRef.current);
+      }
+      deferredReconcileTimerRef.current = window.setTimeout(() => {
+        deferredReconcileTimerRef.current = undefined;
+        // Keep the user's scroll position across the silent reconcile — a
+        // replaced first page must not yank the canvas to the bottom.
+        const canvas = workspaceCanvasRef.current;
+        const scrollTopBefore = canvas?.scrollTop ?? 0;
+        void reloadCurrentContentRef.current()
+          .catch(() => undefined)
+          .finally(() => {
+            const nextCanvas = workspaceCanvasRef.current;
+            if (nextCanvas && nextCanvas.scrollTop !== scrollTopBefore) {
+              nextCanvas.scrollTo({ top: scrollTopBefore });
+            }
+          });
+      }, 1500);
+    },
+    [removeLocallyFromBrowse],
+  );
+
+  function openInlineCollectionRename(collectionId: string, currentName: string) {
+    setShowCollectionInput(false);
+    setCollectionInputValue("");
+    setNewCollectionParentId(null);
+    setRenameTarget(null);
+    setInlineCollectionRename({ collectionId, value: currentName });
+  }
+
+  function cancelInlineCollectionRename() {
+    setInlineCollectionRename(null);
+  }
+
+  async function commitInlineCollectionRename() {
+    const session = inlineCollectionRename;
+    if (!session) return;
+    const name = session.value.trim();
+    if (!name) {
+      setInlineCollectionRename(null);
+      return;
+    }
+    if (!api || !library) return;
+    try {
+      const result = await api.updateCollection({
+        libraryId: library.libraryId,
+        collectionId: session.collectionId,
+        name,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setCollections((current) =>
+        current.map((collection) =>
+          collection.collectionId === result.value.collectionId
+            ? result.value
+            : collection,
+        ),
+      );
+      setInlineCollectionRename(null);
+      setError(null);
+      setNotice(t("toast.collectionRenamed"), result.value.historyEntryId);
+    } catch (caught) {
+      setError(toOrganizationMessage(caught, "collection", "rename", locale));
+    }
+  }
+
+  function requestDeleteCollection(collectionId: string, name: string) {
+    const collection = collections.find(
+      (candidate) => candidate.collectionId === collectionId,
+    );
+    const hasContents =
+      (collection?.assetCount ?? 0) > 0 ||
+      (collection?.childCollectionCount ?? 0) > 0;
+    if (
+      hasContents &&
+      !window.confirm(
+        t("command.collection.deleteConfirm", { name }),
+      )
+    ) {
+      return;
+    }
+    void deleteCollection(collectionId);
+  }
+
+  function requestTrashManagedFolder(folderId: string, name: string) {
+    void trashManagedFolder(folderId, name);
+  }
+
+  async function refreshCollectionSummaries() {
+    if (!api || !library) return;
+    const result = await api.listCollections({ libraryId: library.libraryId });
+    if (result.ok) setCollections(result.value);
+  }
+
+  async function createSelectedImageSequence() {
+    if (!api || !library || !imageSequenceDialog) return;
+    setImageSequenceDialog((current) =>
+      current ? { ...current, submitting: true, error: null } : current,
+    );
+    const result = await api.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: imageSequenceDialog.assetIds,
+      fps: imageSequenceDialog.fps,
+    });
+    if (!result.ok) {
+      setImageSequenceDialog((current) =>
+        current
+          ? { ...current, submitting: false, error: result.error.message }
+          : current,
+      );
+      return;
+    }
+    setImageSequenceDialog(null);
+    clearAssetSelection();
+    await reloadCurrentContent();
+    setSelectedAssetIds([result.value.assetId]);
+  }
+
+  async function updateImageSequenceFps() {
+    if (
+      !api ||
+      !library ||
+      !imageSequenceDialog ||
+      imageSequenceDialog.mode !== "update" ||
+      !imageSequenceDialog.sequenceId
+    ) {
+      return;
+    }
+    setImageSequenceDialog((current) =>
+      current ? { ...current, submitting: true, error: null } : current,
+    );
+    const result = await api.setImageSequenceFps({
+      libraryId: library.libraryId,
+      sequenceId: imageSequenceDialog.sequenceId,
+      fps: imageSequenceDialog.fps,
+    });
+    if (!result.ok) {
+      setImageSequenceDialog((current) =>
+        current
+          ? { ...current, submitting: false, error: result.error.message }
+          : current,
+      );
+      return;
+    }
+    setImageSequenceDialog(null);
+    await reloadCurrentContent();
+  }
+
+  async function dissolveSelectedImageSequence(sequenceId: string) {
+    if (!api || !library) return;
+    const result = await api.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId,
+    });
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    clearAssetSelection();
+    await reloadCurrentContent();
+  }
+
+  async function dissolveSelectedImageSequences(sequenceIds: string[]) {
+    if (!api || !library || sequenceIds.length === 0) return;
+    const result = await api.dissolveImageSequences({
+      libraryId: library.libraryId,
+      sequenceIds,
+    });
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    clearAssetSelection();
+    await reloadCurrentContent();
+  }
   useEffect(() => {
     reloadCurrentContentRef.current = reloadCurrentContent;
   });
 
-  async function executeSearchDefinition(
-    definition: SearchDefinition,
-    offset = 0,
-  ) {
+  async function refreshAfterAutomationScript() {
+    try {
+      // A script may issue hundreds of write commands. Refresh once after the
+      // execution settles so cards retain the current browse scope/selection
+      // and Inspector reflects committed metadata without a reload per batch.
+      await reloadCurrentContent();
+      const selected = selectedAssetIdRef.current;
+      if (selected) await refreshTagAndMetadataState(selected);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+    }
+  }
+
+  const {
+    batchAssignTagToSelection,
+    batchRemoveTagFromSelection,
+    batchAddSelectionToCollection,
+    batchRemoveSelectionFromCollection,
+    trashManagedAssets,
+    trashLinkedAssets,
+    deleteManagedAssetsFromDisk,
+    copyManagedSelectionToLinked,
+  } = useBatchActions({
+    api: api ?? null,
+    library,
+    setUiState,
+    setTags,
+    setCollections,
+    setNotice,
+    setError,
+    reloadCurrentContent,
+    applyLocalAssetRemoval,
+    chooseTag,
+    chooseCollection,
+    clearAssetSelection,
+    activeTagId,
+    activeCollectionId,
+  });
+
+  const removeDeletedManagedFoldersFromSidebar = useCallback(
+    (deletedFolderIds: readonly string[]) => {
+      setFolders((current) => {
+        const removed = new Set(deletedFolderIds);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const folder of current) {
+            if (
+              folder.parentFolderId !== null &&
+              removed.has(folder.parentFolderId) &&
+              !removed.has(folder.folderId)
+            ) {
+              removed.add(folder.folderId);
+              changed = true;
+            }
+          }
+        }
+        return current.filter((folder) => !removed.has(folder.folderId));
+      });
+    },
+    [],
+  );
+
+  const {
+    trashManagedFolder,
+    openDiskDelete,
+    removeLinkedFolder,
+    trashLinkedFolderSubtree,
+  } = useFolderDeleteActions({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    locale,
+    assetScope,
+    folders,
+    setNotice,
+    setError,
+    setUiState,
+    closePreview: releaseAssetPreviewsBeforeDiskDelete,
+    reloadCurrentContent,
+    onManagedFoldersTrashed: removeDeletedManagedFoldersFromSidebar,
+    onDeletedCurrentScope: () => {
+      void chooseFolder("root", { refreshSidebar: true });
+      void refreshCollectionSummaries();
+    },
+  });
+
+  const {
+    handleOpenExternal,
+    handleRevealInFolder,
+    handleCopyFilePath,
+    handleCopyAssetFiles,
+    handleOpenFolderInFileManager,
+    handleCopyFolderPath,
+    handleCopyFolder,
+  } = useShellFileActions({
+    api: api ?? null,
+    library,
+    setError,
+    setNotice,
+  });
+
+  const browsePasteDestination = resolveBrowsePasteDestination({
+    libraryOpen: Boolean(library),
+    showTrash,
+    showTagManagement,
+    showPluginSidebarView,
+    assetScope,
+    selectedFolderId,
+  });
+
+  const { pasteIntoFolder, cloneFolder } =
+    useFolderOrganizeActions({
+      api: api ?? null,
+      libraryId: library?.libraryId ?? null,
+      locale,
+      setNotice,
+      setError,
+      setUiState,
+      reloadCurrentContent,
+      onPasteConflict: (plan) => {
+        presentImportConflicts(plan);
+      },
+      onPasteSequenceOffer: (offer) => {
+        setImageSequenceImportOffer(offer);
+      },
+      onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
+    });
+
+  const osClipboardPasteAtRef = useRef(0);
+  const pasteOsClipboardFiles = useCallback(
+    (folderId: string | null) => {
+      const now = Date.now();
+      if (now - osClipboardPasteAtRef.current < 400) return;
+      osClipboardPasteAtRef.current = now;
+      void pasteIntoFolder(folderId);
+    },
+    [pasteIntoFolder],
+  );
+
+  const {
+    handleAssetsDroppedOnFolder,
+    handleAssetsDroppedOnCollection,
+    handleAssetsDroppedOnTrash,
+  } = useAssetDragDropHandlers({
+    api: api ?? null,
+    library,
+    assets,
+    assetScope,
+    setNotice,
+    setError,
+    setUiState,
+    clearAssetSelection,
+    trashManagedAssets,
+    reloadCurrentContentRef,
+    setCollections,
+  });
+
+  const resolveManagedAssetDrop = useCallback(
+    async (files: File[]): Promise<string[]> => {
+      if (!api || !library) return [];
+      const result = await api.resolveManagedAssetDrop({
+        libraryId: library.libraryId,
+        files,
+      });
+      return result.ok ? result.value.assetIds : [];
+    },
+    [api, library],
+  );
+
+  const {
+    handleFoldersDroppedOnFolder,
+    handleFoldersDroppedOnTrash,
+  } = useFolderDragDropHandlers({
+    api: api ?? null,
+    libraryId: library?.libraryId ?? null,
+    assetScope,
+    folders,
+    setNotice,
+    setError,
+    setUiState,
+    reloadCurrentContent,
+    onManagedFoldersTrashed: removeDeletedManagedFoldersFromSidebar,
+    onDeletedCurrentScope: async () => {
+      await chooseFolder("root", { refreshSidebar: true });
+    },
+  });
+
+  const {
+    externalDropActive,
+    pasteClipboardImage,
+    importDroppedFiles,
+    handleExternalDragEnter,
+    handleExternalDragLeave,
+    handleExternalDragOver,
+    handleExternalDrop,
+    handleTargetExternalDragOver,
+    handleTargetExternalDrop,
+    createFolderCardDropHandlers,
+  } = useExternalImportHandlers({
+    api: api ?? null,
+    library,
+    busy,
+    activeCollectionId,
+    previewBlocksDrop: Boolean(previewAsset),
+    managedImportTargetFolderIdRef,
+    reloadCurrentContent,
+    reloadCurrentContentRef,
+    onImportCompleted: (completion) => revealAfterImportRef.current(completion),
+    setUiState,
+    setError,
+    setNotice,
+    setConflicts: (plan) => {
+      if (plan === null) clearImportConflictsUi();
+      else presentImportConflicts(plan);
+    },
+    setImageSequenceImportOffer,
+    onFoldersDroppedOnFolder: handleFoldersDroppedOnFolder,
+    getManagedAssetDragIds,
+    onResolveManagedAssetDrop: resolveManagedAssetDrop,
+    onAssetsDroppedOnFolder: (folderId, assetIds, mode) =>
+      handleAssetsDroppedOnFolder(folderId, assetIds, mode),
+  });
+
+  const {
+    assetRenameDialog,
+    openAssetRename,
+    changeAssetRenameValue,
+    cancelAssetRename,
+    submitAssetRename,
+  } = useAssetRename({
+    api: api ?? null,
+    library,
+    visibleAssets,
+    reloadCurrentContent,
+    setNotice,
+    setSelectedAssetId,
+    setSelectedAssetIds,
+  });
+
+  const {
+    inlineFolderEdit,
+    openInlineFolderCreate,
+    openInlineFolderRename,
+    changeInlineFolderEdit,
+    cancelInlineFolderEdit,
+    commitInlineFolderEdit,
+  } = useInlineFolderEdit({
+    api: api ?? null,
+    library,
+    setNotice,
+    reloadCurrentContent,
+  });
+
+  const reloadSmartCollections = useCallback(async () => {
     if (!api || !library) return;
+    const listResult = await api.listSmartCollections({
+      libraryId: library.libraryId,
+    });
+    if (listResult.ok) setSmartCollections(listResult.value);
+  }, [api, library]);
+
+  const {
+    inlineSmartCollectionEdit,
+    openInlineSmartCollectionCreate,
+    changeInlineSmartCollectionEdit,
+    cancelInlineSmartCollectionEdit,
+    commitInlineSmartCollectionEdit,
+  } = useInlineSmartCollectionEdit({
+    api: api ?? null,
+    library,
+    getQueryDefinition: () => currentQueryDefinition(),
+    setNotice,
+    reloadSmartCollections,
+    onCreated: (collection) => {
+      setSmartCollectionSettings({
+        collectionId: collection.collectionId,
+        name: collection.name,
+      });
+      void chooseSmartCollection(collection.collectionId);
+    },
+  });
+
+  const resolveManagedFolderName = useCallback(
+    (folderId: string) => {
+      const managed = folders.find((folder) => folder.folderId === folderId)?.name;
+      if (managed !== undefined) return managed;
+      const linkedRoot = linkedFolders.find(
+        (folder) => folder.folderId === folderId,
+      )?.displayName;
+      if (linkedRoot !== undefined) return linkedRoot;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) return linkedDirectoryName(virtual.relativePath) || undefined;
+      return undefined;
+    },
+    [folders, linkedFolders],
+  );
+
+  function requestTrashFolder(folderId: string, name: string) {
+    const virtual = parseLinkedVirtualFolderId(folderId);
+    if (virtual) {
+      void trashLinkedFolderSubtree(
+        virtual.linkedFolderId,
+        virtual.relativePath,
+        name,
+      );
+      return;
+    }
+    if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+      void trashLinkedFolderSubtree(folderId, "", name);
+      return;
+    }
+    requestTrashManagedFolder(folderId, name);
+  }
+
+  // Serpent-vf8x: folder create/rename/trash chords (mac ⌘ / Windows Ctrl).
+  useFolderCommandShortcuts({
+    enabled: Boolean(library) && !showTrash,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    browseManagedFolderId: selectedFolderId ?? null,
+    selectedFolderCardIds: selectedFolderIds,
+    selectedAssetCount: selectedAssetIds.length,
+    resolveManagedFolderName,
+    canRenameFolder: (folderId) =>
+      folders.some((folder) => folder.folderId === folderId),
+    createSubfolder: (parentFolderId) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineFolderCreate(parentFolderId);
+    },
+    renameFolder: (folderId, currentName) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineFolderRename(folderId, currentName);
+    },
+    trashManagedFolder: (folderId, name) => {
+      requestTrashFolder(folderId, name);
+    },
+    deleteFolderFromDisk: (folderId, name) => {
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) {
+        openDiskDelete({
+          kind: "linked-child",
+          linkedFolderId: virtual.linkedFolderId,
+          relativePath: virtual.relativePath,
+          name,
+        });
+        return;
+      }
+      if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+        return;
+      }
+      openDiskDelete({ kind: "managed", folderId, name });
+    },
+  });
+
+  useCollectionCommandShortcuts({
+    enabled: Boolean(library) && !showTrash,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    renameCollection: (collectionId, currentName) => {
+      cancelInlineSmartCollectionEdit();
+      openInlineCollectionRename(collectionId, currentName);
+    },
+    deleteCollection: requestDeleteCollection,
+  });
+
+  async function executeSearchDefinition(definition: SearchDefinition) {
+    if (!api || !library) return;
+    const requestGeneration = ++searchRequestGenerationRef.current;
     const result = await api.searchAssets({
       libraryId: library.libraryId,
       query: definition.search ?? null,
       filters: definition.filters,
       scope: currentSearchScope(),
       sort: definition.sort,
-      limit: ASSET_PAGE_SIZE,
-      offset,
+      // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+      limit: BROWSE_PAGE_SIZE,
+      offset: 0,
+      showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
+    if (requestGeneration !== searchRequestGenerationRef.current) return;
     setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
     if (!tagFilter.trim()) setActiveTagId(null);
     setActiveSmartCollectionId(null);
-    if (offset === 0) clearAssetSelection();
-    applySearchResult(result.value, offset > 0);
+    if (!pendingRevealRef.current) {
+      clearAssetSelection({ preserveFolders: true });
+    }
+    applySearchResult(result.value);
+    // Serpent-ws4k: subsequent pages must reuse the same query/scope/sort.
+    registerBrowseSearchPage(beginBrowsePage, {
+      libraryId: library.libraryId,
+      query: definition.search ?? null,
+      filters: definition.filters,
+      scope: currentSearchScope(),
+      sort: definition.sort,
+      showIgnored: showIgnoredItems,
+      target: "assets",
+      items: result.value.items,
+      total: result.value.total,
+      offset: result.value.offset,
+    });
     return result.value;
   }
 
-  async function runSearch(event?: FormEvent, offset = 0) {
+  async function runSearch(
+    event?: FormEvent,
+    opts?: { silent?: boolean },
+  ) {
     event?.preventDefault();
     if (!api || !library) return;
+    await closeAssetPreview(false);
     try {
       const definition = currentQueryDefinition();
-      setActiveAiSearchDefinition(null);
-      setAiSearchPlanSummary(null);
-      const result = await executeSearchDefinition(definition, offset);
-      if (result) setNotice(`搜索完成：找到 ${result.total} 项。`);
-    } catch (caught) {
-      setError(toMessage(caught, "搜索失败。"));
-    }
-  }
-
-  async function runAiSearch(event?: FormEvent, offset = 0) {
-    event?.preventDefault();
-    if (!api || !library || !searchValue.trim() || aiSearchLoading) return;
-    setAiSearchLoading(true);
-    setError(null);
-    try {
-      const planned = await api.planAiSearch({
-        naturalQuery: searchValue.trim(),
-      });
-      if (!planned.ok) throw new LibraryOperationError(planned.error);
-      const aiDefinition = aiSearchPlanToDefinition(planned.value.plan);
-      const manualDefinition = currentQueryDefinition({
-        includeTextSearch: false,
-      });
-      const definition: SearchDefinition = {
-        ...(aiDefinition.search ? { search: aiDefinition.search } : {}),
-        ...(aiDefinition.filters?.length || manualDefinition.filters?.length
-          ? {
-              filters: [
-                ...(aiDefinition.filters ?? []),
-                ...(manualDefinition.filters ?? []),
-              ],
-            }
-          : {}),
-        ...((manualDefinition.sort ?? aiDefinition.sort)
-          ? { sort: (manualDefinition.sort ?? aiDefinition.sort)! }
-          : {}),
-      };
-      setActiveAiSearchDefinition(definition);
-      setAiSearchPlanSummary(describeAiSearchPlan(planned.value.plan));
-      const result = await executeSearchDefinition(definition, offset);
-      if (result)
-        setNotice(`AI 已转换为普通搜索条件：找到 ${result.total} 项。`);
-    } catch (caught) {
-      const explanation = toMessage(caught, "AI 无法转换这次搜索。");
-      setAiSearchEnabled(false);
-      setActiveAiSearchDefinition(null);
-      setAiSearchPlanSummary(null);
-      try {
-        const fallback = await executeSearchDefinition(
-          currentQueryDefinition(),
-          0,
-        );
-        setError(
-          `${explanation} 已自动改用普通关键词搜索${fallback ? `，找到 ${fallback.total} 项` : ""}。`,
-        );
-      } catch (fallbackError) {
-        setError(
-          `${explanation} 普通关键词搜索也失败：${toMessage(fallbackError, "桌面服务没有响应。")}`,
-        );
+      const result = await executeSearchDefinition(definition);
+      // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
+      // and wipe AI completion / error toasts.
+      if (result && !opts?.silent) {
+        setNotice(t("toast.searchDone", { total: result.total }));
       }
-    } finally {
-      setAiSearchLoading(false);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.searchFailed"), locale));
     }
   }
 
   useEffect(() => {
     const hasDiscoveryInput = Boolean(
       searchValue.trim() ||
+      colorFilter.trim() ||
       formatFilter.trim() ||
       tagFilter.trim() ||
       ratingFilter.trim() ||
@@ -2513,9 +5580,12 @@ function AppInner() {
       heightRange.max ||
       aspectRatioRange.min ||
       aspectRatioRange.max ||
+      aspectRatioRanges.length > 0 ||
       durationRange.min ||
       durationRange.max ||
-      sortField !== "relevance" ||
+      longEdgeRange.min ||
+      longEdgeRange.max ||
+      sortField !== "name" ||
       sortOrder !== "asc",
     );
     const shouldClearPreviousResults =
@@ -2524,13 +5594,18 @@ function AppInner() {
     if (
       !library ||
       showTrash ||
-      aiSearchEnabled ||
+      // Serpent-eaxs: entering tag management clears discovery controls; the
+      // debounced "clear filters → show all" reload must not fire behind the
+      // management page — its response handler closes the page and dumps the
+      // user back on 所有资产. Explicit submit (runSearch) still exits.
+      showTagManagement ||
+      showPluginSidebarView ||
       (!hasDiscoveryInput && !shouldClearPreviousResults)
     )
       return;
     const timer = window.setTimeout(() => {
-      void runSearch(undefined, 0);
-    }, 250);
+      void runSearch(undefined, { silent: true });
+    }, 200);
     return () => window.clearTimeout(timer);
     // Search execution reads the current scope and API from the same render;
     // only discovery controls should restart the debounce timer.
@@ -2538,8 +5613,11 @@ function AppInner() {
   }, [
     library,
     showTrash,
-    aiSearchEnabled,
+    showTagManagement,
+    showPluginSidebarView,
     searchValue,
+    colorFilter,
+    excludeColorFilter,
     formatFilter,
     excludeFormatFilter,
     tagFilter,
@@ -2553,124 +5631,58 @@ function AppInner() {
     widthRange,
     heightRange,
     aspectRatioRange,
+    aspectRatioRanges,
     durationRange,
+    longEdgeRange,
     sortField,
     sortOrder,
   ]);
 
-  async function saveSmartCollection() {
-    if (!api || !library || !smartCollectionName.trim()) return;
-    try {
-      const result = await api.createSmartCollection({
-        libraryId: library.libraryId,
-        name: smartCollectionName.trim(),
-        queryDefinitionJson: JSON.stringify(
-          activeAiSearchDefinition ?? currentQueryDefinition(),
-        ),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      const listResult = await api.listSmartCollections({
-        libraryId: library.libraryId,
-      });
-      if (listResult.ok) setSmartCollections(listResult.value);
-      setSmartCollectionName("");
-      setNotice("智能合集已保存。");
-    } catch (caught) {
-      setError(toMessage(caught, "保存智能合集失败。"));
-    }
-  }
-
-  async function chooseSmartCollection(collectionId: string, offset = 0) {
+  async function chooseSmartCollection(collectionId: string) {
     if (!api || !library) return;
+    await closeAssetPreview(false);
     closeContextMenu();
-    if (offset === 0) workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    workspaceCanvasRef.current?.scrollTo({ top: 0, left: 0 });
+    resetBrowsePagination();
+    setAssets([]);
     try {
       const result = await api.executeSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        limit: ASSET_PAGE_SIZE,
-        offset,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
+      setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(collectionId);
-      if (offset === 0) clearAssetSelection();
-      applySearchResult(result.value, offset > 0);
+      setAssetScope("all");
+      clearAssetSelection();
+      clearDiscoveryControls();
+      recordNavigation({ kind: "smart-collection", collectionId });
+      setSmartCollections((current) =>
+        current.map((collection) =>
+          collection.collectionId === collectionId
+            ? { ...collection, assetCount: result.value.total }
+            : collection,
+        ),
+      );
+      applySearchResult(result.value);
+      registerBrowseSmartCollectionPage(beginBrowsePage, {
+        libraryId: library.libraryId,
+        collectionId,
+        items: result.value.items,
+        total: result.value.total,
+        offset: result.value.offset,
+      });
     } catch (caught) {
-      setError(toMessage(caught, "执行智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
     }
   }
-
-  async function loadMoreAssets() {
-    if (
-      loadingMoreAssets ||
-      searchTotal === null ||
-      visibleAssets.length >= searchTotal
-    )
-      return;
-    setLoadingMoreAssets(true);
-    const offset = visibleAssets.length;
-    try {
-      if (showTrash) {
-        if (!api || !library) return;
-        const result = await api.searchAssets({
-          libraryId: library.libraryId,
-          query: null,
-          scope: { kind: "trash" },
-          limit: ASSET_PAGE_SIZE,
-          offset,
-        });
-        if (!result.ok) throw new LibraryOperationError(result.error);
-        setTrashedAssets((current) => [
-          ...current,
-          ...result.value.items.filter(
-            (item) =>
-              !current.some((existing) => existing.assetId === item.assetId),
-          ),
-        ]);
-        setSearchTotal(result.value.total);
-        setSearchOffset(result.value.offset + result.value.items.length);
-      } else if (activeSmartCollectionId)
-        await chooseSmartCollection(activeSmartCollectionId, offset);
-      else if (activeAiSearchDefinition)
-        await executeSearchDefinition(activeAiSearchDefinition, offset);
-      else await runSearch(undefined, offset);
-    } catch (caught) {
-      setError(toMessage(caught, "继续加载资产失败。"));
-    } finally {
-      setLoadingMoreAssets(false);
-    }
-  }
-
-  useEffect(() => {
-    loadMoreAssetsRef.current = loadMoreAssets;
-  });
-
-  useEffect(() => {
-    const sentinel = loadMoreSentinelRef.current;
-    if (
-      !sentinel ||
-      searchTotal === null ||
-      visibleAssets.length >= searchTotal
-    )
-      return;
-    const root =
-      assetViewMode === "grid"
-        ? sentinel.closest(".asset-grid")
-        : sentinel.closest(".workspace-canvas");
-    if (!(root instanceof HTMLElement)) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting))
-          void loadMoreAssetsRef.current();
-      },
-      { root, rootMargin: "600px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [assetViewMode, loadingMoreAssets, searchTotal, visibleAssets.length]);
 
   async function renameSmartCollection(collectionId: string, name: string) {
     if (!api || !library || !name.trim()) return;
@@ -2686,21 +5698,24 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice("智能合集已重命名。");
+      setNotice(t("toast.smartCollectionRenamed"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "重命名智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionRenameFailed"), locale));
     }
   }
 
   async function updateSmartCollectionQuery(collectionId: string) {
     if (!api || !library) return;
+    const definition = currentQueryDefinition();
+    if (!hasMeaningfulSmartCollectionCondition(definition)) {
+      setError(t("toast.smartCollectionNeedsCondition"));
+      return;
+    }
     try {
       const result = await api.updateSmartCollection({
         libraryId: library.libraryId,
         collectionId,
-        queryDefinitionJson: JSON.stringify(
-          activeAiSearchDefinition ?? currentQueryDefinition(),
-        ),
+        queryDefinitionJson: JSON.stringify(definition),
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setSmartCollections((current) =>
@@ -2708,9 +5723,9 @@ function AppInner() {
           collection.collectionId === collectionId ? result.value : collection,
         ),
       );
-      setNotice("智能合集条件已更新。");
+      setNotice(t("toast.smartCollectionUpdated"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "更新智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionUpdateFailed"), locale));
     }
   }
 
@@ -2728,194 +5743,65 @@ function AppInner() {
         ),
       );
       if (activeSmartCollectionId === collectionId) {
+        await closeAssetPreview(false);
         setActiveSmartCollectionId(null);
         await loadContent(library, "all");
       }
-      setNotice("智能合集已删除。");
+      setNotice(t("toast.smartCollectionDeleted"), result.value.historyEntryId);
     } catch (caught) {
-      setError(toMessage(caught, "删除智能合集失败。"));
+      setError(toMessage(caught, t("toast.smartCollectionDeleteFailed"), locale));
     }
   }
 
-  // --- Asset metadata ---
-
-  async function loadMetadata() {
-    if (!api || !library || !selectedAssetId) return;
-    const targetAssetId = selectedAssetId;
-    setMetadataLoading(true);
-    setVersionConflict(false);
+  loadAiContentForAssetRef.current = loadAiContentForAsset;
+  rebuildAndApplyMultiEditRef.current = rebuildAndApplyMultiEdit;
+  refreshAfterAiRef.current = async (assetId: string) => {
     try {
-      const result = await api.getAssetMetadata({
-        libraryId: library.libraryId,
-        assetId: targetAssetId,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      metadataByAssetRef.current.set(targetAssetId, result.value);
-      metadataConflictAssetIdsRef.current.delete(targetAssetId);
-      if (selectedAssetIdRef.current !== targetAssetId) return;
-      setAssetMetadata(result.value);
-      setEditLabel(result.value.label ?? "");
-      setEditDescription(result.value.description ?? "");
-      setEditRating(result.value.rating);
-      setEditFavorite(result.value.favorite);
-      setEditSourceUrl(result.value.sourcePageUrl ?? "");
-      setEditPalette(parseStoredPalette(result.value.palette).join(", "));
-    } catch (caught) {
-      setError(toMessage(caught, "无法读取元数据。"));
-    } finally {
-      setMetadataLoading(false);
+      await refreshTagAndMetadataState(assetId);
+    } catch {
+      // Best-effort; AI content load still proceeds.
     }
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    if (selectedAssetId) {
-      void Promise.resolve().then(async () => {
-        if (!api || !library) return;
-        setMetadataLoading(true);
-        setVersionConflict(false);
+    await loadAiContentForAsset(assetId);
+    // Multi-selection: the batch-edit Inspector reads the multiEdit model
+    // built from per-asset metadata (intersection), so every selected
+    // asset's metadata must be fresh before the model is rebuilt — the
+    // primary alone was refreshed above (Serpent-c9r3 regression: batch AI
+    // analysis completed but the Inspector stayed stale until a reselect).
+    if (selectedAssetIdsRef.current.length >= 2) {
+      const ids = [...new Set(selectedAssetIdsRef.current)];
+      for (const id of ids) {
+        if (id === assetId) continue;
         try {
-          const result = await api.getAssetMetadata({
-            libraryId: library.libraryId,
-            assetId: selectedAssetId,
-          });
-          if (!cancelled && result.ok) {
-            metadataByAssetRef.current.set(selectedAssetId, result.value);
-            metadataConflictAssetIdsRef.current.delete(selectedAssetId);
-            setAssetMetadata(result.value);
-            setEditLabel(result.value.label ?? "");
-            setEditDescription(result.value.description ?? "");
-            setEditRating(result.value.rating);
-            setEditFavorite(result.value.favorite);
-            setEditSourceUrl(result.value.sourcePageUrl ?? "");
-            setEditPalette(parseStoredPalette(result.value.palette).join(", "));
-          } else if (!cancelled && !result.ok) {
-            throw new LibraryOperationError(result.error);
-          }
-        } catch (caught) {
-          if (!cancelled) setError(toMessage(caught, "无法读取元数据。"));
-        } finally {
-          if (!cancelled) setMetadataLoading(false);
+          await refreshTagAndMetadataState(id);
+        } catch {
+          // Best-effort per asset; the rebuild still proceeds.
         }
-      });
-    } else {
-      queueMicrotask(() => {
-        setAssetMetadata(null);
-        setVersionConflict(false);
-      });
+      }
+      rebuildAndApplyMultiEdit(ids);
     }
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAssetId]);
+  };
 
-  function saveMetadata(fields: {
-    label?: string;
-    description?: string;
-    rating?: number;
-    favorite?: boolean;
-    palette?: string[];
-    sourcePageUrl?: string;
+  async function revealAfterImport(completion: {
+    assets: AssetSummary[];
   }): Promise<void> {
-    if (!api || !library || !selectedAssetId || !assetMetadata)
-      return Promise.resolve();
-    const targetApi = api;
-    const targetLibraryId = library.libraryId;
-    const targetAssetId = selectedAssetId;
-    if (metadataConflictAssetIdsRef.current.has(targetAssetId))
-      return Promise.resolve();
-    if (!metadataByAssetRef.current.has(targetAssetId)) {
-      metadataByAssetRef.current.set(targetAssetId, assetMetadata);
+    const reveal = pendingRevealFromAssets(completion.assets);
+    if (!reveal) {
+      await reloadCurrentContent();
+      return;
     }
-    setVersionConflict(false);
-    setError(null);
-
-    const operation = metadataSaveQueueRef.current.then(async () => {
-      if (metadataConflictAssetIdsRef.current.has(targetAssetId)) return;
-      const currentMetadata = metadataByAssetRef.current.get(targetAssetId);
-      if (!currentMetadata) return;
-      try {
-        const result = await targetApi.setAssetMetadata({
-          libraryId: targetLibraryId,
-          assetId: targetAssetId,
-          expectedVersion: currentMetadata.entityVersion,
-          ...fields,
-        });
-        if (!result.ok) {
-          if (result.error.code === "VERSION_CONFLICT") {
-            metadataConflictAssetIdsRef.current.add(targetAssetId);
-            if (selectedAssetIdRef.current === targetAssetId) {
-              setVersionConflict(true);
-            }
-            setNotice(
-              "元数据版本冲突——另一个操作已修改了这些字段。请刷新后重新编辑。",
-            );
-            return;
-          }
-          throw new LibraryOperationError(result.error);
-        }
-
-        metadataByAssetRef.current.set(targetAssetId, result.value);
-        const updateSummary = (asset: AssetSummary): AssetSummary =>
-          asset.assetId === targetAssetId
-            ? {
-                ...asset,
-                label: result.value.label,
-                rating: result.value.rating,
-                favorite: result.value.favorite,
-              }
-            : asset;
-        setAssets((current) => current.map(updateSummary));
-        setTrashedAssets((current) => current.map(updateSummary));
-        if (selectedAssetIdRef.current === targetAssetId) {
-          setAssetMetadata(result.value);
-        }
-        setNotice("元数据已保存。");
-      } catch (caught) {
-        setError(toMessage(caught, "保存元数据失败。"));
+    pendingRevealRef.current = reveal;
+    if (!currentScopeShowsRevealAssets(assetScope, completion.assets)) {
+      const target = sharedBrowseScopeForAssets(completion.assets);
+      if (target) {
+        await chooseFolder(target);
+        return;
       }
-    });
-    metadataSaveQueueRef.current = operation;
-    return operation;
-  }
-
-  async function handleOpenExternal(assetId: string) {
-    if (!api || !library) return;
-    try {
-      const result = await api.openExternal({
-        libraryId: library.libraryId,
-        assetId,
-      });
-      if (!result.ok) {
-        setError(toMessage(result.error, "无法打开外部应用。"));
-      }
-    } catch (caught) {
-      setError(toMessage(caught, "打开外部应用失败。"));
     }
+    await reloadCurrentContent();
   }
+  revealAfterImportRef.current = revealAfterImport;
 
   // --- Existing operations ---
-
-  async function createFolder() {
-    if (!api || !library) return;
-    setUiState("loading");
-    try {
-      const result = await api.createFolder({
-        libraryId: library.libraryId,
-        parentFolderId: selectedFolderId,
-        name: dialogValue.trim(),
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setDialog(null);
-      setNotice(`已创建文件夹"${result.value.name}"。`);
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "创建文件夹失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
 
   async function importAssets(kind: "files" | "folder") {
     if (!api || !library) return;
@@ -2937,208 +5823,209 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      if ("importId" in result.value) {
-        setConflicts(result.value);
+      if (isImportConflictPlan(result.value)) {
+        presentImportConflicts(result.value);
         return;
       }
-      setNotice(importSummary(result.value));
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  function currentManagedTargetFolderId(): string | undefined {
-    return managedImportTargetFolderIdRef.current;
-  }
-
-  async function applyDesktopImportResult(
-    result: Awaited<ReturnType<SerpentLibraryApi["importDropped"]>>,
-  ): Promise<void> {
-    if (!result.ok) {
-      // Collection assignment is deliberately a post-import relation. Make
-      // the durable partial success visible instead of leaving a stale grid.
-      if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
-        await reloadCurrentContent();
+      if (isImageSequenceImportOffer(result.value)) {
+        setImageSequenceImportOffer(result.value);
+        return;
       }
-      throw new LibraryOperationError(result.error);
-    }
-    if ("importId" in result.value) {
-      setConflicts(result.value);
-      return;
-    }
-    setNotice(importSummary(result.value));
-    await reloadCurrentContent();
-  }
-
-  async function importDroppedFiles(
-    files: File[],
-    targetFolderId: string | null | undefined = currentManagedTargetFolderId(),
-    targetCollectionId = activeCollectionId ?? undefined,
-    webPayload?: { html: string; uriList: string },
-  ) {
-    if (!api || !library || (files.length === 0 && !webPayload) || busy) return;
-    setUiState("importing");
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await api.importDropped({
-        libraryId: library.libraryId,
-        targetFolderId: targetFolderId ?? undefined,
-        targetCollectionId,
-        files,
-        html: webPayload?.html,
-        uriList: webPayload?.uriList,
-      });
-      await applyDesktopImportResult(result);
+      setNotice(importSummaryMessage(result.value, locale));
+      await revealAfterImport(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "拖放导入失败。"));
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
     } finally {
       setUiState("ready");
-      setExternalDropActive(false);
-      externalDragDepth.current = 0;
     }
   }
 
-  const pasteClipboardImage = useCallback(async () => {
-    if (!api || !library || busy) return;
-    setUiState("importing");
+  async function importEagleLibrary() {
+    if (!api || !library || importProgress) return;
+    setLibraryTransferKind("import");
+    setImportProgress({
+      type: "import.progress",
+      importId: "",
+      phase: "validate",
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: 0,
+      bytesProcessed: 0,
+      totalBytes: 0,
+    });
     setError(null);
     setNotice(null);
     try {
-      const result = await api.pasteClipboardImage({
-        libraryId: library.libraryId,
-        targetFolderId: managedImportTargetFolderIdRef.current,
-        targetCollectionId: activeCollectionId ?? undefined,
-      });
+      const result = await api.importEagleLibrary({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (result.error.code === "IMPORT_COLLECTION_ASSIGN_FAILED") {
-          await reloadCurrentContentRef.current();
-        }
+        if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      if ("importId" in result.value) {
-        setConflicts(result.value);
+      setNotice(importSummaryMessage(result.value, locale));
+      await reloadCurrentContent();
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setImportProgress(null);
+    }
+  }
+
+  async function importBillfishLibrary() {
+    if (!api || !library || importProgress) return;
+    setLibraryTransferKind("import");
+    setImportProgress({
+      type: "import.progress",
+      importId: "",
+      phase: "validate",
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles: 0,
+      bytesProcessed: 0,
+      totalBytes: 0,
+    });
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await api.importBillfishLibrary({ libraryId: library.libraryId });
+      if (!result.ok) {
+        if (result.error.code === "CANCELLED") return;
+        throw new LibraryOperationError(result.error);
+      }
+      setNotice(importSummaryMessage(result.value, locale));
+      await reloadCurrentContent();
+    } catch (caught) {
+      showBlockingError(
+        t("dialog.blockingError.importFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
+    } finally {
+      setImportProgress(null);
+    }
+  }
+
+  async function confirmImageSequenceImportOffer(input: {
+    action: "import-sequence" | "import-selected";
+    firstFrame: number;
+    fps: number;
+    lastFrame: number;
+    sequenceIndex: number;
+    applyToRest: boolean;
+  }) {
+    if (!api || !library || !imageSequenceImportOffer) return;
+    setImageSequenceImportSubmitting(true);
+    setImageSequenceImportError(null);
+    setUiState("importing");
+    try {
+      const result = await api.confirmImageSequenceImport({
+        libraryId: library.libraryId,
+        offerId: imageSequenceImportOffer.offerId!,
+        action: input.action,
+        sequenceIndex: input.sequenceIndex,
+        firstFrame: input.firstFrame,
+        lastFrame: input.lastFrame,
+        fps: input.fps,
+        applyToRest: input.applyToRest,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (isImportConflictPlan(result.value)) {
+        setImageSequenceImportOffer(null);
+        presentImportConflicts(result.value);
+        return;
+      }
+      setNotice(importSummaryMessage(result.value, locale));
+      await revealAfterImport(result.value);
+      const nextSequenceIndex = input.sequenceIndex + 1;
+      if (
+        !input.applyToRest &&
+        nextSequenceIndex < imageSequenceImportOffer.sequences.length
+      ) {
+        setImageSequenceImportIndex(nextSequenceIndex);
       } else {
-        setNotice(importSummary(result.value));
-        await reloadCurrentContentRef.current();
+        setImageSequenceImportOffer(null);
       }
     } catch (caught) {
-      setError(toMessage(caught, "从剪贴板导入失败。"));
+      setImageSequenceImportError(
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
     } finally {
+      setImageSequenceImportSubmitting(false);
       setUiState("ready");
     }
-  }, [activeCollectionId, api, busy, library]);
-
-  function handleExternalDragEnter(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      setExternalDropActive(false);
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    externalDragDepth.current += 1;
-    setExternalDropActive(true);
   }
 
-  function handleExternalDragLeave(event: React.DragEvent<HTMLElement>) {
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    externalDragDepth.current = Math.max(0, externalDragDepth.current - 1);
-    if (externalDragDepth.current === 0) setExternalDropActive(false);
-  }
-
-  function handleExternalDragOver(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }
-
-  function handleExternalDrop(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      externalDragDepth.current = 0;
-      setExternalDropActive(false);
-      return;
-    }
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    externalDragDepth.current = 0;
-    setExternalDropActive(false);
-    const payload = externalImportPayload(event.dataTransfer);
-    void importDroppedFiles(payload.files, undefined, undefined, payload);
-  }
-
-  function handleTargetExternalDragOver(event: React.DragEvent<HTMLElement>) {
-    if (previewAsset) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "none";
-      return;
-    }
-    if (!library || !supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-  }
-
-  function handleTargetExternalDrop(
-    event: React.DragEvent<HTMLElement>,
-    targetFolderId: string | null | undefined,
-    targetCollectionId: string | undefined,
+  async function resolveImportConflictsWith(
+    plan: ImportConflictPlan,
+    name: RememberedNameConflictDecision,
+    duplicate: RememberedDuplicateDecision,
   ) {
-    if (previewAsset) {
-      event.preventDefault();
-      externalDragDepth.current = 0;
-      setExternalDropActive(false);
-      return;
-    }
-    if (!supportsExternalImportTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const payload = externalImportPayload(event.dataTransfer);
-    void importDroppedFiles(
-      payload.files,
-      targetFolderId,
-      targetCollectionId,
-      payload,
-    );
-  }
-
-  async function resolveConflicts() {
-    if (!api || !library || !conflicts) return;
+    if (!api || !library) return;
     setUiState("importing");
     try {
       const result = await api.resolveImport({
-        importId: conflicts.importId,
-        suspectedDuplicate: duplicateDecision,
-        nameConflict: nameDecision,
+        importId: plan.importId,
+        suspectedDuplicate: duplicate,
+        nameConflict: name,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setConflicts(null);
-      setNotice(importSummary(result.value));
-      await reloadCurrentContent();
+      clearImportConflictsUi();
+      setNotice(importSummaryMessage(result.value, locale));
+      await revealAfterImport(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "无法继续导入。"));
+      showBlockingError(
+        t("dialog.blockingError.importContinueFailed"),
+        toMessage(caught, t("toast.continueImportFailed"), locale),
+      );
     } finally {
       setUiState("ready");
     }
+  }
+  resolveImportConflictsRef.current = resolveImportConflictsWith;
+
+  function confirmNameConflictDialog() {
+    if (!conflicts) return;
+    if (rememberNameConflict) {
+      rememberNameConflictDecision(nameDecision);
+    }
+    const prefs = loadImportConflictPreferences();
+    const next = nextImportConflictPhaseAfterName(conflicts, prefs);
+    if (next === "duplicate") {
+      setConflictPhase("duplicate");
+      return;
+    }
+    void resolveImportConflictsWith(
+      conflicts,
+      nameDecision,
+      duplicateDecision,
+    );
+  }
+
+  function confirmContentDuplicateDialog() {
+    if (!conflicts) return;
+    if (rememberDuplicate) {
+      rememberDuplicateDecision(duplicateDecision);
+    }
+    void resolveImportConflictsWith(
+      conflicts,
+      nameDecision,
+      duplicateDecision,
+    );
   }
 
   async function abandonConflicts() {
     if (!api || !conflicts) return;
     const plan = conflicts;
-    setConflicts(null);
+    clearImportConflictsUi();
     try {
       const result = await api.abandonImport({ importId: plan.importId });
       if (!result.ok) throw new LibraryOperationError(result.error);
     } catch (caught) {
-      setError(toMessage(caught, "无法取消待处理导入。"));
+      setError(toMessage(caught, t("toast.cancelPendingImportFailed"), locale));
     }
   }
 
@@ -3151,11 +6038,11 @@ function AppInner() {
       await reloadCurrentContent();
       setNotice(
         result.value.changedCount
-          ? `已同步 ${result.value.changedCount} 项外部变化。`
-          : "磁盘内容已是最新状态。",
+          ? t("toast.diskSynced", { count: result.value.changedCount })
+          : t("toast.diskUpToDate"),
       );
     } catch (caught) {
-      setError(toMessage(caught, "刷新失败。"));
+      setError(toMessage(caught, t("toast.refreshFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3175,10 +6062,10 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已链接文件夹"${result.value.displayName}"。`);
+      setNotice(t("toast.linkedFolderCreated", { name: result.value.displayName }));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "链接文件夹失败。"));
+      setError(toMessage(caught, t("toast.linkFolderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3196,10 +6083,10 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice(`已重新定位链接文件夹"${result.value.displayName}"。`);
+      setNotice(t("toast.linkedFolderRelocated", { name: result.value.displayName }));
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "重新定位失败。"));
+      setError(toMessage(caught, t("toast.relocateFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3219,58 +6106,30 @@ function AppInner() {
         rules: result.value,
       });
     } catch (caught) {
-      setError(toMessage(caught, "无法读取链接文件夹过滤规则。"));
+      setError(toMessage(caught, t("toast.readLinkedRulesFailed"), locale));
     }
   }
 
-  async function saveLinkedRules() {
+  async function saveLinkedRules(finalRules: LinkedFolderRule[]) {
     if (!api || !library || !linkedRulesEditor) return;
     setUiState("loading");
     try {
       const result = await api.setLinkedFolderRules({
         libraryId: library.libraryId,
         folderId: linkedRulesEditor.folderId,
-        rules: linkedRulesEditor.rules,
+        rules: finalRules,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setNotice(
-        `过滤规则已保存：隐藏 ${result.value.hiddenCount} 项，恢复 ${result.value.restoredCount} 项。`,
+        t("toast.linkedRulesSaved", {
+          hidden: result.value.hiddenCount,
+          restored: result.value.restoredCount,
+        }),
       );
       setLinkedRulesEditor(null);
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "保存过滤规则失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  async function copyManagedSelectionToLinked(
-    folder: LinkedFolderSummary,
-    assetIds: string[],
-  ) {
-    if (!api || !library || assetIds.length === 0) return;
-    if (
-      !confirm(
-        `将 ${assetIds.length} 项托管资产复制到外部目录"${folder.displayName}"？源托管文件不会移动。`,
-      )
-    )
-      return;
-    setUiState("importing");
-    try {
-      const result = await api.copyAssetsToLinkedFolder({
-        libraryId: library.libraryId,
-        folderId: folder.folderId,
-        assetIds,
-        conflictStrategy: "keep-both",
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(
-        `已复制 ${result.value.copiedCount} 项到链接文件夹，跳过 ${result.value.skippedCount} 项。`,
-      );
-      await reloadCurrentContent();
-    } catch (caught) {
-      setError(toMessage(caught, "复制到链接文件夹失败。"));
+      setError(toMessage(caught, t("toast.saveLinkedRulesFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3281,7 +6140,7 @@ function AppInner() {
     const dialogState = convertLinkedDialog;
     if (
       !confirm(
-        `将"${dialogState.name}"复制进资源库并移除链接关系？外部源目录不会被删除。`,
+        t("toast.convertLinkedConfirm", { name: dialogState.name }),
       )
     )
       return;
@@ -3295,11 +6154,11 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
       setNotice(
-        `已转换 ${result.value.convertedCount} 项；外部源目录保持不变。`,
+        t("toast.convertLinkedDone", { count: result.value.convertedCount }),
       );
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "转换链接文件夹失败。"));
+      setError(toMessage(caught, t("toast.convertLinkedFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3310,61 +6169,181 @@ function AppInner() {
     setUiState("closing");
     let closed = false;
     try {
-      if (previewAsset) await closeAssetPreview();
+      await closeAssetPreview(false);
       const result = await api.close({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
       closed = true;
-      setLibrary(null);
-      setFolders([]);
-      setLinkedFolders([]);
-      setAssets([]);
-      setAllAssetCount(0);
-      setAssetScope("all");
-      setShowTrash(false);
-      setTrashedAssets([]);
-      setTags([]);
-      setCollections([]);
-      setSmartCollections([]);
-      setActiveTagId(null);
-      setActiveCollectionId(null);
-      setActiveSmartCollectionId(null);
-      setSearchTotal(null);
-      setSearchSnippets(new Map());
-      setMoveDialog(null);
-      setUndoMoveDialog(null);
-      setLastMoveOperationId(null);
-      api?.setActiveContext(null);
+      applyClosedLibraryUi();
+      await refreshRecentLibraries(null);
     } catch (caught) {
-      setError(toMessage(caught, "关闭失败。"));
+      setError(toMessage(caught, t("toast.closeFailed"), locale));
     } finally {
       setUiState(closed ? "idle" : "ready");
     }
   }
 
-  // --- Trash operations ---
-
-  async function trashManagedAssets(assetIds: string[]) {
+  async function removeLibrary() {
     if (!api || !library) return;
-    setUiState("loading");
+    const removedName = library.displayName;
+    const removedPath = library.displayPath;
+    setUiState("closing");
+    let removed = false;
     try {
-      const result = await api.trashAssets({
-        libraryId: library.libraryId,
-        assetIds,
-      });
+      await closeAssetPreview(false);
+      const result = await api.close({ libraryId: library.libraryId });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(`${result.value.trashedCount} 项资产已移入回收站。`);
-      clearAssetSelection();
-      await reloadCurrentContent();
+      const forgotten = await api.forgetRecent({ path: removedPath });
+      if (!forgotten.ok) throw new LibraryOperationError(forgotten.error);
+      removed = true;
+      applyClosedLibraryUi();
+      await refreshRecentLibraries(null);
+      setNotice(t("toast.libraryRemoved", { name: removedName }));
     } catch (caught) {
-      setError(toMessage(caught, "删除失败。"));
+      setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
     } finally {
-      setUiState("ready");
+      setUiState(removed ? "idle" : "ready");
     }
   }
 
-  async function restoreTrashedAssets() {
-    if (!api || !library || !restoreDialog) return;
-    const { assetIds, target, conflictStrategy } = restoreDialog;
+  async function forgetRecentLibrary(libraryPath: string) {
+    if (!api) return;
+    try {
+      const result = await api.forgetRecent({ path: libraryPath });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      await refreshRecentLibraries(library?.displayPath ?? null);
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.libraryRemoveFailed"), locale));
+    }
+  }
+
+  function applyClosedLibraryUi() {
+    setLibrary(null);
+    setPluginJobs(null);
+    setHiddenPluginJobActivityId(null);
+    setFolders([]);
+    setLinkedFolders([]);
+    setAssets([]);
+    setAllAssetCount(0);
+    setAssetScope("all");
+    setShowTrash(false);
+    setShowTagManagement(false);
+    setActivePluginSidebarViewId(null);
+    setTrashedAssets([]);
+    setTrashedAssetCount(0);
+    setTags([]);
+    setCollections([]);
+    setSmartCollections([]);
+    setActiveTagId(null);
+    setActiveCollectionId(null);
+    setActiveSmartCollectionId(null);
+    setSearchTotal(null);
+    setSearchSnippets(new Map());
+    resetBrowsePagination();
+    setMoveDialog(null);
+    resetNavHistory({ kind: "all" });
+    api?.setActiveContext(null);
+  }
+
+  function requestDeleteLibraryFromDisk() {
+    if (!library) return;
+    void confirmDeleteLibraryFromDisk();
+  }
+
+  async function confirmDeleteLibraryFromDisk() {
+    if (!api || !library) return;
+    const deletedName = library.displayName;
+    const openLibrary = library;
+    const openScope = assetScope;
+    setUiState("closing");
+    let toreDown = false;
+    try {
+      await closeAssetPreview(false);
+      // Serpent-dfgg: Chromium keeps serpent:// thumbnail/source files mapped
+      // until <img> unmounts. Drop the browse canvas before asking the Worker
+      // to rm the library root, then wait one paint so handles actually close.
+      flushSync(() => {
+        setAssets([]);
+        setSelectedAssetIds([]);
+        setSelectedAssetId(undefined);
+        setHoveredAssetId(null);
+        resetBrowsePagination();
+      });
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      });
+      if (IS_WINDOWS_PLATFORM) {
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 120);
+        });
+      }
+      const result = await api.deleteLibraryFromDisk({
+        libraryId: openLibrary.libraryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      toreDown = true;
+      applyClosedLibraryUi();
+      await refreshRecentLibraries(null);
+      setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
+    } catch (caught) {
+      // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
+      // The worker reopens a still-valid library; a half-deleted tree comes
+      // back as LIBRARY_NOT_FOUND and the UI must close.
+      const cancelled =
+        caught instanceof LibraryOperationError && caught.code === "CANCELLED";
+      const gone =
+        caught instanceof LibraryOperationError &&
+        (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
+      if (!cancelled) {
+        setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
+      }
+      if (gone) {
+        toreDown = true;
+        applyClosedLibraryUi();
+        await refreshRecentLibraries(null);
+      } else {
+        try {
+          await loadContent(openLibrary, openScope, { refreshSidebar: true });
+        } catch {
+          toreDown = true;
+          applyClosedLibraryUi();
+        }
+        void refreshRecentLibraries(openLibrary.displayPath);
+      }
+    } finally {
+      setUiState(toreDown ? "idle" : "ready");
+    }
+  }
+
+  async function requestRestoreTrashedAssets(assetIds: string[]) {
+    if (!api || !library) return;
+    try {
+      const preview = await api.previewRestoreAssets({
+        libraryId: library.libraryId,
+        assetIds,
+      });
+      if (!preview.ok) throw new LibraryOperationError(preview.error);
+      if (shouldOpenTrashRestoreDialog(preview.value.hasNameConflicts)) {
+        setRestoreDialog({
+          assetIds,
+          target: "original",
+          conflictStrategy: "keep-both",
+        });
+        return;
+      }
+      await restoreTrashedAssets(silentTrashRestoreRequest(assetIds));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.restoreFailed"), locale));
+    }
+  }
+
+  // --- Trash operations ---
+
+  async function restoreTrashedAssets(payload?: TrashRestoreRequest) {
+    const request = payload ?? restoreDialog;
+    if (!api || !library || !request) return;
+    const { assetIds, target, conflictStrategy } = request;
     setRestoreDialog(null);
     setUiState("loading");
     try {
@@ -3379,12 +6358,53 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       const skippedCount = assetIds.length - result.value.restoredCount;
       setNotice(
-        `已恢复 ${result.value.restoredCount} 项资产${skippedCount ? `，跳过 ${skippedCount} 项冲突资产` : ""}。`,
+        t("toast.restoredCount", { count: result.value.restoredCount }) +
+          (skippedCount
+            ? t("toast.conflictAssetsSkippedSuffix", { count: skippedCount })
+            : "") +
+          t("common.sentenceEnd"),
+        result.value.historyEntryId,
       );
       clearAssetSelection();
+      await refreshCollectionSummaries();
+      if (showTrash) {
+        await loadContent(library, "all", { trashMode: true });
+      } else {
+        await reloadCurrentContent();
+      }
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.restoreFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function restoreTrashedManagedFolder(
+    tombstoneId: string,
+    name: string,
+  ) {
+    if (!api || !library) return;
+    closeContextMenu();
+    setUiState("loading");
+    try {
+      const result = await api.restoreTrashedManagedFolder({
+        libraryId: library.libraryId,
+        tombstoneId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setNotice(
+        t("toast.restoreTrashedFolderDone", {
+          name,
+          folders: result.value.restoredFolderCount,
+          assets: result.value.restoredAssetCount,
+        }) + t("common.sentenceEnd"),
+        result.value.historyEntryId,
+      );
+      clearAssetSelection();
+      await refreshCollectionSummaries();
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
-      setError(toMessage(caught, "恢复失败。"));
+      setError(toMessage(caught, t("toast.restoreTrashedFolderFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3392,68 +6412,121 @@ function AppInner() {
 
   async function moveManagedAssets() {
     if (!api || !library || !moveDialog) return;
-    const { assetIds, targetFolderId, conflictStrategy } = moveDialog;
+    const { assetIds, folderIds, targetFolderId, conflictStrategy } = moveDialog;
     setMoveDialog(null);
     setUiState("loading");
     try {
-      const result = await api.moveAssets({
-        libraryId: library.libraryId,
-        assetIds,
-        targetFolderId,
-        conflictStrategy,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      setLastMoveOperationId(result.value.operationId);
-      setNotice(
-        `已移动 ${result.value.movedCount} 项资产${result.value.skippedCount ? `，跳过 ${result.value.skippedCount} 项` : ""}。`,
-      );
+      if (assetIds.length > 0) {
+        const result = await api.moveAssets({
+          libraryId: library.libraryId,
+          assetIds,
+          targetFolderId,
+          conflictStrategy,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        setNotice(
+          t("toast.movedCountDetail", { count: result.value.movedCount }) +
+            (result.value.skippedCount
+              ? t("toast.skippedSuffix", { count: result.value.skippedCount })
+              : "") +
+            t("common.sentenceEnd"),
+          result.value.historyEntryId,
+        );
+      }
+      if (folderIds.length > 0) {
+        const folderResult = await api.moveFolders({
+          libraryId: library.libraryId,
+          folderIds,
+          targetParentFolderId: targetFolderId,
+          conflictStrategy:
+            conflictStrategy === "replace" ? "keep-both" : conflictStrategy,
+        });
+        if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
+        if (assetIds.length === 0) {
+          if (folderResult.value.skippedCount > 0) {
+            setNotice(
+              t("toast.folderMoveSkipped", {
+                moved: folderResult.value.movedCount,
+                skipped: folderResult.value.skippedCount,
+              }),
+              folderResult.value.historyEntryId,
+            );
+          } else {
+            setNotice(
+              t("toast.folderMoveDone", {
+                count: folderResult.value.movedCount,
+              }),
+              folderResult.value.historyEntryId,
+            );
+          }
+        }
+      }
       clearAssetSelection();
       await reloadCurrentContent();
     } catch (caught) {
-      setError(toMessage(caught, "移动资产失败。"));
+      setError(toMessage(caught, t("toast.moveFailed"), locale));
     } finally {
       setUiState("ready");
     }
   }
 
-  async function undoManagedMove(
-    operationId: string,
-    conflictStrategy: "error" | "keep-both" | "replace" | "skip" = "error",
-  ) {
+  const undoLastFileOp = useCallback(async (expectedHistoryEntryId?: string) => {
+    if (isEditableTextTarget(document.activeElement)) {
+      document.execCommand("undo");
+      return;
+    }
     if (!api || !library) return;
-    setUndoMoveDialog(null);
+    const current = operationHistory?.undoTop;
+    const historyEntryId = expectedHistoryEntryId ?? current?.historyEntryId;
+    if (!historyEntryId) return;
     setUiState("loading");
     try {
-      const result = await api.undoMoveAssets({
+      const result = await api.undoOperationHistory({
         libraryId: library.libraryId,
-        operationId,
-        conflictStrategy,
+        expectedHistoryEntryId: historyEntryId,
       });
-      if (!result.ok) {
-        if (
-          result.error.code === "ASSET_MOVE_CONFLICT" &&
-          conflictStrategy === "error"
-        ) {
-          setUndoMoveDialog({ operationId, conflictStrategy: "keep-both" });
-        }
-        throw new LibraryOperationError(result.error);
-      }
-      setLastMoveOperationId(null);
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setOperationHistory(result.value);
       setNotice(
-        `已撤销移动 ${result.value.undoneCount} 项资产${result.value.skippedCount ? `，跳过 ${result.value.skippedCount} 项冲突资产` : ""}。`,
+        t("toast.historyUndoDone", { count: current?.affectedCount ?? 1 }),
       );
-      await reloadCurrentContent();
+      await reloadCurrentContentRef.current();
     } catch (caught) {
-      setError(toMessage(caught, "撤销移动失败。"));
+      setError(toMessage(caught, t("toast.historyUndoFailed"), locale));
+      await refreshOperationHistory();
     } finally {
       setUiState("ready");
     }
-  }
+  }, [api, library, locale, operationHistory, refreshOperationHistory, setError, setNotice, t]);
 
-  async function deletePermanentFromTrash() {
-    if (!api || !library || !permanentDeleteDialog) return;
-    const assetIds = permanentDeleteDialog;
-    setPermanentDeleteDialog(null);
+  const redoLastOperation = useCallback(async () => {
+    if (isEditableTextTarget(document.activeElement)) {
+      document.execCommand("redo");
+      return;
+    }
+    if (!api || !library) return;
+    const current = operationHistory?.redoTop;
+    if (!current) return;
+    setUiState("loading");
+    try {
+      const result = await api.redoOperationHistory({
+        libraryId: library.libraryId,
+        expectedHistoryEntryId: current.historyEntryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      setOperationHistory(result.value);
+      setNotice(t("toast.historyRedoDone", { count: current.affectedCount }));
+      await reloadCurrentContentRef.current();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.historyRedoFailed"), locale));
+      await refreshOperationHistory();
+    } finally {
+      setUiState("ready");
+    }
+  }, [api, library, locale, operationHistory, refreshOperationHistory, setError, setNotice, t]);
+
+  async function deletePermanentFromTrash(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
     setUiState("loading");
     try {
       const result = await api.deleteAssetsPermanent({
@@ -3461,29 +6534,276 @@ function AppInner() {
         assetIds,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      let msg = `已永久删除 ${result.value.deletedCount} 项。`;
+      let msg = t("toast.permanentDeleted", {
+        count: result.value.deletedCount,
+      });
       if (result.value.skippedCount > 0) {
         const skippedNames = new Map(
           trashedAssets.map((asset) => [asset.assetId, asset.displayName]),
         );
-        msg += ` ${result.value.skippedCount} 项未删除：${result.value.skippedReasons
-          .map(
-            ({ assetId, reason }) =>
-              `${skippedNames.get(assetId) ?? "所选资产"}（${PUBLIC_ERROR_REASONS_ZH[reason]}）`,
-          )
-          .join("；")}`;
+        msg += t("toast.permanentDeleteSkipped", {
+          count: result.value.skippedCount,
+          reasons: result.value.skippedReasons
+            .map(({ assetId, reason }) =>
+              t("toast.permanentDeleteItem", {
+                name: skippedNames.get(assetId) ?? t("toast.selectedAsset"),
+                reason: translateForLocale(locale, `error.reason.${reason}`),
+              }),
+            )
+            .join("；"),
+        });
       }
       setNotice(msg);
       clearAssetSelection();
-      await loadContent(library, "all", { trashMode: true });
+      applyLocalAssetRemoval(assetIds, {
+        removedCount: result.value.deletedCount,
+      });
     } catch (caught) {
-      setError(toMessage(caught, "永久删除失败。"));
+      setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
       setUiState("ready");
     }
   }
 
-  async function purgeTrash() {
+  function requestAssetDiskDelete(assetIds: string[]) {
+    if (assetIds.length === 0) return;
+    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
+  }
+
+  async function setIgnoreState(input: {
+    locationKind: "managed" | "linked";
+    linkedFolderId?: string | null;
+    relativePath: string;
+    pathKind: "asset" | "folder" | "extension";
+    ignored: boolean;
+    name: string;
+  }) {
+    if (!api || !library) return;
+    try {
+      const result = await api.setIgnore({
+        libraryId: library.libraryId,
+        locationKind: input.locationKind,
+        linkedFolderId: input.linkedFolderId,
+        relativePath: input.relativePath,
+        pathKind: input.pathKind,
+        ignored: input.ignored,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      await reloadCurrentContent();
+      if (input.ignored && input.pathKind === "extension") {
+        setNotice(t("toast.ignoreExtensionUpdated", { extension: input.relativePath }));
+        return;
+      }
+      setNotice(t("toast.ignoreUpdated", {
+        action: input.ignored
+          ? input.pathKind === "folder"
+            ? t("menu.ignoreFolder")
+            : t("menu.ignore")
+          : t("menu.unignore"),
+        name: input.name,
+      }));
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.ignoreFailed"), locale));
+    }
+  }
+
+  async function deleteManagedAssetsFromDiskAfterClosingPreview(
+    assetIds: string[],
+  ) {
+    await releaseAssetPreviewsBeforeDiskDelete();
+    await deleteManagedAssetsFromDisk(assetIds);
+  }
+
+  /**
+   * Chromium can keep a source stream open for a card hover/selection even
+   * after the full viewer closes.  Clear every source-backed card first and
+   * give React two frames to unmount the media elements before Windows sees
+   * the filesystem delete request.
+   */
+  async function releaseAssetPreviewsBeforeDiskDelete() {
+    await closeAssetPreview(false);
+    clearAssetSelection();
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+  }
+
+  function requestSelectionDiskDelete(
+    assetIds: string[],
+    folderIds: readonly string[],
+  ) {
+    const folderIdList = [...folderIds];
+    if (folderIdList.length === 0) {
+      requestAssetDiskDelete(assetIds);
+      return;
+    }
+    if (assetIds.length === 0 && folderIdList.length === 1) {
+      const folderId = folderIdList[0]!;
+      const name =
+        folderBrowseEntries.find((entry) => entry.folderId === folderId)
+          ?.name ??
+        folders.find((folder) => folder.folderId === folderId)?.name ??
+        folderId;
+      openDiskDelete({ kind: "managed", folderId, name });
+      return;
+    }
+    void executeSelectionDiskDelete(assetIds, folderIdList);
+  }
+
+  async function executeSelectionDiskDelete(
+    assetIds: string[],
+    folderIds: readonly string[],
+  ) {
+    if (!api || !library) return;
+    if (assetIds.length === 0 && folderIds.length === 0) return;
+    await releaseAssetPreviewsBeforeDiskDelete();
+    setUiState("loading");
+    try {
+      let deletedAssets = 0;
+      let deletedFolders = 0;
+      if (assetIds.length > 0) {
+        const result = await api.deleteAssetsFromDisk({
+          libraryId: library.libraryId,
+          assetIds,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        deletedAssets = result.value.deletedCount;
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
+      }
+      for (const folderId of folderIds) {
+        const result = await api.deleteFolderFromDisk({
+          libraryId: library.libraryId,
+          folderId,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        deletedFolders += 1;
+        deletedAssets += result.value.deletedAssetCount;
+      }
+      setNotice(
+        t("toast.selectionDeletedFromDisk", {
+          folders: deletedFolders,
+          assets: deletedAssets,
+        }),
+      );
+      clearAssetSelection();
+      applyLocalAssetRemoval(assetIds, { removedCount: deletedAssets });
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.folderDeleteFromDiskFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function trashMixedSelection(
+    assetIds: string[],
+    folderIds: readonly string[] = [],
+  ) {
+    if (!api || !library) return;
+    if (assetIds.length === 0 && folderIds.length === 0) return;
+
+    const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
+    const linkedAssetIds = assetIds.filter(
+      (assetId) => assetById.get(assetId)?.locationKind === "linked",
+    );
+    const managedAssetIds = assetIds.filter(
+      (assetId) => assetById.get(assetId)?.locationKind !== "linked",
+    );
+    const linkedFolderIds: string[] = [];
+    const managedFolderIds: string[] = [];
+    for (const folderId of folderIds) {
+      if (
+        parseLinkedVirtualFolderId(folderId) ||
+        linkedFolders.some((folder) => folder.folderId === folderId)
+      ) {
+        linkedFolderIds.push(folderId);
+      } else {
+        managedFolderIds.push(folderId);
+      }
+    }
+
+    if (linkedAssetIds.length > 0) {
+      await trashLinkedAssets(linkedAssetIds);
+    }
+    for (const folderId of linkedFolderIds) {
+      const name = resolveManagedFolderName(folderId) ?? folderId;
+      const virtual = parseLinkedVirtualFolderId(folderId);
+      if (virtual) {
+        await trashLinkedFolderSubtree(
+          virtual.linkedFolderId,
+          virtual.relativePath,
+          name,
+        );
+      } else {
+        await trashLinkedFolderSubtree(folderId, "", name);
+      }
+    }
+
+    if (managedAssetIds.length === 0 && managedFolderIds.length === 0) {
+      return;
+    }
+    if (managedFolderIds.length === 0) {
+      await trashManagedAssets(managedAssetIds);
+      return;
+    }
+    setUiState("loading");
+    try {
+      let trashedAssets = 0;
+      let trashedFolders = 0;
+      let historyEntryId: string | undefined;
+      if (managedAssetIds.length === 0 && managedFolderIds.length === 1) {
+        const result = await api.trashFolder({
+          libraryId: library.libraryId,
+          folderId: managedFolderIds[0]!,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        trashedFolders = 1;
+        trashedAssets = result.value.trashedAssetCount;
+        historyEntryId = result.value.historyEntryId;
+      } else {
+        const result = await api.trashSelection({
+          libraryId: library.libraryId,
+          assetIds: managedAssetIds,
+          folderIds: [...managedFolderIds],
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        trashedAssets = result.value.trashedAssetCount;
+        trashedFolders = result.value.trashedFolderCount;
+        historyEntryId = result.value.historyEntryId;
+      }
+      if (managedAssetIds.length > 0) {
+        const collectionResult = await api.listCollections({
+          libraryId: library.libraryId,
+        });
+        if (collectionResult.ok) setCollections(collectionResult.value);
+      }
+      setNotice(
+        t("toast.selectionTrashed", {
+          folders: trashedFolders,
+          assets: trashedAssets,
+        }),
+        historyEntryId,
+      );
+      clearAssetSelection();
+      if (
+        isBrowseScopeAffectedByFolderTrash(assetScope, managedFolderIds, folders)
+      ) {
+        await chooseFolder("root");
+      } else {
+        await reloadCurrentContent();
+      }
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.batchDeleteFailed"), locale));
+    } finally {
+      setUiState("ready");
+    }
+  }
+
+  async function emptyTrash() {
     if (!api || !library) return;
     setUiState("loading");
     try {
@@ -3491,68 +6811,24 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       const failureReasons = [
         ...new Set(
-          result.value.failures.map(({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason]),
+          result.value.failures.map(({ reason }) =>
+            translateForLocale(locale, `error.reason.${reason}`),
+          ),
         ),
       ];
       setNotice(
-        `已清理 ${result.value.purgedCount} 项到期资产${result.value.skippedCount > 0
-          ? `，${result.value.skippedCount} 项未清理：${failureReasons.join("；")}`
-          : ""}。`,
+        t("toast.emptyTrashDone", { count: result.value.purgedCount }) +
+          (result.value.skippedCount > 0
+            ? t("toast.emptyTrashSkipped", {
+                count: result.value.skippedCount,
+                reasons: failureReasons.join("；"),
+              })
+            : "") +
+          t("common.sentenceEnd"),
       );
       await loadContent(library, "all", { trashMode: true });
     } catch (caught) {
-      setError(toMessage(caught, "清空回收站失败。"));
-    } finally {
-      setUiState("ready");
-    }
-  }
-
-  // --- Linked asset delete ---
-
-  async function executeDeleteLinked() {
-    if (!api || !library || !deleteLinkedDialog) return;
-    const { assetIds, deleteSourceFile } = deleteLinkedDialog;
-    setDeleteLinkedDialog(null);
-    setUiState("loading");
-    try {
-      const result = await api.deleteLinkedAssets({
-        libraryId: library.libraryId,
-        assetIds,
-        deleteSourceFile,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      let outcomeError: string | null = null;
-      if (result.value.failedCount > 0) {
-        const reasons = [
-          ...new Set(
-            result.value.failures.map(
-              ({ reason }) => PUBLIC_ERROR_REASONS_ZH[reason],
-            ),
-          ),
-        ];
-        outcomeError = `删除链接资产未全部完成：已删除 ${result.value.deletedCount} 项，另有 ${result.value.failedCount} 项保留。原因：${reasons.join("；")}`;
-        setError(outcomeError);
-      } else {
-        setError(null);
-        setNotice(
-          deleteSourceFile
-            ? `已将 ${result.value.deletedCount} 个源文件移入系统回收站，并移除链接资产记录。`
-            : `已移除 ${result.value.deletedCount} 项链接资产记录，磁盘源文件保持不变。`,
-        );
-      }
-      if (result.value.deletedCount > 0) clearAssetSelection();
-      try {
-        await reloadCurrentContent();
-      } catch (refreshError) {
-        const refreshReason = toMessage(refreshError, "请手动刷新资产列表。");
-        setError(
-          outcomeError
-            ? `${outcomeError} 另外，界面刷新失败：${refreshReason}`
-            : `删除已完成，但界面刷新失败：${refreshReason}`,
-        );
-      }
-    } catch (caught) {
-      setError(toMessage(caught, "删除链接资产失败。"));
+      setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3560,22 +6836,49 @@ function AppInner() {
 
   // --- Relink operations ---
 
-  async function relinkMissingAsset() {
-    if (!api || !library || !selectedAssetId) return;
+  async function relinkMissingAsset(assetId = selectedAssetId) {
+    if (!api || !library || !assetId) return;
     setUiState("loading");
     try {
       const result = await api.relinkAsset({
         libraryId: library.libraryId,
-        assetId: selectedAssetId,
+        assetId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setNotice("资产已成功找回。");
+      setAssets((current) =>
+        mergeAssetSummaries(current, [result.value.asset]),
+      );
+      setNotice(t("toast.relinkSuccess"));
       await reloadCurrentContent();
+
+      const preview = await api.relinkBatchPreviewAtRoot({
+        libraryId: library.libraryId,
+        newRootPath: result.value.batchFollowUpRoot,
+        keepMetadata: batchRelinkKeepMetadata,
+      });
+      if (!preview.ok) {
+        if (preview.error.code === "CANCELLED") return;
+        throw new LibraryOperationError(preview.error);
+      }
+      if (preview.value.matchedCount > 0) {
+        setBatchRelinkPreview({
+          preview: preview.value,
+          priorRestoredCount: 1,
+          priorRestoredExamples: [
+            {
+              relativeFilePath: formatRelinkExamplePath(
+                result.value.asset.relativeFilePath,
+              ),
+              matched: true,
+            },
+          ],
+        });
+      }
     } catch (caught) {
-      setError(toMessage(caught, "找回资产失败。"));
+      setError(toMessage(caught, t("toast.relinkFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3593,9 +6896,13 @@ function AppInner() {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
       }
-      setBatchRelinkPreview(result.value);
+      setBatchRelinkPreview({
+        preview: result.value,
+        priorRestoredCount: 0,
+        priorRestoredExamples: [],
+      });
     } catch (caught) {
-      setError(toMessage(caught, "批量重新定位预览失败。"));
+      setError(toMessage(caught, t("toast.batchRelinkPreviewFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3607,18 +6914,33 @@ function AppInner() {
     try {
       const result = await api.relinkBatchApply({
         libraryId: library.libraryId,
-        previewId: batchRelinkPreview.previewId,
+        previewId: batchRelinkPreview.preview.previewId,
         keepMetadata: batchRelinkKeepMetadata,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
+      const priorRestoredCount = batchRelinkPreview.priorRestoredCount;
       setBatchRelinkPreview(null);
-      setNotice(
-        `批量重新定位完成：恢复 ${result.value.restoredCount} 项，${result.value.unchangedMissingCount} 项仍丢失。`,
+      setAssets((current) =>
+        mergeAssetSummaries(current, result.value.assets),
       );
+      const refresh = await api.refreshAssets({
+        libraryId: library.libraryId,
+      });
+      if (refresh.ok) {
+        setAssets((current) =>
+          mergeAssetSummaries(current, refresh.value.assets),
+        );
+      }
       await reloadCurrentContent();
+      setNotice(
+        t("toast.batchRelinkDone", {
+          restored: result.value.restoredCount + priorRestoredCount,
+          missing: result.value.unchangedMissingCount,
+        }),
+      );
     } catch (caught) {
       setBatchRelinkPreview(null);
-      setError(toMessage(caught, "批量重新定位失败。"));
+      setError(toMessage(caught, t("toast.batchRelinkFailed"), locale));
     } finally {
       setUiState("ready");
     }
@@ -3626,7 +6948,7 @@ function AppInner() {
 
   const cancelBatchRelink = useCallback(async () => {
     if (!api || !library || !batchRelinkPreview) return;
-    const previewId = batchRelinkPreview.previewId;
+    const previewId = batchRelinkPreview.preview.previewId;
     setBatchRelinkPreview(null);
     try {
       const result = await api.cancelRelinkBatch({
@@ -3637,13 +6959,13 @@ function AppInner() {
         throw new LibraryOperationError(result.error);
       }
     } catch (caught) {
-      setError(toMessage(caught, "取消批量重新定位失败。"));
+      setError(toMessage(caught, t("toast.cancelBatchRelinkFailed"), locale));
     }
-  }, [api, batchRelinkPreview, library]);
+  }, [api, batchRelinkPreview, library, locale, setError, t]);
 
   // --- Export / Import operations ---
 
-  async function exportLibrary() {
+  async function exportLibrary(format: "folder" | "zip", includeLinkedContent: boolean) {
     if (!api || !library) return;
     setExportDialogOpen(false);
     setExportProgress({
@@ -3659,23 +6981,34 @@ function AppInner() {
     try {
       const result = await api.exportLibrary({
         libraryId: library.libraryId,
+        libraryName: library.displayName,
         includeLinkedContent,
-        format: exportFormat,
+        format,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导出已取消。");
+          // Serpent-tye: folder/save dialog cancel must clear the optimistic strip.
+          setExportProgress(null);
+          setNotice(t("toast.exportCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
       }
     } catch (caught) {
-      setError(toMessage(caught, "导出失败。"));
+      setExportProgress(null);
+      setError(toMessage(caught, t("toast.exportFailed"), locale));
     } finally {
       setTimeout(() => {
         setExportProgress((prev) => {
-          if (prev?.phase === "complete" || prev?.phase === "cancelled")
+          if (
+            !prev ||
+            prev.phase === "complete" ||
+            prev.phase === "cancelled" ||
+            prev.phase === "failed"
+          ) {
             return null;
+          }
+          // Still running after the dialog returned — keep showing until events settle.
           return prev;
         });
       }, 4000);
@@ -3689,22 +7022,28 @@ function AppInner() {
         exportId: exportProgress.exportId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice("正在取消导出并清理本次导出内容…");
+      setNotice(t("toast.cancellingExport"));
     } catch (caught) {
-      setError(toMessage(caught, "无法取消导出。"));
+      setError(toMessage(caught, t("toast.cancelExportFailed"), locale));
     }
   }
 
   async function cancelImport() {
-    if (!api || !importProgress?.importId) return;
+    if (!api) return;
+    if (!importProgress?.importId) {
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
+      return;
+    }
     try {
       const result = await api.cancelLibraryImport({
         importId: importProgress.importId,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice("正在取消导入并清理本次导入内容…");
+      setNotice(t("toast.cancellingImport"));
     } catch (caught) {
-      setError(toMessage(caught, "无法取消导入。"));
+      setError(toMessage(caught, t("toast.cancelImportFailed"), locale));
     }
   }
 
@@ -3731,7 +7070,10 @@ function AppInner() {
       setImportValidated(result.value);
       setImportProgress(null);
     } catch (caught) {
-      setError(toMessage(caught, "导入验证失败。"));
+      showBlockingError(
+        t("dialog.blockingError.importValidateFailed"),
+        toMessage(caught, t("toast.importValidateFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
@@ -3752,23 +7094,71 @@ function AppInner() {
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setImportProgress(null);
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
           return;
         }
         throw new LibraryOperationError(result.error);
       }
       setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "ZIP 导入失败。"));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.zipImportFailed"), locale),
+      );
       setImportProgress(null);
+    }
+  }
+
+  async function activateImportedLibrary(imported: { libraryId: string }) {
+    if (!api) {
+      throw new Error(t("toast.bridgeUnavailable"));
+    }
+    let activated = false;
+    try {
+      const openResult = await api.listOpen();
+      if (!openResult.ok) throw new LibraryOperationError(openResult.error);
+      const summary =
+        openResult.value.find((entry) => entry.libraryId === imported.libraryId) ??
+        null;
+      if (!summary) {
+        throw new Error(t("toast.importFailed"));
+      }
+      await closeAssetPreview(false);
+      setLibrary(summary);
+      setPluginJobs(null);
+      setHiddenPluginJobActivityId(null);
+      setShowTrash(false);
+      setShowTagManagement(false);
+      setActivePluginSidebarViewId(null);
+      setTrashedAssets([]);
+      setTrashedAssetCount(0);
+      setAssetScope("all");
+      setActiveTagId(null);
+      setActiveCollectionId(null);
+      setActiveSmartCollectionId(null);
+      resetNavHistory({ kind: "all" });
+      clearDiscoveryControls();
+      api.setActiveContext(summary.libraryId);
+      await loadContent(summary, "all");
+      await refreshRecentLibraries(summary.displayPath);
+      activated = true;
+      setNotice(t("toast.libraryImportComplete", { name: summary.displayName }));
+    } finally {
+      setUiState(activated ? "ready" : "idle");
     }
   }
 
   async function completeImportCopy() {
     if (!api || !importValidated) return;
+    // Serpent-1tio: the validated dialog must disappear the moment the import
+    // starts; the persistent activity strip (正在导入资源库) is the only
+    // indicator from here until completion.
+    const validated = importValidated;
+    setImportValidated(null);
     setImportProgress({
       type: "import.progress",
-      importId: importValidated.importId,
+      importId: validated.importId,
       phase: "copy",
       filesProcessed: 0,
       totalFiles: 0,
@@ -3777,27 +7167,37 @@ function AppInner() {
     });
     try {
       const result = await api.importLibraryCopy({
-        importId: importValidated.importId,
+        importId: validated.importId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
+        return;
       }
-      setImportValidated(null);
+      setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
 
   async function completeImportInPlace() {
     if (!api || !importValidated) return;
+    // Serpent-1tio: same immediate-dismissal contract as completeImportCopy —
+    // the validated dialog closes as soon as the import starts and the
+    // persistent activity strip (正在导入资源库) becomes the only indicator.
+    const validated = importValidated;
+    setImportValidated(null);
     setImportProgress({
       type: "import.progress",
-      importId: importValidated.importId,
+      importId: validated.importId,
       phase: "open",
       filesProcessed: 0,
       totalFiles: 0,
@@ -3806,51 +7206,141 @@ function AppInner() {
     });
     try {
       const result = await api.importLibraryOpenInPlace({
-        importId: importValidated.importId,
+        importId: validated.importId,
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
-          setNotice("导入已取消。");
+          setNotice(t("toast.importCancelled"));
         } else {
           throw new LibraryOperationError(result.error);
         }
+        return;
       }
-      setImportValidated(null);
+      setImportProgress(null);
+      await activateImportedLibrary(result.value);
     } catch (caught) {
-      setError(toMessage(caught, "导入失败。"));
+      showBlockingError(
+        t("dialog.blockingError.libraryImportFailed"),
+        toMessage(caught, t("toast.importFailed"), locale),
+      );
       setImportProgress(null);
     }
   }
 
   useEffect(() => {
     if (!api || !library) return;
-    return api.onAssetsChanged((event) => {
-      if (event.libraryId !== library.libraryId) return;
-      void Promise.resolve().then(async () => {
-        try {
-          await reloadCurrentContentRef.current();
-          if (selectedAssetId) {
-            const metadata = await api.getAssetMetadata({
-              libraryId: library.libraryId,
-              assetId: selectedAssetId,
-            });
-            if (metadata.ok) {
-              metadataByAssetRef.current.set(selectedAssetId, metadata.value);
-              metadataConflictAssetIdsRef.current.delete(selectedAssetId);
-              if (selectedAssetIdRef.current === selectedAssetId)
-                setAssetMetadata(metadata.value);
-            }
-          }
-          const missing = event.missingCount
-            ? `，其中 ${event.missingCount} 项丢失`
-            : "";
-          setNotice(`已自动同步 ${event.changedCount} 项磁盘变化${missing}。`);
-        } catch (caught) {
-          setError(toMessage(caught, "磁盘内容已变化，但界面刷新失败。"));
+    let reloadTimer: number | undefined;
+    let reloadInFlight = false;
+    let reloadQueued = false;
+    let assetChangeDebounceTimer: number | undefined;
+    const scheduleSilentReload = () => {
+      if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      reloadTimer = window.setTimeout(() => {
+        reloadTimer = undefined;
+        if (reloadInFlight) {
+          reloadQueued = true;
+          return;
         }
+        reloadInFlight = true;
+        void reloadCurrentContentRef
+          .current()
+          .catch(() => undefined)
+          .finally(() => {
+            reloadInFlight = false;
+            if (reloadQueued) {
+              reloadQueued = false;
+              scheduleSilentReload();
+            }
+          });
+      }, 120);
+    };
+    const unsubscribe = api.onAssetsChanged((event) => {
+      if (event.libraryId !== library.libraryId) return;
+      setLayoutThumbnailArtifacts({
+        libraryId: library.libraryId,
+        ids: new Map(),
       });
+      void refreshOperationHistory();
+      // Serpent-yqrl: while a user import is applying, each committed asset
+      // triggers a silent canvas refresh so cards appear one-by-one.
+      if (uiStateRef.current === "importing" || importProgressRef.current) {
+        scheduleSilentReload();
+        return;
+      }
+      // Serpent-关联刷新: batch mutations (delete/trash/relink) broadcast one
+      // asset.changed per asset — debounce so a 500-asset delete triggers one
+      // reconcile instead of 500 queued full reloads. Local removal already
+      // cleared the cards; this reload only reconciles derived data.
+      if (assetChangeDebounceTimer !== undefined) {
+        window.clearTimeout(assetChangeDebounceTimer);
+      }
+      const latestEvent = event;
+      assetChangeDebounceTimer = window.setTimeout(() => {
+        assetChangeDebounceTimer = undefined;
+        void Promise.resolve().then(async () => {
+          try {
+            await reloadCurrentContentRef.current();
+            if (selectedAssetId) {
+              const metadata = await api.getAssetMetadata({
+                libraryId: library.libraryId,
+                assetId: selectedAssetId,
+              });
+              if (metadata.ok) {
+                applyLoadedMetadata(selectedAssetId, metadata.value);
+              }
+            }
+            if (latestEvent.source === "text-save") {
+              setNotice(t("toast.textFileSaved"));
+            } else if (latestEvent.source === "watcher") {
+              const missing = latestEvent.missingCount
+                ? t("toast.diskSyncedMissing", { count: latestEvent.missingCount })
+                : "";
+              setNotice(
+                t("toast.diskSyncedAuto", {
+                  count: latestEvent.changedCount,
+                  missing,
+                }),
+              );
+            }
+            // source === 'client' / 'content-replace' (or omitted): silent canvas refresh only.
+          } catch (caught) {
+            setError(toMessage(caught, t("toast.diskChangedRefreshFailed"), locale));
+          }
+        });
+      }, 300);
     });
-  }, [api, library, selectedAssetId]);
+    let historyTimer: number | undefined;
+    const scheduleHistoryRefresh = () => {
+      if (historyTimer !== undefined) window.clearTimeout(historyTimer);
+      historyTimer = window.setTimeout(() => {
+        historyTimer = undefined;
+        void refreshOperationHistory();
+      }, 1500);
+    };
+    const unsubscribeLibraryChanged = api.onLibraryChanged((event) => {
+      if (event.libraryId !== library.libraryId) return;
+      scheduleHistoryRefresh();
+      // Cross-process change-sequence bumps are not asset mutation counts.
+      // Refresh silently without forging an asset.changed payload.
+      if (uiStateRef.current === "importing" || importProgressRef.current) {
+        scheduleSilentReload();
+        return;
+      }
+      // revision_artifacts / jobs writes also bump change-sequence. The grid
+      // is patched by onThumbnailEvent; a full searchAssets here freezes the
+      // canvas after large imports (Serpent-yti0). Asset-set mutations still
+      // arrive on asset.changed.
+    });
+    return () => {
+      if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      if (historyTimer !== undefined) window.clearTimeout(historyTimer);
+      if (assetChangeDebounceTimer !== undefined) {
+        window.clearTimeout(assetChangeDebounceTimer);
+      }
+      unsubscribe();
+      unsubscribeLibraryChanged();
+    };
+  }, [api, applyLoadedMetadata, library, locale, refreshOperationHistory, selectedAssetId, setError, setNotice, t]);
 
   useEffect(() => {
     if (!api) return;
@@ -3859,149 +7349,305 @@ function AppInner() {
         setExportProgress(event);
         if (event.phase === "complete") {
           setNotice(
-            `导出完成：${event.totalFiles} 文件，${formatBytes(event.totalBytes)}。`,
+            t("toast.exportComplete", {
+              files: event.totalFiles,
+              bytes: formatBytes(event.totalBytes),
+            }),
           );
+        } else if (event.phase === "cancelled") {
+          setNotice(t("toast.exportCancelled"));
         }
       } else if (event.type === "import.progress") {
         setImportProgress(event);
-        if (event.phase === "complete") {
+        if (["complete", "cancelled", "failed"].includes(event.phase)) {
           setImportProgress(null);
+          setLibraryTransferKind("import");
+        }
+      } else if (event.type === "sync.progress") {
+        if (event.phase === "complete") {
+          setSyncProgress(null);
+          // 完成事件 filesDone=0（worker 不携带 report），只弹中性
+          // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
+          // 显示 filesTotal>0）才提示，空跑同步不打扰。
+          if (syncRunNotifiedRef.current) {
+            syncRunNotifiedRef.current = false;
+            setNotice(t("settings.sync.statusSynced"));
+          }
+        } else {
+          setSyncProgress(event);
+          if (event.filesTotal > 0 && !syncRunNotifiedRef.current) {
+            syncRunNotifiedRef.current = true;
+            setNotice(t("settings.sync.statusSyncing"));
+          }
         }
       }
     });
-  }, [api]);
+  }, [api, setNotice, t]);
 
-  useEffect(() => {
-    if (
-      !dialog &&
-      !conflicts &&
-      !permanentDeleteDialog &&
-      !deleteLinkedDialog &&
-      !batchRelinkPreview &&
-      !restoreDialog &&
-      !moveDialog &&
-      !undoMoveDialog &&
-      !collectionEditor
-    )
-      return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Tab") {
-        const modal = document.querySelector<HTMLElement>(
-          '[role="dialog"][aria-modal="true"]',
-        );
-        const focusable = modal?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
-        );
-        if (!focusable?.length) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-        return;
-      }
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      if (permanentDeleteDialog) {
-        setPermanentDeleteDialog(null);
-        return;
-      }
-      if (deleteLinkedDialog) {
-        setDeleteLinkedDialog(null);
-        return;
-      }
-      if (batchRelinkPreview) {
-        void cancelBatchRelink();
-        return;
-      }
-      if (restoreDialog) {
-        setRestoreDialog(null);
-        return;
-      }
-      if (moveDialog) {
-        setMoveDialog(null);
-        return;
-      }
-      if (undoMoveDialog) {
-        setUndoMoveDialog(null);
-        return;
-      }
-      if (collectionEditor) {
-        setCollectionEditor(null);
-        return;
-      }
-      if (dialog) {
-        setDialog(null);
-        setShowTagInput(false);
-        setShowCollectionInput(false);
-        return;
-      }
-      if (!api || !conflicts) return;
-      const importId = conflicts.importId;
-      setConflicts(null);
-      void Promise.resolve().then(async () => {
-        try {
-          const result = await api.abandonImport({ importId });
-          if (!result.ok) throw new LibraryOperationError(result.error);
-        } catch (caught) {
-          setError(toMessage(caught, "无法取消待处理导入。"));
-        }
-      });
+  const dialogEscapeSnapshot = useMemo((): DialogEscapeSnapshot => {
+    return {
+      assetRenameOpen: Boolean(assetRenameDialog),
+      imageSequenceImportOpen: Boolean(imageSequenceImportOffer),
+      imageSequenceDialogOpen: Boolean(imageSequenceDialog),
+      batchRelinkOpen: Boolean(batchRelinkPreview),
+      restoreOpen: Boolean(restoreDialog),
+      moveOpen: Boolean(moveDialog),
+      collectionEditorOpen: Boolean(collectionEditor),
+      exportDialogOpen,
+      importLibraryChooserOpen,
+      openLibraryChooserOpen,
+      appSettingsOpen,
+      librarySettingsOpen,
+      appLogOpen,
+      scriptSandboxPreviewOpen,
+      aboutOpen,
+      openSourceLicensesOpen,
+      mediaJobsOpen: Boolean(mediaJobsOpen && library !== null),
+      linkedRulesEditorOpen: Boolean(linkedRulesEditor),
+      convertLinkedOpen: Boolean(convertLinkedDialog.folderId),
+      dialogOpen: Boolean(dialog),
+      pluginTrustPromptOpen: false,
+      fatalAlertOpen: Boolean(fatalAlertMessage),
+      aiConnectionFailureOpen: aiConnectionFailureGate.open,
+      conflictsImportId: conflictPhase ? (conflicts?.importId ?? null) : null,
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
   }, [
-    api,
-    conflicts,
-    dialog,
-    permanentDeleteDialog,
-    deleteLinkedDialog,
+    assetRenameDialog,
+    imageSequenceImportOffer,
+    imageSequenceDialog,
     batchRelinkPreview,
-    cancelBatchRelink,
     restoreDialog,
     moveDialog,
-    undoMoveDialog,
     collectionEditor,
+    exportDialogOpen,
+    importLibraryChooserOpen,
+    openLibraryChooserOpen,
+    appSettingsOpen,
+    librarySettingsOpen,
+    appLogOpen,
+    scriptSandboxPreviewOpen,
+    aboutOpen,
+    openSourceLicensesOpen,
+    mediaJobsOpen,
+    library,
+    linkedRulesEditor,
+    convertLinkedDialog.folderId,
+    dialog,
+    fatalAlertMessage,
+    aiConnectionFailureGate.open,
+    conflicts?.importId,
+    conflictPhase,
   ]);
 
+  useDialogEscapeDismiss({
+    api: api ?? null,
+    snapshot: dialogEscapeSnapshot,
+    cancelAssetRename,
+    cancelImageSequenceImport: () => {
+      setImageSequenceImportOffer(null);
+      setImageSequenceImportError(null);
+    },
+    cancelImageSequenceDialog: () => setImageSequenceDialog(null),
+    cancelBatchRelink,
+    setRestoreDialog,
+    setMoveDialog,
+    setCollectionEditor,
+    setExportDialogOpen,
+    setImportLibraryChooserOpen,
+    setOpenLibraryChooserOpen,
+    setAppSettingsOpen,
+    setLibrarySettingsOpen,
+    setAppLogOpen,
+    setScriptSandboxPreviewOpen,
+    setAboutOpen,
+    setOpenSourceLicensesOpen,
+    setMediaJobsOpen,
+    setLinkedRulesEditor,
+    resetConvertLinkedDialog: () => {
+      setConvertLinkedDialog({ folderId: "", name: "", targetFolderId: "" });
+    },
+    setDialog: (value) => {
+      // Serpent-kipk: required no-library surface cannot dismiss; Escape returns
+      // to the start phase instead of leaving an empty canvas.
+      if (value === null && !library) {
+        setCreateLibraryPhase("start");
+        return;
+      }
+      setDialog(value);
+    },
+    setShowCollectionInput,
+    setConflicts: (value) => {
+      if (value === null) clearImportConflictsUi();
+      else presentImportConflicts(value);
+    },
+    setError,
+    onDismissFatalAlert: dismissFatalAlert,
+    onAbortAiConnectionFailure: onAiConnectionFailureAbort,
+  });
+
+  const dialogFocusTrapActive = Boolean(
+    dialog ||
+      conflicts ||
+      assetRenameDialog ||
+      batchRelinkPreview ||
+      restoreDialog ||
+      moveDialog ||
+      collectionEditor ||
+      exportDialogOpen ||
+      importLibraryChooserOpen ||
+      openLibraryChooserOpen ||
+      appSettingsOpen ||
+      librarySettingsOpen ||
+      appLogOpen ||
+      scriptSandboxPreviewOpen ||
+      aboutOpen ||
+      openSourceLicensesOpen ||
+      Boolean(smartCollectionSettings) ||
+      Boolean(imageSequenceDialog) ||
+      Boolean(imageSequenceImportOffer) ||
+      Boolean(fatalAlertMessage) ||
+      aiConnectionFailureGate.open ||
+      (mediaJobsOpen && library !== null) ||
+      linkedRulesEditor ||
+      convertLinkedDialog.folderId,
+  );
+  useDialogFocusTrap(dialogFocusTrapActive);
+
+  useWindowsBrowseShortcutBridge({
+    shell: shellApi,
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    acceleratorsBlocked:
+      dialogFocusTrapActive ||
+      Boolean(previewAsset) ||
+      editableTextFocused,
+  });
+
   useEffect(() => {
-    const onSelectionKeyDown = (event: KeyboardEvent) => {
-      const target = event.target;
+    // Serpent-0rk: freeze shell pointer targets while any modal is open.
+    document.body.classList.toggle("serpent-modal-open", dialogFocusTrapActive);
+    return () => {
+      document.body.classList.remove("serpent-modal-open");
+    };
+  }, [dialogFocusTrapActive]);
+
+  useBrowseCommandKeyboard({
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    platform: SHORTCUT_PLATFORM,
+    previewOpen: Boolean(previewAsset),
+    showTrash,
+    activeCollectionId,
+    libraryOpen: Boolean(library),
+    busy,
+    selectedAsset,
+    selectedAssets,
+    pasteDestinationFolderId: browsePasteDestination,
+    diskDeleteAssetIds: diskDeleteKeyboardTargets.assetIds,
+    diskDeleteFolderIds: diskDeleteKeyboardTargets.folderIds,
+    searchInputRef,
+    onOpenExternal: (assetId) => {
+      void handleOpenExternal(assetId);
+    },
+    onTrashManaged: (assetIds) => {
+      void trashManagedAssets(assetIds);
+    },
+    onTrashLinked: (assetIds) => {
+      void trashLinkedAssets(assetIds);
+    },
+    onRename: openAssetRename,
+    onCopyFiles: (assetIds) => {
+      void handleCopyAssetFiles(assetIds);
+    },
+    onCopyFilePath: (assetId) => {
+      void handleCopyFilePath(assetId);
+    },
+    onPasteIntoFolder: pasteOsClipboardFiles,
+    onRevealInFolder: (assetId) => {
+      void handleRevealInFolder(assetId);
+    },
+    onDiskDelete: (assetIds, folderIds) => {
+      requestSelectionDiskDelete([...assetIds], folderIds);
+    },
+    onPermanentDelete: (assetIds) => {
+      void deletePermanentFromTrash([...assetIds]);
+    },
+    onRemoveFromCurrentCollection: (assetIds) => {
+      if (activeCollectionId) {
+        void batchRemoveSelectionFromCollection(activeCollectionId, [...assetIds]);
+      }
+    },
+    onRefreshDisk: () => {
+      void refreshAssets();
+    },
+  });
+
+  usePluginShortcutKeyboard({
+    enabled: Boolean(library) && !showTagManagement && !showPluginSidebarView,
+    platform: SHORTCUT_PLATFORM,
+    pluginApi: (window as RendererWindow).serpent?.plugins,
+    libraryId: library?.libraryId,
+    refreshKey: pluginSidebarRefreshKey,
+    previewOpen: Boolean(previewAsset),
+    selectedAssetIds,
+    context: pluginSurfaceContext,
+  });
+
+  usePluginInputCaptureFanIn({
+    shell: shellApi,
+    enabled: Boolean(library),
+    previewOpen: Boolean(previewAsset),
+  });
+  usePluginInputCaptureModalSeam({
+    shell: shellApi,
+    snapshot: dialogEscapeSnapshot,
+  });
+
+  useWorkspaceMouseNavigation({
+    enabled: Boolean(library),
+    onBack: () => {
+      void goWorkspaceBack();
+    },
+    onForward: () => {
+      void goWorkspaceForward();
+    },
+  });
+
+  // Serpent-166q: macOS Edit → Copy accelerator (custom menu, not role:copy).
+  useEffect(() => {
+    if (!shellApi) return;
+    return shellApi.onCopySelection(() => {
+      const target = document.activeElement;
       if (
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
         (target instanceof HTMLElement && target.isContentEditable)
-      )
+      ) {
+        void shellApi.nativeEditCopy();
         return;
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "a" &&
-        library &&
-        visibleAssets.length > 0
-      ) {
-        event.preventDefault();
-        const ids = visibleAssets.map((asset) => asset.assetId);
-        setSelectedAssetIds(ids);
-        setSelectedAssetId(ids.at(-1));
-        selectionAnchorRef.current = ids[0] ?? null;
-      } else if (
-        event.key === "Escape" &&
-        selectedAssetIds.length > 0 &&
-        !previewAsset &&
-        !document.querySelector('[role="dialog"][aria-modal="true"]')
-      ) {
-        event.preventDefault();
-        clearAssetSelection();
       }
-    };
-    document.addEventListener("keydown", onSelectionKeyDown);
-    return () => document.removeEventListener("keydown", onSelectionKeyDown);
-  }, [library, previewAsset, selectedAssetIds.length, visibleAssets]);
+      if (previewAsset || showTrash || !library) {
+        void shellApi.nativeEditCopy();
+        return;
+      }
+      const copyIds = selectedAssets
+        .filter(
+          (asset) => asset.availability === "available" && !asset.deletedAt,
+        )
+        .map((asset) => asset.assetId);
+      if (copyIds.length > 0) {
+        void handleCopyAssetFiles(copyIds);
+        return;
+      }
+      void shellApi.nativeEditCopy();
+    });
+  }, [
+    shellApi,
+    previewAsset,
+    showTrash,
+    library,
+    selectedAssets,
+    handleCopyAssetFiles,
+  ]);
 
   // Capture-phase Escape guard: when context menu is open, stop
   // propagation so the non-capture handler (which clears selection)
@@ -4023,38 +7669,73 @@ function AppInner() {
     managedImportTargetFolderIdRef.current = undefined;
   }, [library?.libraryId]);
 
+  // 打开库后拉取同步绑定状态（库切换器 link/link-off 图标）。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!api || !library) {
+        if (!cancelled) setSyncBindingStatus("none");
+        return;
+      }
+      const result = await api.syncGetBinding({ libraryId: library.libraryId });
+      if (cancelled) return;
+      if (result.ok && result.value) {
+        setSyncBindingStatus(result.value.enabled ? "enabled" : "disabled");
+      } else {
+        setSyncBindingStatus("none");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, library?.libraryId]);
+
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       const target = event.target;
       if (
         !library ||
         busy ||
+        showTrash ||
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
         (target instanceof HTMLElement && target.isContentEditable)
-      )
+      ) {
         return;
-      if (
+      }
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+
+      const hasImage =
         event.clipboardData &&
-        !Array.from(event.clipboardData.items).some((item) =>
+        Array.from(event.clipboardData.items).some((item) =>
           item.type.startsWith("image/"),
-        )
-      )
+        );
+      if (hasImage) {
+        event.preventDefault();
+        void pasteClipboardImage();
         return;
+      }
+
+      if (browsePasteDestination === undefined) return;
       event.preventDefault();
-      void pasteClipboardImage();
+      pasteOsClipboardFiles(browsePasteDestination);
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [library, busy, pasteClipboardImage]);
+  }, [
+    library,
+    busy,
+    showTrash,
+    browsePasteDestination,
+    pasteClipboardImage,
+    pasteOsClipboardFiles,
+  ]);
 
   useEffect(() => {
     if (
       dialog ||
       conflicts ||
-      permanentDeleteDialog ||
-      deleteLinkedDialog ||
       batchRelinkPreview ||
       restoreDialog ||
       collectionEditor
@@ -4062,18 +7743,25 @@ function AppInner() {
       return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement ||
-        (target instanceof HTMLElement &&
-          (target.isContentEditable || target.closest('[role="dialog"]')))
-      )
-        return;
       if (previewAsset) {
         if (event.key === "Escape" && !document.fullscreenElement) {
           event.preventDefault();
-          void closeAssetPreview();
+          void (async () => {
+            if (previewModalRef.current) {
+              await previewModalRef.current.requestClose();
+            } else {
+              await closeAssetPreview();
+            }
+          })();
+          return;
+        }
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          (target instanceof HTMLElement &&
+            (target.isContentEditable || target.closest('[role="dialog"]')))
+        ) {
           return;
         }
         if (event.key === "ArrowLeft" && previewIndex > 0) {
@@ -4091,6 +7779,14 @@ function AppInner() {
         }
         return;
       }
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement &&
+          (target.isContentEditable || target.closest('[role="dialog"]')))
+      )
+        return;
       if (
         target instanceof HTMLElement &&
         target.closest(
@@ -4115,250 +7811,543 @@ function AppInner() {
     closeAssetPreview,
     collectionEditor,
     conflicts,
-    deleteLinkedDialog,
     dialog,
-    permanentDeleteDialog,
     previewAsset,
     previewIndex,
+    navigateAssetPreview,
+    openAssetPreview,
     restoreDialog,
     selectedAsset,
     visibleAssets,
   ]);
 
-  function workspaceTitle() {
-    if (!library) return "工作区";
-    if (showTrash) return "回收站";
-    if (activeTagId) {
-      const t = tags.find((x) => x.tagId === activeTagId);
-      return t ? `标签：${t.name}` : "标签筛选";
-    }
-    if (activeCollectionId) {
-      const c = collections.find((x) => x.collectionId === activeCollectionId);
-      return c ? `合集：${c.name}` : "合集视图";
-    }
-    if (assetScope === "all") return "所有资产";
-    if (assetScope === "root") return "资源库根目录";
-    return selectedFolder?.name ?? "工作区";
-  }
-
-  function scopeChipLabel() {
-    if (showTrash) return "回收站";
-    if (activeTagId) {
-      const t = tags.find((x) => x.tagId === activeTagId);
-      return t ? `标签 · ${t.name}` : "标签";
-    }
-    if (activeCollectionId) {
-      const c = collections.find((x) => x.collectionId === activeCollectionId);
-      return c ? `合集 · ${c.name}` : "合集";
-    }
-    if (activeSmartCollectionId) {
-      const c = smartCollections.find(
-        (x) => x.collectionId === activeSmartCollectionId,
-      );
-      return c ? `智能合集 · ${c.name}` : "智能合集";
-    }
-    if (assetScope === "all") return "所有资产";
-    if (assetScope === "root") return "资源库根目录";
-    return selectedFolder?.name;
-  }
-
-  // --- Metadata editor helpers ---
-  function handleMetadataLabelInput(event: FormEvent<HTMLInputElement>) {
-    const value = (event.target as HTMLInputElement).value;
-    setEditLabel(value);
-  }
-
-  function handleMetadataLabelSave() {
-    if (!assetMetadata || editLabel === (assetMetadata.label ?? "")) return;
-    void saveMetadata({ label: editLabel });
-  }
-
-  function handleMetadataDescriptionInput(
-    event: FormEvent<HTMLTextAreaElement>,
-  ) {
-    const value = (event.target as HTMLTextAreaElement).value;
-    setEditDescription(value);
-  }
-
-  function handleMetadataDescriptionSave() {
-    if (!assetMetadata || editDescription === (assetMetadata.description ?? ""))
-      return;
-    void saveMetadata({ description: editDescription });
-  }
-
-  function handlePaletteSave() {
-    if (!assetMetadata) return;
-    const values = editPalette
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (values.length > 20) {
-      setError("保存色卡失败。原因：人工色卡最多包含 20 个颜色值。");
-      return;
-    }
-    if (values.some((value) => !/^#[0-9A-Fa-f]{6}$/u.test(value))) {
-      setError("保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。");
-      return;
-    }
-    const current = parseStoredPalette(assetMetadata.palette);
-    if (JSON.stringify(values) === JSON.stringify(current)) return;
-    void saveMetadata({ palette: values });
-  }
-
-  function handleRatingClick(rating: number) {
-    if (!assetMetadata) return;
-    setEditRating(rating);
-    void saveMetadata({ rating });
-  }
-
-  function handleFavoriteToggle() {
-    if (!assetMetadata) return;
-    const next = !editFavorite;
-    setEditFavorite(next);
-    void saveMetadata({ favorite: next });
-  }
-
-  function handleSourceUrlInput(event: FormEvent<HTMLInputElement>) {
-    const value = (event.target as HTMLInputElement).value;
-    setEditSourceUrl(value);
-  }
-
-  function handleSourceUrlSave() {
-    if (!assetMetadata || editSourceUrl === (assetMetadata.sourcePageUrl ?? ""))
-      return;
-    if (editSourceUrl !== "") {
-      try {
-        const parsed = new URL(editSourceUrl);
-        if (
-          editSourceUrl !== editSourceUrl.trim() ||
-          (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-          parsed.username !== "" ||
-          parsed.password !== ""
-        ) {
-          throw new Error("invalid source URL");
+  // macOS three-finger swipe while viewing → previous/next (same order as arrows).
+  useEffect(() => {
+    if (!previewAsset) return;
+    const shellBridge = (window as RendererWindow).serpent?.shell;
+    if (!shellBridge?.onSwipe) return;
+    return shellBridge.onSwipe((direction) => {
+      if (direction === "left") {
+        if (previewIndex >= 0 && previewIndex < visibleAssets.length - 1) {
+          navigateAssetPreview(visibleAssets[previewIndex + 1]!);
         }
-      } catch {
-        setError(
-          "保存源链接失败。原因：请输入不含账号密码的 HTTP(S) 完整链接。",
-        );
         return;
       }
-    }
-    void saveMetadata({ sourcePageUrl: editSourceUrl });
-  }
+      if (direction === "right") {
+        if (previewIndex > 0) {
+          navigateAssetPreview(visibleAssets[previewIndex - 1]!);
+        }
+      }
+    });
+  }, [
+    navigateAssetPreview,
+    previewAsset,
+    previewIndex,
+    visibleAssets,
+  ]);
 
-  // ── AI Analysis ────────────────────────────────────────────────────
+  // Serpent-oy07: sync BrowserWindow focus to document (native macOS traffic lights
+  // dim on inactive via hiddenInset; renderer can mirror for shell chrome).
+  useEffect(() => {
+    const shellBridge = (window as RendererWindow).serpent?.shell;
+    if (!shellBridge?.onWindowFocusChanged) return;
+    const apply = (focused: boolean) => {
+      document.documentElement.dataset.windowFocused = focused
+        ? "true"
+        : "false";
+    };
+    apply(document.hasFocus());
+    return shellBridge.onWindowFocusChanged(apply);
+  }, []);
 
-  async function openExtensionPairing() {
-    setExtensionPairingOpen(true);
-    setExtensionPairingToken("");
-    setExtensionPairingError(null);
-    if (!extensionPairingApi) {
-      setExtensionPairingError("当前桌面桥接不支持浏览器扩展配对。");
-      return;
+  function workspaceTitle() {
+    if (!library) return t("scope.workspace");
+    if (showTagManagement) return t("scope.tagManagement");
+    if (showPluginSidebarView) return activePluginSidebarView?.title ?? t("scope.workspace");
+    if (showTrash) return t("scope.trash");
+    if (activeTagId) {
+      const tag = tags.find((x) => x.tagId === activeTagId);
+      return tag
+        ? t("scope.tagNamed", { name: tag.name })
+        : t("scope.tagFilter");
     }
-    const result = await extensionPairingApi.getToken();
-    if (result.ok) setExtensionPairingToken(result.token);
-    else setExtensionPairingError(result.message);
-  }
-
-  async function rotateExtensionPairing() {
-    if (!extensionPairingApi) return;
-    if (!confirm("轮换后，浏览器扩展中保存的旧配对码会立即失效。确定继续吗？"))
-      return;
-    const result = await extensionPairingApi.rotateToken();
-    if (result.ok) {
-      setExtensionPairingToken(result.token);
-      setExtensionPairingError(null);
-      setNotice("浏览器扩展配对码已轮换，请在扩展选项中更新。");
-    } else {
-      setExtensionPairingError(result.message);
+    if (activeCollectionId) {
+      const collection = collections.find(
+        (x) => x.collectionId === activeCollectionId,
+      );
+      return collection
+        ? t("scope.collectionNamed", { name: collection.name })
+        : t("scope.collectionView");
     }
-  }
-
-  async function copyExtensionPairingToken() {
-    if (!extensionPairingToken) return;
-    try {
-      await navigator.clipboard.writeText(extensionPairingToken);
-      setNotice("浏览器扩展配对码已复制。");
-    } catch {
-      setExtensionPairingError("复制失败，请手动选择配对码。");
+    if (activeSmartCollectionId) {
+      const smart = smartCollections.find(
+        (x) => x.collectionId === activeSmartCollectionId,
+      );
+      return smart
+        ? t("scope.smartCollectionScope", { name: smart.name })
+        : t("scope.smartCollections");
     }
+    if (assetScope === "all") return t("scope.allAssets");
+    if (assetScope === "root") return t("scope.rootFolder");
+    return selectedFolder?.name ?? t("scope.workspace");
   }
 
   async function loadAiConfig() {
     if (!api) return;
     const result = await api.getAiConfig();
     if (!result.ok) return;
-    setAiProvider(
-      (result.value.provider as "openai" | "gemini" | "anthropic") ?? "openai",
+    setAiApiFormat(
+      (result.value.apiFormat as AiApiFormat) ?? "dashscope_native",
     );
-    setAiModel(result.value.model ?? "gpt-4o-mini");
+    setAiModel(result.value.model ?? "qwen3-vl-plus");
+    setAiBaseUrl(result.value.baseUrl ?? "");
     setAiHasKey(result.value.hasKey);
-    setAiLabelEnabled(result.value.enabledFields.label);
     setAiDescriptionEnabled(result.value.enabledFields.description);
     setAiTagsEnabled(result.value.enabledFields.tags);
-    setAiStructuredEnabled(result.value.enabledFields.structuredMetadata);
-    setAiLanguage(result.value.language);
+    setAiRatingEnabled(result.value.enabledFields.rating);
+    setAiForceExistingTags(result.value.analysisSettings.forceExistingTags);
+    setAiAnalysisSettings(
+      toWireAiAnalysisSettings(
+        normalizeAiAnalysisSettings(result.value.analysisSettings),
+      ),
+    );
+    const langs = result.value.languages as
+      | Array<"zh-CN" | "en" | "ja" | "ko">
+      | undefined;
+    setAiLanguages(langs?.length ? [langs[0]!] : ["zh-CN"]);
+    setAiConcurrencyLimit(result.value.concurrencyLimit);
+    setAiMaxAnalysisImageEdgePx(result.value.maxAnalysisImageEdgePx);
     setAiAutoAnalyzeEnabled(result.value.autoAnalyzeEnabled);
     setAiDisclaimerAccepted(result.value.disclaimerAccepted);
+    aiVerifiedFingerprintRef.current = null;
+  }
+
+  function aiCredentialFingerprint(): string {
+    return [
+      aiApiFormat,
+      aiModel.trim(),
+      aiBaseUrl.trim(),
+      aiApiKey.trim() || (aiHasKey ? "__stored__" : ""),
+    ].join("\u0001");
+  }
+
+  const testAiConnectionFromDialog = useCallback(async (): Promise<{
+    success: boolean;
+    reason?: string;
+  }> => {
+    if (!api) return { success: false, reason: t("aiConfig.testFailed") };
+    if (!aiApiKey.trim() && !aiHasKey) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(t("aiConfig.testFailed"));
+      aiVerifiedFingerprintRef.current = null;
+      return { success: false, reason: t("aiConfig.testFailed") };
+    }
+    setAiConnectionState("connecting");
+    setAiConnectionReason(undefined);
+    const fingerprint = [
+      aiApiFormat,
+      aiModel.trim(),
+      aiBaseUrl.trim(),
+      aiApiKey.trim() || (aiHasKey ? "__stored__" : ""),
+    ].join("\u0001");
+    const result = await api.testAiConnection({
+      apiFormat: aiApiFormat,
+      model: aiModel.trim(),
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+      baseUrl: aiBaseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      const reason = toMessage(
+        result.error,
+        t("aiConfig.testFailed"),
+        locale,
+      );
+      setAiConnectionState("error");
+      setAiConnectionReason(reason);
+      aiVerifiedFingerprintRef.current = null;
+      return { success: false, reason };
+    }
+    if (result.value.success) {
+      setAiConnectionState("connected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = fingerprint;
+      // Typed key is not on disk until save — only mark ready when stored.
+      if (aiHasKey || !aiApiKey.trim()) {
+        setAiHasKey(true);
+      } else {
+        // Probe OK with unsaved key: refresh from disk (still false until save).
+        void api.getAiConfig().then((cfg) => {
+          if (cfg.ok) setAiHasKey(cfg.value.hasKey);
+        });
+      }
+      return { success: true };
+    }
+    const reason = result.value.reason ?? t("aiConfig.testFailed");
+    setAiConnectionState("error");
+    setAiConnectionReason(reason);
+    aiVerifiedFingerprintRef.current = null;
+    return { success: false, reason };
+  }, [
+    aiApiFormat,
+    aiApiKey,
+    aiBaseUrl,
+    aiHasKey,
+    aiModel,
+    api,
+    locale,
+    t,
+  ]);
+
+  type AiConfigPersistOverrides = {
+    maxAnalysisImageEdgePx?: number;
+    concurrencyLimit?: number;
+    analysisSettings?: AiAnalysisSettingsWire;
+  };
+
+  async function persistAiConfig(
+    overrides: AiConfigPersistOverrides = {},
+    options: {
+      showNotice?: boolean;
+      clearApiKeyDraft?: boolean;
+      verifyConnection?: boolean;
+    } = {},
+  ): Promise<boolean> {
+    const {
+      showNotice = true,
+      clearApiKeyDraft = false,
+      verifyConnection = false,
+    } = options;
+    if (!api) return false;
+    const draft = aiConfigPersistDraftRef.current;
+    if (!draft.apiKey.trim() && !draft.hasKey) {
+      if (showNotice) {
+        setError(t("toast.aiConfigSaveFailed"));
+      }
+      return false;
+    }
+    const result = await api.setAiConfig({
+      apiFormat: draft.apiFormat,
+      model: draft.model,
+      baseUrl: draft.baseUrl.trim(),
+      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
+      enabledFields: {
+        description: draft.descriptionEnabled,
+        tags: draft.tagsEnabled,
+        rating: draft.ratingEnabled,
+      },
+      analysisSettings: {
+        ...(overrides.analysisSettings ?? draft.analysisSettings),
+        forceExistingTags: draft.forceExistingTags,
+      },
+      languages: draft.languages.length > 0 ? [draft.languages[0]!] : ["zh-CN"],
+      concurrencyLimit: overrides.concurrencyLimit ?? draft.concurrencyLimit,
+      maxAnalysisImageEdgePx:
+        overrides.maxAnalysisImageEdgePx ?? draft.maxAnalysisImageEdgePx,
+      autoAnalyzeEnabled: draft.autoAnalyzeEnabled,
+      disclaimerAccepted: draft.disclaimerAccepted,
+    });
+    if (!result.ok) {
+      if (showNotice) {
+        setError(toMessage(result.error, t("toast.aiConfigSaveFailed"), locale));
+      }
+      return false;
+    }
+    setAiHasKey(true);
+    if (clearApiKeyDraft) setAiApiKey("");
+    if (showNotice) setNotice(t("toast.aiConfigSaved"));
+    if (verifyConnection) {
+      setAiSaveVerifying(true);
+      try {
+        const connection = await testAiConnectionFromDialog();
+        if (connection.success) {
+          setAiConnectionReason(undefined);
+        }
+      } finally {
+        setAiSaveVerifying(false);
+      }
+    }
+    return true;
+  }
+
+  function commitAiMaxAnalysisImageEdgePx(value: number) {
+    setAiMaxAnalysisImageEdgePx(value);
+    aiConfigPersistDraftRef.current.maxAnalysisImageEdgePx = value;
+    void persistAiConfig({ maxAnalysisImageEdgePx: value });
+  }
+
+  function commitAiConcurrencyLimit(value: number) {
+    setAiConcurrencyLimit(value);
+    aiConfigPersistDraftRef.current.concurrencyLimit = value;
+    void persistAiConfig({ concurrencyLimit: value });
+  }
+
+  function commitAiAnalysisSettingsPatch(
+    patch: Partial<AiAnalysisSettingsWire>,
+  ) {
+    const next = { ...aiAnalysisSettings, ...patch };
+    setAiAnalysisSettings(next);
+    aiConfigPersistDraftRef.current.analysisSettings = next;
+    void persistAiConfig({ analysisSettings: next });
   }
 
   async function saveAiConfig() {
     if (!api || (!aiApiKey.trim() && !aiHasKey)) return;
-    const result = await api.setAiConfig({
-      provider: aiProvider,
-      model: aiModel,
-      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
-      enabledFields: {
-        label: aiLabelEnabled,
-        description: aiDescriptionEnabled,
-        tags: aiTagsEnabled,
-        structuredMetadata: aiStructuredEnabled,
+    const alreadyVerified =
+      aiVerifiedFingerprintRef.current === aiCredentialFingerprint() &&
+      aiConnectionState === "connected";
+    const ok = await persistAiConfig(
+      {},
+      {
+        showNotice: true,
+        clearApiKeyDraft: true,
+        verifyConnection: !alreadyVerified,
       },
-      language: aiLanguage,
-      autoAnalyzeEnabled: aiAutoAnalyzeEnabled,
-      disclaimerAccepted: aiDisclaimerAccepted,
-    });
-    if (!result.ok) {
-      setError(toMessage(result.error, "AI 配置保存失败。"));
-      return;
+    );
+    if (!ok) return;
+    if (alreadyVerified) {
+      setAiConnectionReason(undefined);
+      setAiSaveVerifying(false);
     }
-    setAiHasKey(aiHasKey || Boolean(aiApiKey.trim()));
-    setAiApiKey("");
-    setAiConfigOpen(false);
-    setNotice("AI 配置已保存。");
   }
 
-  async function handleAnalyzeClick() {
-    if (!api || !library || !selectedAssetId) return;
-    setAiAnalyzing(true);
-    setAiContent(null);
+  useEffect(() => {
+    const aiSettingsOpen =
+      appSettingsOpen && appSettingsCategory === "ai";
+    if (!aiSettingsOpen) {
+      aiAutoConnectAttemptedRef.current = false;
+      return;
+    }
+    if (!aiHasKey || aiAutoConnectAttemptedRef.current) return;
+    aiAutoConnectAttemptedRef.current = true;
+    void testAiConnectionFromDialog();
+  }, [
+    appSettingsOpen,
+    appSettingsCategory,
+    aiHasKey,
+    testAiConnectionFromDialog,
+  ]);
+
+  useEffect(() => {
+    if (!appSettingsOpen || appSettingsCategory !== "ai") return;
+    void loadAiConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when AI settings surface opens
+  }, [appSettingsOpen, appSettingsCategory]);
+
+  useEffect(() => {
+    if (!librarySettingsOpen || !api || !library) return;
+    void api.getGitignore({ libraryId: library.libraryId }).then((gitignoreResult) => {
+      if (gitignoreResult.ok) setGitignoreContent(gitignoreResult.value.content);
+    });
+  }, [librarySettingsOpen, api, library]);
+
+  const probeStoredAiConnection = useCallback(async () => {
+    if (!api) return;
+    if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    setAiConnectionState((prev) =>
+      prev === "connected" || prev === "connecting" ? prev : "connecting",
+    );
+    const cfg = await api.getAiConfig();
+    if (!cfg.ok || !cfg.value.hasKey || !cfg.value.apiFormat || !cfg.value.model) {
+      setAiConnectionState("disconnected");
+      setAiConnectionReason(t("aiConfig.testFailed"));
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    const result = await api.testAiConnection({
+      apiFormat: cfg.value.apiFormat,
+      model: cfg.value.model,
+      baseUrl: cfg.value.baseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      setAiConnectionState("error");
+      setAiConnectionReason(
+        toMessage(result.error, t("aiConfig.testFailed"), locale),
+      );
+      aiVerifiedFingerprintRef.current = null;
+      return;
+    }
+    if (result.value.success) {
+      setAiConnectionState("connected");
+      setAiConnectionReason(undefined);
+      aiVerifiedFingerprintRef.current = [
+        cfg.value.apiFormat,
+        cfg.value.model.trim(),
+        cfg.value.baseUrl.trim(),
+        "__stored__",
+      ].join("\u0001");
+      return;
+    }
+    setAiConnectionState("error");
+    setAiConnectionReason(result.value.reason ?? t("aiConfig.testFailed"));
+    aiVerifiedFingerprintRef.current = null;
+  }, [api, aiHasKey, locale, t]);
+
+  useEffect(() => {
+    if (!shouldRunAiConnectionHeartbeat(aiHasKey)) {
+      return;
+    }
+    queueMicrotask(() => {
+      void probeStoredAiConnection();
+    });
+    const timer = window.setInterval(() => {
+      void probeStoredAiConnection();
+    }, AI_CONNECTION_HEARTBEAT_MS);
+    const onFocus = () => {
+      void probeStoredAiConnection();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [aiHasKey, probeStoredAiConnection]);
+
+  async function fetchAiModelsFromDialog(): Promise<{
+    models: string[];
+    reason?: string;
+  }> {
+    if (!api) return { models: [], reason: t("aiConfig.fetchModelsFailed") };
+    const result = await api.listAiModels({
+      apiFormat: aiApiFormat,
+      ...(aiApiKey.trim() ? { apiKey: aiApiKey.trim() } : {}),
+      baseUrl: aiBaseUrl.trim() || undefined,
+    });
+    if (!result.ok) {
+      return {
+        models: [],
+        reason: toMessage(
+          result.error,
+          t("aiConfig.fetchModelsFailed"),
+          locale,
+        ),
+      };
+    }
+    return {
+      models: result.value.models,
+      reason: result.value.reason,
+    };
+  }
+
+  async function handleAnalyzeClick(
+    assetId = selectedAssetId,
+    batchIds?: readonly string[],
+  ) {
+    if (!api || !library) {
+      setError(t("toast.aiAnalyzeFailed"));
+      return;
+    }
+    const targetIds = [
+      ...new Set(
+        (batchIds && batchIds.length > 0
+          ? batchIds
+          : assetId
+            ? [assetId]
+            : []
+        ).filter(Boolean),
+      ),
+    ] as string[];
+    if (targetIds.length === 0) {
+      setError(t("toast.aiAnalyzeNoAsset"));
+      return;
+    }
+    if (!aiHasKey) {
+      setError(t("command.reason.aiNotConfigured"));
+      void loadAiConfig();
+      return;
+    }
     try {
-      const result = await api.analyzeAsset({
+      const status = await api.getAiJobStatus({ libraryId: library.libraryId });
+      if (status.ok) {
+        setAiJobs(status.value);
+        notifyAiConnectionBatchStarted(status.value.jobs);
+      } else {
+        notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
+      }
+    } catch {
+      notifyAiConnectionBatchStarted(aiJobs?.jobs ?? []);
+    }
+    try {
+      const result = await api.analyzeAssets({
         libraryId: library.libraryId,
-        assetId: selectedAssetId,
+        assetIds: targetIds,
       });
       if (!result.ok) {
-        setError(toMessage(result.error, "AI 分析失败。"));
+        setError(toMessage(result.error, t("toast.aiAnalyzeFailed"), locale));
         return;
       }
-      if ("reason" in result.value) {
-        setNotice(`AI 分析暂不可用：${result.value.reason}`);
+      const jobIds = result.value.jobIds;
+      const skippedCount = result.value.skippedAssetIds.length;
+      if (jobIds.length === 0) {
+        if (skippedCount > 0) {
+          // 全部跳过（已有分析结果）——8-09 WIP 恢复：跳过不是失败
+          setNotice(t("toast.aiAnalyzeSkippedBatch", { count: skippedCount }));
+        } else {
+          setError(t("toast.aiAnalyzeFailed"));
+        }
         return;
       }
-      setAiContent({
-        label: result.value.generatedFields.label,
-        description: result.value.generatedFields.description,
-        tags: result.value.generatedFields.tags,
-        structuredMetadata: result.value.generatedFields.structuredMetadata,
-        modelVersion: result.value.modelVersion,
+      aiBatchStatusRequestRef.current++;
+      aiBatchJobIdsRef.current = jobIds;
+      aiBatchSkippedCountRef.current = skippedCount;
+      lastAiBatchJobIdsRef.current = jobIds;
+      analyzingAssetIdRef.current = targetIds[0] ?? null;
+      lastAiBatchAssetIdRef.current = analyzingAssetIdRef.current;
+      analyzingBatchSizeRef.current = jobIds.length + skippedCount;
+      setAiBatchProgress(
+        computeAiBatchProgressForJobs(jobIds, [], { skipped: skippedCount }),
+      );
+      flushSync(() => {
+        aiAnalyzingRef.current = true;
+        setAiAnalyzing(true);
+        setAiProgressBannerVisible(true);
       });
-      setNotice("AI 分析完成。");
-      // Refresh metadata to show updated tags
-      if (selectedAssetId) void loadMetadata();
-    } finally {
-      setAiAnalyzing(false);
+      // The fixed workspace progress banner is the only in-progress signal.
+      // A transient notice duplicates it and can hide more important feedback.
+      void loadAiJobs(true);
+      void refreshAiBatchStatus();
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.aiAnalyzeFailed"), locale));
+    }
+  }
+
+  async function handleClearAiContent(assetIds: string[]) {
+    if (!api || !library || assetIds.length === 0) return;
+    // Product brief: batch clear requires confirmation (UI gate; worker only
+    // enforces confirm for folder/library scopes).
+    if (
+      assetIds.length > 1 &&
+      !confirm(
+        t("toast.aiContentClearConfirm", { count: String(assetIds.length) }),
+      )
+    ) {
+      return;
+    }
+    try {
+      const result = await api.clearAiContent({
+        libraryId: library.libraryId,
+        scope: { kind: "asset", assetIds },
+        confirm: assetIds.length > 1,
+      });
+      if (!result.ok) {
+        setError(
+          toMessage(result.error, t("toast.aiContentClearFailed"), locale),
+        );
+        return;
+      }
+      if (
+        selectedAssetId &&
+        assetIds.includes(selectedAssetId)
+      ) {
+        setAiContent(null);
+      }
+      // Toast + list refresh also arrive via onAiCleared.
+    } catch (caught) {
+      setError(toMessage(caught, t("toast.aiContentClearFailed"), locale));
     }
   }
 
@@ -4368,12 +8357,12 @@ function AppInner() {
     try {
       const result = await api.listMediaJobs({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (!quiet) setError(toMessage(result.error, "后台媒体任务加载失败。"));
+        if (!quiet) setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
         return;
       }
       setMediaJobs(result.value);
     } catch {
-      if (!quiet) setError("后台媒体任务加载失败：桌面服务没有响应。");
+      if (!quiet) setError(t("toast.mediaJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
     }
@@ -4385,28 +8374,127 @@ function AppInner() {
     try {
       const result = await api.getAiJobStatus({ libraryId: library.libraryId });
       if (!result.ok) {
-        if (!quiet) setError(toMessage(result.error, "AI 任务加载失败。"));
+        if (!quiet) setError(toMessage(result.error, t("toast.aiJobsLoadFailed"), locale));
         return;
       }
       setAiJobs(result.value);
     } catch {
-      if (!quiet) setError("AI 任务加载失败：桌面服务没有响应。");
+      if (!quiet) setError(t("toast.aiJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
     }
   }
+
+  async function refreshAiBatchStatus() {
+    if (!api || !library) return;
+    const jobIds = aiBatchJobIdsRef.current;
+    if (jobIds.length === 0) return;
+    const requestNumber = ++aiBatchStatusRequestRef.current;
+    try {
+      const result = await api.getAiJobStatus({
+        libraryId: library.libraryId,
+        jobIds,
+      });
+      if (
+        !result.ok ||
+        requestNumber !== aiBatchStatusRequestRef.current ||
+        aiBatchJobIdsRef.current !== jobIds
+      ) {
+        return;
+      }
+      const progress = computeAiBatchProgressForJobs(jobIds, result.value.jobs, {
+        skipped: aiBatchSkippedCountRef.current,
+      });
+      setAiBatchProgress(progress);
+      if (progress.done < progress.batchTotal) return;
+
+      // Completion is defined by this batch's durable job IDs, not by the
+      // whole library becoming idle. Other manual or automatic jobs may run.
+      aiBatchJobIdsRef.current = [];
+      aiBatchStatusRequestRef.current++;
+      const pendingAssetId = analyzingAssetIdRef.current;
+      const batchSize = analyzingBatchSizeRef.current;
+      aiAnalyzingRef.current = false;
+      analyzingAssetIdRef.current = null;
+      analyzingBatchSizeRef.current = 0;
+      setAiAnalyzing(false);
+      setAiBatchProgress(null);
+
+      const detail = summarizeAiFailureCodes(
+        collectRecentAiFailureCodes(result.value.jobs),
+        locale,
+      );
+      const showTotalFailure = () => {
+        showBlockingError(
+          t("dialog.aiAnalyzeFailure.title"),
+          detail
+            ? t("toast.aiAnalyzeFailedDetail", { detail })
+            : t("toast.aiAnalyzeFailed"),
+        );
+      };
+      const showSingleFailure = () => {
+        setError(
+          detail
+            ? t("toast.aiAnalyzeFailedDetail", { detail })
+            : t("toast.aiAnalyzeFailed"),
+        );
+      };
+
+      const failedOutcomes = progress.failed;
+      if (failedOutcomes > 0) {
+        if (progress.succeeded === 0 && progress.cancelled === 0) {
+          if (pendingAssetId && batchSize <= 1) showSingleFailure();
+          else showTotalFailure();
+        } else {
+          setNotice(
+            t("toast.aiAnalyzeDoneBatch", {
+              succeeded: progress.succeeded,
+              failed: failedOutcomes,
+            }) +
+              (progress.skipped > 0
+                ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+                : "") +
+              (detail ? ` ${detail}` : ""),
+          );
+        }
+      } else if (progress.cancelled > 0) {
+        setNotice(t("toast.aiAnalyzeStopped"));
+      } else if (batchSize > 1) {
+        setNotice(
+          t("toast.aiAnalyzeDoneBatch", {
+            succeeded: progress.succeeded,
+            failed: 0,
+          }) +
+            (progress.skipped > 0
+              ? t("toast.aiAnalyzeSkippedSuffix", { count: progress.skipped })
+              : ""),
+        );
+      } else if (batchSize > 0) {
+        setNotice(t("toast.aiAnalyzeDone"));
+      }
+      void reloadCurrentContentRef.current();
+    } catch {
+      // A transient status query must not finish or miscount an active batch;
+      // the next throttled progress event will retry this refresh.
+    }
+  }
+  refreshAiBatchStatusRef.current = () => {
+    void refreshAiBatchStatus();
+  };
 
   useEffect(() => {
     if (!mediaJobsOpen || !library || !api) return;
     let active = true;
     const poll = async () => {
       try {
-        const [mediaResult, aiResult] = await Promise.all([
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
           api.listMediaJobs({ libraryId: library.libraryId }),
           api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
         ]);
         if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
         if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
       } catch {
         // Keep the last known task state during a transient Worker restart.
       } finally {
@@ -4424,6 +8512,31 @@ function AppInner() {
       window.clearInterval(timer);
     };
   }, [api, library, mediaJobsOpen]);
+
+  useEffect(() => {
+    if (!library || !api) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const [mediaResult, aiResult, pluginResult] = await Promise.all([
+          api.listMediaJobs({ libraryId: library.libraryId }),
+          api.getAiJobStatus({ libraryId: library.libraryId }),
+          api.listPluginJobs({ libraryId: library.libraryId }),
+        ]);
+        if (active && mediaResult.ok) setMediaJobs(mediaResult.value);
+        if (active && aiResult.ok) setAiJobs(aiResult.value);
+        if (active && pluginResult.ok) setPluginJobs(pluginResult.value);
+      } catch {
+        // Keep the last known task state during a transient Worker restart.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [api, library]);
 
   async function controlMediaJobs(
     action: "pause" | "resume" | "cancel" | "retry",
@@ -4449,12 +8562,12 @@ function AppInner() {
                   jobIds: jobIds ?? [],
                 });
       if (!result.ok) {
-        setError(toMessage(result.error, "后台媒体任务操作失败。"));
+        setError(toMessage(result.error, t("toast.mediaJobsOpFailed"), locale));
         return;
       }
       await loadMediaJobs(true);
     } catch {
-      setError("后台媒体任务操作失败：桌面服务没有响应。");
+      setError(t("toast.mediaJobsOpNoResponse"));
     }
   }
 
@@ -4476,696 +8589,614 @@ function AppInner() {
                   jobIds: jobIds ?? [],
                 });
       if (!result.ok) {
-        setError(toMessage(result.error, "AI 任务操作失败。"));
+        setError(toMessage(result.error, t("toast.aiJobsOpFailed"), locale));
         return;
+      }
+      if (action === "cancel") {
+        const activeJobIds = aiBatchJobIdsRef.current;
+        const affectsActiveBatch = cancellationAffectsAiBatch(activeJobIds, jobIds);
+        if (!jobIds) {
+          // The workspace Stop control cancels the whole queue, including the
+          // active batch. A panel action with explicit ids must not erase
+          // unrelated or partially cancelled batch tracking.
+          aiBatchJobIdsRef.current = [];
+          aiBatchSkippedCountRef.current = 0;
+          lastAiBatchJobIdsRef.current = [];
+          lastAiBatchAssetIdRef.current = null;
+          aiBatchStatusRequestRef.current++;
+          aiAnalyzingRef.current = false;
+          analyzingAssetIdRef.current = null;
+          analyzingBatchSizeRef.current = 0;
+          setAiAnalyzing(false);
+          setAiBatchProgress(null);
+          setNotice(t("toast.aiAnalyzeStopped"));
+        } else if (affectsActiveBatch) {
+          // Keep the full ID set: the next status refresh records cancelled
+          // jobs alongside any remaining success/failure outcomes.
+          void refreshAiBatchStatus();
+        }
       }
       await loadAiJobs(true);
     } catch {
-      setError("AI 任务操作失败：桌面服务没有响应。");
+      setError(t("toast.aiJobsOpNoResponse"));
     }
   }
+  controlAiJobsRef.current = controlAiJobs;
 
-  // Handle inline input keydown for tag/collection creation
-  function handleTagInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void createTag();
-    } else if (e.key === "Escape") {
-      setShowTagInput(false);
-      setTagInputValue("");
-    }
-  }
+  const mainMenuSections = buildMainMenuSections({
+    locale,
+    platform: SHORTCUT_PLATFORM,
+    state: {
+      libraryOpen: Boolean(library),
+      busy,
+      hasUndoableOperation: editableTextFocused
+        || (operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined),
+      hasRedoableOperation: editableTextFocused
+        || (operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined),
+      undoLabel: operationHistory?.undoTop === null || operationHistory?.undoTop === undefined
+        ? undefined
+        : t("shell.mainMenuUndoCount", { count: operationHistory.undoTop.affectedCount }),
+      redoLabel: operationHistory?.redoTop === null || operationHistory?.redoTop === undefined
+        ? undefined
+        : t("shell.mainMenuRedoCount", { count: operationHistory.redoTop.affectedCount }),
+      hasSelectedAssets: selectedAssetIds.length > 0,
+      hasPasteTarget: browsePasteDestination !== undefined,
+      hasBrowseAssets: browseScopeAssetIds.length > 0,
+    },
+    actions: {
+      createLibrary: () => {
+        setDialogValue(t("shell.myLibrary"));
+        setCreateLibraryPhase("form");
+        setDialog("library");
+      },
+      openLibrary: () => {
+        setImportLibraryChooserOpen(false);
+        setOpenLibraryChooserOpen(true);
+      },
+      closeLibrary: () => void closeLibrary(),
+      removeLibrary: () => void removeLibrary(),
+      deleteLibraryFromDisk: requestDeleteLibraryFromDisk,
+      importFiles: () => void importAssets("files"),
+      importFolder: () => void importAssets("folder"),
+      importLinkedFolder: () => void importFolderAsLinked(),
+      importLibrary: () => {
+        setOpenLibraryChooserOpen(false);
+        setImportLibraryChooserOpen(true);
+      },
+      exportLibrary: () => setExportDialogOpen(true),
+      openLibrarySettings: () => {
+        setAppSettingsOpen(false);
+        setLibrarySettingsOpen(true);
+      },
+      undo: () => void undoLastFileOp(),
+      redo: () => void redoLastOperation(),
+      copySelection: () => {
+        const copyIds = selectedAssets
+          .filter((asset) => asset.availability === "available" && !asset.deletedAt)
+          .map((asset) => asset.assetId);
+        if (copyIds.length > 0) void handleCopyAssetFiles(copyIds);
+      },
+      paste: () => {
+        if (browsePasteDestination !== undefined) {
+          pasteOsClipboardFiles(browsePasteDestination);
+        }
+      },
+      selectAll: () => void selectAllBrowseScope(),
+      invertSelection: () => void invertBrowseScope(),
+      clearSelection: clearAssetSelection,
+      openSettings: () => {
+        setAppSettingsCategory("general");
+        setAppSettingsOpen(true);
+      },
+      openBackgroundJobs: () => setMediaJobsOpen(true),
+      openAppLog,
+      openAbout: () => setAboutOpen(true),
+      openGitHub: () => {
+        void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
+      },
+      openOpenSourceLicenses: () => setOpenSourceLicensesOpen(true),
+    },
+  });
 
-  function handleCollectionInputKeyDown(
-    e: React.KeyboardEvent<HTMLInputElement>,
-  ) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      void createCollection();
-    } else if (e.key === "Escape") {
-      setShowCollectionInput(false);
-      setCollectionInputValue("");
-    }
-  }
+  // macOS keeps a native menu bar. Route its commands through the same
+  // canonical renderer menu actions used by the Windows in-app menu so the
+  // two platforms expose identical product functionality.
+  useEffect(() => {
+    if (!shellApi) return;
+    const findMenuItem = (
+      items: readonly MainMenuItem[],
+      id: string,
+    ): MainMenuItem | undefined => {
+      for (const item of items) {
+        if (item.id === id) return item;
+        const nested = item.submenu === undefined
+          ? undefined
+          : findMenuItem(item.submenu, id);
+        if (nested) return nested;
+      }
+      return undefined;
+    };
+    return shellApi.onApplicationMenuCommand((command: ApplicationMenuCommand) => {
+      if (command === "settings") {
+        mainMenuSections.find((section) => section.id === "settings")?.onSelect?.();
+        return;
+      }
+      const item = mainMenuSections.reduce<MainMenuItem | undefined>(
+        (found, section) => found ?? findMenuItem(section.items ?? [], command),
+        undefined,
+      );
+      // Serpent-q0b1: honor the same disabled state the Windows in-app menu
+      // renders greyed out — a native macOS item stays clickable otherwise.
+      if (item && !item.disabled) item.onSelect();
+    });
+  }, [mainMenuSections, shellApi]);
+
+  useEffect(() => {
+    if (!shellApi) return;
+    shellApi.setApplicationMenuCommandLabel(
+      "edit.undo",
+      operationHistory?.undoTop === null || operationHistory?.undoTop === undefined
+        ? t("shell.mainMenuUndo")
+        : t("shell.mainMenuUndoCount", { count: operationHistory.undoTop.affectedCount }),
+    );
+    shellApi.setApplicationMenuCommandLabel(
+      "edit.redo",
+      operationHistory?.redoTop === null || operationHistory?.redoTop === undefined
+        ? t("shell.mainMenuRedo")
+        : t("shell.mainMenuRedoCount", { count: operationHistory.redoTop.affectedCount }),
+    );
+    // Serpent-接管: the native menu accelerator must NOT intercept Cmd/Ctrl+Z
+    // while a text field is focused — Chromium's native text undo/redo would
+    // be swallowed. The item is only enabled for the business history outside
+    // editable text (which is also what the in-app menu labels advertise).
+    shellApi.setApplicationMenuCommandEnabled(
+      "edit.undo",
+      !editableTextFocused
+        && operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined
+        && !busy,
+    );
+    shellApi.setApplicationMenuCommandEnabled(
+      "edit.redo",
+      !editableTextFocused
+        && operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined
+        && !busy,
+    );
+  }, [busy, editableTextFocused, operationHistory, shellApi, t]);
+
+  // Serpent-接管: Windows has no native menu bar (its accelerators are gone),
+  // so the business undo/redo shortcuts live in the renderer. A focused text
+  // field keeps Ctrl+Z/Ctrl+Shift+Z for Chromium's native text undo/redo.
+  useEffect(() => {
+    if (!IS_WINDOWS_PLATFORM) return;
+    const onUndoRedoKeyDown = (event: KeyboardEvent) => {
+      if (editableTextFocused || busy) return;
+      if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key !== "z" && event.key !== "Z") return;
+      event.preventDefault();
+      if (event.shiftKey) {
+        if (operationHistory?.redoTop !== null && operationHistory?.redoTop !== undefined) {
+          void redoLastOperation();
+        }
+      } else if (operationHistory?.undoTop !== null && operationHistory?.undoTop !== undefined) {
+        void undoLastFileOp();
+      }
+    };
+    document.addEventListener("keydown", onUndoRedoKeyDown);
+    return () => document.removeEventListener("keydown", onUndoRedoKeyDown);
+  }, [busy, editableTextFocused, operationHistory, undoLastFileOp, redoLastOperation]);
 
   return (
+    <>
+    <HoverTipHost />
+    <EditTextContextMenuHost />
     <main
-      className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}`}
+      className={`app-shell${leftOpen ? "" : " left-collapsed"}${rightOpen ? "" : " right-collapsed"}${panelResizing ? " is-resizing" : ""}`}
+      style={panelResizeShellStyle as React.CSSProperties}
     >
       <header className="app-toolbar">
-        <div className="toolbar-cluster toolbar-leading">
+        <div className="toolbar-cluster toolbar-nav-cluster">
           <ToolButton
-            icon="menu"
-            label={leftOpen ? "收起导航" : "展开导航"}
+            icon={leftOpen ? "panel-left-close" : "panel-left"}
+            label={leftOpen ? t("shell.collapseNav") : t("shell.expandNav")}
             onClick={() => setLeftOpen((v) => !v)}
             pressed={leftOpen}
           />
-          <div className="brand-mark">
-            <span className="brand-glyph">S</span>
-            <span>Serpent</span>
+        </div>
+        <div className="toolbar-cluster toolbar-workspace-cluster">
+          <div className="toolbar-workspace-main">
+            <ScopeHistoryButtons
+              canBack={navHistoryUi.canBack}
+              canForward={navHistoryUi.canForward}
+              onBack={() => void goWorkspaceBack()}
+              onForward={() => void goWorkspaceForward()}
+            />
+            {IS_WINDOWS_PLATFORM ? (
+              <MainMenu disabled={busy} sections={mainMenuSections} />
+            ) : (
+              <AppSettingsEntry
+                disabled={busy}
+                onOpen={() => {
+                  setAppSettingsCategory("general");
+                  setAppSettingsOpen(true);
+                }}
+              />
+            )}
+            <LibrarySwitcher
+              busy={busy}
+              disabled={busy}
+              syncStatus={syncBindingStatus}
+              importMenuCopy={importMenuCopy}
+              libraryName={library?.displayName ?? null}
+              libraryOpen={Boolean(library)}
+              onCloseLibrary={() => void closeLibrary()}
+              onRemoveLibrary={() => void removeLibrary()}
+              onDeleteLibraryFromDisk={() => requestDeleteLibraryFromDisk()}
+              onOpenLibrarySettings={() => {
+                setAppSettingsOpen(false);
+                setLibrarySettingsOpen(true);
+              }}
+              onCreateLibrary={() => {
+                setDialogValue(t("shell.myLibrary"));
+                setCreateLibraryPhase("form");
+                setDialog("library");
+              }}
+              onExportLibrary={() => setExportDialogOpen(true)}
+              onImportFolder={() => void importAssets("folder")}
+              onImportLibrary={() => {
+                setOpenLibraryChooserOpen(false);
+                setImportLibraryChooserOpen(true);
+              }}
+              onImportLinkedFolder={() => void importFolderAsLinked()}
+              onMenuOpen={() => void refreshRecentLibraries()}
+              onOpenLibrary={() => {
+                setImportLibraryChooserOpen(false);
+                setOpenLibraryChooserOpen(true);
+              }}
+              onOpenRecent={(path) => void openRecentLibrary(path)}
+              onForgetRecent={(path) => void forgetRecentLibrary(path)}
+              recentLibraries={recentLibraries}
+            />
+            <ScopeBreadcrumbs
+              onNavigateFolder={(folderId) => void chooseFolder(folderId)}
+              onNavigateTrashTombstone={(tombstoneId) => {
+                void enterTrashAt(tombstoneId);
+              }}
+              segments={buildScopeBreadcrumbSegments(
+                {
+                  showTrash,
+                  trashBreadcrumbHops,
+                  activeTagLabel: activeTagId
+                    ? (tags.find((tag) => tag.tagId === activeTagId)?.name ??
+                      null)
+                    : null,
+                  activeCollectionLabel: activeCollectionId
+                    ? (collections.find(
+                        (collection) =>
+                          collection.collectionId === activeCollectionId,
+                      )?.name ?? null)
+                    : null,
+                  activeSmartCollectionLabel: activeSmartCollectionId
+                    ? (smartCollections.find(
+                        (collection) =>
+                          collection.collectionId === activeSmartCollectionId,
+                      )?.name ?? null)
+                    : null,
+                  assetScope,
+                  folderTrail:
+                    assetScope !== "all" && assetScope !== "root"
+                      ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                          .length > 0
+                        ? buildManagedFolderBreadcrumbTrail(folders, assetScope)
+                        : buildLinkedFolderBreadcrumbTrail(
+                            linkedFolders,
+                            assetScope,
+                          )
+                      : [],
+                  linkedFolderLabel: null,
+                },
+                t,
+              )}
+            />
           </div>
-        </div>
-        <div className="scope-trace">
-          <span className="scope-root">资源库</span>
-          <Icon name="chevron" size={12} />
-          <span className="scope-chip">
-            {library?.displayName ?? "尚未打开"}
-          </span>
-          {library && (
-            <span className="scope-chip scope-chip-muted">
-              {scopeChipLabel()}
-            </span>
-          )}
-        </div>
-        <form
-          className="toolbar-cluster toolbar-actions"
-          onSubmit={(event) => {
-            if (aiSearchEnabled) void runAiSearch(event);
-            else void runSearch(event);
-          }}
-        >
-          <button
-            aria-pressed={aiSearchEnabled}
-            className="compact-action ai-search-toggle"
-            disabled={!library || aiSearchLoading}
-            onClick={() => {
-              setAiSearchEnabled((enabled) => !enabled);
-              setActiveAiSearchDefinition(null);
-              setAiSearchPlanSummary(null);
-            }}
-            title="点亮后仅在提交时调用已配置的 AI，把自然语言转换为普通搜索条件"
-            type="button"
+          <form
+            className="toolbar-workspace-search"
+            onSubmit={(event) => void runSearch(event)}
+            role="search"
           >
-            <Icon name="smart" size={14} />
-            AI 搜索
-          </button>
-          <input
-            aria-label="搜索资源库"
-            className="search-control"
-            disabled={!library}
-            onChange={(event) => {
-              setSearchValue(event.target.value);
-              setActiveAiSearchDefinition(null);
-              setAiSearchPlanSummary(null);
-            }}
-            placeholder={
-              aiSearchEnabled
-                ? "自然语言，例如：横版科幻城市概念图，不要草图"
-                : '搜索；支持 label:"短语"、NOT tags:草图、OR'
-            }
-            title={
-              aiSearchEnabled
-                ? "提交后由已配置的云端模型生成受限搜索条件"
-                : '示例：label:"hero concept" NOT tags:草图'
-            }
-            value={searchValue}
-          />
-          <details className="discovery-filters">
-            <summary>筛选与排序</summary>
-            <div className="discovery-filter-panel">
-              <label>
-                格式
-                <input
-                  aria-label="格式过滤"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) => setFormatFilter(event.target.value)}
-                  placeholder="png, jpg"
-                  value={formatFilter}
-                />
-                <span>
-                  <input
-                    aria-label="排除这些格式"
-                    checked={excludeFormatFilter}
-                    onChange={(event) =>
-                      setExcludeFormatFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  排除
-                </span>
-              </label>
-              <label>
-                标签
-                <input
-                  aria-label="标签过滤"
-                  className="text-field"
-                  disabled={!library}
-                  list="tag-filter-options"
-                  onChange={(event) => {
-                    setTagFilter(event.target.value);
-                    setActiveTagId(
-                      tags.find((tag) => tag.name === event.target.value)
-                        ?.tagId ?? null,
-                    );
-                  }}
-                  placeholder="角色, 道具"
-                  value={tagFilter}
-                />
-                <datalist id="tag-filter-options">
-                  {tags.map((tag) => (
-                    <option key={tag.tagId} value={tag.name} />
-                  ))}
-                </datalist>
-                <span>
-                  <input
-                    aria-label="排除这些标签"
-                    checked={excludeTagFilter}
-                    onChange={(event) =>
-                      setExcludeTagFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  排除
-                </span>
-              </label>
-              <label>
-                评分
-                <input
-                  aria-label="评分过滤"
-                  className="text-field"
-                  disabled={!library}
-                  inputMode="numeric"
-                  onChange={(event) => setRatingFilter(event.target.value)}
-                  placeholder="4, 5"
-                  value={ratingFilter}
-                />
-                <span>
-                  <input
-                    aria-label="排除这些评分"
-                    checked={excludeRatingFilter}
-                    onChange={(event) =>
-                      setExcludeRatingFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  排除
-                </span>
-              </label>
-              <label>
-                喜欢
-                <select
-                  aria-label="喜欢过滤"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setFavoriteFilter(
-                      event.target.value as typeof favoriteFilter,
-                    )
-                  }
-                  value={favoriteFilter}
-                >
-                  <option value="any">不限</option>
-                  <option value="yes">仅喜欢</option>
-                  <option value="no">未喜欢</option>
-                </select>
-              </label>
-              <label>
-                源链接
-                <select
-                  aria-label="源链接过滤"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSourceUrlFilter(
-                      event.target.value as typeof sourceUrlFilter,
-                    )
-                  }
-                  value={sourceUrlFilter}
-                >
-                  <option value="any">不限</option>
-                  <option value="yes">有源链接</option>
-                  <option value="no">无源链接</option>
-                </select>
-              </label>
-              <label>
-                可用性
-                <select
-                  aria-label="可用性过滤"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setAvailabilityFilter(
-                      event.target.value as typeof availabilityFilter,
-                    )
-                  }
-                  value={availabilityFilter}
-                >
-                  <option value="any">全部</option>
-                  <option value="available">可用</option>
-                  <option value="missing">文件丢失</option>
-                </select>
-                <span>
-                  <input
-                    aria-label="排除该可用性"
-                    checked={excludeAvailabilityFilter}
-                    disabled={availabilityFilter === "any"}
-                    onChange={(event) =>
-                      setExcludeAvailabilityFilter(event.target.checked)
-                    }
-                    type="checkbox"
-                  />
-                  排除
-                </span>
-              </label>
-              <TechnicalRangeFilter
-                label="宽度 (px)"
-                range={widthRange}
-                setRange={setWidthRange}
-              />
-              <TechnicalRangeFilter
-                label="高度 (px)"
-                range={heightRange}
-                setRange={setHeightRange}
-              />
-              <TechnicalRangeFilter
-                label="宽高比"
-                range={aspectRatioRange}
-                setRange={setAspectRatioRange}
-                step="0.01"
-              />
-              <TechnicalRangeFilter
-                label="时长 (秒)"
-                range={durationRange}
-                setRange={setDurationRange}
-                step="0.1"
-              />
-              <label>
-                排序字段
-                <select
-                  aria-label="排序字段"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSortField(event.target.value as typeof sortField)
-                  }
-                  value={sortField}
-                >
-                  <option value="relevance">相关性（默认）</option>
-                  <option value="name">名称</option>
-                  <option value="modified_at">修改时间</option>
-                  <option value="created_at">创建时间</option>
-                  <option value="byte_size">文件大小</option>
-                  <option value="duration">时长</option>
-                  <option value="rating">评分</option>
-                  <option value="color">颜色</option>
-                </select>
-              </label>
-              <label>
-                排序方向
-                <select
-                  aria-label="排序方向"
-                  className="text-field"
-                  disabled={!library}
-                  onChange={(event) =>
-                    setSortOrder(event.target.value as SortDefinition["order"])
-                  }
-                  value={sortOrder}
-                >
-                  <option value="asc">升序</option>
-                  <option value="desc">降序</option>
-                </select>
-              </label>
-            </div>
-          </details>
-          <button
-            className="compact-action"
-            disabled={
-              !library ||
-              aiSearchLoading ||
-              (aiSearchEnabled && !searchValue.trim())
-            }
-            type="submit"
-          >
-            <Icon name="search" size={14} />
-            {aiSearchLoading ? "转换中…" : "搜索"}
-          </button>
-          {aiSearchPlanSummary && (
-            <span
-              className="ai-search-plan-summary"
-              title={aiSearchPlanSummary}
+            <div
+              className={`search-control-wrap${searchValue.trim() ? " has-value" : ""}`}
             >
-              {aiSearchPlanSummary}
-            </span>
-          )}
-          <input
-            aria-label="智能合集标题"
-            className="text-field"
-            disabled={!library}
-            onChange={(event) => setSmartCollectionName(event.target.value)}
-            placeholder="智能合集名称"
-            style={{ height: 28, width: 110 }}
-            value={smartCollectionName}
-          />
-          <button
-            className="compact-action"
-            disabled={!library || !smartCollectionName.trim()}
-            onClick={() => void saveSmartCollection()}
-            type="button"
-          >
-            <Icon name="smart" size={14} />
-            保存
-          </button>
+              <Icon name="search" size={15} />
+              <input
+                aria-label={t("toolbar.searchLibrary")}
+                className="search-control"
+                disabled={!library}
+                onChange={(event) => setSearchValue(event.target.value)}
+                placeholder={t("toolbar.searchPlaceholder")}
+                ref={searchInputRef}
+                type="search"
+                value={searchValue}
+              />
+              <button
+                aria-label={t("toolbar.searchSyntax")}
+                className="search-syntax-help"
+                data-hover-tip={t("toolbar.searchSyntaxHint")}
+                data-hover-tip-variant="search-syntax"
+                type="button"
+              >
+                ?
+              </button>
+              {searchValue.trim() !== "" && (
+                <button
+                  aria-label={t("toolbar.clearSearch")}
+                  className="search-clear-btn"
+                  disabled={!library}
+                  onClick={() => setSearchValue("")}
+                  type="button"
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+        <div className="toolbar-cluster toolbar-inspector-cluster">
           <ToolButton
-            icon="collapse-right"
-            label={rightOpen ? "收起检查器" : "展开检查器"}
+            icon={rightOpen ? "panel-right-close" : "panel-right"}
+            label={
+              rightOpen
+                ? t("shell.collapseInspector")
+                : t("shell.expandInspector")
+            }
             onClick={() => setRightOpen((v) => !v)}
             pressed={rightOpen}
           />
-        </form>
+        </div>
+        {IS_WINDOWS_PLATFORM ? (
+          <WindowsWindowControls shell={shellApi} />
+        ) : null}
       </header>
-      <aside className="navigation-pane">
-        <div className="pane-header">
-          <span>资源导航</span>
-          <span className="status-dot" data-active={Boolean(library)} />
+      {library?.recovery ? (
+        <div className="library-readonly-banner" role="status">
+          <Icon name="info" size={14} />
+          <span>
+            {library.recovery.mode === "backup-1"
+              ? t("library.recoveryBackup1")
+              : library.recovery.mode === "backup-2"
+                ? t("library.recoveryBackup2")
+                : t("library.recoveryRescue")}
+          </span>
+          {library.recovery?.mode === "rescue" &&
+          library.recovery.recoveredAssetCount !== undefined ? (
+            <span className="library-recovery-report-note">
+              {t("library.recoveryRescueDetails", {
+                count: library.recovery.recoveredAssetCount,
+              })}
+            </span>
+          ) : null}
+          {library.recovery?.reportAvailable ? (
+            <>
+              <span className="library-recovery-report-note">
+                {t("library.recoveryReportAvailable")}
+              </span>
+              <button
+                className="secondary-button library-recovery-report-button"
+                onClick={() => void revealRecoveryReport()}
+                type="button"
+              >
+                {t("library.recoveryOpenReport")}
+              </button>
+            </>
+          ) : null}
         </div>
-        <nav className="navigation-scroll">
-          <NavRow
-            active={
-              library
-                ? assetScope === "all" &&
-                  !activeTagId &&
-                  !activeCollectionId &&
-                  !showTrash
-                : true
-            }
-            count={library ? allAssetCount : undefined}
-            icon="grid"
-            label="所有资产"
-            onClick={() => void chooseFolder("all")}
-            disabled={!library}
-            onDragOver={handleTargetExternalDragOver}
-            onDrop={(event) => handleTargetExternalDrop(event, null, undefined)}
-          />
-          <NavRow
-            active={Boolean(
-              library && showTrash && !activeTagId && !activeCollectionId,
-            )}
-            count={trashedAssets.length || undefined}
-            disabled={!library}
-            icon="trash"
-            label="回收站"
-            onClick={() => void enterTrash()}
-          />
-          <NavRow icon="archive" label="最近使用" disabled />
-          <Section
-            title="文件夹"
-            action={
-              library
-                ? () => {
-                    setDialogValue("新建文件夹");
-                    setDialog("folder");
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                <NavRow
-                  active={
-                    assetScope === "root" && !activeTagId && !activeCollectionId
-                  }
-                  icon="folder"
-                  label="资源库根目录"
-                  onClick={() => void chooseFolder("root")}
-                  onDragOver={handleTargetExternalDragOver}
-                  onDrop={(event) =>
-                    handleTargetExternalDrop(event, null, undefined)
-                  }
-                />
-                {folders.map((folder) => (
-                  <NavRow
-                    active={
-                      assetScope === folder.folderId &&
-                      !activeTagId &&
-                      !activeCollectionId
-                    }
-                    depth={folder.relativePath.split("/").length}
-                    icon="folder"
-                    key={folder.folderId}
-                    label={folder.name}
-                    onClick={() => void chooseFolder(folder.folderId)}
-                    onDragOver={handleTargetExternalDragOver}
-                    onDrop={(event) =>
-                      handleTargetExternalDrop(
-                        event,
-                        folder.folderId,
-                        undefined,
-                      )
-                    }
-                  />
-                ))}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示目录</p>
-            )}
-          </Section>
-          <Section
-            title="标签"
-            action={
-              library
-                ? () => {
-                    setShowTagInput(true);
-                    setTagInputValue("");
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                {showTagInput && (
-                  <div className="nav-section">
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        setShowTagInput(false);
-                        setTagInputValue("");
-                      }}
-                      onChange={(e) => setTagInputValue(e.target.value)}
-                      onKeyDown={handleTagInputKeyDown}
-                      placeholder="输入标签名称，回车创建"
-                      style={{
-                        height: 27,
-                        margin: "2px 0 4px 0",
-                        fontSize: 11,
-                      }}
-                      value={tagInputValue}
-                    />
-                  </div>
-                )}
-                {tags.length ? (
-                  tags.map((tag) => (
-                    <NavRow
-                      active={activeTagId === tag.tagId}
-                      icon="tag"
-                      key={tag.tagId}
-                      label={tag.name}
-                      count={tag.assetCount}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        openContextMenu(
-                          { type: "organization", orgKind: "tag", id: tag.tagId, name: tag.name },
-                          { x: e.clientX, y: e.clientY },
-                        );
-                      }}
-                      onClick={() => void chooseTag(tag.tagId)}
-                    />
-                  ))
-                ) : (
-                  <p className="nav-empty">尚无标签</p>
-                )}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示标签</p>
-            )}
-          </Section>
-          <Section
-            title="合集"
-            action={
-              library
-                ? () => {
-                    setShowCollectionInput(true);
-                    setCollectionInputValue("");
-                    setNewCollectionParentId(activeCollectionId);
-                  }
-                : undefined
-            }
-          >
-            {library ? (
-              <>
-                {showCollectionInput && (
-                  <div className="nav-section">
-                    <input
-                      autoFocus
-                      className="text-field"
-                      maxLength={255}
-                      onBlur={() => {
-                        setShowCollectionInput(false);
-                        setCollectionInputValue("");
-                        setNewCollectionParentId(null);
-                      }}
-                      onChange={(e) => setCollectionInputValue(e.target.value)}
-                      onKeyDown={handleCollectionInputKeyDown}
-                      placeholder={
-                        newCollectionParentId
-                          ? "输入子合集名称，回车创建"
-                          : "输入合集名称，回车创建"
-                      }
-                      style={{
-                        height: 27,
-                        margin: "2px 0 4px 0",
-                        fontSize: 11,
-                      }}
-                      value={collectionInputValue}
-                    />
-                  </div>
-                )}
-                {activeCollectionId && (
-                  <div style={{ padding: "0 5px 2px" }}>
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 10,
-                        color: "var(--tertiary)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <input
-                        checked={collectionRecursive}
-                        onChange={(e) => {
-                          const recursive = e.target.checked;
-                          collectionRecursiveRef.current = recursive;
-                          setCollectionRecursive(recursive);
-                          if (activeCollectionId)
-                            void chooseCollection(activeCollectionId, recursive);
-                        }}
-                        type="checkbox"
-                      />
-                      包含子合集
-                    </label>
-                  </div>
-                )}
-                {collections.length ? (
-                  renderCollectionNodes(null, 0)
-                ) : (
-                  <p className="nav-empty">尚无合集</p>
-                )}
-              </>
-            ) : (
-              <p className="nav-empty">打开资源库后显示合集</p>
-            )}
-          </Section>
-          <Section title="智能合集">
-            {library ? (
-              smartCollections.length ? (
-                smartCollections.map((sc) => (
-                  <NavRow
-                    active={activeSmartCollectionId === sc.collectionId}
-                    icon="smart"
-                    key={sc.collectionId}
-                    label={sc.name}
-                    onClick={() => void chooseSmartCollection(sc.collectionId)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      openContextMenu(
-                        { type: "smart-collection", id: sc.collectionId, name: sc.name },
-                        { x: event.clientX, y: event.clientY },
-                      );
-                    }}
-                  />
-                ))
-              ) : (
-                <p className="nav-empty">尚无智能合集</p>
-              )
-            ) : (
-              <p className="nav-empty">打开资源库后显示智能合集</p>
-            )}
-          </Section>
-          <Section
-            title="链接文件夹"
-            action={library ? () => void importFolderAsLinked() : undefined}
-          >
-            {library ? (
-              linkedFolders.length ? (
-                linkedFolders.map((lf) => (
-                  <NavRow
-                    active={
-                      assetScope === lf.folderId &&
-                      !activeTagId &&
-                      !activeCollectionId
-                    }
-                    icon={lf.status === "offline" ? "warning" : "link"}
-                    key={lf.folderId}
-                    label={lf.displayName}
-                    count={lf.assetCount}
-                    onClick={
-                      lf.status === "offline"
-                        ? () => void relinkFolder(lf.folderId)
-                        : () => void chooseFolder(lf.folderId)
-                    }
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      if (event.shiftKey)
-                        setConvertLinkedDialog({
-                          folderId: lf.folderId,
-                          name: lf.displayName,
-                          targetFolderId: "",
-                        });
-                      else void openLinkedRules(lf);
-                    }}
-                    onDragOver={(event) => {
-                      if (
-                        event.dataTransfer.types.includes(
-                          "application/x-serpent-managed-assets",
-                        )
-                      )
-                        event.preventDefault();
-                    }}
-                    onDrop={(event) => {
-                      const serialized = event.dataTransfer.getData(
-                        "application/x-serpent-managed-assets",
-                      );
-                      if (!serialized) return;
-                      event.preventDefault();
-                      try {
-                        const ids = JSON.parse(serialized) as string[];
-                        void copyManagedSelectionToLinked(lf, ids);
-                      } catch {
-                        setError("拖放资产数据无效，未写入外部目录。");
-                      }
-                    }}
-                  />
-                ))
-              ) : (
-                <p className="nav-empty">链接外部文件夹作为资产来源</p>
-              )
-            ) : (
-              <p className="nav-empty">打开资源库后显示链接文件夹</p>
-            )}
-            {library && linkedFolders.length > 0 && (
-              <p className="nav-empty">
-                右键编辑规则；Shift+右键转换为托管。可拖入所选托管资产。
-              </p>
-            )}
-          </Section>
-        </nav>
-        <div className="pane-footer">
-          <span className="storage-pulse" />
-          <span>{library ? "本地资源库 · 已连接" : "本地优先 · 未连接"}</span>
-        </div>
-      </aside>
+      ) : null}
+      <NavigationSidebar
+        library={library}
+        assetScope={assetScope}
+        showTrash={showTrash}
+        showTagManagement={showTagManagement}
+        activePluginSidebarViewId={activePluginSidebarViewId}
+        pluginSidebarViews={pluginSidebarViews}
+        activeTagId={activeTagId}
+        activeCollectionId={activeCollectionId}
+        activeSmartCollectionId={activeSmartCollectionId}
+        showIgnoredItems={showIgnoredItems}
+        onToggleShowIgnoredItems={() => {
+          const next = !showIgnoredItems;
+          setShowIgnoredItems(next);
+          if (library) {
+            void loadContent(library, assetScope, {
+              trashMode: showTrash,
+              discovery: currentQueryDefinition(),
+              showIgnored: next,
+            });
+          }
+        }}
+        allAssetCount={allAssetCount}
+        rootAssetCount={rootAssetCount}
+        trashedAssetCount={trashedAssetCount}
+        folders={folders}
+        collections={collections}
+        collectionTree={collectionTree}
+        smartCollections={smartCollections}
+        linkedFolders={linkedFolders}
+        showCollectionInput={showCollectionInput}
+        collectionInputValue={collectionInputValue}
+        newCollectionParentId={newCollectionParentId}
+        inlineCollectionRename={inlineCollectionRename}
+        draggedCollectionId={draggedCollectionId}
+        onSetDraggedCollectionId={setDraggedCollectionId}
+        onChooseAllAssets={() => void chooseFolder("all")}
+        onEnterTrash={() => void enterTrash()}
+        onTrashContextMenu={(event) => {
+          openContextMenu(
+            { type: "trash" },
+            { x: event.clientX, y: event.clientY },
+          );
+        }}
+        onEnterTagManagement={() => void enterTagManagement()}
+        onChoosePluginSidebarView={(viewId) => void enterPluginSidebarView(viewId)}
+        onChooseFolder={(folderId) => void chooseFolder(folderId)}
+        onChooseCollection={(collectionId, recursive) =>
+          void chooseCollection(collectionId, recursive)
+        }
+        onChooseSmartCollection={(collectionId) =>
+          void chooseSmartCollection(collectionId)
+        }
+        onExternalDragOver={handleTargetExternalDragOver}
+        onExternalDrop={(event, targetFolderId, targetCollectionId) =>
+          handleTargetExternalDrop(event, targetFolderId, targetCollectionId)
+        }
+        getManagedAssetDragIds={getManagedAssetDragIds}
+        onResolveManagedAssetDrop={resolveManagedAssetDrop}
+        onAssetsDroppedOnFolder={(folderId, assetIds, mode) =>
+          handleAssetsDroppedOnFolder(folderId, assetIds, mode)
+        }
+        onFoldersDroppedOnFolder={handleFoldersDroppedOnFolder}
+        selectedFolderIds={selectedFolderIds}
+        onAssetsDroppedOnTrash={(assetIds) =>
+          handleAssetsDroppedOnTrash(assetIds)
+        }
+        onFoldersDroppedOnTrash={handleFoldersDroppedOnTrash}
+        onAssetsDroppedOnCollection={(collectionId, assetIds, mode) =>
+          handleAssetsDroppedOnCollection(collectionId, assetIds, mode)
+        }
+        onManagedAssetCopyModeChange={(copyMode) => {
+          setAssetDragPreviewCopyMode(dragPreviewRef.current, copyMode);
+        }}
+        onImportFolderAsLinked={() => void importFolderAsLinked()}
+        onRelinkFolder={(folderId) => void relinkFolder(folderId)}
+        onConvertLinkedDialog={setConvertLinkedDialog}
+        onAddCollection={(parentId) => {
+          setShowCollectionInput(true);
+          setCollectionInputValue("");
+          setNewCollectionParentId(parentId);
+        }}
+        onSetShowCollectionInput={setShowCollectionInput}
+        onSetCollectionInputValue={setCollectionInputValue}
+        onSetNewCollectionParentId={setNewCollectionParentId}
+        onCollectionInputCommit={() => createCollection()}
+        onInlineCollectionRenameChange={(value) =>
+          setInlineCollectionRename((current) =>
+            current ? { ...current, value } : current,
+          )
+        }
+        onInlineCollectionRenameCommit={() => commitInlineCollectionRename()}
+        onInlineCollectionRenameCancel={cancelInlineCollectionRename}
+        onAddFolder={() => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderCreate(selectedFolderId ?? null);
+        }}
+        onAddSmartCollection={() => {
+          cancelInlineFolderEdit();
+          openInlineSmartCollectionCreate();
+        }}
+        inlineFolderEdit={inlineFolderEdit}
+        onInlineFolderEditChange={changeInlineFolderEdit}
+        onInlineFolderEditCommit={(onCreateSuccess) =>
+          void commitInlineFolderEdit((folderId, parentFolderId) => {
+            onCreateSuccess?.(folderId, parentFolderId);
+          })
+        }
+        onInlineFolderEditCancel={cancelInlineFolderEdit}
+        inlineSmartCollectionEdit={inlineSmartCollectionEdit}
+        onInlineSmartCollectionEditChange={changeInlineSmartCollectionEdit}
+        onInlineSmartCollectionEditCommit={() =>
+          void commitInlineSmartCollectionEdit()
+        }
+        onInlineSmartCollectionEditCancel={cancelInlineSmartCollectionEdit}
+        onOpenContextMenu={openContextMenu}
+        onReorderCollection={(sourceId, targetId) =>
+          void reorderCollectionSibling(sourceId, targetId)
+        }
+        onImportDroppedFiles={(files, targetFolderId, targetCollectionId, webPayload) =>
+          void importDroppedFiles(files, targetFolderId, targetCollectionId, webPayload)
+        }
+        onCopyManagedToLinked={(folder, assetIds) =>
+          void copyManagedSelectionToLinked(folder, assetIds)
+        }
+      />
       <section className="workspace">
         <div
-          className={`workspace-bar${previewAsset ? " is-viewing" : ""}`}
+          className={`workspace-bar${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
           <div className="workspace-title">
+            {library &&
+              !showTrash &&
+              !showTagManagement &&
+              !showPluginSidebarView &&
+              !activeTagId &&
+              !activeCollectionId &&
+              !activeSmartCollectionId &&
+              assetScope !== "all" &&
+              assetScope !== "root" && (
+                <button
+                  aria-pressed={folderRecursive}
+                  className="workspace-include-subfolders"
+                  onClick={() => {
+                    // Include-subfolders changes the browse result set (REQ-VIEW-004).
+                    void closeAssetPreview(false);
+                    const next = !folderRecursiveRef.current;
+                    folderRecursiveRef.current = next;
+                    setFolderRecursive(next);
+                    const nextPrefs = withFolderRecursiveEnabled(
+                      folderRecursivePrefs,
+                      library.libraryId,
+                      assetScope,
+                      next,
+                    );
+                    setFolderRecursivePrefs(nextPrefs);
+                    saveFolderRecursivePreferences(nextPrefs);
+                    void loadContent(library, assetScope, {
+                      discovery: currentQueryDefinition(),
+                      searchScope: {
+                        kind: "folder",
+                        folderId: assetScope,
+                        recursive: next,
+                      },
+                    }).catch((caught) => {
+                      setError(
+                        toMessage(caught, t("toast.readAssetsFailed"), locale),
+                      );
+                    });
+                  }}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildFolders"))}
+                >
+                  <Icon name="folders" size={14} />
+                </button>
+              )}
+            {library &&
+              !showTrash &&
+              !showTagManagement &&
+              !activeTagId &&
+              activeCollectionId &&
+              !activeSmartCollectionId && (
+                <button
+                  aria-pressed={collectionRecursive}
+                  className="workspace-include-subfolders"
+                  onClick={() => {
+                    // Collection scope uses the same explicit recursive toggle
+                    // as folder scope, but the control lives beside its title.
+                    void closeAssetPreview(false);
+                    const next = !collectionRecursiveRef.current;
+                    collectionRecursiveRef.current = next;
+                    setCollectionRecursive(next);
+                    void chooseCollection(activeCollectionId, next);
+                  }}
+                  type="button"
+                  {...iconActionAttrs(t("nav.includeChildCollections"))}
+                >
+                  <Icon name="folders" size={14} />
+                </button>
+              )}
             <span>{workspaceTitle()}</span>
             <span className="item-count">
-              {library ? `${visibleAssets.length} 项` : "未载入"}
+              {library
+                ? showTagManagement
+                  ? t("common.itemCount", { count: tags.length })
+                  : t("common.itemCount", { count: workspaceBrowseCount })
+                : t("common.notLoaded")}
             </span>
           </div>
           <div className="workspace-tools">
@@ -5174,566 +9205,312 @@ function AppInner() {
                 <button
                   className="compact-action"
                   disabled={busy}
-                  onClick={() => {
-                    if (
-                      confirm(
-                        "确定要清理所有到期项吗？这将永久删除所有超过 30 天的资产。",
-                      )
-                    )
-                      void purgeTrash();
-                  }}
+                  onClick={() => void emptyTrash()}
                   type="button"
                 >
                   <Icon name="trash" size={14} />
-                  清理到期项目
+                  {t("toolbar.emptyTrash")}
                 </button>
-                {selectedAssetIds.length > 0 && (
-                  <>
-                    <span className="tool-separator" />
-                    <button
-                      className="compact-action"
-                      disabled={busy}
-                      onClick={() =>
-                        setRestoreDialog({
-                          assetIds: selectedAssetIds,
-                          target: "original",
-                          conflictStrategy: "keep-both",
-                        })
-                      }
-                      type="button"
-                    >
-                      <Icon name="upload" size={14} />
-                      恢复所选（{selectedAssetIds.length}）
-                    </button>
-                  </>
-                )}
-                {selectedAsset && (
+                <span className="tool-separator" />
+              </>
+            ) : (
+              library &&
+              !showTrash &&
+              !showTagManagement &&
+              !showPluginSidebarView &&
+              visibleAssets.some(
+                (a) => a.availability === "missing" && !a.deletedAt,
+              ) && (
+                <>
                   <button
                     className="compact-action"
                     disabled={busy}
-                    onClick={() => {
-                      setPermanentDeleteDialog(
-                        selectedAssetIds.length > 0
-                          ? selectedAssetIds
-                          : [selectedAsset.assetId],
-                      );
-                    }}
+                    onClick={() => void startBatchRelink()}
                     type="button"
                   >
-                    <Icon name="close" size={14} />
-                    永久删除
+                    <Icon name="folder" size={14} />
+                    {t("toolbar.batchRelink")}
                   </button>
-                )}
-              </>
-            ) : (
-              <>
-                {library &&
-                  selectedAsset &&
-                  selectedAsset.availability === "missing" &&
-                  !selectedAsset.deletedAt && (
-                    <>
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => void relinkMissingAsset()}
-                        type="button"
-                      >
-                        <Icon name="search" size={14} />
-                        找回
-                      </button>
-                      <span className="tool-separator" />
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  selectedAsset &&
-                  !selectedAsset.deletedAt &&
-                  selectedAsset.locationKind === "managed" && (
-                    <>
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => {
-                          void trashManagedAssets([selectedAssetId!]);
-                        }}
-                        type="button"
-                      >
-                        <Icon name="trash" size={14} />
-                        删除
-                      </button>
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  selectedAsset &&
-                  !selectedAsset.deletedAt &&
-                  selectedAsset.locationKind === "linked" && (
-                    <>
-                      <span className="tool-separator" />
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => {
-                          setDeleteLinkedDialog({
-                            assetIds: [selectedAssetId!],
-                            displayNames: selectedAsset.displayName,
-                            deleteSourceFile: false,
-                            canDeleteSourceFile:
-                              selectedAsset.availability === "available",
-                          });
-                        }}
-                        type="button"
-                      >
-                        <Icon name="link" size={14} />
-                        删除（链接）
-                      </button>
-                    </>
-                  )}
-                {library &&
-                  !showTrash &&
-                  visibleAssets.some(
-                    (a) => a.availability === "missing" && !a.deletedAt,
-                  ) && (
-                    <>
-                      <span className="tool-separator" />
-                      <button
-                        className="compact-action"
-                        disabled={busy}
-                        onClick={() => void startBatchRelink()}
-                        type="button"
-                      >
-                        <Icon name="folder" size={14} />
-                        批量重新定位
-                      </button>
-                    </>
-                  )}
-              </>
-            )}
-            <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("files")}
-              type="button"
-            >
-              <Icon name="upload" size={14} />
-              导入文件
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importAssets("folder")}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入文件夹
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void pasteClipboardImage()}
-              type="button"
-            >
-              <Icon name="file" size={14} />
-              粘贴图片
-            </button>
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => void importFolderAsLinked()}
-              type="button"
-            >
-              <Icon name="link" size={14} />
-              导入链接文件夹
-            </button>
-            <span className="tool-separator" />
-            <button
-              className="compact-action"
-              disabled={!library || busy}
-              onClick={() => setExportDialogOpen(true)}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导出资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImport()}
-              type="button"
-            >
-              <Icon name="folder" size={14} />
-              导入资源库
-            </button>
-            <button
-              className="compact-action"
-              disabled={busy}
-              onClick={() => void startImportZip()}
-              type="button"
-            >
-              <Icon name="archive" size={14} />
-              导入 ZIP
-            </button>
-            <ToolButton
-              disabled={!library || busy}
-              icon="refresh"
-              label="刷新磁盘变化"
-              onClick={() => void refreshAssets()}
-            />
-            <div className="canvas-controls">
-              <span className="tool-separator" />
-              <ToolButton
-                icon="grid"
-                label="平铺视图"
-                onClick={() =>
-                  setCanvasPrefs((p) => ({ ...p, viewMode: "grid" }))
-                }
-                pressed={assetViewMode === "grid"}
-              />
-              <ToolButton
-                icon="menu"
-                label="瀑布流视图"
-                onClick={() =>
-                  setCanvasPrefs((p) => ({ ...p, viewMode: "masonry" }))
-                }
-                pressed={assetViewMode === "masonry"}
-              />
-              <label className="asset-size-control">
-                <span>缩略图大小</span>
-                <input
-                  aria-label="资产缩略图大小"
-                  max={CARD_SIZE_MAX}
-                  min={CARD_SIZE_MIN}
-                  onChange={(event) => {
-                    const size = Number(event.target.value);
-                    resizeAssetCards(size);
-                  }}
-                  step="8"
-                  type="range"
-                  value={assetCardSize}
-                />
-              </label>
-              <span className="tool-separator" />
-              {([
-                {
-                  field: "name" as const,
-                  icon: "tag" as const,
-                  label: "文件名",
-                },
-                {
-                  field: "size" as const,
-                  icon: "info" as const,
-                  label: "文件大小",
-                },
-                {
-                  field: "date" as const,
-                  icon: "star" as const,
-                  label: "修改日期",
-                },
-              ]).map(({ field, icon, label }) => (
-                <ToolButton
-                  key={field}
-                  icon={icon}
-                  label={label}
-                  onClick={() =>
-                    setCanvasPrefs((p) => {
-                      const updatedFields = {
-                        ...p.fields,
-                        [field]: !p.fields[field],
-                      };
-                      return { ...p, fields: updatedFields };
-                    })
-                  }
-                  pressed={canvasPrefs.fields[field]}
-                />
-              ))}
-            </div>
-            {library &&
-              selectedAsset &&
-              !showTrash &&
-              !selectedAsset.deletedAt && (
-                <>
                   <span className="tool-separator" />
-                  <button
-                    className="compact-action"
-                    disabled={aiAnalyzing || !aiHasKey}
-                    onClick={() => void handleAnalyzeClick()}
-                    type="button"
-                  >
-                    <Icon name="smart" size={14} />
-                    {aiAnalyzing ? "分析中…" : "AI 分析"}
-                  </button>
                 </>
-              )}
-            <span className="tool-separator" />
-            <button
-              className="compact-action"
-              onClick={() => void openExtensionPairing()}
-              type="button"
-            >
-              <Icon name="link" size={14} />
-              浏览器扩展
-            </button>
-            {library && (
-              <>
-                <button
-                  className="compact-action"
-                  onClick={() => setMediaJobsOpen(true)}
-                  type="button"
-                >
-                  <Icon name="refresh" size={14} />
-                  后台任务
-                </button>
-                <button
-                  className="compact-action"
-                  onClick={() => {
-                    void loadAiConfig();
-                    setAiConfigOpen(true);
-                  }}
-                  type="button"
-                >
-                  <Icon name="info" size={14} />
-                  AI 设置
-                </button>
-              </>
+              )
             )}
+            {!showTagManagement && !showPluginSidebarView && (
+              <CanvasToolbarControls
+                actions={{
+                  refresh: () => {
+                    void refreshAssets();
+                  },
+                  setViewMode: (mode) => {
+                    setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+                  },
+                  toggleField: (field) => {
+                    setCanvasPrefs((p) => ({
+                      ...p,
+                      fields: { ...p.fields, [field]: !p.fields[field] },
+                    }));
+                  },
+                  openAiSettings: () => {
+                    setAppSettingsCategory("ai");
+                    setAppSettingsOpen(true);
+                  },
+                  openAppSettings: () => {
+                    setAppSettingsCategory("general");
+                    setAppSettingsOpen(true);
+                  },
+                }}
+                busy={busy}
+                canvasPrefs={canvasPrefs}
+                cardSize={assetCardSize}
+                cardSizeStops={cardSizeStops}
+                libraryOpen={Boolean(library)}
+                locale={locale}
+                onCardSizeChange={resizeAssetCards}
+                platform={SHORTCUT_PLATFORM}
+              />
+            )}
+            <PluginToolbarButtons
+              disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+              libraryId={library?.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+              refreshKey={pluginContributionRefreshKey}
+              selectedAssetIds={selectedAssetIds}
+              context={pluginSurfaceContext}
+            />
+            <WorkspaceToolsOverflow
+              items={[
+                {
+                  active: backgroundJobsActive,
+                  disabled: library === null,
+                  id: "background-jobs",
+                  label: t("toolbar.backgroundJobs"),
+                  onSelect: openMediaJobs,
+                },
+                {
+                  id: "script-sandbox-preview",
+                  label: t("automation.preview.open"),
+                  onSelect: () => setScriptSandboxPreviewOpen(true),
+                },
+              ]}
+            />
           </div>
         </div>
+        <PluginWorkspaceViews
+          disabled={busy || library === null || showTagManagement || showPluginSidebarView}
+          libraryId={library?.libraryId}
+          pluginApi={(window as RendererWindow).serpent?.plugins}
+          refreshKey={pluginContributionRefreshKey}
+        />
+        {!showTagManagement && !showPluginSidebarView && (
         <div
-          className={`workspace-canvas${previewAsset ? " is-viewing" : ""}${externalDropActive ? " is-external-drop" : ""}`}
-          onDragEnter={handleExternalDragEnter}
-          onDragLeave={handleExternalDragLeave}
-          onDragOver={handleExternalDragOver}
-          onDrop={handleExternalDrop}
-          onMouseDown={handleCanvasMouseDown}
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            if (
-              target.scrollHeight - target.scrollTop - target.clientHeight <
-              480
-            ) {
-              void loadMoreAssets();
-            }
-          }}
-          ref={workspaceCanvasRef}
+          className={`workspace-discovery${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
         >
-          {externalDropActive && (
-            <div className="external-drop-overlay" role="status">
-              <Icon name="upload" size={28} />
-              <strong>松开以导入</strong>
-              <span>
-                {activeCollectionId
-                  ? "导入本地文件或下载网页媒体，并加入当前合集"
-                  : "导入本地文件或下载网页图片/视频"}
-              </span>
-            </div>
-          )}
-          {marqueeBox && (
-            <div
-              className="marquee-selection-box"
-              style={{
-                left: marqueeBox.left,
-                top: marqueeBox.top,
-                width: marqueeBox.width,
-                height: marqueeBox.height,
-              }}
-            />
-          )}
-          {previewAsset && library && api && (
-            <AssetPreviewModal
-              api={api}
-              asset={previewAsset}
-              key={previewAsset.assetId}
-              libraryId={library.libraryId}
-              onClose={() => void closeAssetPreview()}
-              onNext={
-                previewIndex >= 0 && previewIndex < visibleAssets.length - 1
-                  ? () =>
-                      navigateAssetPreview(visibleAssets[previewIndex + 1]!)
-                  : undefined
-              }
-              onPrevious={
-                previewIndex > 0
-                  ? () =>
-                      navigateAssetPreview(visibleAssets[previewIndex - 1]!)
-                  : undefined
-              }
-            />
-          )}
-          {library && selectedAssetIds.length > 0 && !showTrash && (
-            <div
-              className="batch-action-strip"
-              role="region"
-              aria-label="批量资产操作"
-            >
-              <strong>已选择 {selectedAssetIds.length} 项</strong>
-              <select
-                aria-label="批量标签"
-                onChange={(event) => setBatchTagId(event.target.value)}
-                value={batchTagId}
-              >
-                <option value="">选择标签…</option>
-                {tags.map((tag) => (
-                  <option key={tag.tagId} value={tag.tagId}>
-                    {tag.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={busy || !batchTagId}
-                onClick={() => void updateSelectionTags(false)}
-                type="button"
-              >
-                添加标签
-              </button>
-              <button
-                disabled={busy || !batchTagId}
-                onClick={() => void updateSelectionTags(true)}
-                type="button"
-              >
-                移除标签
-              </button>
-              <select
-                aria-label="批量合集"
-                onChange={(event) => setBatchCollectionId(event.target.value)}
-                value={batchCollectionId}
-              >
-                <option value="">选择合集…</option>
-                {collections.map((collection) => (
-                  <option
-                    key={collection.collectionId}
-                    value={collection.collectionId}
-                  >
-                    {collection.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={busy || !batchCollectionId}
-                onClick={() => void updateSelectionCollection(false)}
-                type="button"
-              >
-                加入合集
-              </button>
-              <button
-                disabled={busy || !batchCollectionId}
-                onClick={() => void updateSelectionCollection(true)}
-                type="button"
-              >
-                移出合集
-              </button>
-              <button
-                disabled={
-                  busy ||
-                  !selectedAssets.some(
-                    (asset) =>
-                      asset.locationKind === "managed" &&
-                      asset.availability === "available",
-                  )
-                }
-                onClick={() =>
-                  setMoveDialog({
-                    assetIds: selectedAssets
-                      .filter(
-                        (asset) =>
-                          asset.locationKind === "managed" &&
-                          asset.availability === "available",
-                      )
-                      .map((asset) => asset.assetId),
-                    targetFolderId: null,
-                    conflictStrategy: "keep-both",
+          <DimensionFilterBar
+            availabilityFilter={availabilityFilter}
+            aspectRatioRange={aspectRatioRange}
+            aspectRatioRanges={aspectRatioRanges}
+            colorFilter={colorFilter}
+            disabled={!library}
+            interactionsLocked={dialogFocusTrapActive}
+            durationRange={durationRange}
+            excludeAvailabilityFilter={excludeAvailabilityFilter}
+            excludeColorFilter={excludeColorFilter}
+            excludeFormatFilter={excludeFormatFilter}
+            excludeRatingFilter={excludeRatingFilter}
+            excludeTagFilter={excludeTagFilter}
+            favoriteFilter={favoriteFilter}
+            formatFilter={formatFilter}
+            heightRange={heightRange}
+            longEdgeRange={longEdgeRange}
+            onClearFilter={clearDiscoveryFilter}
+            onTagNamesChange={(names) => {
+              // Discovery tag filters overlay the current folder/collection
+              // scope. Do not set activeTagId — that is "browse by tag" mode
+              // (chooseTag) and would clear folder nav highlight + folder cards
+              // (Serpent-w9c6 / resolveFolderBrowseParentId).
+              setTagFilter(names.join(", "));
+              setActiveTagId(null);
+            }}
+            ratingFilter={ratingFilter}
+            setAspectRatioRange={setAspectRatioRange}
+            setAspectRatioRanges={setAspectRatioRanges}
+            setAvailabilityFilter={setAvailabilityFilter}
+            setColorFilter={setColorFilter}
+            setDurationRange={setDurationRange}
+            setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
+            setExcludeColorFilter={setExcludeColorFilter}
+            setExcludeFormatFilter={setExcludeFormatFilter}
+            setExcludeRatingFilter={setExcludeRatingFilter}
+            setExcludeTagFilter={setExcludeTagFilter}
+            setFavoriteFilter={setFavoriteFilter}
+            setFormatFilter={setFormatFilter}
+            setHeightRange={setHeightRange}
+            setLongEdgeRange={setLongEdgeRange}
+            setRatingFilter={setRatingFilter}
+            setSortField={(field) => {
+              setShuffleSeed(null);
+              setSortField(field);
+            }}
+            setSortOrder={(order) => {
+              setShuffleSeed(null);
+              setSortOrder(order);
+            }}
+            setSourceUrlFilter={setSourceUrlFilter}
+            setTagFilter={(value) => {
+              // Explicit filter-bar edits leave the tag-management AND mode.
+              setTagFilterMatch("any");
+              setTagFilter(value);
+            }}
+            setWidthRange={setWidthRange}
+            shuffleActive={shuffleSeed !== null}
+            onShuffle={() => {
+              setShuffleSeed((prev) => {
+                const next = Date.now() >>> 0;
+                return prev === null ? next : (next ^ ((prev + 1) >>> 0)) >>> 0;
+              });
+            }}
+            snapshot={{
+              colorFilter,
+              excludeColorFilter,
+              formatFilter,
+              excludeFormatFilter,
+              tagFilter,
+              excludeTagFilter,
+              ratingFilter,
+              excludeRatingFilter,
+              favoriteFilter,
+              sourceUrlFilter,
+              availabilityFilter,
+              excludeAvailabilityFilter,
+              widthRange,
+              heightRange,
+              aspectRatioRange,
+              aspectRatioRanges,
+              longEdgeRange,
+              durationRange,
+            }}
+            sortField={sortField}
+            sortOrder={sortOrder}
+            sourceUrlFilter={sourceUrlFilter}
+            tagFilter={tagFilter}
+            tags={tags}
+            widthRange={widthRange}
+          />
+        </div>
+        )}
+        {(aiAnalyzing ||
+          (aiJobs !== null && aiJobs.queued + aiJobs.running > 0)) &&
+          aiProgressBannerVisible &&
+          (() => {
+            const batchProgress = aiBatchProgress;
+            const progressLabel =
+              batchProgress && batchProgress.batchTotal > 0
+                ? t("toast.aiAnalyzeProgressCount", {
+                    done: String(batchProgress.done),
+                    total: String(batchProgress.batchTotal),
                   })
-                }
-                type="button"
-              >
-                <Icon name="folder" size={13} />
-                移动到文件夹
-              </button>
-              <button
-                disabled={
-                  busy ||
-                  !selectedAssets.some(
-                    (asset) => asset.locationKind === "managed",
-                  )
-                }
-                onClick={() =>
-                  void trashManagedAssets(
-                    selectedAssets
-                      .filter((asset) => asset.locationKind === "managed")
-                      .map((asset) => asset.assetId),
-                  )
-                }
-                type="button"
-              >
-                <Icon name="trash" size={13} />
-                移入回收站
-              </button>
-              {linkedFolders.length > 0 && (
-                <>
-                  <select
-                    aria-label="复制到链接文件夹"
-                    onChange={(event) =>
-                      setCopyLinkedTargetId(event.target.value)
-                    }
-                    value={copyLinkedTargetId}
-                  >
-                    <option value="">选择链接文件夹…</option>
-                    {linkedFolders
-                      .filter((folder) => folder.status === "available")
-                      .map((folder) => (
-                        <option key={folder.folderId} value={folder.folderId}>
-                          {folder.displayName}
-                        </option>
-                      ))}
-                  </select>
+                : t("toast.aiAnalyzeStarted");
+            return (
+              <div className="workspace-ai-progress" role="status">
+                <div className="workspace-ai-progress-body">
+                  <div className="workspace-ai-progress-headline">
+                    <span className="activity-pulse" aria-hidden />
+                    <span className="workspace-ai-progress-message">
+                      {progressLabel}
+                    </span>
+                  </div>
+                  {batchProgress && batchProgress.batchTotal > 0 && (
+                    <div
+                      aria-valuemax={batchProgress.batchTotal}
+                      aria-valuemin={0}
+                      aria-valuenow={batchProgress.done}
+                      className="task-progress-track workspace-ai-progress-bar"
+                      role="progressbar"
+                    >
+                      <div
+                        className="task-progress-fill"
+                        style={{
+                          width: `${Math.round((batchProgress.ratio ?? 0) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="workspace-ai-progress-actions">
                   <button
-                    disabled={
-                      busy ||
-                      !copyLinkedTargetId ||
-                      !selectedAssets.some(
-                        (asset) =>
-                          asset.locationKind === "managed" &&
-                          asset.availability === "available",
-                      )
-                    }
-                    onClick={() => {
-                      const folder = linkedFolders.find(
-                        (item) => item.folderId === copyLinkedTargetId,
-                      );
-                      if (folder)
-                        void copyManagedSelectionToLinked(
-                          folder,
-                          selectedAssets
-                            .filter(
-                              (asset) =>
-                                asset.locationKind === "managed" &&
-                                asset.availability === "available",
-                            )
-                            .map((asset) => asset.assetId),
-                        );
-                    }}
+                    className="secondary-button"
+                    onClick={() => void controlAiJobs("cancel")}
                     type="button"
                   >
-                    <Icon name="link" size={13} />
-                    复制到外部目录
+                    {t("toast.aiAnalyzeStop")}
                   </button>
-                </>
-              )}
-              <button
-                aria-label="清除选择"
-                onClick={clearAssetSelection}
-                type="button"
-              >
-                <Icon name="close" size={13} />
-              </button>
-            </div>
-          )}
-          {busy && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => setAiProgressBannerVisible(false)}
+                    type="button"
+                  >
+                    {t("toast.aiAnalyzeRunInBackground")}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
+        {pluginJobActivity !== null && (
+          <PluginJobActivityBanner
+            job={pluginJobActivity}
+            onDismiss={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+            onRunInBackground={() => hidePluginJobActivity(pluginJobActivity.jobId)}
+          />
+        )}
+        <div
+          className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}`}
+        >
+          {renderedToastStack.length > 0
+            ? createPortal(
+                <div
+                  aria-atomic="false"
+                  aria-live="polite"
+                  className="workspace-notice-stack workspace-notice"
+                >
+                  {renderedToastStack.map((message) => {
+                    const isUndoTarget =
+                      !message.closing &&
+                      message.id === topVisibleToastId;
+                    return (
+                      <WorkspaceNoticeBanner
+                        key={message.id}
+                        closing={message.closing}
+                        message={message}
+                        onDismiss={() => dismissToast(message.id)}
+                        onTransitionEnd={handleToastTransitionEnd}
+                        onUndo={
+                          message.kind === "notice" &&
+                          isUndoTarget &&
+                          message.historyEntryId
+                            ? () => void undoLastFileOp(message.historyEntryId)
+                            : undefined
+                        }
+                        toastId={message.id}
+                        undoLabel={
+                          message.kind === "notice" &&
+                          isUndoTarget &&
+                          message.historyEntryId
+                            ? t("action.undo")
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </div>,
+                document.body,
+              )
+            : null}
+          {uiState === "importing" && !importProgress && (
             <div className="activity-strip" role="status">
               <span className="activity-pulse" />
-              {uiState === "importing"
-                ? "正在安全复制与登记资产…"
-                : "正在同步资源库…"}
+              <span className="activity-strip-message">
+                {t("toolbar.importingProgress")}
+              </span>
             </div>
           )}
           {exportProgress &&
@@ -5742,21 +9519,30 @@ function AppInner() {
             ) && (
               <div className="activity-strip" role="status">
                 <span className="activity-pulse" />
-                正在导出资源库：
-                {exportProgress.phase === "snapshot-db"
-                  ? "快照数据库…"
-                  : exportProgress.phase === "enumerate"
-                    ? "枚举文件…"
-                    : exportProgress.phase === "compress"
-                      ? "压缩中"
-                      : `复制中 ${exportProgress.filesProcessed}/${exportProgress.totalFiles} · ${formatBytes(exportProgress.bytesProcessed)}/${formatBytes(exportProgress.totalBytes)}`}
+                <span className="activity-strip-message">
+                  {t("progress.exportingLibrary")}
+                  {exportProgress.phase === "snapshot-db"
+                    ? t("progress.snapshotDb")
+                    : exportProgress.phase === "enumerate"
+                      ? t("progress.enumerateFiles")
+                      : exportProgress.phase === "compress"
+                        ? t("progress.compressing")
+                        : t("progress.copyingFiles", {
+                            processed: exportProgress.filesProcessed,
+                            total: exportProgress.totalFiles,
+                            bytesProcessed: formatBytes(
+                              exportProgress.bytesProcessed,
+                            ),
+                            bytesTotal: formatBytes(exportProgress.totalBytes),
+                          })}
+                </span>
                 <button
                   className="secondary-button"
                   disabled={!exportProgress.exportId}
                   onClick={() => void cancelExport()}
                   type="button"
                 >
-                  取消导出
+                  {t("progress.cancelExport")}
                 </button>
               </div>
             )}
@@ -5764,63 +9550,465 @@ function AppInner() {
             !["complete", "cancelled", "failed"].includes(
               importProgress.phase,
             ) && (
-              <div className="activity-strip" role="status">
+              <div className="activity-strip import-progress-strip" role="status">
                 <span className="activity-pulse" />
-                导入资源库：
-                {importProgress.phase === "validate"
-                  ? "验证中…"
-                  : importProgress.phase === "copy"
-                    ? "复制中…"
-                    : "打开中…"}
-                <button
-                  className="secondary-button"
-                  disabled={!importProgress.importId}
-                  onClick={() => void cancelImport()}
-                  type="button"
-                >
-                  取消导入
-                </button>
+                <div className="import-progress-body">
+                  <span className="activity-strip-message">
+                    {(() => {
+                      const headline = libraryTransferHeadlineKey(libraryTransferKind);
+                      return headline.name
+                        ? t(headline.key, { name: libraryTransferName })
+                        : t(headline.key);
+                    })()}
+                    {importProgress.phase === "validate"
+                      ? importProgress.totalFiles > 0
+                        ? t("progress.readingSourceItems", {
+                            processed: importProgress.filesProcessed,
+                            total: importProgress.totalFiles,
+                          })
+                        : t("progress.validating")
+                      : importProgress.phase === "copy"
+                        ? importProgress.totalFiles > 0
+                          ? t("progress.copyingFiles", {
+                              processed: importProgress.filesProcessed,
+                              total: importProgress.totalFiles,
+                              bytesProcessed: formatBytes(importProgress.bytesProcessed),
+                              bytesTotal: formatBytes(importProgress.totalBytes),
+                            })
+                          : t("progress.copying")
+                        : t("progress.opening")}
+                  </span>
+                  {importProgress.totalFiles > 0 && (
+                    <div
+                      aria-valuemax={importProgress.totalFiles}
+                      aria-valuemin={0}
+                      aria-valuenow={Math.min(
+                        importProgress.filesProcessed,
+                        importProgress.totalFiles,
+                      )}
+                      className="task-progress-track import-progress-bar"
+                      role="progressbar"
+                    >
+                      <div
+                        className="task-progress-fill"
+                        style={{
+                          width: `${Math.round(
+                            (Math.min(
+                              importProgress.filesProcessed,
+                              importProgress.totalFiles,
+                            ) /
+                              importProgress.totalFiles) *
+                              100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+                {importProgress.cancelable !== false && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => void cancelImport()}
+                    type="button"
+                  >
+                    {isLibraryOpenTransferKind(libraryTransferKind)
+                      ? t("progress.cancelOpen")
+                      : t("progress.cancelImport")}
+                  </button>
+                )}
               </div>
             )}
-          {library ? (
-            visibleAssets.length ? (
+        <div
+          className={`workspace-canvas${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${externalDropActive ? " is-external-drop" : ""}`}
+          onDragEnter={handleExternalDragEnter}
+          onDragLeave={handleExternalDragLeave}
+          onDragOver={handleExternalDragOver}
+          onDragOverCapture={handleExternalDragOver}
+          onDrop={handleExternalDrop}
+          onMouseDown={handleCanvasMouseDown}
+          onContextMenu={(event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            if (
+              target.closest(
+                ".asset-card, .folder-card, button, [role='button'], [role='menuitem'], a, input, textarea, select",
+              )
+            ) {
+              return;
+            }
+            if (!library || previewAsset || showTagManagement || showPluginSidebarView) return;
+            event.preventDefault();
+            openContextMenu(
+              {
+                type: "workspace",
+                ...(selectedAssetIds.length > 0
+                  ? { assetIds: [...selectedAssetIds] }
+                  : {}),
+              },
+              { x: event.clientX, y: event.clientY },
+            );
+          }}
+          ref={workspaceCanvasRef}
+        >
+          {/* Serpent-wgl2: rendered once, mutated directly via ref — a
+              per-frame React state would re-render the whole grid. */}
+          <div
+            className="marquee-selection-box"
+            ref={marqueeBoxRef}
+          />
+          {library && showPluginSidebarView ? (
+            <PluginSidebarViewPanel
+              activeView={activePluginSidebarView}
+              libraryId={library.libraryId}
+              pluginApi={(window as RendererWindow).serpent?.plugins}
+            />
+          ) : library && showTagManagement ? (
+            <TagManagementWorkspace
+              busy={busy}
+              onCreate={handleCreateTagInManagement}
+              onDeleteMany={handleDeleteTagsInManagement}
+              onMerge={handleMergeTagsInManagement}
+              onOpenTag={(tagId) => void chooseTag(tagId)}
+              onRename={handleRenameTagInManagement}
+              onSearchTags={(names, match) =>
+                void handleSearchTagsFromManagement(names, match)
+              }
+              tags={tags}
+            />
+          ) : library ? (
+            browseCanvasBodyLayout.mode !== "empty" ? (
               <>
-                <div
-                  className={`asset-grid is-${assetViewMode}`}
-                  style={
-                    assetViewMode === "masonry"
-                      ? { columnWidth: assetCardSize }
-                      : {
-                          gridTemplateColumns: `repeat(auto-fill, ${assetCardSize}px)`,
-                        }
-                  }
-                >
-                  {visibleAssets.map((asset) => (
-                    <button
+                {browseCanvasBodyLayout.showFolders && (
+                  <div
+                    className={
+                      browseCanvasBodyLayout.mode === "folders-only"
+                        ? "folder-card-row is-folders-only"
+                        : "folder-card-row"
+                    }
+                    style={
+                      {
+                        "--folder-card-size": `${folderCardWidthPx}px`,
+                        ...(panelResizing && panelReflowFrozenWidthRef.current
+                          ? {
+                              width: `${panelReflowFrozenWidthRef.current}px`,
+                            }
+                          : {}),
+                      } as CSSProperties
+                    }
+                  >
+                    {canvasFolderBrowseEntries.map((entry) => (
+                      <FolderCard
+                        draggable={!showTrash}
+                        entry={entry}
+                        key={entry.folderId}
+                        libraryId={library.libraryId}
+                        trashed={showTrash}
+                        {...(showTrash
+                          ? {}
+                          : createFolderCardDropHandlers(entry.folderId))}
+                        onDragStart={(event) => {
+                          const folderIds = resolveDraggedFolderIds(
+                            entry.folderId,
+                            selectedFolderIds,
+                          );
+                          event.dataTransfer.setData(
+                            MANAGED_FOLDERS_DRAG_TYPE,
+                            JSON.stringify(folderIds),
+                          );
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
+                        onClick={(folderId, event) => {
+                          handleFolderCardClick(folderId, event);
+                        }}
+                        onContextMenu={(clickedEntry, event) => {
+                          event.preventDefault();
+                          if (showTrash) {
+                            openContextMenu(
+                              {
+                                type: "trashed-folder",
+                                tombstoneId: clickedEntry.folderId,
+                                name: clickedEntry.name,
+                                relativePath: clickedEntry.relativePath,
+                              },
+                              { x: event.clientX, y: event.clientY },
+                            );
+                            return;
+                          }
+                          const intent = resolveBrowseContextMenuIntent(
+                            { kind: "folder", id: clickedEntry.folderId },
+                            {
+                              assetIds: selectedAssetIds,
+                              folderIds: selectedFolderIds,
+                            },
+                          );
+                          if (intent.type === "single-folder") {
+                            setSelectedFolderIds([intent.folderId]);
+                            setSelectedAssetIds([]);
+                            openContextMenu(
+                              {
+                                type: "folder",
+                                folderId:
+                                  clickedEntry.linkedFolderId ??
+                                  intent.folderId,
+                                name: clickedEntry.name,
+                                locationKind: clickedEntry.locationKind,
+                                linkedRelativePath:
+                                  clickedEntry.locationKind === "linked" &&
+                                  clickedEntry.relativePath
+                                    ? clickedEntry.relativePath
+                                    : undefined,
+                              },
+                              { x: event.clientX, y: event.clientY },
+                            );
+                            return;
+                          }
+                          if (intent.type !== "multi") return;
+                          openContextMenu(
+                            {
+                              type: "multi-asset",
+                              assetIds: [...intent.assetIds],
+                              folderIds: [...intent.folderIds],
+                              count:
+                                intent.assetIds.length + intent.folderIds.length,
+                            },
+                            { x: event.clientX, y: event.clientY },
+                          );
+                        }}
+                        onDoubleClick={(folderId) => {
+                          if (showTrash) {
+                            const entry = canvasFolderBrowseEntries.find(
+                              (item) => item.folderId === folderId,
+                            );
+                            if (!entry) return;
+                            void enterTrashAt(entry.folderId);
+                            return;
+                          }
+                          void chooseFolder(folderId);
+                        }}
+                        onMouseDown={(event) => {
+                          cardMouseDownRef.current = event.button;
+                        }}
+                        selected={selectedFolderIdSet.has(entry.folderId)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {browseCanvasBodyLayout.showAssetGrid && (
+                  <div
+                    className={`asset-grid is-${assetViewMode}`}
+                    ref={assetGridRef}
+                    style={{
+                      ...assetGridLayoutStyle(assetViewMode, assetCardSize),
+                      ...(panelResizing && panelReflowFrozenWidthRef.current
+                        ? {
+                            width: `${panelReflowFrozenWidthRef.current}px`,
+                            maxWidth: "none",
+                          }
+                        : {}),
+                    }}
+                  >
+                  {(() => {
+                    const showCornerBadges =
+                      shouldShowAssetCardBadges(assetCardSize);
+                    const renderAssetCard = (asset: AssetSummary) => {
+                      const typeBadge = assetTypeBadgeLabel(
+                        asset.mediaType,
+                        asset.displayName,
+                      );
+                      const showExtension =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeExtension &&
+                        shouldShowExtensionBadge(asset.mediaType);
+                      const showDuration =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeDuration &&
+                        shouldShowDurationBadge(
+                          asset.mediaType,
+                          asset.displayName,
+                          asset.durationMs,
+                        );
+                      const showTypeBadge =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeType &&
+                        Boolean(typeBadge) &&
+                        shouldShowTypeBadgeAlongsideExtension(showExtension) &&
+                        !asset.deletedAt &&
+                        !shouldShowMissingAssetOverlay(asset.availability);
+                      const sourceBadgeLabel =
+                        showCornerBadges &&
+                        canvasPrefs.fields.badgeSource &&
+                        !showTrash &&
+                        shouldShowAssetSourceBadge(
+                          sourceBadgeContext,
+                          asset.managedFolderId,
+                        )
+                          ? resolveAssetSourceBadgeLabel(
+                              folders,
+                              asset.managedFolderId,
+                              selectedFolderId ?? null,
+                            )
+                          : null;
+                      const trashOriginBadgeLabel =
+                        showTrash &&
+                        asset.deletedAt &&
+                        asset.trashedFromPath
+                          ? trashedFromLabel(asset.trashedFromPath, locale)
+                          : null;
+                      const snippetCaption = resolveSearchSnippetCaption(
+                        searchSnippets.get(asset.assetId),
+                        asset.displayName,
+                      );
+                      const layoutThumbnailArtifactId =
+                        layoutThumbnailArtifacts.libraryId === library?.libraryId
+                          ? layoutThumbnailArtifacts.ids.get(asset.assetId)
+                          : undefined;
+                      const cardCover = resolveAssetCardCoverUrl({
+                        libraryId: library?.libraryId,
+                        assetId: asset.assetId,
+                        mediaType: asset.mediaType,
+                        availability: asset.availability,
+                        deletedAt: asset.deletedAt,
+                        thumbnailStatus: layoutThumbnailArtifactId
+                          ? "ready"
+                          : asset.thumbnailStatus,
+                        thumbnailArtifactId:
+                          layoutThumbnailArtifactId ?? asset.thumbnailArtifactId,
+                      });
+                      const showThumbnailFailure = shouldShowThumbnailFailureBadge(
+                        asset,
+                        thumbnailFailures.has(asset.assetId),
+                      );
+                      const renamingThisAsset =
+                        assetRenameDialog?.assetId === asset.assetId;
+                      const corruptAsset = isCorruptAsset(asset);
+                      const CardTag = renamingThisAsset ? "div" : "button";
+                      return (
+                    <CardTag
                       aria-label={canvasPrefs.fields.name ? undefined : asset.displayName}
                       aria-pressed={selectedIdSet.has(asset.assetId)}
-                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${asset.deletedAt ? " is-trashed" : ""}`}
+                      className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
                       title={asset.displayName}
-                      draggable={Boolean(
-                        activeCollectionId && !collectionRecursive,
-                      )}
-                      key={asset.assetId}
+                      draggable={!showTrash && !renamingThisAsset}
+                      key={assetCardKey(library?.libraryId, asset.assetId)}
+                      {...(renamingThisAsset
+                        ? { role: "group" as const }
+                        : { type: "button" as const })}
                       onMouseDown={(e) => {
-                        lastMousedownButtonRef.current = e.button;
+                        cardMouseDownRef.current = e.button;
                       }}
-                      onClick={(event) => selectAsset(event, asset.assetId)}
+                      onMouseEnter={() => {
+                        setHoveredAssetId(asset.assetId);
+                      }}
+                      onMouseLeave={() => {
+                        clearHoveredAssetId(asset.assetId);
+                      }}
+                      onClick={(event) => {
+                        if (renamingThisAsset) return;
+                        handleCardClick(asset.assetId, event);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          renamingThisAsset ||
+                          assetViewMode !== "masonry" ||
+                          event.key !== "Tab"
+                        ) {
+                          return;
+                        }
+                        const nextAssetId = resolveMasonryTabTarget(
+                          selectionAssetIds ?? [],
+                          asset.assetId,
+                          event.shiftKey,
+                        );
+                        if (!nextAssetId) return;
+                        const nextCard = workspaceCanvasRef.current?.querySelector<HTMLElement>(
+                          `.asset-card[data-asset-id="${CSS.escape(nextAssetId)}"]`,
+                        );
+                        if (!nextCard) return;
+                        event.preventDefault();
+                        nextCard.focus();
+                      }}
                       onDoubleClick={() => {
+                        if (renamingThisAsset) return;
                         openAssetPreview(asset);
                       }}
-                      onDragEnd={() => setDraggedMemberId(null)}
+                      onDragEnd={() => {
+                        setDraggedMemberId(null);
+                        managedAssetDragIdsRef.current = null;
+                        // REQ-DND-003: unmount the custom drag ghost.
+                        dismissAssetDragPreview(dragPreviewRef.current);
+                        dragPreviewRef.current = null;
+                      }}
                       onDragOver={(event) => {
                         if (draggedMemberId) event.preventDefault();
                       }}
                       onDragStart={(event) => {
-                        if (!activeCollectionId || collectionRecursive) return;
-                        setDraggedMemberId(asset.assetId);
-                        event.dataTransfer.effectAllowed = "move";
+                        // Collection member reorder keeps its own drag path.
+                        if (activeCollectionId && !collectionRecursive) {
+                          setDraggedMemberId(asset.assetId);
+                          event.dataTransfer.effectAllowed = "move";
+                          return;
+                        }
+                        // REQ-DND-001/002: folder/trash drops resolve this
+                        // selection snapshot at the target (asset-drag-drop.ts).
+                        const ids = resolveDraggedAssetIds(asset.assetId, selectedAssetIds);
+                        // Native OS drag and Chromium HTML5 drag cannot share a
+                        // single session: Electron requires preventDefault()
+                        // before startDrag, while in-app E2E keeps the HTML5
+                        // payload to exercise internal targets. The test flag
+                        // only disables the OS hand-off; production always
+                        // uses the native path.
+                        // `globalThis` in preload is isolated from the page
+                        // world when contextIsolation is enabled. Use the
+                        // explicit diagnostics bridge so E2E HTML5 drops do
+                        // not enter Electron's native OS drag loop, while
+                        // production still uses startDrag().
+                        const isE2e = Boolean(
+                          (window as RendererWindow).serpent?.e2e,
+                        );
+                        if (!isE2e && api && library) {
+                          // Electron's supported path is an asynchronous
+                          // one-way IPC from dragstart. A synchronous round
+                          // trip deadlocks when this native file drag returns
+                          // to Serpent as a drop.
+                          event.preventDefault();
+                          api.startAssetDrag({
+                            libraryId: library.libraryId,
+                            assetIds: ids,
+                          });
+                          return;
+                        }
+                        managedAssetDragIdsRef.current = ids;
+                        event.dataTransfer.setData(
+                          MANAGED_ASSETS_DRAG_TYPE,
+                          JSON.stringify(ids),
+                        );
+                        // Serpent-aa3: Option/Alt during dragover selects copy
+                        // vs move via dropEffect; both must be allowed here.
+                        event.dataTransfer.effectAllowed = "copyMove";
+                        // REQ-DND-003: replace Chromium's full-card ghost with
+                        // the small, translucent, rounded preview tile
+                        // (asset-drag-preview.ts); the same serpent:// URL as
+                        // the card's <img>, so it is already cached.
+                        const preview = showAssetDragPreview({
+                          thumbnailUrl:
+                            asset.thumbnailStatus === "ready" &&
+                            asset.thumbnailArtifactId &&
+                            library
+                              ? `serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`
+                              : null,
+                          fileName: asset.displayName,
+                          count: ids.length,
+                          copyMode: resolveDragDropMode({
+                            altKey: event.altKey,
+                          }) === "copy",
+                        });
+                        dragPreviewRef.current = preview;
+                        event.dataTransfer.setDragImage(
+                          preview,
+                          ASSET_DRAG_PREVIEW_WIDTH / 2,
+                          ASSET_DRAG_PREVIEW_HEIGHT / 2,
+                        );
                       }}
                       onDrop={(event) => {
                         if (!draggedMemberId) return;
@@ -5832,62 +10020,206 @@ function AppInner() {
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        if (!selectedIdSet.has(asset.assetId)) {
-                          setSelectedAssetIds([asset.assetId]);
-                          setSelectedAssetId(asset.assetId);
+                        const intent = resolveBrowseContextMenuIntent(
+                          { kind: "asset", id: asset.assetId },
+                          {
+                            assetIds: selectedAssetIds,
+                            folderIds: selectedFolderIds,
+                          },
+                        );
+                        if (intent.type === "single-asset") {
+                          if (!selectedIdSet.has(intent.assetId)) {
+                            setSelectedAssetIds([intent.assetId]);
+                            setSelectedAssetId(intent.assetId);
+                          }
+                          setSelectedFolderIds([]);
+                          if (library) {
+                            openContextMenu(
+                              {
+                                type: "asset",
+                                assetId: asset.assetId,
+                                displayName: asset.displayName,
+                                locationKind: asset.locationKind,
+                                isAvailable: asset.availability === "available",
+                                isDeleted: Boolean(asset.deletedAt),
+                              },
+                              { x: e.clientX, y: e.clientY },
+                            );
+                          }
+                          return;
                         }
-                        if (library && !asset.deletedAt)
-                          openContextMenu(
-                            {
-                              type: "asset",
-                              assetId: asset.assetId,
-                              displayName: asset.displayName,
-                            },
-                            { x: e.clientX, y: e.clientY },
-                          );
+                        if (intent.type !== "multi" || !library) return;
+                        openContextMenu(
+                          {
+                            type: "multi-asset",
+                            assetIds: [...intent.assetIds],
+                            folderIds: [...intent.folderIds],
+                            count:
+                              intent.assetIds.length + intent.folderIds.length,
+                          },
+                          { x: e.clientX, y: e.clientY },
+                        );
                       }}
                       type="button"
                     >
                       <div
                         className="asset-preview"
-                        style={
-                          assetViewMode === "masonry" &&
-                          asset.width &&
-                          asset.height
-                            ? {
-                                aspectRatio: `${asset.width} / ${asset.height}`,
-                              }
+                        title={
+                          showThumbnailFailure
+                            ? thumbnailFailures.get(asset.assetId)
                             : undefined
                         }
-                        title={thumbnailFailures.get(asset.assetId)}
                       >
-                        {asset.thumbnailStatus === "ready" &&
-                        asset.thumbnailArtifactId &&
-                        library ? (
-                          <img
-                            alt={asset.displayName}
-                            className="asset-thumbnail"
-                            loading="lazy"
-                            src={`serpent://preview/${library.libraryId}/${asset.thumbnailArtifactId}`}
-                          />
-                        ) : (
-                          <>
-                            <span className="asset-extension">
-                              {extension(asset.displayName)}
-                            </span>
-                            <Icon name="file" size={28} />
-                          </>
-                        )}
-                        {thumbnailFailures.has(asset.assetId) && (
-                          <span className="missing-banner">
-                            <Icon name="warning" size={12} />
-                            缩略图失败
+                        {(() => {
+                          if (asset.mediaType === "text" && api && library) {
+                            return (
+                              <TextAssetPreviewTile
+                                api={api}
+                                assetId={asset.assetId}
+                                libraryId={library.libraryId}
+                                revisionId={asset.currentRevisionId}
+                              />
+                            );
+                          }
+                          const thumbCover = cardCover.url;
+                          if (isCardSequencePlayable(asset) && library) {
+                            const sequenceActive =
+                              hoveredAssetId === asset.assetId ||
+                              selectedAssetId === asset.assetId;
+                            if (
+                              thumbCover ||
+                              asset.sequence?.frames.some(
+                                (frame) => frame.thumbnailArtifactId,
+                              )
+                            ) {
+                              return (
+                                <AssetCardMedia
+                                  alt={asset.displayName}
+                                  coverUrl={thumbCover}
+                                  isActive={sequenceActive}
+                                  libraryId={library.libraryId}
+                                  preview={null}
+                                  sequence={asset.sequence}
+                                />
+                              );
+                            }
+                          }
+                          const cardActive =
+                            activePreviewAssetId === asset.assetId;
+                          const cardThumbFailed =
+                            asset.thumbnailStatus === "failed"
+                            && !layoutThumbnailArtifactId;
+                          if (isCardHoverPreviewable(asset)) {
+                            if (
+                              thumbCover ||
+                              (cardActive && activeResolution?.url)
+                            ) {
+                              return (
+                                <AssetCardMedia
+                                  alt={asset.displayName}
+                                  coverUrl={thumbCover}
+                                  failed={cardThumbFailed}
+                                  isActive={cardActive}
+                                  libraryId={library.libraryId}
+                                  preview={
+                                    cardActive ? activeResolution : null
+                                  }
+                                />
+                              );
+                            }
+                          } else if (thumbCover) {
+                            // Serpent-2ajm: unify with AssetCardMedia so a
+                            // failed load shows the themed fallback icon
+                            // instead of the browser's broken-image glyph.
+                            return (
+                              <AssetCardMedia
+                                alt={asset.displayName}
+                                coverUrl={thumbCover}
+                                failed={cardThumbFailed}
+                                isActive={false}
+                                libraryId={library.libraryId}
+                                preview={null}
+                              />
+                            );
+                          }
+                          return (
+                            <>
+                              <Icon
+                                name={
+                                  cardThumbFailed ? "broken-file" : "file"
+                                }
+                                size={28}
+                              />
+                              {!showExtension &&
+                                shouldShowExtensionBadge(asset.mediaType) && (
+                                  <span className="asset-extension">
+                                    {fileExtensionLabel(asset.displayName)}
+                                  </span>
+                                )}
+                            </>
+                          );
+                        })()}
+                        {sourceBadgeLabel && (
+                          <span
+                            aria-label={t("scope.containingFolder", {
+                              name: sourceBadgeLabel,
+                            })}
+                            className="asset-source-badge"
+                            title={t("scope.containingFolder", {
+                              name: sourceBadgeLabel,
+                            })}
+                          >
+                            {sourceBadgeLabel}
                           </span>
                         )}
-                        {asset.availability === "missing" && (
+                        {trashOriginBadgeLabel && (
+                          <span
+                            aria-label={t("scope.containingFolder", {
+                              name: trashOriginBadgeLabel,
+                            })}
+                            className="asset-source-badge"
+                            title={asset.trashedFromPath ?? trashOriginBadgeLabel}
+                          >
+                            {trashOriginBadgeLabel}
+                          </span>
+                        )}
+                        {showExtension && (
+                          <span className="asset-extension">
+                            {fileExtensionLabel(asset.displayName)}
+                          </span>
+                        )}
+                        {showThumbnailFailure && (
                           <span className="missing-banner">
                             <Icon name="warning" size={12} />
-                            文件丢失
+                            {t("toast.thumbnailFailedBadge")}
+                          </span>
+                        )}
+                        {shouldShowMissingAssetOverlay(asset.availability) && (
+                          <span
+                            aria-label={
+                              corruptAsset
+                                ? t("inspector.dataCorrupt")
+                                : t("inspector.missing")
+                            }
+                            title={
+                              corruptAsset
+                                ? t("inspector.dataCorrupt")
+                                : t("inspector.missing")
+                            }
+                            className="missing-overlay"
+                          >
+                            {(() => {
+                              const affordance = corruptAsset
+                                ? corruptAssetAffordance()
+                                : missingAssetAffordance();
+                              return (
+                                <Icon
+                                  color={affordance.iconColor}
+                                  name={affordance.icon}
+                                  size={28}
+                                />
+                              );
+                            })()}
                           </span>
                         )}
                         {asset.deletedAt && (
@@ -5901,48 +10233,98 @@ function AppInner() {
                             }}
                           >
                             <Icon name="trash" size={12} />
-                            回收站
+                            {t("inspector.trashed")}
                             {asset.remainingDays !== null &&
-                              ` · ${asset.remainingDays}天`}
+                              t("scope.remainingDays", {
+                                days: asset.remainingDays,
+                              })}
                           </span>
                         )}
+                        {showDuration && asset.durationMs != null && (
+                          <span className="asset-duration-badge">
+                            {formatDuration(asset.durationMs)}
+                          </span>
+                        )}
+                        {asset.sequence && (
+                          <span className="asset-duration-badge asset-sequence-badge">
+                            {asset.sequence.frameCount}F · {asset.sequence.fps} FPS ·{" "}
+                            {formatSequenceDuration(
+                              asset.sequence.frameCount,
+                              asset.sequence.fps,
+                            )}
+                          </span>
+                        )}
+                        {showTypeBadge && typeBadge && (
+                          <span className="asset-type-badge">{typeBadge}</span>
+                        )}
                       </div>
-                      {(canvasPrefs.fields.name ||
+                      {(renamingThisAsset ||
+                        canvasPrefs.fields.name ||
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
-                        searchSnippets.has(asset.assetId) ||
-                        (asset.deletedAt && asset.trashedFromPath)) && (
+                        snippetCaption != null ||
+                        (assetViewMode === "grid" &&
+                          asset.width != null &&
+                          asset.height != null)) && (
                         <div className="asset-caption">
-                          {canvasPrefs.fields.name && (
+                          {assetViewMode === "grid" &&
+                            asset.width != null &&
+                            asset.height != null &&
+                            !renamingThisAsset && (
+                              <span className="asset-dimensions">
+                                {asset.width} × {asset.height}
+                              </span>
+                            )}
+                          {(canvasPrefs.fields.name || renamingThisAsset) && (
                             <>
-                              <strong title={asset.label ?? asset.displayName}>
-                                {asset.label ?? asset.displayName}
-                              </strong>
-                              {asset.label && (
-                                <span title={asset.displayName}>
-                                  {asset.displayName}
+                              {renamingThisAsset && assetRenameDialog ? (
+                                <span className="asset-inline-rename">
+                                  <input
+                                    aria-label={t("dialog.rename.fileTitle")}
+                                    autoFocus
+                                    className="text-field asset-inline-rename-input"
+                                    disabled={assetRenameDialog.submitting}
+                                    onBlur={() => {
+                                      void submitAssetRename();
+                                    }}
+                                    onChange={(event) =>
+                                      changeAssetRenameValue(event.target.value)
+                                    }
+                                    onClick={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => {
+                                      event.stopPropagation();
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        void submitAssetRename();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelAssetRename();
+                                      }
+                                    }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    value={assetRenameDialog.value}
+                                  />
+                                  {assetRenameDialog.extension ? (
+                                    <span className="asset-inline-rename-ext">
+                                      {assetRenameDialog.extension}
+                                    </span>
+                                  ) : null}
+                                  {assetRenameDialog.error ? (
+                                    <span className="asset-inline-rename-error">
+                                      {assetRenameDialog.error}
+                                    </span>
+                                  ) : null}
                                 </span>
+                              ) : (
+                                <strong className="asset-caption-filename" title={asset.displayName}>
+                                  {renderMiddleEllipsisFilename(asset.displayName, searchValue)}
+                                </strong>
                               )}
                             </>
                           )}
-                          {searchSnippets.has(asset.assetId) ? (
+                          {snippetCaption != null ? (
                             <span className="search-snippet">
-                              {highlightSnippet(
-                                searchSnippets.get(asset.assetId)!,
-                              )}
-                            </span>
-                          ) : asset.deletedAt && asset.trashedFromPath ? (
-                            <span
-                              style={{
-                                color: "var(--tertiary)",
-                                fontSize: 8,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                              title={asset.trashedFromPath}
-                            >
-                              {asset.trashedFromPath}
+                              {highlightSnippet(snippetCaption)}
                             </span>
                           ) : (canvasPrefs.fields.size ||
                               canvasPrefs.fields.date) ? (
@@ -5953,2472 +10335,1137 @@ function AppInner() {
                                 canvasPrefs.fields.date &&
                                 " · "}
                               {canvasPrefs.fields.date &&
-                                formatDate(asset.modifiedAt)}
+                                formatDate(asset.modifiedAt, locale, t("common.unknownTime"))}
                             </span>
                           ) : null}
                         </div>
                       )}
-                    </button>
-                  ))}
-                  <div
-                    className="asset-loading-more"
-                    ref={loadMoreSentinelRef}
-                    role="status"
-                  >
-                    {loadingMoreAssets && (
-                      <>
-                        <span className="activity-pulse" />
-                        继续加载资产…
-                      </>
-                    )}
+                    </CardTag>
+                    );
+                    };
+                    return assetRenderSections.map((section) => (
+                      <div
+                        className={
+                          section.label ? "trash-folder-group" : undefined
+                        }
+                        key={section.key || "__root__"}
+                      >
+                        {section.label ? (
+                          <h3 className="trash-folder-group-header">
+                            {section.label}
+                          </h3>
+                        ) : null}
+                        {assetViewMode === "masonry" ? (
+                          <MasonryColumns
+                            assets={section.assets}
+                            layout={browseLayout}
+                            cardSize={assetCardSize}
+                            renderCard={renderAssetCard}
+                            renderLayoutPreview={(entry) =>
+                              library ? (
+                                <BrowseLayoutPreview
+                                  entry={entry}
+                                  fields={canvasPrefs.fields}
+                                  libraryId={library.libraryId}
+                                  previewArtifactId={
+                                    layoutThumbnailArtifacts.libraryId === library.libraryId
+                                      ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                  viewMode="masonry"
+                                />
+                              ) : null
+                            }
+                            showCaption={
+                              canvasPrefs.fields.name ||
+                              canvasPrefs.fields.size ||
+                              canvasPrefs.fields.date
+                            }
+                            suspendScrollRestoration={
+                              Boolean(previewAsset || previewRestoring)
+                            }
+                          />
+                        ) : (
+                          <JustifiedAssetRows
+                            assets={section.assets}
+                            layout={browseLayout}
+                            cardSize={assetCardSize}
+                            renderCard={renderAssetCard}
+                            renderLayoutPreview={(entry) =>
+                              library ? (
+                                <BrowseLayoutPreview
+                                  entry={entry}
+                                  fields={canvasPrefs.fields}
+                                  libraryId={library.libraryId}
+                                  previewArtifactId={
+                                    layoutThumbnailArtifacts.libraryId === library.libraryId
+                                      ? layoutThumbnailArtifacts.ids.get(entry.assetId)
+                                      : undefined
+                                  }
+                                  viewMode="grid"
+                                />
+                              ) : null
+                            }
+                          />
+                        )}
+                      </div>
+                    ));
+                  })()}
                   </div>
-                </div>
+                )}
+                {/* Serpent-87pd: invisible tail probe. A jump to the end fills
+                    the last window, not pages 0 → 100 → 200. Serpent-6z5r:
+                    no spinner or "loading more" copy. */}
+                {browsePagination.hasMorePages && (
+                  <div
+                    ref={browsePagination.sentinelRef}
+                    className="browse-load-more"
+                    aria-hidden="true"
+                  />
+                )}
               </>
             ) : (
               <div className="empty-library">
                 <div className="empty-orbit">
-                  <Icon name="upload" size={24} />
+                  <Icon name={browseEmptyState.icon} size={24} />
                 </div>
-                <span className="eyebrow">MANAGED ASSETS</span>
-                <h1>
-                  {selectedFolder ? "这个文件夹还是空的" : "把第一批素材放进来"}
-                </h1>
-                <p>
-                  文件将复制到清晰可读的 Assets 目录，同时建立稳定的资产身份。
-                </p>
-                <div className="empty-actions">
-                  <button
-                    className="primary-button"
-                    onClick={() => void importAssets("files")}
-                    type="button"
-                  >
-                    导入文件
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => void importAssets("folder")}
-                    type="button"
-                  >
-                    导入文件夹
-                  </button>
-                </div>
-              </div>
-            )
-          ) : (
-            <div className="empty-state">
-              <div className="empty-index">01</div>
-              <div className="empty-copy">
-                <span className="eyebrow">LOCAL ASSET WORKSPACE</span>
-                <h1>从一个本地资源库开始</h1>
-                <p>文件、目录与元数据都保留在你掌控的位置。</p>
-                <div className="empty-actions">
-                  <button
-                    className="primary-button"
-                    onClick={() => {
-                      setDialogValue("我的资源库");
-                      setDialog("library");
-                    }}
-                    type="button"
-                  >
-                    <Icon name="plus" size={15} />
-                    创建资源库
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => void runLibraryOperation("open")}
-                    type="button"
-                  >
-                    <Icon name="folder" size={15} />
-                    打开资源库
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-          {(error || notice) && (
-            <div
-              className={`toast${error ? " is-error" : ""}`}
-              role={error ? "alert" : "status"}
-            >
-              <Icon name={error ? "warning" : "info"} size={15} />
-              <span>{error ?? notice}</span>
-              {!error && lastMoveOperationId && (
-                <button
-                  className="secondary-button"
-                  onClick={() => void undoManagedMove(lastMoveOperationId)}
-                  type="button"
-                >
-                  撤销移动
-                </button>
-              )}
-              <button
-                aria-label="关闭提示"
-                onClick={() => {
-                  setError(null);
-                  setNotice(null);
-                }}
-                type="button"
-              >
-                <Icon name="close" size={13} />
-              </button>
-            </div>
-          )}
-        </div>
-      </section>
-      <aside className="inspector-pane">
-        <div className="pane-header">
-          <span>检查器</span>
-          <ToolButton icon="info" label="检查器信息" />
-        </div>
-        {selectedAsset ? (
-          <div className="inspector-content">
-            <div className="selected-file-hero">
-              <Icon name="file" size={36} />
-              <span>{extension(selectedAsset.displayName)}</span>
-            </div>
-            <div className="inspector-identity">
-              <div>
-                <span className="micro-label">当前选择</span>
-                <strong>{selectedAsset.displayName}</strong>
-              </div>
-            </div>
-            <dl className="metadata-list">
-              <div>
-                <dt>状态</dt>
-                <dd>
-                  {selectedAsset.deletedAt
-                    ? `回收站（${selectedAsset.remainingDays ?? "?"}天后自动清理）`
-                    : selectedAsset.availability === "available"
-                      ? "可用"
-                      : "文件丢失"}
-                </dd>
-              </div>
-              <div>
-                <dt>大小</dt>
-                <dd className="mono">{formatBytes(selectedAsset.byteSize)}</dd>
-              </div>
-              {selectedAsset.width !== null &&
-                selectedAsset.height !== null && (
-                  <div>
-                    <dt>分辨率</dt>
-                    <dd className="mono">
-                      {selectedAsset.width} × {selectedAsset.height}
-                    </dd>
-                  </div>
-                )}
-              {selectedAsset.durationMs !== null && (
-                <div>
-                  <dt>时长</dt>
-                  <dd className="mono">
-                    {formatDuration(selectedAsset.durationMs)}
-                  </dd>
-                </div>
-              )}
-              <div>
-                <dt>修改</dt>
-                <dd>{formatDate(selectedAsset.modifiedAt)}</dd>
-              </div>
-              {selectedAsset.deletedAt && (
-                <div>
-                  <dt>删除时间</dt>
-                  <dd>{formatDate(selectedAsset.deletedAt)}</dd>
-                </div>
-              )}
-              {selectedAsset.trashedFromPath && (
-                <div>
-                  <dt>原始位置</dt>
-                  <dd className="mono" style={{ fontSize: 9 }}>
-                    {selectedAsset.trashedFromPath}
-                  </dd>
-                </div>
-              )}
-            </dl>
-            {/* --- Asset metadata editor --- */}
-            <section className="inspector-section">
-              <h2>元数据</h2>
-              {metadataLoading ? (
-                <span className="micro-label">加载中…</span>
-              ) : assetMetadata ? (
-                <>
-                  {versionConflict && (
-                    <div className="inline-error">
-                      <Icon name="warning" size={14} />
-                      <div>
-                        <strong>版本冲突</strong>
-                        <p>元数据已被其他操作修改。请刷新以获取最新版本。</p>
-                        <button
-                          onClick={() => void loadMetadata()}
-                          type="button"
-                        >
-                          刷新元数据
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  <div className="editor-field">
-                    <label className="micro-label" htmlFor="meta-label">
-                      标签 (Label)
-                    </label>
-                    <input
-                      className="text-field"
-                      id="meta-label"
-                      maxLength={255}
-                      onBlur={handleMetadataLabelSave}
-                      onChange={handleMetadataLabelInput}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleMetadataLabelSave();
-                      }}
-                      style={{ height: 28, fontSize: 11 }}
-                      value={editLabel}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label" htmlFor="meta-desc">
-                      描述
-                    </label>
-                    <textarea
-                      className="text-field"
-                      id="meta-desc"
-                      maxLength={10000}
-                      onBlur={handleMetadataDescriptionSave}
-                      onChange={handleMetadataDescriptionInput}
-                      rows={3}
-                      style={{
-                        height: "auto",
-                        resize: "vertical",
-                        fontSize: 11,
-                        paddingTop: 6,
-                      }}
-                      value={editDescription}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label">评分</label>
-                    <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          key={star}
-                          aria-label={`${star} 星`}
-                          onClick={() => handleRatingClick(star)}
-                          style={{
-                            padding: 0,
-                            border: 0,
-                            background: "transparent",
-                            cursor: "pointer",
-                            color:
-                              star <= editRating
-                                ? "#d99a3e"
-                                : "var(--tertiary)",
-                          }}
-                          type="button"
-                        >
-                          <Icon name="star" size={16} />
-                        </button>
-                      ))}
-                      {editRating > 0 && (
-                        <button
-                          aria-label="清除评分"
-                          onClick={() => handleRatingClick(0)}
-                          style={{
-                            padding: "0 0 0 4px",
-                            border: 0,
-                            background: "transparent",
-                            color: "var(--tertiary)",
-                            cursor: "pointer",
-                            fontSize: 10,
-                          }}
-                          type="button"
-                        >
-                          清除
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div
-                    className="editor-field"
-                    style={{
-                      marginTop: 10,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <label className="micro-label" style={{ flex: 1 }}>
-                      喜欢
-                    </label>
+                <h1>{t(browseEmptyState.titleKey)}</h1>
+                <p>{t(browseEmptyState.detailKey)}</p>
+                {browseEmptyState.showImportActions ? (
+                  <div className="empty-actions">
                     <button
-                      aria-label={editFavorite ? "取消喜欢" : "标记喜欢"}
-                      onClick={handleFavoriteToggle}
-                      style={{
-                        padding: 2,
-                        border: 0,
-                        background: "transparent",
-                        cursor: "pointer",
-                        color: editFavorite ? "#e76b7a" : "var(--tertiary)",
-                      }}
+                      className="primary-button"
+                      onClick={() => void importAssets("files")}
                       type="button"
                     >
-                      <Icon name="heart" size={18} />
+                      {t("toolbar.importFiles")}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      onClick={() => void importAssets("folder")}
+                      type="button"
+                    >
+                      {t("toolbar.importFolder")}
                     </button>
                   </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label" htmlFor="meta-url">
-                      源链接 (URL)
-                    </label>
-                    <input
-                      className="text-field"
-                      id="meta-url"
-                      maxLength={255}
-                      onBlur={handleSourceUrlSave}
-                      onChange={handleSourceUrlInput}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSourceUrlSave();
-                      }}
-                      placeholder="https://…"
-                      style={{ height: 28, fontSize: 11 }}
-                      value={editSourceUrl}
-                    />
-                  </div>
-                  <div className="editor-field" style={{ marginTop: 10 }}>
-                    <label className="micro-label">
-                      色卡 (Palette) ·{" "}
-                      {assetMetadata.paletteSource === "manual"
-                        ? "人工"
-                        : assetMetadata.paletteSource === "automatic"
-                          ? "自动"
-                          : "待提取"}
-                    </label>
-                    <input
-                      aria-label="人工色卡"
-                      className="text-field"
-                      maxLength={1024}
-                      onBlur={handlePaletteSave}
-                      onChange={(event) => setEditPalette(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handlePaletteSave();
-                      }}
-                      placeholder="#C84C4C, #203040（最多 20 色）"
-                      style={{ height: 28, fontSize: 10, marginTop: 3 }}
-                      value={editPalette}
-                    />
-                    {displayedPalette.length > 0 && (
-                      <div
-                        className="palette-preview"
-                        aria-label={`${assetMetadata.paletteSource === "manual" ? "人工" : "自动"}色卡预览`}
-                      >
-                        {displayedPalette.map((color, index) => {
-                          const ratio =
-                            assetMetadata.paletteSource === "automatic"
-                              ? automaticPaletteRatios.get(color)
-                              : undefined;
-                          return (
-                            <span
-                              key={`${color}-${index}`}
-                              style={{
-                                background: isCssColor(color)
-                                  ? color
-                                  : "transparent",
-                              }}
-                              title={
-                                ratio === undefined
-                                  ? color
-                                  : `${color} · ${(ratio * 100).toFixed(1)}%`
-                              }
-                            />
-                          );
-                        })}
-                      </div>
-                    )}
-                    {assetMetadata.paletteSource === "automatic" && (
-                      <p className="field-help" style={{ margin: "4px 0 0" }}>
-                        本地算法从当前修订提取；填写上方颜色后将以人工色卡优先。
-                      </p>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      color: "var(--tertiary)",
-                      fontSize: 9,
-                      fontFamily: "'IBM Plex Mono', monospace",
-                    }}
-                  >
-                    版本 {assetMetadata.entityVersion} ·{" "}
-                    {formatDate(assetMetadata.updatedAt)}
-                  </div>
-                </>
-              ) : (
-                <p className="nav-empty" style={{ margin: "4px 0 0" }}>
-                  选择资产以查看元数据
-                </p>
-              )}
-            </section>
-            <section className="inspector-section">
-              <h2>资源库路径</h2>
-              <p className="path-block">{selectedAsset.relativeFilePath}</p>
-            </section>
-            {/* --- AI Content --- */}
-            {aiContent && (
-              <section className="inspector-section">
-                <h2 style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      padding: "1px 6px",
-                      borderRadius: 3,
-                      background: "var(--accent, #6c8ee0)",
-                      color: "#fff",
-                      fontSize: 9,
-                      fontWeight: 700,
-                      lineHeight: "16px",
-                    }}
-                  >
-                    AI
-                  </span>
-                  AI 生成内容
-                </h2>
-                {aiContent.label && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">标签 (Label) · AI</label>
-                    <p
-                      className="path-block"
-                      style={{
-                        color: "var(--secondary)",
-                        fontSize: 11,
-                        margin: "2px 0 0",
-                      }}
-                    >
-                      {aiContent.label}
-                    </p>
-                  </div>
-                )}
-                {aiContent.description && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">描述 · AI</label>
-                    <p
-                      className="path-block"
-                      style={{
-                        color: "var(--secondary)",
-                        fontSize: 11,
-                        margin: "2px 0 0",
-                      }}
-                    >
-                      {aiContent.description}
-                    </p>
-                  </div>
-                )}
-                {aiContent.tags && aiContent.tags.length > 0 && (
-                  <div className="editor-field" style={{ marginTop: 8 }}>
-                    <label className="micro-label">标签 · AI</label>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 4,
-                        marginTop: 3,
-                      }}
-                    >
-                      {aiContent.tags.map((tag) => (
-                        <span className="tag-chip" key={tag}>
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {aiContent.modelVersion && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      color: "var(--tertiary)",
-                      fontSize: 9,
-                      fontFamily: "'IBM Plex Mono', monospace",
-                    }}
-                  >
-                    {aiContent.modelVersion}
-                  </div>
-                )}
-              </section>
-            )}
-            <button
-              className="secondary-button inspector-close-library"
-              onClick={() => void closeLibrary()}
-              type="button"
-            >
-              关闭资源库
-            </button>
-          </div>
-        ) : library ? (
-          <div className="inspector-content">
-            <div className="inspector-identity">
-              <div className="inspector-badge">
-                {initials(library.displayName)}
+                ) : null}
               </div>
-              <div>
-                <span className="micro-label">当前资源库</span>
-                <strong>{library.displayName}</strong>
-              </div>
+            )
+          ) : null}
+        </div>
+        {/* Drop overlay lives outside the scrollable canvas so it stays put
+            while the browse grid scrolls (Serpent-ns3r). */}
+        {externalDropActive && (
+          <div className="external-drop-overlay" role="status">
+            <div className="external-drop-overlay-content">
+              <Icon name="upload" size={28} />
+              <strong>{t("toolbar.dropToImport")}</strong>
+              <span>
+                {activeCollectionId
+                  ? t("toolbar.dropHintWithCollection")
+                  : t("toolbar.dropHint")}
+              </span>
             </div>
-            <dl className="metadata-list">
-              <div>
-                <dt>状态</dt>
-                <dd>
-                  <span className="status-dot" data-active="true" />
-                  已打开
-                </dd>
-              </div>
-              <div>
-                <dt>资产</dt>
-                <dd className="mono">{allAssetCount}</dd>
-              </div>
-              <div>
-                <dt>文件夹</dt>
-                <dd className="mono">{folders.length}</dd>
-              </div>
-            </dl>
-            <section className="inspector-section">
-              <h2>位置</h2>
-              <p className="path-block">{library.displayPath}</p>
-            </section>
-            <button
-              className="secondary-button inspector-close-library"
-              onClick={() => void closeLibrary()}
-              type="button"
-            >
-              关闭资源库
-            </button>
-          </div>
-        ) : (
-          <div className="inspector-empty">
-            <Icon name="info" size={18} />
-            <strong>没有活动资源库</strong>
-            <p>打开资源库后查看当前范围与资产详情。</p>
           </div>
         )}
-      </aside>
-      {!leftOpen && (
-        <button
-          className="pane-reveal pane-reveal-left"
-          onClick={() => setLeftOpen(true)}
-          type="button"
-        >
-          <Icon name="collapse-left" size={15} />
-        </button>
-      )}
-      {!rightOpen && (
-        <button
-          className="pane-reveal pane-reveal-right"
-          onClick={() => setRightOpen(true)}
-          type="button"
-        >
-          <Icon name="collapse-right" size={15} />
-        </button>
-      )}
-      {linkedRulesEditor && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-            style={{ maxWidth: 700 }}
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">LINKED FOLDER FILTER</span>
-                <h2>{linkedRulesEditor.name} · 过滤规则</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setLinkedRulesEditor(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              从上到下执行，最后一个匹配项生效；仅支持受约束的路径、文件名、扩展名和文件夹规则。
-            </p>
-            {linkedRulesEditor.rules.map((rule, index) => (
-              <div
-                key={rule.ruleId}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "22px 82px 82px 1fr 28px",
-                  gap: 6,
-                  marginTop: 6,
-                }}
-              >
-                <input
-                  aria-label={`启用规则 ${index + 1}`}
-                  checked={rule.enabled}
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? { ...item, enabled: event.target.checked }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  type="checkbox"
-                />
-                <select
-                  className="text-field"
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    action: event.target
-                                      .value as LinkedFolderRule["action"],
-                                  }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.action}
-                >
-                  <option value="exclude">排除</option>
-                  <option value="include">包含</option>
-                </select>
-                <select
-                  className="text-field"
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    target: event.target
-                                      .value as LinkedFolderRule["target"],
-                                  }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.target}
-                >
-                  <option value="folder">文件夹</option>
-                  <option value="filename">文件名</option>
-                  <option value="extension">扩展名</option>
-                  <option value="path">路径</option>
-                </select>
-                <input
-                  className="text-field"
-                  maxLength={512}
-                  onChange={(event) =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.map((item, i) =>
-                              i === index
-                                ? { ...item, pattern: event.target.value }
-                                : item,
-                            ),
-                          }
-                        : current,
-                    )
-                  }
-                  value={rule.pattern}
-                />
-                <button
-                  aria-label={`删除规则 ${index + 1}`}
-                  className="dialog-close"
-                  onClick={() =>
-                    setLinkedRulesEditor((current) =>
-                      current
-                        ? {
-                            ...current,
-                            rules: current.rules.filter((_, i) => i !== index),
-                          }
-                        : current,
-                    )
-                  }
-                  type="button"
-                >
-                  <Icon name="close" size={13} />
-                </button>
-              </div>
-            ))}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  setLinkedRulesEditor((current) =>
-                    current
-                      ? {
-                          ...current,
-                          rules: [
-                            ...current.rules,
-                            {
-                              ruleId: crypto.randomUUID(),
-                              action: "exclude",
-                              target: "extension",
-                              pattern: "tmp",
-                              enabled: true,
-                            },
-                          ],
-                        }
-                      : current,
-                  )
-                }
-                type="button"
-              >
-                添加规则
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => setLinkedRulesEditor(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={linkedRulesEditor.rules.some(
-                  (rule) => !rule.pattern.trim(),
-                )}
-                onClick={() => void saveLinkedRules()}
-                type="button"
-              >
-                保存并刷新
-              </button>
-            </div>
-          </div>
         </div>
+        {previewAsset && library && api && (
+          <AssetPreviewModal
+            ref={previewModalRef}
+            api={api}
+            asset={previewAsset}
+            chromeIdle={viewerChromeIdle}
+            key={previewAsset.assetId}
+            libraryId={library.libraryId}
+            onChromeActivity={onViewerChromeActivity}
+            onSetColorSpace={(assetId, colorSpace) => {
+              void persistAssetColorSpace(assetId, colorSpace);
+            }}
+            onClose={() => void closeAssetPreview()}
+            onInfoNotice={setNotice}
+            onNext={
+              previewIndex >= 0 && previewIndex < visibleAssets.length - 1
+                ? () => navigateAssetPreview(visibleAssets[previewIndex + 1]!)
+                : undefined
+            }
+            onPrevious={
+              previewIndex > 0
+                ? () => navigateAssetPreview(visibleAssets[previewIndex - 1]!)
+                : undefined
+            }
+            pluginApi={(window as RendererWindow).serpent?.plugins}
+            pluginContributionRefreshKey={pluginContributionRefreshKey}
+          />
+        )}
+      </section>
+      <InspectorPanel
+        aiContent={
+          aiContent?.assetId === selectedAsset?.assetId ? aiContent : null
+        }
+        aiAnalyzing={aiAnalyzing}
+        descriptionIsAi={descriptionIsAi}
+        showAiBadges={aiUiPrefs.showAiBadges}
+        allAssetCount={allAssetCount}
+        allTags={tags}
+        api={api}
+        assetMetadata={assetMetadata}
+        automaticPaletteRatios={automaticPaletteRatios}
+        displayedPalette={displayedPalette}
+        editDescription={editDescription}
+        editFavorite={editFavorite}
+        editRating={editRating}
+        editSourceUrl={editSourceUrl}
+        editAuthor={editAuthor}
+        folderCount={folders.length}
+        handleFavoriteToggle={handleFavoriteToggle}
+        handleMetadataDescriptionInput={handleMetadataDescriptionInput}
+        handleMetadataDescriptionSave={handleMetadataDescriptionSave}
+        handleRatingClick={handleRatingClick}
+        handleSourceUrlInput={handleSourceUrlInput}
+        handleSourceUrlSave={handleSourceUrlSave}
+        handleAuthorInput={handleAuthorInput}
+        handleAuthorSave={handleAuthorSave}
+        library={library}
+        loadMetadata={loadMetadata}
+        onAssignTagToAsset={(tagId) => void handleInspectorAssignTag(tagId)}
+        onCreateAndAssignTag={(tagName) => void handleInspectorCreateAndAssignTag(tagName)}
+        onOpenSourceUrl={handleOpenSourceUrl}
+        onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
+        onPaletteColorCopy={(color, copied) => {
+          if (copied) {
+            setNotice(t("toast.colorCopiedAlt", { color }));
+          } else {
+            setError(t("toast.colorCopyUnavailable"));
+          }
+        }}
+        onRemoveTagFromAsset={(tagId) => void handleInspectorRemoveTag(tagId)}
+        selectedAsset={selectedAsset}
+        selectedAssets={selectedAssets}
+        multiEdit={multiEdit}
+        versionConflict={versionConflict}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        libraryId={library?.libraryId}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
+      />
+      <ImageSequenceDialog
+        count={
+          imageSequenceDialog?.mode === "update"
+            ? imageSequenceDialog.frameCount ?? 0
+            : imageSequenceDialog?.assetIds.length ?? 0
+        }
+        error={imageSequenceDialog?.error}
+        fps={imageSequenceDialog?.fps ?? DEFAULT_IMAGE_SEQUENCE_FPS}
+        mode={imageSequenceDialog?.mode}
+        onCancel={() => setImageSequenceDialog(null)}
+        onFpsChange={(fps) =>
+          setImageSequenceDialog((current) =>
+            current ? { ...current, fps, error: null } : current,
+          )
+        }
+        onSubmit={() =>
+          void (
+            imageSequenceDialog?.mode === "update"
+              ? updateImageSequenceFps()
+              : createSelectedImageSequence()
+          )
+        }
+        open={imageSequenceDialog !== null}
+        submitting={imageSequenceDialog?.submitting}
+      />
+      <ImageSequenceImportDialog
+        error={imageSequenceImportError}
+        offer={imageSequenceImportOffer}
+        sequenceIndex={imageSequenceImportIndex}
+        onCancel={() => {
+          setImageSequenceImportOffer(null);
+          setImageSequenceImportError(null);
+        }}
+        onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
+        open={imageSequenceImportOffer !== null}
+        submitting={imageSequenceImportSubmitting}
+      />
+      {linkedRulesEditor && (
+        <LinkedRulesDialog
+          name={linkedRulesEditor.name}
+          initialRules={linkedRulesEditor.rules}
+          onClose={() => setLinkedRulesEditor(null)}
+          onSave={(finalRules) => void saveLinkedRules(finalRules)}
+        />
       )}
       {convertLinkedDialog.folderId && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">CONVERT LINKED FOLDER</span>
-                <h2>转换"{convertLinkedDialog.name}"</h2>
-              </div>
-              <button
-                aria-label="取消转换"
-                className="dialog-close"
-                onClick={() =>
-                  setConvertLinkedDialog({
-                    folderId: "",
-                    name: "",
-                    targetFolderId: "",
-                  })
-                }
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              复制过滤后的内容并保留资产信息；外部源目录不会删除或移动。
-            </p>
-            <select
-              className="text-field"
-              onChange={(event) =>
-                setConvertLinkedDialog((current) => ({
-                  ...current,
-                  targetFolderId: event.target.value,
-                }))
-              }
-              value={convertLinkedDialog.targetFolderId}
-            >
-              <option value="">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() =>
-                  setConvertLinkedDialog({
-                    folderId: "",
-                    name: "",
-                    targetFolderId: "",
-                  })
-                }
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void convertLinkedToManaged()}
-                type="button"
-              >
-                确认复制并转换
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConvertLinkedDialog
+          folderName={convertLinkedDialog.name}
+          folders={folders}
+          targetFolderId={convertLinkedDialog.targetFolderId}
+          onCancel={() =>
+            setConvertLinkedDialog({
+              folderId: "",
+              name: "",
+              targetFolderId: "",
+            })
+          }
+          onConfirm={() => void convertLinkedToManaged()}
+          onTargetChange={(targetFolderId) =>
+            setConvertLinkedDialog((current) => ({
+              ...current,
+              targetFolderId,
+            }))
+          }
+        />
       )}
       {restoreDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="restore-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">RESTORE ASSETS</span>
-                <h2 id="restore-dialog-title">
-                  恢复 {restoreDialog.assetIds.length} 项资产
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setRestoreDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="restore-target">
-              恢复位置
-            </label>
-            <select
-              className="text-field"
-              id="restore-target"
-              onChange={(event) =>
-                setRestoreDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        target: event.target.value as typeof current.target,
-                      }
-                    : current,
-                )
-              }
-              value={restoreDialog.target}
-            >
-              <option value="original">
-                原位置（原文件夹不存在时使用根目录）
-              </option>
-              <option value="root">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <label
-              className="field-label"
-              htmlFor="restore-conflict"
-              style={{ marginTop: 12 }}
-            >
-              同名冲突
-            </label>
-            <select
-              className="text-field"
-              id="restore-conflict"
-              onChange={(event) =>
-                setRestoreDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={restoreDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（自动编号）</option>
-              <option value="replace">用回收站资产替换现有资产</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            {restoreDialog.conflictStrategy === "replace" && (
-              <p className="field-help">
-                替换会删除冲突资产的 Serpent
-                记录及其托管文件，恢复资产会保留原有 ID 和元数据。
-              </p>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setRestoreDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void restoreTrashedAssets()}
-                type="button"
-              >
-                确认恢复
-              </button>
-            </div>
-          </div>
-        </div>
+        <RestoreDialog
+          assetIds={restoreDialog.assetIds}
+          folders={folders}
+          target={restoreDialog.target}
+          conflictStrategy={restoreDialog.conflictStrategy}
+          onTargetChange={(target) =>
+            setRestoreDialog((current) =>
+              current ? { ...current, target } : current,
+            )
+          }
+          onStrategyChange={(strategy) =>
+            setRestoreDialog((current) =>
+              current ? { ...current, conflictStrategy: strategy } : current,
+            )
+          }
+          onConfirm={() => void restoreTrashedAssets()}
+          onCancel={() => setRestoreDialog(null)}
+        />
       )}
       {moveDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="move-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">MOVE MANAGED ASSETS</span>
-                <h2 id="move-dialog-title">
-                  移动 {moveDialog.assetIds.length} 项托管资产
-                </h2>
-              </div>
-              <button
-                aria-label="取消移动"
-                className="dialog-close"
-                onClick={() => setMoveDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="move-target">
-              目标文件夹
-            </label>
-            <select
-              className="text-field"
-              id="move-target"
-              onChange={(event) =>
-                setMoveDialog((current) =>
-                  current
-                    ? { ...current, targetFolderId: event.target.value || null }
-                    : current,
-                )
-              }
-              value={moveDialog.targetFolderId ?? ""}
-            >
-              <option value="">资源库根目录</option>
-              {folders.map((folder) => (
-                <option key={folder.folderId} value={folder.folderId}>
-                  {folder.relativePath}
-                </option>
-              ))}
-            </select>
-            <label
-              className="field-label"
-              htmlFor="move-conflict"
-              style={{ marginTop: 12 }}
-            >
-              同名冲突
-            </label>
-            <select
-              className="text-field"
-              id="move-conflict"
-              onChange={(event) =>
-                setMoveDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={moveDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（自动编号）</option>
-              <option value="replace">替换目标资产</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            <p className="field-help">
-              移动不会改变资产 ID、标签、合集、人工元数据、AI
-              内容或源链接；完成后可撤销一次。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setMoveDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void moveManagedAssets()}
-                type="button"
-              >
-                确认移动
-              </button>
-            </div>
-          </div>
-        </div>
+        <MoveDialog
+          assetIds={moveDialog.assetIds}
+          folderIds={moveDialog.folderIds}
+          folders={folders}
+          targetFolderId={moveDialog.targetFolderId}
+          conflictStrategy={moveDialog.conflictStrategy}
+          folderOnly={
+            moveDialog.folderIds.length > 0 && moveDialog.assetIds.length === 0
+          }
+          onTargetChange={(folderId) =>
+            setMoveDialog((current) =>
+              current ? { ...current, targetFolderId: folderId } : current,
+            )
+          }
+          onStrategyChange={(strategy) =>
+            setMoveDialog((current) =>
+              current ? { ...current, conflictStrategy: strategy } : current,
+            )
+          }
+          onConfirm={() => void moveManagedAssets()}
+          onCancel={() => setMoveDialog(null)}
+        />
       )}
-      {undoMoveDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="undo-move-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">UNDO MOVE CONFLICT</span>
-                <h2 id="undo-move-dialog-title">原位置已有新内容</h2>
-              </div>
-              <button
-                aria-label="取消撤销"
-                className="dialog-close"
-                onClick={() => setUndoMoveDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p className="field-help">
-              Serpent 没有覆盖原位置。请选择明确的冲突处理方式后再撤销。
-            </p>
-            <label className="field-label" htmlFor="undo-move-conflict">
-              冲突处理
-            </label>
-            <select
-              className="text-field"
-              id="undo-move-conflict"
-              onChange={(event) =>
-                setUndoMoveDialog((current) =>
-                  current
-                    ? {
-                        ...current,
-                        conflictStrategy: event.target
-                          .value as typeof current.conflictStrategy,
-                      }
-                    : current,
-                )
-              }
-              value={undoMoveDialog.conflictStrategy}
-            >
-              <option value="keep-both">保留两者（撤回资产自动编号）</option>
-              <option value="replace">替换原位置的新内容</option>
-              <option value="skip">跳过冲突资产</option>
-            </select>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setUndoMoveDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() =>
-                  void undoManagedMove(
-                    undoMoveDialog.operationId,
-                    undoMoveDialog.conflictStrategy,
-                  )
-                }
-                type="button"
-              >
-                按所选策略撤销
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {collectionEditor && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="collection-editor-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">COLLECTION DETAILS</span>
-                <h2 id="collection-editor-title">编辑合集详情</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setCollectionEditor(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="collection-description">
-              描述
-            </label>
-            <textarea
-              className="text-field"
-              id="collection-description"
-              maxLength={10000}
-              onChange={(event) =>
-                setCollectionEditor((current) =>
-                  current
-                    ? { ...current, description: event.target.value }
-                    : current,
-                )
-              }
-              rows={4}
-              value={collectionEditor.description}
-            />
-            <label
-              className="field-label"
-              htmlFor="collection-cover"
-              style={{ marginTop: 12 }}
-            >
-              封面资产
-            </label>
-            <select
-              className="text-field"
-              id="collection-cover"
-              onChange={(event) =>
-                setCollectionEditor((current) =>
-                  current
-                    ? { ...current, coverAssetId: event.target.value }
-                    : current,
-                )
-              }
-              value={collectionEditor.coverAssetId}
-            >
-              <option value="">无封面</option>
-              {collectionEditor.coverAssetId &&
-                !visibleAssets.some(
-                  (asset) => asset.assetId === collectionEditor.coverAssetId,
-                ) && (
-                  <option value={collectionEditor.coverAssetId}>
-                    当前封面（不在本页）
-                  </option>
-                )}
-              {visibleAssets.map((asset) => (
-                <option key={asset.assetId} value={asset.assetId}>
-                  {asset.label ?? asset.displayName}
-                </option>
-              ))}
-            </select>
-            <p className="field-help">
-              可从当前页面资产中选择封面；合集树支持同级拖拽排序。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setCollectionEditor(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void saveCollectionDetails()}
-                type="button"
-              >
-                保存详情
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {renameTarget && (
-        <div className="dialog-backdrop" role="presentation">
-          <form
-            aria-labelledby="rename-organization-title"
-            aria-modal="true"
-            className="create-dialog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (renameTarget.kind === "tag") void renameTag();
-              else if (renameTarget.kind === "collection")
-                void renameCollection();
-              else {
-                const target = renameTarget;
-                setRenameTarget(null);
-                void renameSmartCollection(target.id, target.name);
-              }
+      <CollectionEditorDialog
+        open={collectionEditor !== null}
+        description={collectionEditor?.description ?? ""}
+        coverAssetId={collectionEditor?.coverAssetId ?? ""}
+        assetOptions={visibleAssets.map((asset) => ({
+          assetId: asset.assetId,
+          displayName: asset.displayName,
+        }))}
+        onDescriptionChange={(d) =>
+          setCollectionEditor((current) =>
+            current ? { ...current, description: d } : current,
+          )
+        }
+        onCoverAssetChange={(id) =>
+          setCollectionEditor((current) =>
+            current ? { ...current, coverAssetId: id } : current,
+          )
+        }
+        onSave={() => void saveCollectionDetails()}
+        onCancel={() => setCollectionEditor(null)}
+      />
+      <RenameDialog
+        open={renameTarget !== null}
+        kind={renameTarget?.kind ?? "collection"}
+        currentName={renameTarget?.name ?? ""}
+        onNameChange={(name) =>
+          setRenameTarget((current) =>
+            current ? { ...current, name } : current,
+          )
+        }
+        onSave={() => {
+          if (!renameTarget) return;
+          if (renameTarget.kind === "collection")
+            void renameCollection();
+          else {
+            const target = renameTarget;
+            setRenameTarget(null);
+            void renameSmartCollection(target.id, target.name);
+          }
+        }}
+        onCancel={() => setRenameTarget(null)}
+      />
+      <AppSettingsDialog
+        activeCategory={appSettingsCategory}
+        aiConfigPanel={
+          <AiConfigDialog
+            open={appSettingsOpen && appSettingsCategory === "ai"}
+            variant="embedded"
+            apiKey={aiApiKey}
+            apiFormat={aiApiFormat}
+            model={aiModel}
+            baseUrl={aiBaseUrl}
+            languages={aiLanguages}
+            concurrencyLimit={aiConcurrencyLimit}
+            maxAnalysisImageEdgePx={aiMaxAnalysisImageEdgePx}
+            hasKey={aiHasKey}
+            descriptionEnabled={aiDescriptionEnabled}
+            tagsEnabled={aiTagsEnabled}
+            ratingEnabled={aiRatingEnabled}
+            forceExistingTags={aiForceExistingTags}
+            analysisSettings={aiAnalysisSettings}
+            disclaimerAccepted={aiDisclaimerAccepted}
+            autoAnalyzeEnabled={aiAutoAnalyzeEnabled}
+            connectionState={aiConnectionState}
+            connectionReason={aiConnectionReason}
+            onApiKeyChange={setAiApiKey}
+            onApiFormatChange={setAiApiFormat}
+            onModelChange={setAiModel}
+            onBaseUrlChange={setAiBaseUrl}
+            onLanguagesChange={setAiLanguages}
+            onConcurrencyLimitChange={commitAiConcurrencyLimit}
+            onMaxAnalysisImageEdgePxChange={commitAiMaxAnalysisImageEdgePx}
+            onDescriptionEnabledChange={setAiDescriptionEnabled}
+            onTagsEnabledChange={setAiTagsEnabled}
+            onRatingEnabledChange={setAiRatingEnabled}
+            onForceExistingTagsChange={setAiForceExistingTags}
+            onAnalysisSettingsChange={setAiAnalysisSettings}
+            onCommitAnalysisSettingsPatch={commitAiAnalysisSettingsPatch}
+            onDisclaimerAcceptedChange={setAiDisclaimerAccepted}
+            onAutoAnalyzeEnabledChange={setAiAutoAnalyzeEnabled}
+            saveVerifying={aiSaveVerifying}
+            onClose={() => {
+              if (aiSaveVerifying) return;
+              setAiApiKey("");
+              // Keep global connection state for heartbeat / context menu
+              // (Serpent-rsbt); re-sync from stored credentials after draft edits.
+              void probeStoredAiConnection();
             }}
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">ORGANIZE LIBRARY</span>
-                <h2 id="rename-organization-title">
-                  重命名{organizationNoun(renameTarget.kind)}
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setRenameTarget(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="rename-organization-name">
-              {organizationNoun(renameTarget.kind)}名称
-            </label>
-            <input
-              autoFocus
-              className="text-field"
-              id="rename-organization-name"
-              onChange={(event) =>
-                setRenameTarget((current) =>
-                  current ? { ...current, name: event.target.value } : current,
-                )
-              }
-              value={renameTarget.name}
-            />
-            <p className="field-help">
-              名称仅影响资源库中的组织方式，不会修改资产文件。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setRenameTarget(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!renameTarget.name.trim()}
-                type="submit"
-              >
-                保存名称
-              </button>
-            </div>
-          </form>
-        </div>
+            onSave={() => void saveAiConfig()}
+            onTestConnection={testAiConnectionFromDialog}
+            onFetchModels={fetchAiModelsFromDialog}
+          />
+        }
+        aiUiPrefs={aiUiPrefs}
+        canvasPrefs={canvasPrefs}
+        onActiveCategoryChange={setAppSettingsCategory}
+        onClose={() => {
+          setAppSettingsOpen(false);
+          setAppSettingsCategory("general");
+        }}
+        onSetViewMode={(mode) => {
+          setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+        }}
+        onToggleField={(field) => {
+          setCanvasPrefs((p) => ({
+            ...p,
+            fields: { ...p.fields, [field]: !p.fields[field] },
+          }));
+        }}
+        onToggleShowAiBadges={() => {
+          setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
+        }}
+        onOpenAppLog={openAppLog}
+        onOpenExtensionReleases={() => {
+          void shellApi?.openExternalUrl(
+            "https://github.com/dolag233/Serpent-Extension/releases/latest",
+          );
+        }}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
+        libraryId={library?.libraryId}
+        mcpApi={(window as RendererWindow).serpent?.mcp}
+        open={appSettingsOpen}
+        syncServerCallbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncSaveServer(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncSaveServer(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncDeleteServer(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncDeleteServer(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true };
+          },
+          async syncProbe(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncProbe(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+        }}
+      />
+      <LibrarySettingsDialog
+        key={`${library?.libraryId ?? "none"}:${librarySettingsOpen ? "open" : "closed"}:${gitignoreContent}`}
+        library={library}
+        open={librarySettingsOpen}
+        gitignoreContent={gitignoreContent}
+        onClose={() => {
+          setLibrarySettingsOpen(false);
+        }}
+        onSaveName={async (name) => {
+          if (!api || !library) return;
+          const result = await api.rename({ libraryId: library.libraryId, displayName: name });
+          if (!result.ok) {
+            setError(messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")));
+            return;
+          }
+          setLibrary(result.value);
+          setNotice(t("toast.librarySettingsSaved"));
+        }}
+        onSaveGitignore={async (content) => {
+          if (!api || !library) return;
+          const result = await api.setGitignore({ libraryId: library.libraryId, content });
+          if (!result.ok) {
+            setError(messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")));
+            return;
+          }
+          setGitignoreContent(result.value.content);
+          setNotice(t("toast.librarySettingsSaved"));
+          await reloadCurrentContent();
+        }}
+        syncCallbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncProbe(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncProbe(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncPreview(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncPreview(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncRun(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncRun(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncSaveBinding(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncSaveBinding(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true };
+          },
+          async syncGetBinding(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncGetBinding(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+        }}
+        syncProgress={syncProgress}
+      />
+      <OpenSyncLibraryDialog
+        callbacks={{
+          async syncListServers() {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListServers();
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncListRemoteLibraries(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncListRemoteLibraries(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+          async syncOpenRemoteLibrary(input) {
+            if (!api) return { ok: false, message: t("common.unavailable") };
+            const result = await api.syncOpenRemoteLibrary(input);
+            if (!result.ok) return { ok: false, message: messageForPublicError(result.error, locale, t("toast.librarySettingsSaveFailed")) };
+            return { ok: true, value: result.value };
+          },
+        }}
+        onClose={() => setOpenSyncLibraryOpen(false)}
+        onOpened={(opened) => {
+          void (async () => {
+            if (!api) return;
+            await runLibraryOpenPipeline(
+              "opening",
+              () => Promise.resolve({ ok: true, value: opened }),
+              t("toast.openRecentFailed"),
+            );
+          })();
+        }}
+        open={openSyncLibraryOpen}
+      />
+      <AppLogDialog
+        automationCorrelationId={appLogAutomationCorrelationId}
+        entries={appLogEntries}
+        errorCode={appLogErrorCode}
+        loading={appLogLoading}
+        onClose={() => setAppLogOpen(false)}
+        onAutomationCorrelationIdChange={setAppLogAutomationCorrelationId}
+        onRefresh={() => void refreshAppLog()}
+        onReveal={() => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.revealAppLog) {
+            setError(t("toast.aiRevealLogFailed"));
+            return;
+          }
+          void bridge.revealAppLog().then((result) => {
+            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
+          });
+        }}
+        open={appLogOpen}
+      />
+      <ScriptSandboxPreviewDialog
+        automation={(window as RendererWindow).serpent?.automation}
+        libraryId={library?.libraryId ?? null}
+        onClose={() => {
+          setScriptSandboxPreviewOpen(false);
+        }}
+        onExecutionSettled={() => refreshAfterAutomationScript()}
+        onOpenExecutionLog={(logId) => {
+          setScriptSandboxPreviewOpen(false);
+          openAppLog(logId);
+        }}
+        open={scriptSandboxPreviewOpen}
+      />
+      <AboutDialog
+        open={aboutOpen}
+        version={SERPENT_VERSION}
+        onClose={() => setAboutOpen(false)}
+        onOpenGitHub={() => {
+          const bridge = (window as RendererWindow).serpent?.shell;
+          if (!bridge?.openExternalUrl) return;
+          void bridge.openExternalUrl("https://github.com/dolag233/Serpent");
+        }}
+      />
+      <OpenSourceLicensesDialog
+        open={openSourceLicensesOpen}
+        onClose={() => setOpenSourceLicensesOpen(false)}
+      />
+      {smartCollectionSettings ? (
+        <SmartCollectionSettingsDialog
+          key={smartCollectionSettings.collectionId}
+          onClose={() => setSmartCollectionSettings(null)}
+          onRename={async (collectionId, name) => {
+            await renameSmartCollection(collectionId, name);
+            setSmartCollectionSettings((current) =>
+              current && current.collectionId === collectionId
+                ? { ...current, name }
+                : current,
+            );
+          }}
+          onSaveCurrentQuery={async (collectionId) => {
+            await updateSmartCollectionQuery(collectionId);
+          }}
+          target={smartCollectionSettings}
+        />
+      ) : null}
+      <CreateDialog
+        busy={busy}
+        open={dialog === "library"}
+        phase={createLibraryPhase}
+        required={!library}
+        value={dialogValue}
+        onValueChange={setDialogValue}
+        onBeginCreate={() => {
+          setDialogValue(t("shell.myLibrary"));
+          setCreateLibraryPhase("form");
+        }}
+        onBackToStart={() => {
+          if (createLibraryPhase === "eagle") {
+            cancelEagleInspectFlow();
+            if (library) setDialog(null);
+            return;
+          }
+          if (createLibraryPhase === "billfish") {
+            cancelBillfishInspectFlow();
+            if (library) setDialog(null);
+            return;
+          }
+          if (library) {
+            setDialog(null);
+            return;
+          }
+          setCreateLibraryPhase("start");
+        }}
+        onSubmit={() => {
+          if (createLibraryPhase === "eagle") {
+            void submitEagleLibraryName();
+            return;
+          }
+          if (createLibraryPhase === "billfish") {
+            void submitBillfishLibraryName();
+            return;
+          }
+          setDialog(null);
+          void runLibraryOperation("create");
+        }}
+        onCancel={() => {
+          if (createLibraryPhase === "eagle") {
+            cancelEagleInspectFlow();
+          }
+          if (createLibraryPhase === "billfish") {
+            cancelBillfishInspectFlow();
+          }
+          setDialog(null);
+          setCreateLibraryPhase("start");
+        }}
+        onOpenExisting={() => {
+          // Keep the required no-library surface mounted while the native
+          // picker is open. This avoids the auto-open effect racing a cancel
+          // and makes the action visibly await the selected library. When a
+          // library is already open, the menu dialog can close immediately.
+          if (library) setDialog(null);
+          void runLibraryOperation("open");
+        }}
+        onImportLibrary={() => {
+          setDialog(null);
+          setImportLibraryChooserOpen(true);
+        }}
+        onOpenRecent={(path) => {
+          setDialog(null);
+          void openRecentLibrary(path);
+        }}
+        onForgetRecent={(path) => {
+          void forgetRecentLibrary(path);
+        }}
+        recentLibraries={recentLibraries}
+      />
+      {conflicts && conflictPhase === "name" && library && (
+        <NameConflictDialog
+          conflicts={conflicts}
+          libraryId={library.libraryId}
+          decision={nameDecision}
+          remember={rememberNameConflict}
+          onDecisionChange={setNameDecision}
+          onRememberChange={setRememberNameConflict}
+          onCancel={() => void abandonConflicts()}
+          onConfirm={() => confirmNameConflictDialog()}
+        />
       )}
-      {dialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <form
-            aria-labelledby="create-dialog-title"
-            aria-modal="true"
-            className="create-dialog"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!dialogValue.trim()) return;
-              if (dialog === "library") {
-                setDialog(null);
-                void runLibraryOperation("create");
-              } else void createFolder();
-            }}
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">
-                  {dialog === "library"
-                    ? "NEW LOCAL LIBRARY"
-                    : "MANAGED FOLDER"}
-                </span>
-                <h2 id="create-dialog-title">
-                  {dialog === "library" ? "创建资源库" : "新建文件夹"}
-                </h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <label className="field-label" htmlFor="dialog-name">
-              名称
-            </label>
-            <input
-              autoFocus
-              className="text-field"
-              id="dialog-name"
-              maxLength={255}
-              onChange={(event) => setDialogValue(event.target.value)}
-              value={dialogValue}
-            />
-            <p className="field-help">
-              {dialog === "library"
-                ? "下一步由系统选择本地保存位置。"
-                : `将在"${selectedFolder?.name ?? "资源库根目录"}"内创建真实目录。`}
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!dialogValue.trim()}
-                type="submit"
-              >
-                创建
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-      {conflicts && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="conflict-dialog-title"
-            aria-modal="true"
-            className="conflict-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">IMPORT REVIEW</span>
-                <h2 id="conflict-dialog-title">处理导入冲突</h2>
-              </div>
-            </div>
-            <div className="conflict-summary">
-              <div>
-                <strong>{conflicts.fileCount}</strong>
-                <span>待导入文件</span>
-              </div>
-              <div>
-                <strong>{conflicts.suspectedDuplicateCount}</strong>
-                <span>疑似重复</span>
-              </div>
-              <div>
-                <strong>{conflicts.nameConflictCount}</strong>
-                <span>同名冲突</span>
-              </div>
-            </div>
-            <label className="decision-field">
-              <span>疑似重复</span>
-              <select
-                autoFocus
-                value={duplicateDecision}
-                onChange={(event) =>
-                  setDuplicateDecision(
-                    event.target.value as typeof duplicateDecision,
-                  )
-                }
-              >
-                <option value="skip">跳过</option>
-                <option value="merge">合并到已有资产</option>
-                <option value="create-copy">创建副本</option>
-              </select>
-            </label>
-            <label className="decision-field">
-              <span>同名冲突</span>
-              <select
-                value={nameDecision}
-                onChange={(event) =>
-                  setNameDecision(event.target.value as typeof nameDecision)
-                }
-              >
-                <option value="keep-both">保留两者</option>
-                <option value="replace">替换现有资产</option>
-                <option value="skip">跳过</option>
-              </select>
-            </label>
-            {conflicts.examples.length > 0 && (
-              <div className="conflict-examples">
-                {conflicts.examples.map((item, index) => (
-                  <span key={`${item.displayName}-${index}`}>
-                    <Icon name="file" size={13} />
-                    {item.displayName}
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => void abandonConflicts()}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void resolveConflicts()}
-                type="button"
-              >
-                应用并导入
-              </button>
-            </div>
-          </div>
-        </div>
+      {conflicts && conflictPhase === "duplicate" && library && (
+        <ContentDuplicateDialog
+          conflicts={conflicts}
+          libraryId={library.libraryId}
+          decision={duplicateDecision}
+          remember={rememberDuplicate}
+          onDecisionChange={setDuplicateDecision}
+          onRememberChange={setRememberDuplicate}
+          onCancel={() => void abandonConflicts()}
+          onConfirm={() => confirmContentDuplicateDialog()}
+        />
       )}
       {exportDialogOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">EXPORT LIBRARY</span>
-                <h2>导出资源库</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setExportDialogOpen(false)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              将资源库导出为完整文件夹或标准
-              ZIP。导出内容包括所有托管资产、数据库、修订记录和回收站文件。
-            </p>
-            <fieldset
-              style={{
-                border: "none",
-                padding: 0,
-                marginTop: 14,
-                display: "flex",
-                gap: 16,
-              }}
-            >
-              <legend
-                style={{ fontSize: 11, color: "#6c6f6c", marginBottom: 6 }}
-              >
-                导出格式
-              </legend>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  checked={exportFormat === "folder"}
-                  onChange={() => setExportFormat("folder")}
-                  type="radio"
-                  name="export-format"
-                />
-                文件夹
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  checked={exportFormat === "zip"}
-                  onChange={() => setExportFormat("zip")}
-                  type="radio"
-                  name="export-format"
-                />
-                标准 ZIP
-                {exportFormat === "zip" && (
-                  <span style={{ fontSize: 10, color: "#6c6f6c" }}>
-                    （4&nbsp;GiB / 65534 条目以内）
-                  </span>
-                )}
-              </label>
-            </fieldset>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 10,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                checked={includeLinkedContent}
-                onChange={(e) => setIncludeLinkedContent(e.target.checked)}
-                type="checkbox"
-              />
-              包含链接文件夹源内容
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setExportDialogOpen(false)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void exportLibrary()}
-                type="button"
-              >
-                {exportFormat === "zip"
-                  ? "选择保存位置并导出 ZIP"
-                  : "选择目标文件夹并导出"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ExportDialog
+          open={exportDialogOpen}
+          exporting={
+            exportProgress !== null &&
+            !["complete", "cancelled", "failed"].includes(exportProgress.phase)
+          }
+          onClose={() => setExportDialogOpen(false)}
+          onExportFolder={(includeLinked) =>
+            void exportLibrary("folder", includeLinked)
+          }
+          onExportZip={(includeLinked) =>
+            void exportLibrary("zip", includeLinked)
+          }
+        />
       )}
+      <OpenLibraryChooserDialog
+        open={openLibraryChooserOpen}
+        onCancel={() => setOpenLibraryChooserOpen(false)}
+        onOpenSerpent={() => {
+          setOpenLibraryChooserOpen(false);
+          if (library) setDialog(null);
+          void runLibraryOperation("open");
+        }}
+        onOpenSyncLibrary={() => {
+          setOpenLibraryChooserOpen(false);
+          setAppSettingsOpen(false);
+          setOpenSyncLibraryOpen(true);
+        }}
+        onOpenEagle={() => {
+          setOpenLibraryChooserOpen(false);
+          void openEagleLibrary();
+        }}
+        onOpenBillfish={() => {
+          setOpenLibraryChooserOpen(false);
+          void openBillfishLibrary();
+        }}
+      />
+      <ImportLibraryChooserDialog
+        open={importLibraryChooserOpen}
+        externalKind={library ? "import" : "open"}
+        onCancel={() => setImportLibraryChooserOpen(false)}
+        onImportFolder={() => {
+          setImportLibraryChooserOpen(false);
+          void startImport();
+        }}
+        onImportZip={() => {
+          setImportLibraryChooserOpen(false);
+          void startImportZip();
+        }}
+        onOpenEagle={() => {
+          setImportLibraryChooserOpen(false);
+          void openEagleLibrary();
+        }}
+        onImportEagle={() => {
+          setImportLibraryChooserOpen(false);
+          void importEagleLibrary();
+        }}
+        onOpenBillfish={() => {
+          setImportLibraryChooserOpen(false);
+          void openBillfishLibrary();
+        }}
+        onImportBillfish={() => {
+          setImportLibraryChooserOpen(false);
+          void importBillfishLibrary();
+        }}
+      />
       {importValidated && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">IMPORT LIBRARY</span>
-                <h2>导入资源库</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setImportValidated(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              资源库 <strong>{importValidated.displayName}</strong>{" "}
-              验证通过。请选择导入方式：
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setImportValidated(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="secondary-button"
-                onClick={() => void completeImportInPlace()}
-                type="button"
-              >
-                原地打开（不复制）
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void completeImportCopy()}
-                type="button"
-              >
-                复制到新位置
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImportDialog
+          open
+          validated={importValidated}
+          importing={
+            importProgress !== null &&
+            !["complete", "cancelled", "failed"].includes(importProgress.phase)
+          }
+          onClose={() => setImportValidated(null)}
+          onImportCopy={() => void completeImportCopy()}
+          onImportOpenInPlace={() => void completeImportInPlace()}
+          onImportZip={() => {
+            setImportValidated(null);
+            void startImportZip();
+          }}
+        />
       )}
-      {permanentDeleteDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">PERMANENT DELETE</span>
-                <h2>永久删除确认</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setPermanentDeleteDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              确定要永久删除所选 {permanentDeleteDialog.length} 项资产吗？文件将从回收站彻底移除，此操作不可撤销。
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setPermanentDeleteDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void deletePermanentFromTrash()}
-                type="button"
-              >
-                永久删除 {permanentDeleteDialog.length} 项
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {deleteLinkedDialog && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">DELETE LINKED ASSET</span>
-                <h2>删除链接资产</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => setDeleteLinkedDialog(null)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              确定要从 Serpent 中移除链接资产"{deleteLinkedDialog.displayNames}
-              "吗？默认只移除索引记录，磁盘源文件保持不变。
-            </p>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 8,
-                marginTop: 12,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: deleteLinkedDialog.canDeleteSourceFile
-                  ? "pointer"
-                  : "not-allowed",
-                lineHeight: 1.5,
-              }}
-            >
-              <input
-                aria-label="同时删除磁盘源文件"
-                checked={deleteLinkedDialog.deleteSourceFile}
-                disabled={!deleteLinkedDialog.canDeleteSourceFile}
-                onChange={(event) =>
-                  setDeleteLinkedDialog((current) =>
-                    current
-                      ? { ...current, deleteSourceFile: event.target.checked }
-                      : current,
-                  )
-                }
-                type="checkbox"
-              />
-              <span>
-                {deleteLinkedDialog.canDeleteSourceFile
-                  ? "同时将磁盘源文件移入系统回收站。系统拒绝操作时，该项源文件和 Serpent 记录都会保留，并显示具体原因。"
-                  : "源文件当前不可用，只能移除 Serpent 中的链接记录。"}
-              </span>
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setDeleteLinkedDialog(null)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => void executeDeleteLinked()}
-                type="button"
-              >
-                {deleteLinkedDialog.deleteSourceFile
-                  ? "移入系统回收站并移除"
-                  : "仅移除记录"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {batchRelinkPreview && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="batch-relink-dialog-title"
-            aria-modal="true"
-            className="conflict-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BATCH RELINK</span>
-                <h2 id="batch-relink-dialog-title">批量重新定位预览</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => void cancelBatchRelink()}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <div
-              className="conflict-summary"
-              style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
-            >
-              <div>
-                <strong>{batchRelinkPreview.totalCount}</strong>
-                <span>总计丢失</span>
-              </div>
-              <div>
-                <strong>{batchRelinkPreview.matchedCount}</strong>
-                <span>新位置匹配</span>
-              </div>
-              <div>
-                <strong>{batchRelinkPreview.unmatchedCount}</strong>
-                <span>未找到</span>
-              </div>
-            </div>
-            {batchRelinkPreview.examples.length > 0 && (
-              <div className="conflict-examples">
-                {batchRelinkPreview.examples.map((item, index) => (
-                  <span
-                    key={`${item.relativeFilePath}-${index}`}
-                    style={{
-                      color: item.matched ? "var(--accent)" : "var(--warning)",
-                    }}
-                  >
-                    <Icon name={item.matched ? "file" : "warning"} size={13} />
-                    {item.relativeFilePath}
-                  </span>
-                ))}
-              </div>
-            )}
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginTop: 14,
-                color: "#c7cac7",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              <input
-                checked={batchRelinkKeepMetadata}
-                onChange={(e) => setBatchRelinkKeepMetadata(e.target.checked)}
-                type="checkbox"
-              />
-              沿用原资产信息（保留标签、描述、评分、合集等人工元数据）
-            </label>
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                onClick={() => void cancelBatchRelink()}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={batchRelinkPreview.matchedCount === 0}
-                onClick={() => void applyBatchRelink()}
-                type="button"
-              >
-                应用批量重新定位
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {extensionPairingOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="extension-pairing-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BROWSER EXTENSION PAIRING</span>
-                <h2 id="extension-pairing-title">浏览器扩展配对</h2>
-              </div>
-              <button
-                aria-label="关闭浏览器扩展配对"
-                className="dialog-close"
-                onClick={() => {
-                  setExtensionPairingOpen(false);
-                  setExtensionPairingToken("");
-                  setExtensionPairingError(null);
-                }}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              将配对码粘贴到 Chrome 或 Edge 的 Serpent
-              扩展选项中。配对码由操作系统安全存储加密保存；此窗口关闭后不会在界面中保留明文。
-            </p>
-            {extensionPairingError ? (
-              <p role="alert" style={{ color: "var(--warning)", fontSize: 12 }}>
-                {extensionPairingError}
-              </p>
-            ) : (
-              <>
-                <label
-                  className="field-label"
-                  htmlFor="extension-pairing-token"
-                >
-                  配对码
-                </label>
-                <input
-                  className="text-field"
-                  id="extension-pairing-token"
-                  onFocus={(event) => event.currentTarget.select()}
-                  readOnly
-                  spellCheck={false}
-                  style={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: 11,
-                  }}
-                  value={extensionPairingToken || "正在读取…"}
-                />
-                <p className="field-help">
-                  轮换会使所有浏览器中保存的旧配对码立即失效。
-                </p>
-              </>
-            )}
-            <div className="dialog-actions">
-              <button
-                className="secondary-button"
-                disabled={!extensionPairingToken}
-                onClick={() => void rotateExtensionPairing()}
-                type="button"
-              >
-                轮换配对码
-              </button>
-              <button
-                className="primary-button"
-                disabled={!extensionPairingToken}
-                onClick={() => void copyExtensionPairingToken()}
-                type="button"
-              >
-                复制配对码
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {aiConfigOpen && (
-        <div className="dialog-backdrop" role="presentation">
-          <div aria-modal="true" className="create-dialog" role="dialog">
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">AI CONFIGURATION</span>
-                <h2>AI 配置 (BYOK)</h2>
-              </div>
-              <button
-                aria-label="取消"
-                className="dialog-close"
-                onClick={() => {
-                  setAiConfigOpen(false);
-                  setAiApiKey("");
-                }}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <p
-              style={{
-                color: "var(--secondary)",
-                fontSize: 12,
-                lineHeight: 1.6,
-              }}
-            >
-              配置第三方云端视觉模型 API Key。Key
-              将加密存储于本地操作系统安全凭据中，Serpent
-              不代理、不计费、不追踪额度。
-            </p>
-            <div className="editor-field" style={{ marginTop: 12 }}>
-              <label className="micro-label">供应商</label>
-              <select
-                className="text-field"
-                onChange={(e) =>
-                  setAiProvider(
-                    e.target.value as "openai" | "gemini" | "anthropic",
-                  )
-                }
-                style={{ height: 30, fontSize: 12, marginTop: 3 }}
-                value={aiProvider}
-              >
-                <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="anthropic">Anthropic Claude</option>
-              </select>
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">模型</label>
-              <input
-                className="text-field"
-                maxLength={255}
-                onChange={(e) => setAiModel(e.target.value)}
-                placeholder="gpt-4o-mini"
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                value={aiModel}
-              />
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">API Key</label>
-              <input
-                className="text-field"
-                maxLength={512}
-                onChange={(e) => setAiApiKey(e.target.value)}
-                placeholder={aiHasKey ? "（已配置，重新输入可覆盖）" : "sk-…"}
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                type="password"
-                value={aiApiKey}
-              />
-            </div>
-            <div className="editor-field" style={{ marginTop: 10 }}>
-              <label className="micro-label">语言</label>
-              <input
-                className="text-field"
-                maxLength={35}
-                onChange={(e) => setAiLanguage(e.target.value)}
-                placeholder="auto (跟随系统)"
-                style={{ height: 28, fontSize: 11, marginTop: 3 }}
-                value={aiLanguage}
-              />
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <label
-                className="micro-label"
-                style={{ marginBottom: 5, display: "block" }}
-              >
-                AI 写入开关（按字段）
-              </label>
-              {(
-                [
-                  {
-                    key: "label",
-                    label: "标签 (Label)",
-                    state: aiLabelEnabled,
-                    setter: setAiLabelEnabled,
-                  },
-                  {
-                    key: "description",
-                    label: "描述",
-                    state: aiDescriptionEnabled,
-                    setter: setAiDescriptionEnabled,
-                  },
-                  {
-                    key: "tags",
-                    label: "标签 (Tags)",
-                    state: aiTagsEnabled,
-                    setter: setAiTagsEnabled,
-                  },
-                  {
-                    key: "structured",
-                    label: "结构化元信息",
-                    state: aiStructuredEnabled,
-                    setter: setAiStructuredEnabled,
-                  },
-                ] as const
-              ).map((field) => (
-                <label
-                  key={field.key}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "3px 0",
-                    color: "#c7cac7",
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    checked={field.state}
-                    onChange={(e) => field.setter(e.target.checked)}
-                    type="checkbox"
-                  />
-                  {field.label}
-                </label>
-              ))}
-            </div>
-            <div
-              style={{
-                marginTop: 14,
-                borderTop: "1px solid var(--border)",
-                paddingTop: 12,
-              }}
-            >
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  color: "#c7cac7",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  lineHeight: 1.5,
-                }}
-              >
-                <input
-                  checked={aiDisclaimerAccepted}
-                  onChange={(e) => {
-                    setAiDisclaimerAccepted(e.target.checked);
-                    if (!e.target.checked) setAiAutoAnalyzeEnabled(false);
-                  }}
-                  type="checkbox"
-                />
-                <span>
-                  我了解启用 AI
-                  分析会将选中资产的图像或视频联系表上传给所选第三方供应商，并可能产生费用。
-                </span>
-              </label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginTop: 9,
-                  color: aiDisclaimerAccepted ? "#c7cac7" : "var(--tertiary)",
-                  fontSize: 12,
-                  cursor: aiDisclaimerAccepted ? "pointer" : "not-allowed",
-                }}
-              >
-                <input
-                  checked={aiAutoAnalyzeEnabled}
-                  disabled={!aiDisclaimerAccepted}
-                  onChange={(e) => setAiAutoAnalyzeEnabled(e.target.checked)}
-                  type="checkbox"
-                />
-                导入后自动上传并分析支持的资产
-              </label>
-            </div>
-            <div className="dialog-actions" style={{ marginTop: 14 }}>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setAiConfigOpen(false);
-                  setAiApiKey("");
-                }}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="primary-button"
-                disabled={!aiApiKey.trim() && !aiHasKey}
-                onClick={() => void saveAiConfig()}
-                type="button"
-              >
-                保存配置
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {mediaJobsOpen && library && (
-        <div className="dialog-backdrop" role="presentation">
-          <div
-            aria-labelledby="media-jobs-title"
-            aria-modal="true"
-            className="create-dialog"
-            role="dialog"
-            style={{ maxWidth: 680 }}
-          >
-            <div className="dialog-heading">
-              <div>
-                <span className="eyebrow">BACKGROUND MEDIA JOBS</span>
-                <h2 id="media-jobs-title">后台媒体任务</h2>
-              </div>
-              <button
-                aria-label="关闭后台任务"
-                className="dialog-close"
-                onClick={() => setMediaJobsOpen(false)}
-                type="button"
-              >
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            {mediaJobsLoading && !mediaJobs ? (
-              <p className="field-help">正在读取任务状态…</p>
-            ) : mediaJobs ? (
-              <>
-                <p className="field-help">
-                  排队 {mediaJobs.queued} · 运行 {mediaJobs.running} · 暂停{" "}
-                  {mediaJobs.paused} · 失败 {mediaJobs.failed} · 已完成{" "}
-                  {mediaJobs.succeeded}
-                </p>
-                <div
-                  className="dialog-actions"
-                  style={{ justifyContent: "flex-start", marginBottom: 12 }}
-                >
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.queued + mediaJobs.running === 0}
-                    onClick={() => void controlMediaJobs("pause")}
-                    type="button"
-                  >
-                    全部暂停
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.paused === 0}
-                    onClick={() => void controlMediaJobs("resume")}
-                    type="button"
-                  >
-                    继续暂停项
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={
-                      mediaJobs.queued +
-                        mediaJobs.running +
-                        mediaJobs.paused ===
-                      0
-                    }
-                    onClick={() => void controlMediaJobs("cancel")}
-                    type="button"
-                  >
-                    取消未完成项
-                  </button>
-                  <button
-                    className="secondary-button"
-                    disabled={mediaJobs.failed === 0}
-                    onClick={() =>
-                      void controlMediaJobs(
-                        "retry",
-                        mediaJobs.jobs
-                          .filter((job) => job.status === "failed")
-                          .map((job) => job.jobId),
-                      )
-                    }
-                    type="button"
-                  >
-                    重试失败项
-                  </button>
-                </div>
-                <div
-                  style={{
-                    maxHeight: 330,
-                    overflow: "auto",
-                    borderTop: "1px solid var(--border)",
-                  }}
-                >
-                  {mediaJobs.jobs.length ? (
-                    mediaJobs.jobs.map((job) => (
-                      <div
-                        key={job.jobId}
-                        style={{
-                          borderBottom: "1px solid var(--border)",
-                          display: "grid",
-                          gap: 8,
-                          gridTemplateColumns:
-                            "minmax(140px, 1fr) 90px minmax(180px, 2fr)",
-                          padding: "9px 2px",
-                          fontSize: 11,
-                        }}
-                      >
-                        <span>
-                          {job.kind
-                            .replace("generate_", "")
-                            .replaceAll("_", " ")}
-                        </span>
-                        <strong>{job.status}</strong>
-                        <span title={job.errorCode ?? undefined}>
-                          {job.errorDetail ??
-                            job.errorCode ??
-                            `${Math.round(job.progress * 100)}%`}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="field-help">当前没有媒体任务。</p>
-                  )}
-                </div>
-                {aiJobs && (
-                  <section
-                    style={{
-                      borderTop: "1px solid var(--border)",
-                      marginTop: 16,
-                      paddingTop: 12,
-                    }}
-                  >
-                    <h3 style={{ fontSize: 13, margin: "0 0 5px" }}>
-                      AI 分析任务
-                    </h3>
-                    <p className="field-help">
-                      排队 {aiJobs.queued} · 运行 {aiJobs.running} · 暂停{" "}
-                      {aiJobs.paused} · 失败 {aiJobs.failed} · 已完成{" "}
-                      {aiJobs.succeeded}
-                    </p>
-                    <div
-                      className="dialog-actions"
-                      style={{ justifyContent: "flex-start", marginBottom: 10 }}
-                    >
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.queued + aiJobs.running === 0}
-                        onClick={() => void controlAiJobs("pause")}
-                        type="button"
-                      >
-                        暂停 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.paused === 0}
-                        onClick={() => void controlAiJobs("resume")}
-                        type="button"
-                      >
-                        继续 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={
-                          aiJobs.queued + aiJobs.running + aiJobs.paused === 0
-                        }
-                        onClick={() => void controlAiJobs("cancel")}
-                        type="button"
-                      >
-                        取消 AI
-                      </button>
-                      <button
-                        className="secondary-button"
-                        disabled={aiJobs.failed === 0}
-                        onClick={() =>
-                          void controlAiJobs(
-                            "retry",
-                            aiJobs.jobs
-                              .filter((job) => job.status === "failed")
-                              .map((job) => job.jobId),
-                          )
-                        }
-                        type="button"
-                      >
-                        重试 AI 失败项
-                      </button>
-                    </div>
-                    <div style={{ maxHeight: 180, overflow: "auto" }}>
-                      {aiJobs.jobs.map((job) => (
-                        <div
-                          key={job.jobId}
-                          style={{
-                            display: "grid",
-                            gap: 8,
-                            gridTemplateColumns:
-                              "minmax(150px, 1fr) 90px minmax(180px, 2fr)",
-                            padding: "7px 2px",
-                            fontSize: 11,
-                          }}
-                        >
-                          <span>{job.kind}</span>
-                          <strong>{job.status}</strong>
-                          <span title={job.errorCode ?? undefined}>
-                            {job.errorDetail ?? job.errorCode ?? "—"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                )}
-              </>
-            ) : (
-              <p className="field-help">暂时无法读取任务状态，请关闭后重试。</p>
-            )}
-          </div>
-        </div>
-      )}
+      <RelinkPreview
+        session={batchRelinkPreview}
+        keepMetadata={batchRelinkKeepMetadata}
+        onKeepMetadataChange={setBatchRelinkKeepMetadata}
+        onApply={() => void applyBatchRelink()}
+        onCancel={() => void cancelBatchRelink()}
+      />
+      <AiConnectionFailureDialog
+        failedCount={aiConnectionFailureGate.failedJobIds.length}
+        onAbort={onAiConnectionFailureAbort}
+        onRetry={handleAiConnectionFailureRetry}
+        open={aiConnectionFailureGate.open}
+      />
+      <FatalAlertDialog
+        message={fatalAlertMessage}
+        title={fatalDialogTitle}
+        onDismiss={dismissFatalAlert}
+      />
+      <MediaJobsDialog
+        open={mediaJobsOpen && library !== null}
+        mediaJobs={mediaJobs}
+        mediaJobsLoading={mediaJobsLoading}
+        aiJobs={aiJobs}
+        pluginJobs={pluginJobs}
+        onClose={() => setMediaJobsOpen(false)}
+        onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
+        onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
+        onRevealAppLog={() => {
+          const shellBridge = (window as RendererWindow).serpent?.shell;
+          if (!shellBridge?.revealAppLog) {
+            setError(t("toast.aiRevealLogFailed"));
+            return;
+          }
+          void shellBridge.revealAppLog().then((result) => {
+            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
+          });
+        }}
+        onViewAppLog={openAppLog}
+      />
       {/* Unified context menu */}
-      {activeContextMenu && (
-        <ContextMenuBackdrop>
-          <ContextMenu
-            ariaLabel={
-              activeContextMenu.descriptor.type === "asset"
-                ? `资产操作：${activeContextMenu.descriptor.displayName}`
-                : activeContextMenu.descriptor.type === "organization"
-                  ? `${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}操作：${activeContextMenu.descriptor.name}`
-                  : `智能合集操作：${activeContextMenu.descriptor.name}`
-            }
-            position={activeContextMenu.position}
-          >
-            {activeContextMenu.descriptor.type === "smart-collection" && (
-              <>
-                <ContextMenuItem
-                  icon={<Icon name="smart" size={14} />}
-                  label="重命名智能合集"
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    setRenameTarget({ kind: "smart", id: desc.id, name: desc.name });
-                  }}
-                />
-                <ContextMenuItem
-                  icon={<Icon name="refresh" size={14} />}
-                  label="用当前条件更新"
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    void updateSmartCollectionQuery(desc.id);
-                  }}
-                />
-                <ContextMenuItem
-                  icon={<Icon name="trash" size={14} />}
-                  label="删除智能合集"
-                  danger
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "smart-collection") return;
-                    if (confirm(`删除智能合集"${desc.name}"？`))
-                      void deleteSmartCollection(desc.id);
-                  }}
-                />
-              </>
-            )}
-            {activeContextMenu.descriptor.type === "organization" && (
-              <>
-                <ContextMenuItem
-                  icon={
-                    <Icon
-                      name={activeContextMenu.descriptor.orgKind === "tag" ? "tag" : "collection"}
-                      size={14}
-                    />
-                  }
-                  label={`重命名${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "organization") return;
-                    setRenameTarget({ kind: desc.orgKind, id: desc.id, name: desc.name });
-                  }}
-                />
-                {activeContextMenu.descriptor.orgKind === "collection" && (
-                  <ContextMenuItem
-                    icon={<Icon name="info" size={14} />}
-                    label="编辑合集详情"
-                    onAction={() => {
-                      const desc = activeContextMenu.descriptor;
-                      if (desc.type !== "organization") return;
-                      const collection = collections.find(
-                        (candidate) => candidate.collectionId === desc.id,
-                      );
-                      if (collection)
-                        setCollectionEditor({
-                          collectionId: collection.collectionId,
-                          description: collection.description ?? "",
-                          coverAssetId: collection.coverAssetId ?? "",
-                        });
-                    }}
-                  />
-                )}
-                <ContextMenuItem
-                  icon={<Icon name="trash" size={14} />}
-                  label={`删除${activeContextMenu.descriptor.orgKind === "tag" ? "标签" : "合集"}`}
-                  danger
-                  onAction={() => {
-                    const desc = activeContextMenu.descriptor;
-                    if (desc.type !== "organization") return;
-                    const confirmed = confirm(
-                      desc.orgKind === "tag"
-                        ? `删除标签"${desc.name}"？`
-                        : `删除合集"${desc.name}"？\n（仅删除合集结构，不删除资产）`,
-                    );
-                    if (confirmed) {
-                      if (desc.orgKind === "tag") void deleteTag(desc.id);
-                      else void deleteCollection(desc.id);
-                    }
-                  }}
-                />
-              </>
-            )}
-            {activeContextMenu.descriptor.type === "asset" &&
-              (() => {
-                const { assetId } = activeContextMenu.descriptor;
-                return (
-                  <>
-                    <ContextMenuItem
-                      icon={<Icon name="upload" size={14} />}
-                      label="使用外部应用打开"
-                      onAction={() => {
-                        void handleOpenExternal(assetId);
-                      }}
-                    />
-                    {activeCollectionId && (
-                      <ContextMenuItem
-                        icon={<Icon name="close" size={14} />}
-                        label="从当前合集移除"
-                        onAction={() => {
-                          void removeAssetFromCollection(assetId, activeCollectionId);
-                        }}
-                      />
-                    )}
-                    {tags.map((tag) => (
-                      <ContextMenuItem
-                        key={`tag-${tag.tagId}`}
-                        icon={<Icon name="tag" size={14} />}
-                        label={`添加标签：${tag.name}`}
-                        onAction={() => {
-                          void assignAssetToTag(assetId, tag.tagId);
-                        }}
-                      />
-                    ))}
-                    {collections.map((collection) => (
-                      <ContextMenuItem
-                        key={`collection-${collection.collectionId}`}
-                        icon={<Icon name="collection" size={14} />}
-                        label={`加入合集：${collection.name}`}
-                        onAction={() => {
-                          void addAssetToCollection(assetId, collection.collectionId);
-                        }}
-                      />
-                    ))}
-                  </>
-                );
-              })()}
-          </ContextMenu>
-        </ContextMenuBackdrop>
+      <AssetContextMenu
+        busy={busy}
+        libraryId={library?.libraryId}
+        pluginBrowseScope={pluginBrowseScope}
+        pluginViewerState={pluginViewerState}
+        pluginApi={(window as RendererWindow).serpent?.plugins}
+        pluginContributionRefreshKey={pluginContributionRefreshKey}
+        tags={tags}
+        collections={collections}
+        linkedFolders={linkedFolders}
+        managedFolders={folders}
+        activeCollectionId={activeCollectionId}
+        assets={visibleAssets}
+        onRenameSmartCollection={(id, name) => setRenameTarget({ kind: "smart", id, name })}
+        onUpdateSmartCollection={(id) => { void updateSmartCollectionQuery(id); }}
+        onDeleteSmartCollection={(id) => { void deleteSmartCollection(id); }}
+        onRenameOrganization={(id, name) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineCollectionRename(id, name);
+        }}
+        onCreateSubcollection={(parentId) => {
+          cancelInlineSmartCollectionEdit();
+          setShowCollectionInput(true);
+          setCollectionInputValue("");
+          setNewCollectionParentId(parentId);
+        }}
+        onEditCollectionDetails={(collectionId) => {
+          const collection = collections.find((c) => c.collectionId === collectionId);
+          if (collection)
+            setCollectionEditor({
+              collectionId: collection.collectionId,
+              description: collection.description ?? "",
+              coverAssetId: collection.coverAssetId ?? "",
+            });
+        }}
+        onDeleteOrganization={(id, name) => {
+          requestDeleteCollection(id, name);
+        }}
+        onCreateSubfolder={(folderId) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderCreate(folderId);
+        }}
+        onSetIgnore={({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name }) => {
+          void setIgnoreState({ locationKind, linkedFolderId, relativePath, pathKind, ignored, name });
+        }}
+        onRenameFolder={(folderId, currentName) => {
+          cancelInlineSmartCollectionEdit();
+          openInlineFolderRename(folderId, currentName);
+        }}
+        onOpenFolderInFileManager={(folderId) => {
+          void handleOpenFolderInFileManager(folderId);
+        }}
+        onCopyFolderPath={(folderId) => {
+          void handleCopyFolderPath(folderId);
+        }}
+        onCopyFolder={(folderId) => {
+          void handleCopyFolder(folderId);
+        }}
+        onPasteIntoFolder={(folderId) => {
+          void pasteIntoFolder(folderId);
+        }}
+        onCloneFolder={(folderId) => {
+          void cloneFolder(folderId);
+        }}
+        onMoveFolder={(folderIds) =>
+          setMoveDialog({
+            assetIds: [],
+            folderIds: [...folderIds],
+            targetFolderId: null,
+            conflictStrategy: "keep-both",
+          })
+        }
+        onOpenLinkedRules={(folder) => void openLinkedRules(folder)}
+        onTrashManagedFolder={(folderId, name) => {
+          requestTrashManagedFolder(folderId, name);
+        }}
+        onDeleteFolderFromDisk={({ folderId, name, locationKind, linkedRelativePath }) => {
+          if (locationKind === "managed") {
+            openDiskDelete({ kind: "managed", folderId, name });
+            return;
+          }
+          if (linkedRelativePath) {
+            openDiskDelete({
+              kind: "linked-child",
+              linkedFolderId: folderId,
+              relativePath: linkedRelativePath,
+              name,
+            });
+          }
+        }}
+        onRemoveLinkedFolder={(folderId, name) => {
+          void removeLinkedFolder(folderId, name);
+        }}
+        onTrashLinkedFolderSubtree={(linkedFolderId, relativePath, name) => {
+          void trashLinkedFolderSubtree(linkedFolderId, relativePath, name);
+        }}
+        onBatchAssignTag={(tagId, assetIds) => {
+          void batchAssignTagToSelection(tagId, assetIds);
+        }}
+        onBatchRemoveTag={(tagId, assetIds) => {
+          void batchRemoveTagFromSelection(tagId, assetIds);
+        }}
+        onBatchAddToCollection={(collectionId, assetIds) => {
+          void batchAddSelectionToCollection(collectionId, assetIds);
+        }}
+        onBatchRemoveFromCollection={(collectionId, assetIds) => {
+          void batchRemoveSelectionFromCollection(collectionId, assetIds);
+        }}
+        onMoveToFolder={(assetIds, folderIds) =>
+          setMoveDialog({
+            assetIds: [...assetIds],
+            folderIds: [...(folderIds ?? [])],
+            targetFolderId: null,
+            conflictStrategy: "keep-both",
+          })
+        }
+        onTrash={(assetIds, folderIds) => {
+          void trashMixedSelection(assetIds, folderIds ?? []);
+        }}
+        onDeleteFromDisk={(assetIds, folderIds) => {
+          requestSelectionDiskDelete(assetIds, folderIds ?? []);
+        }}
+        onRestore={(assetIds) => {
+          void requestRestoreTrashedAssets(assetIds);
+        }}
+        onPermanentDelete={(assetIds) => {
+          void deletePermanentFromTrash(assetIds);
+        }}
+        onRelink={(assetId) => { void relinkMissingAsset(assetId); }}
+        onAnalyze={(assetId, batchIds) => {
+          void handleAnalyzeClick(assetId, batchIds);
+        }}
+        onClearAiContent={(assetIds) => { void handleClearAiContent(assetIds); }}
+        canAnalyze={
+          aiAnalyzeConnectionReady(aiHasKey, aiConnectionState) && !aiAnalyzing
+        }
+        aiDisconnected={aiAnalyzeShowsDisconnectGlyph(
+          aiHasKey,
+          aiConnectionState,
+        )}
+        onCopyToLinked={(folder, assetIds) => { void copyManagedSelectionToLinked(folder, assetIds); }}
+        onClearSelection={clearAssetSelection}
+        onOpenExternal={(assetId) => { void handleOpenExternal(assetId); }}
+        onViewAsset={(assetId) => {
+          const asset = visibleAssets.find((item) => item.assetId === assetId);
+          if (asset) openAssetPreview(asset);
+        }}
+        onSetAssetColorSpace={(assetId, colorSpace) => {
+          void persistAssetColorSpace(assetId, colorSpace);
+        }}
+        onCreateImageSequence={(assetIds) =>
+          setImageSequenceDialog({
+            assetIds: [...assetIds],
+            mode: "create",
+            fps: DEFAULT_IMAGE_SEQUENCE_FPS,
+            submitting: false,
+            error: null,
+          })
+        }
+        onSetImageSequenceFps={(sequenceId, frameCount, fps) => {
+          setImageSequenceDialog({
+            assetIds: [],
+            mode: "update",
+            sequenceId,
+            frameCount,
+            fps,
+            submitting: false,
+            error: null,
+          });
+        }}
+        onDissolveImageSequence={(sequenceId) => {
+          void dissolveSelectedImageSequence(sequenceId);
+        }}
+        onDissolveImageSequences={(sequenceIds) => {
+          void dissolveSelectedImageSequences(sequenceIds);
+        }}
+        onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
+        onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
+        onCopyAssetFiles={(assetIds) => {
+          void handleCopyAssetFiles(assetIds);
+        }}
+        pasteTargetFolderId={browsePasteDestination}
+        onRenameAssetFile={(assetId) => { openAssetRename(assetId); }}
+        onRemoveFromCurrentCollection={(assetId) => {
+          if (activeCollectionId) void removeAssetFromCollection(assetId, activeCollectionId);
+        }}
+        onRemoveFromCollection={(assetId, collectionId) => { void removeAssetFromCollection(assetId, collectionId); }}
+        onAssignTag={(assetId, tagId) => { void assignAssetToTag(assetId, tagId); }}
+        onAddToCollection={(assetId, collectionId) => { void addAssetToCollection(assetId, collectionId); }}
+        onLoadCollectionMemberships={loadCollectionMemberships}
+        trashedAssetCount={trashedAssetCount}
+        trashedFolderCount={trashedFolders.length}
+        onRestoreTrashedFolder={(tombstoneId, name) => {
+          void restoreTrashedManagedFolder(tombstoneId, name);
+        }}
+        onEmptyTrash={() => {
+          void emptyTrash();
+        }}
+      />
+      {/* REQ-SHELL-007 / REQ-SHELL-011 pane resize + edge restore handles. */}
+      {leftOpen ? (
+        <div
+          aria-label={t("shell.resizeNav")}
+          aria-orientation="vertical"
+          className={`panel-resizer${panelResizing === "nav" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.resizeNav")}
+          onDoubleClick={() => {
+            capturePanelResizeAnchor(false);
+            resetPanelWidth("nav");
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            capturePanelResizeAnchor();
+            beginPanelResize("nav", event.clientX);
+          }}
+          onMouseDown={() => capturePanelResizeAnchor()}
+          role="separator"
+          style={{ left: navPanelWidth - 3 }}
+        />
+      ) : (
+        <div
+          aria-label={t("shell.restoreNavEdge")}
+          aria-orientation="vertical"
+          className={`panel-resizer panel-resizer-edge${panelResizing === "nav" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.restoreNavEdge")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            capturePanelResizeAnchor();
+            beginPanelEdgeRestore("nav", event.clientX);
+          }}
+          onMouseDown={() => capturePanelResizeAnchor()}
+          role="separator"
+          style={{ left: 0 }}
+        />
+      )}
+      {rightOpen ? (
+        <div
+          aria-label={t("shell.resizeInspector")}
+          aria-orientation="vertical"
+          className={`panel-resizer${panelResizing === "inspector" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.resizeInspector")}
+          onDoubleClick={() => {
+            capturePanelResizeAnchor(false);
+            resetPanelWidth("inspector");
+          }}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            capturePanelResizeAnchor();
+            beginPanelResize("inspector", event.clientX);
+          }}
+          onMouseDown={() => capturePanelResizeAnchor()}
+          role="separator"
+          style={{ right: inspectorPanelWidth - 3 }}
+        />
+      ) : (
+        <div
+          aria-label={t("shell.restoreInspectorEdge")}
+          aria-orientation="vertical"
+          className={`panel-resizer panel-resizer-edge${panelResizing === "inspector" ? " is-active" : ""}`}
+          data-hover-tip={t("shell.restoreInspectorEdge")}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            capturePanelResizeAnchor();
+            beginPanelEdgeRestore("inspector", event.clientX);
+          }}
+          onMouseDown={() => capturePanelResizeAnchor()}
+          role="separator"
+          style={{ right: 0 }}
+        />
       )}
     </main>
+    </>
   );
 }
 
@@ -8430,96 +11477,17 @@ export function App() {
   );
 }
 
-function initials(value: string) {
-  return value.trim().slice(0, 2).toUpperCase() || "SP";
-}
-function organizationNoun(kind: OrganizationKind) {
-  return kind === "tag" ? "标签" : kind === "collection" ? "合集" : "智能合集";
-}
-function parseStoredPalette(value: string | null): string[] {
-  if (!value) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-function isCssColor(value: string) {
-  return /^#[0-9a-f]{3,8}$/i.test(value) || /^(rgb|hsl)a?\(/i.test(value);
-}
-export function parseSearchExpression(
-  value: string,
-): Array<{ field: string | null; values: string[]; exclude: boolean }> {
-  const allowedFields = new Set([
-    "label",
-    "filename",
-    "tags",
-    "description",
-    "source_url",
-    "folder_path",
-    "metadata_text",
-  ]);
-  const tokens = value.match(/-?[a-z_]+:"[^"]*"|"[^"]*"|\S+/gi) ?? [];
-  const clauses: Array<{
-    field: string | null;
-    values: string[];
-    exclude: boolean;
-  }> = [];
-  let excludeNext = false;
-  let mergeWithPrevious = false;
-  for (const rawToken of tokens) {
-    if (rawToken.toUpperCase() === "NOT") {
-      excludeNext = true;
-      continue;
-    }
-    if (rawToken.toUpperCase() === "OR") {
-      mergeWithPrevious = true;
-      continue;
-    }
-    let token = rawToken;
-    const exclude = excludeNext || token.startsWith("-");
-    excludeNext = false;
-    if (token.startsWith("-")) token = token.slice(1);
-    const separator = token.indexOf(":");
-    const candidateField = separator > 0 ? token.slice(0, separator) : null;
-    const field =
-      candidateField && allowedFields.has(candidateField)
-        ? candidateField
-        : null;
-    const rawValues = (field ? token.slice(separator + 1) : token).replace(
-      /^"|"$/g,
-      "",
-    );
-    const values = rawValues
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    if (values.length === 0) continue;
-    const previous = clauses.at(-1);
-    if (
-      mergeWithPrevious &&
-      previous &&
-      previous.field === field &&
-      previous.exclude === exclude
-    ) {
-      previous.values.push(...values);
-    } else {
-      clauses.push({ field, values, exclude });
-    }
-    mergeWithPrevious = false;
-  }
-  return clauses;
+function organizationNoun(kind: OrganizationKind, locale: AppLocale) {
+  return translateForLocale(
+    locale,
+    kind === "collection"
+      ? "dialog.rename.nounCollection"
+      : "dialog.rename.nounSmartCollection",
+  );
 }
 export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
   const positiveTerms = [...new Set([...plan.keywords, ...plan.synonyms])];
-  const clauses: Array<{
-    field: string | null;
-    values: string[];
-    exclude: boolean;
-  }> = [];
+  const clauses: SearchQuery["clauses"] = [];
   if (positiveTerms.length > 0)
     clauses.push({ field: null, values: positiveTerms, exclude: false });
   // LibraryService executes exclude-only clauses through a parameterized
@@ -8537,37 +11505,8 @@ export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
     ...(plan.sort ? { sort: plan.sort } : {}),
   };
 }
-function describeAiSearchPlan(plan: AiSearchPlan): string {
-  const parts = [
-    plan.keywords.length + plan.synonyms.length > 0
-      ? `${plan.keywords.length + plan.synonyms.length} 个词`
-      : undefined,
-    plan.exclusions.length > 0
-      ? `排除 ${plan.exclusions.length} 项`
-      : undefined,
-    plan.filters.length > 0 ? `${plan.filters.length} 个筛选` : undefined,
-    plan.sort ? "含排序" : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return `AI 计划：${parts.join(" · ")}`;
-}
-function extension(name: string) {
-  const value = name.split(".").pop();
-  return value && value !== name ? value.slice(0, 5).toUpperCase() : "FILE";
-}
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-}
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? "未知时间"
-    : new Intl.DateTimeFormat("zh-CN", {
-        month: "2-digit",
-        day: "2-digit",
-      }).format(date);
+function formatDate(value: string, locale: AppLocale, unknownLabel: string) {
+  return formatShortDate(value, locale, unknownLabel);
 }
 export function formatDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -8625,186 +11564,67 @@ function highlightSnippet(value: string): ReactNode {
     );
   });
 }
-function importSummary(value: {
-  importedCount: number;
-  skippedCount: number;
-  replacedCount: number;
-}) {
-  return `导入完成：新增 ${value.importedCount} 项${value.replacedCount ? `，替换 ${value.replacedCount} 项` : ""}${value.skippedCount ? `，跳过 ${value.skippedCount} 项` : ""}。`;
+type OrganizationOperation = "create" | "rename" | "delete" | "removeAsset";
+
+function organizationAction(
+  kind: OrganizationKind,
+  operation: OrganizationOperation,
+  locale: AppLocale,
+) {
+  const noun = organizationNoun(kind, locale);
+  switch (operation) {
+    case "create":
+      return translateForLocale(locale, "toast.orgCreate", { noun });
+    case "rename":
+      return translateForLocale(locale, "toast.orgRename", { noun });
+    case "delete":
+      return translateForLocale(locale, "toast.orgDelete", { noun });
+    case "removeAsset":
+      return translateForLocale(locale, "toast.orgRemoveAsset");
+  }
 }
-export function supportsExternalImportTypes(types: readonly string[]): boolean {
-  return (
-    types.includes("Files") ||
-    types.includes("text/html") ||
-    types.includes("text/uri-list")
-  );
-}
-function supportsExternalImportTransfer(transfer: DataTransfer): boolean {
-  return supportsExternalImportTypes(Array.from(transfer.types));
-}
-function externalImportPayload(transfer: DataTransfer): {
-  files: File[];
-  html: string;
-  uriList: string;
-} {
-  // Renderer reads browser-provided drag metadata only. Fetching and staging
-  // remain inside Main/Worker and URLs never become filesystem paths.
-  const read = (type: string): string => {
-    try {
-      return transfer.getData(type);
-    } catch {
-      return "";
-    }
-  };
-  return {
-    files: Array.from(transfer.files),
-    html: read("text/html"),
-    uriList: read("text/uri-list"),
-  };
-}
+
 function toOrganizationMessage(
   error: unknown,
   kind: OrganizationKind,
-  operation: "创建" | "重命名" | "删除" | "移除资产",
+  operation: OrganizationOperation,
+  locale: AppLocale,
 ) {
-  const noun = organizationNoun(kind);
-  const action =
-    operation === "移除资产" ? "从合集移除资产" : `${operation}${noun}`;
+  const noun = organizationNoun(kind, locale);
+  const action = organizationAction(kind, operation, locale);
   if (error instanceof LibraryOperationError) {
     const reason = error.reason
-      ? PUBLIC_ERROR_REASONS_ZH[error.reason]
+      ? translateForLocale(locale, `error.reason.${error.reason}`)
       : undefined;
     const detail = (() => {
       switch (error.code) {
         case "INVALID_FOLDER_NAME":
-          return `${noun}名称为空，或名称不受当前平台支持。`;
+          return translateForLocale(locale, "toast.nameEmpty", { noun });
         case "FOLDER_ALREADY_EXISTS":
-          return `资源库中已存在同名${noun}。`;
+          return translateForLocale(locale, "toast.nameConflict", { noun });
         case "FOLDER_NOT_FOUND":
-          return `目标${noun}已不存在，请刷新后重试。`;
+          return translateForLocale(locale, "toast.targetGone", { noun });
         case "ASSET_NOT_FOUND":
-          return "目标资产已不存在，请刷新后重试。";
-        default:
-          return (
-            reason ??
-            PUBLIC_ERROR_MESSAGES_ZH[error.code] ??
-            "Serpent 无法完成这项操作，请查看日志了解详细原因。"
-          );
+          return translateForLocale(locale, "toast.assetGone");
+        default: {
+          if (reason) return reason;
+          const codeKey = `error.code.${error.code}`;
+          const codeMsg = translateForLocale(locale, codeKey);
+          return codeMsg !== codeKey
+            ? codeMsg
+            : translateForLocale(locale, "toast.opFailedSeeLog");
+        }
       }
     })();
-    return `${action}失败。原因：${detail}${reason && detail !== reason ? ` ${reason}` : ""}`;
+    const message = translateForLocale(locale, "toast.opFailedReason", {
+      action,
+      detail,
+    });
+    return reason && detail !== reason ? `${message} ${reason}` : message;
   }
   const detail =
     error instanceof Error && error.message
       ? error.message
-      : "发生未知错误，请查看日志了解详细原因。";
-  return `${action}失败。原因：${detail}`;
-}
-function toMessage(error: unknown, fallback: string) {
-  if (error instanceof LibraryOperationError) {
-    const message = PUBLIC_ERROR_MESSAGES_ZH[error.code] ?? fallback;
-    const reason = error.reason
-      ? PUBLIC_ERROR_REASONS_ZH[error.reason]
-      : undefined;
-    return reason ? `${message} 原因：${reason}` : message;
-  }
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-const PUBLIC_ERROR_MESSAGES_ZH: Partial<Record<PublicErrorCode, string>> = {
-  CANCELLED: "操作已取消。",
-  INTERNAL_ERROR: "Serpent 无法完成这项操作，请重试。",
-  INVALID_LIBRARY_NAME: "请输入可跨平台安全使用的资源库名称。",
-  INVALID_LIBRARY_PATH: "请选择有效的本地文件夹。",
-  INVALID_FOLDER_NAME: "请输入可跨平台安全使用的文件夹名称。",
-  FOLDER_ALREADY_EXISTS: "当前位置已经存在同名文件夹。",
-  FOLDER_NOT_FOUND: "找不到所选资源库文件夹。",
-  INVALID_IMPORT_SOURCE: "无法读取所选导入内容。",
-  INVALID_DROP_SELECTION:
-    "请一次拖入一个本地文件夹，或一个及以上本地文件；不能混合拖入文件与文件夹。",
-  WEB_MEDIA_NOT_FOUND: "拖放内容中没有可下载的网页图片或视频地址。",
-  WEB_MEDIA_URL_INVALID: "拖放内容中的媒体地址不是有效的 HTTP(S) 链接。",
-  WEB_MEDIA_DROP_TOO_LARGE: "网页拖放元数据过大，Serpent 已拒绝解析。",
-  CLIPBOARD_IMAGE_NOT_FOUND:
-    "系统剪贴板中没有可导入的图片，请先复制图片再重试。",
-  IMPORT_COLLECTION_ASSIGN_FAILED:
-    "资产已经导入目标文件夹，但未能加入所选合集；资产不会丢失，请查看日志后重试合集操作。",
-  INVALID_IMPORT_DECISION: "导入冲突处理选项无效。",
-  INVALID_ASSET_METADATA:
-    "资产元数据无效，请使用六位十六进制色值，并填写有效的 HTTP(S) 源链接。",
-  IMPORT_NOT_FOUND: "待处理的导入已失效，请重新选择文件。",
-  IMPORT_APPLY_FAILED: "无法安全完成导入。",
-  LIBRARY_ALREADY_EXISTS: "该位置已经存在同名文件或文件夹。",
-  LIBRARY_NOT_FOUND: "找不到所选资源库。",
-  NOT_A_LIBRARY: "所选文件夹不是有效的 Serpent 资源库。",
-  LIBRARY_CORRUPT: "资源库数据库或迁移记录已损坏。",
-  LIBRARY_VERSION_TOO_NEW: "该资源库由更新版本的 Serpent 创建。",
-  LIBRARY_NOT_WRITABLE: "Serpent 无法写入所选位置。",
-  LIBRARY_CLEANUP_FAILED: "创建失败，且临时文件无法自动清理。",
-  LIBRARY_NOT_OPEN: "该资源库当前没有打开。",
-  ASSET_NOT_FOUND: "找不到所选资产。",
-  ASSET_MOVE_CONFLICT:
-    "资产移动无法完成：源位置或目标位置已经变化，Serpent 未执行静默覆盖。",
-  ASSET_SOURCE_TRASH_FAILED:
-    "无法将源文件移入系统回收站，请查看日志了解具体原因。",
-  AI_ANALYSIS_FAILED: "AI 服务未能完成资产分析。",
-  AI_SEARCH_FAILED: "AI 服务未能转换这次搜索。",
-  VERSION_CONFLICT: "元数据已被其他操作修改。请刷新后重新编辑。",
-  ZIP_TOO_LARGE:
-    "资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。请改为导出文件夹。",
-  TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
-};
-const PUBLIC_ERROR_REASONS_ZH: Record<PublicErrorReason, string> = {
-  PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
-  FILE_BUSY: "文件正被其他应用使用，请关闭后重试。",
-  PATH_LIMIT_EXCEEDED: "目标文件系统拒绝了该路径或名称长度。",
-  DISK_FULL: "目标磁盘空间不足。",
-  READ_ONLY_FILESYSTEM: "目标位置位于只读文件系统。",
-  SOURCE_NOT_FOUND: "源文件在导入过程中消失或无法找到。",
-  SOURCE_CHANGED: "源文件在复制过程中发生了变化。",
-  SOURCE_TRASH_FAILED:
-    "操作系统拒绝将源文件移入系统回收站；源文件与 Serpent 记录均已保留。",
-  SOURCE_TRASH_RECONCILIATION_REQUIRED:
-    "源文件可能已进入系统回收站，但记录尚未完成清理；请重新打开资源库以自动对账，并查看日志。",
-  SYMBOLIC_LINK_NOT_ALLOWED: "目录中包含当前切片不支持的符号链接。",
-  UNSUPPORTED_FILE_ENTRY: "目录中包含普通文件和文件夹之外的项目。",
-  MIME_TYPE_MISSING: "远程响应未声明媒体类型，为避免保存伪装文件已拒绝导入。",
-  MIME_TYPE_UNSUPPORTED: "远程响应声明的媒体类型不受支持。",
-  MIME_EXTENSION_MISMATCH: "文件扩展名与远程响应声明的媒体类型不一致。",
-  MAGIC_BYTES_MISMATCH:
-    "文件头与远程响应声明的媒体类型不一致，文件可能已损坏或被伪装。",
-  NAME_NOT_SUPPORTED: "当前目标文件系统不接受其中的文件名。",
-  IO_ERROR: "操作系统报告了磁盘读写错误。",
-  SHARP_UNAVAILABLE: "图像处理引擎 Sharp 不可用。",
-  FFMPEG_REQUIRED: "当前安装中未找到 FFmpeg，暂时无法生成视频预览。",
-  OIIO_REQUIRED: "当前安装中未找到 OpenImageIO，暂时无法解码 EXR/TGA。",
-  MEDIA_PROCESSING_FAILED:
-    "媒体处理失败。请检查源文件是否损坏，并查看应用日志了解详细原因。",
-  PALETTE_SOURCE_NOT_READY: "当前修订的缩略图或视频封面尚未就绪。",
-  PALETTE_EXTRACTION_FAILED: "本地色卡提取失败，请查看应用日志了解详细原因。",
-  UNSUPPORTED_FORMAT: "当前切片不支持此文件格式。",
-  ZIP_TOO_LARGE: "资源库大小超出标准 ZIP 限制（4 GiB / 65534 条目）。",
-  NOT_A_LIBRARY: "所选目标不是有效的 Serpent 资源库。",
-  PATH_ESCAPE: "ZIP 中包含路径逃逸条目，可能造成安全风险。",
-  AI_AUTH: "API Key 无效或已失效，请更新凭据。",
-  AI_PERMISSION: "当前 API Key 没有访问所选模型的权限。",
-  AI_QUOTA: "供应商账户额度已用尽，请检查计费与额度。",
-  AI_RATE_LIMIT: "请求过于频繁，Serpent 将稍后重试。",
-  AI_NETWORK: "无法连接 AI 供应商，请检查网络。",
-  AI_TIMEOUT: "AI 请求超时，Serpent 将稍后重试。",
-  AI_INVALID_RESPONSE: "AI 供应商返回了无法解析的结果。",
-  AI_NOT_CONFIGURED:
-    "请先在 AI 设置中保存 API Key、选择模型并接受数据发送说明。",
-  AI_REFUSED: "AI 供应商拒绝了这次查询转换；查询内容未执行。",
-  THUMBNAIL_REQUIRED: "资产缩略图尚未就绪，无法安全发送到 AI 供应商。",
-  TRANSFER_IN_PROGRESS: "已有资源库导入或导出正在使用相同资源库或路径。",
-};
-class LibraryOperationError extends Error {
-  readonly code: PublicError["code"];
-  readonly reason?: PublicErrorReason;
-  constructor(error: PublicError) {
-    super(error.message);
-    this.code = error.code;
-    this.reason = error.reason;
-  }
+      : translateForLocale(locale, "toast.unknownError");
+  return translateForLocale(locale, "toast.opFailedReason", { action, detail });
 }

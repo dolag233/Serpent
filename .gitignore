@@ -1,6 +1,9 @@
 .DS_Store
 .agents/
 .claude/
+.kimi/
+.daimon/
+.worktrees/
 .vscode/
 skills-lock.json
 
@@ -25,3 +28,16 @@ resources/media-binaries/*/licenses/
 resources/media-binaries/vcpkg/vcpkg_installed/
 .media-build/
 artifacts/media-binaries/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+.beads/issues.jsonl.lock
+.beads/issues.jsonl.*.tmp
+/skills
+
+# 媒体产物目录（manifest 等为构建生成，来源/锁文件在 media-binaries/ 根）
+resources/media-binaries/*/
+!resources/media-binaries/vcpkg/

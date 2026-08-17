@@ -8,6 +8,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 import { GeminiVendorAdapter } from '../../src/worker/ai/gemini-adapter';
 import { AnthropicVendorAdapter } from '../../src/worker/ai/anthropic-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
@@ -44,20 +45,7 @@ function importNoConflict(
   libraryId: string,
   sourceFile: string,
 ) {
-  const prepared = service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId: undefined,
-    sourceKind: 'files',
-    sourcePaths: [sourceFile],
-  });
-  if ('importId' in prepared) {
-    return service.resolveImport({
-      importId: prepared.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'keep-both',
-    });
-  }
-  return prepared;
+  return sharedImportNoConflict(service, libraryId, sourceFile);
 }
 
 function createPngFile(dir: string, name: string): string {
@@ -83,7 +71,6 @@ describe('GeminiVendorAdapter', () => {
           parts: [
             {
               text: JSON.stringify({
-                label: 'Test asset',
                 description: 'A test image',
                 tags: ['test', 'image'],
               }),
@@ -103,14 +90,14 @@ describe('GeminiVendorAdapter', () => {
     };
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch);
     await adapter.analyze({
-      filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [], imageBase64: 'fakebase64',
     });
 
     const config = requestBody?.generationConfig as Record<string, unknown>;
     const schema = config.responseSchema as Record<string, unknown>;
-    expect(schema.propertyOrdering).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+    expect(schema.propertyOrdering).toEqual(['description', 'tags', 'rating']);
   });
 
   it('parses a valid Gemini response', async () => {
@@ -119,14 +106,14 @@ describe('GeminiVendorAdapter', () => {
     };
     const adapter = new GeminiVendorAdapter('test-key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     const result = await adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
-    expect(result.label).toBe('Test asset');
     expect(result.description).toBe('A test image');
     expect(result.tags).toEqual(['test', 'image']);
     expect(result.modelVersion).toBe('gemini-2.5-flash');
@@ -137,15 +124,15 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('bad-key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     await expect(
       adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       }),
     ).rejects.toThrow(VendorAdapterError);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
     } catch (error) {
@@ -159,8 +146,8 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -175,8 +162,8 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -191,8 +178,8 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -211,8 +198,8 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -236,8 +223,8 @@ describe('GeminiVendorAdapter', () => {
     const adapter = new GeminiVendorAdapter('key', 'gemini-2.5-flash', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -260,7 +247,6 @@ describe('AnthropicVendorAdapter', () => {
         id: 'toolu_01X',
         name: 'serpent_classify_asset',
         input: {
-          label: 'Anthropic test',
           description: 'A test image classified by Claude',
           tags: ['claude', 'test'],
         },
@@ -274,14 +260,14 @@ describe('AnthropicVendorAdapter', () => {
       new Response(JSON.stringify(anthropicSuccessBody), { status: 200 });
     const adapter = new AnthropicVendorAdapter('test-key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
+      displayName: 'test.png',
       filename: 'test.png',
       mime: 'image/png',
       language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
       imageBase64: 'fakebase64',
     });
-    expect(result.label).toBe('Anthropic test');
     expect(result.description).toBe('A test image classified by Claude');
     expect(result.tags).toEqual(['claude', 'test']);
     expect(result.modelVersion).toBe('claude-sonnet-4-20250514');
@@ -292,8 +278,8 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('bad-key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -308,8 +294,8 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -324,8 +310,8 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -340,8 +326,8 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -360,8 +346,8 @@ describe('AnthropicVendorAdapter', () => {
     const adapter = new AnthropicVendorAdapter('key', 'claude-sonnet-4-20250514', mockFetch as typeof fetch);
     try {
       await adapter.analyze({
-        filename: 'test.png', mime: 'image/png', language: 'en',
-        enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+        displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+        enabledFields: { description: false, tags: true, rating: false },
         existingTagNames: [],
       });
       expect.fail('Should have thrown');
@@ -380,7 +366,6 @@ describe('AnthropicVendorAdapter', () => {
           id: 'toolu_02',
           name: 'serpent_classify_asset',
           input: {
-            label: 'Later block',
             description: 'Found in second block',
             tags: ['late'],
           },
@@ -391,11 +376,11 @@ describe('AnthropicVendorAdapter', () => {
     const mockFetch = async () => new Response(JSON.stringify(body), { status: 200 });
     const adapter = new AnthropicVendorAdapter('key', 'claude-haiku-3-5-20250514', mockFetch as typeof fetch);
     const result = await adapter.analyze({
-      filename: 'test.png', mime: 'image/png', language: 'en',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      displayName: 'test.png', filename: 'test.png', mime: 'image/png', language: 'en',
+      enabledFields: { description: true, tags: true, rating: false },
       existingTagNames: [],
     });
-    expect(result.label).toBe('Later block');
+    expect(result.description).toBe('Found in second block');
     expect(result.tags).toEqual(['late']);
   });
 });
@@ -429,12 +414,11 @@ describe('clearAiContent', () => {
     service.writeAiAnalysisResult({
       libraryId,
       assetId,
-      label: 'AI Label',
       description: 'AI Description',
       tags: ['AI-tag'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     // Write some human content (use expectedVersion: 0 for first write)
@@ -442,7 +426,6 @@ describe('clearAiContent', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Human Label',
       description: 'Human Description',
     });
 
@@ -459,6 +442,9 @@ describe('clearAiContent', () => {
     });
 
     expect(result.clearedCount).toBe(1);
+    // Serpent-c9r3: the cleared IDs ride out so the renderer can refresh the
+    // Inspector of a selected asset that was among the cleared set.
+    expect(result.affectedAssetIds).toEqual([assetId]);
 
     // AI content should be gone
     const aiContent = service.getAiContent(libraryId, assetId);
@@ -466,8 +452,36 @@ describe('clearAiContent', () => {
 
     // Human content should still be intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
     expect(metadata.description).toBe('Human Description');
+
+    service.closeAll();
+  });
+
+  it('clears only the requested AI field and keeps other AI layers (Serpent-u7hz)', () => {
+    const { service, libraryId, assetId } = setupLibraryWithAiContent();
+
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'AI only desc',
+      tags: ['keep-me'],
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: 'v1',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+
+    const result = service.clearAiContent({
+      libraryId,
+      scope: { kind: 'asset', assetIds: [assetId] },
+      confirm: false,
+      fields: ['description'],
+    });
+    expect(result.clearedCount).toBe(1);
+
+    const aiContent = service.getAiContent(libraryId, assetId);
+    expect(aiContent.map((row) => row.fieldName).sort()).toEqual(['rating']);
+    expect(service.listAiTagNames(libraryId, assetId)).toEqual(['keep-me']);
 
     service.closeAll();
   });
@@ -485,12 +499,11 @@ describe('clearAiContent', () => {
     service.writeAiAnalysisResult({
       libraryId,
       assetId: assetId2,
-      label: 'AI Label 2',
       description: 'AI Desc 2',
       tags: ['AI-tag-2'],
       modelId: 'test-model',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     const result = service.clearAiContent({
@@ -522,7 +535,7 @@ describe('clearAiContent', () => {
 
     // Human content still intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
+    expect(metadata.description).toBe('Human Description');
 
     service.closeAll();
   });
@@ -541,7 +554,7 @@ describe('clearAiContent', () => {
 
     // Human content still intact
     const metadata = service.getAssetMetadata({ libraryId, assetId });
-    expect(metadata.label).toBe('Human Label');
+    expect(metadata.description).toBe('Human Description');
 
     service.closeAll();
   });
@@ -661,11 +674,16 @@ describe('enqueueAiAnalysisJobs', () => {
 
     const result = service.enqueueAiAnalysisJobs({ libraryId });
     expect(result.enqueued).toBe(2);
+    expect(result.jobIds).toHaveLength(2);
+    expect(new Set(result.jobIds)).toHaveLength(2);
+    expect(
+      service.getAiJobStatus(libraryId).jobs.map((job) => job.jobId),
+    ).toEqual(expect.arrayContaining(result.jobIds));
 
     service.closeAll();
   });
 
-  it('does not enqueue for video assets (contact sheet needed)', () => {
+  it('enqueues video analysis when its contact sheet is ready without a poster', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AI No Video', selectedParentPath: root });
@@ -679,9 +697,64 @@ describe('enqueueAiAnalysisJobs', () => {
 
     importNoConflict(service, libraryId, videoPath);
 
+    const assetId = service.listAssets({ libraryId, recursive: true })[0]!.assetId;
+    service.writeDerivedArtifact({
+      libraryId,
+      assetId,
+      kind: 'contact_sheet',
+      mimeType: 'image/jpeg',
+      bytes: Buffer.from('contact-sheet'),
+      generatorVersion: 'test',
+      maxBytes: 1024,
+    });
+
     const result = service.enqueueAiAnalysisJobs({ libraryId });
-    // Video should not be enqueued for AI analysis (needs contact sheet)
-    expect(result.enqueued).toBe(0);
+    expect(result.enqueued).toBe(1);
+    expect(result.skippedAssetIds).toHaveLength(0);
+    expect(service.getAiJobStatus(libraryId).jobs).toEqual([
+      expect.objectContaining({ assetId, kind: 'ai.video.analysis', status: 'queued' }),
+    ]);
+
+    service.closeAll();
+  });
+
+  it('reconciles every ready video input when no asset ids are supplied', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Reconcile', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+
+    for (const name of ['one.mp4', 'two.mp4', 'three.mp4']) {
+      const videoPath = path.join(sourceDir, name);
+      writeFileSync(videoPath, Buffer.alloc(128));
+      importNoConflict(service, libraryId, videoPath);
+      const asset = service.listAssets({ libraryId, recursive: true }).find(
+        (candidate) => candidate.displayName === name,
+      );
+      expect(asset).toBeDefined();
+      service.writeDerivedArtifact({
+        libraryId,
+        assetId: asset!.assetId,
+        kind: 'contact_sheet',
+        mimeType: 'image/jpeg',
+        bytes: Buffer.from(`contact-sheet-${name}`),
+        generatorVersion: 'test',
+        maxBytes: 1024,
+      });
+    }
+
+    // This is the durable library-open reconciliation call used after a
+    // worker restart; it must discover all ready videos without import IDs.
+    const first = service.enqueueAiAnalysisJobs({ libraryId });
+    expect(first.enqueued).toBe(3);
+    expect(first.skippedAssetIds).toHaveLength(0);
+
+    // Re-opening/reconciling is idempotent and must not duplicate jobs.
+    const second = service.enqueueAiAnalysisJobs({ libraryId });
+    expect(second.enqueued).toBe(0);
+    expect(second.alreadyPendingJobIds).toHaveLength(3);
 
     service.closeAll();
   });
@@ -705,6 +778,71 @@ describe('enqueueAiAnalysisJobs', () => {
     const r2 = service.enqueueAiAnalysisJobs({ libraryId });
     expect(r2.enqueued).toBe(0);
 
+    service.closeAll();
+  });
+
+  it('treats an asset with existing AI content as an idempotent skip', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Existing', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    const imported = importNoConflict(service, libraryId, createPngFile(sourceDir, 'img.png'));
+    const assetId = imported.assets[0]!.assetId;
+
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'already analyzed',
+      modelId: 'test-model',
+      modelVersion: 'test-version',
+      enabledFields: { description: true, tags: false, rating: false },
+    });
+
+    const result = service.enqueueAiAnalysisJobs({ libraryId, assetIds: [assetId] });
+    expect(result).toEqual({
+      enqueued: 0,
+      jobIds: [],
+      alreadyPendingJobIds: [],
+      skippedAssetIds: [assetId],
+    });
+    expect(service.getAiJobStatus(libraryId).jobs).toHaveLength(0);
+
+    const manual = service.enqueueAiAnalysisJobs({
+      libraryId,
+      assetIds: [assetId],
+      forceExisting: true,
+    });
+    expect(manual.enqueued).toBe(1);
+    expect(manual.skippedAssetIds).toHaveLength(0);
+    service.closeAll();
+  });
+
+  it('resumes an explicitly paused job when manual analysis requests it again', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Resume Paused', selectedParentPath: root });
+    const libraryId = created.libraryId;
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    createPngFile(sourceDir, 'img.png');
+    const imported = importNoConflict(service, libraryId, path.join(sourceDir, 'img.png'));
+    const assetId = imported.assets[0]!.assetId;
+
+    const first = service.enqueueAiAnalysisJobs({ libraryId, assetIds: [assetId] });
+    service.pauseJobs(libraryId, first.jobIds);
+    const resumed = service.enqueueAiAnalysisJobs({
+      libraryId,
+      assetIds: [assetId],
+      resumePaused: true,
+    });
+
+    expect(resumed).toMatchObject({
+      enqueued: 0,
+      alreadyPendingJobIds: first.jobIds,
+    });
+    expect(service.getAiJobStatus(libraryId, first.jobIds).queued).toBe(1);
     service.closeAll();
   });
 
@@ -876,6 +1014,41 @@ describe('AI job queue management', () => {
     service.closeAll();
   });
 
+  it('returns exact counts for explicitly tracked job IDs, excluding history', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+    const historicalJobId = randomUUID();
+    const status = service.getAiJobStatus(libraryId);
+    const db = new Database(
+      path.join(service.listLibraries()[0]!.libraryPath, '.serpent', 'library.db'),
+    );
+    const libraryRow = db.prepare('SELECT library_id FROM library LIMIT 1').get() as {
+      library_id: string;
+    };
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority,
+          progress, attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, 'ai.image.analysis', 'succeeded', 0, 1.0, 1, ?, ?)`,
+    ).run(
+      historicalJobId,
+      libraryRow.library_id,
+      status.jobs[0]!.assetId,
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const tracked = service.getAiJobStatus(libraryId, [jobId]);
+    expect(tracked).toMatchObject({
+      queued: 1,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+    });
+    expect(tracked.jobs.map((job) => job.jobId)).toEqual([jobId]);
+    service.closeAll();
+  });
+
   it('atomically claims and completes the oldest queued AI job', () => {
     const { service, libraryId, jobId } = setupWithJob('queued');
 
@@ -914,6 +1087,23 @@ describe('AI job queue management', () => {
     service.closeAll();
   });
 
+  it('persists redacted error_detail on permanent failure (Serpent-iokf)', () => {
+    const { service, libraryId, jobId } = setupWithJob('queued');
+    service.claimNextAiJob(libraryId);
+
+    service.failAiJob(libraryId, jobId, {
+      errorCode: 'AI_AUTH',
+      retryable: false,
+      errorDetail: 'AI_AUTH · kind=auth',
+    });
+
+    const status = service.getAiJobStatus(libraryId);
+    expect(status.failed).toBe(1);
+    expect(status.jobs[0]?.errorCode).toBe('AI_AUTH');
+    expect(status.jobs[0]?.errorDetail).toBe('AI_AUTH · kind=auth');
+    service.closeAll();
+  });
+
   it('marks permanent failures failed immediately', () => {
     const { service, libraryId, jobId } = setupWithJob('queued');
     service.claimNextAiJob(libraryId);
@@ -939,11 +1129,11 @@ describe('AI job queue management', () => {
       libraryId,
       assetId,
       guardJobId: jobId,
-      label: 'must-not-be-written',
+      description: 'must-not-be-written',
       tags: ['must-not-be-written'],
       modelId: 'test-model',
       modelVersion: 'test-version',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(result.committed).toBe(false);

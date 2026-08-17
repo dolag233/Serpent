@@ -1,6 +1,11 @@
-import { parseAiAnalysisResult } from './protocol';
+import {
+  aiTagsSchemaDescription,
+  buildAiAnalysisSystemPrompt,
+} from '../../shared/ai-analysis-settings';
+import { resolveAnthropicMessagesUrl } from '../../shared/ai-endpoints';
+import { buildAiAnalysisUserTextLines, parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
-import { VendorAdapterError } from './vendor-adapter';
+import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
 
 /**
@@ -9,37 +14,33 @@ import type { VendorAdapter, VendorId } from './vendor-adapter';
  * we use tool-use with a single tool whose `input_schema` forces
  * structured output, then extract the tool-call arguments.
  */
-const ANTHROPIC_TOOL_INPUT_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    label: {
-      type: 'string' as const,
-      description: 'A concise title or label for the asset. Omit if not applicable.',
-    },
-    description: {
-      type: 'string' as const,
-      description: 'A detailed description of the asset content. Omit if not applicable.',
-    },
-    tags: {
-      type: 'array' as const,
-      items: { type: 'string' as const },
-      description: 'Relevant keyword tags. Prefer existing library tags when suitable.',
-    },
-    structured_metadata: {
+function buildAnthropicToolDefinition(language: string) {
+  return {
+    name: 'serpent_classify_asset',
+    description:
+      'Classify a digital asset for a creative professional library. ' +
+      `Provide description and tags in ${language}, and an optional aesthetic rating.`,
+    input_schema: {
       type: 'object' as const,
-      description: 'Additional structured metadata as key-value pairs. Omit if not applicable.',
+      properties: {
+        description: {
+          type: ['string', 'null'] as const,
+          description: `Description of the asset content in ${language}, or null if skipped.`,
+        },
+        tags: {
+          type: 'array' as const,
+          items: { type: 'string' as const },
+          description: aiTagsSchemaDescription(language),
+        },
+        rating: {
+          type: ['integer', 'null'] as const,
+          description: 'Aesthetic score from 1 to 5, or null if unknown.',
+        },
+      },
+      required: ['tags'] as string[],
     },
-  },
-  required: ['tags'] as string[],
-};
-
-const ANTHROPIC_TOOL_DEFINITION = {
-  name: 'serpent_classify_asset',
-  description:
-    'Classify a digital asset for a creative professional library. ' +
-    'Provide label, description, tags, and structured metadata.',
-  input_schema: ANTHROPIC_TOOL_INPUT_SCHEMA,
-};
+  };
+}
 
 /**
  * Maps HTTP status + body to a VendorAdapterError kind.
@@ -83,11 +84,18 @@ export class AnthropicVendorAdapter implements VendorAdapter {
 
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl: string | undefined;
   private readonly _fetch: typeof fetch;
 
-  constructor(apiKey: string, model: string, customFetch?: typeof fetch) {
+  constructor(
+    apiKey: string,
+    model: string,
+    customFetch?: typeof fetch,
+    baseUrl?: string,
+  ) {
     this.apiKey = apiKey;
     this.model = model;
+    this.baseUrl = baseUrl;
     this._fetch = customFetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -108,7 +116,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       temperature: 0.2,
       system,
       messages,
-      tools: [ANTHROPIC_TOOL_DEFINITION],
+      tools: [buildAnthropicToolDefinition(request.language)],
       tool_choice: {
         type: 'tool' as const,
         name: 'serpent_classify_asset',
@@ -118,7 +126,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     let response: Response;
     try {
       response = await this._fetch(
-        'https://api.anthropic.com/v1/messages',
+        resolveAnthropicMessagesUrl(this.baseUrl),
         {
           method: 'POST',
           headers: {
@@ -145,11 +153,57 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unreadable response.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
 
     return this.#extractResult(json);
+  }
+
+  async probeConnection(signal?: AbortSignal): Promise<void> {
+    // No tools / vision — midstream proxies often return plain text for
+    // classification tool_choice, which is fine for a reachability check.
+    let response: Response;
+    try {
+      response = await this._fetch(
+        resolveAnthropicMessagesUrl(this.baseUrl),
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': this.apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.model,
+            max_tokens: 16,
+            temperature: 0,
+            messages: [
+              {
+                role: 'user',
+                content: 'Reply with the single word OK.',
+              },
+            ],
+          }),
+          signal,
+        },
+      );
+    } catch (error: unknown) {
+      throw this.#mapFetchError(error);
+    }
+    if (!response.ok) {
+      throw await this.#mapHttpError(response);
+    }
+    // Body shape is irrelevant for probe; HTTP success is enough.
+    try {
+      await response.json();
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an unreadable response.',
+        { cause: error },
+      );
+    }
   }
 
   // ------------------------------------------------------------------
@@ -157,28 +211,15 @@ export class AnthropicVendorAdapter implements VendorAdapter {
   // ------------------------------------------------------------------
 
   #buildSystemPrompt(request: AiAnalysisRequest): string {
-    const fields: string[] = [];
-    if (request.enabledFields.label) fields.push('label');
-    if (request.enabledFields.description) fields.push('description');
-    if (request.enabledFields.tags) fields.push('tags');
-    if (request.enabledFields.structuredMetadata)
-      fields.push('structured_metadata');
-
-    let prompt =
-      'You are a digital asset classifier for creative professionals. ' +
-      'Analyze the provided asset and return structured classification data ' +
-      'by calling the `serpent_classify_asset` tool.\n\n';
-    prompt += `Target language: ${request.language}\n`;
-    prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
-
-    if (request.existingTagNames.length > 0) {
-      prompt +=
-        '\nExisting library tags (prefer these when suitable): ' +
-        request.existingTagNames.join(', ') +
-        '\n';
-    }
-
-    return prompt;
+    return (
+      buildAiAnalysisSystemPrompt({
+        language: request.language,
+        settings: resolveAiAnalysisSettings(request),
+        enabledFields: request.enabledFields,
+        existingTagNames: request.existingTagNames,
+      }) +
+      '\n通过调用 `serpent_classify_asset` 工具返回结果。\n'
+    );
   }
 
   #buildMessages(
@@ -187,20 +228,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
     const content: Array<Record<string, unknown>> = [];
 
     // Text part
-    const textLines: string[] = [];
-    textLines.push(`Filename: ${request.filename}`);
-
-    if (request.contactSheetDescription) {
-      textLines.push(
-        `Contact sheet description: ${request.contactSheetDescription}`,
-      );
-    }
-
-    if (request.contactSheetBase64) {
-      textLines.push(
-        'The first image is the poster frame and the second is a contact sheet of key frames.',
-      );
-    }
+    const textLines = buildAiAnalysisUserTextLines(request);
 
     content.push({
       type: 'text',
@@ -225,7 +253,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/png',
+          media_type: request.contactSheetMime ?? 'image/png',
           data: request.contactSheetBase64,
         },
       });
@@ -239,15 +267,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
   // ------------------------------------------------------------------
 
   #mapFetchError(error: unknown): VendorAdapterError {
-    const name =
-      typeof error === 'object' &&
-      error !== null &&
-      'name' in error &&
-      typeof (error as Record<string, unknown>).name === 'string'
-        ? ((error as Record<string, unknown>).name as string)
-        : '';
-
-    if (name === 'AbortError') {
+    if (isAiAbortOrTimeoutError(error)) {
       return new VendorAdapterError(
         'timeout',
         'The AI request timed out or was cancelled.',
@@ -257,7 +277,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
 
     return new VendorAdapterError(
       'network',
-      `Could not reach the AI service: ${String(error)}`,
+      'Could not reach the AI service.',
       { cause: error },
     );
   }
@@ -285,6 +305,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unexpected response shape.',
+        { retryable: true },
       );
     }
 
@@ -296,13 +317,13 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned no content blocks.',
+        { retryable: true },
       );
     }
 
     const block = body.content[0] as Record<string, unknown>;
     if (block.type !== 'tool_use') {
       // Claude might refuse; check for tool_use in other blocks
-      let foundToolUse = false;
       for (const b of body.content as Array<Record<string, unknown>>) {
         if (b.type === 'tool_use') {
           const input = b.input as Record<string, unknown> | undefined;
@@ -321,22 +342,25 @@ export class AnthropicVendorAdapter implements VendorAdapter {
               throw new VendorAdapterError(
                 'invalid_response',
                 'The AI response did not match the required schema.',
-                { cause: error },
+                { cause: error, retryable: true },
               );
             }
           }
-          foundToolUse = true;
+              throw new VendorAdapterError(
+                'invalid_response',
+                'The AI tool-use input was empty.',
+                { retryable: true },
+          );
         }
       }
-      if (foundToolUse) {
-        throw new VendorAdapterError(
-          'invalid_response',
-          'The AI tool-use input was empty.',
-        );
-      }
+      // Serpent-iokf: some Anthropic-compatible proxies return plain text JSON
+      // instead of tool_use — accept that when it parses.
+      const textFallback = this.#tryParseTextContentAsResult(body);
+      if (textFallback) return textFallback;
       throw new VendorAdapterError(
         'invalid_response',
         `Expected tool_use response but got ${String(block.type)}.`,
+        { retryable: true },
       );
     }
 
@@ -345,6 +369,7 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI tool-use input was empty.',
+        { retryable: true },
       );
     }
 
@@ -362,8 +387,39 @@ export class AnthropicVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response did not match the required schema.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
+  }
+
+  #tryParseTextContentAsResult(
+    body: Record<string, unknown>,
+  ): AiAnalysisResult | undefined {
+    if (!Array.isArray(body.content)) return undefined;
+    const modelVersion =
+      typeof body.model === 'string' && body.model.length > 0
+        ? body.model
+        : this.model;
+    for (const b of body.content as Array<Record<string, unknown>>) {
+      if (b.type !== 'text' || typeof b.text !== 'string') continue;
+      const raw = b.text.trim();
+      if (!raw) continue;
+      const fenced = raw
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      try {
+        const parsed = JSON.parse(fenced) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parseAiAnalysisResult({
+            ...(parsed as Record<string, unknown>),
+            modelVersion,
+          });
+        }
+      } catch {
+        // keep looking
+      }
+    }
+    return undefined;
   }
 }

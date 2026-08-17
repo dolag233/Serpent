@@ -19,6 +19,20 @@ import {
 } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 function temporaryRoot(): string {
@@ -47,15 +61,36 @@ async function expectServiceErrorAsync(
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
 });
 
+// Windows-only helper: libraries and export destinations can live on
+// different drive letters, where path.relative cannot express a traversal
+// and returns an absolute path (Serpent-59f). Probe for a writable drive
+// other than the temp drive and return a fresh directory on it.
+function createForeignDriveRoot(): string | null {
+  const tempDrive = path.parse(path.resolve(tmpdir())).root.toUpperCase();
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const driveRoot = `${letter}:\\`;
+    if (driveRoot.toUpperCase() === tempDrive) continue;
+    try {
+      const candidate = mkdtempSync(path.join(driveRoot, 'serpent-xdrive-'));
+      temporaryRoots.push(candidate);
+      return candidate;
+    } catch {
+      // Drive absent, read-only media, or not writable — try the next one.
+    }
+  }
+  return null;
+}
+
 describe('LibraryService export', () => {
   it('exports a library with Assets, revisions, trash, and library.db', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Export Test', selectedParentPath: root });
 
     // Add some content.
@@ -85,7 +120,7 @@ describe('LibraryService export', () => {
     expect(existsSync(path.join(destPath, '.serpent', 'library.db'))).toBe(true);
 
     // Verify the exported library is valid and can be opened.
-    const service2 = new LibraryService();
+    const service2 = newService();
     const reopened = service2.openLibrary(destPath);
     expect(reopened.displayName).toBe('Export Test');
 
@@ -99,7 +134,7 @@ describe('LibraryService export', () => {
 
   it('excludes previews and operations directories', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Exclude Test', selectedParentPath: root });
 
     // Create fake preview/operations content.
@@ -126,9 +161,130 @@ describe('LibraryService export', () => {
     service.closeAll();
   });
 
+  it('includes .serpent/artifacts so import keeps ready thumbnails (Serpent-pxd)', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Artifacts Export',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'photo.png');
+    writeFileSync(
+      sourcePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    const imported = service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    expect('importId' in imported).toBe(false);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(1);
+    const thumb = (await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    }))!;
+    const sourceArtifact = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${thumb.artifactId}.webp`,
+    );
+    expect(existsSync(sourceArtifact)).toBe(true);
+
+    const destPath = path.join(root, 'export-with-artifacts');
+    await service.exportLibraryToFolder({
+      libraryId: created.libraryId,
+      destinationPath: destPath,
+      includeLinkedContent: false,
+    });
+
+    expect(
+      existsSync(path.join(destPath, '.serpent', 'artifacts', `${thumb.artifactId}.webp`)),
+    ).toBe(true);
+    service.closeAll();
+
+    const service2 = newService();
+    const reopened = service2.openLibrary(destPath);
+    expect(
+      existsSync(
+        path.join(reopened.libraryPath, '.serpent', 'artifacts', `${thumb.artifactId}.webp`),
+      ),
+    ).toBe(true);
+    const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
+    expect(listed[0]?.thumbnailArtifactId).toBe(thumb.artifactId);
+    service2.closeAll();
+  });
+
+  it('invalidates ready artifacts missing on disk so thumbnails requeue (Serpent-pxd)', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Missing Artifacts',
+      selectedParentPath: root,
+    });
+
+    const sourcePath = path.join(root, 'photo.png');
+    writeFileSync(
+      sourcePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const thumb = (await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: assets[0]!.assetId,
+    }))!;
+    const artifactPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      `${thumb.artifactId}.webp`,
+    );
+    expect(existsSync(artifactPath)).toBe(true);
+    rmSync(artifactPath);
+
+    // Serpent-tumv: re-open delivers immediately; the missing-artifact sweep
+    // now runs in the background reconciliation step.
+    service.closeAll();
+    const service2 = newService();
+    const reopened = service2.openLibrary(created.libraryPath);
+    await service2.runOpenBackgroundReconciliation(reopened.libraryId);
+    const listed = service2.listAssets({ libraryId: reopened.libraryId, recursive: true });
+    expect(listed[0]?.thumbnailStatus).not.toBe('ready');
+    const regenerated = (await service2.generateThumbnail({
+      libraryId: reopened.libraryId,
+      assetId: listed[0]!.assetId,
+    }))!;
+    expect(
+      existsSync(
+        path.join(
+          reopened.libraryPath,
+          '.serpent',
+          'artifacts',
+          `${regenerated.artifactId}.webp`,
+        ),
+      ),
+    ).toBe(true);
+    service2.closeAll();
+  });
+
   it('rejects export destination inside the library', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Inside Export', selectedParentPath: root });
 
     const destInsideLibrary = path.join(created.libraryPath, 'export-output');
@@ -144,9 +300,41 @@ describe('LibraryService export', () => {
     service.closeAll();
   });
 
+  it.runIf(process.platform === 'win32')(
+    'accepts a folder destination on a different drive letter (Serpent-59f)',
+    async (ctx) => {
+      const foreignRoot = createForeignDriveRoot();
+      if (!foreignRoot) {
+        ctx.skip();
+        return;
+      }
+      const root = temporaryRoot();
+      const service = newService();
+      const created = service.createLibrary({ displayName: 'Folder Cross-Drive Export', selectedParentPath: root });
+
+      const assetPath = path.join(root, 'sample.png');
+      writeFileSync(assetPath, Buffer.alloc(256));
+      service.prepareOrExecuteImport({
+        libraryId: created.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [assetPath],
+      });
+
+      const destPath = path.join(foreignRoot, 'cross-drive-export');
+      const result = await service.exportLibraryToFolder({
+        libraryId: created.libraryId,
+        destinationPath: destPath,
+        includeLinkedContent: false,
+      });
+
+      expect(result.fileCount).toBeGreaterThan(0);
+      expect(existsSync(path.join(destPath, '.serpent', 'library.db'))).toBe(true);
+    },
+  );
+
   it('rejects export when library is not open', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Closed Export', selectedParentPath: root });
     service.closeAll();
 
@@ -162,7 +350,7 @@ describe('LibraryService export', () => {
 
   it('never merges into or deletes a pre-existing export destination', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Owned Export', selectedParentPath: root });
     const destPath = path.join(root, 'existing-export');
     const sentinelPath = path.join(destPath, 'keep-me.txt');
@@ -185,7 +373,7 @@ describe('LibraryService export', () => {
   it('removes only its newly-created export directory after a copy failure', async () => {
     const root = temporaryRoot();
     let sourceToRemove: string | undefined;
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type === 'export.progress' && event.phase === 'copy' && sourceToRemove) {
           rmSync(sourceToRemove, { force: true });
@@ -218,7 +406,7 @@ describe('LibraryService export', () => {
     const linkedRoot = path.join(root, 'linked-source');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'linked.png'), 'linked');
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Complete Export', selectedParentPath: root });
     service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: linkedRoot });
     rmSync(linkedRoot, { force: true, recursive: true });
@@ -245,7 +433,7 @@ describe('LibraryService export', () => {
     mkdirSync(secondRoot);
     writeFileSync(path.join(firstRoot, 'first.png'), 'first');
     writeFileSync(path.join(secondRoot, 'second.png'), 'second');
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Linked Backup', selectedParentPath: root });
     const first = service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: firstRoot, displayName: 'References' });
     const second = service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: secondRoot, displayName: 'References' });
@@ -268,7 +456,7 @@ describe('LibraryService export', () => {
 describe('LibraryService import folder', () => {
   it('validates a valid library source', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Import Validate', selectedParentPath: root });
     service.closeAll();
 
@@ -279,7 +467,7 @@ describe('LibraryService import folder', () => {
 
   it('rejects source without Assets directory', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'No Assets', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, 'Assets'), { recursive: true });
@@ -292,7 +480,7 @@ describe('LibraryService import folder', () => {
 
   it('rejects source without database', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'No DB', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -305,7 +493,7 @@ describe('LibraryService import folder', () => {
 
   it('rejects source with symlink at root', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Symlink', selectedParentPath: root });
     service.closeAll();
 
@@ -329,7 +517,7 @@ describe('LibraryService import folder', () => {
 
   it('rejects a nested symbolic link instead of silently dropping it', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Nested Symlink', selectedParentPath: root });
     service.closeAll();
     const nested = path.join(created.libraryPath, 'Assets', 'nested');
@@ -346,7 +534,7 @@ describe('LibraryService import folder', () => {
 
   it('imports a library in place', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'In Place Import', selectedParentPath: root });
     service.closeAll();
 
@@ -365,7 +553,7 @@ describe('LibraryService import folder', () => {
 
   it('imports a library by copying to a new location', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Copy Import', selectedParentPath: root });
     service.closeAll();
 
@@ -390,7 +578,7 @@ describe('LibraryService import folder', () => {
 
   it('rejects non-library source', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const nonLibrary = path.join(root, 'not-a-library');
     mkdirSync(nonLibrary, { recursive: true });
 
@@ -402,7 +590,7 @@ describe('LibraryService import folder', () => {
 
   it('never merges into or deletes a pre-existing copied-library destination', async () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Copy Ownership', selectedParentPath: root });
     service.closeAll();
     const copyParent = path.join(root, 'copy-parent');
@@ -425,7 +613,7 @@ describe('LibraryService import folder', () => {
   it('removes its newly-created copied-library directory after a copy failure', async () => {
     const root = temporaryRoot();
     let databaseToRemove: string | undefined;
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type === 'import.progress' && event.phase === 'copy' && databaseToRemove) {
           rmSync(databaseToRemove, { force: true });
@@ -452,7 +640,7 @@ describe('Export progress events', () => {
   it('emits progress events through all phases', async () => {
     const root = temporaryRoot();
     const progressEvents: Array<{ phase: string }> = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type === 'export.progress') {
           progressEvents.push({ phase: event.phase });
@@ -489,7 +677,7 @@ describe('Export progress events', () => {
 
   it('rejects cancellation for an unknown operation id', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     service.createLibrary({ displayName: 'Cancel Export', selectedParentPath: root });
 
@@ -502,7 +690,7 @@ describe('Export progress events', () => {
   });
 
   it('cancel import rejects unknown importId', () => {
-    const service = new LibraryService();
+    const service = newService();
 
     expectServiceError(
       () => service.cancelImport('nonexistent'),
@@ -514,7 +702,7 @@ describe('Export progress events', () => {
     const root = temporaryRoot();
     let cancelRequested = false;
     const phases: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type !== 'export.progress') return;
         phases.push(event.phase);
@@ -548,7 +736,7 @@ describe('Export progress events', () => {
 
   it('announces an import id before completion and removes only its owned copy on cancellation', async () => {
     const root = temporaryRoot();
-    const sourceService = new LibraryService();
+    const sourceService = newService();
     const created = sourceService.createLibrary({ displayName: 'Live Cancel Import', selectedParentPath: root });
     for (let index = 0; index < 20; index += 1) {
       writeFileSync(path.join(created.libraryPath, 'Assets', `asset-${index}.bin`), Buffer.alloc(4096));
@@ -557,7 +745,7 @@ describe('Export progress events', () => {
 
     let cancelRequested = false;
     const phases: string[] = [];
-    const service = new LibraryService({
+    const service = newService({
       onProgress: (event) => {
         if (event.type !== 'import.progress') return;
         phases.push(event.phase);

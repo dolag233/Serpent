@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { assetCard, resolveElectronExecutablePath } from './electron-test-helpers';
 
 test('cancels a batch relink preview and later applies a fresh preview', async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-relink-e2e-'));
@@ -24,6 +24,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePath,
       SERPENT_E2E_RELINK_ROOT: replacementRoot,
@@ -33,19 +34,24 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    await expect(window.getByRole('button', { name: /missing\.txt/i })).toBeVisible();
+    await expect(assetCard(window, 'missing.txt')).toBeVisible();
 
     const managedPath = path.join(libraryPath, 'Assets', 'missing.txt');
     rmSync(managedPath);
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
+    await assetCard(window, 'missing.txt').click();
+    const inspectorStatus = window.locator('.inspector-status-row');
+    await expect(inspectorStatus).toBeVisible();
+    await expect(inspectorStatus).toContainText('未在已知位置找到，请选择恢复位置');
+    await expect(inspectorStatus.getByRole('button', { name: '找回资产' })).toBeVisible();
     await expect(window.getByRole('button', { name: '批量重新定位' })).toBeVisible();
 
     await window.getByRole('button', { name: '批量重新定位' }).click();
     const firstPreview = window.getByRole('dialog', { name: '批量重新定位预览' });
-    await expect(firstPreview).toContainText('新位置匹配');
+    await expect(firstPreview).toContainText('已找回');
     await expect(firstPreview).toContainText('1');
     await firstPreview.getByRole('button', { name: '取消', exact: true }).last().click();
     await expect(firstPreview).toHaveCount(0);
@@ -54,7 +60,7 @@ test('cancels a batch relink preview and later applies a fresh preview', async (
     await window.getByRole('button', { name: '批量重新定位' }).click();
     const freshPreview = window.getByRole('dialog', { name: '批量重新定位预览' });
     await freshPreview.getByRole('button', { name: '应用批量重新定位' }).click();
-    await expect(window.locator('.toast')).toContainText('恢复 1 项');
+    await expect(window.locator('.workspace-notice')).toContainText('恢复 1 项');
     expect(readFileSync(managedPath, 'utf8')).toBe('replacement');
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
     await expect(window.getByRole('button', { name: '批量重新定位' })).toHaveCount(0);

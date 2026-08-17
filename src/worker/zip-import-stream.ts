@@ -15,8 +15,10 @@ import { crc32 } from 'node:zlib';
 
 import * as yauzl from 'yauzl';
 
-const DEFAULT_MAX_ENTRIES = 65_534;
-const DEFAULT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
+import { pathIsWithin } from './path-utils';
+
+const DEFAULT_MAX_ENTRIES = Number.MAX_SAFE_INTEGER;
+const DEFAULT_MAX_UNCOMPRESSED_BYTES = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MAX_COMPRESSION_RATIO = 100;
 const DEFAULT_COMPRESSION_RATIO_MIN_SIZE = 1024 * 1024;
 const FILESYSTEM_ERROR_CODES = new Set([
@@ -58,6 +60,17 @@ export interface ZipImportLimits {
   maxEntryUncompressedBytes?: number;
   maxCompressionRatio?: number;
   compressionRatioMinSize?: number;
+}
+
+/** Reject zip bombs; do not cap library size or entry count. */
+export function zipBombProtectionLimits(): ZipImportLimits {
+  return {
+    maxEntries: DEFAULT_MAX_ENTRIES,
+    maxUncompressedBytes: DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    maxEntryUncompressedBytes: DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    maxCompressionRatio: DEFAULT_MAX_COMPRESSION_RATIO,
+    compressionRatioMinSize: DEFAULT_COMPRESSION_RATIO_MIN_SIZE,
+  };
 }
 
 export interface ZipImportProgress {
@@ -198,6 +211,43 @@ function portableEntryName(fileName: string): { name: string; directoryByName: b
   return { name: normalized, directoryByName };
 }
 
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+
+/**
+ * Some BillfishPack files contain UTF-8 names but omit ZIP's UTF-8 flag.
+ * yauzl quite correctly treats an unflagged name as CP437, which turns
+ * otherwise valid Chinese names into mojibake. Prefer a verified Unicode Path
+ * extra field, then valid UTF-8, and retain yauzl's CP437 decoder as the
+ * compatibility fallback for older archives.
+ */
+function decodeZipEntryName(entry: yauzl.Entry): string {
+  const rawName = entry.fileNameRaw;
+  const unicodePath = entry.extraFields.find((field) => field.id === 0x7075);
+  if (unicodePath && unicodePath.data.length >= 5 && unicodePath.data[0] === 1) {
+    const expectedCrc = unicodePath.data.readUInt32LE(1);
+    if ((crc32(rawName) >>> 0) === expectedCrc) {
+      try {
+        return UTF8_DECODER.decode(unicodePath.data.subarray(5));
+      } catch {
+        // Fall through to the raw-name decoding path.
+      }
+    }
+  }
+  if ((entry.generalPurposeBitFlag & 0x800) !== 0) {
+    return rawName.toString('utf8');
+  }
+  try {
+    return UTF8_DECODER.decode(rawName);
+  } catch {
+    return yauzl.getFileNameLowLevel(
+      entry.generalPurposeBitFlag,
+      rawName,
+      entry.extraFields,
+      false,
+    );
+  }
+}
+
 function unixEntryType(entry: yauzl.Entry): number {
   return ((entry.externalFileAttributes >>> 16) & 0xffff) & 0o170000;
 }
@@ -211,7 +261,7 @@ function validateEntry(
   limits: ResolvedLimits,
   totalBytes: number,
 ): { planned: PlannedEntry; nextTotalBytes: number } {
-  const { name, directoryByName } = portableEntryName(entry.fileName);
+  const { name, directoryByName } = portableEntryName(decodeZipEntryName(entry));
   const entryType = unixEntryType(entry);
   if (entryType === 0o120000) {
     throw new ZipImportStreamError('SYMBOLIC_LINK_NOT_ALLOWED');
@@ -299,12 +349,6 @@ async function planArchive(
   }
 
   return { entries, totalBytes, fileCount, directoryCount };
-}
-
-function pathIsWithin(rootPath: string, candidatePath: string): boolean {
-  const relative = path.relative(rootPath, candidatePath);
-  return relative === ''
-    || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
 }
 
 function verifyDestinationRoot(destinationRoot: string): string {
@@ -489,7 +533,9 @@ export async function extractZipStream(
     zipFile = await yauzl.openPromise(options.sourceZipPath, {
       autoClose: false,
       lazyEntries: true,
-      decodeStrings: true,
+      // Decode names ourselves. BillfishPack archives in the wild can store
+      // UTF-8 bytes without setting the ZIP UTF-8 flag.
+      decodeStrings: false,
       validateEntrySizes: true,
       strictFileNames: false,
     });

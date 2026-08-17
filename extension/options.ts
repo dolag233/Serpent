@@ -1,33 +1,91 @@
-import { isValidPairingToken, normalizePairingToken } from './pairing-token';
+import {
+  DRAG_RADIAL_MENU_ENABLED_KEY,
+  dragRadialMenuEnabledFromStored,
+  FOCUS_APP_AFTER_SAVE_KEY,
+  focusAppAfterSaveFromStored,
+  NOTIFICATIONS_ENABLED_KEY,
+  notificationsEnabledFromStored,
+  REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
+  revealInLibraryAfterSaveFromStored,
+  writeDragRadialMenuEnabled,
+  writeFocusAppAfterSave,
+  writeNotificationsEnabled,
+  writeRevealInLibraryAfterSave,
+} from './preferences';
 
-const form = document.querySelector<HTMLFormElement>('#pairing-form');
-const input = document.querySelector<HTMLInputElement>('#pairing-token');
-const status = document.querySelector<HTMLElement>('#status');
+const statusEl = document.getElementById('status');
+const notificationsCheckbox = document.getElementById(
+  'notifications-enabled',
+) as HTMLInputElement | null;
+const focusAppCheckbox = document.getElementById(
+  'focus-app-after-save',
+) as HTMLInputElement | null;
+const revealInLibraryCheckbox = document.getElementById(
+  'reveal-in-library-after-save',
+) as HTMLInputElement | null;
+const dragRadialMenuCheckbox = document.getElementById(
+  'drag-radial-menu-enabled',
+) as HTMLInputElement | null;
 
-if (!form || !input || !status) throw new Error('Extension options UI is incomplete.');
-
-chrome.storage.local.get('pairingToken', (values) => {
-  void chrome.runtime.lastError;
-  const stored = values.pairingToken;
-  if (typeof stored === 'string') input.value = stored;
-});
-
-form.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const token = normalizePairingToken(input.value);
-  if (!isValidPairingToken(token)) {
-    status.textContent = '配对码格式不正确。请从 Serpent 桌面应用重新复制。';
-    status.dataset.kind = 'error';
-    return;
+function setStatus(message: string, kind?: 'success' | 'error'): void {
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  if (kind) {
+    statusEl.dataset.kind = kind;
+  } else {
+    delete statusEl.dataset.kind;
   }
-  chrome.storage.local.set({ pairingToken: token }, () => {
-    if (chrome.runtime.lastError) {
-      status.textContent = '保存失败，请重试。';
-      status.dataset.kind = 'error';
-      return;
-    }
-    input.value = token;
-    status.textContent = '配对码已保存。现在可以从网页右键保存到 Serpent。';
-    status.dataset.kind = 'success';
+}
+
+function loadPreferences(): void {
+  chrome.storage.sync.get(
+    [
+      NOTIFICATIONS_ENABLED_KEY,
+      FOCUS_APP_AFTER_SAVE_KEY,
+      REVEAL_IN_LIBRARY_AFTER_SAVE_KEY,
+      DRAG_RADIAL_MENU_ENABLED_KEY,
+    ],
+    (values) => {
+      void chrome.runtime.lastError;
+      if (notificationsCheckbox) {
+        notificationsCheckbox.checked = notificationsEnabledFromStored(
+          values[NOTIFICATIONS_ENABLED_KEY],
+        );
+      }
+      if (focusAppCheckbox) {
+        focusAppCheckbox.checked = focusAppAfterSaveFromStored(
+          values[FOCUS_APP_AFTER_SAVE_KEY],
+        );
+      }
+      if (revealInLibraryCheckbox) {
+        revealInLibraryCheckbox.checked = revealInLibraryAfterSaveFromStored(
+          values[REVEAL_IN_LIBRARY_AFTER_SAVE_KEY],
+        );
+      }
+      if (dragRadialMenuCheckbox) {
+        dragRadialMenuCheckbox.checked = dragRadialMenuEnabledFromStored(
+          values[DRAG_RADIAL_MENU_ENABLED_KEY],
+        );
+      }
+    },
+  );
+}
+
+function bindToggle(
+  checkbox: HTMLInputElement | null,
+  write: (enabled: boolean) => Promise<void>,
+): void {
+  checkbox?.addEventListener('change', () => {
+    const enabled = checkbox.checked;
+    void write(enabled).then(() => {
+      setStatus('已保存', 'success');
+    });
   });
-});
+}
+
+bindToggle(notificationsCheckbox, writeNotificationsEnabled);
+bindToggle(focusAppCheckbox, writeFocusAppAfterSave);
+bindToggle(revealInLibraryCheckbox, writeRevealInLibraryAfterSave);
+bindToggle(dragRadialMenuCheckbox, writeDragRadialMenuEnabled);
+
+loadPreferences();

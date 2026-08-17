@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
 import type { LibraryServiceError } from '../../src/worker/library-service';
-import type { ImportCompletion } from '../../src/shared/protocol/responses';
+import { importNoConflict as importFile } from './import-no-conflict';
 
 const roots: string[] = [];
 const require = createRequire(import.meta.url);
@@ -15,6 +15,7 @@ const TestDatabase = require('better-sqlite3') as new (filename: string) => {
   close(): void;
   prepare(source: string): {
     get(...parameters: unknown[]): unknown;
+    run(...parameters: unknown[]): unknown;
   };
 };
 
@@ -22,15 +23,6 @@ function root(): string {
   const value = mkdtempSync(path.join(tmpdir(), 'serpent-managed-move-'));
   roots.push(value);
   return value;
-}
-
-function importFile(service: LibraryService, libraryId: string, sourcePath: string, targetFolderId?: string) {
-  return service.prepareOrExecuteImport({
-    libraryId,
-    sourceKind: 'files',
-    sourcePaths: [sourcePath],
-    targetFolderId,
-  }) as ImportCompletion;
 }
 
 function expectCode(run: () => unknown, code: LibraryServiceError['code']) {
@@ -58,7 +50,7 @@ describe('managed asset move and one-shot undo', () => {
     service.assignTags({ libraryId: library.libraryId, assetIds: [a.assetId], tagIds: [tag.tagId] });
     const collection = service.createCollection({ libraryId: library.libraryId, name: 'Set' });
     service.addCollectionAssets({ libraryId: library.libraryId, collectionId: collection.collectionId, assetIds: [a.assetId] });
-    service.setAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId, expectedVersion: 0, label: 'Hero', sourcePageUrl: 'https://example.com/a' });
+    service.setAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId, expectedVersion: 0, description: 'Hero', sourcePageUrl: 'https://example.com/a' });
 
     const moved = service.moveAssets({
       libraryId: library.libraryId,
@@ -71,7 +63,7 @@ describe('managed asset move and one-shot undo', () => {
     expect(moved.assets.map((asset) => asset.assetId)).toEqual([a.assetId, b.assetId]);
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Target', 'a.png'))).toBe(true);
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'a.png'))).toBe(false);
-    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId })).toMatchObject({ label: 'Hero', sourcePageUrl: 'https://example.com/a' });
+    expect(service.getAssetMetadata({ libraryId: library.libraryId, assetId: a.assetId })).toMatchObject({ description: 'Hero', sourcePageUrl: 'https://example.com/a' });
     expect(service.listCollectionAssets({ libraryId: library.libraryId, collectionId: collection.collectionId, recursive: false }).map((asset) => asset.assetId)).toContain(a.assetId);
     expect(service.listTags(library.libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
 
@@ -165,6 +157,47 @@ describe('managed asset move and one-shot undo', () => {
     expect(undone.assets[0]!.relativeFilePath).toBe('Source/asset (2).png');
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'asset.png'))).toBe(true);
     service.closeAll();
+  });
+
+  it('resolves an undo conflict when the occupying DB row has a missing file', () => {
+    const temp = root();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Stale undo conflict', selectedParentPath: temp });
+    const sourceFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Source' });
+    const targetFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Target' });
+    const source = path.join(temp, 'asset.png');
+    writeFileSync(source, 'asset');
+    const asset = importFile(service, library.libraryId, source, sourceFolder.folderId).assets[0]!;
+    const moved = service.moveAssets({
+      libraryId: library.libraryId,
+      assetIds: [asset.assetId],
+      targetFolderId: targetFolder.folderId,
+    });
+
+    // Recreate the original path as an active-but-missing DB row. This is the
+    // race that previously made the conflict dialog retry fail immediately.
+    const staleSource = path.join(temp, 'stale.png');
+    writeFileSync(staleSource, 'stale');
+    const stale = importFile(service, library.libraryId, staleSource, sourceFolder.folderId).assets[0]!;
+    service.closeAll();
+    const database = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    database
+      .prepare('UPDATE assets SET relative_file_path = ?, path_identity = ?, availability = ? WHERE asset_id = ?')
+      .run('Source/asset.png', 'source/asset.png', 'missing', stale.assetId);
+    database.close();
+    rmSync(path.join(library.libraryPath, 'Assets', 'Source', 'stale.png'), { force: true });
+
+    const recovered = new LibraryService();
+    recovered.openLibrary(library.libraryPath);
+    const undone = recovered.undoMoveAssets({
+      libraryId: library.libraryId,
+      operationId: moved.operationId!,
+      conflictStrategy: 'keep-both',
+    });
+    expect(undone).toMatchObject({ undoneCount: 1, skippedCount: 0 });
+    expect(undone.assets[0]!.relativeFilePath).toBe('Source/asset (2).png');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'Source', 'asset (2).png'))).toBe(true);
+    recovered.closeAll();
   });
 
   it('rolls an interrupted undo back on reopen and leaves the one-shot undo available', () => {

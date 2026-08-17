@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "ufbx": {
+    "version": "0.23.0",
+    "tag": "v0.23.0",
+    "sourceUrl": "https://codeload.github.com/bqqbarbhg/ufbx/tar.gz/refs/tags/v0.23.0",
+    "sourceSha256": "efaed6c51f9c202e35255775775e3929d0c6978ddbb5cb888299f14d36c3c365",
+    "license": "MIT"
+  },
+  "emsdk": {
+    "version": "6.0.5"
+  },
+  "bridge": "scripts/ufbx-bridge.c",
+  "emccFlags": [
+    "-O2",
+    "-sWASM=1",
+    "-sMODULARIZE=1",
+    "-sENVIRONMENT=node",
+    "-sEXPORTED_FUNCTIONS=_serpent_parse,_serpent_error,_serpent_out_ptr,_serpent_out_size,_serpent_free_out,_malloc,_free",
+    "-sEXPORTED_RUNTIME_METHODS=UTF8ToString,HEAPU8,HEAPU32,HEAPF32",
+    "-sALLOW_MEMORY_GROWTH=1",
+    "-sMAXIMUM_MEMORY=2147483648",
+    "-sINITIAL_MEMORY=67108864",
+    "-sSTACK_SIZE=524288",
+    "-sFILESYSTEM=0",
+    "-sASSERTIONS=0",
+    "-g0"
+  ],
+  "artifacts": {
+    "ufbx.wasm": {
+      "sha256": "74b5cdd8442fac885698094959c2f2f3f0988c9466cefecf3f1b3e789eac4899",
+      "note": "2026-08-07 rebuilt on Windows with Emscripten 6.0.5 after the Serpent-a5ic bridge change #3: flip V texture coordinates (FBX bottom-left origin -> glTF top-left; matches FBX2glTF default). Wasm hash changed by the bridge edit; JS glue unchanged."
+    },
+    "ufbx.js": {
+      "sha256": "e85bf030aa96ae59c4b41415e653ffae9bbf212f72bc2aa8b15b030b537d3652",
+      "note": "2026-08-08 corrected to the committed glue hash (wasm from the 2026-08-07 Windows rebuild matches; the glue entry had kept a stale pre-bridge value)"
+    }
+  }
+}

@@ -4,8 +4,35 @@ import { Readable } from 'node:stream';
 function responseBody(
   stream: ReturnType<typeof createReadStream>,
   onStreamError?: (error: Error) => void,
+  signal?: AbortSignal | null,
 ): BodyInit {
-  if (onStreamError) stream.on('error', onStreamError);
+  if (onStreamError) {
+    stream.on('error', (error: Error) => {
+      // Aborts during seek cancel the consumer; do not treat as a protocol fault.
+      if (signal?.aborted) return;
+      if (error.name === 'AbortError') return;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ERR_STREAM_PREMATURE_CLOSE' || code === 'ERR_STREAM_DESTROYED') {
+        return;
+      }
+      onStreamError(error);
+    });
+  }
+
+  if (signal) {
+    const destroyOnAbort = () => {
+      stream.destroy();
+    };
+    if (signal.aborted) {
+      stream.destroy();
+    } else {
+      signal.addEventListener('abort', destroyOnAbort, { once: true });
+      stream.once('close', () => {
+        signal.removeEventListener('abort', destroyOnAbort);
+      });
+    }
+  }
+
   // Node and DOM currently publish structurally equivalent ReadableStream types
   // from separate declarations; Electron's Response consumes the Node stream.
   return Readable.toWeb(stream) as unknown as BodyInit;
@@ -46,13 +73,45 @@ export function parseByteRange(value: string, size: number): ByteRange | null {
   return { start, end: Math.min(requestedEnd, size - 1) };
 }
 
+export interface CreateArtifactResponseOptions {
+  rangeHeader?: string | null;
+  onStreamError?: (error: Error) => void;
+  /** When Chromium cancels a Range fetch (seek), destroy the file stream promptly. */
+  signal?: AbortSignal | null;
+}
+
 /** Build a seekable protocol response while reading only the requested video byte range. */
 export function createArtifactResponse(
   absolutePath: string,
   mimeType: string,
   rangeHeader?: string | null,
   onStreamError?: (error: Error) => void,
+  signal?: AbortSignal | null,
+): Response;
+export function createArtifactResponse(
+  absolutePath: string,
+  mimeType: string,
+  options?: CreateArtifactResponseOptions,
+): Response;
+export function createArtifactResponse(
+  absolutePath: string,
+  mimeType: string,
+  rangeHeaderOrOptions?: string | null | CreateArtifactResponseOptions,
+  onStreamError?: (error: Error) => void,
+  signal?: AbortSignal | null,
 ): Response {
+  const options: CreateArtifactResponseOptions =
+    rangeHeaderOrOptions && typeof rangeHeaderOrOptions === 'object'
+      ? rangeHeaderOrOptions
+      : {
+          rangeHeader: rangeHeaderOrOptions as string | null | undefined,
+          onStreamError,
+          signal,
+        };
+  const rangeHeader = options.rangeHeader;
+  const streamError = options.onStreamError;
+  const abortSignal = options.signal ?? null;
+
   const flags = process.platform === 'win32'
     ? constants.O_RDONLY
     : constants.O_RDONLY | constants.O_NOFOLLOW;
@@ -73,7 +132,7 @@ export function createArtifactResponse(
     return new Response(responseBody(createReadStream(absolutePath, {
       fd: descriptor,
       autoClose: true,
-    }), onStreamError), {
+    }), streamError, abortSignal), {
       status: 200,
       headers: { ...commonHeaders, 'Content-Length': String(size) },
     });
@@ -94,7 +153,7 @@ export function createArtifactResponse(
     autoClose: true,
     start: range.start,
     end: range.end,
-  }), onStreamError), {
+  }), streamError, abortSignal), {
     status: 206,
     headers: {
       ...commonHeaders,

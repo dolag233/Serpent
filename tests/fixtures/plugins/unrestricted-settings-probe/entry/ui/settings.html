@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Unrestricted settings page</title>
+  </head>
+  <body>
+    <main>
+      <h1>Unrestricted settings page</h1>
+      <p id="status">ready</p>
+    </main>
+    <script>
+      window.parent.postMessage({ type: 'plugin-ui.ready', contributionId: 'com.serpent.unrestricted-settings-probe.settings-page' }, '*');
+    </script>
+  </body>
+</html>

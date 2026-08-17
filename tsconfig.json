@@ -26,6 +26,7 @@
     "vite.*.config.ts",
     "vitest.config.ts",
     "eslint.config.mjs",
-    "forge.env.d.ts"
+    "forge.env.d.ts",
+    "extension/chrome.d.ts"
   ]
 }

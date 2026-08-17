@@ -18,13 +18,15 @@
         "opus",
         "swresample",
         "swscale",
-        "vpx"
+        "vpx",
+        "zlib"
       ]
     },
     {
       "name": "openimageio",
       "default-features": false,
       "features": [
+        "libraw",
         "opencolorio",
         "tools"
       ]

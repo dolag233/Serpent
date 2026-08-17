@@ -1,8 +1,18 @@
+import {
+  formatAiLanguagesForPrompt,
+  resolveAnthropicMessagesUrl,
+  resolveDashScopeMultimodalGenerationUrl,
+  resolveGeminiGenerateContentUrl,
+  resolveOpenAiChatCompletionsUrl,
+  resolveOpenAiResponsesUrl,
+  type AiApiFormat,
+} from '../shared/ai-endpoints';
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, type AiSearchPlan, type FilterClause } from '../shared/asset-types';
 import type { PublicErrorReason } from '../shared/protocol/errors';
 
+/** @deprecated Prefer AiApiFormat. Kept for older unit tests that still pass brand ids. */
 export type AiSearchProvider = 'openai' | 'gemini' | 'anthropic';
 
 export class AiSearchPlannerError extends Error {
@@ -170,22 +180,52 @@ Only add a sort when the user explicitly asks for ordering. The ordinary paramet
 
 type Fetch = typeof globalThis.fetch;
 
+function resolveSearchApiFormat(
+  input: { apiFormat?: AiApiFormat; provider?: AiSearchProvider },
+): AiApiFormat {
+  if (input.apiFormat) return input.apiFormat;
+  switch (input.provider) {
+    case 'gemini':
+      return 'gemini_native';
+    case 'anthropic':
+      return 'anthropic';
+    case 'openai':
+    default:
+      return 'openai_chat';
+  }
+}
+
+function searchSystemPrompt(languages?: readonly string[]): string {
+  const langLine = formatAiLanguagesForPrompt(languages ?? ['zh-CN', 'en']);
+  return `${SYSTEM_PROMPT}
+
+Prefer keywords, synonyms, and exclusions that work for search in these languages: ${langLine}.
+When multiple languages are configured, include useful terms in each language where appropriate.`;
+}
+
 export async function planAiSearch(input: {
-  provider: AiSearchProvider;
+  apiFormat?: AiApiFormat;
+  /** @deprecated Prefer apiFormat. */
+  provider?: AiSearchProvider;
   model: string;
   apiKey: string;
   naturalQuery: string;
+  baseUrl?: string;
+  languages?: readonly string[];
   fetchFn?: Fetch;
   timeoutMs?: number;
 }): Promise<AiSearchPlan> {
+  const apiFormat = resolveSearchApiFormat(input);
   const fetchFn = input.fetchFn ?? globalThis.fetch.bind(globalThis);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 30_000);
   try {
-    const response = await fetchFn(...providerRequest(input, controller.signal));
+    const response = await fetchFn(
+      ...providerRequest({ ...input, apiFormat }, controller.signal),
+    );
     if (!response.ok) throw await httpFailure(response);
     const body = await readJson(response);
-    const output = extractProviderOutput(input.provider, body);
+    const output = extractProviderOutput(apiFormat, body);
     return normalizePlan(output);
   } catch (error) {
     if (error instanceof AiSearchPlannerError) throw error;
@@ -199,17 +239,25 @@ export async function planAiSearch(input: {
 }
 
 function providerRequest(
-  input: { provider: AiSearchProvider; model: string; apiKey: string; naturalQuery: string },
+  input: {
+    apiFormat: AiApiFormat;
+    model: string;
+    apiKey: string;
+    naturalQuery: string;
+    baseUrl?: string;
+    languages?: readonly string[];
+  },
   signal: AbortSignal,
 ): Parameters<Fetch> {
-  if (input.provider === 'openai') {
-    return ['https://api.openai.com/v1/chat/completions', {
+  const system = searchSystemPrompt(input.languages);
+  if (input.apiFormat === 'openai_chat') {
+    return [resolveOpenAiChatCompletionsUrl(input.baseUrl), {
       method: 'POST', signal,
       headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: input.model,
         temperature: 0,
-        messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: input.naturalQuery }],
+        messages: [{ role: 'system', content: system }, { role: 'user', content: input.naturalQuery }],
         response_format: {
           type: 'json_schema',
           json_schema: { name: 'serpent_search_plan', strict: true, schema: AI_SEARCH_PLAN_JSON_SCHEMA },
@@ -217,12 +265,55 @@ function providerRequest(
       }),
     }];
   }
-  if (input.provider === 'gemini') {
-    return [`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`, {
+  if (input.apiFormat === 'openai_responses') {
+    return [resolveOpenAiResponsesUrl(input.baseUrl), {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: input.model,
+        temperature: 0,
+        instructions: system,
+        input: [{ role: 'user', content: [{ type: 'input_text', text: input.naturalQuery }] }],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'serpent_search_plan',
+            strict: true,
+            schema: AI_SEARCH_PLAN_JSON_SCHEMA,
+          },
+        },
+      }),
+    }];
+  }
+  if (input.apiFormat === 'dashscope_native') {
+    // A DashScope profile has one selected model. The default qwen3-vl-plus
+    // is a multimodal model, so use its multimodal generation endpoint even
+    // for text-only search planning instead of the text-only model endpoint.
+    return [resolveDashScopeMultimodalGenerationUrl(input.baseUrl), {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${input.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: input.model,
+        input: {
+          messages: [
+            { role: 'system', content: `${system}\nReturn only one JSON object with no Markdown fences.` },
+            { role: 'user', content: input.naturalQuery },
+          ],
+        },
+        parameters: {
+          result_format: 'message',
+          response_format: { type: 'json_object' },
+          temperature: 0,
+        },
+      }),
+    }];
+  }
+  if (input.apiFormat === 'gemini_native') {
+    return [resolveGeminiGenerateContentUrl(input.model, input.baseUrl), {
       method: 'POST', signal,
       headers: { 'x-goog-api-key': input.apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        system_instruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: input.naturalQuery }] }],
         generationConfig: {
           temperature: 0,
@@ -232,7 +323,7 @@ function providerRequest(
       }),
     }];
   }
-  return ['https://api.anthropic.com/v1/messages', {
+  return [resolveAnthropicMessagesUrl(input.baseUrl), {
     method: 'POST', signal,
     headers: {
       'x-api-key': input.apiKey,
@@ -243,7 +334,7 @@ function providerRequest(
       model: input.model,
       max_tokens: 1_024,
       temperature: 0,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: 'user', content: input.naturalQuery }],
       tools: [{
         name: 'serpent_prepare_search',
@@ -263,16 +354,55 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function extractProviderOutput(provider: AiSearchProvider, body: unknown): unknown {
+function extractProviderOutput(apiFormat: AiApiFormat, body: unknown): unknown {
   const record = asRecord(body);
-  if (provider === 'openai') {
+  if (apiFormat === 'openai_responses') {
+    if (typeof record.output_text === 'string' && record.output_text.trim()) {
+      return parseEmbeddedJson(record.output_text);
+    }
+    if (Array.isArray(record.output)) {
+      let content = '';
+      for (const item of record.output) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        if (row.type !== 'message' || !Array.isArray(row.content)) continue;
+        for (const part of row.content) {
+          if (!part || typeof part !== 'object') continue;
+          const block = part as Record<string, unknown>;
+          if (
+            (block.type === 'output_text' || block.type === 'text') &&
+            typeof block.text === 'string'
+          ) {
+            content += block.text;
+          }
+        }
+      }
+      if (content.trim()) return parseEmbeddedJson(content);
+    }
+    throw new AiSearchPlannerError(
+      'AI_INVALID_RESPONSE',
+      'OpenAI Responses output was empty.',
+    );
+  }
+  if (apiFormat === 'openai_chat') {
     const message = asRecord(asRecord(asArray(record.choices)[0]).message);
     if (typeof message.refusal === 'string' && message.refusal.trim()) {
       throw new AiSearchPlannerError('AI_REFUSED', 'The provider refused to prepare this search.');
     }
     return parseEmbeddedJson(message.content);
   }
-  if (provider === 'gemini') {
+  if (apiFormat === 'dashscope_native') {
+    const output = asRecord(record.output);
+    const choice = asRecord(asArray(output.choices)[0]);
+    const content = asRecord(choice.message).content;
+    const text = typeof content === 'string'
+      ? content
+      : asArray(content)
+        .map((part) => asRecord(part).text)
+        .find((value): value is string => typeof value === 'string');
+    return parseEmbeddedJson(text);
+  }
+  if (apiFormat === 'gemini_native') {
     const feedback = asRecord(record.promptFeedback);
     if (typeof feedback.blockReason === 'string' && feedback.blockReason) {
       throw new AiSearchPlannerError('AI_REFUSED', 'The provider blocked this search request.');

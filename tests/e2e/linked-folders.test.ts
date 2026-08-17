@@ -10,7 +10,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { assetCard, resolveElectronExecutablePath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -40,6 +40,7 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_LINKED_SOURCE: sourceRoot,
@@ -50,31 +51,31 @@ test('imports a linked folder, reconciles external changes, and relinks after th
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.getByRole('button', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
 
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
+    await window
+      .getByLabel('当前浏览范围')
+      .getByRole('button', { name: 'source', exact: true })
+      .click();
 
-    await window.getByRole('button', { name: /a\.png/i }).click();
-    await window.getByRole('button', { name: '删除（链接）' }).click();
-    await expect(window.getByRole('heading', { name: '删除链接资产' })).toBeVisible();
-    const deleteSource = window.getByLabel('同时删除磁盘源文件');
-    await expect(deleteSource).not.toBeChecked();
-    await deleteSource.check();
-    await expect(window.getByRole('button', { name: '移入系统回收站并移除' })).toBeVisible();
-    await window.getByRole('dialog').locator('.secondary-button').click();
+    await assetCard(window, 'a.png').click({ button: 'right' });
+    await expect(window.getByRole('menuitem', { name: '移入回收站' })).toBeVisible();
+    await window.keyboard.press('Escape');
 
-    await window.getByRole('button', { name: /delete-me\.png/i }).click();
-    await window.getByRole('button', { name: '删除（链接）' }).click();
-    await window.getByLabel('同时删除磁盘源文件').check();
-    await window.getByRole('button', { name: '移入系统回收站并移除' }).click();
+    await assetCard(window, 'delete-me.png').click({ button: 'right' });
+    await window.getByRole('menuitem', { name: '移入回收站' }).click();
     await expect(window.getByText('delete-me.png', { exact: true })).toHaveCount(0);
     expect(existsSync(path.join(sourceRoot, 'delete-me.png'))).toBe(false);
 
@@ -94,13 +95,15 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     // Source root removed: folder flips to offline, all linked assets missing.
     rmSync(sourceRoot, { recursive: true, force: true });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
+    await expect(
+      window.locator('.missing-overlay[aria-label="文件丢失"]').first(),
+    ).toBeVisible();
     const afterOffline = await listAllAssets(window);
     expect(afterOffline.every((asset) => asset.availability === 'missing')).toBe(true);
 
     // Relink to the new root that has a.png (different content) but not b.png/c.png.
     writeFileSync(path.join(newRoot, 'a.png'), Buffer.from('aaa-restored'));
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
     const afterRelink = await listAllAssets(window);
     const aAfterRelink = afterRelink.find((asset) => asset.displayName === 'a.png');
     const bAfterRelink = afterRelink.find((asset) => asset.displayName === 'b.png');
@@ -187,18 +190,22 @@ test('restores a linked library after a full app restart', async () => {
   try {
     let window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
     // Link the folder.
-    await window.getByRole('button', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
 
-    // All three assets should be visible.
+    // The root shows direct files and a virtual child-folder row; nested files
+    // appear after entering that row.
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
     // Remember asset IDs for the restart comparison.
@@ -215,11 +222,17 @@ test('restores a linked library after a full app restart', async () => {
     window = await application.firstWindow();
 
     // Wait for the library to be restored and the linked folder to be visible.
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible({ timeout: 15_000 });
-    await window.getByRole('button', { name: 'source' }).click();
+    const restoredSource = window
+      .locator('button.nav-row[data-nav-folder-kind="linked"]')
+      .filter({ hasText: 'source' })
+      .first();
+    await expect(restoredSource).toBeVisible({ timeout: 15_000 });
+    await restoredSource.click();
 
     await expect(window.getByText('a.png', { exact: true })).toBeVisible();
     await expect(window.getByText('b.png', { exact: true })).toBeVisible();
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'sub', exact: true }).click();
     await expect(window.getByText('c.png', { exact: true })).toBeVisible();
 
     const afterRestart = await listAllAssets(window);
@@ -271,6 +284,7 @@ test('applies default ignore rules — .git and node_modules are not registered 
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_LINKED_SOURCE: sourceRoot,
@@ -280,13 +294,14 @@ test('applies default ignore rules — .git and node_modules are not registered 
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.getByRole('button', { name: '导入链接文件夹' }).click();
-    await expect(window.getByRole('button', { name: 'source' })).toBeVisible();
-    await window.getByRole('button', { name: 'source' }).click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
+    await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
+    await window.getByRole('button', { name: 'source', exact: true }).click();
 
     // Only the real assets should be visible.
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();

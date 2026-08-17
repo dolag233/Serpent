@@ -8,10 +8,25 @@ import { resolveElectronExecutablePath } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
 
-const VALID_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
+// Windows 上 Playwright 的鼠标拖拽会被真实鼠标位置干扰（hover 状态混叠、
+// CDP 输入与真实输入冲突；mac 无此问题——用户实测 2026-08-12）。拖拽类
+// 测试在 Windows 跳过；框选几何/选择逻辑由 tests/unit/marquee-selection
+// .test.ts 的纯函数单测覆盖。
+function skipDragOnWindows(): void {
+  test.skip(
+    process.platform === "win32",
+    "真实鼠标位置干扰 Playwright 拖拽（仅 Windows）",
+  );
+}
+
+/**
+ * Use distinct text payloads for selection-only E2E fixtures. The tests cover
+ * geometry and keyboard selection, not media decoding, so a plain text asset
+ * avoids routing malformed image fixtures through the thumbnail worker.
+ */
+function textWithToken(token: string): Buffer {
+  return Buffer.from(`marquee-${token}`, "utf8");
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,9 +51,9 @@ async function setupLibrary(assetCount: number) {
   const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
     const sourcePath = path.join(
       sourceRoot,
-      `marquee-${index.toString().padStart(2, "0")}.png`,
+      `marquee-${index.toString().padStart(2, "0")}.txt`,
     );
-    writeFileSync(sourcePath, VALID_PNG);
+    writeFileSync(sourcePath, textWithToken(index.toString().padStart(2, "0")));
     return sourcePath;
   });
 
@@ -53,6 +68,7 @@ async function setupLibrary(assetCount: number) {
       SERPENT_E2E: "1",
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FILES: sourcePaths.join(path.delimiter),
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "profile"),
     },
   });
 
@@ -67,8 +83,13 @@ async function createAndImport(
   expectedCardCount: number,
 ) {
   await window.getByRole("button", { name: "创建资源库" }).click();
-  await window.getByLabel("名称").fill(libraryName);
+  await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
   await window.getByRole("button", { name: "创建", exact: true }).click();
+  // Library creation commits through Main/Worker asynchronously. Waiting for
+  // the empty browse surface makes the following import click observe the
+  // same ready state as a user, instead of racing the initial library.opened
+  // refresh (which otherwise intermittently leaves the button absent).
+  await expect(window.getByRole("heading", { name: "导入资产以开始整理" })).toBeVisible();
   await window
     .getByRole("button", { name: "导入文件", exact: true })
     .first()
@@ -76,13 +97,59 @@ async function createAndImport(
   await expect(window.locator(".asset-card")).toHaveCount(expectedCardCount, {
     timeout: 30_000,
   });
+  // Import reveal intentionally selects the imported set. Each selection
+  // contract below starts from an empty selection so the gesture under test is
+  // the only source of selected cards.
+  await window.keyboard.press("Escape");
+  await expect.poll(() => selectedCount(window)).toBe(0);
 }
+
+/** Count selected asset cards via .is-selected CSS class. */
+async function selectedCount(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  page: any,
+): Promise<number> {
+  return page.evaluate(
+    () => document.querySelectorAll(".asset-card.is-selected").length,
+  );
+}
+
+test("masonry Tab follows the left-to-right reading order", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(5);
+  try {
+    await createAndImport(window, "瀑布流键盘顺序验收", 5);
+    const masonryButton = window.getByRole("button", { name: "瀑布流视图" });
+    if ((await masonryButton.getAttribute("aria-pressed")) !== "true") {
+      await masonryButton.click();
+    }
+    await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
+    await expect(window.locator(".masonry-columns")).toBeVisible();
+
+    const firstCard = window.locator('.asset-card[title="marquee-00.txt"]');
+    const secondCard = window.locator('.asset-card[title="marquee-01.txt"]');
+    await firstCard.click();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await firstCard.focus();
+    await window.keyboard.press("Tab");
+    await expect(secondCard).toBeFocused();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
+    await window.keyboard.press("Shift+Tab");
+    await expect(firstCard).toBeFocused();
+    await expect(firstCard).toHaveClass(/is-selected/);
+    await expect(secondCard).not.toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Test 1 — Marquee drag-select in grid mode
 // ---------------------------------------------------------------------------
 
 test("marquee-selects multiple cards in grid mode", async () => {
+  skipDragOnWindows();
   const { temporaryRoot, application, window } = await setupLibrary(4);
   try {
     await createAndImport(window, "框选平铺验收", 4);
@@ -120,17 +187,17 @@ test("marquee-selects multiple cards in grid mode", async () => {
     await window.mouse.up();
 
     // All 4 cards should be selected
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
 
     // Click empty canvas to clear (checks marquee-to-empty behavior)
     await window.mouse.click(canvas.x + 5, canvas.y + 5);
-    await expect(window.getByText("已选择 4 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Ctrl/Cmd-marquee: select first 2 via normal click, then shift-marquee
     // First, click card 0 then Ctrl+click card 1
     await cards.nth(0).click();
     await cards.nth(1).click({ modifiers: [additiveModifier] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Shift-marquee to add remaining 2 cards
     // Start marquee from slightly above card 2
@@ -150,7 +217,466 @@ test("marquee-selects multiple cards in grid mode", async () => {
     await window.mouse.up();
     await window.keyboard.up("Shift");
 
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee invalidates card geometry after layout and size changes", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(8);
+  try {
+    await createAndImport(window, "布局切换后框选缓存验收", 8);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    // Prime the geometry cache in grid mode.
+    const firstGridCard = window.locator(".asset-card").first();
+    const firstGridBox = await firstGridCard.boundingBox();
+    if (!firstGridBox) throw new Error("Grid card is not visible");
+    await window.mouse.move(firstGridBox.x - 6, firstGridBox.y - 6);
+    await window.mouse.down();
+    await window.mouse.move(
+      firstGridBox.x + firstGridBox.width + 6,
+      firstGridBox.y + firstGridBox.height + 6,
+      { steps: 8 },
+    );
+    await window.mouse.up();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    await window.keyboard.press("Escape");
+    await expect.poll(() => selectedCount(window)).toBe(0);
+
+    // Both changes can reflow cards while the canvas itself keeps the same
+    // client size. A stale cache would use the old grid rectangles here.
+    await window.getByRole("button", { name: "瀑布流视图" }).click();
+    const sizeControl = window.locator(
+      '.asset-size-control input[type="range"]',
+    );
+    await sizeControl.fill("0");
+    await expect(window.locator(".asset-grid")).toHaveClass(/is-masonry/);
+    await expect.poll(() => sizeControl.inputValue()).toBe("0");
+
+    const target = window.locator(".asset-card").nth(3);
+    await expect(target).toBeVisible();
+    const targetBox = await target.boundingBox();
+    if (!targetBox) throw new Error("Masonry target card is not visible");
+    await window.mouse.move(targetBox.x - 4, targetBox.y - 4);
+    await window.mouse.down();
+    await window.mouse.move(
+      targetBox.x + targetBox.width + 4,
+      targetBox.y + targetBox.height + 4,
+      { steps: 8 },
+    );
+    await window.mouse.up();
+
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    await expect(target).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee keeps its viewport range aligned after the canvas is scrolled", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "滚动后框选坐标验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      canvas.scrollTop = Math.min(360, canvas.scrollHeight - canvas.clientHeight);
+      const canvasRect = canvas.getBoundingClientRect();
+      const cards = Array.from(
+        canvas.querySelectorAll<HTMLElement>(".asset-card[data-asset-id]"),
+      )
+        .map((card) => {
+          const rect = card.getBoundingClientRect();
+          return {
+            id: card.dataset.assetId ?? "",
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+          };
+        })
+        .filter((card) => card.id);
+      const fullyVisibleCards = cards.filter(
+        (card) =>
+          card.top > canvasRect.top + 50 &&
+          card.bottom < canvasRect.bottom - 50,
+      );
+      const first = fullyVisibleCards[0];
+      if (!first) throw new Error("No fully visible card after scrolling");
+      const second = fullyVisibleCards.find(
+        (card) => Math.abs(card.top - first.top) < 2 && card.left > first.right,
+      );
+      if (!second) throw new Error("No second card in the visible row");
+      const start = { x: first.left - 8, y: first.top - 8 };
+      const end = { x: second.right + 8, y: second.bottom + 8 };
+      const expected = cards
+        .filter(
+          (card) =>
+            card.left < end.x &&
+            card.right > start.x &&
+            card.top < end.y &&
+            card.bottom > start.y,
+        )
+        .map((card) => card.id);
+      return {
+        canvas: {
+          left: canvasRect.left,
+          top: canvasRect.top,
+          right: canvasRect.right,
+          bottom: canvasRect.bottom,
+        },
+        start,
+        end,
+        expected,
+        scrollTop: canvas.scrollTop,
+      };
+    });
+    expect(geometry.scrollTop).toBeGreaterThan(0);
+    expect(geometry.start.x).toBeGreaterThan(geometry.canvas.left);
+    expect(geometry.start.y).toBeGreaterThan(geometry.canvas.top);
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 12 });
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const marqueeBox = await marquee.boundingBox();
+    expect(marqueeBox).not.toBeNull();
+    expect(marqueeBox!.x).toBeCloseTo(geometry.start.x, 0);
+    expect(marqueeBox!.y).toBeCloseTo(geometry.start.y, 0);
+    expect(marqueeBox!.width).toBeCloseTo(geometry.end.x - geometry.start.x, 0);
+    expect(marqueeBox!.height).toBeCloseTo(geometry.end.y - geometry.start.y, 0);
+
+    await window.mouse.up();
+    const selectedIds = await window.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>(".asset-card.is-selected"))
+        .map((card) => card.dataset.assetId ?? "")
+        .filter(Boolean),
+    );
+    expect(selectedIds.sort()).toEqual([...geometry.expected].sort());
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee keeps its anchor attached while auto-scroll moves the canvas", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "滚动中框选锚点验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const maxScrollTop = canvas.scrollHeight - canvas.clientHeight;
+      canvas.scrollTop = Math.min(300, maxScrollTop);
+      const rect = canvas.getBoundingClientRect();
+      return {
+        canvas: {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+        },
+        initialScrollTop: canvas.scrollTop,
+        start: {
+          x: rect.left + 5,
+          y: rect.top + rect.height / 2,
+        },
+        end: {
+          x: rect.right - 24,
+          y: rect.bottom - 5,
+        },
+      };
+    });
+    expect(geometry.initialScrollTop).toBeGreaterThan(0);
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 20 });
+
+    await expect
+      .poll(
+        () =>
+          window.evaluate(() => {
+            const canvas = document.querySelector<HTMLElement>(
+              ".workspace-canvas",
+            );
+            if (!canvas) return false;
+            return (
+              canvas.scrollTop >=
+              canvas.scrollHeight - canvas.clientHeight - 2
+            );
+          }),
+        { timeout: 20_000 },
+      )
+      .toBe(true);
+
+    const finalScrollTop = await window.evaluate(
+      () => document.querySelector<HTMLElement>(".workspace-canvas")?.scrollTop ?? 0,
+    );
+    expect(finalScrollTop).toBeGreaterThan(geometry.initialScrollTop);
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const marqueeBox = await marquee.boundingBox();
+    expect(marqueeBox).not.toBeNull();
+
+    // The drag anchor is content-local. Once scrolling moves it above the
+    // viewport, the visible marquee must be clipped to the canvas top rather
+    // than remaining at the anchor's old clientY.
+    expect(marqueeBox!.y).toBeCloseTo(geometry.canvas.top, 0);
+
+    await window.mouse.up();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+test("marquee refreshes its visible range when the canvas scrolls during a drag", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(40);
+  try {
+    await createAndImport(window, "拖拽中滚动画布验收", 40);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    if ((await gridButton.getAttribute("aria-pressed")) !== "true") {
+      await gridButton.click();
+    }
+
+    const geometry = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const maxScrollTop = canvas.scrollHeight - canvas.clientHeight;
+      canvas.scrollTop = Math.min(250, maxScrollTop);
+      const rect = canvas.getBoundingClientRect();
+      const start = {
+        x: rect.left + 5,
+        y: rect.top + rect.height * 0.35,
+      };
+      const end = {
+        x: rect.right - 24,
+        y: rect.top + rect.height * 0.65,
+      };
+      return {
+        start,
+        end,
+        initialScrollTop: canvas.scrollTop,
+      };
+    });
+
+    await window.mouse.move(geometry.start.x, geometry.start.y);
+    await window.mouse.down();
+    await window.mouse.move(geometry.end.x, geometry.end.y, { steps: 12 });
+
+    const marquee = window.locator(".marquee-selection-box");
+    await expect(marquee).toBeVisible();
+    const beforeScrollBox = await marquee.boundingBox();
+    expect(beforeScrollBox).not.toBeNull();
+
+    const scrollDelta = await window.evaluate(() => {
+      const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+      if (!canvas) throw new Error("workspace-canvas is not visible");
+      const previous = canvas.scrollTop;
+      canvas.scrollTop = Math.min(
+        previous + 120,
+        canvas.scrollHeight - canvas.clientHeight,
+      );
+      return canvas.scrollTop - previous;
+    });
+    expect(scrollDelta).toBeGreaterThan(0);
+
+    await expect
+      .poll(async () => (await marquee.boundingBox())?.y ?? null)
+      .toBeCloseTo(beforeScrollBox!.y - scrollDelta, 0);
+
+    await window.mouse.up();
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 1b — Plain marquee (no modifier) replaces an existing selection
+// ---------------------------------------------------------------------------
+
+test("blank-drag marquee without modifiers replaces the existing selection", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选替换验收", 4);
+    const additiveModifier =
+      process.platform === "darwin" ? "Meta" : "Control";
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select cards 0 and 1 via click + additive-modifier click.
+    await cards.nth(0).click();
+    await cards.nth(1).click({ modifiers: [additiveModifier] });
+    await expect.poll(() => selectedCount(window)).toBe(2);
+
+    // Marquee-drag over cards 2-3 only, with NO modifier held.
+    const card2Box = await cards.nth(2).boundingBox();
+    const card3Box = await cards.nth(3).boundingBox();
+    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+
+    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.down();
+    await window.mouse.move(
+      card3Box.x + card3Box.width + 10,
+      card3Box.y + card3Box.height + 10,
+      { steps: 15 },
+    );
+    await window.mouse.up();
+
+    // Selection must be REPLACED by the marquee hit set — cards 0/1 are
+    // deselected, only cards 2/3 remain selected.
+    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect(cards.nth(0)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(1)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+    await expect(cards.nth(3)).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 1c — Ctrl/Cmd-held marquee toggles the hit set against the existing
+//            selection, without changing the operation if the key is
+//            released mid-drag (modifier snapshot is taken at mousedown).
+// ---------------------------------------------------------------------------
+
+test("Ctrl/Cmd-held marquee toggles hit assets and snapshots the modifier", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选并集验收", 4);
+    const additiveModifier =
+      process.platform === "darwin" ? "Meta" : "Control";
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select card 0 only.
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+
+    // Ctrl/Cmd-held marquee over cards 0-2. Card 0 starts selected, so it must
+    // be removed while cards 1-2 are added. Release
+    // the modifier key before mouseup to prove the op was snapshotted at
+    // mousedown and does not flip back to "replace" mid-drag.
+    const card0Box = await cards.nth(0).boundingBox();
+    const card2Box = await cards.nth(2).boundingBox();
+    if (!card0Box || !card2Box) throw new Error("Cards 0-2 not visible");
+
+    await window.keyboard.down(additiveModifier);
+    await window.mouse.move(card0Box.x - 10, card0Box.y - 10);
+    await window.mouse.down();
+    await window.mouse.move(
+      card2Box.x + card2Box.width + 10,
+      card2Box.y + card2Box.height + 10,
+      { steps: 15 },
+    );
+    await window.keyboard.up(additiveModifier);
+    await window.mouse.up();
+
+    await expect.poll(() => selectedCount(window)).toBe(2);
+    await expect(cards.nth(0)).not.toHaveClass(/is-selected/);
+    await expect(cards.nth(1)).toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 1d — Shift-held marquee unions the hit set into the existing
+//            selection (same union semantics as Ctrl/Cmd for marquee).
+// ---------------------------------------------------------------------------
+
+test("Shift-held marquee unions the hit set into the existing selection", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(4);
+  try {
+    await createAndImport(window, "框选Shift并集验收", 4);
+
+    const gridButton = window.getByRole("button", { name: "平铺视图" });
+    const isGrid = (await gridButton.getAttribute("aria-pressed")) === "true";
+    if (!isGrid) await gridButton.click();
+    await expect(gridButton).toHaveAttribute("aria-pressed", "true");
+
+    const cards = window.locator(".asset-card");
+
+    // Pre-select card 0 only.
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+
+    // Shift-held marquee over cards 2-3 (not touching card 0).
+    const card2Box = await cards.nth(2).boundingBox();
+    const card3Box = await cards.nth(3).boundingBox();
+    if (!card2Box || !card3Box) throw new Error("Cards 2-3 not visible");
+
+    // Reproduce the real navigation-to-canvas journey: the current-folder
+    // button can still own focus when Shift changes Chromium to keyboard focus
+    // modality. Starting the marquee must release that focus so the folder
+    // does not gain an unrelated focus highlight while asset selection is in
+    // progress.
+    const activeFolder = window.locator(".nav-row.is-active").first();
+    await activeFolder.focus();
+    await expect(activeFolder).toBeFocused();
+
+    await window.keyboard.down("Shift");
+    await window.mouse.move(card2Box.x - 10, card2Box.y - 10);
+    await window.mouse.down();
+    await expect(activeFolder).not.toBeFocused();
+    await window.mouse.move(
+      card3Box.x + card3Box.width + 10,
+      card3Box.y + card3Box.height + 10,
+      { steps: 15 },
+    );
+    await window.mouse.up();
+    await window.keyboard.up("Shift");
+
+    // Selection must be the UNION of the initial selection (card 0) and the
+    // hit set (cards 2-3) — card 0 stays selected alongside cards 2-3.
+    await expect.poll(() => selectedCount(window)).toBe(3);
+    await expect(cards.nth(0)).toHaveClass(/is-selected/);
+    await expect(cards.nth(2)).toHaveClass(/is-selected/);
+    await expect(cards.nth(3)).toHaveClass(/is-selected/);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -162,6 +688,7 @@ test("marquee-selects multiple cards in grid mode", async () => {
 // ---------------------------------------------------------------------------
 
 test("marquee-selects in masonry mode", async () => {
+  skipDragOnWindows();
   const { temporaryRoot, application, window } = await setupLibrary(4);
   try {
     await createAndImport(window, "框选瀑布流验收", 4);
@@ -229,7 +756,7 @@ test("Ctrl/Cmd+Shift+click appends range to existing selection", async () => {
 
     // Step 1: Click first card normally (single selection)
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Step 2: Ctrl/Cmd+Shift+click last card — should append range
     await cards.last().click({
@@ -237,7 +764,7 @@ test("Ctrl/Cmd+Shift+click appends range to existing selection", async () => {
     });
 
     // All 4 cards should now be selected (range from 0 to 3 appended to existing [0])
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -257,28 +784,28 @@ test("Esc clears selection", async () => {
 
     // Plain click selects one
     await cards.first().click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Escape clears
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Range-select both via Shift+click
     await cards.first().click();
     await cards.last().click({ modifiers: ["Shift"] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Escape clears again
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 2 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Verify selection is empty — clicking a card selects anew
     await cards.first().click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Right-clicking an unselected card selects it
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
     await cards.first().click({ button: "right" });
     // The right-click handler selects the card before opening context menu
     // Verify the context menu appears (implies selection was set)
@@ -310,31 +837,31 @@ test("Ctrl/Cmd+click toggle deselects and re-selects a card", async () => {
 
     // Select card 0 with plain click
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl/Cmd+click card 0 — toggle DESELECT
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Ctrl/Cmd+click card 0 again — toggle re-add
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Plain click on already-selected sole card keeps it selected (no deselect)
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl/Cmd+click card 1 — add to multi-selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Ctrl/Cmd+click card 1 — toggle remove from multi-selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Plain click card 2 — replace single selection
     await cards.nth(2).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
     await expect(cards.nth(2)).toHaveClass(/is-selected/);
   } finally {
     await application.close();
@@ -347,6 +874,7 @@ test("Ctrl/Cmd+click toggle deselects and re-selects a card", async () => {
 // ---------------------------------------------------------------------------
 
 test("marquee then Shift+click extends correctly", async () => {
+  skipDragOnWindows();
   const { temporaryRoot, application, window } = await setupLibrary(6);
   try {
     await createAndImport(window, "框选后Shift扩展验收", 6);
@@ -369,17 +897,17 @@ test("marquee then Shift+click extends correctly", async () => {
     await window.mouse.move(mqEndX, mqEndY, { steps: 15 });
     await window.mouse.up();
 
-    await expect(window.getByText("已选择 3 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(3);
 
     // Shift+click card 5 — should extend range from marquee anchor (card 2) through card 5
     await cards.nth(5).click({ modifiers: ["Shift"] });
 
     // Range from card 2 to card 5 = 4 cards
-    await expect(window.getByText("已选择 4 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(4);
 
     // Clear and verify: click empty canvas
     await window.mouse.click(canvas.x + 5, canvas.y + 5);
-    await expect(window.getByText("已选择 4 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -400,37 +928,62 @@ test("selection survives view-switch and card-size zoom", async () => {
       name: "瀑布流视图",
     });
 
-    // Select 2 cards in grid mode
+    // Select 2 cards in grid mode. Import auto-selects all 4 and re-applies
+    // that reveal selection on a 280ms settle timer (use-pending-asset-reveal),
+    // so wait out the settle, clear the reveal selection with a blank-canvas
+    // click, then build a clean 2-selection.
     const cards = window.locator(".asset-card");
+    await window.waitForTimeout(600);
+    const canvasForClear = await canvasBox(window);
+    await window.mouse.click(
+      canvasForClear.x + canvasForClear.width - 8,
+      canvasForClear.y + canvasForClear.height - 8,
+    );
+    await expect.poll(() => selectedCount(window)).toBe(0);
     await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
     await cards.nth(1).click({
       modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
     });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
-    // Switch to masonry — selection must survive
+    // Switch to masonry — selection must survive. Re-query .asset-card after
+    // each switch because the grid fully re-mounts the cards on view change.
     await masonryButton.click();
     await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
-    await window.waitForTimeout(500);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
 
     // Switch back to grid — selection must survive
     await gridButton.click();
     await expect(gridButton).toHaveAttribute("aria-pressed", "true");
-    await window.waitForTimeout(500);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
 
-    // Card-size zoom via Ctrl+wheel — selection must survive
+    // Card-size zoom via Ctrl+wheel — selection must survive. The zoom handler
+    // requires ctrlKey, so hold the modifier key across the wheel events
+    // (mouse.wheel's own modifier option does not reach the DOM wheel event).
     const canvas = await canvasBox(window);
     const cx = canvas.x + canvas.width / 2;
     const cy = canvas.y + canvas.height / 2;
+    const zoomModifier = process.platform === "darwin" ? "Meta" : "Control";
     await window.mouse.move(cx, cy);
-    await window.mouse.wheel(0, -100); // zoom in
-    await window.waitForTimeout(200);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
-    await window.mouse.wheel(0, 100); // zoom out
-    await window.waitForTimeout(200);
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await window.keyboard.down(zoomModifier);
+    await window.mouse.wheel(0, -480); // zoom in (several notches)
+    await window.keyboard.up(zoomModifier);
+    await window.waitForTimeout(500);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
+    await window.keyboard.down(zoomModifier);
+    await window.mouse.wheel(0, 480); // zoom out
+    await window.keyboard.up(zoomModifier);
+    await window.waitForTimeout(500);
+    await expect
+      .poll(() => selectedCount(window), { timeout: 10_000 })
+      .toBe(2);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -451,26 +1004,26 @@ test("Ctrl/Cmd toggle adds then removes the same card", async () => {
 
     // Start with card 0 selected
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Ctrl+click card 1 — add to selection
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 2 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(2);
 
     // Ctrl+click card 1 again — remove from selection, keep card 0
     await cards.nth(1).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Verify card 0 is still selected (the sole selected card)
     await expect(cards.nth(0)).toHaveClass(/is-selected/);
 
     // Ctrl+click card 0 — remove it, selection should be empty
     await cards.nth(0).click({ modifiers: [mod] });
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
 
     // Plain click card 2 — fresh selection
     await cards.nth(2).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -481,10 +1034,11 @@ test("Ctrl/Cmd toggle adds then removes the same card", async () => {
 // Test 9 — Masonry-mode auto-scroll during marquee
 // ---------------------------------------------------------------------------
 
-test("masonry marquee auto-scrolls when pointer is near bottom edge", async () => {
-  const { temporaryRoot, application, window } = await setupLibrary(12);
+test("masonry marquee auto-scroll preserves first, last, and along-path selections", async () => {
+  skipDragOnWindows();
+  const { temporaryRoot, application, window } = await setupLibrary(40);
   try {
-    await createAndImport(window, "自动滚动画布验收", 12);
+    await createAndImport(window, "自动滚动画布验收", 40);
 
     // Switch to masonry mode
     const masonryButton = window.getByRole("button", {
@@ -496,46 +1050,97 @@ test("masonry marquee auto-scrolls when pointer is near bottom edge", async () =
 
     const cvs = await canvasBox(window);
 
-    // Ensure the canvas IS scrollable (content taller than viewport)
-    const initialScroll = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.scrollTop ?? 0,
-    );
-    const scrollHeight = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.scrollHeight ?? 0,
-    );
-    const clientHeight = await window.evaluate(
-      () => document.querySelector(".workspace-canvas")?.clientHeight ?? 0,
-    );
-    // Skip test if content fits without scrolling
-    if (scrollHeight <= clientHeight) {
-      // Not scrollable with 12 assets — try zooming out to fit more
-      await window.mouse.move(cvs.x + cvs.width / 2, cvs.y + cvs.height / 2);
-      await window.mouse.wheel(0, -500); // zoom out to make cards smaller
-      await window.waitForTimeout(500);
-    }
+    // Record which asset IDs are visible before the marquee.
+    const initialVisibleIds: string[] = await window.evaluate(() => {
+      const cards = document.querySelectorAll<HTMLElement>(".asset-card");
+      const canvas = document.querySelector(".workspace-canvas");
+      if (!canvas) return [];
+      const canvasRect = canvas.getBoundingClientRect();
+      const visible: string[] = [];
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (
+          rect.bottom > canvasRect.top &&
+          rect.top < canvasRect.bottom &&
+          rect.left < canvasRect.right &&
+          rect.right > canvasRect.left
+        ) {
+          const id = card.dataset.assetId;
+          if (id) visible.push(id);
+        }
+      }
+      return visible;
+    });
 
-    // Start marquee from within canvas, drag toward bottom edge
-    const startX = cvs.x + 50;
-    const startY = cvs.y + clientHeight - 50;
+    // Start marquee above the topmost visible card.
+    const safeStartY = await window.evaluate((canvasTop: number) => {
+      const cards = document.querySelectorAll<HTMLElement>(".asset-card");
+      let minY = Infinity;
+      for (const card of cards) {
+        const rect = card.getBoundingClientRect();
+        if (rect.top < minY) minY = rect.top;
+      }
+      return Math.max(canvasTop + 5, minY - 15);
+    }, cvs.y);
+    const startX = cvs.x + 30;
+    const startY = safeStartY;
     await window.mouse.move(startX, startY);
     await window.mouse.down();
 
-    // Drag down toward the auto-scroll zone (bottom 40px) and stay there
+    // Drag down into the auto-scroll zone at the bottom edge of the canvas
     const endX = cvs.x + cvs.width - 50;
-    const endY = cvs.y + clientHeight - 5; // inside auto-scroll zone
-    await window.mouse.move(endX, endY, { steps: 30 });
+    const endY = cvs.y + cvs.height - 5; // inside auto-scroll zone
+    await window.mouse.move(endX, endY, { steps: 20 });
 
-    // Brief wait for auto-scroll to take effect
-    await window.waitForTimeout(500);
+    // Keep the pointer still at the edge. The RAF loop must continue scrolling
+    // without any additional mousemove events until the bottom is reached.
+    await expect
+      .poll(
+        () =>
+          window.evaluate(() => {
+            const canvas = document.querySelector(".workspace-canvas");
+            if (!canvas) return false;
+            return (
+              canvas.scrollTop >=
+              canvas.scrollHeight - canvas.clientHeight - 2
+            );
+          }),
+        // CI can briefly throttle Electron's RAF loop while other test
+        // processes finish. Keep the assertion on reaching the true bottom,
+        // but allow enough wall time for a throttled renderer.
+        { timeout: 20_000 },
+      )
+      .toBe(true);
 
     const finalScroll = await window.evaluate(
       () => document.querySelector(".workspace-canvas")?.scrollTop ?? 0,
     );
 
     // Auto-scroll should have moved the scroll position
-    expect(finalScroll).toBeGreaterThan(initialScroll);
+    expect(finalScroll).toBeGreaterThan(0);
 
     await window.mouse.up();
+
+    // The selection must retain the first card encountered before scrolling,
+    // include the final card at the bottom, and include cards along the path.
+    const cards = window.locator(".asset-card");
+    await expect(cards.first()).toHaveClass(/is-selected/);
+    await expect(cards.last()).toHaveClass(/is-selected/);
+    expect(await selectedCount(window)).toBeGreaterThan(2);
+
+    // At least one selected asset was NOT visible before the auto-scroll.
+    const selectedIds: string[] = await window.evaluate(() => {
+      const cards = document.querySelectorAll<HTMLElement>(
+        ".asset-card.is-selected",
+      );
+      return Array.from(cards)
+        .map((c) => c.dataset.assetId ?? "")
+        .filter(Boolean);
+    });
+    const newlyVisibleSelected = selectedIds.filter(
+      (id) => !initialVisibleIds.includes(id),
+    );
+    expect(newlyVisibleSelected.length).toBeGreaterThan(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });
@@ -556,7 +1161,7 @@ test("context-menu Escape dismisses menu then second Escape clears selection", a
 
     // Select a card
     await cards.nth(0).click();
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Right-click opens context menu (selects the card)
     await cards.nth(0).click({ button: "right" });
@@ -569,11 +1174,43 @@ test("context-menu Escape dismisses menu then second Escape clears selection", a
     await expect(
       window.getByRole("menuitem", { name: "打开" }),
     ).toHaveCount(0, { timeout: 3000 });
-    await expect(window.getByText("已选择 1 项")).toBeVisible();
+    await expect.poll(() => selectedCount(window)).toBe(1);
 
     // Second Escape: now clears the selection
     await window.keyboard.press("Escape");
-    await expect(window.getByText("已选择 1 项")).toHaveCount(0);
+    await expect.poll(() => selectedCount(window)).toBe(0);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 11 — Delete key trashes selected managed assets via keyboard
+// ---------------------------------------------------------------------------
+
+test("Delete key trashes selected managed assets", async () => {
+  const { temporaryRoot, application, window } = await setupLibrary(3);
+  try {
+    await createAndImport(window, "删除键验收", 3);
+
+    // Select two cards via Cmd+click
+    const cards = window.locator(".asset-card");
+    await cards.nth(0).click();
+    await expect.poll(() => selectedCount(window)).toBe(1);
+    const multiSelectModifier: "Meta" | "Control" =
+      process.platform === "darwin" ? "Meta" : "Control";
+    await cards.nth(1).click({ modifiers: [multiSelectModifier] });
+    await expect.poll(() => selectedCount(window)).toBe(2);
+
+    // Press Delete — should move selected managed assets to trash
+    await window.keyboard.press(
+      process.platform === "darwin" ? "Meta+Backspace" : "Delete",
+    );
+    await expect(window.locator(".workspace-notice")).toContainText("已移入回收站", {
+      timeout: 10_000,
+    });
+    await expect.poll(() => selectedCount(window)).toBe(0);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

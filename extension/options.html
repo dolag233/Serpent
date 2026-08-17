@@ -3,19 +3,32 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Serpent 扩展配对</title>
+    <title>Serpent 扩展</title>
     <link rel="stylesheet" href="options.css">
   </head>
   <body>
     <main>
-      <p class="eyebrow">SERPENT BROWSER EXTENSION</p>
-      <h1>连接桌面应用</h1>
-      <p>在 Serpent 桌面应用中打开“浏览器扩展”，复制配对码并粘贴到这里。配对码只保存在本机浏览器配置中。</p>
-      <form id="pairing-form">
-        <label for="pairing-token">配对码</label>
-        <input id="pairing-token" name="pairing-token" type="password" autocomplete="off" spellcheck="false" required>
-        <button type="submit">保存配对码</button>
-      </form>
+      <h1>Serpent 扩展设置</h1>
+
+      <section class="options-section">
+        <label class="options-toggle">
+          <input id="notifications-enabled" type="checkbox">
+          <span>保存后显示系统通知</span>
+        </label>
+        <label class="options-toggle">
+          <input id="focus-app-after-save" type="checkbox">
+          <span>保存后显示 Serpent 窗口</span>
+        </label>
+        <label class="options-toggle">
+          <input id="reveal-in-library-after-save" type="checkbox">
+          <span>保存后跳转到目标文件夹并选中文件</span>
+        </label>
+        <label class="options-toggle">
+          <input id="drag-radial-menu-enabled" type="checkbox">
+          <span>拖拽网页图片/视频时显示树状保存菜单</span>
+        </label>
+      </section>
+
       <p id="status" aria-live="polite"></p>
     </main>
     <script type="module" src="options.js"></script>

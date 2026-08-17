@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -477,7 +477,11 @@ describe('saveAssetFromUrl', () => {
       mediaUrl: 'https://example.com/photo.png',
     });
 
-    // Import second asset with same filename.
+    // Import second asset with the same filename but different bytes.
+    stubFetch({
+      contentType: 'image/png',
+      body: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]),
+    });
     const second = await service.saveAssetFromUrl({
       libraryId,
       sourcePageUrl: 'https://example.com/page2',
@@ -501,6 +505,27 @@ describe('saveAssetFromUrl', () => {
 
     const meta2 = service.getAssetMetadata({ libraryId, assetId: second.asset.assetId });
     expect(meta2.sourcePageUrl).toBe('https://example.com/page2');
+  });
+
+  it('skips library-level duplicate content and returns the existing asset', async () => {
+    stubFetch({ contentType: 'image/png' });
+
+    const first = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://example.com/photo.png',
+    });
+
+    // Free destination basename + identical bytes → content-duplicate skip
+    // (IMPORT-007: same basename would be name-conflict instead).
+    const second = await service.saveAssetFromUrl({
+      libraryId,
+      sourcePageUrl: 'https://example.com/page-again',
+      mediaUrl: 'https://example.com/photo-copy.png',
+    });
+
+    expect(second.asset.assetId).toBe(first.asset.assetId);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
   });
 
   it('rejects non-http scheme for mediaUrl (defense in depth)', async () => {
@@ -763,5 +788,71 @@ describe('saveAssetFromUrl', () => {
       mediaUrl: 'https://example.com/download',
     })).rejects.toMatchObject({ reason: 'PATH_LIMIT_EXCEEDED' });
     expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(0);
+  });
+
+  it('realigns a browser-upload filename when the URL extension disagrees with Content-Type', async () => {
+    const pngBody = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+    ]);
+    const stagedPath = path.join(tempDir(), 'cdn-thumb.jpg');
+    writeFileSync(stagedPath, pngBody);
+
+    const result = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: stagedPath,
+      contentType: 'image/png',
+      filename: 'cdn-thumb.jpg',
+      sourcePageUrl: 'https://example.com/page',
+      mediaUrl: 'https://cdn.example.com/cdn-thumb.jpg',
+    });
+
+    expect(result.asset.displayName).toBe('cdn-thumb.png');
+  });
+
+  it('uses the common import conflict policy for browser uploads', async () => {
+    const firstBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x10, 0x11,
+    ]);
+    const firstPath = path.join(tempDir(), 'first.png');
+    writeFileSync(firstPath, firstBytes);
+
+    const first = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: firstPath,
+      contentType: 'image/png',
+      filename: 'photo.png',
+      sourcePageUrl: 'https://example.com/first',
+    });
+
+    const duplicatePath = path.join(tempDir(), 'duplicate.png');
+    writeFileSync(duplicatePath, firstBytes);
+    const duplicate = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: duplicatePath,
+      contentType: 'image/png',
+      filename: 'another-name.png',
+      sourcePageUrl: 'https://example.com/duplicate',
+    });
+
+    expect(duplicate.asset.assetId).toBe(first.asset.assetId);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(1);
+
+    const secondPath = path.join(tempDir(), 'second.png');
+    writeFileSync(secondPath, Buffer.from([...firstBytes, 0x12]));
+    const second = await service.saveAssetFromFile({
+      libraryId,
+      stagedFilePath: secondPath,
+      contentType: 'image/png',
+      filename: 'photo.png',
+      sourcePageUrl: 'https://example.com/second',
+    });
+
+    expect(second.asset.assetId).not.toBe(first.asset.assetId);
+    expect(second.asset.displayName).not.toBe(first.asset.displayName);
+    expect(service.listAssets({ libraryId, recursive: true })).toHaveLength(2);
+    expect(service.getAssetMetadata({ libraryId, assetId: first.asset.assetId }).sourcePageUrl)
+      .toBe('https://example.com/first');
+    expect(service.getAssetMetadata({ libraryId, assetId: second.asset.assetId }).sourcePageUrl)
+      .toBe('https://example.com/second');
   });
 });

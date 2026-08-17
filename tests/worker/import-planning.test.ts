@@ -20,6 +20,8 @@ import {
   LibraryServiceError,
   type ImportFailurePoint,
 } from '../../src/worker/library-service';
+import { normalizeAbsolutePath as normalizeLibraryAbsolutePath } from '../../src/worker/library-rules';
+import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
 
@@ -76,6 +78,131 @@ describe('pending import plans', () => {
     expect(result).toMatchObject({ importedCount: 1, skippedCount: 0, replacedCount: 0 });
     expect('importId' in result).toBe(false);
     expect(readFileSync(path.join(library.libraryPath, 'Assets', 'direct.png'), 'utf8')).toBe('direct');
+    service.closeAll();
+  });
+
+  it('deduplicates same-name same-content entries staged in one batch', () => {
+    const root = temporaryRoot();
+    const firstSourceRoot = path.join(root, 'first');
+    const secondSourceRoot = path.join(root, 'second');
+    mkdirSync(firstSourceRoot);
+    mkdirSync(secondSourceRoot);
+    const firstSource = path.join(firstSourceRoot, 'shared.png');
+    const secondSource = path.join(secondSourceRoot, 'shared.png');
+    writeFileSync(firstSource, 'shared bytes');
+    writeFileSync(secondSource, 'shared bytes');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Batch dedupe', selectedParentPath: root });
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [firstSource, secondSource],
+      dedupeSameNameByContent: true,
+    });
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+
+    expect(completion).toMatchObject({ importedCount: 1, skippedCount: 1 });
+    expect(completion.assets).toHaveLength(1);
+    expect(readdirSync(path.join(library.libraryPath, 'Assets'))).toEqual(['shared.png']);
+    service.closeAll();
+  });
+
+  it('creates a readonly automation import plan and rejects a changed source before staging', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'planned.png');
+    writeFileSync(source, 'before');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Automation plan', selectedParentPath: root });
+
+    const plan = service.previewAutomationImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    expect(plan).toMatchObject({
+      libraryId: library.libraryId,
+      fileCount: 1,
+      totalBytes: 6,
+      suspectedDuplicateCount: 0,
+      nameConflictCount: 0,
+    });
+    expect(plan.sourceStates).toHaveLength(1);
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+
+    expectServiceCode(
+      () => service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+        automationPlan: {
+          planHash: '0'.repeat(64),
+          expectedChangeSequence: plan.changeSequence,
+          sourceStates: plan.sourceStates,
+        },
+      }),
+      'VERSION_CONFLICT',
+    );
+
+    writeFileSync(source, 'after!');
+    expectServiceCode(
+      () => service.prepareOrExecuteImport({
+        libraryId: library.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [source],
+        automationPlan: {
+          planHash: plan.planHash,
+          expectedChangeSequence: plan.changeSequence,
+          sourceStates: plan.sourceStates,
+        },
+      }),
+      'VERSION_CONFLICT',
+    );
+    expect(existsSync(path.join(library.libraryPath, '.serpent', 'operations'))).toBe(false);
+    service.closeAll();
+  });
+
+  it('executes a confirmed automation import plan with the default conflict policy', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'duplicate.png');
+    writeFileSync(source, 'same content');
+    const secondSource = path.join(root, 'duplicate-copy.png');
+    writeFileSync(secondSource, 'same content');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Automation conflicts', selectedParentPath: root });
+
+    const first = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [source],
+    });
+    expect(first).toMatchObject({ importedCount: 1, skippedCount: 0 });
+
+    const plan = service.previewAutomationImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [secondSource],
+    });
+    expect(plan.suspectedDuplicateCount).toBe(1);
+
+    const confirmed = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [secondSource],
+      automationPlan: {
+        planHash: plan.planHash,
+        expectedChangeSequence: plan.changeSequence,
+        sourceStates: plan.sourceStates,
+      },
+    });
+
+    expect(confirmed).toMatchObject({ importedCount: 0, skippedCount: 1 });
+    expect('importId' in confirmed).toBe(false);
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
     service.closeAll();
   });
 
@@ -315,7 +442,9 @@ describe('pending import plans', () => {
     const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
     writeFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'same');
 
-    const duplicate = service.prepareImport({
+    // Same destination basename wins as name-conflict even when bytes match
+    // (IMPORT-007 / Serpent-12ae). Content-duplicate is only for free names.
+    const sameNameSameContent = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
       sourcePaths: [path.join(firstSource, 'same.png')],
@@ -326,16 +455,252 @@ describe('pending import plans', () => {
       sourcePaths: [path.join(secondSource, 'same.png')],
     });
 
-    expect(duplicate).toMatchObject({
-      suspectedDuplicateCount: 1,
-      nameConflictCount: 0,
-      examples: [{ displayName: 'same.png', kind: 'suspected-duplicate' }],
-    });
-    expect(conflict).toMatchObject({
+    expect(sameNameSameContent).toMatchObject({
       suspectedDuplicateCount: 0,
+      libraryDuplicateCount: 0,
       nameConflictCount: 1,
       examples: [{ displayName: 'same.png', kind: 'name-conflict' }],
     });
+    expect(conflict).toMatchObject({
+      suspectedDuplicateCount: 0,
+      libraryDuplicateCount: 0,
+      nameConflictCount: 1,
+      examples: [{ displayName: 'same.png', kind: 'name-conflict' }],
+    });
+    service.closeAll();
+  });
+
+  it('surfaces the colliding asset name + thumbnail in name-conflict examples (Serpent-793k)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const firstSource = mkdtempSync(path.join(root, 'first-'));
+    const secondSource = mkdtempSync(path.join(root, 'second-'));
+    writeFileSync(path.join(firstSource, 'model.fbx'), 'aaa');
+    writeFileSync(path.join(secondSource, 'model.fbx'), 'bbb');
+
+    // Import the first file so the library holds a real asset row with a
+    // thumbnail artifact (Serpent-793k: name-conflict examples must carry the
+    // colliding asset's display name + preview, like content duplicates).
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(firstSource, 'model.fbx')],
+    });
+    expect('importedCount' in imported).toBe(true);
+
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(secondSource, 'model.fbx')],
+    });
+    expect(conflict.nameConflictCount).toBe(1);
+    const example = conflict.examples.find((item) => item.kind === 'name-conflict');
+    expect(example?.displayName).toBe('model.fbx');
+    expect(example?.existingDisplayName).toBe('model.fbx');
+    expect(example?.existingAssetId).toMatch(/^[0-9a-f-]{36}$/u);
+    // A thumbnail artifact may not be generated yet in this test, but the
+    // field must be present when it is (assert structure via schema later).
+    service.closeAll();
+  });
+
+  it('detects content duplicates for 3D files under a different name (Serpent-vqg9)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'src-'));
+    writeFileSync(path.join(sourceDir, 'model.fbx'), 'same-fbx-bytes');
+    writeFileSync(path.join(sourceDir, 'copy.fbx'), 'same-fbx-bytes');
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'model.fbx')],
+    });
+    expect('importedCount' in imported).toBe(true);
+
+    // Same content under a different name must be flagged as a duplicate —
+    // duplicate detection is content-hash based and format-agnostic.
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(sourceDir, 'copy.fbx')],
+    });
+    // suspectedDuplicateCount is the total duplicate count (library matches
+    // also increment the library subset).
+    expect(conflict.suspectedDuplicateCount).toBe(1);
+    expect(conflict.libraryDuplicateCount).toBe(1);
+    expect(conflict.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          displayName: 'copy.fbx',
+          kind: expect.stringMatching(/duplicate$/u),
+          existingDisplayName: 'model.fbx',
+        }),
+      ]),
+    );
+    service.closeAll();
+  });
+
+  it('carries the existing asset thumbnail in name-conflict examples when ready (Serpent-793k)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const srcDir = mkdtempSync(path.join(root, 'src-'));
+    const firstSource = path.join(srcDir, 'same.png');
+    const secondSource = path.join(srcDir, 'other.png');
+    writeFileSync(firstSource, ONE_PX_RED_PNG);
+    const bluePng = Buffer.from(ONE_PX_RED_PNG);
+    bluePng[44] = 0; // different content, still a valid PNG
+    // The colliding import keeps the same destination basename (same.png)
+    // with different bytes — that is the name-conflict case.
+    writeFileSync(secondSource, bluePng);
+    // Import the second file under the colliding name by staging it as
+    // same.png in a separate source dir.
+    const collideDir = mkdtempSync(path.join(root, 'collide-'));
+    writeFileSync(path.join(collideDir, 'same.png'), bluePng);
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [firstSource],
+    });
+    expect('importedCount' in imported).toBe(true);
+    // Generate the thumbnail so the library asset has a ready preview.
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    const asset = assets.find((item) => item.displayName === 'same.png');
+    expect(asset).toBeDefined();
+    const thumb = await service.generateThumbnail({
+      libraryId: library.libraryId,
+      assetId: asset!.assetId,
+    });
+    expect(thumb?.artifactId).toBeTruthy();
+
+    // Import a different-content file that collides on the same basename.
+    const conflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'same.png')],
+    });
+    expect(conflict.nameConflictCount).toBe(1);
+    const example = conflict.examples.find((item) => item.kind === 'name-conflict');
+    expect(example?.existingDisplayName).toBe('same.png');
+    expect(example?.existingThumbnailArtifactId).toBe(thumb!.artifactId);
+    service.closeAll();
+  });
+
+  it('carries a video poster in name and content conflict examples', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Video conflicts', selectedParentPath: root });
+    const sourceDir = mkdtempSync(path.join(root, 'source-'));
+    const collideDir = mkdtempSync(path.join(root, 'collide-'));
+    const originalBytes = Buffer.from('original-video-bytes');
+    const originalPath = path.join(sourceDir, 'clip.mp4');
+    writeFileSync(originalPath, originalBytes);
+    writeFileSync(path.join(collideDir, 'clip.mp4'), 'different-video-bytes');
+    writeFileSync(path.join(collideDir, 'copy.mp4'), originalBytes);
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [originalPath],
+    });
+    expect('importedCount' in imported).toBe(true);
+    const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0];
+    expect(asset).toBeDefined();
+    const poster = service.writeDerivedArtifact({
+      libraryId: library.libraryId,
+      assetId: asset!.assetId,
+      kind: 'video_poster',
+      mimeType: 'image/jpeg',
+      bytes: Buffer.from('poster'),
+      generatorVersion: 'test',
+      maxBytes: 1024,
+    });
+
+    const nameConflict = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'clip.mp4')],
+    });
+    expect(nameConflict.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'name-conflict',
+          existingThumbnailArtifactId: poster.artifactId,
+        }),
+      ]),
+    );
+    service.abandonImport(nameConflict.importId);
+
+    const contentDuplicate = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(collideDir, 'copy.mp4')],
+    });
+    expect(contentDuplicate.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: expect.stringMatching(/duplicate$/u),
+          existingThumbnailArtifactId: poster.artifactId,
+        }),
+      ]),
+    );
+    service.abandonImport(contentDuplicate.importId);
+    service.closeAll();
+  });
+
+  it('detects library-wide suspected duplicates across folders via byteSize and SHA-256', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Library', selectedParentPath: root });
+    const folderA = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'folder-a',
+    });
+    const folderB = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'folder-b',
+    });
+    const sourceA = path.join(root, 'a.png');
+    const sourceB = path.join(root, 'b.png');
+    writeFileSync(sourceA, 'same-bytes');
+    writeFileSync(sourceB, 'same-bytes');
+    service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourceA],
+      targetFolderId: folderA.folderId,
+    });
+
+    const plan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourceB],
+      targetFolderId: folderB.folderId,
+    });
+    // Serpent-1syi: cross-folder content match is library-scoped (not path collision).
+    expect(plan).toMatchObject({
+      suspectedDuplicateCount: 1,
+      libraryDuplicateCount: 1,
+      nameConflictCount: 0,
+      examples: [{ displayName: 'b.png', kind: 'library-duplicate' }],
+    });
+
+    // Serpent-hy1n: create-copy keeps free destination basename for library scope.
+    const completion = service.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'keep-both',
+    });
+    expect(completion.importedCount).toBe(1);
+    expect(completion.assets[0]!.relativeFilePath).toBe(
+      path.posix.join('folder-b', 'b.png'),
+    );
+    expect(
+      existsSync(path.join(library.libraryPath, 'Assets', 'folder-b', 'b.png')),
+    ).toBe(true);
     service.closeAll();
   });
 
@@ -470,7 +835,14 @@ describe('pending import plans', () => {
       nameConflict: 'keep-both',
     });
 
-    expect(completion).toEqual({ importedCount: 0, skippedCount: 0, replacedCount: 0, assets: [] });
+    expect(completion).toEqual({
+      importedCount: 0,
+      fileCount: 0,
+      assetCount: 0,
+      skippedCount: 0,
+      replacedCount: 0,
+      assets: [],
+    });
     expect(service.listManagedFolders(library.libraryId).map((folder) => folder.relativePath)).toEqual([
       'Empty Tree',
       'Empty Tree/Nested',
@@ -559,17 +931,75 @@ describe('pending import plans', () => {
   });
 
   it('applies all suspected-duplicate decisions independently', () => {
+    // Content-duplicate requires a free destination basename (IMPORT-007):
+    // same bytes with a different filename. Same-name collisions are name-conflicts.
     const root = temporaryRoot();
     const originalDirectory = path.join(root, 'original');
     const incomingDirectory = path.join(root, 'incoming');
     mkdirSync(originalDirectory);
     mkdirSync(incomingDirectory);
     const originalSource = path.join(originalDirectory, 'same.png');
-    const incomingSource = path.join(incomingDirectory, 'same.png');
-    writeFileSync(originalSource, 'old');
-    writeFileSync(incomingSource, 'new');
+    const duplicateSource = path.join(incomingDirectory, 'dup-a.png');
+    writeFileSync(originalSource, 'same-content');
+    writeFileSync(duplicateSource, 'same-content');
     const service = new LibraryService();
     const library = service.createLibrary({ displayName: 'Duplicates', selectedParentPath: root });
+    const initial = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [originalSource],
+    });
+    service.resolveImport({
+      importId: initial.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'keep-both',
+    });
+
+    const skipPlan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [duplicateSource],
+    });
+    expect(skipPlan.suspectedDuplicateCount).toBe(1);
+    expect(skipPlan.nameConflictCount).toBe(0);
+    expect(service.resolveImport({
+      importId: skipPlan.importId,
+      suspectedDuplicate: 'skip',
+      nameConflict: 'replace',
+    })).toMatchObject({ importedCount: 0, skippedCount: 1, replacedCount: 0, assets: [] });
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe(
+      'same-content',
+    );
+
+    const copyPlan = service.prepareImport({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [duplicateSource],
+    });
+    const copy = service.resolveImport({
+      importId: copyPlan.importId,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'replace',
+    });
+    expect(copy.assets[0]?.relativeFilePath).toBe('dup-a.png');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'dup-a.png'), 'utf8')).toBe(
+      'same-content',
+    );
+    service.closeAll();
+  });
+
+  it('merges suspected-duplicate content onto the existing asset', () => {
+    const root = temporaryRoot();
+    const originalDirectory = path.join(root, 'original');
+    const incomingDirectory = path.join(root, 'incoming');
+    mkdirSync(originalDirectory);
+    mkdirSync(incomingDirectory);
+    const originalSource = path.join(originalDirectory, 'same.png');
+    const duplicateSource = path.join(incomingDirectory, 'dup.png');
+    writeFileSync(originalSource, 'same-content');
+    writeFileSync(duplicateSource, 'same-content');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'MergeDuplicates', selectedParentPath: root });
     const initial = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
@@ -581,37 +1011,13 @@ describe('pending import plans', () => {
       nameConflict: 'keep-both',
     }).assets[0]!;
 
-    const skipPlan = service.prepareImport({
-      libraryId: library.libraryId,
-      sourceKind: 'files',
-      sourcePaths: [incomingSource],
-    });
-    expect(skipPlan.suspectedDuplicateCount).toBe(1);
-    expect(service.resolveImport({
-      importId: skipPlan.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'replace',
-    })).toMatchObject({ importedCount: 0, skippedCount: 1, replacedCount: 0, assets: [] });
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe('old');
-
-    const copyPlan = service.prepareImport({
-      libraryId: library.libraryId,
-      sourceKind: 'files',
-      sourcePaths: [incomingSource],
-    });
-    const copy = service.resolveImport({
-      importId: copyPlan.importId,
-      suspectedDuplicate: 'create-copy',
-      nameConflict: 'replace',
-    });
-    expect(copy.assets[0]?.relativeFilePath).toBe('same (2).png');
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same (2).png'), 'utf8')).toBe('new');
-
     const mergePlan = service.prepareImport({
       libraryId: library.libraryId,
       sourceKind: 'files',
-      sourcePaths: [incomingSource],
+      sourcePaths: [duplicateSource],
     });
+    expect(mergePlan.suspectedDuplicateCount).toBe(1);
+    expect(mergePlan.nameConflictCount).toBe(0);
     const merged = service.resolveImport({
       importId: mergePlan.importId,
       suspectedDuplicate: 'merge',
@@ -619,7 +1025,9 @@ describe('pending import plans', () => {
     }).assets[0]!;
     expect(merged.assetId).toBe(initialAsset.assetId);
     expect(merged.currentRevisionId).toBe(initialAsset.currentRevisionId);
-    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe('old');
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'same.png'), 'utf8')).toBe(
+      'same-content',
+    );
     service.closeAll();
   });
 
@@ -752,7 +1160,14 @@ describe('pending import plans', () => {
       importId: plan.importId,
       suspectedDuplicate: 'skip',
       nameConflict: 'keep-both',
-    })).toEqual({ importedCount: 1, skippedCount: 0, replacedCount: 0, assets: [] });
+    })).toEqual({
+      importedCount: 1,
+      fileCount: 1,
+      assetCount: 1,
+      skippedCount: 0,
+      replacedCount: 0,
+      assets: [],
+    });
     expect(service.listAssets({ libraryId: library.libraryId, recursive: true })).toHaveLength(1);
     expectServiceCode(
       () => service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }),
@@ -887,12 +1302,59 @@ describe('managed asset refresh', () => {
       availability: 'available',
     });
 
+    utimesSync(managedPath, new Date(acceptedTime.getTime() + 1), new Date(acceptedTime.getTime() + 1));
+    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+      changedCount: 0,
+      missingCount: 0,
+    });
+
     const statOnlyTime = new Date(acceptedTime.getTime() + 20_000);
     utimesSync(managedPath, statOnlyTime, statOnlyTime);
+    // Serpent-1tio: a pure mtime touch with identical content (portable
+    // library copy / utimes) is NOT a content change — the content
+    // fingerprint matches, so the revision and its artifacts survive.
     const statOnly = service.refreshManagedAssets(library.libraryId);
-    expect(statOnly).toMatchObject({ changedCount: 1, missingCount: 0 });
+    expect(statOnly).toMatchObject({ changedCount: 0, missingCount: 0 });
     expect(statOnly.assets[0]?.assetId).toBe(initial.assetId);
-    expect(statOnly.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
+    expect(statOnly.assets[0]?.currentRevisionId).toBe(overwriteRevision.currentRevisionId);
+
+    // Same byte-size content edit is still detected via the fingerprint.
+    writeFileSync(managedPath, 'second version!');
+    utimesSync(managedPath, new Date(acceptedTime.getTime() + 40_000), new Date(acceptedTime.getTime() + 40_000));
+    const sameSizeEdit = service.refreshManagedAssets(library.libraryId);
+    expect(sameSizeEdit).toMatchObject({ changedCount: 1, missingCount: 0 });
+    expect(sameSizeEdit.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
+    service.closeAll();
+  });
+
+  it('keeps a revision whose mtime moved but content is identical when no fingerprint is recorded yet (portable copy backfill)', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'portable.png');
+    writeFileSync(source, 'portable bytes');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Portable', selectedParentPath: root });
+    const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
+    service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
+    const managedPath = path.join(library.libraryPath, 'Assets', 'portable.png');
+    const beforeRevision = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!.currentRevisionId;
+
+    // Simulate a pre-fingerprint (exported) revision: clear the recorded
+    // fingerprint and move the mtime like a zip extraction would.
+    const connection = (service as unknown as {
+      openById: Map<string, { connection: { prepare(sql: string): { run(...args: unknown[]): void; get(...args: unknown[]): unknown } } }>;
+    }).openById.get(library.libraryId)!.connection;
+    connection.prepare('UPDATE revisions SET content_fingerprint = NULL WHERE revision_id = ?').run(beforeRevision);
+    const copiedTime = new Date(Date.now() + 60_000);
+    utimesSync(managedPath, copiedTime, copiedTime);
+
+    const refreshed = service.refreshManagedAssets(library.libraryId);
+    expect(refreshed).toMatchObject({ changedCount: 0, missingCount: 0 });
+    expect(refreshed.assets[0]?.currentRevisionId).toBe(beforeRevision);
+    // The fingerprint is backfilled from the file for future comparisons.
+    const stored = connection.prepare(
+      'SELECT content_fingerprint FROM revisions WHERE revision_id = ?',
+    ).get(beforeRevision) as { content_fingerprint: string | null };
+    expect(stored.content_fingerprint).toBeTruthy();
     service.closeAll();
   });
 
@@ -953,5 +1415,98 @@ describe('managed asset refresh', () => {
       assets: [{ availability: 'missing' }],
     });
     service.closeAll();
+  });
+});
+
+describe('explicit path boundaries (Serpent-8b5b.3)', () => {
+  it('rejects importing a filesystem root as a folder source', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'folder',
+        sourcePaths: [path.parse(root).root],
+      }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    try {
+      service.prepareImport({
+        libraryId: library.libraryId,
+        sourceKind: 'folder',
+        sourcePaths: [path.parse(root).root],
+      });
+    } catch (error) {
+      expect(error).toMatchObject({ reason: 'ROOT_NOT_ALLOWED' });
+    }
+    service.closeAll();
+  });
+
+  it('rejects an empty or relative import source path', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary2', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [''] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['relative/path'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+
+  // Serpent-8b5b.3: Windows-only evidence — drive roots and UNC roots must be
+  // rejected the same way; executed on the Windows runner, skipped elsewhere.
+  it.skipIf(process.platform !== 'win32')('rejects Windows drive and UNC roots as import sources', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'WinBoundary', selectedParentPath: root });
+
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['C:\\'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: ['\\\\server\\share'] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+});
+
+describe('Windows path hardening (Serpent-8b5b.7 review)', () => {
+  it('rejects an over-long library parent path', () => {
+    const service = new LibraryService();
+    const longParent = path.join(temporaryRoot(), 'x'.repeat(260));
+    expectServiceCode(
+      () => service.createLibrary({ displayName: 'Long', selectedParentPath: longParent }),
+      'INVALID_LIBRARY_PATH',
+    );
+    service.closeAll();
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects NTFS-forbidden characters in import relative paths', () => {
+    const root = temporaryRoot();
+    const source = path.join(root, 'Source');
+    mkdirSync(source);
+    // '|' is legal on APFS but illegal on NTFS — this fixture cannot be
+    // created on Windows, so the portable-path guard is asserted on POSIX.
+    writeFileSync(path.join(source, 'bad|name.png'), 'x');
+    const service = new LibraryService();
+    const library = service.createLibrary({ displayName: 'Boundary3', selectedParentPath: root });
+    expectServiceCode(
+      () => service.prepareImport({ libraryId: library.libraryId, sourceKind: 'folder', sourcePaths: [source] }),
+      'INVALID_IMPORT_SOURCE',
+    );
+    service.closeAll();
+  });
+
+  it.skipIf(process.platform !== 'win32')('strips the \\\\?\\ prefix for identity on Windows', () => {
+    expect(normalizeLibraryAbsolutePath('\\\\?\\C:\\data\\lib')).toBe('C:\\data\\lib');
   });
 });

@@ -16,6 +16,7 @@ INSTALLED_ROOT="$WORK/vcpkg-installed"
 HOST_TOOLS_ROOT="$WORK/host-tools"
 ARTIFACT_ROOT="$ROOT/artifacts/media-binaries"
 TRIPLET=serpent-arm64-osx-static
+export VCPKG_ROOT
 
 VCPKG_REPOSITORY=$(node -p "require('$LOCK').registry.repository")
 VCPKG_TAG=$(node -p "require('$LOCK').registry.tag")

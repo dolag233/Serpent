@@ -1,0 +1,8 @@
+/* Bundled HarmonyOS Sans SC (Regular–Black) for Windows UI.
+   Weight ranges + vertical metric overrides are injected at Vite transform
+   time (vite.renderer.config.ts). */
+@import "../../node_modules/harmonyos-sans-sc-webfont-splitted/dist/Regular.css";
+@import "../../node_modules/harmonyos-sans-sc-webfont-splitted/dist/Medium.css";
+@import "../../node_modules/harmonyos-sans-sc-webfont-splitted/dist/Semibold.css";
+@import "../../node_modules/harmonyos-sans-sc-webfont-splitted/dist/Bold.css";
+@import "../../node_modules/harmonyos-sans-sc-webfont-splitted/dist/Black.css";

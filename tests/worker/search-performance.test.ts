@@ -6,7 +6,8 @@ import { performance } from 'node:perf_hooks';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { LibraryService } from '../../src/worker/library-service';
+import { LibraryService, type AssetRefreshResult } from '../../src/worker/library-service';
+import { normalizeSearchText } from '../../src/worker/search-query';
 
 const ASSET_COUNT = 100_000;
 const FIRST_PAGE_SIZE = 50;
@@ -35,6 +36,18 @@ interface PerformanceFixture {
 }
 
 let fixture: PerformanceFixture;
+
+class SearchPerfLibraryService extends LibraryService {
+  override refreshManagedAssets(libraryId: string): AssetRefreshResult {
+    // Seeded rows intentionally omit on-disk files; skip refresh so availability
+    // and search-index fixtures stay deterministic for the performance gate.
+    return {
+      changedCount: 0,
+      missingCount: 0,
+      assets: this.listAssets({ libraryId, recursive: true }),
+    };
+  }
+}
 
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -74,15 +87,15 @@ function seedAssets(libraryPath: string, folderId: string): void {
   );
   const insertMetadata = database.prepare(
     `INSERT INTO asset_metadata (
-       asset_id, label, description, rating, favorite, palette,
+       asset_id, description, rating, favorite, palette,
        source_page_url, entity_version, updated_at
-     ) VALUES (?, ?, ?, ?, ?, NULL, ?, 1, ?)`,
+     ) VALUES (?, ?, ?, ?, NULL, ?, 1, ?)`,
   );
   const insertSearchIndex = database.prepare(
     `INSERT INTO asset_search_index (
-       asset_id, label, filename, tags, description, source_url,
+       asset_id, filename, tags, description, source_url,
        folder_path, metadata_text
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
   database.exec('BEGIN IMMEDIATE');
@@ -92,10 +105,11 @@ function seedAssets(libraryPath: string, folderId: string): void {
       const assetId = `perf-asset-${suffix}`;
       const revisionId = `perf-revision-${suffix}`;
       const extension = index % 2 === 0 ? 'png' : 'jpg';
-      const filename = `reference-${suffix}.${extension}`;
+      const filename = `perf-spec-${suffix}-x.${extension}`;
       const relativePath = `Performance/${filename}`;
-      const label = index % 10 === 0 ? `Needle concept ${suffix}` : `Reference ${suffix}`;
-      const description = `Synthetic performance fixture ${index % 100}`;
+      const description = index % 10 === 0
+        ? `Needle concept ${suffix}`
+        : `Synthetic performance fixture ${index % 100}`;
       const availability = index % 20 === 0 ? 'missing' : 'available';
       const rating = index % 6;
       const favorite = index % 5 === 0 ? 1 : 0;
@@ -115,7 +129,6 @@ function seedAssets(libraryPath: string, folderId: string): void {
       insertRevision.run(revisionId, assetId, byteSize, now, filename, now);
       insertMetadata.run(
         assetId,
-        label,
         description,
         rating,
         favorite,
@@ -124,13 +137,12 @@ function seedAssets(libraryPath: string, folderId: string): void {
       );
       insertSearchIndex.run(
         assetId,
-        label,
-        filename,
-        favorite ? 'favorite' : '',
-        description,
-        sourceUrl ?? '',
-        'Performance',
-        `rating:${rating}`,
+        normalizeSearchText(filename),
+        normalizeSearchText(favorite ? 'favorite' : ''),
+        normalizeSearchText(description),
+        normalizeSearchText(sourceUrl ?? ''),
+        normalizeSearchText('Performance'),
+        normalizeSearchText(`rating:${rating}`),
       );
     }
     database.exec('COMMIT');
@@ -145,7 +157,7 @@ function seedAssets(libraryPath: string, folderId: string): void {
 beforeAll(() => {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-search-performance-'));
   const noObservers = () => ({ close() {} });
-  const service = new LibraryService({ observerFactory: noObservers });
+  const service = new SearchPerfLibraryService({ observerFactory: noObservers });
   const library = service.createLibrary({
     displayName: 'SearchPerformance',
     selectedParentPath: root,
@@ -191,7 +203,7 @@ describe('100k asset search performance gate', () => {
     // 100k-asset library. This Worker page is the dominant data read on that
     // path; renderer startup is covered separately by Electron smoke tests.
     expect(elapsedMs).toBeLessThan(3_000);
-  });
+  }, 10_000);
 
   it('keeps keyword search first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;
@@ -212,6 +224,28 @@ describe('100k asset search performance gate', () => {
     console.info(`[search-perf] keyword median=${elapsedMs.toFixed(1)}ms assets=${ASSET_COUNT}`);
     expect(elapsedMs).toBeLessThan(MAX_QUERY_MS);
   });
+
+  it('keeps one-character substring search interactive without FTS', () => {
+    let result: ReturnType<LibraryService['searchAssets']> | undefined;
+    const elapsedMs = benchmark(() => {
+      result = fixture.service.searchAssets({
+        libraryId: fixture.libraryId,
+        query: {
+          clauses: [{ field: null, values: ['y'], exclude: false }],
+        },
+        limit: FIRST_PAGE_SIZE,
+        offset: 0,
+      });
+    });
+
+    // SQLite's trigram tokenizer cannot index one-character terms. The
+    // contextual fallback must therefore stay usable even when it scans the
+    // current 100k-asset search scope directly.
+    expect(result?.total).toBe(90_000);
+    expect(result?.items).toHaveLength(FIRST_PAGE_SIZE);
+    console.info(`[search-perf] one-character median=${elapsedMs.toFixed(1)}ms assets=${ASSET_COUNT}`);
+    expect(elapsedMs).toBeLessThan(MAX_QUERY_MS);
+  }, 15_000);
 
   it('keeps combined filter and sort first-page latency below one second', () => {
     let result: ReturnType<LibraryService['searchAssets']> | undefined;
@@ -277,10 +311,15 @@ describe('100k asset search performance gate', () => {
       );
       writer.prepare(
         `INSERT INTO asset_search_index (
-           asset_id, label, filename, tags, description, source_url,
+           asset_id, filename, tags, description, source_url,
            folder_path, metadata_text
-         ) VALUES (?, 'Needle concurrent', 'concurrent.png', '', '', '', 'Performance', '')`,
-      ).run('perf-asset-concurrent');
+         ) VALUES (?, ?, '', ?, '', ?, '')`,
+      ).run(
+        'perf-asset-concurrent',
+        normalizeSearchText('concurrent.png'),
+        normalizeSearchText('Needle concurrent'),
+        normalizeSearchText('Performance'),
+      );
 
       const whileWriting = fixture.service.searchAssets({
         libraryId: fixture.libraryId,

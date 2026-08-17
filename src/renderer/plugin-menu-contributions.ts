@@ -1,0 +1,793 @@
+import { useEffect, useState } from "react";
+
+import type {
+  PluginManagerCommandContribution,
+  PluginManagerUiDescriptorContribution,
+  PluginHostMenuTarget,
+  SerpentPluginManagerApi,
+} from "../shared/plugin-manager-api";
+import type { PluginUiMenuItem } from "../shared/plugin-ui-descriptor";
+import {
+  evaluatePluginContextExpression,
+  createPluginInvocationContext,
+  type PluginContributionContext,
+  type PluginInvocationContext,
+} from "../plugins/plugin-context";
+import type { PluginContextExpression } from "../plugins/plugin-manifest";
+import {
+  formatElectronAcceleratorLabel,
+  type CommandPlatform,
+} from "../shared/plugin-accelerator";
+
+const pluginMenuPlatform: CommandPlatform = typeof navigator !== "undefined"
+  && /Mac/u.test(navigator.userAgent)
+  ? "mac"
+  : "windows";
+
+const DESCRIPTOR_MENU_KEY_BY_TARGET: Record<PluginHostMenuTarget, "asset" | "folder" | "collection" | "workspace"> = {
+  "menus.asset": "asset",
+  "menus.folder": "folder",
+  "menus.collection": "collection",
+  "menus.workspace": "workspace",
+};
+
+export type PluginMenuDescriptor = {
+  id: string;
+  label: string;
+  contributionId: string;
+  commandId?: string;
+  pluginId: string;
+  group?: string;
+  before?: string;
+  after?: string;
+  first?: boolean;
+  last?: boolean;
+  shortcut?: string;
+  disabled: boolean;
+  checked?: boolean;
+  condition?: {
+    when?: PluginContextExpression;
+    enablement?: PluginContextExpression;
+    checked?: PluginContextExpression;
+  };
+  children: PluginMenuDescriptor[];
+};
+
+export type PluginContributionConditions = {
+  when?: PluginContextExpression;
+  enablement?: PluginContextExpression;
+  checked?: PluginContextExpression;
+};
+
+export function resolvePluginContributionConditions(
+  contribution: PluginContributionConditions,
+  context?: PluginContributionContext,
+): { visible: boolean; disabled: boolean; checked?: boolean } {
+  if (context === undefined) return { visible: true, disabled: false };
+  const visible = contribution.when === undefined
+    || evaluatePluginContextExpression(contribution.when, context);
+  const disabled = contribution.enablement !== undefined
+    && !evaluatePluginContextExpression(contribution.enablement, context);
+  return {
+    visible,
+    disabled,
+    ...(contribution.checked === undefined
+      ? {}
+      : { checked: evaluatePluginContextExpression(contribution.checked, context) }),
+  };
+}
+
+export type MenuContributionNode = {
+  descriptor: PluginMenuDescriptor;
+  sourceIndex: number;
+  parentId?: string;
+  pluginId: string;
+  pluginInstanceId?: string;
+};
+
+export type PluginMenuPlacementDiagnostic = {
+  code: "missing-anchor" | "cycle-broken" | "orphan-parent" | "max-depth";
+  itemId: string;
+  anchorId?: string;
+};
+
+export type PluginMenuPlacementResult = {
+  nodes: MenuContributionNode[];
+  diagnostics: PluginMenuPlacementDiagnostic[];
+};
+
+export type PluginHostMenuPlacement = {
+  before: PluginMenuDescriptor[];
+  after: PluginMenuDescriptor[];
+};
+
+export type PluginMenuHostPlacement = {
+  groups: Map<string, PluginHostMenuPlacement>;
+  anchors: Map<string, PluginHostMenuPlacement>;
+  outside: PluginMenuDescriptor[];
+};
+
+export type BuildPluginMenuDescriptorsOptions = {
+  onPlacementDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void;
+};
+
+function buildDescriptorMenuItems(
+  contribution: PluginManagerUiDescriptorContribution,
+  items: readonly PluginUiMenuItem[],
+  commandIds: ReadonlyMap<string, PluginManagerCommandContribution>,
+  context: PluginContributionContext | undefined,
+  target: PluginHostMenuTarget,
+  path: readonly number[] = [],
+): PluginMenuDescriptor[] {
+  const descriptors: PluginMenuDescriptor[] = [];
+  for (const [index, item] of items.entries()) {
+    const conditions = resolvePluginContributionConditions(item, context);
+    if (!conditions.visible) continue;
+    const itemId = `${contribution.id}.${target}.${item.id ?? item.command ?? `item-${[...path, index].join("-")}`}`;
+    const commandContribution = item.command === undefined
+      ? undefined
+      : commandIds.get(`${contribution.pluginInstanceId}:${item.command}`);
+    const children = item.submenu === undefined
+      ? []
+      : buildDescriptorMenuItems(contribution, item.submenu, commandIds, context, target, [...path, index]);
+    if (commandContribution === undefined && children.length === 0) continue;
+    descriptors.push({
+      id: itemId,
+      label: item.title ?? item.command ?? item.id ?? itemId,
+      contributionId: commandContribution?.id ?? itemId,
+      ...(item.command === undefined ? {} : { commandId: item.command }),
+      pluginId: contribution.pluginId,
+      ...(item.group === undefined ? {} : { group: item.group }),
+      ...(item.before === undefined ? {} : { before: item.before }),
+      ...(item.after === undefined ? {} : { after: item.after }),
+      ...(item.first === undefined ? {} : { first: item.first }),
+      ...(item.last === undefined ? {} : { last: item.last }),
+      ...(item.shortcut === undefined ? {} : { shortcut: item.shortcut }),
+      disabled: conditions.disabled,
+      ...(conditions.checked === undefined ? {} : { checked: conditions.checked }),
+      children,
+    });
+  }
+  return descriptors;
+}
+
+/** Convert one semantic descriptor surface into the existing executable menu model. */
+export function buildPluginUiMenuDescriptors(
+  contribution: PluginManagerUiDescriptorContribution,
+  target: PluginHostMenuTarget,
+  commandContributions: readonly PluginManagerCommandContribution[],
+  context?: PluginContributionContext,
+): PluginMenuDescriptor[] {
+  const key = DESCRIPTOR_MENU_KEY_BY_TARGET[target];
+  const items = contribution.descriptor.menus?.[key];
+  if (items === undefined) return [];
+  const commandIds = new Map<string, PluginManagerCommandContribution>();
+  for (const command of commandContributions) {
+    commandIds.set(`${command.pluginInstanceId}:${command.commandId}`, command);
+  }
+  return buildDescriptorMenuItems(contribution, items, commandIds, context, target);
+}
+
+/** Host command ids that may be used as placement anchors by a plugin. */
+const KNOWN_HOST_MENU_ANCHORS = new Set([
+  "asset.view",
+  "asset.open-with",
+  "host.asset.open-with",
+  "asset.open-external",
+  "asset.reveal-in-folder",
+  "folder.open-in-file-manager",
+  "asset.remove-from-current-collection",
+  "asset.relink",
+  "asset.move-to-folder",
+  "asset.copy",
+  "asset.paste",
+  "asset.copy-file-path",
+  "asset.rename",
+  "folder.create-subfolder",
+  "folder.rename",
+  "folder.linked-rules",
+  "folder.copy",
+  "folder.paste",
+  "folder.clone",
+  "folder.copy-path",
+  "asset.ai-analyze",
+  "asset.clear-ai-content",
+  "asset.move-to-trash",
+  "asset.delete-from-disk",
+  "asset.delete-permanent",
+  "folder.move-to-trash",
+  "folder.delete-from-disk",
+  "folder.remove-from-library",
+]);
+
+function compareGroup(
+  left: MenuContributionNode,
+  right: MenuContributionNode,
+): number {
+  const leftGroup = left.descriptor.group;
+  const rightGroup = right.descriptor.group;
+  if (leftGroup === undefined && rightGroup !== undefined) return -1;
+  if (leftGroup !== undefined && rightGroup === undefined) return 1;
+  if (leftGroup !== undefined && rightGroup !== undefined) {
+    const groupOrder = leftGroup.localeCompare(rightGroup);
+    if (groupOrder !== 0) return groupOrder;
+  }
+  return (
+    left.pluginId.localeCompare(right.pluginId) ||
+    (left.pluginInstanceId ?? "").localeCompare(
+      right.pluginInstanceId ?? "",
+    ) ||
+    left.descriptor.id.localeCompare(right.descriptor.id) ||
+    left.sourceIndex - right.sourceIndex
+  );
+}
+
+function compareCycleFallback(
+  left: MenuContributionNode,
+  right: MenuContributionNode,
+): number {
+  const idOrder = left.descriptor.id.localeCompare(right.descriptor.id);
+  return idOrder === 0 ? left.sourceIndex - right.sourceIndex : idOrder;
+}
+
+/**
+ * Orders one menu level without mutating the contribution input. Explicit
+ * before/after edges win over the default group order; groups determine the
+ * stable choice whenever no edge makes one item ready first. If an edge cycle
+ * remains, the weakest conflicting edge is removed and reported so the rest
+ * of the menu can still be resolved.
+ */
+function sortMenuLevel(
+  nodes: readonly MenuContributionNode[],
+  onDiagnostic?: (diagnostic: PluginMenuPlacementDiagnostic) => void,
+): MenuContributionNode[] {
+  const byId = new Map(nodes.map((node) => [node.descriptor.id, node]));
+  const report = (diagnostic: PluginMenuPlacementDiagnostic): void => {
+    onDiagnostic?.(diagnostic);
+  };
+  type PlacementEdge = {
+    from: string;
+    to: string;
+    kind: "anchor" | "first" | "last";
+  };
+  const edges: PlacementEdge[] = [];
+  const outgoing = new Map<string, Set<string>>();
+  const indegree = new Map<string, number>();
+  for (const node of nodes) {
+    outgoing.set(node.descriptor.id, new Set());
+    indegree.set(node.descriptor.id, 0);
+  }
+
+  const addEdge = (
+    from: string,
+    to: string,
+    kind: PlacementEdge["kind"],
+  ): void => {
+    if (from === to || !byId.has(from) || !byId.has(to)) return;
+    const outgoingTargets = outgoing.get(from);
+    if (outgoingTargets === undefined || outgoingTargets.has(to)) return;
+    outgoingTargets.add(to);
+    indegree.set(to, (indegree.get(to) ?? 0) + 1);
+    edges.push({ from, to, kind });
+  };
+
+  for (const node of nodes) {
+    const { id, before, after } = node.descriptor;
+    if (before !== undefined) {
+      if (byId.has(before)) addEdge(id, before, "anchor");
+      else if (!KNOWN_HOST_MENU_ANCHORS.has(before)) {
+        report({ code: "missing-anchor", itemId: id, anchorId: before });
+      }
+    }
+    if (after !== undefined) {
+      if (byId.has(after)) addEdge(after, id, "anchor");
+      else if (!KNOWN_HOST_MENU_ANCHORS.has(after)) {
+        report({ code: "missing-anchor", itemId: id, anchorId: after });
+      }
+    }
+    if (node.descriptor.first === true) {
+      for (const other of nodes) addEdge(id, other.descriptor.id, "first");
+    }
+    if (node.descriptor.last === true) {
+      for (const other of nodes) addEdge(other.descriptor.id, id, "last");
+    }
+  }
+
+  const remaining = new Set(nodes.map((node) => node.descriptor.id));
+  const result: MenuContributionNode[] = [];
+  const choose = (cycle: boolean): MenuContributionNode | undefined => {
+    const candidates = nodes.filter((node) => {
+      if (!remaining.has(node.descriptor.id)) return false;
+      return cycle || indegree.get(node.descriptor.id) === 0;
+    });
+    candidates.sort(cycle ? compareCycleFallback : compareGroup);
+    return candidates[0];
+  };
+
+  while (remaining.size > 0) {
+    let node = choose(false);
+    if (node === undefined) {
+      // A cycle has no zero-indegree node. Remove one weakest explicit edge,
+      // report it, then continue normal topological ordering. This rejects
+      // only the conflicting placement relation instead of dropping a menu
+      // branch or making the entire surface disappear.
+      const cycleEdge = edges
+        .filter((edge) => remaining.has(edge.from) && remaining.has(edge.to))
+        .sort((left, right) =>
+          (left.kind === "anchor" ? 1 : 0) - (right.kind === "anchor" ? 1 : 0) ||
+          left.from.localeCompare(right.from) ||
+          left.to.localeCompare(right.to),
+        )[0];
+      if (cycleEdge === undefined) break;
+      const cycleEdgeIndex = edges.indexOf(cycleEdge);
+      if (cycleEdgeIndex >= 0) edges.splice(cycleEdgeIndex, 1);
+      outgoing.get(cycleEdge.from)?.delete(cycleEdge.to);
+      indegree.set(
+        cycleEdge.to,
+        Math.max(0, (indegree.get(cycleEdge.to) ?? 0) - 1),
+      );
+      report({
+        code: "cycle-broken",
+        itemId: cycleEdge.from,
+        anchorId: cycleEdge.to,
+      });
+      node = choose(false) ?? choose(true);
+    }
+    if (node === undefined) break;
+    remaining.delete(node.descriptor.id);
+    result.push(node);
+    for (const target of outgoing.get(node.descriptor.id) ?? []) {
+      if (remaining.has(target)) {
+        indegree.set(target, Math.max(0, (indegree.get(target) ?? 0) - 1));
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Solves one sibling level. Kept as a named export so non-React contract tests
+ * and future toolbar/Inspector/Viewer surfaces can share the exact ordering
+ * semantics instead of reimplementing menu placement.
+ */
+export function solvePluginMenuPlacement(
+  nodes: readonly MenuContributionNode[],
+): PluginMenuPlacementResult {
+  const diagnostics: PluginMenuPlacementDiagnostic[] = [];
+  return {
+    nodes: sortMenuLevel(nodes, (diagnostic) => diagnostics.push(diagnostic)),
+    diagnostics,
+  };
+}
+
+function orderPluginMenuDescriptors(
+  items: readonly PluginMenuDescriptor[],
+): PluginMenuDescriptor[] {
+  const nodes = items.map((descriptor, sourceIndex) => ({
+    descriptor,
+    sourceIndex,
+    pluginId: descriptor.pluginId,
+  }));
+  return solvePluginMenuPlacement(nodes).nodes.map((node) => node.descriptor);
+}
+
+/**
+ * Merges plugin-only placement edges with the host menu's fixed anchors.
+ *
+ * AssetContextMenu renders host sections in several JSX slots (for example
+ * `organize` before/after the native commands). Filtering each slot in
+ * isolation loses a plugin item that is only related to a sibling plugin:
+ * `a after b`, where `b group=organize`, used to put `b` in Organize and `a`
+ * in the generic plugin section. Build the slots from the full contribution
+ * graph first so plugin-to-plugin before/after relations stay adjacent to
+ * their host section or anchor.
+ */
+export function placePluginMenuItemsAroundHost(
+  items: readonly PluginMenuDescriptor[],
+  hostGroups: Readonly<Record<string, readonly string[]>>,
+  inlineAnchors: ReadonlySet<string>,
+): PluginMenuHostPlacement {
+  const groupNames = Object.keys(hostGroups);
+  const groupSlots = new Map<string, PluginHostMenuPlacement>();
+  for (const group of groupNames) {
+    groupSlots.set(group, { before: [], after: [] });
+  }
+  const anchorSlots = new Map<string, PluginHostMenuPlacement>();
+  const hostAnchorIds = new Set<string>();
+  const hostAnchorGroup = new Map<string, string>();
+  for (const group of groupNames) {
+    for (const anchor of hostGroups[group] ?? []) {
+      hostAnchorIds.add(anchor);
+      hostAnchorGroup.set(anchor, group);
+    }
+  }
+  for (const anchor of inlineAnchors) {
+    hostAnchorIds.add(anchor);
+    anchorSlots.set(anchor, { before: [], after: [] });
+  }
+
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const adjacency = new Map<string, Set<string>>(
+    items.map((item) => [item.id, new Set<string>()]),
+  );
+  for (const item of items) {
+    for (const relatedId of [item.before, item.after]) {
+      if (relatedId === undefined || !byId.has(relatedId)) continue;
+      adjacency.get(item.id)?.add(relatedId);
+      adjacency.get(relatedId)?.add(item.id);
+    }
+  }
+
+  // Placement edges form one unit for the purpose of embedding into the
+  // host. This is important when a chain crosses plugin group labels: the
+  // explicit edge must not be split between two independently rendered host
+  // sections.
+  const components: PluginMenuDescriptor[][] = [];
+  const visited = new Set<string>();
+  for (const item of items) {
+    if (visited.has(item.id)) continue;
+    const component: PluginMenuDescriptor[] = [];
+    const pending = [item.id];
+    visited.add(item.id);
+    while (pending.length > 0) {
+      const id = pending.shift();
+      if (id === undefined) continue;
+      const current = byId.get(id);
+      if (current === undefined) continue;
+      component.push(current);
+      for (const relatedId of adjacency.get(id) ?? []) {
+        if (visited.has(relatedId)) continue;
+        visited.add(relatedId);
+        pending.push(relatedId);
+      }
+    }
+    components.push(component);
+  }
+
+  const slotItems = new Map<string, PluginMenuDescriptor[]>();
+  const outsideItems: PluginMenuDescriptor[] = [];
+  for (const component of components) {
+    const anchorItem = component.find((item) =>
+      item.before !== undefined && hostAnchorIds.has(item.before)
+      || item.after !== undefined && hostAnchorIds.has(item.after));
+    let slotId: string | undefined;
+    if (anchorItem !== undefined) {
+      const anchor = anchorItem.before !== undefined && hostAnchorIds.has(anchorItem.before)
+        ? anchorItem.before
+        : anchorItem.after;
+      if (anchor !== undefined) {
+        const edge = anchorItem.before === anchor ? "before" : "after";
+        const group = inlineAnchors.has(anchor) ? undefined : hostAnchorGroup.get(anchor);
+        slotId = group === undefined
+          ? `anchor:${edge}:${anchor}`
+          : `group:${group}:${edge}`;
+      }
+    } else {
+      // Explicit plugin edges outrank default groups. If a connected branch
+      // carries conflicting host groups, use the first host group in the
+      // declared order as a deterministic single host slot.
+      const group = groupNames.find((name) => component.some((item) => item.group === name));
+      if (group !== undefined) slotId = `group:${group}:after`;
+    }
+    if (slotId === undefined) {
+      outsideItems.push(...component);
+      continue;
+    }
+    const slot = slotItems.get(slotId) ?? [];
+    slot.push(...component);
+    slotItems.set(slotId, slot);
+  }
+
+  for (const [slotId, placed] of slotItems) {
+    const ordered = orderPluginMenuDescriptors(placed);
+    if (slotId.startsWith("group:")) {
+      const [, groupName, edge] = slotId.split(":");
+      const group = groupName === undefined ? undefined : groupSlots.get(groupName);
+      if (group !== undefined) {
+        if (edge === "before") group.before = ordered;
+        else group.after = ordered;
+      }
+      continue;
+    }
+    const [, edge, anchor] = slotId.split(":");
+    const slot = anchor === undefined ? undefined : anchorSlots.get(anchor);
+    if (slot !== undefined) {
+      if (edge === "before") slot.before = ordered;
+      else slot.after = ordered;
+    }
+  }
+
+  const outside = orderPluginMenuDescriptors(outsideItems);
+  return { groups: groupSlots, anchors: anchorSlots, outside };
+}
+
+export function buildPluginMenuDescriptors(
+  contributions: readonly {
+    kind: 'menu';
+    id: string;
+    title: string;
+    commandId?: string;
+    pluginId: string;
+    pluginInstanceId?: string;
+    group?: string;
+    before?: string;
+    after?: string;
+    first?: boolean;
+    last?: boolean;
+    shortcut?: string;
+    parentId?: string;
+    when?: PluginContextExpression;
+    enablement?: PluginContextExpression;
+    checked?: PluginContextExpression;
+  }[],
+  context?: PluginContributionContext,
+  options?: BuildPluginMenuDescriptorsOptions,
+): PluginMenuDescriptor[] {
+  const contributionById = new Map(
+    contributions.map((contribution) => [contribution.id, contribution]),
+  );
+  const visibilityById = new Map<string, boolean>();
+  const visiting = new Set<string>();
+  const isVisible = (contribution: (typeof contributions)[number]): boolean => {
+    const cached = visibilityById.get(contribution.id);
+    if (cached !== undefined) return cached;
+
+    const ownVisibility = resolvePluginContributionConditions(contribution, context).visible;
+    if (!ownVisibility) {
+      visibilityById.set(contribution.id, false);
+      return false;
+    }
+
+    const parentId = contribution.parentId;
+    const parent = parentId === undefined ? undefined : contributionById.get(parentId);
+    if (parentId === undefined || parent === undefined || parent === contribution) {
+      visibilityById.set(contribution.id, true);
+      return true;
+    }
+
+    // A placement cycle is handled by the existing tree builder. Do not let
+    // the visibility walk recurse forever while preserving its old behavior.
+    if (visiting.has(contribution.id)) return true;
+    visiting.add(contribution.id);
+    const visible = isVisible(parent);
+    visiting.delete(contribution.id);
+    visibilityById.set(contribution.id, visible);
+    return visible;
+  };
+  const visibleContributions = contributions.filter(isVisible);
+  for (const contribution of visibleContributions) {
+    if (
+      contribution.parentId !== undefined &&
+      !contributionById.has(contribution.parentId)
+    ) {
+      options?.onPlacementDiagnostic?.({
+        code: "orphan-parent",
+        itemId: contribution.id,
+        anchorId: contribution.parentId,
+      });
+    }
+  }
+  const descriptors: PluginMenuDescriptor[] = visibleContributions.map((contribution) => {
+    const condition = contribution.when === undefined
+      && contribution.enablement === undefined
+      && contribution.checked === undefined
+      ? undefined
+      : {
+          ...(contribution.when === undefined ? {} : { when: contribution.when }),
+          ...(contribution.enablement === undefined ? {} : { enablement: contribution.enablement }),
+          ...(contribution.checked === undefined ? {} : { checked: contribution.checked }),
+        };
+    return {
+      id: contribution.id,
+      label: contribution.title,
+      contributionId: contribution.id,
+      ...(contribution.commandId === undefined ? {} : { commandId: contribution.commandId }),
+      pluginId: contribution.pluginId,
+      ...(contribution.group === undefined ? {} : { group: contribution.group }),
+      ...(contribution.before === undefined ? {} : { before: contribution.before }),
+      ...(contribution.after === undefined ? {} : { after: contribution.after }),
+      ...(contribution.first === undefined ? {} : { first: contribution.first }),
+      ...(contribution.last === undefined ? {} : { last: contribution.last }),
+      ...(contribution.shortcut === undefined
+        ? {}
+        : { shortcut: formatElectronAcceleratorLabel(contribution.shortcut, pluginMenuPlatform) }),
+      disabled: resolvePluginContributionConditions(contribution, context).disabled,
+      ...(resolvePluginContributionConditions(contribution, context).checked === undefined
+        ? {}
+        : { checked: resolvePluginContributionConditions(contribution, context).checked }),
+      ...(condition === undefined ? {} : { condition }),
+      children: [] as PluginMenuDescriptor[],
+    };
+  });
+  const nodes: MenuContributionNode[] = descriptors.map((descriptor, sourceIndex) => {
+    const contribution = visibleContributions[sourceIndex];
+    return {
+      descriptor,
+      sourceIndex,
+      parentId: contribution?.parentId,
+      pluginId: contribution?.pluginId ?? descriptor.pluginId,
+      ...(contribution?.pluginInstanceId === undefined
+        ? {}
+        : { pluginInstanceId: contribution.pluginInstanceId }),
+    };
+  });
+  const byId = new Map(nodes.map((node) => [node.descriptor.id, node]));
+  const effectiveParentById = new Map(
+    nodes.map((node) => [node.descriptor.id, node.parentId]),
+  );
+  const inspected = new Set<string>();
+  for (const node of nodes) {
+    if (inspected.has(node.descriptor.id)) continue;
+    const chain: string[] = [];
+    const positionById = new Map<string, number>();
+    let currentId: string | undefined = node.descriptor.id;
+    while (currentId !== undefined && !inspected.has(currentId)) {
+      const cycleStart = positionById.get(currentId);
+      if (cycleStart !== undefined) {
+        const cycleIds = chain.slice(cycleStart);
+        const detachId = [...cycleIds].sort().at(-1);
+        if (detachId !== undefined) {
+          const detachNode = byId.get(detachId);
+          const oldParent = effectiveParentById.get(detachId);
+          effectiveParentById.set(detachId, undefined);
+          options?.onPlacementDiagnostic?.({
+            code: "cycle-broken",
+            itemId: detachNode?.descriptor.id ?? detachId,
+            ...(oldParent === undefined ? {} : { anchorId: oldParent }),
+          });
+        }
+        break;
+      }
+      positionById.set(currentId, chain.length);
+      chain.push(currentId);
+      const parentId = effectiveParentById.get(currentId);
+      currentId = parentId !== undefined && byId.has(parentId) ? parentId : undefined;
+    }
+    for (const id of chain) inspected.add(id);
+  }
+  const childrenByParent = new Map<string, MenuContributionNode[]>();
+  const roots: MenuContributionNode[] = [];
+  for (const node of nodes) {
+    const parentId = effectiveParentById.get(node.descriptor.id);
+    const parent = parentId === undefined ? undefined : byId.get(parentId);
+    if (parent === undefined || parent === node) {
+      roots.push(node);
+    } else {
+      const siblings = childrenByParent.get(parent.descriptor.id) ?? [];
+      siblings.push(node);
+      childrenByParent.set(parent.descriptor.id, siblings);
+    }
+  }
+
+  const materialize = (
+    node: MenuContributionNode,
+    depth = 1,
+  ): PluginMenuDescriptor => {
+    const children = childrenByParent.get(node.descriptor.id) ?? [];
+    if (depth >= 3) {
+      for (const child of children) {
+        options?.onPlacementDiagnostic?.({
+          code: "max-depth",
+          itemId: child.descriptor.id,
+        });
+      }
+      return node.descriptor;
+    }
+    node.descriptor.children.push(
+      ...sortMenuLevel(children, options?.onPlacementDiagnostic).map((child) =>
+        materialize(child, depth + 1),
+      ),
+    );
+    return node.descriptor;
+  };
+  return sortMenuLevel(roots, options?.onPlacementDiagnostic).map((root) => materialize(root));
+}
+
+/** @deprecated Use {@link buildPluginMenuDescriptors} */
+export const buildPluginAssetMenuDescriptors = buildPluginMenuDescriptors;
+
+export function usePluginMenuContributions(
+  pluginApi: SerpentPluginManagerApi | undefined,
+  libraryId: string | undefined,
+  target: PluginHostMenuTarget,
+  enabled: boolean,
+  refreshKey: string | null,
+  context?: PluginContributionContext,
+): PluginMenuDescriptor[] {
+  const [items, setItems] = useState<PluginMenuDescriptor[]>([]);
+
+  useEffect(() => {
+    if (!enabled || pluginApi === undefined || libraryId === undefined) {
+      queueMicrotask(() => setItems([]));
+      return;
+    }
+    let cancelled = false;
+    void Promise.all([
+      pluginApi.listPluginContributions({ libraryId, target }),
+      pluginApi.listPluginContributions({ libraryId }),
+    ]).then(([targetResult, allResult]) => {
+      if (cancelled) return;
+      if (!("contributions" in targetResult) || !("contributions" in allResult)) {
+        setItems([]);
+        return;
+      }
+      const menuContributions = targetResult.contributions.filter(
+        (contribution): contribution is Extract<typeof contribution, { kind: 'menu' }> => contribution.kind === 'menu',
+      );
+      const diagnostics: BuildPluginMenuDescriptorsOptions = {
+        onPlacementDiagnostic: (diagnostic) => {
+          console.warn("plugin-menu-placement-diagnostic", {
+            target,
+            ...diagnostic,
+          });
+        },
+      };
+      const descriptorMenuContributions = allResult.contributions.filter(
+        (contribution): contribution is PluginManagerUiDescriptorContribution => contribution.kind === "ui-descriptor",
+      );
+      const commandContributions = allResult.contributions.filter(
+        (contribution): contribution is PluginManagerCommandContribution => contribution.kind === "command",
+      );
+      const descriptorItems = descriptorMenuContributions.flatMap((contribution) => (
+        buildPluginUiMenuDescriptors(contribution, target, commandContributions, context)
+      ));
+      setItems([
+        ...buildPluginMenuDescriptors(menuContributions, context, diagnostics),
+        ...descriptorItems,
+      ]);
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setItems([]);
+        console.warn("plugin-menu-contributions-unavailable", target, error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [context, enabled, libraryId, pluginApi, refreshKey, target]);
+
+  return items;
+}
+
+export async function runPluginMenuCommand(
+  pluginApi: SerpentPluginManagerApi,
+  libraryId: string,
+  item: Pick<PluginMenuDescriptor, 'contributionId' | 'id'>,
+  context: {
+    assetIds?: string[];
+    folderIds?: string[];
+    collectionIds?: string[];
+    contributionContext?: PluginContributionContext;
+    invocationContext?: PluginInvocationContext;
+  },
+): Promise<void> {
+  const invocation = context.invocationContext ?? (
+    context.contributionContext === undefined
+      ? undefined
+      : createPluginInvocationContext(context.contributionContext, {
+        libraryId,
+        selection: {
+          refs: [
+            ...(context.assetIds ?? []),
+            ...(context.folderIds ?? []),
+            ...(context.collectionIds ?? []),
+          ],
+          ...(context.assetIds === undefined ? {} : { assetIds: context.assetIds }),
+          ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
+          ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
+        },
+      })
+  );
+  const result = await pluginApi.runPluginCommand({
+    type: "plugin-manager.run-command",
+    libraryId,
+    contributionId: item.contributionId,
+    ...(context.assetIds === undefined ? {} : { assetIds: context.assetIds }),
+    ...(context.folderIds === undefined ? {} : { folderIds: context.folderIds }),
+    ...(context.collectionIds === undefined ? {} : { collectionIds: context.collectionIds }),
+    ...(invocation === undefined ? {} : { invocation }),
+  });
+  if (!result.ok) {
+    console.warn("plugin-command-failed", item.id, result.code);
+  }
+}

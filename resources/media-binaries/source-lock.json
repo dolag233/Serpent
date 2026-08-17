@@ -1,35 +1,52 @@
 {
-  "schemaVersion": 1,
-  "registry": {
-    "name": "microsoft/vcpkg",
-    "repository": "https://github.com/microsoft/vcpkg.git",
-    "tag": "2026.04.27",
-    "commit": "56bb2411609227288b70117ead2c47585ba07713"
-  },
-  "components": {
-    "ffmpeg": {
-      "version": "8.1",
-      "portVersion": 3,
-      "sourceUrl": "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.1.tar.gz",
-      "sha256": "dd308201bb1239a1b73185f80c6b4121f4efdfa424a009ce544fd00bf736bb2e",
-      "sha512": "1dee3967057619dd7f2f78c63de85bb97af16c974bd9225c2336d42c7c8765c04f77490aac36af2daf953bc52c7faa37750a09265e133708f6a1709028573834",
-      "license": "LGPL-2.1-or-later",
-      "requiredConfigureFlags": [
-        "--disable-gpl",
-        "--disable-nonfree",
-        "--enable-libvpx",
-        "--enable-libopus",
-        "--enable-libfreetype",
-        "--enable-libharfbuzz"
-      ]
-    },
-    "openimageio": {
-      "version": "3.1.12.0",
-      "portVersion": 0,
-      "sourceUrl": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.1.12.0.tar.gz",
-      "sha256": "24aa5a7af5c7a98887a8f495e18079d82ef73913370e906fa5d73016d37964c7",
-      "sha512": "d00877c1bca8c5ca19e4534787783a12c892215403282425d1685920b5f424b6fac217f049243c2106e5d981c7508115145e08ce5c5dd78633073c1ddd883f3e",
-      "license": "Apache-2.0"
-    }
+ "schemaVersion": 1,
+ "registry": {
+  "name": "microsoft/vcpkg",
+  "repository": "https://github.com/microsoft/vcpkg.git",
+  "tag": "2026.04.27",
+  "commit": "56bb2411609227288b70117ead2c47585ba07713"
+ },
+ "vcpkgTool": {
+  "releaseTag": "2026-04-08",
+  "windowsX64": {
+   "url": "https://github.com/microsoft/vcpkg-tool/releases/download/2026-04-08/vcpkg.exe",
+   "sha256": "f1edbf3a39de350e2bb065214fdc057111aa87a2e2ed9a7dcb8ddc86e17751b9"
   }
+ },
+ "components": {
+  "ffmpeg": {
+   "version": "n8.1",
+   "sourceUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-8.1.zip",
+   "sha256": "fd8f8af0878942e2009aee3d7b399077e7e4367723380cd388350c28530f222f",
+   "license": "LGPL-2.1-or-later",
+   "requiredConfigureFlags": [
+    "--enable-libvpx",
+    "--enable-libopus",
+    "--enable-libfreetype",
+    "--enable-libharfbuzz",
+    "--enable-zlib"
+   ],
+   "external": true
+  },
+  "openimageio": {
+   "version": "3.1.12.0",
+   "portVersion": 0,
+   "sourceUrl": "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.1.12.0.tar.gz",
+   "sha256": "24aa5a7af5c7a98887a8f495e18079d82ef73913370e906fa5d73016d37964c7",
+   "sha512": "d00877c1bca8c5ca19e4534787783a12c892215403282425d1685920b5f424b6fac217f049243c2106e5d981c7508115145e08ce5c5dd78633073c1ddd883f3e",
+   "license": "Apache-2.0"
+  }
+ },
+ "platforms": {
+  "darwin-arm64": {
+   "components": {
+    "ffmpeg": {
+     "version": "8.1",
+     "sourceUrl": "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n8.1.tar.gz",
+     "sha256": "dd308201bb1239a1b73185f80c6b4121f4efdfa424a009ce544fd00bf736bb2e",
+     "license": "LGPL-2.1-or-later"
+    }
+   }
+  }
+ }
 }

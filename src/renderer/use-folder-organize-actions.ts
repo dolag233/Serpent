@@ -1,0 +1,182 @@
+import { useCallback } from "react";
+
+import type { SerpentLibraryApi } from "../shared/library-api";
+import type {
+  ImportConflictPlan,
+  ImportCompletion,
+  ImageSequenceImportOffer,
+} from "../shared/protocol/responses";
+import {
+  isImageSequenceImportOffer,
+  isImportConflictPlan,
+} from "../shared/import-outcome";
+import { LibraryOperationError, toMessage, shouldSuppressClipboardPasteFeedback } from "./error-utils";
+import { useT } from "./i18n";
+import type { AppLocale } from "./i18n/types";
+
+export type UseFolderOrganizeActionsParams = {
+  api: SerpentLibraryApi | null;
+  libraryId: string | null;
+  locale: AppLocale;
+  setNotice: (message: string, historyEntryId?: string) => void;
+  setError: (message: string | null) => void;
+  setUiState: (state: "ready" | "loading") => void;
+  reloadCurrentContent: () => Promise<void>;
+  /**
+   * When paste returns a conflict plan, hand it to the existing import UI.
+   * Returns true if the caller will finish the import (conflicts dialog).
+   */
+  onPasteConflict?: (plan: ImportConflictPlan) => void;
+  onPasteCompleted?: (completion: ImportCompletion) => void | Promise<void>;
+  onPasteSequenceOffer?: (offer: ImageSequenceImportOffer) => void;
+};
+
+/**
+ * Folder copy-aside actions: paste (OS clipboard import), clone, move confirm
+ * helpers used by REQ-MENU-005 / Serpent-vgp. OS copy itself lives in
+ * use-shell-file-actions (Main clipboard write).
+ */
+export function useFolderOrganizeActions({
+  api,
+  libraryId,
+  locale,
+  setNotice,
+  setError,
+  setUiState,
+  reloadCurrentContent,
+  onPasteConflict,
+  onPasteCompleted,
+  onPasteSequenceOffer,
+}: UseFolderOrganizeActionsParams) {
+  const t = useT();
+
+  const pasteIntoFolder = useCallback(
+    async (folderId: string | null) => {
+      if (!api || !libraryId) return;
+      setUiState("loading");
+      try {
+        const result = await api.pasteIntoFolder({
+          libraryId,
+          folderId,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        if (isImageSequenceImportOffer(result.value)) {
+          onPasteSequenceOffer?.(result.value);
+          return;
+        }
+        if (isImportConflictPlan(result.value)) {
+          onPasteConflict?.(result.value);
+          return;
+        }
+        if (onPasteCompleted) {
+          await onPasteCompleted(result.value);
+        } else {
+          await reloadCurrentContent();
+        }
+        setNotice(t("toast.folderPasteDone"));
+      } catch (caught) {
+        if (shouldSuppressClipboardPasteFeedback(caught)) return;
+        setError(toMessage(caught, t("toast.folderPasteFailed"), locale));
+      } finally {
+        setUiState("ready");
+      }
+    },
+    [
+      api,
+      libraryId,
+      locale,
+      onPasteCompleted,
+      onPasteConflict,
+      onPasteSequenceOffer,
+      reloadCurrentContent,
+      setError,
+      setNotice,
+      setUiState,
+      t,
+    ],
+  );
+
+  const cloneFolder = useCallback(
+    async (folderId: string) => {
+      if (!api || !libraryId) return;
+      setUiState("loading");
+      try {
+        const result = await api.cloneFolder({ libraryId, folderId });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        setNotice(
+          t("toast.folderCloneDone", { name: result.value.folder.name }),
+        );
+        await reloadCurrentContent();
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.folderCloneFailed"), locale));
+      } finally {
+        setUiState("ready");
+      }
+    },
+    [
+      api,
+      libraryId,
+      locale,
+      reloadCurrentContent,
+      setError,
+      setNotice,
+      setUiState,
+      t,
+    ],
+  );
+
+  const confirmMoveFolders = useCallback(
+    async (input: {
+      folderIds: string[];
+      targetParentFolderId: string | null;
+      conflictStrategy: "keep-both" | "skip";
+    }) => {
+      if (!api || !libraryId) return;
+      if (input.folderIds.length === 0) {
+        setNotice(t("toast.folderMoveNothing"));
+        return;
+      }
+      setUiState("loading");
+      try {
+        const result = await api.moveFolders({
+          libraryId,
+          folderIds: input.folderIds,
+          targetParentFolderId: input.targetParentFolderId,
+          conflictStrategy: input.conflictStrategy,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        if (result.value.skippedCount > 0) {
+          setNotice(
+            t("toast.folderMoveSkipped", {
+              moved: result.value.movedCount,
+              skipped: result.value.skippedCount,
+            }),
+            result.value.historyEntryId,
+          );
+        } else {
+          setNotice(
+            t("toast.folderMoveDone", { count: result.value.movedCount }),
+            result.value.historyEntryId,
+          );
+        }
+        await reloadCurrentContent();
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.folderMoveFailed"), locale));
+      } finally {
+        setUiState("ready");
+      }
+    },
+    [
+      api,
+      libraryId,
+      locale,
+      reloadCurrentContent,
+      setError,
+      setNotice,
+      setUiState,
+      t,
+    ],
+  );
+
+  return { pasteIntoFolder, cloneFolder, confirmMoveFolders };
+}

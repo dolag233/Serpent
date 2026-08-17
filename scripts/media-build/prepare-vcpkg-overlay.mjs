@@ -51,12 +51,16 @@ if (gitHead(vcpkgRoot) !== lock.registry.commit) {
   throw new Error(`vcpkg checkout is not pinned commit ${lock.registry.commit}.`);
 }
 
-const ffmpegPort = readJson(path.join(vcpkgRoot, 'ports/ffmpeg/vcpkg.json'));
-if (
-  ffmpegPort.version !== lock.components.ffmpeg.version ||
-  (ffmpegPort['port-version'] ?? 0) !== lock.components.ffmpeg.portVersion
-) {
-  throw new Error('Pinned vcpkg FFmpeg port version does not match source-lock.json.');
+// ffmpeg 已外部化（source-lock.components.ffmpeg.external = true，下载 BtbN
+// LGPL 产物），不再经 vcpkg 构建，跳过 port 版本校验。
+if (!lock.components.ffmpeg.external) {
+  const ffmpegPort = readJson(path.join(vcpkgRoot, 'ports/ffmpeg/vcpkg.json'));
+  if (
+    ffmpegPort.version !== lock.components.ffmpeg.version ||
+    (ffmpegPort['port-version'] ?? 0) !== lock.components.ffmpeg.portVersion
+  ) {
+    throw new Error('Pinned vcpkg FFmpeg port version does not match source-lock.json.');
+  }
 }
 const oiioPort = readJson(path.join(vcpkgRoot, 'ports/openimageio/vcpkg.json'));
 if (
@@ -84,6 +88,16 @@ portfile = replaceExactly(
   `if("gpl" IN_LIST FEATURES)\n    set(OPTIONS "\${OPTIONS} --enable-gpl")\nendif()`,
   `if("gpl" IN_LIST FEATURES)\n    set(OPTIONS "\${OPTIONS} --enable-gpl")\nelse()\n    set(OPTIONS "\${OPTIONS} --disable-gpl")\nendif()`,
   'GPL configuration',
+);
+portfile = replaceExactly(
+  portfile,
+  `set(OPTIONS_CROSS "--enable-cross-compile")`,
+  `# Serpent generates audio waveform thumbnails as PNG. Keep the encoder in
+# the minimal LGPL runtime; filters alone cannot write an image2 PNG output.
+set(OPTIONS "\${OPTIONS} --enable-encoder=png")
+
+set(OPTIONS_CROSS "--enable-cross-compile")`,
+  'cross-compile options block',
 );
 writeFileSync(portfilePath, portfile, 'utf8');
 

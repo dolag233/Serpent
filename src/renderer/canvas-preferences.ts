@@ -12,6 +12,12 @@ export interface CanvasPreferences {
     readonly name: boolean;
     readonly size: boolean;
     readonly date: boolean;
+    /** GIF / VIDEO / TEXT type chip (Serpent-cs1). */
+    readonly badgeType: boolean;
+    readonly badgeDuration: boolean;
+    readonly badgeSource: boolean;
+    /** Non-image extension chip, bottom-left (Serpent-cs1). */
+    readonly badgeExtension: boolean;
   };
 }
 
@@ -23,20 +29,40 @@ export interface CanvasPreferencesStorage {
 
 export const CARD_SIZE_MIN = 96;
 export const CARD_SIZE_MAX = 320;
+// Serpent-akz originally used this as the range-input step (2px). Serpent-7ny
+// moved the browse slider onto width-aligned discrete column stops
+// (`card-size-stops.ts`); keep the helper for clamp math / legacy tests.
+export const CARD_SIZE_STEP = 2;
 
 // ---------------------------------------------------------------------------
 // Zod schema
 // ---------------------------------------------------------------------------
 
+const canvasFieldsSchema = z
+  .object({
+    name: z.boolean(),
+    size: z.boolean(),
+    date: z.boolean(),
+    badgeType: z.boolean().optional(),
+    badgeDuration: z.boolean().optional(),
+    badgeSource: z.boolean().optional(),
+    badgeExtension: z.boolean().optional(),
+  })
+  .transform((fields) => ({
+    name: fields.name,
+    size: fields.size,
+    date: fields.date,
+    badgeType: fields.badgeType ?? true,
+    badgeDuration: fields.badgeDuration ?? true,
+    badgeSource: fields.badgeSource ?? true,
+    badgeExtension: fields.badgeExtension ?? true,
+  }));
+
 const canvasPreferencesSchema = z.object({
   version: z.literal(1),
   viewMode: z.enum(['grid', 'masonry']),
   cardSize: z.number().int().min(CARD_SIZE_MIN).max(CARD_SIZE_MAX),
-  fields: z.object({
-    name: z.boolean(),
-    size: z.boolean(),
-    date: z.boolean(),
-  }),
+  fields: canvasFieldsSchema,
 });
 
 // ---------------------------------------------------------------------------
@@ -51,7 +77,15 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
   version: 1,
   viewMode: 'grid',
   cardSize: 160,
-  fields: { name: true, size: true, date: true },
+  fields: {
+    name: true,
+    size: true,
+    date: true,
+    badgeType: true,
+    badgeDuration: true,
+    badgeSource: true,
+    badgeExtension: true,
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +94,20 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
 
 function clampCardSize(value: number): number {
   return Math.min(CARD_SIZE_MAX, Math.max(CARD_SIZE_MIN, Math.round(value)));
+}
+
+/**
+ * Number of distinct stops the card-size slider offers across its full
+ * range at a given step (Serpent-akz). Exported so a regression test can
+ * assert the slider actually got finer, not just that the constant changed.
+ */
+export function cardSizeSliderStepCount(
+  min: number = CARD_SIZE_MIN,
+  max: number = CARD_SIZE_MAX,
+  step: number = CARD_SIZE_STEP,
+): number {
+  if (step <= 0) return 0;
+  return Math.round((max - min) / step);
 }
 
 function resolveStorage(storage?: CanvasPreferencesStorage): CanvasPreferencesStorage {

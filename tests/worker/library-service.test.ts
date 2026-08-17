@@ -1,6 +1,7 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   realpathSync,
@@ -10,6 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,9 +21,28 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   LibraryService,
   LibraryServiceError,
+  SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
+import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
+import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
+import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
+import { build } from 'vite';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -30,6 +51,7 @@ interface TestDatabaseConnection {
   pragma(source: string): unknown;
   prepare(source: string): {
     all(...parameters: unknown[]): unknown[];
+    get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): unknown;
   };
 }
@@ -38,8 +60,131 @@ const TestDatabase = require('better-sqlite3') as new (
   filename: string,
 ) => TestDatabaseConnection;
 
+interface MigrationOpener {
+  child: ChildProcess;
+  waitFor(type: 'entered' | 'pre' | 'success'): Promise<Record<string, unknown>>;
+}
+
+function startMigrationOpener(
+  openerPath: string,
+  libraryPath: string,
+  childId: 'first' | 'second',
+  releasePath: string,
+): MigrationOpener {
+  const child = spawn(process.execPath, [openerPath], {
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      NODE_PATH: path.join(process.cwd(), 'node_modules'),
+      SERPENT_MIGRATION_CHILD_ID: childId,
+      SERPENT_MIGRATION_LIBRARY_PATH: libraryPath,
+      SERPENT_MIGRATION_RELEASE_PATH: releasePath,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  const pendingEvents = new Map<string, Record<string, unknown>[]>();
+  const pendingWaiters = new Map<
+    string,
+    Array<(event: Record<string, unknown>) => void>
+  >();
+  let buffered = '';
+  child.stdout.on('data', (chunk: string) => {
+    buffered += chunk;
+    for (;;) {
+      const newline = buffered.indexOf('\n');
+      if (newline < 0) break;
+      const line = buffered.slice(0, newline);
+      buffered = buffered.slice(newline + 1);
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const type = event.type;
+      if (typeof type !== 'string') continue;
+      const waiters = pendingWaiters.get(type);
+      if (waiters?.length) waiters.shift()!(event);
+      else {
+        pendingEvents.set(type, [
+          ...(pendingEvents.get(type) ?? []),
+          event,
+        ]);
+      }
+    }
+  });
+
+  return {
+    child,
+    waitFor(type) {
+      return new Promise((resolve, reject) => {
+        const queued = pendingEvents.get(type);
+        if (queued?.length) {
+          resolve(queued.shift()!);
+          return;
+        }
+        const onExit = (code: number | null) => {
+          reject(new Error(`Migration opener exited before ${type}: ${code ?? 'signal'}`));
+        };
+        child.once('exit', onExit);
+        const resolveEvent = (event: Record<string, unknown>) => {
+          child.off('exit', onExit);
+          resolve(event);
+        };
+        pendingWaiters.set(type, [
+          ...(pendingWaiters.get(type) ?? []),
+          resolveEvent,
+        ]);
+      });
+    },
+  };
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs = 5_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    if (!child.killed) child.kill();
+  });
+}
+
+function removeWriteCoordinationSchema(database: TestDatabaseConnection): void {
+  const triggers = database.prepare(
+    `SELECT name FROM sqlite_master
+      WHERE type = 'trigger'
+        AND (name LIKE 'library_change_on_%' OR name = 'library_change_sequence_seed')`,
+  ).all() as Array<{ name: string }>;
+  for (const trigger of triggers) {
+    if (
+      trigger.name !== 'library_change_sequence_seed' &&
+      !/^library_change_on_[a-z_]+_(?:insert|update|delete)$/u.test(trigger.name)
+    ) {
+      throw new Error('Unexpected write-coordination trigger name in test fixture.');
+    }
+    database.exec(`DROP TRIGGER "${trigger.name}"`);
+  }
+  database.exec(`
+    DROP TABLE IF EXISTS library_write_leases;
+    DROP TABLE IF EXISTS library_change_sequence;
+    DROP TABLE IF EXISTS library_job_leases;
+    DROP TRIGGER IF EXISTS library_change_on_operation_history_insert;
+    DROP TRIGGER IF EXISTS library_change_on_operation_history_update;
+    DROP TRIGGER IF EXISTS library_change_on_operation_history_delete;
+    DROP TABLE IF EXISTS operation_history_attempts;
+    DROP TABLE IF EXISTS operation_history_steps;
+    DROP TABLE IF EXISTS operation_history;
+  `);
+}
+
 function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = false): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  removeWriteCoordinationSchema(database);
   database.exec(`
     -- Reverse v6: drop FTS5 tables and triggers.
     DROP TABLE IF EXISTS asset_search;
@@ -59,6 +204,8 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
     -- Reverse v9: drop revision_artifacts + jobs.
     DROP TABLE IF EXISTS linked_ignored_assets;
     DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS trashed_managed_folders;
+    DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -77,6 +224,7 @@ function downgradeLibraryToV1(libraryPath: string, createMigrationBlocker = fals
 
 function downgradeLibraryToV2(libraryPath: string): void {
   const database = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+  removeWriteCoordinationSchema(database);
   database.exec(`
     -- better-sqlite3 defaults foreign_keys = ON (unlike SQLite's default OFF);
     -- disable during this raw downgrade so DROP TABLE assets does not cascade
@@ -101,6 +249,8 @@ function downgradeLibraryToV2(libraryPath: string): void {
     -- Reverse v9: drop revision_artifacts + jobs.
     DROP TABLE IF EXISTS linked_ignored_assets;
     DROP TABLE IF EXISTS linked_folder_rules;
+    DROP TABLE IF EXISTS trashed_managed_folders;
+    DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
     DROP TABLE IF EXISTS revision_artifacts;
     DROP TABLE IF EXISTS jobs;
     DROP TABLE IF EXISTS asset_metadata;
@@ -167,15 +317,16 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removePathWithSyncRetry(root);
   }
 });
 
 describe('LibraryService lifecycle', () => {
   it('creates a self-contained library and exposes it exactly once', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     const created = service.createLibrary({
       displayName: '  概念设计  ',
@@ -195,7 +346,14 @@ describe('LibraryService lifecycle', () => {
     expect(service.listLibraries()).toEqual([created]);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
+    const queueIndexes = database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN (?, ?)",
+    ).all('jobs_asset_kind_status', 'revision_artifacts_revision_kind_status') as Array<{ name: string }>;
+    expect(queueIndexes.map((index) => index.name)).toEqual(expect.arrayContaining([
+      'jobs_asset_kind_status',
+      'revision_artifacts_revision_kind_status',
+    ]));
     database.close();
 
     expect(service.openLibrary(created.libraryPath)).toEqual(created);
@@ -203,9 +361,500 @@ describe('LibraryService lifecycle', () => {
     service.closeAll();
   });
 
+  it('persists a change sequence with committed library mutations and rolls it back with aborted work', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Change sequence', selectedParentPath: root });
+
+    expect(service.getChangeSequence(created.libraryId)).toBe(0);
+    service.createTag({ libraryId: created.libraryId, name: 'sequence-tag' });
+    expect(service.getChangeSequence(created.libraryId)).toBe(1);
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.exec(`
+      BEGIN;
+      UPDATE tags SET name = name WHERE library_id = '${created.libraryId}';
+      ROLLBACK;
+    `);
+    database.close();
+    expect(service.getChangeSequence(created.libraryId)).toBe(1);
+  });
+
+  it('exposes the same per-library write lease to independently opened service instances', async () => {
+    const root = temporaryRoot();
+    const first = newService();
+    const created = first.createLibrary({ displayName: 'Shared writer', selectedParentPath: root });
+    const second = newService();
+    second.openLibrary(created.libraryPath);
+
+    const lease = await first.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    await expect(second.acquireWriteLease(created.libraryId, { timeoutMs: 0 })).rejects
+      .toBeInstanceOf(LibraryWriteCoordinatorError);
+    lease.release();
+    const recovered = await second.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    recovered.release();
+  });
+
+  it('holds SQLite’s real writer mutex for the entire bounded write callback', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Bounded writer', selectedParentPath: root });
+    const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
+
+    const result = await service.runBoundedWrite(created.libraryId, () => {
+      const contender = new TestDatabase(databasePath);
+      try {
+        contender.pragma('busy_timeout = 0');
+        let contentionError: unknown;
+        try {
+          contender.prepare(
+            `INSERT INTO library_write_leases
+              (library_id, owner_id, acquired_at_ms, expires_at_ms)
+             VALUES (?, 'contender', 0, 1)
+             ON CONFLICT(library_id) DO UPDATE SET owner_id = excluded.owner_id`,
+          ).run(created.libraryId);
+        } catch (error) {
+          contentionError = error;
+        }
+        expect(contentionError).toMatchObject({ code: 'SQLITE_BUSY' });
+      } finally {
+        contender.close();
+      }
+      return 'committed';
+    });
+
+    expect(result).toBe('committed');
+  });
+
+  it('waits for the lease timeout and exposes an occupied lease as LIBRARY_BUSY', async () => {
+    const root = temporaryRoot();
+    const first = newService();
+    const created = first.createLibrary({ displayName: 'Bounded lease wait', selectedParentPath: root });
+    const second = newService();
+    second.openLibrary(created.libraryPath);
+
+    const lease = await first.acquireWriteLease(created.libraryId, { timeoutMs: 0 });
+    try {
+      let failure: unknown;
+      try {
+        await second.runBoundedWrite(created.libraryId, () => 'unreachable', { timeoutMs: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
+      expect(publicErrorForWorkerFailure(failure)).toEqual({
+        code: 'LIBRARY_BUSY',
+        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+      });
+    } finally {
+      lease.release();
+    }
+  });
+
+  it('translates writer-mutex contention after lease acquisition to LIBRARY_BUSY', async () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({ displayName: 'Mutex writer', selectedParentPath: root });
+    const databaseFilename = path.join(created.libraryPath, '.serpent', 'library.db');
+    let contender: TestDatabaseConnection | undefined;
+    const service = newService({
+      sqliteBusyTimeoutMsForTests: 0,
+      beforeBoundedWriteTransaction: () => {
+        contender = new TestDatabase(databaseFilename);
+        contender.pragma('busy_timeout = 0');
+        contender.exec('BEGIN IMMEDIATE');
+      },
+    });
+    service.openLibrary(created.libraryPath);
+
+    try {
+      let failure: unknown;
+      try {
+        await service.runBoundedWrite(created.libraryId, () => 'unreachable');
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
+      expect(publicErrorForWorkerFailure(failure)).toEqual({
+        code: 'LIBRARY_BUSY',
+        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+      });
+    } finally {
+      contender?.exec('ROLLBACK');
+      contender?.close();
+    }
+  });
+
+  it('serializes the v23-to-v25 coordination migrations before verifying schema history', () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({ displayName: 'Migration writer', selectedParentPath: root });
+    creatingService.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    removeWriteCoordinationSchema(database);
+    database.exec(`
+      DELETE FROM schema_migrations WHERE version >= 24;
+      PRAGMA user_version = 23;
+    `);
+    database.close();
+
+    const first = newService();
+    const second = newService();
+    expect(first.openLibrary(created.libraryPath)).toMatchObject({ libraryId: created.libraryId });
+    expect(second.openLibrary(created.libraryPath)).toMatchObject({ libraryId: created.libraryId });
+
+    const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verification.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
+    expect(
+      verification.prepare('SELECT sequence FROM library_change_sequence WHERE library_id = ?')
+        .get(created.libraryId),
+    ).toEqual({ sequence: 0 });
+    verification.close();
+  });
+
+  it('normalizes libraries created with the pre-merge plugin migration history', () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({
+      displayName: 'Legacy plugin migration history',
+      selectedParentPath: root,
+    });
+    creatingService.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    database.exec(`
+      DROP TABLE explicit_ignored_paths;
+      DROP TABLE gitignore_ignored_paths;
+      DELETE FROM schema_migrations WHERE version >= 24;
+      PRAGMA user_version = 28;
+    `);
+    const legacyChecksums = [
+      '7dc6f9927d613b15fca8393a9b17c2f88e05eb38ddaa9367c0994f03ea5d1a83',
+      'b7af3b7d40699ce2961689b18eebbbb8fa89246d3893ab19b558f4644830e7b0',
+      '934c70e0de6b38a5119bccbb1c678d601dac9b16224c2b5728887047d70add47',
+      '639e696480e3f3910d91674c6ac7dd3f7027aed06eecd919545e8c54a528a397',
+      '6e218ba9992d63df6a2b9e10e115a4329fb7bd33480b999d099379be5f3b7d46',
+    ];
+    const insertMigration = database.prepare(
+      'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+    );
+    legacyChecksums.forEach((checksum, index) => {
+      insertMigration.run(24 + index, checksum, new Date().toISOString());
+    });
+    database.close();
+
+    const service = newService();
+    expect(service.openLibrary(created.libraryPath)).toMatchObject({
+      libraryId: created.libraryId,
+    });
+
+    const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verification.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
+    expect(verification.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name IN ('explicit_ignored_paths', 'gitignore_ignored_paths')`,
+    ).all()).toHaveLength(2);
+    expect(verification.prepare(
+      'SELECT version FROM schema_migrations ORDER BY version',
+    ).all()).toHaveLength(SUPPORTED_SCHEMA_VERSION);
+    verification.close();
+  });
+
+  it('serializes overlapping v23-to-v24 migrations from independent Electron processes', async () => {
+    const root = temporaryRoot();
+    const creatingService = newService();
+    const created = creatingService.createLibrary({
+      displayName: 'Concurrent migration',
+      selectedParentPath: root,
+    });
+    creatingService.closeAll();
+
+    const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    removeWriteCoordinationSchema(database);
+    database.exec(`
+      DELETE FROM schema_migrations WHERE version >= 24;
+      PRAGMA user_version = 23;
+    `);
+    database.close();
+
+    const releasePath = path.join(root, 'release-first-migration');
+    const bundlePath = path.join(root, 'migration-opener-bundle');
+    await build({
+      build: {
+        emptyOutDir: true,
+        outDir: bundlePath,
+        rollupOptions: {
+          output: { entryFileNames: 'opener.cjs', format: 'cjs' },
+        },
+        ssr: path.join(process.cwd(), 'tests/worker/library-migration-opener.ts'),
+      },
+      logLevel: 'silent',
+    });
+    const openerPath = path.join(bundlePath, 'opener.cjs');
+    const first = startMigrationOpener(openerPath, created.libraryPath, 'first', releasePath);
+    const second = startMigrationOpener(openerPath, created.libraryPath, 'second', releasePath);
+    try {
+      await Promise.all([first.waitFor('pre'), second.waitFor('pre')]);
+      await first.waitFor('entered');
+      writeFileSync(releasePath, 'release');
+
+      const [firstResult, secondResult] = await Promise.all([
+        first.waitFor('success'),
+        second.waitFor('success'),
+      ]);
+      expect(firstResult.libraryId).toBe(created.libraryId);
+      expect(secondResult.libraryId).toBe(created.libraryId);
+
+      const verification = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+      expect(verification.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
+      expect(verification.pragma('quick_check(1)')).toEqual([{ quick_check: 'ok' }]);
+      expect(
+        verification.prepare(
+          `SELECT sequence FROM library_change_sequence WHERE library_id = ?`,
+        ).get(created.libraryId),
+      ).toEqual({ sequence: 0 });
+      expect(
+        verification.prepare(
+          `SELECT COUNT(*) AS count FROM sqlite_master
+             WHERE type = 'table' AND name IN ('library_write_leases', 'library_change_sequence')`,
+        ).get(),
+      ).toEqual({ count: 2 });
+      const migrationRows = verification.prepare(
+        'SELECT version FROM schema_migrations ORDER BY version',
+      ).all() as Array<{ version: number }>;
+      expect(migrationRows.map((row) => row.version)).toEqual(
+        Array.from({ length: SUPPORTED_SCHEMA_VERSION }, (_, index) => index + 1),
+      );
+      const coordinationTriggers = verification.prepare(
+        `SELECT name FROM sqlite_master
+           WHERE type = 'trigger' AND
+             (name LIKE 'library_change_on_%' OR name = 'library_change_sequence_seed')`,
+      ).all() as Array<{ name: string }>;
+      expect(new Set(coordinationTriggers.map((trigger) => trigger.name)).size)
+        .toBe(coordinationTriggers.length);
+      expect(coordinationTriggers.length).toBeGreaterThan(1);
+      expect(coordinationTriggers.map((trigger) => trigger.name)).toEqual(
+        expect.arrayContaining([
+          'library_change_on_jobs_insert',
+          'library_change_on_jobs_update',
+          'library_change_on_jobs_delete',
+        ]),
+      );
+      verification.close();
+    } finally {
+      writeFileSync(releasePath, 'release');
+      await Promise.all([first, second].map((opener) => waitForChildExit(opener.child)));
+    }
+  });
+
+  it('migrates v13 Label data to v14 without changing unrelated metadata', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Retire Label', selectedParentPath: root });
+    const sourcePath = path.join(root, 'legacy.png');
+    writeFileSync(sourcePath, 'legacy image');
+    const imported = service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [sourcePath],
+    });
+    if ('importId' in imported) throw new Error('Unexpected import conflict.');
+    const assetId = imported.assets[0]!.assetId;
+    service.setAssetMetadata({
+      libraryId: created.libraryId,
+      assetId,
+      expectedVersion: 0,
+      description: 'Description survives',
+      rating: 4,
+      favorite: true,
+    });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      description: 'AI description survives',
+      tags: ['surviving-tag'],
+      modelId: 'migration-test',
+      modelVersion: 'v1',
+      enabledFields: { description: true, tags: true, rating: false },
+    });
+    service.createSmartCollection({
+      libraryId: created.libraryId,
+      name: 'Filename Query',
+      queryDefinitionJson: JSON.stringify({
+        search: { clauses: [{ field: 'filename', values: ['legacy.png'], exclude: false }] },
+      }),
+    });
+    service.closeAll();
+
+    const databasePath = path.join(created.libraryPath, '.serpent', 'library.db');
+    const database = new TestDatabase(databasePath);
+    removeWriteCoordinationSchema(database);
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      CREATE TABLE asset_metadata_v13 (
+        asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+        label TEXT,
+        description TEXT,
+        rating INTEGER NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
+        favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+        palette TEXT,
+        source_page_url TEXT,
+        entity_version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO asset_metadata_v13
+        SELECT asset_id, 'Legacy Alias', description, rating, favorite, palette,
+               source_page_url, entity_version, updated_at
+          FROM asset_metadata;
+      DROP TABLE asset_metadata;
+      ALTER TABLE asset_metadata_v13 RENAME TO asset_metadata;
+
+      CREATE TABLE ai_content_v13 (
+        ai_content_id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+        revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+        field_name TEXT NOT NULL CHECK (field_name IN ('label', 'description', 'structured_metadata')),
+        value TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        generated_at TEXT NOT NULL
+      );
+      INSERT INTO ai_content_v13 SELECT * FROM ai_content;
+      DROP TABLE ai_content;
+      ALTER TABLE ai_content_v13 RENAME TO ai_content;
+      CREATE INDEX ai_content_asset_field ON ai_content(asset_id, field_name);
+
+      DROP TRIGGER IF EXISTS asset_search_index_ai;
+      DROP TRIGGER IF EXISTS asset_search_index_ad;
+      DROP TRIGGER IF EXISTS asset_search_index_au;
+      DROP TABLE asset_search;
+      DROP TABLE IF EXISTS trashed_managed_folders;
+      DROP INDEX IF EXISTS trashed_managed_folders_trashed_at_idx;
+      CREATE TABLE asset_search_index_v13 (
+        asset_id TEXT UNIQUE NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+        label TEXT NOT NULL DEFAULT '',
+        filename TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        source_url TEXT NOT NULL DEFAULT '',
+        folder_path TEXT NOT NULL DEFAULT '',
+        metadata_text TEXT NOT NULL DEFAULT ''
+      );
+      INSERT INTO asset_search_index_v13
+        SELECT asset_id, 'Legacy Alias', filename, tags, description, source_url,
+               folder_path, metadata_text
+          FROM asset_search_index;
+      DROP TABLE asset_search_index;
+      ALTER TABLE asset_search_index_v13 RENAME TO asset_search_index;
+      CREATE VIRTUAL TABLE asset_search USING fts5(
+        label, filename, tags, description, source_url, folder_path, metadata_text,
+        content='asset_search_index'
+      );
+      INSERT INTO asset_search(asset_search) VALUES('rebuild');
+
+      CREATE TABLE jobs_v13 (
+        job_id TEXT PRIMARY KEY,
+        library_id TEXT NOT NULL,
+        asset_id TEXT REFERENCES assets(asset_id) ON DELETE CASCADE,
+        revision_id TEXT REFERENCES revisions(revision_id) ON DELETE SET NULL,
+        kind TEXT NOT NULL CHECK (
+          kind IN ('generate_thumbnail', 'generate_video_poster',
+                   'generate_contact_sheet', 'generate_webm_proxy',
+                   'extract_metadata', 'extract_palette',
+                   'ai.image.analysis', 'ai.video.analysis')
+        ),
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled')
+        ),
+        priority INTEGER NOT NULL DEFAULT 0,
+        progress REAL DEFAULT 0.0,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_detail TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO jobs_v13 (
+        job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+        attempt_count, error_code, error_detail, created_at, updated_at
+      )
+      SELECT
+        job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+        attempt_count, error_code, error_detail, created_at, updated_at
+      FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_v13 RENAME TO jobs;
+      CREATE INDEX jobs_library_status_priority
+        ON jobs(library_id, status, priority DESC, created_at);
+
+      DELETE FROM schema_migrations WHERE version >= 14;
+      PRAGMA user_version = 13;
+    `);
+    database.prepare(
+      `INSERT INTO ai_content
+         (ai_content_id, asset_id, revision_id, field_name, value,
+          model_id, model_version, generated_at)
+       SELECT ?, asset_id, current_revision_id, 'label', 'AI Legacy Alias',
+              'migration-test', 'v1', ?
+         FROM assets WHERE asset_id = ?`,
+    ).run(randomUUID(), new Date().toISOString(), assetId);
+    database.prepare(
+      `INSERT INTO smart_collections
+         (collection_id, library_id, name, query_definition_json, position,
+          created_at, updated_at)
+       VALUES (?, ?, 'Legacy Label Query', ?, 0, ?, ?)`,
+    ).run(
+      randomUUID(),
+      created.libraryId,
+      JSON.stringify({
+        search: { clauses: [{ field: 'label', values: ['Legacy Alias'], exclude: false }] },
+      }),
+      new Date().toISOString(),
+      new Date().toISOString(),
+    );
+    database.close();
+
+    const migratedService = newService();
+    migratedService.openLibrary(created.libraryPath);
+    const metadata = migratedService.getAssetMetadata({ libraryId: created.libraryId, assetId });
+    expect(metadata).toMatchObject({
+      description: 'Description survives',
+      rating: 4,
+      favorite: true,
+    });
+    expect(migratedService.getAiContent(created.libraryId, assetId)).toEqual([
+      expect.objectContaining({ fieldName: 'description', value: 'AI description survives' }),
+    ]);
+    expect(migratedService.listSmartCollections(created.libraryId).map((item) => item.name))
+      .toEqual(['Filename Query']);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['Legacy Alias'], exclude: false }] },
+    }).total).toBe(0);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'description', values: ['survives'], exclude: false }] },
+    }).items.map((asset) => asset.assetId)).toEqual([assetId]);
+    expect(migratedService.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: 'description', values: ['AI description'], exclude: false }] },
+    }).items.map((asset) => asset.assetId)).toEqual([assetId]);
+    migratedService.closeAll();
+
+    const migratedDatabase = new TestDatabase(databasePath);
+    expect(migratedDatabase.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
+    expect(migratedDatabase.prepare("PRAGMA table_info('asset_metadata')").all())
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
+    expect(migratedDatabase.prepare("PRAGMA table_info('asset_search_index')").all())
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'label' })]));
+    migratedDatabase.close();
+  });
+
   it('closes, moves, and reopens a library without changing its identity', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'Reference',
       selectedParentPath: root,
@@ -224,7 +873,7 @@ describe('LibraryService lifecycle', () => {
 
   it('recreates regenerable directories when reopening a closed library', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({
       displayName: 'Textures',
       selectedParentPath: root,
@@ -246,14 +895,14 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects a conflicting target without leaving a creation partial', () => {
     const root = temporaryRoot();
-    const first = new LibraryService();
+    const first = newService();
     const created = first.createLibrary({
       displayName: 'Existing',
       selectedParentPath: root,
     });
     first.closeAll();
 
-    const second = new LibraryService();
+    const second = newService();
     expectServiceError(
       () => second.createLibrary({ displayName: 'Existing', selectedParentPath: root }),
       'LIBRARY_ALREADY_EXISTS',
@@ -263,24 +912,26 @@ describe('LibraryService lifecycle', () => {
 
   it('rejects folders that are missing a required library location', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
 
     expectServiceError(() => service.openLibrary(root), 'NOT_A_LIBRARY');
   });
 
-  it('rejects a missing database as a non-library', () => {
+  it('rescues a missing database from the Assets tree', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'No Database', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, '.serpent', 'library.db'));
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
+    const summary = service.openLibrary(created.libraryPath);
+    expect(summary.recovery?.mode).toBe('rescue');
+    expect(summary.libraryId).not.toBe(created.libraryId);
   });
 
   it('rejects a library whose required Assets directory was removed', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Missing Assets', selectedParentPath: root });
     service.closeAll();
     rmSync(path.join(created.libraryPath, 'Assets'), { recursive: true });
@@ -288,24 +939,27 @@ describe('LibraryService lifecycle', () => {
     expectServiceError(() => service.openLibrary(created.libraryPath), 'NOT_A_LIBRARY');
   });
 
-  it('rejects a database created by a newer schema version', () => {
+  it('opens a database created by a newer schema version writable (Serpent-033e)', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Future', selectedParentPath: root });
     service.closeAll();
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     database.pragma('user_version = 999');
     database.close();
 
-    expectServiceError(
-      () => service.openLibrary(created.libraryPath),
-      'LIBRARY_VERSION_TOO_NEW',
-    );
+    const summary = service.openLibrary(created.libraryPath);
+    expect(summary.readOnly).toBeFalsy();
+    expect(summary.libraryVersion).toBe(999);
+    service.renameLibrary({
+      libraryId: summary.libraryId,
+      displayName: 'Future writable',
+    });
   });
 
   it('migrates a valid v1 library through v2 to v3 when opening', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Migration', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV1(created.libraryPath);
@@ -313,7 +967,7 @@ describe('LibraryService lifecycle', () => {
     service.openLibrary(created.libraryPath);
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
     expect(
       database
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assets'")
@@ -327,7 +981,7 @@ describe('LibraryService lifecycle', () => {
     const root = temporaryRoot();
     const source = path.join(root, 'Café.PNG');
     writeFileSync(source, 'asset');
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Portable Migration', selectedParentPath: root });
     service.prepareOrExecuteImport({
       libraryId: created.libraryId,
@@ -341,7 +995,7 @@ describe('LibraryService lifecycle', () => {
     expect(service.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
       .toMatchObject({ relativeFilePath: 'Café.PNG' });
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
-    expect(database.pragma('user_version')).toEqual([{ user_version: 13 }]);
+    expect(database.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
     expect(database.prepare('SELECT path_identity FROM assets').all()).toEqual([
       { path_identity: 'café.png' },
     ]);
@@ -351,12 +1005,15 @@ describe('LibraryService lifecycle', () => {
 
   it('rolls back a failed v2 migration and preserves the v1 version', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Rollback', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV1(created.libraryPath, true);
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    // Serpent-verg.5 (0031 §2.2): a rolled-back migration failure is now a
+    // retryable LIBRARY_MIGRATION_FAILED (recorded for the retry path)
+    // rather than LIBRARY_CORRUPT — the version still does not advance.
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_MIGRATION_FAILED');
 
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(database.pragma('user_version')).toEqual([{ user_version: 1 }]);
@@ -368,7 +1025,7 @@ describe('LibraryService lifecycle', () => {
 
   it('does not commit a table-rebuild migration when foreign keys are corrupt', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Foreign Key Rollback', selectedParentPath: root });
     service.closeAll();
     downgradeLibraryToV2(created.libraryPath);
@@ -383,7 +1040,8 @@ describe('LibraryService lifecycle', () => {
     ).run(randomUUID(), randomUUID(), new Date().toISOString(), new Date().toISOString());
     before.close();
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    // Serpent-verg.5: a rolled-back table-rebuild failure is retryable.
+    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_MIGRATION_FAILED');
 
     const after = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(after.pragma('user_version')).toEqual([{ user_version: 3 }]);
@@ -396,61 +1054,113 @@ describe('LibraryService lifecycle', () => {
     after.close();
   });
 
-  it('rejects a corrupt database without leaving the library open', () => {
+  it('rescues a corrupt database without losing the library root', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Corrupt', selectedParentPath: root });
     service.closeAll();
     writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not a sqlite database');
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
-    expect(service.listLibraries()).toEqual([]);
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(service.listLibraries()).toEqual([recovered]);
+    expect(readdirSync(path.join(created.libraryPath, '.serpent', 'corrupt-backup')))
+      .toEqual(expect.arrayContaining([expect.stringMatching(/^library\.db\.primary-/u)]));
   });
 
-  it('does not repair internal directories before a database passes validation', () => {
+  it('recreates regenerable directories after a database rescue', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Read First', selectedParentPath: root });
     service.closeAll();
     const previewsPath = path.join(created.libraryPath, '.serpent', 'previews');
     rmSync(previewsPath, { recursive: true });
     writeFileSync(path.join(created.libraryPath, '.serpent', 'library.db'), 'not sqlite');
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
-    expect(existsSync(previewsPath)).toBe(false);
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(existsSync(previewsPath)).toBe(true);
   });
 
-  it('rejects a tampered migration audit record', () => {
+  it('rescues a tampered migration audit record without latching retries', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const created = service.createLibrary({ displayName: 'Tampered', selectedParentPath: root });
     service.closeAll();
     const database = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     database.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 1').run('bad');
     database.close();
 
-    expectServiceError(() => service.openLibrary(created.libraryPath), 'LIBRARY_CORRUPT');
+    const recovered = service.openLibrary(created.libraryPath);
+    expect(recovered.recovery).toMatchObject({ mode: 'rescue' });
+    expect(recovered.readOnly).toBeFalsy();
   });
 
-  it('does not leave a partial library when the parent is not writable', () => {
-    const root = temporaryRoot();
-    const service = new LibraryService();
-    chmodSync(root, 0o500);
-    try {
-      expectServiceError(
-        () => service.createLibrary({ displayName: 'Denied', selectedParentPath: root }),
-        'LIBRARY_NOT_WRITABLE',
-      );
-      expect(readdirSync(root)).toEqual([]);
-    } finally {
-      chmodSync(root, 0o700);
-    }
-  });
+  it.runIf(process.platform !== 'win32')(
+    'does not leave a partial library when the parent is not writable',
+    () => {
+      // POSIX-only: chmod actually revokes the owner's write permission here.
+      // On Windows chmod only toggles the read-only attribute, accessSync(W_OK)
+      // still reports the owner-writable directory as writable, and mkdirSync
+      // succeeds regardless — so a non-writable parent cannot be constructed
+      // this way (it would require ACL/icacls manipulation). createLibrary's
+      // writability probe + partial cleanup are exercised on POSIX.
+      const root = temporaryRoot();
+      const service = newService();
+      chmodSync(root, 0o500);
+      try {
+        expectServiceError(
+          () => service.createLibrary({ displayName: 'Denied', selectedParentPath: root }),
+          'LIBRARY_NOT_WRITABLE',
+        );
+        expect(readdirSync(root)).toEqual([]);
+      } finally {
+        chmodSync(root, 0o700);
+      }
+    },
+  );
 
   it('reports an unknown close without changing the open set', () => {
-    const service = new LibraryService();
+    const service = newService();
 
     expectServiceError(() => service.closeLibrary('unknown-library'), 'LIBRARY_NOT_OPEN');
     expect(service.listLibraries()).toEqual([]);
+  });
+
+  it('deletes an open library root from disk and leaves linked sources (Serpent-9i8)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Delete Me',
+      selectedParentPath: root,
+    });
+
+    const assetPath = path.join(root, 'photo.png');
+    writeFileSync(assetPath, Buffer.alloc(64));
+    service.prepareOrExecuteImport({
+      libraryId: created.libraryId,
+      sourceKind: 'files',
+      sourcePaths: [assetPath],
+    });
+
+    const linkedRoot = path.join(root, 'linked-source');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'outside.png'), 'keep');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+      displayName: 'Linked',
+    });
+
+    const libraryPath = created.libraryPath;
+    expect(existsSync(libraryPath)).toBe(true);
+
+    const deleted = service.deleteLibraryFromDisk(created.libraryId);
+    expect(deleted.libraryId).toBe(created.libraryId);
+    expect(deleted.libraryPath).toBe(libraryPath);
+    expect(existsSync(libraryPath)).toBe(false);
+    expect(existsSync(path.join(linkedRoot, 'outside.png'))).toBe(true);
+    expectServiceError(() => service.closeLibrary(created.libraryId), 'LIBRARY_NOT_OPEN');
+    expectServiceError(() => service.openLibrary(libraryPath), 'LIBRARY_NOT_FOUND');
   });
 });

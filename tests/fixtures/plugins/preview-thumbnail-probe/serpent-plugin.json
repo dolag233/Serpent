@@ -1,0 +1,80 @@
+{
+  "manifestVersion": 1,
+  "id": "com.serpent.preview-thumbnail-probe",
+  "version": "1.0.0",
+  "name": "Preview Thumbnail Probe",
+  "description": "Returns deterministic bounded PNG bytes for .probe assets.",
+  "author": "Serpent",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.1.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "entry/main.js"
+  },
+  "permissions": [
+    "preview.provider",
+    "thumbnail.provider",
+    "metadata.extractor",
+    "import.provider",
+    "export.provider",
+    "ai.provider"
+  ],
+  "contributes": {
+    "commands": [],
+    "menus": {},
+    "views": [],
+    "settings": [],
+    "hooks": [],
+    "jobs": [],
+    "providers": [
+      {
+        "id": "probe-preview",
+        "kind": "preview",
+        "extensions": [
+          ".probe"
+        ]
+      },
+      {
+        "id": "probe-thumbnail",
+        "kind": "thumbnail",
+        "extensions": [
+          ".probe"
+        ]
+      },
+      {
+        "id": "probe-metadata",
+        "kind": "metadata",
+        "extensions": [
+          ".probe"
+        ]
+      },
+      {
+        "id": "probe-import",
+        "kind": "import",
+        "extensions": [
+          ".probe"
+        ],
+        "mimeTypes": [
+          "application/x-serpent-probe"
+        ]
+      },
+      {
+        "id": "probe-export",
+        "kind": "export",
+        "extensions": [
+          ".probe"
+        ]
+      },
+      {
+        "id": "probe-ai",
+        "kind": "ai",
+        "extensions": [
+          ".probe"
+        ]
+      }
+    ]
+  }
+}

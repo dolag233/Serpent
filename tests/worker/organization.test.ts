@@ -9,6 +9,20 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -42,6 +56,7 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
@@ -56,7 +71,7 @@ function createLibraryWithAsset(): {
   assetId: string;
 } {
   const root = temporaryRoot();
-  const service = new LibraryService();
+  const service = newService();
   const library = service.createLibrary({ displayName: 'Org', selectedParentPath: root });
 
   // Create a managed folder and an asset on disk + in DB so tags/collections can reference it.
@@ -168,6 +183,31 @@ describe('tags', () => {
     service.closeAll();
   });
 
+  it('lists the most recently created tag first', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAsset();
+    const older = service.createTag({ libraryId, name: 'Older' });
+    const newer = service.createTag({ libraryId, name: 'Newer' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare('UPDATE tags SET created_at = ? WHERE tag_id = ?').run(
+        '2026-07-15T00:00:00.000Z',
+        older.tagId,
+      );
+      db.prepare('UPDATE tags SET created_at = ? WHERE tag_id = ?').run(
+        '2026-07-16T00:00:00.000Z',
+        newer.tagId,
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(service.listTags(libraryId).map((tag) => tag.tagId)).toEqual([
+      newer.tagId,
+      older.tagId,
+    ]);
+    service.closeAll();
+  });
+
   it('isolates tag names across libraries', () => {
     const { service, libraryId } = createLibraryWithAsset();
     const root2 = temporaryRoot();
@@ -231,11 +271,116 @@ describe('tags', () => {
     );
     service.closeAll();
   });
+
+  it('deletes multiple tags in one call', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'BatchA' });
+    const beta = service.createTag({ libraryId, name: 'BatchB' });
+
+    const { deletedTagIds } = service.deleteTags({
+      libraryId,
+      tagIds: [alpha.tagId, beta.tagId],
+    });
+    expect(deletedTagIds.sort()).toEqual([alpha.tagId, beta.tagId].sort());
+    expect(service.listTags(libraryId)).toHaveLength(0);
+
+    service.closeAll();
+  });
+
+  it('merges tags into a newly named tag and deduplicates asset links', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'MergeA' });
+    const beta = service.createTag({ libraryId, name: 'MergeB' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId] });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [beta.tagId] });
+
+    const merged = service.mergeTags({
+      libraryId,
+      sourceTagIds: [alpha.tagId, beta.tagId],
+      name: 'Merged',
+    });
+    expect(merged.name).toBe('Merged');
+    expect(merged.assetCount).toBe(1);
+
+    const list = service.listTags(libraryId);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.tagId).toBe(merged.tagId);
+    expect(list.find((tag) => tag.tagId === alpha.tagId)).toBeUndefined();
+
+    service.closeAll();
+  });
+
+  it('throws when merging fewer than two tags', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Solo' });
+    expectServiceCode(
+      () =>
+        service.mergeTags({
+          libraryId,
+          sourceTagIds: [tag.tagId],
+          name: 'Nope',
+        }),
+      'INVALID_FOLDER_NAME',
+    );
+    service.closeAll();
+  });
+
+  it('builds tag co-occurrence graph with weighted edges', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'CoAlpha' });
+    const beta = service.createTag({ libraryId, name: 'CoBeta' });
+    const solo = service.createTag({ libraryId, name: 'CoSolo' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId, beta.tagId] });
+
+    const graph = service.getTagCooccurrenceGraph({ libraryId });
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.edges).toHaveLength(1);
+    const edge = graph.edges[0]!;
+    expect(edge.weight).toBe(1);
+    expect([edge.sourceTagId, edge.targetTagId].sort()).toEqual(
+      [alpha.tagId, beta.tagId].sort(),
+    );
+    expect(graph.nodes.find((node) => node.tagId === solo.tagId)).toBeUndefined();
+
+    service.closeAll();
+  });
+
+  it('respects minWeight when building co-occurrence edges', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const alpha = service.createTag({ libraryId, name: 'WeightA' });
+    const beta = service.createTag({ libraryId, name: 'WeightB' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [alpha.tagId, beta.tagId] });
+
+    const graph = service.getTagCooccurrenceGraph({ libraryId, minWeight: 2 });
+    expect(graph.edges).toHaveLength(0);
+
+    service.closeAll();
+  });
 });
 
 // ── Tag assignment ────────────────────────────────────────────────────
 
 describe('tag assignment', () => {
+  it('counts distinct assets across human and AI tag relationships', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Shared source' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO ai_asset_tags
+           (asset_id, tag_id, revision_id, model_id, model_version)
+         VALUES (?, ?, NULL, 'test-model', '1')`,
+      ).run(assetId, tag.tagId);
+    } finally {
+      db.close();
+    }
+
+    expect(service.listTags(libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    expect(service.listTags(libraryId).find((item) => item.tagId === tag.tagId)?.assetCount).toBe(1);
+    service.closeAll();
+  });
+
   it('assigns tags to assets and counts assignments', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
     const alpha = service.createTag({ libraryId, name: 'Alpha' });
@@ -247,6 +392,7 @@ describe('tag assignment', () => {
       tagIds: [alpha.tagId, beta.tagId],
     });
     expect(result.assignedCount).toBe(2);
+    expect(result.skipped).toEqual([]);
 
     // Verify assetCount on listed tags.
     const list = service.listTags(libraryId);
@@ -274,13 +420,40 @@ describe('tag assignment', () => {
     service.closeAll();
   });
 
-  it('rejects assignment with nonexistent asset', () => {
+  it('skips nonexistent assets during assignment and reports them', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'Ghost' });
+
+    const result = service.assignTags({
+      libraryId,
+      assetIds: [assetId, 'nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.assignedCount).toBe(1);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // The valid asset still received the tag.
+    const list = service.listTags(libraryId);
+    expect(list.find((t) => t.tagId === tag.tagId)?.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('reports every requested asset as skipped when none exist', () => {
     const { service, libraryId } = createLibraryWithAsset();
     const tag = service.createTag({ libraryId, name: 'Ghost' });
-    expectServiceCode(
-      () => service.assignTags({ libraryId, assetIds: ['nonexistent'], tagIds: [tag.tagId] }),
-      'FOLDER_NOT_FOUND',
-    );
+
+    const result = service.assignTags({
+      libraryId,
+      assetIds: ['nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.assignedCount).toBe(0);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // Nothing was assigned anywhere.
+    expect(service.listTags(libraryId).find((t) => t.tagId === tag.tagId)?.assetCount).toBe(0);
+
     service.closeAll();
   });
 
@@ -305,10 +478,49 @@ describe('tag assignment', () => {
       tagIds: [alpha.tagId],
     });
     expect(result.removedCount).toBe(1);
+    expect(result.skipped).toEqual([]);
 
     const list = service.listTags(libraryId);
     expect(list.find((t) => t.tagId === alpha.tagId)?.assetCount).toBe(0);
     expect(list.find((t) => t.tagId === beta.tagId)?.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('removeTags also clears AI-authored tag links (Serpent-h2i2)', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'AiOnly' });
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `INSERT INTO ai_asset_tags
+           (asset_id, tag_id, revision_id, model_id, model_version)
+         VALUES (?, ?, NULL, 'test-model', '1')`,
+      ).run(assetId, tag.tagId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.removeTags({
+      libraryId,
+      assetIds: [assetId],
+      tagIds: [tag.tagId],
+    });
+    expect(result.removedCount).toBe(1);
+
+    const after = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      const count = (
+        after
+          .prepare(
+            'SELECT COUNT(*) AS count FROM ai_asset_tags WHERE asset_id = ? AND tag_id = ?',
+          )
+          .get(assetId, tag.tagId) as { count: number }
+      ).count;
+      expect(count).toBe(0);
+    } finally {
+      after.close();
+    }
 
     service.closeAll();
   });
@@ -323,6 +535,31 @@ describe('tag assignment', () => {
 
     const second = service.removeTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
     expect(second.removedCount).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('skips nonexistent assets during removal and reports them', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    const tag = service.createTag({ libraryId, name: 'RemoveMe' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+
+    const result = service.removeTags({
+      libraryId,
+      assetIds: [assetId, 'nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(result.removedCount).toBe(1);
+    expect(result.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
+
+    // A removal targeting only unknown assets is a no-op, not an error.
+    const noop = service.removeTags({
+      libraryId,
+      assetIds: ['nonexistent'],
+      tagIds: [tag.tagId],
+    });
+    expect(noop.removedCount).toBe(0);
+    expect(noop.skipped).toEqual([{ assetId: 'nonexistent', reason: 'asset_not_found' }]);
 
     service.closeAll();
   });
@@ -511,7 +748,7 @@ describe('collections', () => {
 describe('collection assets', () => {
   it('preserves a linked asset location kind when listing a collection', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Linked Collection', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-collection-source');
     mkdirSync(linkedRoot);
@@ -563,6 +800,58 @@ describe('collection assets', () => {
     expect(assets).toHaveLength(2);
     expect(assets.map((a) => a.assetId).sort()).toEqual([assetId, assetId2].sort());
 
+    // CU-B4: memberships query returns only direct memberships for the asked assets.
+    const memberships = service.listAssetCollectionMemberships({
+      libraryId,
+      assetIds: [assetId, assetId2, 'missing-asset'],
+    });
+    expect(memberships).toEqual(
+      expect.arrayContaining([
+        { assetId, collectionId: col.collectionId },
+        { assetId: assetId2, collectionId: col.collectionId },
+      ]),
+    );
+    expect(memberships).toHaveLength(2);
+
+    service.closeAll();
+  });
+
+  it('counts recursive collection assets as a distinct union', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
+    const managedFolder = service.listManagedFolders(libraryId)[0]!;
+    const secondAssetId = createSecondAsset(
+      libraryPath,
+      managedFolder.relativePath,
+      managedFolder.folderId,
+    );
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({
+      libraryId,
+      parentId: parent.collectionId,
+      name: 'Child',
+    });
+
+    service.addCollectionAssets({
+      libraryId,
+      collectionId: parent.collectionId,
+      assetIds: [assetId],
+    });
+    service.addCollectionAssets({
+      libraryId,
+      collectionId: child.collectionId,
+      assetIds: [assetId, secondAssetId],
+    });
+
+    const list = service.listCollections(libraryId);
+    expect(list.find((collection) => collection.collectionId === parent.collectionId))
+      .toMatchObject({ assetCount: 2, childCollectionCount: 1 });
+    expect(list.find((collection) => collection.collectionId === child.collectionId))
+      .toMatchObject({ assetCount: 2, childCollectionCount: 0 });
+
+    service.trashAssets({ libraryId, assetIds: [secondAssetId] });
+    expect(service.listCollections(libraryId).find(
+      (collection) => collection.collectionId === parent.collectionId,
+    )?.assetCount).toBe(1);
     service.closeAll();
   });
 
@@ -720,12 +1009,12 @@ describe('asset metadata', () => {
     const metadata = service.getAssetMetadata({ libraryId, assetId });
     expect(metadata).toMatchObject({
       assetId,
-      label: null,
       description: null,
       rating: 0,
       favorite: false,
       palette: null,
       sourcePageUrl: null,
+      author: null,
       entityVersion: 0,
     });
     service.closeAll();
@@ -747,12 +1036,12 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Hero',
+      description: 'Hero description',
       rating: 4,
       favorite: true,
     });
     expect(result.entityVersion).toBe(1);
-    expect(result.label).toBe('Hero');
+    expect(result.description).toBe('Hero description');
     expect(result.rating).toBe(4);
     expect(result.favorite).toBe(true);
 
@@ -765,7 +1054,7 @@ describe('asset metadata', () => {
     });
     expect(result2.entityVersion).toBe(2);
     expect(result2.rating).toBe(5);
-    expect(result2.label).toBe('Hero'); // unchanged
+    expect(result2.description).toBe('Hero description'); // unchanged
 
     service.closeAll();
   });
@@ -778,7 +1067,7 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'First',
+      description: 'First',
     });
 
     // Attempt with stale expectedVersion=0.
@@ -788,7 +1077,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 0,
-          label: 'Stale',
+          description: 'Stale',
         }),
       'VERSION_CONFLICT',
     );
@@ -801,7 +1090,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 2,
-          label: 'Wrong',
+          description: 'Wrong',
         }),
       'VERSION_CONFLICT',
     );
@@ -818,7 +1107,7 @@ describe('asset metadata', () => {
           libraryId,
           assetId,
           expectedVersion: 1,
-          label: 'Bad',
+          description: 'Bad',
         }),
       'VERSION_CONFLICT',
     );
@@ -850,18 +1139,9 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('enforces label and description lengths at the service boundary', () => {
+  it('enforces description length at the service boundary', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
-    expectServiceCode(
-      () => service.setAssetMetadata({
-        libraryId,
-        assetId,
-        expectedVersion: 0,
-        label: 'a'.repeat(256),
-      }),
-      'INVALID_ASSET_METADATA',
-    );
     expectServiceCode(
       () => service.setAssetMetadata({
         libraryId,
@@ -875,42 +1155,58 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('enforces palette <= 20 entries', () => {
+  it('ignores palette writes and leaves stored palette unchanged', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
-    // 20 entries should be fine.
+    // Serpent-7pg: any palette payload is a no-op for the column / effective view.
     const palette20 = Array.from({ length: 20 }, (_, i) => `#${String(i).padStart(6, '0')}`);
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, palette: palette20 });
+    const first = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      palette: palette20,
+    });
+    expect(first).toMatchObject({
+      palette: null,
+      effectivePalette: [],
+      paletteSource: null,
+      entityVersion: 1,
+    });
 
-    // 21 entries should be rejected at service level.
     const palette21 = Array.from({ length: 21 }, (_, i) => `#${String(i).padStart(6, '0')}`);
-    expectServiceCode(
-      () =>
-        service.setAssetMetadata({
-          libraryId,
-          assetId,
-          expectedVersion: 1,
-          palette: palette21,
-        }),
-      'INVALID_ASSET_METADATA',
-    );
+    const second = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 1,
+      palette: palette21,
+    });
+    expect(second).toMatchObject({
+      palette: null,
+      effectivePalette: [],
+      paletteSource: null,
+      entityVersion: 2,
+    });
 
     service.closeAll();
   });
 
-  it('rejects manual palette entries that are not six-digit hex colors', () => {
+  it('ignores invalid manual palette payloads without rejecting the write', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
+    let expectedVersion = 0;
     for (const invalidColor of ['red', '#FFF', '#12345G', 'rgb(1, 2, 3)', ' #112233']) {
-      expectServiceCode(
-        () => service.setAssetMetadata({
-          libraryId,
-          assetId,
-          expectedVersion: 0,
-          palette: [invalidColor],
-        }),
-        'INVALID_ASSET_METADATA',
-      );
+      const result = service.setAssetMetadata({
+        libraryId,
+        assetId,
+        expectedVersion,
+        palette: [invalidColor],
+      });
+      expect(result).toMatchObject({
+        palette: null,
+        effectivePalette: [],
+        paletteSource: null,
+      });
+      expectedVersion = result.entityVersion;
     }
 
     service.closeAll();
@@ -955,6 +1251,71 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
+  it('accepts only non-blank, whitespace-trimmed author values at the service boundary', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    for (const invalidAuthor of [
+      ' Jane Doe',
+      'Jane Doe ',
+      '   ',
+      'a'.repeat(256),
+    ]) {
+      expectServiceCode(
+        () => service.setAssetMetadata({
+          libraryId,
+          assetId,
+          expectedVersion: 0,
+          author: invalidAuthor,
+        }),
+        'INVALID_ASSET_METADATA',
+      );
+    }
+
+    const validAuthor = 'a'.repeat(255);
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      author: validAuthor,
+    }).author).toBe(validAuthor);
+    expect(service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 1,
+      author: '',
+    }).author).toBeNull();
+
+    service.closeAll();
+  });
+
+  it('sets and reads back author independently of other metadata fields', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+
+    const result = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      author: 'Jane Doe',
+      description: 'Hero description',
+    });
+    expect(result.author).toBe('Jane Doe');
+    expect(result.description).toBe('Hero description');
+
+    const fetched = service.getAssetMetadata({ libraryId, assetId });
+    expect(fetched.author).toBe('Jane Doe');
+
+    // Updating other fields without touching author must leave it unchanged.
+    const untouched = service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: result.entityVersion,
+      rating: 3,
+    });
+    expect(untouched.author).toBe('Jane Doe');
+
+    service.closeAll();
+  });
+
   it('backfill is idempotent and fills missing rows', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAsset();
     const managedFolder = service.listManagedFolders(libraryId)[0]!;
@@ -984,13 +1345,12 @@ describe('asset metadata', () => {
     service.closeAll();
   });
 
-  it('AssetSummary reflects label/rating/favorite after metadata.set', () => {
+  it('AssetSummary reflects rating/favorite after metadata.set', () => {
     const { service, libraryId, assetId } = createLibraryWithAsset();
 
     // Before metadata: defaults.
     const assetsBefore = service.listAssets({ libraryId, recursive: true });
     const before = assetsBefore.find((a) => a.assetId === assetId)!;
-    expect(before.label).toBeNull();
     expect(before.rating).toBe(0);
     expect(before.favorite).toBe(false);
 
@@ -999,7 +1359,6 @@ describe('asset metadata', () => {
       libraryId,
       assetId,
       expectedVersion: 0,
-      label: 'Masterpiece',
       rating: 5,
       favorite: true,
     });
@@ -1007,7 +1366,6 @@ describe('asset metadata', () => {
     // After metadata: populated.
     const assetsAfter = service.listAssets({ libraryId, recursive: true });
     const after = assetsAfter.find((a) => a.assetId === assetId)!;
-    expect(after.label).toBe('Masterpiece');
     expect(after.rating).toBe(5);
     expect(after.favorite).toBe(true);
 
@@ -1018,6 +1376,78 @@ describe('asset metadata', () => {
 // ── Smart Collections ───────────────────────────────────────────────────
 
 describe('smart collections', () => {
+  it('create allows draft empty/sort-only; update rejects them (CU-M5)', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+
+    // Sidebar inline-create (Serpent-san / SMART-007) intentionally allows a
+    // draft `{}` or sort-only query at create time; the settings dialog
+    // attaches a meaningful condition afterwards. Validation therefore
+    // happens on update/save, not on create.
+    const draftEmpty = service.createSmartCollection({
+      libraryId,
+      name: 'All Assets Trap',
+      queryDefinitionJson: '{}',
+    });
+    expect(draftEmpty.collectionId).toBeTruthy();
+
+    const draftSortOnly = service.createSmartCollection({
+      libraryId,
+      name: 'Sort Only',
+      queryDefinitionJson: JSON.stringify({
+        sort: { field: 'name', order: 'asc' },
+      }),
+    });
+    expect(draftSortOnly.collectionId).toBeTruthy();
+
+    expectServiceCode(
+      () =>
+        service.updateSmartCollection({
+          libraryId,
+          collectionId: draftEmpty.collectionId,
+          queryDefinitionJson: '{}',
+        }),
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+    expectServiceCode(
+      () =>
+        service.updateSmartCollection({
+          libraryId,
+          collectionId: draftSortOnly.collectionId,
+          queryDefinitionJson: JSON.stringify({
+            sort: { field: 'name', order: 'asc' },
+          }),
+        }),
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+
+    service.closeAll();
+  });
+
+  it('lists smart collections with live asset counts (CU-M6)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAsset();
+    service.setAssetMetadata({
+      libraryId,
+      assetId,
+      expectedVersion: 0,
+      favorite: true,
+    });
+
+    const sc = service.createSmartCollection({
+      libraryId,
+      name: 'Favorites',
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: 'favorite', values: [], exclude: false }],
+      }),
+    });
+    expect(sc.assetCount).toBe(1);
+
+    const list = service.listSmartCollections(libraryId);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
   it('creates and lists smart collections', () => {
     const { service, libraryId } = createLibraryWithAsset();
 
@@ -1045,7 +1475,7 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'Original',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
 
     const updated = service.updateSmartCollection({
@@ -1093,7 +1523,7 @@ describe('smart collections', () => {
     const sc = service.createSmartCollection({
       libraryId,
       name: 'ToDelete',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
 
     const deletedId = service.deleteSmartCollection({
@@ -1126,14 +1556,14 @@ describe('smart collections', () => {
     service.createSmartCollection({
       libraryId,
       name: 'Unique',
-      queryDefinitionJson: '{}',
+      queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
     });
     expectServiceCode(
       () =>
         service.createSmartCollection({
           libraryId,
           name: 'Unique',
-          queryDefinitionJson: '{}',
+          queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }),
         }),
       'FOLDER_ALREADY_EXISTS',
     );
@@ -1156,8 +1586,8 @@ describe('smart collections', () => {
     const assetId2 = createSecondAsset(libraryPath, managedFolder.relativePath, managedFolder.folderId);
 
     // Set distinct ratings so we can filter.
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, rating: 5, label: 'Masterpiece' });
-    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 0, rating: 1, label: 'Sketch' });
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, rating: 5 });
+    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 0, rating: 1 });
 
     // Create smart collection for rating >= 4.
     const sc = service.createSmartCollection({
@@ -1173,7 +1603,7 @@ describe('smart collections', () => {
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]!.assetId).toBe(assetId);
-    expect(result.items[0]!.label).toBe('Masterpiece');
+    expect(result.items[0]!.rating).toBe(5);
 
     service.closeAll();
   });

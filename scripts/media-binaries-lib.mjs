@@ -20,17 +20,22 @@ const FORBIDDEN_FFMPEG_MARKERS = [
   '--enable-libfdk-aac',
 ];
 
+// LGPL 合规由 FORBIDDEN_FFMPEG_MARKERS（无 --enable-gpl/nonfree/x264/x265/
+// fdk-aac）保证；显式 --disable-gpl/--disable-nonfree 是 vcpkg 自建的自证
+// 标记，外部 LGPL build（BtbN 等）不包含，因此不作硬性要求。
 const REQUIRED_FFMPEG_CONFIG = [
-  '--disable-gpl',
-  '--disable-nonfree',
   '--enable-libvpx',
   '--enable-libopus',
   '--enable-libfreetype',
   '--enable-libharfbuzz',
+  '--enable-zlib',
 ];
 
-const REQUIRED_ENCODERS = ['libvpx-vp9', 'libopus'];
-const REQUIRED_FILTERS = ['drawtext', 'fps', 'scale', 'thumbnail', 'tile'];
+const REQUIRED_ENCODERS = ['libvpx-vp9', 'libopus', 'png'];
+const REQUIRED_FILTERS = [
+  'drawtext', 'fps', 'scale', 'thumbnail', 'tile',
+  'aformat', 'compand', 'showwavespic',
+];
 
 export function currentPlatformKey() {
   if (process.platform === 'darwin' && process.arch === 'arm64') {
@@ -278,7 +283,7 @@ function validateManifestShape(manifest, platform, sourceLock) {
     throw new Error('Media manifest files must be an array.');
   }
   for (const component of ['ffmpeg', 'openimageio']) {
-    const expected = sourceLock.components?.[component];
+    const expected = expectedComponents(sourceLock, platform)?.[component];
     const actual = manifest.components?.[component];
     if (!expected || !actual) {
       throw new Error(`Media manifest is missing component metadata for ${component}.`);
@@ -313,6 +318,16 @@ function assertRegularRequiredFile(root, file, platform) {
   }
 }
 
+/**
+ * Expected component metadata for a platform: a per-platform override in
+ * source-lock.json (`platforms.<platform>.components`) wins over the global
+ * `components` block, so each platform bundle can pin its own versions.
+ */
+function expectedComponents(sourceLock, platform) {
+  const override = sourceLock.platforms?.[platform]?.components;
+  return override ? { ...sourceLock.components, ...override } : sourceLock.components;
+}
+
 export function verifyBundle({ root, platform, execute = true }) {
   assertPlatform(platform);
   const sourceLock = readJson(path.join(root, 'media-binaries', 'source-lock.json'));
@@ -342,7 +357,7 @@ export function verifyBundle({ root, platform, execute = true }) {
   let inspection;
   if (execute) {
     inspection = inspectBinaries(root, platform);
-    const expectedVersions = sourceLock.components;
+    const expectedVersions = expectedComponents(sourceLock, platform);
     if (!inspection.ffmpegVersion.includes(expectedVersions.ffmpeg.version)) {
       throw new Error(`FFmpeg version does not contain ${expectedVersions.ffmpeg.version}.`);
     }
@@ -381,21 +396,22 @@ export function generateManifest({ root, platform }) {
   }
 
   const inspection = inspectBinaries(root, platform);
-  if (!inspection.ffmpegVersion.includes(sourceLock.components.ffmpeg.version)) {
-    throw new Error(`FFmpeg is not locked version ${sourceLock.components.ffmpeg.version}.`);
+  const expectedVersions = expectedComponents(sourceLock, platform);
+  if (!inspection.ffmpegVersion.includes(expectedVersions.ffmpeg.version)) {
+    throw new Error(`FFmpeg is not locked version ${expectedVersions.ffmpeg.version}.`);
   }
-  if (!inspection.ffprobeVersion.includes(sourceLock.components.ffmpeg.version)) {
-    throw new Error(`ffprobe is not locked version ${sourceLock.components.ffmpeg.version}.`);
+  if (!inspection.ffprobeVersion.includes(expectedVersions.ffmpeg.version)) {
+    throw new Error(`ffprobe is not locked version ${expectedVersions.ffmpeg.version}.`);
   }
-  if (!inspection.oiiotoolVersion.includes(sourceLock.components.openimageio.version)) {
-    throw new Error(`oiiotool is not locked version ${sourceLock.components.openimageio.version}.`);
+  if (!inspection.oiiotoolVersion.includes(expectedVersions.openimageio.version)) {
+    throw new Error(`oiiotool is not locked version ${expectedVersions.openimageio.version}.`);
   }
 
   const manifest = {
     schemaVersion: 1,
     platform,
     generatedAt: new Date().toISOString(),
-    components: sourceLock.components,
+    components: expectedComponents(sourceLock, platform),
     reportedVersions: {
       ffmpegVersion: inspection.ffmpegVersion,
       ffprobeVersion: inspection.ffprobeVersion,

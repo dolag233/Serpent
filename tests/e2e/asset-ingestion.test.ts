@@ -15,9 +15,25 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import {
+  closeLibraryViaSwitcher,
+  resolveElectronExecutablePath,
+} from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
+
+/**
+ * Locates a managed folder's sidebar nav row by its label text. Folder cards
+ * only render in a managed-folder/root view (not the default "所有资产" scope
+ * — FOLDER-010), and the nav label ellipsis-truncates in narrow panes (which
+ * clips the text node and breaks an accessible-name match), so target the
+ * label text + ancestor row instead of getByRole('button', { name }).
+ */
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator('.navigation-pane .nav-row-label', { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
 
 test('imports files and a directory hierarchy, then reconciles external changes', async () => {
   const testInfo = test.info();
@@ -46,6 +62,7 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
       SERPENT_E2E_IMPORT_FILES: [imageSource, notesSource].join(path.delimiter),
@@ -56,23 +73,26 @@ test('imports files and a directory hierarchy, then reconciles external changes'
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('heading', { name: '把第一批素材放进来' })).toBeVisible();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('项目');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('button', { name: '项目' })).toBeVisible();
-    await window.getByRole('button', { name: '项目' }).click();
+    await window.getByLabel("新文件夹名称").fill('项目');
+    await window.keyboard.press("Enter");
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
+    await sidebarFolderRow(window, '项目').click();
 
     await window.getByRole('button', { name: '添加文件夹' }).click();
-    await window.getByLabel('名称').fill('角色');
-    await window.getByRole('button', { name: '创建', exact: true }).click();
-    await expect(window.getByRole('button', { name: '角色' })).toBeVisible();
+    await window.getByLabel("新文件夹名称").fill('角色');
+    await window.keyboard.press("Enter");
+    await expect(sidebarFolderRow(window, '角色')).toBeVisible();
 
-    await window.getByRole('button', { name: '项目' }).click();
-    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
+    await sidebarFolderRow(window, '项目').click();
+    // File imports are exposed through the typed import contract; the library
+    // switcher now owns folder/library transfers only and this folder is no
+    // longer guaranteed to render the empty-canvas CTA after navigation.
+    await importFilesToProject(window);
     await expect(window.getByText('hero.png', { exact: true })).toBeVisible();
     await expect(window.getByText('notes.txt', { exact: true })).toBeVisible();
     expect(readFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), 'utf8')).toBe('image-v1');
@@ -81,31 +101,29 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     writeFileSync(imageSource, Buffer.from('image-v2-different'));
     const abandoned = await prepareAndAbandonConflict(window);
     expect(JSON.stringify(abandoned.plan)).not.toContain(sourceRoot);
-    expect(abandoned.plan.suspectedDuplicateCount).toBe(1);
-    expect(abandoned.plan.nameConflictCount).toBe(1);
+    // Both re-imports collide on destination basename → name conflicts only
+    // (IMPORT-007: path/name wins over content-duplicate classification).
+    expect(abandoned.plan.suspectedDuplicateCount).toBe(0);
+    expect(abandoned.plan.nameConflictCount).toBe(2);
     expect(abandoned.replayOk).toBe(false);
     expect(abandoned.replayErrorCode).toBeTruthy();
     const operationsPath = path.join(libraryPath, '.serpent', 'operations');
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
 
-    await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    const conflictDialog = window.getByRole('dialog');
-    await expect(conflictDialog).toBeVisible();
-    await expect(conflictDialog.getByRole('heading', { name: '处理导入冲突' })).toBeVisible();
-    const conflictScreenshot = testInfo.outputPath('import-conflict.png');
-    await window.screenshot({ path: conflictScreenshot });
-    await testInfo.attach('import-conflict', { path: conflictScreenshot, contentType: 'image/png' });
-    await conflictDialog.getByLabel('疑似重复').selectOption('create-copy');
-    await conflictDialog.getByRole('button', { name: '应用并导入' }).click();
-    await expect(conflictDialog).toBeHidden();
+    // The non-empty canvas no longer duplicates the library switcher's import
+    // actions. Drive the same typed preload import contract so this test keeps
+    // covering the conflict plan and its atomic resolution.
+    const conflictPlan = await importFilesAndResolveConflict(window);
+    expect(conflictPlan).toMatchObject({ suspectedDuplicateCount: 0, nameConflictCount: 2 });
     const assetsAfterCopy = await listAllAssets(window);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('hero')).length).toBe(2);
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
-    await window.getByRole('button', { name: '角色' }).click();
-    await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
-    await expect(window.getByRole('button', { name: '正面' })).toBeVisible();
-    await window.getByRole('button', { name: '正面' }).click();
+    await sidebarFolderRow(window, '角色').click();
+    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
+    await expect(sidebarFolderRow(window, '正面')).toBeVisible();
+    await sidebarFolderRow(window, '正面').click();
     await expect(window.getByText('pose.webp', { exact: true })).toBeVisible();
     const importedNestedPath = path.join(
       libraryPath,
@@ -128,7 +146,9 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     writeFileSync(path.join(libraryPath, 'Assets', '项目', 'hero.png'), Buffer.from('image-v2-longer'));
     unlinkSync(importedNestedPath);
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
-    await expect(window.locator('.missing-banner', { hasText: '文件丢失' }).first()).toBeVisible();
+    await expect(
+      window.locator('.missing-overlay[aria-label="文件丢失"]').first(),
+    ).toBeVisible();
     const missingScreenshot = testInfo.outputPath('external-missing.png');
     await window.screenshot({ path: missingScreenshot });
     await testInfo.attach('external-missing', { path: missingScreenshot, contentType: 'image/png' });
@@ -156,11 +176,11 @@ test('imports files and a directory hierarchy, then reconciles external changes'
 
     const pendingBeforeClose = await preparePendingConflict(window);
     expect(pendingBeforeClose.forgedTokenAccepted).toBe(false);
-    await window.getByRole('button', { name: '关闭资源库' }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     expect(existsSync(operationsPath) ? readdirSync(operationsPath, { recursive: true }) : []).toHaveLength(0);
     expect(await resolveImportToken(window, pendingBeforeClose.importId)).toBe(false);
     await window.getByRole('button', { name: '打开资源库' }).click();
-    await expect(window.getByRole('button', { name: '项目' })).toBeVisible();
+    await expect(sidebarFolderRow(window, '项目')).toBeVisible();
     const afterReopen = await listAllAssets(window);
     expect(afterReopen.find((asset) => asset.displayName === 'hero.png')?.assetId).toBe(heroBefore?.assetId);
     expect(afterReopen.find((asset) => asset.displayName === 'pose.webp')?.availability).toBe('missing');
@@ -188,6 +208,7 @@ test('shows a specific safe import reason and persists the complete Worker error
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
     },
@@ -196,10 +217,10 @@ test('shows a specific safe import reason and persists the complete Worker error
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
-    await expect(window.getByRole('alert')).toContainText(
+    await expect(window.getByRole('alertdialog')).toContainText(
       '原因：目录中包含当前切片不支持的符号链接。',
     );
 
@@ -230,6 +251,7 @@ test('maps a real filesystem permission failure and logs its complete cause chai
     env: {
       ...process.env,
       SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_IMPORT_FOLDER: sourceDirectory,
     },
@@ -241,11 +263,11 @@ test('maps a real filesystem permission failure and logs its complete cause chai
     const logOffset = existsSync(logPath) ? readFileSync(logPath).length : 0;
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    await window.getByLabel('名称').fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     chmodSync(sourceDirectory, 0o000);
     await window.getByRole('button', { name: '导入文件夹', exact: true }).first().click();
-    await expect(window.getByRole('alert')).toContainText(
+    await expect(window.getByRole('alertdialog')).toContainText(
       '原因：当前用户没有读取源文件或写入目标位置的权限。',
     );
 
@@ -349,6 +371,84 @@ async function prepareAndAbandonConflict(window: Page): Promise<{
       replayOk: replay.ok,
       replayErrorCode: replay.error?.code,
     };
+  });
+}
+
+async function importFilesAndResolveConflict(window: Page): Promise<{
+  suspectedDuplicateCount: number;
+  nameConflictCount: number;
+}> {
+  return window.evaluate(async () => {
+    interface Result<T> {
+      ok: boolean;
+      value?: T;
+      error?: { code: string };
+    }
+    interface Folder { folderId: string; name: string }
+    interface Plan {
+      importId: string;
+      suspectedDuplicateCount: number;
+      nameConflictCount: number;
+    }
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+          listFolders(input: { libraryId: string }): Promise<Result<Folder[]>>;
+          importFiles(input: { libraryId: string; targetFolderId?: string }): Promise<Result<Plan>>;
+          resolveImport(input: {
+            importId: string;
+            suspectedDuplicate: 'create-copy';
+            nameConflict: 'keep-both';
+          }): Promise<Result<unknown>>;
+        };
+      };
+    };
+    const open = await bridge.serpent.library.listOpen();
+    const libraryId = open.value?.[0]?.libraryId;
+    if (!open.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    const targetFolderId = folders.value?.find((folder) => folder.name === '项目')?.folderId;
+    if (!folders.ok || !targetFolderId) throw new Error('Expected the project folder.');
+    const prepared = await bridge.serpent.library.importFiles({ libraryId, targetFolderId });
+    if (!prepared.ok || !prepared.value || !('importId' in prepared.value)) {
+      throw new Error('Expected an import conflict plan.');
+    }
+    const plan = prepared.value;
+    const resolved = await bridge.serpent.library.resolveImport({
+      importId: plan.importId,
+      suspectedDuplicate: 'create-copy',
+      nameConflict: 'keep-both',
+    });
+    if (!resolved.ok) throw new Error('Could not resolve the import conflict plan.');
+    return plan;
+  });
+}
+
+async function importFilesToProject(window: Page): Promise<void> {
+  await window.evaluate(async () => {
+    interface Result<T> { ok: boolean; value?: T; error?: { code: string } }
+    interface Folder { folderId: string; name: string }
+    interface Completion { assets: unknown[] }
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+          listFolders(input: { libraryId: string }): Promise<Result<Folder[]>>;
+          importFiles(input: { libraryId: string; targetFolderId?: string }): Promise<Result<Completion>>;
+        };
+      };
+    };
+    const open = await bridge.serpent.library.listOpen();
+    const libraryId = open.value?.[0]?.libraryId;
+    if (!open.ok || !libraryId) throw new Error('Expected an open library.');
+    const folders = await bridge.serpent.library.listFolders({ libraryId });
+    const targetFolderId = folders.value?.find((folder) => folder.name === '项目')?.folderId;
+    if (!folders.ok || !targetFolderId) throw new Error('Expected the project folder.');
+    const imported = await bridge.serpent.library.importFiles({ libraryId, targetFolderId });
+    if (!imported.ok || !imported.value || !('assets' in imported.value)) {
+      throw new Error('Expected the initial file import to complete.');
+    }
   });
 }
 

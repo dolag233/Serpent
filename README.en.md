@@ -1,0 +1,89 @@
+<div align="center">
+
+**🇺🇸 English** | [🇨🇳 简体中文](README.md)
+
+</div>
+
+# Serpent
+
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Logo.png" alt="Serpent-Logo" width="30%" />
+
+</div>
+
+Open-source (MIT), cross-platform (macOS / Windows) digital asset manager for game artists, film and post-production teams, and designers.
+
+[Homepage](https://serpent.dolag.work) · [Online docs](https://serpent.dolag.work/docs/user-guide/) · [Latest release](https://github.com/dolag233/Serpent/releases) · [Browser extension](https://github.com/dolag233/Serpent-Extension/releases)
+
+Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), and render with HDRI environment lighting and PBR. Data stays in a local library — no cloud dependency.
+
+## Features
+
++ **Massive asset support.** Most video, image, and audio formats, plus 3D models and text assets.
++ **Asset management.** Tags, ratings, descriptions, fast filtering and search, and collections.
++ **Plugin system.** Extend Serpent with plugins.
++ **Scripting & MCP.** Control Serpent with scripts, and let agents connect and automate through MCP.
++ **AI analysis.** Built-in AI module analyzes images, videos, and 3D assets.
++ **WebDAV cloud sync.** Two-way library sync across machines, with auto-sync and a configurable poll interval.
++ **External libraries.** Open Eagle / Billfish libraries directly and browse and search them seamlessly after conversion.
+
+<div align="center">
+
+<img src="docs/assets/ui/Serpent-Preview.png" alt="Serpent-Preview" />
+
+</div>
+
+## Install
+
+Download the latest installer from [GitHub Releases](https://github.com/dolag233/Serpent/releases).
+
+**macOS**: download `Serpent-<version>-arm64.dmg` and drag it into Applications. On first launch macOS shows "cannot verify the developer" — right-click the app → Open (first time only), or run:
+
+```bash
+xattr -cr /Applications/Serpent.app
+```
+
+**Windows**: run `Serpent-<version> Setup.exe`. Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway".
+
+**Browser extension**: download it from the [browser extension releases](https://github.com/dolag233/Serpent-Extension/releases). Open `chrome://extensions`, enable Developer mode, and load the unpacked extension:
+
+- macOS: `Serpent.app/Contents/Resources/extension`
+- Windows: `resources/extension` in the install directory
+
+## Build locally
+
+Requires Node.js 24.15.0 (see `.nvmrc`). Native development targets are macOS arm64 and Windows x64. Do not build from an SMB/NAS-mounted path.
+
+```bash
+npm ci --registry=https://registry.npmjs.org
+npm run rebuild:native   # align better-sqlite3 with Electron's ABI (verifies FTS5)
+npm start
+```
+
+Common commands:
+
+```bash
+npm run lint             # ESLint
+npm run typecheck        # tsc --noEmit
+npm run test             # unit + worker integration tests
+npm run test:e2e         # Playwright E2E
+npm run package          # package to out/Serpent-<platform>-<arch>/
+npm run make             # build platform installers (macOS dmg / Windows zip; Windows setup via Inno Setup)
+```
+
+The full build, packaging and release flow is in the [developer docs](docs/developer/build-packaging.en.md).
+
+## Documentation
+
+| Doc | Content |
+| --- | --- |
+| [User guide](docs/user-guide/README.en.md) | Install, import, browse, search, tags, collections, 3D viewer, troubleshooting |
+| [Online docs](https://serpent.dolag.work/docs/user-guide/) | The latest user guide in your browser |
+| [Developer docs](docs/developer/README.en.md) | Setup, build & packaging, architecture, testing |
+| [Extension author manual](docs/manual/README.md) | Plugins / scripts / MCP |
+| [Product brief](docs/product-brief.md) | Product vision and MVP scope |
+
+## License
+
+MIT. Bundled media components and assets carry their own licenses (FFmpeg LGPL, OpenImageIO, ufbx MIT, Poly Haven CC0) — see the LICENSE files under each `resources/` directory.

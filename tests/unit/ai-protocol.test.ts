@@ -1,31 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_AI_ANALYSIS_SETTINGS } from '../../src/shared/ai-analysis-settings';
 import {
   aiAnalysisResultSchema,
   aiStructuredOutputSchema,
   parseAiAnalysisResult,
+  parseAiAnalysisResultFromModelText,
 } from '../../src/worker/ai/protocol';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
+import { DashScopeVendorAdapter } from '../../src/worker/ai/dashscope-adapter';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
-import { safeAiDiagnostic, vendorFailure } from '../../src/worker/ai/error-mapping';
+import {
+  safeAiConnectionFailure,
+  safeAiDiagnostic,
+  vendorFailure,
+} from '../../src/worker/ai/error-mapping';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 const TEST_IMAGE_REQUEST: AiAnalysisRequest = {
+  displayName: 'concept-art.png',
   filename: 'concept-art.png',
   mime: 'image/png',
   imageBase64: 'aW1hZ2VEYXRh', // "imageData" in base64
   language: 'zh-CN',
   enabledFields: {
-    label: true,
     description: true,
     tags: true,
-    structuredMetadata: false,
+    rating: false,
   },
   existingTagNames: ['角色设计', '场景概念'],
+  analysisSettings: DEFAULT_AI_ANALYSIS_SETTINGS,
 };
 
 function okFetch(body: unknown): typeof fetch {
@@ -83,17 +91,15 @@ function openAiChatResponse(content: unknown, model = 'gpt-4o-2024-05-13') {
 describe('aiStructuredOutputSchema', () => {
   it('accepts a fully populated structured output', () => {
     const result = aiStructuredOutputSchema.parse({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
-      structured_metadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
     });
 
     expect(result).toEqual({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
-      structured_metadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
     });
   });
 
@@ -113,7 +119,7 @@ describe('aiStructuredOutputSchema', () => {
 
   it('rejects output missing the required tags field', () => {
     expect(() =>
-      aiStructuredOutputSchema.parse({ label: 'Only label' }),
+      aiStructuredOutputSchema.parse({ description: 'Only description' }),
     ).toThrow();
   });
 
@@ -153,6 +159,17 @@ describe('vendorFailure', () => {
     });
   });
 
+  it('permits bounded retry only for a model-output parse failure', () => {
+    expect(vendorFailure(new VendorAdapterError(
+      'invalid_response',
+      'The AI response did not match the required schema.',
+      { retryable: true },
+    ))).toMatchObject({
+      reason: 'AI_INVALID_RESPONSE',
+      retryable: true,
+    });
+  });
+
   it('creates a cause-bearing diagnostic with safe provider and system details', () => {
     const systemError = Object.assign(
       new Error('fetch https://example.test/path?key=AIza-secret failed with Bearer top-secret'),
@@ -177,19 +194,18 @@ describe('vendorFailure', () => {
 describe('aiAnalysisResultSchema', () => {
   it('accepts a valid result with modelVersion', () => {
     const result = aiAnalysisResultSchema.parse({
-      label: 'Test',
       description: 'Desc',
       tags: ['t1'],
       modelVersion: 'gpt-4o-2024-05-13',
     });
 
     expect(result.modelVersion).toBe('gpt-4o-2024-05-13');
-    expect(result.label).toBe('Test');
+    expect(result.description).toBe('Desc');
   });
 
   it('rejects a result without modelVersion', () => {
     expect(() =>
-      aiAnalysisResultSchema.parse({ label: 'Test', tags: [] }),
+      aiAnalysisResultSchema.parse({ description: 'Test', tags: [] }),
     ).toThrow();
   });
 
@@ -219,6 +235,187 @@ describe('parseAiAnalysisResult', () => {
   it('throws on an empty object (missing modelVersion)', () => {
     expect(() => parseAiAnalysisResult({})).toThrow();
   });
+
+  it('coerces comma-separated tags string (Serpent-iokf)', () => {
+    const result = parseAiAnalysisResult({
+      tags: '城市场景, 科幻',
+      modelVersion: 'v1',
+    });
+    expect(result.tags).toEqual(['城市场景', '科幻']);
+  });
+
+  it('parses fenced or prose-wrapped JSON from model text', () => {
+    const fenced = parseAiAnalysisResultFromModelText(
+      '```json\n{"tags":["a"],"description":"d","rating":3}\n```',
+      'm1',
+    );
+    expect(fenced).toEqual({
+      tags: ['a'],
+      description: 'd',
+      rating: 3,
+      modelVersion: 'm1',
+    });
+    const prose = parseAiAnalysisResultFromModelText(
+      'Here you go:\n{"tags":["b"]}\nThanks',
+      'm2',
+    );
+    expect(prose).toEqual({ tags: ['b'], modelVersion: 'm2' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DashScope adapter tests (native multimodal transport)
+// ---------------------------------------------------------------------------
+
+describe('DashScopeVendorAdapter', () => {
+  it('uses the native multimodal transport and validates JSON text output', async () => {
+    let requestedUrl = '';
+    let requestBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof fetch = async (input, init) => {
+      requestedUrl = String(input);
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        request_id: 'dashscope-request',
+        output: {
+          choices: [{
+            message: {
+              content: [{
+                text: JSON.stringify({
+                  description: '一张概念设计图',
+                  tags: ['概念设计'],
+                  rating: 4,
+                }),
+              }],
+            },
+          }],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      fetchStub,
+      'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+    );
+
+    const result = await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestedUrl).toBe(
+      'https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+    );
+    expect(requestBody?.parameters).toMatchObject({
+      result_format: 'message',
+      response_format: { type: 'json_object' },
+    });
+    const messages = (requestBody?.input as { messages?: Array<{ role: string; content: unknown }> })
+      .messages;
+    expect(messages?.[0]?.role).toBe('system');
+    expect(messages?.[1]?.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ image: 'data:image/png;base64,aW1hZ2VEYXRh' }),
+    ]));
+    expect(result).toEqual({
+      description: '一张概念设计图',
+      tags: ['概念设计'],
+      rating: 4,
+      modelVersion: 'qwen3-vl-plus',
+    });
+  });
+
+  it('maps a native authorization failure without leaking response details', async () => {
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      httpErrorFetch(401, 'credential rejected'),
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      name: 'VendorAdapterError',
+      kind: 'auth',
+      message: 'AI service returned HTTP 401',
+    });
+  });
+
+  it.each([
+    [401, 'credential rejected', 'auth', false],
+    [403, 'permission denied', 'permission', false],
+    [429, 'too many requests', 'rate_limit', true],
+    [429, 'quota exhausted', 'quota', false],
+    [500, 'temporary upstream failure', 'network', true],
+  ] as const)(
+    'classifies native HTTP %i as %s with retryable=%s',
+    async (status, body, kind, retryable) => {
+      const adapter = new DashScopeVendorAdapter(
+        'test-api-key',
+        'qwen3-vl-plus',
+        httpErrorFetch(status, body),
+      );
+
+      await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({ kind });
+      try {
+        await adapter.analyze(TEST_IMAGE_REQUEST);
+      } catch (error) {
+        expect(error).toBeInstanceOf(VendorAdapterError);
+        expect(vendorFailure(error as VendorAdapterError).retryable).toBe(retryable);
+      }
+    },
+  );
+
+  it('classifies native network and bounded-retry malformed-output failures', async () => {
+    const network = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      networkErrorFetch(new TypeError('socket closed')),
+    );
+    await expect(network.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({ kind: 'network' });
+
+    const malformed = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      okFetch({ output: { choices: [{ message: { content: 'not-json' } }] } }),
+    );
+    try {
+      await malformed.analyze(TEST_IMAGE_REQUEST);
+    } catch (error) {
+      expect(error).toMatchObject({ kind: 'invalid_response' });
+      expect(vendorFailure(error as VendorAdapterError).retryable).toBe(true);
+    }
+  });
+
+  it('maps a real AbortSignal.timeout rejection to the timeout category', async () => {
+    const fetchUntilAborted: typeof fetch = async (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error('Expected an AbortSignal.');
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    const adapter = new DashScopeVendorAdapter(
+      'test-api-key',
+      'qwen3-vl-plus',
+      fetchUntilAborted,
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST, AbortSignal.timeout(10)))
+      .rejects.toMatchObject({ kind: 'timeout' });
+  });
+});
+
+describe('safe AI connection failures', () => {
+  it('never sends credentials or proxy diagnostics across the Worker boundary', () => {
+    const result = safeAiConnectionFailure(new VendorAdapterError(
+      'network',
+      'proxy failed for https://relay.example/?key=secret Bearer sk-super-secret',
+    ));
+
+    expect(result).toEqual({
+      errorKind: 'network',
+      reason: 'Could not reach the AI service.',
+    });
+    expect(JSON.stringify(result)).not.toContain('secret');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -226,26 +423,51 @@ describe('parseAiAnalysisResult', () => {
 // ---------------------------------------------------------------------------
 
 describe('OpenAIVendorAdapter', () => {
-  it('sends an OpenAI strict schema whose fields are all required and nullable when optional', async () => {
+  it('requests json_object (not strict json_schema) for midstream compatibility', async () => {
     let requestBody: Record<string, unknown> | undefined;
     const fetchStub: typeof fetch = async (_input, init) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return new Response(JSON.stringify(openAiChatResponse({
-        label: null,
         description: null,
         tags: ['asset'],
-        structured_metadata: null,
+        rating: null,
       })), { status: 200, headers: { 'content-type': 'application/json' } });
     };
     const adapter = new OpenAIVendorAdapter('test-api-key', 'gpt-4o', fetchStub);
 
     const result = await adapter.analyze(TEST_IMAGE_REQUEST);
 
-    const responseFormat = requestBody?.response_format as Record<string, unknown>;
-    const jsonSchema = responseFormat.json_schema as Record<string, unknown>;
-    const schema = jsonSchema.schema as Record<string, unknown>;
-    expect(schema.required).toEqual(['label', 'description', 'tags', 'structured_metadata']);
+    expect(requestBody?.response_format).toEqual({ type: 'json_object' });
+    const messages = requestBody?.messages as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain('Return ONLY one JSON object');
     expect(result).toEqual({ tags: ['asset'], modelVersion: 'gpt-4o-2024-05-13' });
+  });
+
+  it('posts to a custom OpenAI-compatible base URL when provided', async () => {
+    let requestedUrl = '';
+    const fetchStub: typeof fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(
+        JSON.stringify(
+          openAiChatResponse({
+            description: null,
+            tags: ['asset'],
+            rating: null,
+          }),
+        ),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'gpt-4o',
+      fetchStub,
+      'https://relay.example/v1',
+    );
+
+    await adapter.analyze(TEST_IMAGE_REQUEST);
+
+    expect(requestedUrl).toBe('https://relay.example/v1/chat/completions');
   });
 
   it('returns a parsed AiAnalysisResult on successful analysis', async () => {
@@ -254,7 +476,6 @@ describe('OpenAIVendorAdapter', () => {
       'gpt-4o',
       okFetch(
         openAiChatResponse({
-          label: '未来城市概念图',
           description: '一幅描绘未来城市的数字概念艺术作品',
           tags: ['城市场景', '科幻', '概念艺术'],
         }),
@@ -264,7 +485,6 @@ describe('OpenAIVendorAdapter', () => {
     const result = await adapter.analyze(TEST_IMAGE_REQUEST);
 
     expect(result).toEqual({
-      label: '未来城市概念图',
       description: '一幅描绘未来城市的数字概念艺术作品',
       tags: ['城市场景', '科幻', '概念艺术'],
       modelVersion: 'gpt-4o-2024-05-13',
@@ -469,7 +689,7 @@ describe('OpenAIVendorAdapter', () => {
       okFetch(
         openAiChatResponse({
           // Missing required 'tags' field
-          label: 'Some label',
+          description: 'Some description',
         }),
       ),
     );
@@ -504,10 +724,14 @@ describe('OpenAIVendorAdapter', () => {
   });
 
   it('maps HTTP 400 to invalid_response error kind', async () => {
+    let calls = 0;
     const adapter = new OpenAIVendorAdapter(
       'test-key',
       'gpt-4o',
-      httpErrorFetch(400),
+      (() => {
+        calls += 1;
+        return Promise.resolve(new Response('unknown model', { status: 400 }));
+      }) as typeof fetch,
     );
 
     let error: unknown;
@@ -519,5 +743,32 @@ describe('OpenAIVendorAdapter', () => {
 
     expect(error).toBeInstanceOf(VendorAdapterError);
     expect((error as VendorAdapterError).kind).toBe('invalid_response');
+    expect(calls).toBe(1);
+  });
+
+  it('maps a timeout while reading a 400 compatibility body to retryable timeout', async () => {
+    const timeout = Object.assign(new Error('body read timed out'), { name: 'TimeoutError' });
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'gpt-4o',
+      (() => Promise.resolve({
+        ok: false,
+        status: 400,
+        clone: () => ({ text: async () => { throw timeout; } }),
+      } as unknown as Response)) as typeof fetch,
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      kind: 'timeout',
+    });
+  });
+
+  it('marks a transient successful-but-empty completion envelope retryable', async () => {
+    const adapter = new OpenAIVendorAdapter('test-key', 'gpt-4o', okFetch({ choices: [] }));
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).rejects.toMatchObject({
+      kind: 'invalid_response',
+      retryable: true,
+    });
   });
 });

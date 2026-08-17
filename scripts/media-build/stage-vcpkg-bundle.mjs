@@ -81,9 +81,14 @@ function findLockedArchive(downloadRoot, expectedHash) {
     }
   };
   visit(downloadRoot);
-  if (matches.length !== 1) {
-    throw new Error(`Expected one vcpkg download with SHA-256 ${expectedHash}, found ${matches.length}.`);
+  if (matches.length === 0) {
+    throw new Error(`Expected one vcpkg download with SHA-256 ${expectedHash}, found 0.`);
   }
+  const locked = matches.filter((entryPath) => path.basename(entryPath).startsWith('serpent-locked-'));
+  if (locked.length === 1) return locked[0];
+  if (matches.length === 1) return matches[0];
+  // Overlay + port can both leave identical archives; same hash means same bytes.
+  matches.sort();
   return matches[0];
 }
 

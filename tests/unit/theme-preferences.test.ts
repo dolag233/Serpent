@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  DEFAULT_THEME_PREFERENCE,
+  THEME_PREF_KEY,
+  loadThemePreferences,
+  readSystemTheme,
+  resolveEffectiveTheme,
+  setStoredTheme,
+} from '../../src/renderer/theme';
+
+function memoryStorage() {
+  const memory = new Map<string, string>();
+  return {
+    getItem: (key: string) => memory.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      memory.set(key, value);
+    },
+    removeItem: (key: string) => {
+      memory.delete(key);
+    },
+    memory,
+  };
+}
+
+describe('theme preferences', () => {
+  it('defaults to system (clarification #11 / Serpent-svc)', () => {
+    const storage = memoryStorage();
+    expect(loadThemePreferences(storage).theme).toBe(DEFAULT_THEME_PREFERENCE);
+    expect(DEFAULT_THEME_PREFERENCE).toBe('system');
+  });
+
+  it('round-trips light/dark/system through injectable storage', () => {
+    const storage = memoryStorage();
+    setStoredTheme('light', storage);
+    expect(loadThemePreferences(storage).theme).toBe('light');
+    setStoredTheme('system', storage);
+    expect(loadThemePreferences(storage).theme).toBe('system');
+    expect(storage.memory.get(THEME_PREF_KEY)).toContain('"system"');
+  });
+
+  it('falls back to default on corrupt storage', () => {
+    const storage = memoryStorage();
+    storage.setItem(THEME_PREF_KEY, '{not-json');
+    expect(loadThemePreferences(storage).theme).toBe('system');
+  });
+});
+
+describe('resolveEffectiveTheme', () => {
+  it('returns explicit preference as-is', () => {
+    expect(resolveEffectiveTheme('light', 'dark')).toBe('light');
+    expect(resolveEffectiveTheme('dark', 'light')).toBe('dark');
+  });
+
+  it('follows system when preference is system', () => {
+    expect(resolveEffectiveTheme('system', 'light')).toBe('light');
+    expect(resolveEffectiveTheme('system', 'dark')).toBe('dark');
+  });
+});
+
+describe('readSystemTheme E2E override', () => {
+  it('honors __SERPENT_E2E_THEME__ when present', () => {
+    const previous = (globalThis as { __SERPENT_E2E_THEME__?: string })
+      .__SERPENT_E2E_THEME__;
+    try {
+      (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+        'light';
+      expect(readSystemTheme(() => ({ matches: false }))).toBe('light');
+      (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+        'dark';
+      expect(readSystemTheme(() => ({ matches: true }))).toBe('dark');
+    } finally {
+      if (previous === undefined) {
+        delete (globalThis as { __SERPENT_E2E_THEME__?: string })
+          .__SERPENT_E2E_THEME__;
+      } else {
+        (globalThis as { __SERPENT_E2E_THEME__?: string }).__SERPENT_E2E_THEME__ =
+          previous;
+      }
+    }
+  });
+});

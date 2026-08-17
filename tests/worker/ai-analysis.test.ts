@@ -8,6 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 import { OpenAIVendorAdapter } from '../../src/worker/ai/openai-adapter';
 import { VendorAdapterError } from '../../src/worker/ai/vendor-adapter';
 import type { AiAnalysisRequest } from '../../src/worker/ai/protocol';
@@ -37,20 +38,7 @@ function temporaryRoot(): string {
 }
 
 function importNoConflict(service: LibraryService, libraryId: string, sourceFile: string) {
-  const prepared = service.prepareOrExecuteImport({
-    libraryId,
-    targetFolderId: undefined,
-    sourceKind: 'files',
-    sourcePaths: [sourceFile],
-  });
-  if ('importId' in prepared) {
-    return service.resolveImport({
-      importId: prepared.importId,
-      suspectedDuplicate: 'skip',
-      nameConflict: 'keep-both',
-    });
-  }
-  return prepared;
+  return sharedImportNoConflict(service, libraryId, sourceFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +124,7 @@ describe('writeAiAnalysisResult', () => {
       tags: ['CharacterDesign', '  SciFi  ', 'NewTag'],
       modelId: 'gpt-4o',
       modelVersion: 'gpt-4o-2024-05-13',
-      enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(writeResult.tagsWritten).toEqual(['CharacterDesign', 'SciFi', 'NewTag']);
@@ -168,7 +156,7 @@ describe('writeAiAnalysisResult', () => {
     service.closeAll();
   });
 
-  it('writes ai_content rows for label and description', () => {
+  it('writes an ai_content row for description', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AI Content', selectedParentPath: root });
@@ -180,24 +168,59 @@ describe('writeAiAnalysisResult', () => {
     const { fieldsWritten } = service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: '  Future City Concept  ',
       description: 'A futuristic cityscape.',
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'gpt-4o-2024-05-13',
-      enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
-    expect(fieldsWritten).toContain('label');
     expect(fieldsWritten).toContain('description');
 
     const content = service.getAiContent(created.libraryId, assetId);
-    const labelEntry = content.find((c) => c.fieldName === 'label');
     const descEntry = content.find((c) => c.fieldName === 'description');
-    expect(labelEntry?.value).toBe('Future City Concept');
     expect(descEntry?.value).toBe('A futuristic cityscape.');
-    expect(labelEntry?.modelId).toBe('gpt-4o');
+    expect(descEntry?.modelId).toBe('gpt-4o');
     expect(descEntry?.modelVersion).toBe('gpt-4o-2024-05-13');
+
+    service.closeAll();
+  });
+
+  it('indexes an AI-generated description for search and removes it when cleared', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI Description Search', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'poster.webp'), 'image-data');
+    const result = importNoConflict(service, created.libraryId, path.join(root, 'poster.webp'));
+    const assetId = result.assets[0]!.assetId;
+
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      description: '这是一张游戏音乐的招贴海报，主体为复古电子鼓机与正在旋转的光盘。',
+      tags: [],
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: true, tags: false, rating: false },
+    });
+
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['鼓机'], exclude: false }] },
+    }).items.map((item) => item.assetId)).toContain(assetId);
+
+    service.clearAiContent({
+      libraryId: created.libraryId,
+      scope: { kind: 'asset', assetIds: [assetId] },
+      confirm: true,
+      fields: ['description'],
+    });
+
+    expect(service.searchAssets({
+      libraryId: created.libraryId,
+      query: { clauses: [{ field: null, values: ['鼓机'], exclude: false }] },
+    }).total).toBe(0);
 
     service.closeAll();
   });
@@ -215,29 +238,29 @@ describe('writeAiAnalysisResult', () => {
     service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: 'Old Label',
+      description: 'Old Description',
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     // Second write should replace.
     service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: 'New Label',
+      description: 'New Description',
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v2',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
     const content = service.getAiContent(created.libraryId, assetId);
-    const labels = content.filter((c) => c.fieldName === 'label');
-    expect(labels).toHaveLength(1);
-    expect(labels[0]!.value).toBe('New Label');
-    expect(labels[0]!.modelVersion).toBe('v2');
+    const descriptions = content.filter((c) => c.fieldName === 'description');
+    expect(descriptions).toHaveLength(1);
+    expect(descriptions[0]!.value).toBe('New Description');
+    expect(descriptions[0]!.modelVersion).toBe('v2');
 
     service.closeAll();
   });
@@ -252,15 +275,15 @@ describe('writeAiAnalysisResult', () => {
 
     service.writeAiAnalysisResult({
       libraryId: created.libraryId, assetId,
-      label: 'Stale Label', tags: ['StaleTag'],
+      description: 'Stale Description', tags: ['StaleTag'],
       modelId: 'openai', modelVersion: 'v1',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
     service.writeAiAnalysisResult({
       libraryId: created.libraryId, assetId,
       tags: ['FreshTag'],
       modelId: 'openai', modelVersion: 'v2',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     expect(service.getAiContent(created.libraryId, assetId)).toEqual([]);
@@ -280,7 +303,7 @@ describe('writeAiAnalysisResult', () => {
     service.closeAll();
   });
 
-  it('does not store label when label toggle is disabled', () => {
+  it('stores enabled description content', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'AI Toggle', selectedParentPath: root });
@@ -292,28 +315,25 @@ describe('writeAiAnalysisResult', () => {
     const { fieldsWritten } = service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: 'Should Not Be Stored',
       description: 'Should be stored',
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { label: false, description: true, tags: true, structuredMetadata: false },
+      enabledFields: { description: true, tags: true, rating: false },
     });
 
-    expect(fieldsWritten).not.toContain('label');
     expect(fieldsWritten).toContain('description');
 
     const content = service.getAiContent(created.libraryId, assetId);
-    expect(content.find((c) => c.fieldName === 'label')).toBeUndefined();
     expect(content.find((c) => c.fieldName === 'description')).toBeDefined();
 
     service.closeAll();
   });
 
-  it('writes structured_metadata as a JSON string', () => {
+  it('writes rating into the AI content layer only', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'AI Structured', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'AI Rating', selectedParentPath: root });
 
     writeFileSync(path.join(root, 'test.png'), 'image-data');
     const result = importNoConflict(service, created.libraryId, path.join(root, 'test.png'));
@@ -322,17 +342,21 @@ describe('writeAiAnalysisResult', () => {
     service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      structuredMetadata: { resolution: '4K', style: 'cyberpunk' },
+      rating: 4,
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { label: false, description: false, tags: true, structuredMetadata: true },
+      enabledFields: { description: false, tags: true, rating: true },
     });
 
     const content = service.getAiContent(created.libraryId, assetId);
-    const meta = content.find((c) => c.fieldName === 'structured_metadata');
-    expect(meta).toBeDefined();
-    expect(JSON.parse(meta!.value)).toEqual({ resolution: '4K', style: 'cyberpunk' });
+    const rating = content.find((c) => c.fieldName === 'rating');
+    expect(rating?.value).toBe('4');
+    const metadata = service.getAssetMetadata({
+      libraryId: created.libraryId,
+      assetId,
+    });
+    expect(metadata.rating).toBe(0);
 
     service.closeAll();
   });
@@ -343,6 +367,31 @@ describe('writeAiAnalysisResult', () => {
 // ---------------------------------------------------------------------------
 
 describe('FTS sync with AI tags', () => {
+  it('deduplicates the same human and AI tag and prefers the removable human source', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'AI tag merge', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'same-tag.png'), 'image-data');
+    const result = importNoConflict(service, created.libraryId, path.join(root, 'same-tag.png'));
+    const assetId = result.assets[0]!.assetId;
+    const tag = service.createTag({ libraryId: created.libraryId, name: 'SharedTag' });
+    service.assignTags({ libraryId: created.libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId,
+      tags: ['sharedtag'],
+      modelId: 'gpt-4o',
+      modelVersion: 'v1',
+      enabledFields: { description: false, tags: true, rating: false },
+    });
+
+    expect(service.getAssetMetadata({ libraryId: created.libraryId, assetId }).tags).toEqual([
+      { id: tag.tagId, name: 'SharedTag', source: 'user' },
+    ]);
+    service.closeAll();
+  });
+
   it('includes AI tags in asset_search_index tags column', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
@@ -363,7 +412,7 @@ describe('FTS sync with AI tags', () => {
       tags: ['AITag1', 'AITag2'],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { label: false, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     const db = new Database(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -445,8 +494,213 @@ describe('listTagNames', () => {
 });
 
 // ---------------------------------------------------------------------------
-// VendorAdapterError mapping (via OpenAIVendorAdapter injected fetch)
+// OpenAI-compatible text fallback + error mapping
 // ---------------------------------------------------------------------------
+
+describe('OpenAIVendorAdapter Responses compatibility', () => {
+  it('retries without the Responses json_object envelope when a compatible relay rejects it', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let call = 0;
+    const mockFetch: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      call += 1;
+      if (call === 1) {
+        return new Response('unsupported text.format', { status: 400 });
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({
+          description: '一张测试图片',
+          tags: ['测试'],
+          rating: 4,
+        }),
+      }), { status: 200 });
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'compatible-vision',
+      mockFetch,
+      'https://relay.example/v1',
+      'openai_responses',
+    );
+
+    const result = await adapter.analyze({
+      displayName: 'test.png',
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    });
+
+    expect(result).toMatchObject({
+      description: '一张测试图片',
+      tags: ['测试'],
+      rating: 4,
+      modelVersion: 'compatible-vision',
+    });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.text).toEqual({ format: { type: 'json_object' } });
+    expect(bodies[1]).not.toHaveProperty('text');
+
+    await adapter.analyze({
+      displayName: 'second.png',
+      filename: 'second.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    });
+    // The first request negotiated the relay capability. Later assets on the
+    // same endpoint send one request, so a 400 fallback cannot halve batch
+    // throughput or silently consume every retry budget.
+    expect(bodies).toHaveLength(3);
+    expect(bodies[2]).not.toHaveProperty('text');
+  });
+
+  it('does not retry an ordinary Responses 400 as a format fallback', async () => {
+    let calls = 0;
+    const fetch = async () => {
+      calls += 1;
+      return new Response('model is invalid', { status: 400 });
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'unknown-model',
+      fetch as typeof globalThis.fetch,
+      'https://invalid-model.example/v1',
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze({
+      displayName: 'test.png',
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    })).rejects.toMatchObject({ kind: 'invalid_response' });
+    expect(calls).toBe(1);
+  });
+
+  it('coordinates the first format probe without holding followers at the global limiter', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    let structuredCalls = 0;
+    let releaseFirstProbe!: () => void;
+    const firstProbe = new Promise<void>((resolve) => { releaseFirstProbe = resolve; });
+    const mockFetch: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if (body.text) {
+        structuredCalls += 1;
+        if (structuredCalls === 1) await firstProbe;
+        return new Response('unsupported text.format', { status: 400 });
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({ tags: ['parallel'] }),
+      }), { status: 200 });
+    };
+    const request = {
+      displayName: 'parallel.png',
+      filename: 'parallel.png',
+      mime: 'image/png',
+      language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    };
+    const first = new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch,
+      'https://parallel-negotiation.example/v1', 'openai_responses',
+    ).analyze(request);
+    await Promise.resolve();
+    const second = new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch,
+      'https://parallel-negotiation.example/v1', 'openai_responses',
+    ).analyze(request);
+    // A same-endpoint follower uses the portable JSON-text body right away;
+    // it must not wait for the leader's deliberately stalled probe while
+    // holding one of the global outbound-request slots.
+    await expect(second).resolves.toMatchObject({ tags: ['parallel'] });
+    expect(structuredCalls).toBe(1);
+    releaseFirstProbe();
+    await expect(first).resolves.toMatchObject({ tags: ['parallel'] });
+    expect(structuredCalls).toBe(1);
+    expect(bodies.filter((body) => !body.text)).toHaveLength(2);
+  });
+
+  it('cleans up an unreadable probe response so a later request cannot hang', async () => {
+    let calls = 0;
+    const mockFetch: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 400,
+          clone: () => ({ text: async () => { throw new Error('broken body'); } }),
+        } as unknown as Response;
+      }
+      return new Response(JSON.stringify({
+        model: 'compatible-vision',
+        output_text: JSON.stringify({ tags: ['recovered'] }),
+      }), { status: 200 });
+    };
+    const endpoint = 'https://broken-probe.example/v1';
+    const request = {
+      displayName: 'recovery.png',
+      filename: 'recovery.png', mime: 'image/png', language: 'zh-CN' as const,
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [], imageBase64: 'fakebase64',
+    };
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(request)).rejects.toMatchObject({
+      kind: 'invalid_response', retryable: true,
+    });
+    await expect(new OpenAIVendorAdapter(
+      'test-key', 'compatible-vision', mockFetch, endpoint, 'openai_responses',
+    ).analyze(request)).resolves.toMatchObject({ tags: ['recovered'] });
+    expect(calls).toBe(2);
+  });
+
+  it('accepts a Chat-style compatibility envelope but still validates its JSON text', async () => {
+    const adapter = new OpenAIVendorAdapter(
+      'test-key',
+      'compatible-vision',
+      async () => new Response(JSON.stringify({
+        model: 'compatible-vision',
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              description: '一张角色设计图',
+              tags: ['角色设计'],
+              rating: 4,
+            }),
+          },
+        }],
+      }), { status: 200 }),
+      'https://chat-shaped-relay.example/v1',
+      'openai_responses',
+    );
+
+    await expect(adapter.analyze({
+      displayName: 'test.png',
+      filename: 'test.png',
+      mime: 'image/png',
+      language: 'zh-CN',
+      enabledFields: { description: true, tags: true, rating: true },
+      existingTagNames: [],
+      imageBase64: 'fakebase64',
+    })).resolves.toMatchObject({
+      tags: ['角色设计'],
+      modelVersion: 'compatible-vision',
+    });
+  });
+});
 
 describe('error mapping', () => {
   function fetchReturning(status: number, body: unknown): typeof fetch {
@@ -533,11 +787,11 @@ describe('API key security', () => {
     const written = service.writeAiAnalysisResult({
       libraryId: created.libraryId,
       assetId,
-      label: 'Test',
+      description: 'Test',
       tags: [],
       modelId: 'gpt-4o',
       modelVersion: 'v1',
-      enabledFields: { label: true, description: false, tags: true, structuredMetadata: false },
+      enabledFields: { description: false, tags: true, rating: false },
     });
 
     // The result should not contain any key fields.
@@ -580,11 +834,55 @@ describe('video asset analyze-unsupported', () => {
 
 function makeImageRequest(): AiAnalysisRequest {
   return {
+    displayName: 'test.png',
     filename: 'test.png',
     mime: 'image/png',
     imageBase64: 'aW1hZ2VEYXRh',
     language: 'en',
-    enabledFields: { label: true, description: true, tags: true, structuredMetadata: false },
+    enabledFields: { description: true, tags: true, rating: false },
     existingTagNames: [],
   };
 }
+
+describe('pendingAiAssets（「AI分析未分析项」运行时判断）', () => {
+  it('returns only assets without any ai_content records', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({
+      displayName: 'AI Pending',
+      selectedParentPath: root,
+    });
+
+    writeFileSync(path.join(root, 'a.png'), 'image-data');
+    writeFileSync(path.join(root, 'b.png'), 'image-data');
+    const a = importNoConflict(service, created.libraryId, path.join(root, 'a.png'));
+    const b = importNoConflict(service, created.libraryId, path.join(root, 'b.png'));
+    const aId = a.assets[0]!.assetId;
+    const bId = b.assets[0]!.assetId;
+
+    // 只有 a 有 AI 数据（描述）。
+    service.writeAiAnalysisResult({
+      libraryId: created.libraryId,
+      assetId: aId,
+      description: 'Has AI.',
+      tags: [],
+      modelId: 'gpt-4o',
+      modelVersion: 'gpt-4o-2024-05-13',
+      enabledFields: { description: true, tags: true, rating: false },
+    });
+
+    const pending = service.pendingAiAssets({
+      libraryId: created.libraryId,
+      assetIds: [aId, bId],
+    });
+    expect(pending).toEqual([bId]);
+
+    // 已知 id 缺失/空输入安全。
+    expect(service.pendingAiAssets({ libraryId: created.libraryId, assetIds: [] })).toEqual([]);
+    expect(
+      service.pendingAiAssets({ libraryId: created.libraryId, assetIds: ['missing-id'] }),
+    ).toEqual([]);
+
+    service.closeAll();
+  });
+});

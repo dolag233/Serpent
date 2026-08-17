@@ -1,36 +1,41 @@
-import { parseAiAnalysisResult } from './protocol';
+import {
+  aiTagsSchemaDescription,
+  buildAiAnalysisSystemPrompt,
+} from '../../shared/ai-analysis-settings';
+import { resolveGeminiGenerateContentUrl } from '../../shared/ai-endpoints';
+import { buildAiAnalysisUserTextLines, parseAiAnalysisResult, resolveAiAnalysisSettings } from './protocol';
 import type { AiAnalysisRequest, AiAnalysisResult } from './protocol';
-import { VendorAdapterError } from './vendor-adapter';
+import { isAiAbortOrTimeoutError, VendorAdapterError } from './vendor-adapter';
 import type { VendorAdapter, VendorId } from './vendor-adapter';
 
 /**
  * Gemini structured-output schema sent via `responseSchema`.
  * Mirrors `aiStructuredOutputSchema` from protocol.ts.
  */
-const GEMINI_RESPONSE_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    label: {
-      type: 'string' as const,
-      description: 'A concise title or label for the asset. Omit if not applicable.',
+function buildGeminiResponseSchema(language: string) {
+  return {
+    type: 'object' as const,
+    properties: {
+      description: {
+        type: 'string' as const,
+        description: `Description of the asset content in ${language}.`,
+        nullable: true,
+      },
+      tags: {
+        type: 'array' as const,
+        items: { type: 'string' as const },
+        description: aiTagsSchemaDescription(language),
+      },
+      rating: {
+        type: 'integer' as const,
+        description: 'Aesthetic score from 1 to 5.',
+        nullable: true,
+      },
     },
-    description: {
-      type: 'string' as const,
-      description: 'A detailed description of the asset content. Omit if not applicable.',
-    },
-    tags: {
-      type: 'array' as const,
-      items: { type: 'string' as const },
-      description: 'Relevant keyword tags. Prefer existing library tags when suitable.',
-    },
-    structured_metadata: {
-      type: 'object' as const,
-      description: 'Additional structured metadata as key-value pairs. Omit if not applicable.',
-    },
-  },
-  required: ['tags'],
-  propertyOrdering: ['label', 'description', 'tags', 'structured_metadata'],
-};
+    required: ['tags'],
+    propertyOrdering: ['description', 'tags', 'rating'],
+  };
+}
 
 /**
  * Maps HTTP status + body to a VendorAdapterError kind.
@@ -73,11 +78,18 @@ export class GeminiVendorAdapter implements VendorAdapter {
 
   private readonly apiKey: string;
   private readonly model: string;
+  private readonly baseUrl: string | undefined;
   private readonly _fetch: typeof fetch;
 
-  constructor(apiKey: string, model: string, customFetch?: typeof fetch) {
+  constructor(
+    apiKey: string,
+    model: string,
+    customFetch?: typeof fetch,
+    baseUrl?: string,
+  ) {
     this.apiKey = apiKey;
     this.model = model;
+    this.baseUrl = baseUrl;
     this._fetch = customFetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -92,22 +104,27 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const contents = this.#buildContents(request);
     const systemInstruction = this.#buildSystemInstruction(request);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${
-      encodeURIComponent(this.model)
-    }:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = resolveGeminiGenerateContentUrl(this.model, this.baseUrl, {
+      apiKeyQuery: this.apiKey,
+    });
 
     let response: Response;
     try {
       response = await this._fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Official Google accepts ?key=; many relays (CC Switch Google
+          // strategy) prefer x-goog-api-key. Send both for compatibility.
+          'x-goog-api-key': this.apiKey,
+        },
         body: JSON.stringify({
           system_instruction: systemInstruction,
           contents,
           generationConfig: {
             temperature: 0.2,
             responseMimeType: 'application/json',
-            responseSchema: GEMINI_RESPONSE_SCHEMA,
+            responseSchema: buildGeminiResponseSchema(request.language),
           },
         }),
         signal,
@@ -127,11 +144,54 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unreadable response.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
 
     return this.#extractResult(json);
+  }
+
+  async probeConnection(signal?: AbortSignal): Promise<void> {
+    const url = resolveGeminiGenerateContentUrl(this.model, this.baseUrl, {
+      apiKeyQuery: this.apiKey,
+    });
+    let response: Response;
+    try {
+      response = await this._fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: 'Reply with the single word OK.' }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 16,
+          },
+        }),
+        signal,
+      });
+    } catch (error: unknown) {
+      throw this.#mapFetchError(error);
+    }
+    if (!response.ok) {
+      throw await this.#mapHttpError(response);
+    }
+    try {
+      await response.json();
+    } catch (error: unknown) {
+      throw new VendorAdapterError(
+        'invalid_response',
+        'The AI service returned an unreadable response.',
+        { cause: error },
+      );
+    }
   }
 
   // ------------------------------------------------------------------
@@ -146,27 +206,12 @@ export class GeminiVendorAdapter implements VendorAdapter {
   }
 
   #buildSystemPromptText(request: AiAnalysisRequest): string {
-    const fields: string[] = [];
-    if (request.enabledFields.label) fields.push('label');
-    if (request.enabledFields.description) fields.push('description');
-    if (request.enabledFields.tags) fields.push('tags');
-    if (request.enabledFields.structuredMetadata)
-      fields.push('structured_metadata');
-
-    let prompt =
-      'You are a digital asset classifier for creative professionals. ' +
-      'Analyze the provided asset and return structured classification data.\n\n';
-    prompt += `Target language: ${request.language}\n`;
-    prompt += `Fill these fields: ${fields.join(', ') || 'tags only'}\n`;
-
-    if (request.existingTagNames.length > 0) {
-      prompt +=
-        '\nExisting library tags (prefer these when suitable): ' +
-        request.existingTagNames.join(', ') +
-        '\n';
-    }
-
-    return prompt;
+    return buildAiAnalysisSystemPrompt({
+      language: request.language,
+      settings: resolveAiAnalysisSettings(request),
+      enabledFields: request.enabledFields,
+      existingTagNames: request.existingTagNames,
+    });
   }
 
   #buildContents(
@@ -175,18 +220,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const parts: Array<Record<string, unknown>> = [];
 
     // Text part with context
-    const textLines: string[] = [];
-    textLines.push(`Filename: ${request.filename}`);
-    if (request.contactSheetDescription) {
-      textLines.push(
-        `Contact sheet description: ${request.contactSheetDescription}`,
-      );
-    }
-    if (request.contactSheetBase64) {
-      textLines.push(
-        'The first image is the poster frame and the second is a contact sheet of key frames.',
-      );
-    }
+    const textLines = buildAiAnalysisUserTextLines(request);
     parts.push({ text: textLines.join('\n') });
 
     // Image parts
@@ -202,7 +236,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
     if (request.contactSheetBase64) {
       parts.push({
         inlineData: {
-          mimeType: 'image/png',
+          mimeType: request.contactSheetMime ?? 'image/png',
           data: request.contactSheetBase64,
         },
       });
@@ -216,15 +250,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
   // ------------------------------------------------------------------
 
   #mapFetchError(error: unknown): VendorAdapterError {
-    const name =
-      typeof error === 'object' &&
-      error !== null &&
-      'name' in error &&
-      typeof (error as Record<string, unknown>).name === 'string'
-        ? ((error as Record<string, unknown>).name as string)
-        : '';
-
-    if (name === 'AbortError') {
+    if (isAiAbortOrTimeoutError(error)) {
       return new VendorAdapterError(
         'timeout',
         'The AI request timed out or was cancelled.',
@@ -234,7 +260,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
 
     return new VendorAdapterError(
       'network',
-      `Could not reach the AI service: ${String(error)}`,
+      'Could not reach the AI service.',
       { cause: error },
     );
   }
@@ -262,6 +288,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an unexpected response shape.',
+        { retryable: true },
       );
     }
 
@@ -272,6 +299,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned no candidates.',
+        { retryable: true },
       );
     }
 
@@ -284,6 +312,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI service returned an empty response.',
+        { retryable: true },
       );
     }
 
@@ -293,6 +322,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response contained no text.',
+        { retryable: true },
       );
     }
 
@@ -303,7 +333,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response contained invalid JSON.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
 
@@ -321,7 +351,7 @@ export class GeminiVendorAdapter implements VendorAdapter {
       throw new VendorAdapterError(
         'invalid_response',
         'The AI response did not match the required schema.',
-        { cause: error },
+        { cause: error, retryable: true },
       );
     }
   }

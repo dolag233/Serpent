@@ -11,6 +11,15 @@ import {
 } from '../../src/worker/library-service';
 
 const temporaryRoots: string[] = [];
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
 
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-watcher-test-'));
@@ -63,8 +72,31 @@ function observerHarness() {
   return { callbacks, closed, errorCallbacks, factory, roots };
 }
 
+/**
+ * Controllable clock for the client-mutation watcher-notification suppression
+ * window. Import/resolve are client-initiated filesystem mutations, so the
+ * service suppresses watcher "disk synced" notifications for `debounceMs * 6`
+ * after them (real wall-clock seconds). Tests drive the debounce scheduler
+ * manually and would otherwise sit inside that window; advancing this clock
+ * past it keeps them deterministic without wall-clock sleeps.
+ */
+function watchClock(startMs = 1_000_000) {
+  let current = startMs;
+  return {
+    advance: (ms: number) => {
+      current += ms;
+    },
+    clock: { now: () => current },
+  };
+}
+
 afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
+  for (const service of services.splice(0)) {
+    service.closeAll();
+  }
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true, maxRetries: 5, retryDelay: 200 });
+  }
 });
 
 describe('managed asset watcher', () => {
@@ -72,7 +104,7 @@ describe('managed asset watcher', () => {
     const root = temporaryRoot();
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
-    const service = new LibraryService({ observerFactory: observers.factory, scheduler });
+    const service = newService({ observerFactory: observers.factory, scheduler });
     const library = service.createLibrary({ displayName: 'Observed', selectedParentPath: root });
 
     expect(observers.roots).toEqual([path.join(library.libraryPath, 'Assets')]);
@@ -94,7 +126,7 @@ describe('managed asset watcher', () => {
     writeFileSync(source, 'watched');
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
-    const service = new LibraryService({ observerFactory: observers.factory, scheduler });
+    const service = newService({ observerFactory: observers.factory, scheduler });
     const library = service.createLibrary({ displayName: 'Storm', selectedParentPath: root });
     const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
@@ -118,19 +150,25 @@ describe('managed asset watcher', () => {
     writeFileSync(source, 'first');
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
+    const { advance, clock } = watchClock();
     const events: unknown[] = [];
-    const service = new LibraryService({
+    const service = newService({
       observerFactory: observers.factory,
       scheduler,
+      watchNotifyClock: clock,
       onAssetsChanged: (event) => events.push(event),
     });
     const library = service.createLibrary({ displayName: 'Overwrite', selectedParentPath: root });
     const plan = service.prepareImport({ libraryId: library.libraryId, sourceKind: 'files', sourcePaths: [source] });
     const before = service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' }).assets[0]!;
+    events.length = 0;
     const managedPath = path.join(library.libraryPath, 'Assets', 'watched.png');
     writeFileSync(managedPath, 'second');
     const changedTime = new Date(Date.now() + 20_000);
     utimesSync(managedPath, changedTime, changedTime);
+    // The import above is a client mutation: advance past the suppression
+    // window so this external overwrite is reported as a watcher change.
+    advance(10_000);
 
     observers.callbacks[0]!();
     scheduler.flush();
@@ -139,7 +177,7 @@ describe('managed asset watcher', () => {
     expect(after.assetId).toBe(before.assetId);
     expect(after.currentRevisionId).not.toBe(before.currentRevisionId);
     expect(events).toEqual([
-      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0 },
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0, source: 'watcher' },
     ]);
     observers.callbacks[0]!();
     scheduler.flush();
@@ -147,7 +185,7 @@ describe('managed asset watcher', () => {
     service.closeAll();
   });
 
-  it('does not schedule after close and swallows refresh errors', () => {
+  it('does not schedule after close and swallows refresh errors', async () => {
     const root = temporaryRoot();
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
@@ -162,14 +200,28 @@ describe('managed asset watcher', () => {
       scheduler,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });
+    services.push(service);
     const library = service.createLibrary({ displayName: 'Errors', selectedParentPath: root });
+    // Serpent-tumv: the on-open refresh moved to the background reconciliation
+    // step; drive it explicitly so the injected failure lands on the same
+    // diagnostic scope.
+    await service.runOpenBackgroundReconciliation(library.libraryId);
     observers.callbacks[0]!();
     expect(() => scheduler.flush()).not.toThrow();
-    expect(diagnostics).toMatchObject([
-      { scope: 'asset-watcher.refresh', error: { message: 'injected refresh failure' } },
-    ]);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: 'open.refresh-managed-assets',
+          error: expect.objectContaining({ message: 'injected refresh failure' }),
+        }),
+        expect.objectContaining({
+          scope: 'asset-watcher.refresh',
+          error: expect.objectContaining({ message: 'injected refresh failure' }),
+        }),
+      ]),
+    );
 
-    service.closeLibrary(library.libraryId);
+    service.closeAll();
     observers.callbacks[0]!();
     expect(scheduler.pendingCount()).toBe(0);
   });
@@ -188,7 +240,7 @@ describe('managed asset watcher', () => {
       cancel: () => undefined,
       schedule: () => { throw causes.schedule; },
     };
-    const service = new LibraryService({
+    const service = newService({
       observerFactory: (assetsPath, onEvent, onError) => {
         const observer = observers.factory(assetsPath, onEvent, onError);
         return { close: () => { observer.close(); throw causes.close; } };
@@ -202,7 +254,7 @@ describe('managed asset watcher', () => {
     expect(() => observers.callbacks[0]!()).not.toThrow();
     expect(() => service.closeLibrary(library.libraryId)).not.toThrow();
 
-    const startService = new LibraryService({
+    const startService = newService({
       observerFactory: () => { throw causes.start; },
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });
@@ -220,11 +272,48 @@ describe('managed asset watcher', () => {
 
   it('ignores diagnostic callback failures', () => {
     const root = temporaryRoot();
-    const service = new LibraryService({
+    const service = newService({
       observerFactory: () => { throw new Error('watch failure'); },
       onDiagnostic: () => { throw new Error('diagnostic failure'); },
     });
     expect(() => service.createLibrary({ displayName: 'Best effort', selectedParentPath: root })).not.toThrow();
+    service.closeAll();
+  });
+
+  it('discovers new files in a managed folder after a debounced event', () => {
+    const root = temporaryRoot();
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Managed watch', selectedParentPath: root });
+    const folder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'FolderA',
+    });
+
+    writeFileSync(path.join(library.libraryPath, 'Assets', folder.relativePath, 'added-a.png'), 'a');
+    writeFileSync(path.join(library.libraryPath, 'Assets', folder.relativePath, 'added-b.png'), 'b');
+    observers.callbacks[0]!();
+    observers.callbacks[0]!();
+    expect(scheduler.pendingCount()).toBe(1);
+    scheduler.flush();
+
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      folderId: folder.folderId,
+      recursive: false,
+    }).map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'FolderA/added-a.png',
+      'FolderA/added-b.png',
+    ]);
+    expect(events).toEqual([
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 2, missingCount: 0, source: 'watcher' },
+    ]);
     service.closeAll();
   });
 });
@@ -238,7 +327,7 @@ describe('linked folder watcher', () => {
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
     const events: unknown[] = [];
-    const service = new LibraryService({
+    const service = newService({
       observerFactory: observers.factory,
       scheduler,
       onAssetsChanged: (event) => events.push(event),
@@ -271,7 +360,7 @@ describe('linked folder watcher', () => {
       'new/added.png',
     ]);
     expect(events).toEqual([
-      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0 },
+      { type: 'asset.changed', libraryId: library.libraryId, changedCount: 1, missingCount: 0, source: 'watcher' },
     ]);
     service.closeAll();
     expect(observers.closed.sort()).toEqual([0, 1]);
@@ -291,7 +380,7 @@ describe('linked folder watcher', () => {
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'a.png'), 'a');
     const observers = observerHarness();
-    const service = new LibraryService({ observerFactory: observers.factory });
+    const service = newService({ observerFactory: observers.factory });
     const library = service.createLibrary({ displayName: 'Lifecycle', selectedParentPath: root });
     const linked = service.importFolderAsLinked({
       libraryId: library.libraryId,
@@ -334,7 +423,7 @@ describe('linked folder watcher', () => {
     const observers = observerHarness();
     const scheduler = new ManualScheduler();
     const diagnostics: Array<{ scope: string; context?: Record<string, unknown> }> = [];
-    const service = new LibraryService({
+    const service = newService({
       observerFactory: observers.factory,
       scheduler,
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),

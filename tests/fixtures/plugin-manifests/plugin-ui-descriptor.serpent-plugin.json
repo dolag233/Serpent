@@ -1,0 +1,81 @@
+{
+  "manifestVersion": 1,
+  "id": "com.example.ui-descriptor",
+  "version": "1.0.0",
+  "name": "UI Descriptor Probe",
+  "description": "Fixture for the Host-rendered Plugin UI Contract v1.",
+  "author": "Serpent Tests",
+  "license": "MIT",
+  "engines": {
+    "serpent": ">=0.2.0 <1.0.0",
+    "pluginApi": 1
+  },
+  "runtime": {
+    "mode": "restricted",
+    "entry": "dist/main.js"
+  },
+  "permissions": ["ui.settings", "ui.notify"],
+  "contributes": {
+    "commands": [
+      { "id": "open-tools", "title": "Open tools" },
+      { "id": "run-action", "title": "Run action" }
+    ],
+    "menus": {
+      "asset": [
+        {
+          "id": "tools",
+          "title": "Tools",
+          "submenu": [{ "command": "run-action" }]
+        }
+      ]
+    },
+    "settings": [
+      { "id": "enabled", "title": "Enabled", "type": "boolean", "default": true },
+      {
+        "id": "quality",
+        "title": "Quality",
+        "type": "select",
+        "options": [
+          { "value": "balanced", "label": "Balanced" },
+          { "value": "best", "label": "Best" }
+        ],
+        "default": "balanced"
+      },
+      { "id": "scale", "title": "Scale", "type": "slider", "minimum": 1, "maximum": 4, "step": 1, "default": 2 }
+    ],
+    "ui": {
+      "version": 1,
+      "settings": {
+        "groups": [
+          {
+            "id": "general",
+            "title": "General",
+            "items": [
+              { "settingId": "enabled" },
+              { "settingId": "quality" },
+              { "settingId": "scale" }
+            ]
+          }
+        ]
+      },
+      "menus": {
+        "asset": [
+          {
+            "id": "tools",
+            "title": "Tools",
+            "submenu": [{ "command": "run-action", "shortcut": "⌘R" }]
+          }
+        ]
+      },
+      "notices": [
+        { "id": "ready", "title": "Ready", "message": "The plugin is ready.", "tone": "success" }
+      ],
+      "activities": [
+        { "id": "scan", "title": "Scanning", "message": "Reading assets.", "indeterminate": true }
+      ],
+      "jobs": [
+        { "id": "index", "title": "Index assets" }
+      ]
+    }
+  }
+}

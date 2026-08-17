@@ -2,9 +2,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
-import { resolveElectronExecutablePath } from "./electron-test-helpers";
+import {
+  closeLibraryViaSwitcher,
+  resolveElectronExecutablePath,
+} from "./electron-test-helpers";
+
+function sidebarFolderRow(window: Page, folderName: string) {
+  return window
+    .locator(".navigation-pane .nav-row-label", { hasText: folderName })
+    .locator("xpath=ancestor::button[contains(@class, 'nav-row')]");
+}
 
 test("creates, closes, and reopens a library through the sandboxed UI", async () => {
   const testInfo = test.info();
@@ -23,6 +32,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     env: {
       ...process.env,
       SERPENT_E2E: "1",
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
       SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
       SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
     },
@@ -31,7 +41,7 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
   try {
     const window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
 
     const rendererCapabilities = await window.evaluate(() => ({
@@ -67,15 +77,15 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     );
 
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
 
-    await window.getByRole("button", { name: "关闭资源库" }).click();
+    await closeLibraryViaSwitcher(window, libraryName);
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
     expect(await lifecycleEvents).toEqual([
       "library.opening",
@@ -136,26 +146,29 @@ test("restores the recent library and focuses the last browsed asset after a ful
   try {
     let window = await application.firstWindow();
     await window.getByRole("button", { name: "创建资源库" }).click();
-    await window.getByLabel("名称").fill(libraryName);
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole("button", { name: "创建", exact: true }).click();
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
     await window.getByRole("button", { name: "添加文件夹" }).click();
-    await window.getByLabel("名称").fill("恢复文件夹");
-    await window.getByRole("button", { name: "创建", exact: true }).click();
-    await window
-      .getByRole("button", { name: "恢复文件夹", exact: true })
-      .click();
+    await window.getByLabel("新文件夹名称").fill("恢复文件夹");
+    await window.keyboard.press("Enter");
+    await sidebarFolderRow(window, "恢复文件夹").click();
     await window
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
       .click();
+    // 等导入 reveal 的 pending 过期（280ms）——否则点击会被 reveal 重应用
+    // 覆盖（选中回到全选，session 存的是第一个资产而非点击目标）。
+    await window.waitForTimeout(500);
     const rememberedCard = window.locator(".asset-card", {
       hasText: "remember-me.txt",
     });
     await rememberedCard.click();
     await expect(rememberedCard).toHaveAttribute("aria-pressed", "true");
+    // 等待会话保存完成（useEffect 异步写 session，close 前必须落盘）
+    await window.waitForTimeout(800);
     await application.close();
 
     application = await launch();
@@ -216,7 +229,7 @@ test("falls back to the start screen when the recent library no longer exists", 
   try {
     const window = await application.firstWindow();
     await expect(
-      window.getByRole("heading", { name: "从一个本地资源库开始" }),
+      window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible({ timeout: 10_000 });
     await expect
       .poll(() =>

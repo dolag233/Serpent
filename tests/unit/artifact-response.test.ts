@@ -62,4 +62,32 @@ describe('artifact protocol byte ranges', () => {
 
     expect(() => createArtifactResponse(linkPath, 'video/webm')).toThrow();
   });
+
+  it('accepts an AbortSignal without treating cancel as a stream fault', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-artifact-response-'));
+    roots.push(root);
+    const filePath = path.join(root, 'proxy.webm');
+    writeFileSync(filePath, Buffer.alloc(256 * 1024, 7));
+
+    const controller = new AbortController();
+    const streamErrors: Error[] = [];
+    const response = createArtifactResponse(filePath, 'video/webm', {
+      rangeHeader: 'bytes=0-65535',
+      signal: controller.signal,
+      onStreamError: (error) => {
+        streamErrors.push(error);
+      },
+    });
+
+    expect(response.status).toBe(206);
+    controller.abort();
+    // Consume may reject after abort; either outcome is fine as long as we
+    // do not report a protocol stream fault for the cancel path.
+    try {
+      await response.arrayBuffer();
+    } catch {
+      // expected when the consumer is cancelled mid-read
+    }
+    expect(streamErrors).toEqual([]);
+  });
 });

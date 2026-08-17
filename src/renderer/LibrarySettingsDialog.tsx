@@ -1,0 +1,516 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { RendererLibrarySummary, SyncProgressEvent } from "../shared/protocol/responses";
+import type { SyncCapabilities, SyncReport } from "../shared/library-api";
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
+import { useT } from "./i18n";
+import { DialogShell } from "./ui/patterns";
+import { Switch } from "./ui/primitives";
+import { formatBytes } from "./format-file-meta";
+import type { SyncServerSummary } from "./sync-settings-types";
+
+type LibrarySettingsCategory = "general" | "ignore" | "sync";
+
+export interface SyncSettingsCallbacks {
+  syncListServers(): Promise<{ ok: true; value: SyncServerSummary[] } | { ok: false; message: string }>;
+  syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
+  syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
+  syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean; pollIntervalMs?: number }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean; pollIntervalMs?: number } | null } | { ok: false; message: string }>;
+}
+
+type ConnectionState = "checking" | "connected" | "failed";
+
+function SyncStatusDot({
+  state,
+  label,
+}: {
+  state: ConnectionState | "idle";
+  label: string;
+}): ReactNode {
+  return (
+    <span className="sync-status-indicator" data-state={state}>
+      <span className="sync-status-dot" />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function SyncSettingsSection({
+  library,
+  callbacks,
+  syncProgress,
+}: {
+  library: RendererLibrarySummary;
+  callbacks: SyncSettingsCallbacks;
+  /** 当前同步传输进度（自动或手动），用于进度条与速度显示。 */
+  syncProgress: SyncProgressEvent | null;
+}): ReactNode {
+  const t = useT();
+  const [servers, setServers] = useState<SyncServerSummary[]>([]);
+  const [serverId, setServerId] = useState("");
+  const [directoryName, setDirectoryName] = useState(() => library.displayName);
+  const [enabled, setEnabled] = useState(false);
+  /** 轮询间隔输入（秒，字符串便于清空/编辑）。 */
+  const [pollIntervalSeconds, setPollIntervalSeconds] = useState("5");
+  const [busy, setBusy] = useState<"preview" | "run" | "save" | null>(null);
+  const [connection, setConnection] = useState<{
+    serverId: string;
+    state: ConnectionState;
+    message?: string;
+  } | null>(null);
+  const [preview, setPreview] = useState<SyncReport | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
+  const probeSelected = async (id: string) => {
+    if (!id) return;
+    setConnection({ serverId: id, state: "checking" });
+    setError(null);
+    const probe = await callbacks.syncProbe({ serverId: id });
+    if (!probe.ok) {
+      setConnection({ serverId: id, state: "failed", message: probe.message });
+      return;
+    }
+    if (!probe.value.supportsContentTransfer) {
+      setConnection({ serverId: id, state: "failed", message: t("settings.sync.contentTransferUnsupported") });
+      return;
+    }
+    setConnection({ serverId: id, state: "connected" });
+  };
+
+  useEffect(() => {
+    void (async () => {
+      const listed = await callbacks.syncListServers();
+      if (!listed.ok) return;
+      setServers(listed.value);
+      const binding = await callbacks.syncGetBinding({ libraryId: library.libraryId });
+      if (binding.ok && binding.value) {
+        setServerId(binding.value.serverId);
+        setDirectoryName(binding.value.directoryName || library.displayName);
+        setLastSyncedAt(binding.value.lastSyncedAt ?? null);
+        setEnabled(binding.value.enabled ?? false);
+        setPollIntervalSeconds(String(Math.round((binding.value.pollIntervalMs ?? 5_000) / 1_000)));
+        void probeSelected(binding.value.serverId);
+      } else if (listed.value.length > 0) {
+        const first = listed.value[0]!.id;
+        setServerId(first);
+        void probeSelected(first);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library.libraryId]);
+
+  const runPreview = async () => {
+    setBusy("preview");
+    setError(null);
+    setPreview(null);
+    try {
+      const previewResult = await callbacks.syncPreview({ libraryId: library.libraryId, serverId, directoryName });
+      if (previewResult.ok) setPreview(previewResult.value);
+      else setError(previewResult.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runSync = async () => {
+    setBusy("run");
+    setError(null);
+    setResult(null);
+    try {
+      const syncResult = await callbacks.syncRun({ libraryId: library.libraryId, serverId, directoryName });
+      if (syncResult.ok) {
+        const report = syncResult.value.report;
+        setResult(t("settings.sync.completedSummary", {
+          uploads: report.uploads,
+          downloads: report.downloads,
+          conflicts: report.conflicts,
+        }));
+        setLastSyncedAt(new Date().toISOString());
+        if (syncResult.value.conflicts.length > 0) {
+          setError(t("settings.sync.conflictsDetected", { count: syncResult.value.conflicts.length }));
+        }
+      } else {
+        setError(syncResult.message);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveBinding = async () => {
+    setBusy("save");
+    setError(null);
+    // 轮询间隔（秒 → 毫秒）：空或非法回落 5 秒默认；上限 1 小时。
+    const parsedSeconds = Number(pollIntervalSeconds);
+    const pollIntervalMs = Number.isFinite(parsedSeconds) && parsedSeconds >= 1
+      ? Math.min(Math.round(parsedSeconds * 1_000), 3_600_000)
+      : 5_000;
+    try {
+      const saved = await callbacks.syncSaveBinding({
+        libraryId: library.libraryId,
+        serverId,
+        directoryName,
+        enabled,
+        pollIntervalMs,
+      });
+      if (!saved.ok) setError(saved.message);
+      else setResult(t("settings.sync.bindingSaved"));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const connectionState: ConnectionState | "idle" = connection?.serverId === serverId && connection ? connection.state : "idle";
+  const connectionLabel = connectionState === "checking"
+    ? t("settings.sync.connectionChecking")
+    : connectionState === "connected"
+      ? t("settings.sync.connectionConnected")
+      : connectionState === "failed"
+        ? t("settings.sync.connectionFailed")
+        : t("settings.sync.connectionUnknown");
+
+  const syncState = busy === "run" ? "syncing" : lastSyncedAt ? "synced" : "unsynced";
+  const syncLabel = syncState === "syncing"
+    ? t("settings.sync.statusSyncing")
+    : syncState === "synced"
+      ? t("settings.sync.statusSynced")
+      : t("settings.sync.statusUnsynced");
+
+  return (
+    <>
+      <div className="app-settings-page-heading">
+        <h3>{t("settings.sync.title")}</h3>
+        <p>{t("settings.sync.hint")}</p>
+      </div>
+      <section className="app-settings-card library-sync-card">
+        <div className="app-settings-row">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.status")}</strong>
+            <span>
+              {syncState === "synced" && lastSyncedAt
+                ? t("settings.sync.lastSyncedAt", { time: new Date(lastSyncedAt).toLocaleString() })
+                : syncLabel}
+            </span>
+          </div>
+          <SyncStatusDot state={syncState === "syncing" ? "checking" : syncState === "synced" ? "connected" : "idle"} label={syncLabel} />
+        </div>
+        <div className="app-settings-card-divider" />
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.server")}</strong>
+            <span>{t("settings.sync.serverHint")}</span>
+          </div>
+          {servers.length === 0 ? (
+            <p className="app-settings-help-note">{t("settings.sync.noServer")}</p>
+          ) : (
+            <select
+              className="text-field"
+              aria-label={t("settings.sync.server")}
+              value={serverId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setServerId(next);
+                void probeSelected(next);
+              }}
+            >
+              {servers.map((server) => (
+                <option key={server.id} value={server.id}>{server.baseUrl}</option>
+              ))}
+            </select>
+          )}
+        </div>
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.directoryName")}</strong>
+            <span>{t("settings.sync.directoryNameHint")}</span>
+          </div>
+          <input className="text-field" aria-label={t("settings.sync.directoryName")} value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
+        </div>
+        <div className="app-settings-card-divider" />
+        <label className="app-settings-toggle-row">
+          <span className="app-settings-row-copy">
+            <strong>{t("settings.sync.autoSync")}</strong>
+            <span>{t("settings.sync.autoSyncHint")}</span>
+          </span>
+          <Switch
+            aria-label={t("settings.sync.autoSync")}
+            checked={enabled}
+            onCheckedChange={setEnabled}
+          />
+        </label>
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.pollInterval")}</strong>
+            <span>{t("settings.sync.pollIntervalHint")}</span>
+          </div>
+          <input
+            className="text-field sync-poll-interval-input"
+            aria-label={t("settings.sync.pollInterval")}
+            inputMode="numeric"
+            value={pollIntervalSeconds}
+            onChange={(event) => setPollIntervalSeconds(event.target.value)}
+          />
+        </div>
+        <div className="app-settings-card-divider" />
+        <div className="library-settings-gitignore-actions library-sync-actions">
+          <button className="secondary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
+            {busy === "save" ? t("common.saving") : t("common.save")}
+          </button>
+        </div>
+        <div className="app-settings-card-divider" />
+        <div className="app-settings-row">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.server")}</strong>
+            <span>
+              {connectionState === "failed" && connection?.message ? connection.message : ""}
+            </span>
+          </div>
+          <SyncStatusDot state={connectionState} label={connectionLabel} />
+        </div>
+        <div className="app-settings-card-divider" />
+        <div className="library-settings-gitignore-actions library-sync-actions">
+          <button className="primary-button" disabled={busy !== null || !serverId} onClick={() => void runPreview()} type="button">
+            {busy === "preview" ? t("common.saving") : t("settings.sync.preview")}
+          </button>
+          <button className="primary-button" disabled={busy !== null || !serverId || connectionState !== "connected"} onClick={() => void runSync()} type="button">
+            {busy === "run" ? t("common.saving") : t("settings.sync.run")}
+          </button>
+        </div>
+        {preview ? (
+          <p className="library-settings-gitignore-help">
+            {t("settings.sync.previewSummary", {
+              uploads: preview.uploads,
+              downloads: preview.downloads,
+              conflicts: preview.conflicts,
+              remoteDeletes: preview.remoteDeletes,
+              localRecycles: preview.localRecycles,
+            })}
+          </p>
+        ) : null}
+        {syncProgress && syncProgress.filesTotal > 0 ? (
+          <div className="sync-progress-block">
+            <div
+              aria-valuemax={syncProgress.filesTotal}
+              aria-valuemin={0}
+              aria-valuenow={Math.min(syncProgress.filesDone, syncProgress.filesTotal)}
+              className="task-progress-track sync-progress-track"
+              role="progressbar"
+            >
+              <div
+                className="task-progress-fill"
+                style={{
+                  width: `${Math.round(
+                    (Math.min(syncProgress.filesDone, syncProgress.filesTotal) /
+                      syncProgress.filesTotal) *
+                      100,
+                  )}%`,
+                }}
+              />
+            </div>
+            <p className="library-settings-gitignore-help">
+              {t("settings.sync.transferProgress", {
+                filesDone: syncProgress.filesDone,
+                filesTotal: syncProgress.filesTotal,
+                bytesDone: formatBytes(syncProgress.bytesDone),
+                bytesTotal: formatBytes(syncProgress.bytesTotal),
+              })}
+            </p>
+          </div>
+        ) : null}
+        {result ? <p className="library-settings-gitignore-help">{result}</p> : null}
+        {error ? <p className="settings-error-message">{error}</p> : null}
+      </section>
+    </>
+  );
+}
+
+export function LibrarySettingsDialog({
+  library,
+  gitignoreContent,
+  open,
+  onClose,
+  focusNameOnOpen = false,
+  onSaveName,
+  onSaveGitignore,
+  syncCallbacks,
+  syncProgress,
+}: {
+  library: RendererLibrarySummary | null;
+  gitignoreContent: string;
+  open: boolean;
+  onClose: () => void;
+  focusNameOnOpen?: boolean;
+  onSaveName: (name: string) => Promise<void>;
+  onSaveGitignore: (content: string) => Promise<void>;
+  syncCallbacks: SyncSettingsCallbacks;
+  syncProgress: SyncProgressEvent | null;
+}): ReactNode {
+  const t = useT();
+  const [category, setCategory] = useState<LibrarySettingsCategory>("general");
+  const [name, setName] = useState(library?.displayName ?? "");
+  const [gitignoreDraft, setGitignoreDraft] = useState(gitignoreContent);
+  const [savingName, setSavingName] = useState(false);
+  const [savingIgnore, setSavingIgnore] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open || !focusNameOnOpen) return;
+    const frame = requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusNameOnOpen, open]);
+
+  if (!open || !library) return null;
+
+  const saveName = async () => {
+    const next = name.trim();
+    if (!next || next === library.displayName || savingName) return;
+    setSavingName(true);
+    try {
+      await onSaveName(next);
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const saveGitignore = async () => {
+    if (savingIgnore || gitignoreDraft === gitignoreContent) return;
+    setSavingIgnore(true);
+    try {
+      await onSaveGitignore(gitignoreDraft);
+    } finally {
+      setSavingIgnore(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onClick={(event) => {
+      if (event.target === event.currentTarget) onClose();
+    }} role="presentation">
+      <DialogShell
+        className="create-dialog app-settings-dialog library-settings-dialog"
+        contentClassName="ui-dialog-shell__content--flush"
+        dialogId="library-settings-dialog"
+        headerActions={
+          <button className="dialog-close" onClick={onClose} type="button" {...iconActionAttrs(t("common.close"))}>
+            <Icon name="close" size={16} />
+          </button>
+        }
+        style={{ padding: 0 }}
+        title={t("settings.librarySettings")}
+      >
+        <div className="app-settings-frame library-settings-frame">
+          <nav aria-label={t("settings.librarySettingsCategories")} className="app-settings-nav">
+            <div className="app-settings-nav-list" role="tablist">
+              {(["general", "ignore", "sync"] as const).map((item) => {
+                const selected = category === item;
+                return (
+                  <button
+                    aria-selected={selected}
+                    className={`app-settings-nav-item${selected ? " is-active" : ""}`}
+                    id={`library-settings-tab-${item}`}
+                    key={item}
+                    onClick={() => setCategory(item)}
+                    role="tab"
+                    type="button"
+                  >
+                    <Icon name={item === "general" ? "settings" : item === "ignore" ? "eye-off" : "refresh"} size={16} />
+                    <span>{t(item === "general" ? "settings.libraryGeneral" : item === "ignore" ? "settings.libraryIgnore" : "settings.sync.title")}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+          <main
+            aria-labelledby={`library-settings-tab-${category}`}
+            className="app-settings-content"
+            role="tabpanel"
+          >
+            {category === "general" ? (
+              <>
+                <div className="app-settings-page-heading">
+                  <h3>{t("settings.libraryGeneral")}</h3>
+                  <p>{t("settings.libraryGeneralHint")}</p>
+                </div>
+                <section className="app-settings-card">
+                  <div className="app-settings-row app-settings-row-stack">
+                    <div className="app-settings-row-copy">
+                      <strong>{t("settings.libraryName")}</strong>
+                      <span>{t("settings.libraryNameHint")}</span>
+                    </div>
+                    <div className="library-settings-name-row">
+                      <input className="text-field" ref={nameInputRef} value={name} onChange={(event) => setName(event.target.value)} />
+                      <button className="primary-button" disabled={!name.trim() || savingName} onClick={() => void saveName()} type="button">{t("common.save")}</button>
+                    </div>
+                  </div>
+                  <div className="app-settings-card-divider" />
+                  <div className="app-settings-row app-settings-row-stack">
+                    <div className="app-settings-row-copy">
+                      <strong>{t("settings.libraryLocation")}</strong>
+                      <span className="library-settings-path">{library.displayPath}</span>
+                    </div>
+                  </div>
+                  <div className="app-settings-card-divider" />
+                  <div className="app-settings-row app-settings-row-stack">
+                    <div className="app-settings-row-copy">
+                      <strong>{t("settings.libraryDescription")}</strong>
+                      <span>{t("settings.libraryDescriptionUnsupported")}</span>
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : category === "ignore" ? (
+              <>
+                <div className="app-settings-page-heading">
+                  <h3>{t("settings.libraryIgnore")}</h3>
+                  <p>{t("settings.libraryIgnoreHint")}</p>
+                </div>
+                <section className="app-settings-card library-settings-gitignore-card">
+                  <div className="library-settings-gitignore-heading">
+                    <div className="app-settings-row-copy">
+                      <strong>{t("settings.gitignoreFile")}</strong>
+                      <span>{t("settings.gitignoreFileHint")}</span>
+                    </div>
+                    <button
+                      aria-expanded={helpOpen}
+                      className="library-settings-help-button"
+                      onClick={() => setHelpOpen((current) => !current)}
+                      title={t("settings.gitignoreSyntax")}
+                      type="button"
+                    >
+                      ?
+                    </button>
+                  </div>
+                  {helpOpen ? <p className="library-settings-gitignore-help">{t("settings.gitignoreSyntax")}</p> : null}
+                  <textarea
+                    aria-label={t("settings.gitignoreFile")}
+                    className="library-settings-gitignore-editor"
+                    onChange={(event) => setGitignoreDraft(event.target.value)}
+                    onBlur={() => void saveGitignore()}
+                    spellCheck={false}
+                    value={gitignoreDraft}
+                  />
+                  <div className="library-settings-gitignore-actions">
+                    <span>{t("settings.gitignoreSaveHint")}</span>
+                    <button className="primary-button" disabled={savingIgnore} onClick={() => void saveGitignore()} type="button">
+                      {savingIgnore ? t("common.saving") : t("common.save")}
+                    </button>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <SyncSettingsSection library={library} callbacks={syncCallbacks} syncProgress={syncProgress} />
+            )}
+          </main>
+        </div>
+      </DialogShell>
+    </div>
+  );
+}

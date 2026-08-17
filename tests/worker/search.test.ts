@@ -6,10 +6,28 @@ import { randomUUID } from 'node:crypto';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LibraryService, LibraryServiceError } from '../../src/worker/library-service';
-import { buildFts5Query, tokenizeForFts } from '../../src/worker/search-query';
+import {
+  LibraryService,
+  LibraryServiceError,
+  SUPPORTED_SCHEMA_VERSION,
+} from '../../src/worker/library-service';
+import { buildFts5Query, normalizeSearchText, tokenizeForFts } from '../../src/worker/search-query';
 
 const temporaryRoots: string[] = [];
+
+// LibraryService holds SQLite connections and recursive fs watchers; on
+// Windows those open handles block rm of the temp tree (POSIX unlinks open
+// files, which is why the leak is invisible on macOS). Always close first.
+const services: LibraryService[] = [];
+
+function newService(
+  ...args: ConstructorParameters<typeof LibraryService>
+): LibraryService {
+  const service = new LibraryService(...args);
+  services.push(service);
+  return service;
+}
+
 const require = createRequire(import.meta.url);
 
 interface TestDatabaseConnection {
@@ -43,21 +61,22 @@ function expectServiceCode(operation: () => unknown, code: LibraryServiceError['
 }
 
 afterEach(() => {
+  for (const service of services.splice(0)) service.closeAll();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
 });
 
-// ── Helper: create a library with a tagged and labeled asset ──
+// ── Helper: create a library with a tagged and described asset ──
 
-function createLibraryWithAssetAndTags(label?: string, description?: string): {
+function createLibraryWithAssetAndTags(initialDescription?: string, description?: string): {
   service: LibraryService;
   libraryId: string;
   libraryPath: string;
   assetId: string;
 } {
   const root = temporaryRoot();
-  const service = new LibraryService();
+  const service = newService();
   const library = service.createLibrary({ displayName: 'SearchTest', selectedParentPath: root });
 
   const managedFolder = service.createManagedFolder({ libraryId: library.libraryId, name: 'Assets' });
@@ -101,8 +120,7 @@ function createLibraryWithAssetAndTags(label?: string, description?: string): {
     libraryId: library.libraryId,
     assetId,
     expectedVersion: 0,
-    label: label ?? 'Hero Concept',
-    description: description ?? 'Main character concept art',
+    description: description ?? initialDescription ?? 'Main character concept art',
     rating: 5,
     favorite: true,
     sourcePageUrl: 'https://example.com/ref',
@@ -115,7 +133,7 @@ function createSecondAsset(
   service: LibraryService,
   libraryId: string,
   libraryPath: string,
-  label?: string,
+  description?: string,
 ): string {
   const managedFolder = service.listManagedFolders(libraryId)[0]!;
   const assetId = randomUUID();
@@ -151,8 +169,8 @@ function createSecondAsset(
     db.close();
   }
 
-  if (label) {
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, label });
+  if (description) {
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 0, description });
   }
 
   return assetId;
@@ -167,7 +185,7 @@ describe('schema v5->v6 migration', () => {
 
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      expect(db.pragma('user_version')).toEqual([{ user_version: 13 }]);
+      expect(db.pragma('user_version')).toEqual([{ user_version: SUPPORTED_SCHEMA_VERSION }]);
 
       // Verify FTS tables exist.
       const searchIndex = db.prepare(
@@ -219,7 +237,7 @@ describe('schema v5->v6 migration', () => {
   });
 
   it('backfills existing assets into FTS index during migration', () => {
-    const { service, libraryId } = createLibraryWithAssetAndTags();
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
 
     // The asset should be searchable immediately after migration backfill.
     const result = service.searchAssets({
@@ -227,7 +245,7 @@ describe('schema v5->v6 migration', () => {
       query: { clauses: [{ field: null, values: ['hero'], exclude: false }] },
     });
     expect(result.total).toBeGreaterThanOrEqual(1);
-    expect(result.items.some((a) => a.label === 'Hero Concept')).toBe(true);
+    expect(result.items.some((a) => a.assetId === assetId)).toBe(true);
 
     service.closeAll();
   });
@@ -240,11 +258,11 @@ describe('FTS trigger consistency', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
 
     // Set metadata should also sync FTS content.
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, label: 'NewLabel123' });
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, description: 'NewDescription123' });
 
     const result = service.searchAssets({
       libraryId,
-      query: { clauses: [{ field: 'label', values: ['NewLabel123'], exclude: false }] },
+      query: { clauses: [{ field: 'description', values: ['NewDescription123'], exclude: false }] },
     });
     expect(result.total).toBe(1);
     expect(result.items[0]!.assetId).toBe(assetId);
@@ -255,28 +273,28 @@ describe('FTS trigger consistency', () => {
   it('removes old tokens from FTS index on metadata update', () => {
     const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
 
-    // Helper created metadata with label='Hero Concept'.
+    // Helper created searchable description metadata.
     // Verify it's indexed.
     const initial = service.searchAssets({
       libraryId,
-      query: { clauses: [{ field: 'label', values: ['Hero'], exclude: false }] },
+      query: { clauses: [{ field: 'description', values: ['character'], exclude: false }] },
     });
     expect(initial.total).toBe(1);
 
-    // Change label to something unique.
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, label: 'ZYXQUUX Unused Label' });
+    // Change description to something unique.
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, description: 'ZYXQUUX unused description' });
 
-    // Old token should no longer match in label field.
+    // Old token should no longer match in description field.
     const afterOld = service.searchAssets({
       libraryId,
-      query: { clauses: [{ field: 'label', values: ['Hero'], exclude: false }] },
+      query: { clauses: [{ field: 'description', values: ['character'], exclude: false }] },
     });
     expect(afterOld.total).toBe(0);
 
     // New unique token should match.
     const afterNew = service.searchAssets({
       libraryId,
-      query: { clauses: [{ field: 'label', values: ['ZYXQUUX'], exclude: false }] },
+      query: { clauses: [{ field: 'description', values: ['ZYXQUUX'], exclude: false }] },
     });
     expect(afterNew.total).toBe(1);
 
@@ -291,28 +309,28 @@ describe('FTS trigger consistency', () => {
     // token counts don't leak on an update done through the sync path.
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     try {
-      // Verify the initial asset is indexed (label='Hero Concept', stored as-is).
+      // Verify the initial asset description is indexed.
       const beforeCount = db.prepare(
         'SELECT count(*) AS cnt FROM asset_search WHERE asset_search MATCH ?',
-      ).get('label:Hero') as { cnt: number };
+      ).get('description:character') as { cnt: number };
       expect(beforeCount.cnt).toBe(1);
 
       // Simulate an update through the content table (like syncAssetSearchContent would do).
       db.prepare(
-        `UPDATE asset_search_index SET label = ?, filename = 'renamed.xyz'
+        `UPDATE asset_search_index SET description = ?, filename = 'renamed.xyz'
          WHERE asset_id = ?`,
       ).run(tokenizeForFts('UpdatedToken'), assetId);
 
       // Old token should be gone.
       const afterOldCount = db.prepare(
         'SELECT count(*) AS cnt FROM asset_search WHERE asset_search MATCH ?',
-      ).get('label:Hero') as { cnt: number };
+      ).get('description:character') as { cnt: number };
       expect(afterOldCount.cnt).toBe(0);
 
       // New token should exist.
       const afterNewCount = db.prepare(
         'SELECT count(*) AS cnt FROM asset_search WHERE asset_search MATCH ?',
-      ).get('label:UpdatedToken') as { cnt: number };
+      ).get('description:UpdatedToken') as { cnt: number };
       expect(afterNewCount.cnt).toBe(1);
     } finally {
       db.close();
@@ -322,10 +340,10 @@ describe('FTS trigger consistency', () => {
   it('removes FTS tokens on asset delete via CASCADE', () => {
     const { service, libraryPath, libraryId, assetId } = createLibraryWithAssetAndTags();
 
-    // Verify the asset is indexed (label='Hero Concept').
+    // Verify the asset description is indexed.
     const before = service.searchAssets({
       libraryId,
-      query: { clauses: [{ field: 'label', values: ['Hero'], exclude: false }] },
+      query: { clauses: [{ field: 'description', values: ['character'], exclude: false }] },
     });
     expect(before.total).toBe(1);
     expect(before.items[0]!.assetId).toBe(assetId);
@@ -340,7 +358,7 @@ describe('FTS trigger consistency', () => {
       // The DELETE trigger should have cleaned up the FTS index.
       const afterCount = db.prepare(
         'SELECT count(*) AS cnt FROM asset_search WHERE asset_search MATCH ?',
-      ).get('label:Hero') as { cnt: number };
+      ).get('description:character') as { cnt: number };
       expect(afterCount.cnt).toBe(0);
 
       // Content table should also be empty for this asset.
@@ -377,9 +395,9 @@ describe('CJK tokenization', () => {
     expect(tokenizeForFts('   ')).toBe('');
   });
 
-  it('searches Chinese labels tokenized in asset_search_index', () => {
+  it('searches CJK substrings stored as normalized contextual text', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'CJK', selectedParentPath: root });
     const libraryId = library.libraryId;
     const libraryPath = library.libraryPath;
@@ -387,7 +405,7 @@ describe('CJK tokenization', () => {
     // Create a managed folder using the service API (library is still open from createLibrary).
     const managedFolder = service.createManagedFolder({ libraryId, name: 'CJKAssets' });
 
-    // Insert an asset directly with Chinese label into search index.
+    // Insert an asset directly with a Chinese description into search index.
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     const assetId = randomUUID();
     const now = new Date().toISOString();
@@ -405,11 +423,11 @@ describe('CJK tokenization', () => {
       db.prepare('UPDATE assets SET current_revision_id = (SELECT revision_id FROM revisions WHERE asset_id = ? LIMIT 1), updated_at = ? WHERE asset_id = ?')
         .run(assetId, now, assetId);
 
-      // Manually insert tokenized Chinese label.
+      // Manually insert raw normalized Chinese text, as v18 does.
       db.prepare(
-        `INSERT INTO asset_search_index (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
-         VALUES (?, ?, '', '', '', '', 'CJKAssets', '')`,
-      ).run(assetId, tokenizeForFts('角色概念设计'));
+        `INSERT INTO asset_search_index (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+         VALUES (?, '', '', ?, '', 'CJKAssets', '')`,
+      ).run(assetId, normalizeSearchText('角色概念设计'));
     } finally {
       db.close();
     }
@@ -433,12 +451,109 @@ describe('CJK tokenization', () => {
   });
 });
 
+// ── Contextual substring search ─────────────────────────────────────
+
+describe('contextual substring search', () => {
+  it('finds a one-character query inside both filename and tag text', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index
+            SET filename = ?, tags = ?
+          WHERE asset_id = ?`,
+      ).run(normalizeSearchText('y-reference.png'), normalizeSearchText('y2k'), assetId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['y'], exclude: false }] },
+    });
+
+    expect(result.items.map((item) => item.assetId)).toContain(assetId);
+  });
+
+  it('applies canonical field clauses and OR groups without broadening a match', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index
+            SET filename = ?, tags = ?, author = ?
+          WHERE asset_id = ?`,
+      ).run(
+        normalizeSearchText('midcentury-reference.png'),
+        normalizeSearchText('y2k'),
+        normalizeSearchText('Jane Doe'),
+        assetId,
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: { clauses: [{ field: 'tags', values: ['century'], exclude: false }] },
+      }).total,
+    ).toBe(0);
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: { clauses: [{ field: 'tags', values: ['2k'], exclude: false }] },
+      }).items.map((item) => item.assetId),
+    ).toContain(assetId);
+    expect(
+      service.searchAssets({
+        libraryId,
+        query: {
+          clauses: [],
+          groups: [
+            [{ field: 'filename', values: ['not-present'], exclude: false }],
+            [
+              { field: 'author', values: ['jane'], exclude: false },
+              { field: 'tags', values: ['y2k'], exclude: false },
+            ],
+          ],
+        },
+      }).items.map((item) => item.assetId),
+    ).toContain(assetId);
+  });
+
+  it('ranks a filename exact match before an arbitrary tag contains match', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'nothing');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    try {
+      db.prepare(
+        `UPDATE asset_search_index SET filename = ?, tags = ? WHERE asset_id = ?`,
+      ).run(normalizeSearchText('y2k'), '', assetId);
+      db.prepare(
+        `UPDATE asset_search_index SET filename = ?, tags = ? WHERE asset_id = ?`,
+      ).run(normalizeSearchText('reference'), normalizeSearchText('modern-y2k'), secondAssetId);
+    } finally {
+      db.close();
+    }
+
+    const result = service.searchAssets({
+      libraryId,
+      query: { clauses: [{ field: null, values: ['y2k'], exclude: false }] },
+    });
+    expect(result.items.slice(0, 2).map((item) => item.assetId)).toEqual([
+      assetId,
+      secondAssetId,
+    ]);
+  });
+});
+
 // ── bm25 Weighting ──────────────────────────────────────────────────
 
 describe('bm25 weighting', () => {
-  it('ranks label match above filename match', () => {
+  it('ranks filename match above tags match', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'BM25', selectedParentPath: root });
     const libraryId = library.libraryId;
     const libraryPath = library.libraryPath;
@@ -450,7 +565,7 @@ describe('bm25 weighting', () => {
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     const now = new Date().toISOString();
 
-    // Asset 1: "dragon" in label (weight 12).
+    // Asset 1: "dragon" in filename (weight 10).
     const id1 = randomUUID();
     db.prepare(
       `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
@@ -465,11 +580,11 @@ describe('bm25 weighting', () => {
     db.prepare('UPDATE assets SET current_revision_id = (SELECT revision_id FROM revisions WHERE asset_id = ? LIMIT 1), updated_at = ? WHERE asset_id = ?')
       .run(id1, now, id1);
     db.prepare(
-      `INSERT INTO asset_search_index (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
-       VALUES (?, ?, ?, '', '', '', '', '')`,
-    ).run(id1, tokenizeForFts('dragon'), tokenizeForFts('file1'));
+      `INSERT INTO asset_search_index (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+       VALUES (?, ?, '', '', '', '', '')`,
+    ).run(id1, tokenizeForFts('dragon'));
 
-    // Asset 2: "dragon" in filename only (weight 10).
+    // Asset 2: "dragon" in tags only (weight 8).
     const id2 = randomUUID();
     db.prepare(
       `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
@@ -484,8 +599,8 @@ describe('bm25 weighting', () => {
     db.prepare('UPDATE assets SET current_revision_id = (SELECT revision_id FROM revisions WHERE asset_id = ? LIMIT 1), updated_at = ? WHERE asset_id = ?')
       .run(id2, now, id2);
     db.prepare(
-      `INSERT INTO asset_search_index (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
-       VALUES (?, ?, ?, '', '', '', '', '')`,
+      `INSERT INTO asset_search_index (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+       VALUES (?, ?, ?, '', '', '', '')`,
     ).run(id2, tokenizeForFts('other'), tokenizeForFts('dragon'));
 
     // Asset 3: unrelated (ensures IDF > 0 for "dragon").
@@ -503,9 +618,9 @@ describe('bm25 weighting', () => {
     db.prepare('UPDATE assets SET current_revision_id = (SELECT revision_id FROM revisions WHERE asset_id = ? LIMIT 1), updated_at = ? WHERE asset_id = ?')
       .run(id3, now, id3);
     db.prepare(
-      `INSERT INTO asset_search_index (asset_id, label, filename, tags, description, source_url, folder_path, metadata_text)
-       VALUES (?, ?, 'unrelated', '', '', '', 'bm25f', '')`,
-    ).run(id3, tokenizeForFts('unrelated'));
+      `INSERT INTO asset_search_index (asset_id, filename, tags, description, source_url, folder_path, metadata_text)
+       VALUES (?, 'unrelated', '', '', '', 'bm25f', '')`,
+    ).run(id3);
 
     db.close();
 
@@ -514,7 +629,7 @@ describe('bm25 weighting', () => {
       query: { clauses: [{ field: null, values: ['dragon'], exclude: false }] },
     });
 
-    // Both should match, but label match (id1) should rank above filename match (id2).
+    // Both should match, but filename match (id1) should rank above tags match (id2).
     expect(result.total).toBe(2);
     expect(result.items[0]!.assetId).toBe(id1);
     expect(result.items[1]!.assetId).toBe(id2);
@@ -551,24 +666,50 @@ describe('bm25 weighting', () => {
     expect(result.items.some((asset) => asset.assetId === keptAssetId)).toBe(true);
     service.closeAll();
   });
+
+  it('keeps positives and drops excluded matches when trigram narrowing applies', () => {
+    // 'hero'/'draft' are >=3 chars with no FTS5-unsafe characters, so the
+    // query goes through the trigram index (A NOT B). This guards the real
+    // positive+exclusion path that the builder emits `A NOT B` for.
+    const { service, libraryId, libraryPath, assetId } =
+      createLibraryWithAssetAndTags('Hero Concept');
+    const excludedId = createSecondAsset(service, libraryId, libraryPath, 'Hero draft poster');
+    const keptId = createSecondAsset(service, libraryId, libraryPath, 'Hero lineup poster');
+
+    const result = service.searchAssets({
+      libraryId,
+      query: {
+        clauses: [
+          { field: null, values: ['hero'], exclude: false },
+          { field: null, values: ['draft'], exclude: true },
+        ],
+      },
+      sort: { field: 'name', order: 'asc' },
+    });
+
+    expect(result.items.some((asset) => asset.assetId === assetId)).toBe(true);
+    expect(result.items.some((asset) => asset.assetId === keptId)).toBe(true);
+    expect(result.items.some((asset) => asset.assetId === excludedId)).toBe(false);
+    service.closeAll();
+  });
 });
 
-// ── FTS5 Query Builder ──────────────────────────────────────────────
+// ── FTS5 trigram query builder ──────────────────────────────────────
 
-describe('FTS5 query builder', () => {
-  it('builds single-token query', () => {
+describe('FTS5 trigram query builder', () => {
+  it('normalizes a single substring phrase', () => {
     const query = buildFts5Query([{ field: null, values: ['hero'], exclude: false }]);
     expect(query).toBe('"hero"');
   });
 
-  it('builds field-specific query', () => {
-    const query = buildFts5Query([{ field: 'label', values: ['PBR'], exclude: false }]);
-    expect(query).toBe('label:"PBR"');
+  it('builds a field-specific normalized phrase', () => {
+    const query = buildFts5Query([{ field: 'filename', values: ['PBR'], exclude: false }]);
+    expect(query).toBe('filename : "pbr"');
   });
 
   it('builds multi-value OR query', () => {
     const query = buildFts5Query([{ field: 'tags', values: ['character', 'prop'], exclude: false }]);
-    expect(query).toBe('(tags:"character" OR tags:"prop")');
+    expect(query).toBe('(tags : "character" OR tags : "prop")');
   });
 
   it('builds exclude query', () => {
@@ -578,11 +719,13 @@ describe('FTS5 query builder', () => {
 
   it('builds combined AND + OR + exclude query', () => {
     const query = buildFts5Query([
-      { field: 'label', values: ['PBR'], exclude: false },
+      { field: 'filename', values: ['PBR'], exclude: false },
       { field: 'tags', values: ['character', 'prop'], exclude: false },
       { field: 'folder_path', values: ['archive'], exclude: true },
     ]);
-    expect(query).toBe('label:"PBR" (tags:"character" OR tags:"prop") NOT folder_path:"archive"');
+    // FTS5 NOT is a binary operator (`left NOT right`); `AND NOT` is a syntax
+    // error (verified against SQLite trigram FTS5).
+    expect(query).toBe('((filename : "pbr" AND (tags : "character" OR tags : "prop")) NOT folder_path : "archive")');
   });
 
   it('normalizes an exclusion that arrives before positive clauses', () => {
@@ -590,7 +733,7 @@ describe('FTS5 query builder', () => {
       { field: null, values: ['draft'], exclude: true },
       { field: null, values: ['hero'], exclude: false },
     ]);
-    expect(query).toBe('"hero" NOT "draft"');
+    expect(query).toBe('("hero" NOT "draft")');
   });
 
   it('never emits a leading NOT when positive input sanitizes to empty', () => {
@@ -608,15 +751,11 @@ describe('FTS5 query builder', () => {
 
   it('sanitizes FTS5 special characters', () => {
     const query = buildFts5Query([{ field: null, values: ['" OR 1=1 --'], exclude: false }]);
-    // Quotes are stripped, but the words become safe quoted literals.
-    // The query should not contain unquoted special chars that alter FTS semantics.
-    // Check that the returned string is a legitimate FTS5 query (all tokens double-quoted).
-    const parts = query.split(' ');
-    for (const part of parts) {
-      // Each token should be a double-quoted literal.
-      expect(part.startsWith('"')).toBe(true);
-      expect(part.endsWith('"')).toBe(true);
-    }
+    // Quotes are FTS5-unsafe: the builder must refuse to embed the text as a
+    // phrase and fall back to the impossible query, which routes the search to
+    // the exact instr() predicate rather than risking `OR` as an operator.
+    expect(query).toBe('"__IMPOSSIBLE__"');
+    expect(query).not.toContain(' OR 1=1');
   });
 
   it('strips asterisk wildcards', () => {
@@ -681,6 +820,83 @@ describe('search filters', () => {
     service.closeAll();
   });
 
+  // REQ-FILTER-012: a folder-scoped search with a real query string recurses
+  // into descendant folders (depth ≥2) when recursive is true, and stays
+  // limited to the folder itself when recursive is false.
+  it('matches grandchild folder assets in folder-scoped search only when recursive', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    const parent = service.listManagedFolders(libraryId)[0]!;
+    const child = service.createManagedFolder({
+      libraryId,
+      parentFolderId: parent.folderId,
+      name: 'Child',
+    });
+    const grandchild = service.createManagedFolder({
+      libraryId,
+      parentFolderId: child.folderId,
+      name: 'Grandchild',
+    });
+
+    // Raw-SQL asset fixture in the same style as the folder-scope browse test
+    // above; setAssetMetadata then syncs the asset into the FTS index.
+    const insertAssetIntoFolder = (
+      folder: { folderId: string; relativePath: string },
+      fileName: string,
+    ): string => {
+      const id = randomUUID();
+      const revisionId = randomUUID();
+      const relativePath = `${folder.relativePath}/${fileName}`;
+      const now = new Date().toISOString();
+      writeFileSync(path.join(libraryPath, 'Assets', relativePath), 'needle asset');
+      const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+      try {
+        db.prepare(
+          `INSERT INTO assets (asset_id, location_kind, managed_folder_id, linked_folder_id,
+            relative_file_path, current_revision_id, availability, path_identity, created_at, updated_at)
+           VALUES (?, 'managed', ?, NULL, ?, NULL, 'available', ?, ?, ?)`,
+        ).run(id, folder.folderId, relativePath, relativePath, now, now);
+        db.prepare(
+          `INSERT INTO revisions (revision_id, asset_id, parent_revision_id, byte_size,
+            modified_at, original_filename, origin, accepted_at)
+           VALUES (?, ?, NULL, 12, ?, ?, 'import', ?)`,
+        ).run(revisionId, id, now, fileName, now);
+        db.prepare('UPDATE assets SET current_revision_id = ? WHERE asset_id = ?')
+          .run(revisionId, id);
+      } finally {
+        db.close();
+      }
+      service.setAssetMetadata({ libraryId, assetId: id, expectedVersion: 0 });
+      return id;
+    };
+
+    // Depth 1 (direct child) and depth 2 (grandchild) both carry the query term.
+    const childAssetId = insertAssetIntoFolder(child, 'needle-shallow.png');
+    const grandchildAssetId = insertAssetIntoFolder(grandchild, 'needle-deep.png');
+
+    const query = { clauses: [{ field: null, values: ['needle'], exclude: false }] };
+    const recursive = service.searchAssets({
+      libraryId,
+      query,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: true },
+    });
+    const direct = service.searchAssets({
+      libraryId,
+      query,
+      scope: { kind: 'folder', folderId: parent.folderId, recursive: false },
+    });
+
+    // Recursive search reaches the grandchild (depth 2), not just direct children.
+    expect(recursive.items.map((asset) => asset.assetId).sort()).toEqual(
+      [childAssetId, grandchildAssetId].sort(),
+    );
+    // Non-recursive search stays inside the parent folder: neither the child
+    // nor the grandchild asset matches.
+    expect(direct.items.some((asset) => asset.assetId === grandchildAssetId)).toBe(false);
+    expect(direct.items.some((asset) => asset.assetId === childAssetId)).toBe(false);
+    expect(direct.items).toHaveLength(0);
+    service.closeAll();
+  });
+
   it('intersects search results with the current collection scope', () => {
     const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
     const otherAssetId = createSecondAsset(service, libraryId, libraryPath, 'Other Hero');
@@ -710,7 +926,7 @@ describe('search filters', () => {
 
   it('filters by format with OR', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Fmt', selectedParentPath: root });
     const mf = service.createManagedFolder({ libraryId: library.libraryId, name: 'f' });
     service.closeAll();
@@ -801,6 +1017,95 @@ describe('search filters', () => {
       filters: [{ field: 'tag', values: ['Character'], exclude: true }],
     });
     expect(withoutTag.total).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('filters by AI tags as well as human tags (Serpent-5cvr)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.writeAiAnalysisResult({
+      libraryId,
+      assetId,
+      description: 'AI 描述',
+      tags: ['赛博朋克'],
+      rating: 4,
+      modelId: 'test-model',
+      modelVersion: '1',
+      enabledFields: { description: true, tags: true, rating: true },
+    });
+
+    const withAiTag = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['赛博朋克'], exclude: false }],
+    });
+    expect(withAiTag.total).toBe(1);
+    expect(withAiTag.items[0]!.assetId).toBe(assetId);
+
+    const excluded = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['赛博朋克'], exclude: true }],
+    });
+    expect(excluded.total).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('excludes multiple tags with every placeholder bound (regression)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    const tag = service.createTag({ libraryId, name: 'Character' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [tag.tagId] });
+
+    // Multi-value exclude previously left placeholders unbound and better-sqlite3
+    // threw "too few parameter values", failing the search closed.
+    const excluded = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Character', 'Environment'], exclude: true }],
+    });
+    expect(excluded.total).toBe(0);
+
+    // Assets carrying none of the excluded tags survive the filter.
+    const kept = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Environment', 'Props'], exclude: true }],
+    });
+    expect(kept.total).toBe(1);
+
+    service.closeAll();
+  });
+
+  it('ANDs separate single-value tag clauses (Serpent-eaxs tag-management AND search)', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    const character = service.createTag({ libraryId, name: 'Character' });
+    const environment = service.createTag({ libraryId, name: 'Environment' });
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [character.tagId] });
+
+    // The asset carries only one of the two tags: separate clauses (AND)
+    // must miss while one multi-value clause (OR) still hits.
+    const andMiss = service.searchAssets({
+      libraryId,
+      filters: [
+        { field: 'tag', values: ['Character'], exclude: false },
+        { field: 'tag', values: ['Environment'], exclude: false },
+      ],
+    });
+    expect(andMiss.total).toBe(0);
+
+    const orHit = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'tag', values: ['Character', 'Environment'], exclude: false }],
+    });
+    expect(orHit.total).toBe(1);
+
+    // Assign the second tag: AND matches now.
+    service.assignTags({ libraryId, assetIds: [assetId], tagIds: [environment.tagId] });
+    const andHit = service.searchAssets({
+      libraryId,
+      filters: [
+        { field: 'tag', values: ['Character'], exclude: false },
+        { field: 'tag', values: ['Environment'], exclude: false },
+      ],
+    });
+    expect(andHit.total).toBe(1);
 
     service.closeAll();
   });
@@ -958,6 +1263,65 @@ describe('search filters', () => {
       .toEqual([portraitId, unknownId].sort());
     service.closeAll();
   });
+
+  it('filters long_edge buckets for resolution presets, with NULL semantics intact (REQ-FILTER-010)', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const portraitId = createSecondAsset(service, libraryId, libraryPath, 'Portrait');
+    const unknownId = createSecondAsset(service, libraryId, libraryPath, 'Unknown');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, portraitId) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, duration_ms, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const isLandscape = row.asset_id === assetId;
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `${row.asset_id}.json`,
+        isLandscape ? 1920 : 1080,
+        isLandscape ? 1080 : 1920,
+        0,
+        now,
+      );
+    }
+    db.close();
+
+    // Both assets have long edge 1920 regardless of orientation; the
+    // metadata-less asset is omitted from positive matches.
+    const atLeast1K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: false }],
+    });
+    expect(atLeast1K.items.map((asset) => asset.assetId).sort())
+      .toEqual([assetId, portraitId].sort());
+
+    const below1K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ max: 1900 }], exclude: false }],
+    });
+    expect(below1K.items).toHaveLength(0);
+
+    const bucket2K = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 2240, max: 3199 }], exclude: false }],
+    });
+    expect(bucket2K.items).toHaveLength(0);
+
+    // Exclusion retains metadata-less assets, matching the other numeric fields.
+    const excludeBig = service.searchAssets({
+      libraryId,
+      filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: true }],
+    });
+    expect(excludeBig.items.map((asset) => asset.assetId)).toEqual([unknownId]);
+    service.closeAll();
+  });
 });
 
 // ── Sort ────────────────────────────────────────────────────────────
@@ -965,7 +1329,7 @@ describe('search filters', () => {
 describe('sort', () => {
   it('preserves a linked asset location kind in search results', () => {
     const root = temporaryRoot();
-    const service = new LibraryService();
+    const service = newService();
     const library = service.createLibrary({ displayName: 'Linked Search', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-search-source');
     mkdirSync(linkedRoot);
@@ -999,6 +1363,30 @@ describe('sort', () => {
     service.closeAll();
   });
 
+  it('sorts by author ascending with nulls last and case-insensitive ordering', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Second asset');
+    const assetId3 = createSecondAsset(service, libraryId, libraryPath, 'Third asset');
+
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, author: 'zeta' });
+    service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 1, author: 'Alpha' });
+    // assetId3 is left without an author to exercise the nulls-last ordering.
+
+    const ascending = service.searchAssets({
+      libraryId,
+      sort: { field: 'author', order: 'asc' },
+    });
+    expect(ascending.items.map((asset) => asset.assetId)).toEqual([assetId2, assetId, assetId3]);
+
+    const descending = service.searchAssets({
+      libraryId,
+      sort: { field: 'author', order: 'desc' },
+    });
+    expect(descending.items.map((asset) => asset.assetId)).toEqual([assetId, assetId2, assetId3]);
+
+    service.closeAll();
+  });
+
   it('sorts by byte_size ascending', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
     const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Tiny');
@@ -1010,6 +1398,43 @@ describe('sort', () => {
     });
     expect(result.items[0]!.assetId).toBe(assetId2);
     expect(result.items[1]!.assetId).toBe(assetId);
+
+    service.closeAll();
+  });
+
+  it('sorts by long_edge ascending with nulls last', () => {
+    const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
+    const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Small');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
+    ).all(assetId, assetId2) as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 1, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    const now = new Date().toISOString();
+    for (const row of revisions) {
+      const width = row.asset_id === assetId ? 3840 : 800;
+      const height = row.asset_id === assetId ? 2160 : 600;
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `${row.asset_id}.json`,
+        width,
+        height,
+        now,
+      );
+    }
+    db.close();
+
+    const result = service.searchAssets({
+      libraryId,
+      sort: { field: 'long_edge', order: 'asc' },
+    });
+    expect(result.items.map((asset) => asset.assetId)).toEqual([assetId2, assetId]);
 
     service.closeAll();
   });
@@ -1203,11 +1628,154 @@ describe('pagination', () => {
 
     service.closeAll();
   });
+
+  it('loads the full browse scope when scopeMode is true', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, scopeMode: true });
+    expect(result.items).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('returns the full scope ids only when idsOnly is true (Serpent-ws4k)', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, idsOnly: true });
+    expect(result.items).toHaveLength(0);
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.assetIds).toContain(secondAssetId);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
+    service.closeAll();
+  });
+
+  it('idsOnly ignores limit/offset and still covers the whole scope', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+
+    const result = service.searchAssets({ libraryId, idsOnly: true, limit: 1, offset: 1 });
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.total).toBe(2);
+
+    service.closeAll();
+  });
+
+  it('returns a compact real-asset geometry index when layoutOnly is true (Serpent-sa65)', () => {
+    const { service, libraryId, libraryPath, assetId } = createLibraryWithAssetAndTags();
+    const secondAssetId = createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
+    const revisions = db.prepare(
+      'SELECT asset_id, current_revision_id FROM assets ORDER BY asset_id',
+    ).all() as Array<{ asset_id: string; current_revision_id: string }>;
+    const insert = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', 2, ?, ?, ?, 'test', 'ready', ?)`,
+    );
+    revisions.forEach((row, index) => {
+      insert.run(
+        randomUUID(),
+        row.current_revision_id,
+        `layout-${index}.json`,
+        1600 + index,
+        900 + index,
+        new Date().toISOString(),
+      );
+    });
+    db.close();
+
+    const result = service.searchAssets({
+      libraryId,
+      layoutOnly: true,
+      limit: 1,
+      offset: 1,
+    });
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+    expect(result.layout).toHaveLength(2);
+    expect(result.layout?.map((entry) => entry.assetId).sort()).toEqual(
+      [assetId, secondAssetId].sort(),
+    );
+    expect(result.layout?.every((entry) => entry.width && entry.height)).toBe(true);
+    expect(result.layout?.every((entry) => entry.displayName)).toBe(true);
+
+    service.closeAll();
+  });
+
+  it('idsOnly respects the scope (trash) and keeps soft-deleted assets out of normal ids', () => {
+    const { service, libraryId, assetId } = createLibraryWithAssetAndTags();
+    service.trashAssets({ libraryId, assetIds: [assetId] });
+
+    const all = service.searchAssets({ libraryId, idsOnly: true });
+    expect(all.assetIds).toHaveLength(0);
+
+    const trash = service.searchAssets({
+      libraryId,
+      scope: { kind: 'trash' },
+      idsOnly: true,
+    });
+    expect(trash.assetIds).toEqual([assetId]);
+    expect(trash.total).toBe(1);
+
+    service.closeAll();
+  });
 });
 
 // ── Smart Collections (v6) ──────────────────────────────────────────
 
 describe('smart collections v6', () => {
+  it('create allows draft empty; update rejects empty (CU-M5)', () => {
+    const { service, libraryId } = createLibraryWithAssetAndTags();
+
+    // Sidebar inline-create allows a draft `{}` query; validation is on
+    // update/save (Serpent-san / SMART-007).
+    const draft = service.createSmartCollection({
+      libraryId,
+      name: 'Empty',
+      queryDefinitionJson: '{}',
+    });
+    expect(draft.collectionId).toBeTruthy();
+
+    expectServiceCode(
+      () =>
+        service.updateSmartCollection({
+          libraryId,
+          collectionId: draft.collectionId,
+          queryDefinitionJson: '{}',
+        }),
+      'INVALID_SMART_COLLECTION_QUERY',
+    );
+
+    service.closeAll();
+  });
+
+  it('includes assetCount when listing smart collections (CU-M6)', () => {
+    // Helper already marks the asset as favorite.
+    const { service, libraryId } = createLibraryWithAssetAndTags();
+
+    service.createSmartCollection({
+      libraryId,
+      name: 'Starred',
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: 'favorite', values: [], exclude: false }],
+      }),
+    });
+
+    const list = service.listSmartCollections(libraryId);
+    expect(list).toHaveLength(1);
+    expect(list[0]!.assetCount).toBe(1);
+
+    service.closeAll();
+  });
+
   it('creates and lists with collectionId and position', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
@@ -1233,9 +1801,9 @@ describe('smart collections v6', () => {
   it('enforces UNIQUE(library_id, name)', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
-    service.createSmartCollection({ libraryId, name: 'Unique', queryDefinitionJson: '{}' });
+    service.createSmartCollection({ libraryId, name: 'Unique', queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }) });
     expectServiceCode(
-      () => service.createSmartCollection({ libraryId, name: 'Unique', queryDefinitionJson: '{}' }),
+      () => service.createSmartCollection({ libraryId, name: 'Unique', queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }) }),
       'FOLDER_ALREADY_EXISTS',
     );
 
@@ -1273,8 +1841,8 @@ describe('smart collections v6', () => {
     const assetId2 = createSecondAsset(service, libraryId, libraryPath, 'Sketch');
 
     // Asset 1: rating=5 from helper (entityVersion=1). Update label.
-    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, rating: 5, label: 'Masterpiece' });
-    // Asset 2: label set in createSecondAsset, row has entityVersion=1. Update rating.
+    service.setAssetMetadata({ libraryId, assetId, expectedVersion: 1, rating: 5 });
+    // Asset 2: description set in createSecondAsset, row has entityVersion=1. Update rating.
     service.setAssetMetadata({ libraryId, assetId: assetId2, expectedVersion: 1, rating: 1 });
 
     const sc = service.createSmartCollection({
@@ -1300,7 +1868,10 @@ describe('smart collections v6', () => {
     const smart = service.createSmartCollection({
       libraryId,
       name: 'All paged',
-      queryDefinitionJson: JSON.stringify({ sort: { field: 'name', order: 'asc' } }),
+      queryDefinitionJson: JSON.stringify({
+        filters: [{ field: 'format', values: ['png'], exclude: false }],
+        sort: { field: 'name', order: 'asc' },
+      }),
     });
 
     const first = service.executeSmartCollection({ libraryId, collectionId: smart.collectionId, limit: 1, offset: 0 });
@@ -1311,6 +1882,28 @@ describe('smart collections v6', () => {
     expect(second.offset).toBe(1);
     expect(second.items).toHaveLength(1);
     expect(second.items[0]!.assetId).not.toBe(first.items[0]!.assetId);
+    service.closeAll();
+  });
+
+  it('executes a smart collection with idsOnly for select-all (Serpent-ws4k)', () => {
+    const { service, libraryId, libraryPath } = createLibraryWithAssetAndTags();
+    void createSecondAsset(service, libraryId, libraryPath, 'Second');
+    const smart = service.createSmartCollection({
+      libraryId,
+      name: 'All',
+      queryDefinitionJson: '{}',
+    });
+
+    const result = service.executeSmartCollection({
+      libraryId,
+      collectionId: smart.collectionId,
+      idsOnly: true,
+    });
+    expect(result.items).toHaveLength(0);
+    expect(result.assetIds).toHaveLength(2);
+    expect(result.total).toBe(2);
+    expect(result.offset).toBe(0);
+
     service.closeAll();
   });
 
@@ -1335,7 +1928,7 @@ describe('smart collections v6', () => {
   it('updates smart collection partially', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
-    const sc = service.createSmartCollection({ libraryId, name: 'Orig', queryDefinitionJson: '{}' });
+    const sc = service.createSmartCollection({ libraryId, name: 'Orig', queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }) });
 
     const updated = service.updateSmartCollection({
       libraryId,
@@ -1361,7 +1954,7 @@ describe('smart collections v6', () => {
   it('deletes a smart collection', () => {
     const { service, libraryId } = createLibraryWithAssetAndTags();
 
-    const sc = service.createSmartCollection({ libraryId, name: 'ToDelete', queryDefinitionJson: '{}' });
+    const sc = service.createSmartCollection({ libraryId, name: 'ToDelete', queryDefinitionJson: JSON.stringify({ filters: [{ field: 'favorite', values: [], exclude: false }] }) });
     const deletedId = service.deleteSmartCollection({ libraryId, collectionId: sc.collectionId });
     expect(deletedId).toBe(sc.collectionId);
 

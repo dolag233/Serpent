@@ -30,7 +30,6 @@ const validAssetSummary = {
   byteSize: 42,
   modifiedAt: '2026-07-14T00:00:00.000Z',
   availability: 'available' as const,
-  label: null,
   rating: 0,
   favorite: false,
   deletedAt: null,
@@ -89,12 +88,16 @@ describe('managed folder paths', () => {
       parentFolderId: null,
       name: 'UI',
       relativePath: 'UI',
+      directAssetCount: 0,
+      childFolderCount: 0,
     }).success).toBe(true);
     expect(managedFolderSummarySchema.safeParse({
       folderId: 'folder-02',
       parentFolderId: 'folder-01',
       name: 'Buttons',
       relativePath: 'UI/Buttons',
+      directAssetCount: 2,
+      childFolderCount: 1,
     }).success).toBe(true);
   });
 
@@ -104,6 +107,8 @@ describe('managed folder paths', () => {
       parentFolderId: null,
       name: 'unsafe',
       relativePath,
+      directAssetCount: 0,
+      childFolderCount: 0,
     }).success).toBe(false);
   });
 });

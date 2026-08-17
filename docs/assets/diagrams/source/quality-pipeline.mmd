@@ -1,0 +1,13 @@
+flowchart LR
+    C[Change] --> L[Lint + typecheck]
+    L --> U[Unit tests]
+    U --> W[Worker integration]
+    W --> E[Electron E2E]
+    E --> P[Package + verify]
+    P --> PE[Packaged E2E]
+    PE --> R[Make release artifacts]
+
+    classDef step fill:#1f2937,stroke:#60a5fa,color:#f8fafc;
+    classDef gate fill:#12352b,stroke:#34d399,color:#f8fafc;
+    class C,L,U,W,E,P,PE step;
+    class R gate;

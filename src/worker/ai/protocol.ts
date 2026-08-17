@@ -1,34 +1,32 @@
 import { z } from 'zod';
 
+import {
+  DEFAULT_AI_ANALYSIS_SETTINGS,
+  type AiAnalysisSettings,
+} from '../../shared/ai-analysis-settings';
+
 /**
- * The structured-output contract that AI models must conform to.
- * This is the JSON shape the vendor API is instructed to return.
+ * The structured-output contract that AI models must conform to (F8).
  */
 export const aiStructuredOutputSchema = z.strictObject({
-  label: z
-    .string()
-    .optional()
-    .describe('A concise title or label for the asset.'),
   description: z
     .string()
     .optional()
-    .describe('A detailed natural-language description of the asset content.'),
+    .describe('Natural-language description of the asset content.'),
   tags: z
     .array(z.string())
     .describe('Relevant keyword tags describing the asset.'),
-  structured_metadata: z
-    .record(z.string(), z.unknown())
+  rating: z
+    .number()
+    .int()
+    .min(1)
+    .max(5)
     .optional()
-    .describe('Additional structured metadata keyed by field name.'),
+    .describe('Aesthetic score from 1 to 5.'),
 });
 
 export type AiStructuredOutput = z.infer<typeof aiStructuredOutputSchema>;
 
-/**
- * The validated result returned by a vendor adapter after a successful
- * analysis.  Wraps the model's structured output with the model version
- * reported by the vendor API.
- */
 export const aiAnalysisResultSchema = aiStructuredOutputSchema.extend({
   modelVersion: z
     .string()
@@ -38,48 +36,124 @@ export const aiAnalysisResultSchema = aiStructuredOutputSchema.extend({
 
 export type AiAnalysisResult = z.infer<typeof aiAnalysisResultSchema>;
 
-/**
- * Parse and validate an AI analysis result.
- * Throws ZodError if the input does not conform to AiAnalysisResult.
- */
+function stripNullValues(input: unknown): unknown {
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(
+      input as Record<string, unknown>,
+    )) {
+      if (value !== null) out[key] = value;
+    }
+    return out;
+  }
+  return input;
+}
+
 export function parseAiAnalysisResult(input: unknown): AiAnalysisResult {
-  return aiAnalysisResultSchema.parse(input);
+  return aiAnalysisResultSchema.parse(normalizeAiStructuredInput(input));
 }
 
 /**
- * Vendor-agnostic request for AI asset analysis.
- * Carries all context the adapter needs to construct a prompt and images.
+ * Prefer plain model text that embeds a JSON object (optionally fenced).
+ * Avoids requiring vendor-native json_schema / tool_use when midstream
+ * proxies only return text.
  */
+export function parseAiAnalysisResultFromModelText(
+  text: string,
+  modelVersion: string,
+): AiAnalysisResult {
+  const trimmed = text.trim();
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/iu, '')
+    .replace(/\s*```$/u, '')
+    .trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(unfenced);
+  } catch {
+    const start = unfenced.indexOf('{');
+    const end = unfenced.lastIndexOf('}');
+    if (start < 0 || end <= start) {
+      throw new Error('Model text did not contain a JSON object.');
+    }
+    parsed = JSON.parse(unfenced.slice(start, end + 1));
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Model JSON was not an object.');
+  }
+  return parseAiAnalysisResult({
+    ...(parsed as Record<string, unknown>),
+    modelVersion,
+  });
+}
+
+/** Coerce common model drift before Zod (tags as string, nulls, etc.). */
+function normalizeAiStructuredInput(input: unknown): unknown {
+  const stripped = stripNullValues(input);
+  if (!stripped || typeof stripped !== 'object' || Array.isArray(stripped)) {
+    return stripped;
+  }
+  const row = { ...(stripped as Record<string, unknown>) };
+  if (typeof row.tags === 'string') {
+    row.tags = row.tags
+      .split(/[,，;；|]/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  if (typeof row.rating === 'string' && /^\d+$/.test(row.rating.trim())) {
+    row.rating = Number(row.rating.trim());
+  }
+  return row;
+}
+
 export interface AiAnalysisRequest {
-  /** The asset's display filename, for contextual prompting. */
+  /** UI display name (basename of library-relative path). */
+  displayName: string;
   filename: string;
-
-  /** The asset's MIME type. */
   mime: string;
-
-  /** Optional description of contact-sheet contents (video assets). */
+  /** Visual presentation kind — drives the system prompt explanation. */
+  mediaType?: 'image' | 'video' | 'model';
   contactSheetDescription?: string;
-
-  /** Base64-encoded primary image (thumbnail for images, poster frame for video). */
   imageBase64?: string;
-
-  /** Base64-encoded contact sheet (video assets only). */
   contactSheetBase64?: string;
-
-  /** BCP-47 language tag for the desired response language. */
+  /** MIME of the contact-sheet derivative (normally image/jpeg). */
+  contactSheetMime?: string;
+  /** Prompt language line (may list multiple). */
   language: string;
-
-  /** Which fields the AI may populate. */
   enabledFields: {
-    label: boolean;
     description: boolean;
     tags: boolean;
-    structuredMetadata: boolean;
+    rating: boolean;
   };
-
-  /**
-   * Existing tag names in the library, used by the adapter to hint
-   * tag reuse to the model.
-   */
   existingTagNames: string[];
+  /** Defaults to DEFAULT_AI_ANALYSIS_SETTINGS when omitted (tests / stubs). */
+  analysisSettings?: AiAnalysisSettings;
+}
+
+export function resolveAiAnalysisSettings(
+  request: AiAnalysisRequest,
+): AiAnalysisSettings {
+  return request.analysisSettings ?? DEFAULT_AI_ANALYSIS_SETTINGS;
+}
+
+/** Shared user-message context for all vendor adapters. */
+export function buildAiAnalysisUserTextLines(
+  request: AiAnalysisRequest,
+): string[] {
+  const lines = [
+    'Asset metadata:',
+    `- Name: ${request.displayName}`,
+    `Filename: ${request.filename}`,
+  ];
+  if (request.contactSheetDescription) {
+    lines.push(`Contact sheet description: ${request.contactSheetDescription}`);
+  }
+  if (request.contactSheetBase64) {
+    lines.push(
+      request.imageBase64
+        ? 'The first image is the poster frame and the second is a contact sheet of key frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.'
+        : 'The supplied image is a contact sheet of key video frames; every frame carries its timestamp (HH:MM:SS.mmm) at the bottom right.',
+    );
+  }
+  return lines;
 }
