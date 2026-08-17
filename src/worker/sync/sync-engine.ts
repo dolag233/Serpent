@@ -12,6 +12,7 @@ import {
   SYNC_TRASH_DIR,
   sanitizeSyncDirectoryName,
   SYNC_FORMAT_VERSION,
+  normalizeWebDAVBaseUrl,
 } from '../../shared/sync-paths';
 import type { DriverCapabilities, RemoteStorageDriver } from './remote-storage';
 import { RemoteStorageError } from './remote-storage';
@@ -100,8 +101,14 @@ export class SyncEngine {
   constructor(private readonly library: SyncLibraryPort, private readonly options: SyncEngineOptions) {}
 
   buildDriver(root: SyncRootConfig): RemoteStorageDriver {
+    // Serpent-fatf: 纵深防御 —— 命令入口已规范化，但 engine 可能被直接
+    // 调用（后台定时同步等）；非法地址在这里给可读错误而非 TypeError。
+    const normalized = normalizeWebDAVBaseUrl(root.baseUrl);
+    if (!normalized.ok) {
+      throw new RemoteStorageError('INVALID_URL', normalized.error);
+    }
     return new WebDAVDriver({
-      baseUrl: root.baseUrl,
+      baseUrl: normalized.value,
       username: root.username,
       password: root.password,
       allowInsecureTls: root.allowInsecureTls ?? false,

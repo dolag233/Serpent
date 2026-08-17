@@ -416,9 +416,9 @@ export function AiConfigDialog({
             <label className="micro-label" htmlFor="ai-config-api-key">
               {t("aiConfig.apiKey")}
             </label>
-            <div className="ai-config-api-key-row">
+            <div className="field-with-visibility-toggle">
               <input
-                className="text-field ai-config-input"
+                className="text-field ai-config-input field-with-visibility-input"
                 id="ai-config-api-key"
                 maxLength={512}
                 onChange={(e) => {
@@ -432,7 +432,7 @@ export function AiConfigDialog({
                 value={apiKey}
               />
               <button
-                className="ai-config-visibility-toggle"
+                className="visibility-toggle"
                 onClick={() => setShowApiKey((prev) => !prev)}
                 type="button"
                 {...iconActionAttrs(

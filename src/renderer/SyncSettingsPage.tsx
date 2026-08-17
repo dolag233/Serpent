@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { SyncCapabilities } from "../shared/library-api";
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { SettingsCard } from "./ui/patterns";
 import type { SyncServerSummary } from "./sync-settings-types";
@@ -43,6 +45,7 @@ export function SyncSettingsPage({
   const [baseUrl, setBaseUrl] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [allowInsecureTls, setAllowInsecureTls] = useState(false);
   const [busy, setBusy] = useState<BusyState>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -236,7 +239,19 @@ export function SyncSettingsPage({
         </div>
         <div className="library-settings-name-row">
           <input className="text-field" aria-label={t("settings.sync.username")} value={username} onChange={(event) => setUsername(event.target.value)} placeholder={t("settings.sync.username")} />
-          <input className="text-field" aria-label={t("settings.sync.password")} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={editingId ? t("settings.sync.passwordKeepHint") : t("settings.sync.password")} />
+          <div className="field-with-visibility-toggle">
+            <input className="text-field field-with-visibility-input" aria-label={t("settings.sync.password")} type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={editingId ? t("settings.sync.passwordKeepHint") : t("settings.sync.password")} />
+            <button
+              className="visibility-toggle"
+              onClick={() => setShowPassword((prev) => !prev)}
+              type="button"
+              {...iconActionAttrs(
+                showPassword ? t("settings.sync.hidePassword") : t("settings.sync.showPassword"),
+              )}
+            >
+              <Icon name={showPassword ? "eye-off" : "eye"} size={14} />
+            </button>
+          </div>
         </div>
       </div>
       <div className="app-settings-row">

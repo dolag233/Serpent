@@ -17,8 +17,8 @@ vi.mock('electron', () => ({
 
 import {
   LibraryWorkerClient,
-  requestTimeoutForCommand,
   WorkerRequestTimeoutError,
+  requestTimeoutForCommand,
 } from '../../src/main/worker-client';
 
 describe('requestTimeoutForCommand', () => {
@@ -117,6 +117,49 @@ describe('requestTimeoutForCommand', () => {
         result: { ok: true, type: 'library.closed', libraryId: 'library-1' },
       });
       await expect(pending).resolves.toMatchObject({ ok: true, type: 'library.closed' });
+    } finally {
+      vi.useRealTimers();
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
+  });
+
+  it('rejects a timed-out request with a typed timeout error carrying the command', async () => {
+    vi.useFakeTimers();
+    utilityProcessFork.mockClear();
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const child = new FakeUtilityProcess();
+      utilityProcessFork.mockReturnValueOnce(child);
+      const logger = {
+        worker: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+      } as unknown as AppLogger;
+      const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+
+      const start = client.start();
+      child.emit('message', { type: 'worker.ready' });
+      await start;
+
+      const pending = client.request({ type: 'library.close', libraryId: 'library-1' });
+      // 先 attach rejection 处理器再推进时间，避免 timer 触发时 unhandled。
+      const pendingRejection = expect(pending).rejects.toMatchObject({
+        name: 'WorkerRequestTimeoutError',
+        code: 'WORKER_REQUEST_TIMEOUT',
+        commandType: 'library.close',
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+      await pendingRejection;
+
+      const shutdown = client.shutdown();
+      child.emit('message', { type: 'worker.shutdown.ack' });
+      await shutdown;
     } finally {
       vi.useRealTimers();
       if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;

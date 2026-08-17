@@ -1304,7 +1304,7 @@ export const zhCN = {
       title: "同步",
       hint: "通过 WebDAV 与其他设备或同事共享此资源库。同一文件在两台设备都修改时会生成冲突副本。",
       webdavUrl: "WebDAV 地址",
-      webdavUrlHint: "可为服务端的任意子路径，例如 https://nas.local/dav/share/serpent/。",
+      webdavUrlHint: "可为服务端的任意子路径，例如 https://nas.local/dav/share/serpent/；省略 http:// 时会自动补全。",
       credentials: "凭据",
       credentialsHint: "可选；留空表示匿名连接。密码经应用内存传递，不写入库文件。",
       username: "用户名",
@@ -1341,6 +1341,8 @@ export const zhCN = {
       passwordStored: "已保存密码",
       passwordNone: "无密码",
       passwordKeepHint: "留空则保持原密码",
+      showPassword: "显示密码",
+      hidePassword: "隐藏密码",
       serverSummary: "用户 {username} · {password}",
       serverSummaryAnonymous: "匿名 · {password}",
       connectionConnected: "已连接",
@@ -1922,7 +1924,10 @@ export const zhCN = {
       HISTORY_NOT_REVERSIBLE: "该操作不能撤回或重做。",
       HISTORY_TRANSITION_IN_PROGRESS: "已有另一个撤回或重做操作正在进行。",
       HISTORY_STALE: "文件或记录已经变化，无法安全撤回或重做该操作。",
-      SYNC_CONNECTION_FAILED: "无法连接同步服务器。"
+      SYNC_CONNECTION_FAILED: "无法连接同步服务器。",
+      INVALID_SYNC_URL: "服务器地址无效，请以 http:// 或 https:// 开头。",
+      SYNC_PASSWORD_STORAGE_UNAVAILABLE: "系统安全存储不可用，无法保存密码。请检查系统钥匙串（Keychain）后重试。",
+      DISK_FULL: "磁盘空间不足，无法完成此操作。请清理磁盘空间后重试。"
     },
     reason: {
       PERMISSION_DENIED: "当前用户没有读取源文件或写入目标位置的权限。",
@@ -1981,6 +1986,7 @@ export const zhCN = {
       SYNC_PERMISSION_DENIED: "该账号没有上传或下载文件的权限。",
       SYNC_NOT_FOUND: "服务器上找不到该同步路径。",
       SYNC_TIMEOUT: "连接超时，请检查地址与网络。",
+      SYNC_INVALID_URL: "服务器地址无效，请以 http:// 或 https:// 开头。",
       SYNC_TLS: "服务器证书无效或自签名。",
       SYNC_DNS: "无法解析服务器地址。",
       SYNC_CONNECTION_REFUSED: "连接被拒绝，请检查服务器与端口。",

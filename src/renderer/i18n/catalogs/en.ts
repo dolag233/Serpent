@@ -1320,7 +1320,7 @@ export const en = {
       title: "Sync",
       hint: "Share this library with other devices or teammates over WebDAV. Conflicting edits to the same file produce conflict copies.",
       webdavUrl: "WebDAV URL",
-      webdavUrlHint: "Any server subpath works, e.g. https://nas.local/dav/share/serpent/.",
+      webdavUrlHint: "Any server subpath works, e.g. https://nas.local/dav/share/serpent/; http:// is added automatically when omitted.",
       credentials: "Credentials",
       credentialsHint: "Optional; leave blank for anonymous access. Passwords travel in app memory only, never into library files.",
       username: "Username",
@@ -1357,6 +1357,8 @@ export const en = {
       passwordStored: "password saved",
       passwordNone: "no password",
       passwordKeepHint: "Leave empty to keep the existing password",
+      showPassword: "Show password",
+      hidePassword: "Hide password",
       serverSummary: "User {username} · {password}",
       serverSummaryAnonymous: "Anonymous · {password}",
       connectionConnected: "Connected",
@@ -1941,7 +1943,10 @@ export const en = {
       HISTORY_NOT_REVERSIBLE: "This operation cannot be undone or redone.",
       HISTORY_TRANSITION_IN_PROGRESS: "Another undo or redo operation is already in progress.",
       HISTORY_STALE: "The files or records changed, so this operation cannot be reversed safely.",
-      SYNC_CONNECTION_FAILED: "Serpent could not connect to the sync server."
+      SYNC_CONNECTION_FAILED: "Serpent could not connect to the sync server.",
+      INVALID_SYNC_URL: "Enter a valid server address that starts with http:// or https://.",
+      SYNC_PASSWORD_STORAGE_UNAVAILABLE: "System secure storage is unavailable, so the password could not be saved. Check your system keychain and try again.",
+      DISK_FULL: "The disk does not have enough free space to complete this operation. Free up space and try again."
     },
     reason: {
       PERMISSION_DENIED: "The current user lacks permission to read the source or write to the destination.",
@@ -2000,6 +2005,7 @@ export const en = {
       SYNC_PERMISSION_DENIED: "This account cannot upload or download files on the server.",
       SYNC_NOT_FOUND: "The sync path could not be found on the server.",
       SYNC_TIMEOUT: "The connection timed out. Check the address and network.",
+      SYNC_INVALID_URL: "The server address is invalid. It must start with http:// or https://.",
       SYNC_TLS: "The server certificate is invalid or self-signed.",
       SYNC_DNS: "The server address could not be resolved.",
       SYNC_CONNECTION_REFUSED: "The connection was refused. Check the server and port.",

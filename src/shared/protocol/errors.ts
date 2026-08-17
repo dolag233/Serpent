@@ -64,6 +64,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   HISTORY_TOO_LARGE: 'This operation is too large to retain in the undo history.',
   SYNC_CONNECTION_FAILED: 'Serpent could not connect to the sync server.',
   SYNC_IN_PROGRESS: 'This library is syncing right now. Try again after the current sync finishes.',
+  DISK_FULL: 'The disk does not have enough free space to complete this operation. Free up space and try again.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;
@@ -119,6 +120,7 @@ export const publicErrorReasonSchema = z.enum([
   'LIBRARY_PARENT_INSIDE_SOURCE',
   'LIBRARY_TRANSFER_TIMEOUT',
   'SYNC_AUTH_FAILED',
+  'SYNC_INVALID_URL',
   'SYNC_PERMISSION_DENIED',
   'SYNC_NOT_FOUND',
   'SYNC_TIMEOUT',

@@ -56,3 +56,36 @@ export const SYNC_ASSETS_DIR = 'assets';
 export const SYNC_METADATA_DIR = 'metadata/entries';
 export const SYNC_TRASH_DIR = 'trash';
 export const SYNC_FORMAT_VERSION = 1;
+
+/** normalizeWebDAVBaseUrl 的失败原因（用户可读，作为 RemoteStorageError 的 message）。 */
+export type WebDAVUrlNormalization =
+  | { ok: true; value: string }
+  | { ok: false; error: string };
+
+const PROTOCOL_PREFIX = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+
+/**
+ * 规范化 WebDAV 服务器地址（Serpent-fatf）。
+ * - 去除首尾空白
+ * - 无协议前缀时自动补 http://（浏览器式输入习惯：`10.0.0.1:5005/dav/`
+ *   直接可连，避免 new URL 抛 ERR_INVALID_URL 落到笼统的 INTERNAL_ERROR）
+ * - 仅允许 http/https 协议，且必须解析出主机名
+ */
+export function normalizeWebDAVBaseUrl(input: string): WebDAVUrlNormalization {
+  const trimmed = input.trim();
+  if (!trimmed) return { ok: false, error: '服务器地址不能为空。' };
+  const candidate = PROTOCOL_PREFIX.test(trimmed) ? trimmed : `http://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return { ok: false, error: '服务器地址无效，请以 http:// 或 https:// 开头。' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: '仅支持 http:// 或 https:// 协议的服务器地址。' };
+  }
+  if (!parsed.hostname) {
+    return { ok: false, error: '服务器地址无效，请检查主机名或 IP。' };
+  }
+  return { ok: true, value: parsed.toString() };
+}

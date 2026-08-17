@@ -5953,20 +5953,23 @@ body.serpent-modal-open .app-shell {
   font-size: 12px;
 }
 
-/* F1 (Serpent-lqof): eye toggle overlaid inside the API Key input's right
-   side — an inline affordance, not a separate button beside the field. */
-.ai-config-api-key-row {
+/* F1 (Serpent-lqof): eye toggle overlaid inside a credential input's right
+   side — an inline affordance, not a separate button beside the field.
+   通用类：AI Key（AiConfigDialog）与同步服务器密码（SyncSettingsPage）共用。 */
+.field-with-visibility-toggle {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1;
+  min-width: 0;
 }
 
-.ai-config-api-key-row .ai-config-input {
+.field-with-visibility-toggle .field-with-visibility-input {
   width: 100%;
   padding-right: 32px;
 }
 
-.ai-config-visibility-toggle {
+.visibility-toggle {
   position: absolute;
   right: 5px;
   top: 50%;
@@ -5987,12 +5990,12 @@ body.serpent-modal-open .app-shell {
     color 120ms ease;
 }
 
-.ai-config-visibility-toggle:hover {
+.visibility-toggle:hover {
   background: var(--hover);
   color: var(--text);
 }
 
-.ai-config-visibility-toggle:focus-visible {
+.visibility-toggle:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-soft);
 }

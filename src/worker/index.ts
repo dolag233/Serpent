@@ -33,7 +33,9 @@ import {
   SYNC_MANIFEST_FILE,
   SYNC_ASSETS_DIR,
   sanitizeSyncDirectoryName,
+  normalizeWebDAVBaseUrl,
 } from '../shared/sync-paths';
+import { RemoteStorageError } from './sync/remote-storage';
 import {
   LibraryService,
   LibraryServiceError,
@@ -1026,13 +1028,31 @@ function recordDesktopAssetRenameHistory(
   }).historyEntryId;
 }
 
+/**
+ * Serpent-fatf：构造 WebDAVDriver 前规范化服务器地址（缺协议自动补
+ * http://、非法地址抛可读的 INVALID_URL，而不是 new URL 的 TypeError
+ * 落到 INTERNAL_ERROR 兜底）。所有 sync 命令入口统一走这里。
+ */
+function syncWebDAVDriver(input: {
+  baseUrl: string;
+  username?: string;
+  password?: string;
+  allowInsecureTls?: boolean;
+}): WebDAVDriver {
+  const normalized = normalizeWebDAVBaseUrl(input.baseUrl);
+  if (!normalized.ok) {
+    throw new RemoteStorageError('INVALID_URL', normalized.error);
+  }
+  return new WebDAVDriver({ ...input, baseUrl: normalized.value });
+}
+
 async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<WorkerResult> {
   switch (request.command.type) {
     case 'library.list':
       return { ok: true, type: 'library.list', libraries: libraryService.listLibraries() };
     case 'sync.probe': {
       // Serpent-xffq：连接级能力探测（不触碰库）。
-      const driver = new WebDAVDriver({
+      const driver = syncWebDAVDriver({
         baseUrl: request.command.baseUrl,
         username: request.command.username,
         password: request.command.password,
@@ -1042,10 +1062,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'sync.probed', capabilities };
     }
     case 'sync.preview': {
+      const normalized = normalizeWebDAVBaseUrl(request.command.baseUrl);
+      if (!normalized.ok) {
+        throw new RemoteStorageError('INVALID_URL', normalized.error);
+      }
       const engine = buildSyncEngine(request.command.deviceId);
       const report = await engine.previewSync(request.command.libraryId, {
         id: 'request',
-        baseUrl: request.command.baseUrl,
+        baseUrl: normalized.value,
         username: request.command.username,
         password: request.command.password,
         allowInsecureTls: request.command.allowInsecureTls,
@@ -1055,6 +1079,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'sync.run': {
       const libraryId = request.command.libraryId;
+      const normalized = normalizeWebDAVBaseUrl(request.command.baseUrl);
+      if (!normalized.ok) {
+        throw new RemoteStorageError('INVALID_URL', normalized.error);
+      }
       const engine = buildSyncEngine(request.command.deviceId, (done, total, bytesDone, bytesTotal) => {
         if (parentPort) {
           parentPort.postMessage({
@@ -1072,7 +1100,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       try {
         const outcome = await engine.syncOnce(libraryId, {
           id: 'request',
-          baseUrl: request.command.baseUrl,
+          baseUrl: normalized.value,
           username: request.command.username,
           password: request.command.password,
           allowInsecureTls: request.command.allowInsecureTls,
@@ -1127,7 +1155,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'sync.poll-remote.result', changed };
     }
     case 'sync.list-remote-libraries': {
-      const driver = new WebDAVDriver({
+      const driver = syncWebDAVDriver({
         baseUrl: request.command.baseUrl,
         username: request.command.username,
         password: request.command.password,
@@ -1153,7 +1181,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'sync.remote-libraries', remoteLibraries: libraries };
     }
     case 'sync.open-remote-library': {
-      const driver = new WebDAVDriver({
+      const driver = syncWebDAVDriver({
         baseUrl: request.command.baseUrl,
         username: request.command.username,
         password: request.command.password,

@@ -148,6 +148,7 @@ import {
   mcpSettingsSnapshotSchema,
   type McpSettingsRequest,
 } from '../shared/mcp';
+import { normalizeWebDAVBaseUrl } from '../shared/sync-paths';
 import { registerAutomationScriptIpc } from './automation-script-ipc';
 import { AutomationScriptFileService } from './automation-script-file-service';
 import {
@@ -3412,6 +3413,17 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     if (request.type === "sync.servers.upsert.request") {
       const servers = readSyncServers();
       const id = request.id ?? randomUUID();
+      // Serpent-fatf: 保存时即校验/规范化 URL（缺协议自动补 http://），
+      // 让非法地址在保存瞬间给出可读提示，而不是等到连接时才报笼统错误。
+      // 远端码体系已删除 INVALID_SYNC_URL，用 SYNC_CONNECTION_FAILED +
+      // SYNC_INVALID_URL reason 表达同一语义。
+      const normalized = normalizeWebDAVBaseUrl(request.baseUrl);
+      if (!normalized.ok) {
+        return {
+          ok: false,
+          error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_INVALID_URL"),
+        } satisfies RendererResult;
+      }
       const passwordEncrypted = request.password
         ? safeStorage.encryptString(request.password).toString("base64")
         : request.id
@@ -3419,7 +3431,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           : undefined;
       const record: SyncServerRecord = {
         id,
-        baseUrl: request.baseUrl,
+        baseUrl: normalized.value,
         username: request.username || undefined,
         passwordEncrypted,
         allowInsecureTls: request.allowInsecureTls ?? false,
