@@ -163,4 +163,34 @@ describe('Billfish library import', () => {
       service.closeAll();
     }
   });
+
+  it('reports the full library byte total during copy', async () => {
+    const root = temporaryRoot();
+    const sourceRootPath = writeBillfishLibrary(root);
+    const snapshot = readBillfishLibrary(sourceRootPath);
+    const expectedTotal = snapshot.items.reduce((total, item) => total + item.byteSize, 0);
+    const copyTotals: number[] = [];
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      onProgress: (event) => {
+        if (event.type === 'import.progress' && event.phase === 'copy') {
+          copyTotals.push(event.totalBytes);
+        }
+      },
+    });
+    try {
+      const library = service.createLibrary({
+        displayName: 'ByteTotal',
+        selectedParentPath: root,
+      });
+      await service.importBillfishLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath,
+      });
+      expect(copyTotals.length).toBeGreaterThan(0);
+      expect(new Set(copyTotals)).toEqual(new Set([expectedTotal]));
+    } finally {
+      service.closeAll();
+    }
+  });
 });

@@ -95,14 +95,14 @@ describe('Eagle library import', () => {
 
   it('cancels between batches and leaves already imported assets', async () => {
     const root = temporaryRoot();
-    const sourceRootPath = writeEagleLibrary(root, 40);
+    const sourceRootPath = writeEagleLibrary(root, 160);
     let importId: string | undefined;
     const service = new LibraryService({
       observerFactory: () => ({ close() {} }),
       onProgress: (event) => {
         if (event.type !== 'import.progress') return;
         importId = event.importId;
-        if (event.phase === 'copy' && event.filesProcessed >= 32 && importId) {
+        if (event.phase === 'copy' && event.filesProcessed >= 128 && importId) {
           service.cancelImport(importId);
         }
       },
@@ -117,7 +117,7 @@ describe('Eagle library import', () => {
     })).rejects.toMatchObject({ code: 'CANCELLED' });
     const remaining = service.listAssets({ libraryId: library.libraryId, recursive: true }).length;
     expect(remaining).toBeGreaterThan(0);
-    expect(remaining).toBeLessThan(40);
+    expect(remaining).toBeLessThan(160);
     service.closeAll();
   });
 
@@ -152,6 +152,59 @@ describe('Eagle library import', () => {
       generatorVersion: 'eagle-thumbnail@1',
     });
     expect(service.getCurrentArtifact(library.libraryId, video!.assetId, 'webm_proxy')).toBeNull();
+    service.closeAll();
+  });
+
+  it('reports a stable full-library byte total from the first copy progress event', async () => {
+    const root = temporaryRoot();
+    const sourceRootPath = writeEagleLibrary(root, 160);
+    const copyTotals: number[] = [];
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      onProgress: (event) => {
+        if (event.type === 'import.progress' && event.phase === 'copy') {
+          copyTotals.push(event.totalBytes);
+        }
+      },
+    });
+    const library = service.createLibrary({
+      displayName: 'ByteTotal',
+      selectedParentPath: root,
+    });
+    const result = await service.importEagleLibrary({
+      libraryId: library.libraryId,
+      sourceRootPath,
+    });
+    const expectedTotal = ONE_PX_RED_PNG.byteLength * 160;
+    expect(result.importedCount).toBe(160);
+    expect(copyTotals.length).toBeGreaterThan(1);
+    expect(new Set(copyTotals)).toEqual(new Set([expectedTotal]));
+    service.closeAll();
+  });
+
+  it('does not emit copy progress for every file in a batch', async () => {
+    const root = temporaryRoot();
+    const sourceRootPath = writeEagleLibrary(root, 40);
+    const copyEvents: number[] = [];
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      onProgress: (event) => {
+        if (event.type === 'import.progress' && event.phase === 'copy') {
+          copyEvents.push(event.filesProcessed);
+        }
+      },
+    });
+    const library = service.createLibrary({
+      displayName: 'Progress',
+      selectedParentPath: root,
+    });
+    const result = await service.importEagleLibrary({
+      libraryId: library.libraryId,
+      sourceRootPath,
+    });
+    expect(result.importedCount).toBe(40);
+    expect(copyEvents.length).toBeGreaterThan(0);
+    expect(copyEvents.length).toBeLessThan(40);
     service.closeAll();
   });
 

@@ -9,6 +9,7 @@ import {
   readEagleAssetCandidate,
   readEagleLibrary,
   readEagleLibraryRoot,
+  sumEagleLibrarySourceBytes,
 } from '../../src/worker/eagle-library';
 
 const temporaryRoots: string[] = [];
@@ -42,6 +43,8 @@ function writeEagleLibrary(root: string): string {
     tags: ['red'],
     folders: ['folder-heroes'],
     url: 'https://example.test/hero',
+    width: 1920,
+    height: 1080,
   }));
   writeFileSync(path.join(libraryPath, 'images', 'aaa.info', 'hero.png'), ONE_PX_RED_PNG);
   writeFileSync(path.join(libraryPath, 'images', 'aaa.info', 'hero_thumbnail.png'), ONE_PX_RED_PNG);
@@ -84,6 +87,43 @@ describe('Eagle library reader', () => {
     expect(snapshot.skippedCount).toBe(1);
     expect(snapshot.invalidCount).toBe(0);
     expect(snapshot.items[0]?.thumbnailPath).toMatch(/hero_thumbnail\.png$/);
+    expect(snapshot.items[0]?.width).toBe(1920);
+    expect(snapshot.items[0]?.height).toBe(1080);
+  });
+
+  it('uses metadata name.ext without scanning extra files in the info directory', () => {
+    const libraryPath = writeEagleLibrary(temporaryRoot());
+    writeFileSync(
+      path.join(libraryPath, 'images', 'aaa.info', 'unrelated.bin'),
+      ONE_PX_RED_PNG,
+    );
+    const snapshot = readEagleLibrary(libraryPath);
+    expect(snapshot.items[0]?.fileName).toBe('hero.png');
+    expect(snapshot.items[0]?.thumbnailPath).toMatch(/hero_thumbnail\.png$/);
+  });
+
+  it('falls back to a directory scan when metadata name does not match the file', () => {
+    const root = temporaryRoot();
+    const libraryPath = path.join(root, 'Odd.library');
+    mkdirSync(path.join(libraryPath, 'images', 'odd.info'), { recursive: true });
+    writeFileSync(path.join(libraryPath, 'metadata.json'), JSON.stringify({ folders: [] }));
+    writeFileSync(
+      path.join(libraryPath, 'images', 'odd.info', 'metadata.json'),
+      JSON.stringify({
+        id: 'odd',
+        name: 'does-not-match',
+        ext: 'png',
+      }),
+    );
+    writeFileSync(path.join(libraryPath, 'images', 'odd.info', 'actual.png'), ONE_PX_RED_PNG);
+    writeFileSync(
+      path.join(libraryPath, 'images', 'odd.info', 'actual_thumbnail.png'),
+      ONE_PX_RED_PNG,
+    );
+    const snapshot = readEagleLibrary(libraryPath);
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]?.fileName).toBe('actual.png');
+    expect(snapshot.items[0]?.thumbnailPath).toMatch(/actual_thumbnail\.png$/);
   });
 
   it('returns invalid when an info directory has broken metadata', () => {
@@ -93,5 +133,28 @@ describe('Eagle library reader', () => {
       skipped: true,
       invalid: true,
     });
+  });
+
+  it('sums source bytes for the whole library and skips deleted items', () => {
+    const libraryPath = writeEagleLibrary(temporaryRoot());
+    const root = readEagleLibraryRoot(libraryPath);
+    expect(root.imagesPath).toBeTruthy();
+    expect(sumEagleLibrarySourceBytes(root.imagesPath!, root.infoDirectoryNames)).toBe(
+      ONE_PX_RED_PNG.byteLength * 2,
+    );
+  });
+
+  it('prefers metadata size when present', () => {
+    const libraryPath = writeEagleLibrary(temporaryRoot());
+    writeFileSync(path.join(libraryPath, 'images', 'aaa.info', 'metadata.json'), JSON.stringify({
+      id: 'aaa',
+      name: 'hero',
+      ext: 'png',
+      size: 4096,
+    }));
+    const root = readEagleLibraryRoot(libraryPath);
+    expect(sumEagleLibrarySourceBytes(root.imagesPath!, root.infoDirectoryNames)).toBe(
+      4096 + ONE_PX_RED_PNG.byteLength,
+    );
   });
 });

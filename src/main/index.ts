@@ -209,6 +209,10 @@ import {
   toPublicError,
 } from "../shared/protocol/errors";
 import {
+  LibraryParentError,
+  resolveWritableLibraryParent,
+} from "../worker/library-parent";
+import {
   parseNativeAssetDragRequest,
   parseRendererRequest,
   tryParseActiveContext,
@@ -236,7 +240,7 @@ import {
   parseAiAnalysisCompletedEvent,
   parseAiContentClearedEvent,
 } from "../shared/protocol/responses";
-import { LibraryWorkerClient } from "./worker-client";
+import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client";
 import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
 import {
@@ -1462,12 +1466,14 @@ function publishLifecycle(event: RendererLifecycleEvent): void {
   );
 }
 
-async function closeOpenLibrariesBeforeReplacement(): Promise<void> {
-  if (!workerClient) return;
+async function closeOpenLibrariesBeforeReplacement(): Promise<string[]> {
+  const previousPaths: string[] = [];
+  if (!workerClient) return previousPaths;
   try {
     const listed = await workerClient.request({ type: "library.list" });
-    if (!listed.ok || listed.type !== "library.list") return;
+    if (!listed.ok || listed.type !== "library.list") return previousPaths;
     for (const library of listed.libraries) {
+      previousPaths.push(library.libraryPath);
       try {
         const closed = await workerClient.request({
           type: "library.close",
@@ -1490,6 +1496,35 @@ async function closeOpenLibrariesBeforeReplacement(): Promise<void> {
     }
   } catch (error) {
     logger?.error("external-library-open.list-previous", error);
+  }
+  return previousPaths;
+}
+
+async function reopenLibrariesAfterFailedReplacement(
+  libraryPaths: readonly string[],
+): Promise<void> {
+  if (!workerClient || libraryPaths.length === 0) return;
+  for (const selectedLibraryPath of libraryPaths) {
+    try {
+      const opened = await workerClient.request({
+        type: "library.open",
+        selectedLibraryPath,
+      });
+      if (!opened.ok || opened.type !== "library.opened") continue;
+      publishLifecycle({
+        type: "library.opened",
+        library: {
+          libraryId: opened.library.libraryId,
+          displayName: opened.library.displayName,
+          displayPath: opened.library.libraryPath,
+        },
+        source: "replacement-restore",
+      });
+    } catch (error) {
+      logger?.error("external-library-open.restore-previous", error, {
+        selectedLibraryPath,
+      });
+    }
   }
 }
 
@@ -3209,6 +3244,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let relinkPreviewContext:
     | { libraryId: string; previewId: string }
     | undefined;
+  let previousLibraryPaths: string[] = [];
   try {
     const request = parseRendererRequest(input);
 
@@ -4174,21 +4210,40 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     // name panel appears, so a slow archive/metadata read is visible as an
     // opening operation instead of looking like a stale browse session.
     if (command.type === "library.inspect-billfish") operation = "open-billfish";
-    const replacesCurrentLibrary =
-      command.type === "library.open-eagle" || command.type === "library.open-billfish";
-    if (command.type === "library.open-eagle") {
-      pendingEagleOpenSourcePath = undefined;
-      operation = "open-eagle";
-    } else if (command.type === "library.open-billfish") {
-      pendingBillfishOpenSourcePath = undefined;
-      operation = "open-billfish";
+    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
+      try {
+        const selectedParentPath = resolveWritableLibraryParent({
+          selectedParentPath: command.selectedParentPath,
+          sourceRootPath: command.sourceRootPath,
+          createIfMissing: true,
+        });
+        command = { ...command, selectedParentPath };
+      } catch (error) {
+        if (error instanceof LibraryParentError) {
+          return {
+            ok: false,
+            error: createPublicError(error.code, error.reason),
+          } satisfies RendererResult;
+        }
+        throw error;
+      }
+      if (command.type === "library.open-eagle") {
+        pendingEagleOpenSourcePath = undefined;
+        operation = "open-eagle";
+      } else {
+        pendingBillfishOpenSourcePath = undefined;
+        operation = "open-billfish";
+      }
     }
     if (operation && !lifecyclePublished) publishLifecycle({ type: "library.opening", operation });
-    if (replacesCurrentLibrary) {
-      await closeOpenLibrariesBeforeReplacement();
+    if (command.type === "library.open-eagle" || command.type === "library.open-billfish") {
+      previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
     }
 
     const workerResult = await workerClient.request(command);
+    if (!workerResult.ok && previousLibraryPaths.length > 0) {
+      await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
+    }
 
     if (
       request.type === "library.delete-from-disk.request" &&
@@ -4989,7 +5044,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       );
     }
     logger?.error("main.library-request", error);
-    const publicError = toPublicError(error);
+    if (previousLibraryPaths.length > 0) {
+      await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
+    }
+    const publicError = error instanceof LibraryParentError
+      ? createPublicError(error.code, error.reason)
+      : error instanceof WorkerRequestTimeoutError
+        ? createPublicError("INTERNAL_ERROR", "LIBRARY_TRANSFER_TIMEOUT")
+        : toPublicError(error);
     if (operation) {
       publishLifecycle({
         type: "library.open-failed",

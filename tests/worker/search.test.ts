@@ -1705,6 +1705,7 @@ describe('pagination', () => {
       [assetId, secondAssetId].sort(),
     );
     expect(result.layout?.every((entry) => entry.width && entry.height)).toBe(true);
+    expect(result.layout?.every((entry) => entry.displayName)).toBe(true);
 
     service.closeAll();
   });

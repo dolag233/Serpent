@@ -2084,6 +2084,17 @@ describe('public errors', () => {
     });
   });
 
+  it('keeps library-parent and transfer-timeout reasons renderer-safe (Serpent-sq4i)', () => {
+    expect(createPublicError('INVALID_LIBRARY_PATH', 'LIBRARY_PARENT_MISSING')).toMatchObject({
+      code: 'INVALID_LIBRARY_PATH',
+      reason: 'LIBRARY_PARENT_MISSING',
+    });
+    expect(createPublicError('INTERNAL_ERROR', 'LIBRARY_TRANSFER_TIMEOUT')).toMatchObject({
+      code: 'INTERNAL_ERROR',
+      reason: 'LIBRARY_TRANSFER_TIMEOUT',
+    });
+  });
+
   it('exposes a specific safe error for invalid asset metadata', () => {
     expect(createPublicError('INVALID_ASSET_METADATA')).toEqual({
       code: 'INVALID_ASSET_METADATA',
@@ -2145,6 +2156,15 @@ describe('renderer lifecycle events', () => {
         displayPath: '/libraries/mcp-library',
       },
     })).toMatchObject({ type: 'library.opened', source: 'mcp' });
+    expect(parseRendererLifecycleEvent({
+      type: 'library.opened',
+      source: 'replacement-restore',
+      library: {
+        libraryId: 'restored-library',
+        displayName: 'Restored',
+        displayPath: '/libraries/restored',
+      },
+    })).toMatchObject({ type: 'library.opened', source: 'replacement-restore' });
     expect(() =>
       parseRendererLifecycleEvent({ type: 'library.opened', libraryPath: '/private/path' }),
     ).toThrow();

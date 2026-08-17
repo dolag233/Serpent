@@ -369,6 +369,14 @@ import {
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
 import { BrowseLayoutPreview } from "./BrowseLayoutPreview";
+import { assetSummaryFromLayoutEntry } from "./browse-window-slots";
+import { formatBytes, formatShortDate } from "./format-file-meta";
+import {
+  isLibraryOpenTransferKind,
+  libraryTransferHeadlineKey,
+  libraryTransferKindFromOperation,
+  type LibraryTransferKind,
+} from "./library-transfer-progress";
 import {
   BROWSE_PAGE_SIZE,
   registerBrowseSearchPage,
@@ -1029,9 +1037,7 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
-  const [libraryTransferKind, setLibraryTransferKind] = useState<
-    "import" | "open" | "open-billfish"
-  >("import");
+  const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
   const [libraryTransferName, setLibraryTransferName] = useState("");
 
   // REQ-PREF-001: browse-area general settings panel (theme/language/canvas).
@@ -1604,9 +1610,14 @@ function AppInner() {
   const selectedFolder = folders.find(
     (folder) => folder.folderId === selectedFolderId,
   );
-  const selectedAsset = showTrash
+  const selectedAssetFromList = showTrash
     ? trashedAssets.find((a) => a.assetId === selectedAssetId)
     : assets.find((asset) => asset.assetId === selectedAssetId);
+  const selectedLayoutEntry = selectedAssetId
+    ? browseLayout.find((entry) => entry.assetId === selectedAssetId)
+    : undefined;
+  const selectedAsset = selectedAssetFromList
+    ?? (selectedLayoutEntry ? assetSummaryFromLayoutEntry(selectedLayoutEntry) : undefined);
 
   const {
     handleMetadataDescriptionInput,
@@ -3074,8 +3085,13 @@ function AppInner() {
         // must stop presenting the previous library while Eagle/Billfish is
         // being converted.
         applyClosedLibraryUi();
-        setLibraryTransferKind("open-billfish");
-        if (event.type === "library.opening" && event.operation === "open-billfish") {
+        const transferKind = libraryTransferKindFromOperation(
+          event.type === "library.opening" ? event.operation : undefined,
+        );
+        setLibraryTransferKind(transferKind);
+        if (event.type === "library.opening" && event.operation === "open-eagle") {
+          setNotice(t("progress.validatingEagleLibrary"));
+        } else if (event.type === "library.opening" && event.operation === "open-billfish") {
           setNotice(t("progress.validatingBillfishLibrary"));
         }
         setImportProgress({
@@ -3089,6 +3105,12 @@ function AppInner() {
           totalBytes: 0,
         });
         void closeAssetPreview(false);
+        return;
+      }
+      if (event.type === "library.open-failed") {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        setLibraryTransferName("");
         return;
       }
       if (event.type !== "library.opened") return;
@@ -3135,6 +3157,9 @@ function AppInner() {
           api.setActiveContext(event.library.libraryId);
           await loadContent(event.library, "all");
           await refreshRecentLibraries(event.library.displayPath);
+          setImportProgress(null);
+          setLibraryTransferKind("import");
+          setLibraryTransferName("");
         } catch (caught) {
           setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
         }
@@ -3465,10 +3490,16 @@ function AppInner() {
   }
 
   async function openEagleLibrary() {
-    if (!api || importProgress) return;
+    if (!api) return;
+    // A real transfer has a Worker importId. The synthetic opening spinner uses
+    // an empty id; if it was left behind after a failed destination, allow retry
+    // instead of trapping the user on "validating…".
+    if (importProgress?.importId) return;
+    setImportProgress(null);
     setDialog(null);
     const inspect = await api.inspectEagle();
     if (!inspect.ok) {
+      setImportProgress(null);
       if (inspect.error.code === "CANCELLED") return;
       showBlockingError(
         t("dialog.blockingError.libraryOpenFailed"),
@@ -3495,7 +3526,7 @@ function AppInner() {
     const displayName = dialogValue.trim();
     if (!displayName) return;
     setDialog(null);
-    setLibraryTransferKind("open");
+    setLibraryTransferKind("open-eagle");
     setLibraryTransferName(displayName);
     try {
       await runLibraryOpenPipeline(
@@ -3504,14 +3535,14 @@ function AppInner() {
         t("toast.openRecentFailed"),
       );
     } finally {
-      setLibraryTransferKind("import");
-      setLibraryTransferName("");
       setCreateLibraryPhase("start");
     }
   }
 
   async function openBillfishLibrary() {
-    if (!api || importProgress) return;
+    if (!api) return;
+    if (importProgress?.importId) return;
+    setImportProgress(null);
     setDialog(null);
     const inspect = await api.inspectBillfish();
     if (!inspect.ok) {
@@ -3546,7 +3577,7 @@ function AppInner() {
     const displayName = dialogValue.trim();
     if (!displayName) return;
     setDialog(null);
-    setLibraryTransferKind("open");
+    setLibraryTransferKind("open-billfish");
     setLibraryTransferName(displayName);
     try {
       await runLibraryOpenPipeline(
@@ -3555,8 +3586,6 @@ function AppInner() {
         t("toast.openRecentFailed"),
       );
     } finally {
-      setLibraryTransferKind("import");
-      setLibraryTransferName("");
       setCreateLibraryPhase("start");
     }
   }
@@ -3593,7 +3622,10 @@ function AppInner() {
     try {
       const result = await action();
       if (!result.ok) {
-        if (result.error.code === "CANCELLED") return;
+        if (result.error.code === "CANCELLED") {
+          setImportProgress(null);
+          return;
+        }
         throw new LibraryOperationError(result.error);
       }
       // Opening an external library first gives us a validated replacement;
@@ -3626,7 +3658,13 @@ function AppInner() {
       api?.setActiveContext(result.value.libraryId);
       await loadContent(result.value, "all");
       await refreshRecentLibraries(result.value.displayPath);
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
     } catch (caught) {
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
       showBlockingError(
         busyState === "creating"
           ? t("dialog.blockingError.libraryCreateFailed")
@@ -3639,6 +3677,11 @@ function AppInner() {
       void refreshRecentLibraries();
     } finally {
       setUiState(opened ? "ready" : "idle");
+      if (!opened) {
+        setImportProgress(null);
+        setLibraryTransferKind("import");
+        setLibraryTransferName("");
+      }
     }
   }
 
@@ -6979,7 +7022,13 @@ function AppInner() {
   }
 
   async function cancelImport() {
-    if (!api || !importProgress?.importId) return;
+    if (!api) return;
+    if (!importProgress?.importId) {
+      setImportProgress(null);
+      setLibraryTransferKind("import");
+      setLibraryTransferName("");
+      return;
+    }
     try {
       const result = await api.cancelLibraryImport({
         importId: importProgress.importId,
@@ -9459,13 +9508,12 @@ function AppInner() {
                 <span className="activity-pulse" />
                 <div className="import-progress-body">
                   <span className="activity-strip-message">
-                    {libraryTransferKind === "open-billfish"
-                      ? t("progress.validatingBillfishLibrary")
-                      : libraryTransferKind === "open"
-                      ? t("progress.openingLibrary", {
-                          name: libraryTransferName,
-                        })
-                      : t("progress.importingLibrary")}
+                    {(() => {
+                      const headline = libraryTransferHeadlineKey(libraryTransferKind);
+                      return headline.name
+                        ? t(headline.key, { name: libraryTransferName })
+                        : t(headline.key);
+                    })()}
                     {importProgress.phase === "validate"
                       ? importProgress.totalFiles > 0
                         ? t("progress.readingSourceItems", {
@@ -9514,12 +9562,10 @@ function AppInner() {
                 {importProgress.cancelable !== false && (
                   <button
                     className="secondary-button"
-                    disabled={!importProgress.importId}
                     onClick={() => void cancelImport()}
                     type="button"
                   >
-                    {libraryTransferKind === "open" ||
-                    libraryTransferKind === "open-billfish"
+                    {isLibraryOpenTransferKind(libraryTransferKind)
                       ? t("progress.cancelOpen")
                       : t("progress.cancelImport")}
                   </button>
@@ -10052,22 +10098,12 @@ function AppInner() {
                           }
                           return (
                             <>
-                              {asset.thumbnailStatus === "pending" ? (
-                                // Serpent-1tio: progressive loading — a
-                                // skeleton while the poster/thumbnail is
-                                // still generating instead of a blank tile.
-                                <div
-                                  aria-hidden="true"
-                                  className="asset-card-media is-pending"
-                                />
-                              ) : (
-                                <Icon
-                                  name={
-                                    cardThumbFailed ? "broken-file" : "file"
-                                  }
-                                  size={28}
-                                />
-                              )}
+                              <Icon
+                                name={
+                                  cardThumbFailed ? "broken-file" : "file"
+                                }
+                                size={28}
+                              />
                               {!showExtension &&
                                 shouldShowExtensionBadge(asset.mediaType) && (
                                   <span className="asset-extension">
@@ -10283,12 +10319,14 @@ function AppInner() {
                               library ? (
                                 <BrowseLayoutPreview
                                   entry={entry}
+                                  fields={canvasPrefs.fields}
                                   libraryId={library.libraryId}
                                   previewArtifactId={
                                     layoutThumbnailArtifacts.libraryId === library.libraryId
                                       ? layoutThumbnailArtifacts.ids.get(entry.assetId)
                                       : undefined
                                   }
+                                  viewMode="masonry"
                                 />
                               ) : null
                             }
@@ -10311,12 +10349,14 @@ function AppInner() {
                               library ? (
                                 <BrowseLayoutPreview
                                   entry={entry}
+                                  fields={canvasPrefs.fields}
                                   libraryId={library.libraryId}
                                   previewArtifactId={
                                     layoutThumbnailArtifacts.libraryId === library.libraryId
                                       ? layoutThumbnailArtifacts.ids.get(entry.assetId)
                                       : undefined
                                   }
+                                  viewMode="grid"
                                 />
                               ) : null
                             }
@@ -11418,20 +11458,8 @@ export function aiSearchPlanToDefinition(plan: AiSearchPlan): SearchDefinition {
     ...(plan.sort ? { sort: plan.sort } : {}),
   };
 }
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-}
 function formatDate(value: string, locale: AppLocale, unknownLabel: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.valueOf())
-    ? unknownLabel
-    : new Intl.DateTimeFormat(locale, {
-        month: "2-digit",
-        day: "2-digit",
-      }).format(date);
+  return formatShortDate(value, locale, unknownLabel);
 }
 export function formatDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));

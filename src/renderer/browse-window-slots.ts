@@ -86,3 +86,35 @@ export function mergeLoadedBrowsePage(input: {
     return leftRank - rightRank;
   });
 }
+
+/** First-paint Inspector/card copy from the compact layout index (Serpent-l2at / Serpent-joz6). */
+export function assetSummaryFromLayoutEntry(
+  entry: BrowseLayoutEntry,
+): AssetSummary | undefined {
+  const displayName = entry.displayName?.trim();
+  if (!displayName) return undefined;
+  const relativeFilePath = entry.relativeFilePath?.trim() || displayName;
+  return {
+    assetId: entry.assetId,
+    locationKind: "managed",
+    managedFolderId: null,
+    relativeFilePath,
+    displayName,
+    currentRevisionId: `layout:${entry.assetId}`,
+    byteSize: entry.byteSize ?? 0,
+    modifiedAt: entry.modifiedAt ?? new Date(0).toISOString(),
+    availability: "available",
+    rating: entry.rating ?? 0,
+    favorite: false,
+    deletedAt: null,
+    trashedFromPath: null,
+    trashedFromTombstoneId: null,
+    remainingDays: null,
+    thumbnailStatus: entry.previewArtifactId ? "ready" : "pending",
+    thumbnailArtifactId: entry.previewArtifactId ?? null,
+    mediaType: "other",
+    width: entry.width,
+    height: entry.height,
+    durationMs: null,
+  };
+}

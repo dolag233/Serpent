@@ -8,6 +8,7 @@ export function shouldApplyLibraryLifecycleEvent(input: {
   if (input.event.type !== 'library.opened') return false;
   if (input.event.library.libraryId === input.currentLibraryId) return false;
   return input.event.source === 'mcp'
+    || input.event.source === 'replacement-restore'
     || (input.scriptSandboxPreviewOpen && input.currentLibraryId === undefined);
 }
 

@@ -42,7 +42,7 @@ import {
 interface PendingRequest {
   resolve(result: WorkerResult): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | undefined;
 }
 
 // 15s: a cold UtilityProcess spawn under memory pressure (large game/IDE
@@ -53,34 +53,62 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const SEARCH_REQUEST_TIMEOUT_MS = 60_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
-const LINKED_DELETE_TIMEOUT_MS = 6 * 60_000;
-const EXPORT_IMPORT_TIMEOUT_MS = 30 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
 
-const EXPORT_IMPORT_COMMANDS = new Set([
+/**
+ * Disk-bound library transfer commands. A slow machine or a large Eagle
+ * conversion can run for longer than any honest wall-clock budget; Main
+ * must wait until the Worker finishes or the user cancels. Do not put
+ * product "you may not use a large library" deadlines here.
+ */
+const UNBOUNDED_WORKER_COMMANDS = new Set([
+  'library.create',
+  'library.open',
+  'library.inspect-eagle',
+  'library.open-eagle',
+  'library.inspect-billfish',
+  'library.open-billfish',
   'library.export',
   'library.export-cancel',
   'library.import-folder',
   'library.import-zip',
   'library.import-cancel',
-  // Eagle imports scan and hash every item before committing metadata. A
-  // large library can legitimately outlive the ordinary file-operation
-  // deadline, just like the archive import path above.
+  'library.import-validate',
   'asset.import-eagle',
   'asset.import-billfish',
-  // Opening Eagle is the same conversion as import, plus creating a new
-  // Serpent library at the user-chosen destination. It must not sit on the
-  // 15s default timeout.
-  'library.open-eagle',
-  'library.open-billfish',
+  'asset.refresh',
+  'asset.delete-linked',
+  'automation.file-import-plan',
+  'automation.file-operation-plan',
+  // WebDAV sync transfers every changed asset in both directions plus the
+  // full remote manifest; a large library legitimately outlives the 15s
+  // default, same as the disk-bound transfer commands above. Opening a
+  // remote library also downloads the entire library before returning.
+  'sync.preview',
+  'sync.run',
+  'sync.list-remote-libraries',
+  'sync.open-remote-library',
 ]);
+
+export class WorkerRequestTimeoutError extends Error {
+  readonly code = 'WORKER_REQUEST_TIMEOUT' as const;
+
+  constructor(
+    readonly requestId: string,
+    readonly commandType: string,
+  ) {
+    super(`Library Worker request timed out (${requestId}).`);
+    this.name = 'WorkerRequestTimeoutError';
+  }
+}
 
 export function requestTimeoutForCommand(
   command: WorkerCommand | WorkerCommand['type'],
-): number {
+): number | null {
   const commandType = typeof command === 'string' ? command : command.type;
-  if (EXPORT_IMPORT_COMMANDS.has(commandType)) return EXPORT_IMPORT_TIMEOUT_MS;
-  if (commandType === 'asset.delete-linked') return LINKED_DELETE_TIMEOUT_MS;
+  if (UNBOUNDED_WORKER_COMMANDS.has(commandType) || commandType.startsWith('asset.import.')) {
+    return null;
+  }
   if (commandType === 'ai.process-queue') {
     if (typeof command === 'object' && command.type === 'ai.process-queue') {
       const lanes = Math.max(1, Math.min(command.maxJobs, command.concurrencyLimit));
@@ -104,14 +132,7 @@ export function requestTimeoutForCommand(
     return SEARCH_REQUEST_TIMEOUT_MS;
   }
   if (
-    commandType.startsWith('asset.import.')
-    || commandType === 'asset.refresh'
-    || commandType === 'library.create'
-    // 库打开含 schema 迁移（大库/旧版库重写可超过 15s 默认超时，导致启动失败）
-    || commandType === 'library.open'
-    || commandType === 'automation.file-import-plan'
-    || commandType === 'automation.file-operation-plan'
-    || commandType === 'extension.save-from-url'
+    commandType === 'extension.save-from-url'
     || commandType === 'extension.save-from-file'
   ) return FILE_OPERATION_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
@@ -261,16 +282,18 @@ export class LibraryWorkerClient {
     const requestId = randomUUID();
     return new Promise<WorkerResult>((resolve, reject) => {
       const timeout = requestTimeoutForCommand(command);
-      const timer = setTimeout(() => {
-        this.#pending.delete(requestId);
-        this.#expiredRequestIds.add(requestId);
-        const cleanupTimer = setTimeout(
-          () => this.#expiredRequestIds.delete(requestId),
-          10 * 60_000,
-        );
-        cleanupTimer.unref();
-        reject(new Error(`Library Worker request timed out (${requestId}).`));
-      }, timeout);
+      const timer = timeout == null
+        ? undefined
+        : setTimeout(() => {
+          this.#pending.delete(requestId);
+          this.#expiredRequestIds.add(requestId);
+          const cleanupTimer = setTimeout(
+            () => this.#expiredRequestIds.delete(requestId),
+            10 * 60_000,
+          );
+          cleanupTimer.unref();
+          reject(new WorkerRequestTimeoutError(requestId, command.type));
+        }, timeout);
 
       this.#pending.set(requestId, { resolve, reject, timer });
       child.postMessage({

@@ -57,6 +57,7 @@ describe("CreateDialog Eagle open name panel", () => {
       "button.primary-button[type='submit']",
     );
     expect(submit?.textContent).toMatch(/选择保存位置|Choose save location/);
+    expect(container.querySelector(".field-help")).toBeNull();
     expect(container.querySelector(".create-dialog-recent-list")).toBeNull();
 
     await act(async () => {
@@ -105,6 +106,7 @@ describe("CreateDialog Eagle open name panel", () => {
       "button.primary-button[type='submit']",
     );
     expect(submit?.textContent).toMatch(/选择保存位置/);
+    expect(container.querySelector(".field-help")).toBeNull();
     expect(container.querySelector(".create-dialog-recent-list")).toBeNull();
 
     await act(async () => {

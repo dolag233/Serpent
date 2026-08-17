@@ -155,6 +155,7 @@ import {
   EagleLibraryReadError,
   readEagleAssetCandidate,
   readEagleLibraryRoot,
+  sumEagleLibrarySourceBytes,
   type EagleAssetCandidate,
   type EagleFolderNode,
 } from './eagle-library';
@@ -427,6 +428,10 @@ import {
   targetLibraryPath,
 } from './library-rules';
 import {
+  LibraryParentError,
+  resolveWritableLibraryParent,
+} from './library-parent';
+import {
   buildTrigramFts5Query,
   canUseTrigramSearch,
   normalizeSearchText,
@@ -502,6 +507,7 @@ import type { ImageSequenceImportOffer } from '../shared/protocol/responses';
 import { assetSupportsThumbnail } from '../shared/thumbnail-support';
 import {
   extractZipStream,
+  zipBombProtectionLimits,
   ZipImportStreamError,
   type ZipArchiveManifest,
 } from './zip-import-stream';
@@ -2703,6 +2709,8 @@ interface ImportSourceEntry {
   destinationRelativePath: string;
   /** Metadata projected from an Eagle item; absent for ordinary imports. */
   eagleMetadata?: EagleImportedMetadata;
+  /** Thumbnail already copied during bulk staging so resolve can skip a second walk. */
+  copiedThumbnail?: EagleCopiedThumbnail;
   /** Hash of the staged bytes, calculated once during preparation. */
   sha256?: string;
   /** SHA-1 content identity used to disambiguate missing-file recovery. */
@@ -2721,6 +2729,18 @@ interface SourceSnapshot {
   size: bigint;
 }
 
+interface EagleCopiedThumbnail {
+  artifactAbsPath: string;
+  artifactId: string;
+  artifactKind: 'thumbnail' | 'video_poster';
+  artifactRelPath: string;
+  byteSize: number;
+  generatorVersion: string;
+  height: number | null;
+  mimeType: string;
+  width: number | null;
+}
+
 interface EagleImportedMetadata {
   collectionIds: string[];
   description: string | null;
@@ -2731,6 +2751,8 @@ interface EagleImportedMetadata {
   tagIds: string[];
   thumbnailPath: string | null;
   thumbnailGeneratorVersion?: string;
+  width?: number;
+  height?: number;
 }
 
 interface ManagedRelinkPlacementIdentity {
@@ -2768,6 +2790,13 @@ interface PendingImport {
   operationPath: string;
   dedupeSameNameByContent?: boolean;
   suppressAssetChangeEvents?: boolean;
+  /** External bulk conversion skips full-file hashing (Serpent-7tjg). */
+  skipContentHash?: boolean;
+  /**
+   * Identity → on-disk destination for bulk conversion. Avoids readdir of
+   * Assets for every file (O(n²) on a 20k Eagle library).
+   */
+  destinationIndex?: Map<string, ExistingDestination>;
 }
 
 interface ExistingAssetRow {
@@ -3769,6 +3798,23 @@ function realFileExists(filePath: string): boolean {
     return entry.isFile() && !entry.isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+function copyFileExclusive(sourcePath: string, destinationPath: string): void {
+  // Windows CopyFile does not clone; trying COPYFILE_FICLONE first just fails
+  // and retries. APFS/XFS can clone, so keep the fallback there.
+  const cloneFlag = process.platform === 'win32' || typeof constants.COPYFILE_FICLONE !== 'number'
+    ? 0
+    : constants.COPYFILE_FICLONE;
+  if (cloneFlag === 0) {
+    copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
+    return;
+  }
+  try {
+    copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL | cloneFlag);
+  } catch {
+    copyFileSync(sourcePath, destinationPath, constants.COPYFILE_EXCL);
   }
 }
 
@@ -5109,6 +5155,7 @@ export class LibraryService {
    * copy is reserved for true external changes.
    */
   private suppressWatcherNotifyUntilMs = 0;
+  private artifactsDirReady = new WeakSet<OpenLibrary>();
 
   constructor(private readonly options: LibraryServiceOptions = {}) {}
 
@@ -9415,6 +9462,47 @@ export class LibraryService {
     return undefined;
   }
 
+  /**
+   * SQLite path_identity lookup for bulk Eagle/Billfish conversion.
+   * `portableDiskDestination` readdirs Assets for every file; that becomes
+   * the dominant cost long before payload copy on a 20k-item library.
+   */
+  private managedDestinationIndex(openLibrary: OpenLibrary): Map<string, ExistingDestination> {
+    const assetColumns = columnsFor(openLibrary.connection, 'assets');
+    const deletedClause = assetColumns.has('deleted_at') ? 'WHERE a.deleted_at IS NULL' : '';
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.path_identity AS path_identity,
+                a.relative_file_path AS relative_file_path,
+                r.byte_size AS byte_size
+           FROM assets a
+           LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+          ${deletedClause}`,
+      )
+      .all() as Array<{
+        path_identity: string;
+        relative_file_path: string;
+        byte_size: number | null;
+      }>;
+    const index = new Map<string, ExistingDestination>();
+    for (const row of rows) {
+      index.set(row.path_identity, {
+        actualRelativePath: row.relative_file_path,
+        size: row.byte_size ?? -1,
+      });
+    }
+    return index;
+  }
+
+  private lookupImportDestination(
+    openLibrary: OpenLibrary,
+    relativePath: string,
+    index: Map<string, ExistingDestination> | undefined,
+  ): ExistingDestination | undefined {
+    if (index) return index.get(portablePathIdentity(relativePath));
+    return this.portableDiskDestination(openLibrary, relativePath);
+  }
+
   private assetsPath(openLibrary: OpenLibrary): string {
     return path.join(openLibrary.summary.libraryPath, 'Assets');
   }
@@ -9430,8 +9518,24 @@ export class LibraryService {
     return folder;
   }
 
-  private copySourceSnapshot(entry: ImportSourceEntry, stagedPath: string): number {
+  private copySourceSnapshot(
+    entry: ImportSourceEntry,
+    stagedPath: string,
+    options?: { bulk?: boolean },
+  ): number {
     this.options.beforeSourceSnapshotOpen?.(entry.sourcePath);
+    if (options?.bulk === true) {
+      // Eagle/Billfish conversion already lstat'd the source when building the
+      // entry. A second lstat+snapshot compare before every copyFile is 20k
+      // extra metadata ops on the 2w baseline; copyFileExclusive fails if the
+      // path disappeared or is not a regular file.
+      copyFileExclusive(entry.sourcePath, stagedPath);
+      const byteSize = entry.byteSize;
+      if (!Number.isSafeInteger(byteSize) || byteSize < 0) {
+        throw sourceChanged();
+      }
+      return byteSize;
+    }
     const sourceFlags =
       constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
     let sourceFd: number | undefined;
@@ -9868,6 +9972,7 @@ export class LibraryService {
     assetId: string,
     metadata: EagleImportedMetadata,
     now: string,
+    collectionNextPosition?: Map<string, number>,
   ): void {
     openLibrary.connection
       .prepare(
@@ -9896,17 +10001,23 @@ export class LibraryService {
     );
     for (const tagId of metadata.tagIds) insertTag.run(assetId, tagId);
 
-    const nextCollectionPosition = openLibrary.connection.prepare(
+    const maxCollectionPosition = openLibrary.connection.prepare(
       'SELECT COALESCE(MAX(position), -1) AS max_position FROM collection_assets WHERE collection_id = ?',
     );
     const insertCollection = openLibrary.connection.prepare(
       'INSERT OR IGNORE INTO collection_assets (collection_id, asset_id, position) VALUES (?, ?, ?)',
     );
     for (const collectionId of metadata.collectionIds) {
-      const row = nextCollectionPosition.get(collectionId) as { max_position: number };
-      insertCollection.run(collectionId, assetId, row.max_position + 1);
+      let nextPosition = collectionNextPosition?.get(collectionId);
+      if (nextPosition === undefined) {
+        const row = maxCollectionPosition.get(collectionId) as { max_position: number };
+        nextPosition = row.max_position + 1;
+      }
+      insertCollection.run(collectionId, assetId, nextPosition);
+      collectionNextPosition?.set(collectionId, nextPosition + 1);
     }
-    this.syncAssetSearchContent(openLibrary.connection, assetId);
+    // Search FTS is rebuilt once after the asset row commits; doing it here
+    // doubled the GROUP_CONCAT + FTS write on every Eagle/Billfish item.
   }
 
   createManagedFolder(input: {
@@ -22632,10 +22743,14 @@ export class LibraryService {
     // AssetSummary rows over three process hops.
     const layoutColumns = hasLayoutDimensions
       ? `a.asset_id,
+         a.relative_file_path,
+         r.byte_size AS layout_byte_size,
+         r.modified_at AS layout_modified_at,
+         m.rating AS layout_rating,
          COALESCE(layout_metadata.width, layout_preview.width) AS layout_width,
          COALESCE(layout_metadata.height, layout_preview.height) AS layout_height,
          layout_preview.artifact_id AS layout_preview_artifact_id`
-      : 'a.asset_id, NULL AS layout_width, NULL AS layout_height, NULL AS layout_preview_artifact_id';
+      : `a.asset_id, a.relative_file_path, r.byte_size AS layout_byte_size, r.modified_at AS layout_modified_at, m.rating AS layout_rating, NULL AS layout_width, NULL AS layout_height, NULL AS layout_preview_artifact_id`;
     const dataColumnsForFetch = idsOnly
       ? 'a.asset_id'
       : layoutOnly
@@ -22662,6 +22777,9 @@ export class LibraryService {
         layout_width?: number | null;
         layout_height?: number | null;
         layout_preview_artifact_id?: string | null;
+        layout_byte_size?: number | null;
+        layout_modified_at?: string | null;
+        layout_rating?: number | null;
       }>;
 
     if (idsOnly) {
@@ -22683,6 +22801,11 @@ export class LibraryService {
           width: row.layout_width ?? null,
           height: row.layout_height ?? null,
           previewArtifactId: row.layout_preview_artifact_id ?? null,
+          displayName: path.posix.basename(row.relative_file_path),
+          relativeFilePath: row.relative_file_path,
+          ...(row.layout_byte_size == null ? {} : { byteSize: row.layout_byte_size }),
+          ...(row.layout_modified_at == null ? {} : { modifiedAt: row.layout_modified_at }),
+          ...(row.layout_rating == null ? {} : { rating: row.layout_rating }),
         })),
       };
     }
@@ -29710,9 +29833,13 @@ export class LibraryService {
     dedupeSameNameByContent?: boolean;
     /** Avoid hashing every existing same-size asset for external bulk imports. */
     skipLibraryDuplicateScan?: boolean;
+    /** Skip SHA-256/fingerprint of staged bytes; used for Eagle/Billfish conversion. */
+    skipContentHash?: boolean;
     /** Optional progress callback for a caller-owned bulk import. */
     onStagedEntry?: (processedCount: number, bytesProcessed: number) => void;
     suppressAssetChangeEvents?: boolean;
+    /** Shared destination identity map for multi-batch Eagle/Billfish conversion. */
+    destinationIndex?: Map<string, ExistingDestination>;
   }): ImportConflictPlan {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     if (this.linkedFolderRowForImport(openLibrary, input.targetFolderId)) {
@@ -29743,6 +29870,10 @@ export class LibraryService {
       importId,
     );
     const stagePath = path.join(operationPath, 'stage');
+    const skipContentHash = input.skipContentHash === true;
+    const destinationIndex = skipContentHash
+      ? (input.destinationIndex ?? this.managedDestinationIndex(openLibrary))
+      : undefined;
     let preparingManifest: OperationManifest;
     try {
       preparingManifest = {
@@ -29752,11 +29883,17 @@ export class LibraryService {
           backupName: String(index),
           destinationRelativePath: entry.destinationRelativePath,
           hadDestination:
-            this.portableDiskDestination(openLibrary, entry.destinationRelativePath) !== undefined,
+            this.lookupImportDestination(
+              openLibrary,
+              entry.destinationRelativePath,
+              destinationIndex,
+            ) !== undefined,
           stageName: String(index),
         })),
         directories: directories.map((relativePath) => ({
-          existed: this.portableDiskDestination(openLibrary, relativePath) !== undefined,
+          existed: skipContentHash
+            ? existsSync(this.folderPath(openLibrary, relativePath))
+            : this.portableDiskDestination(openLibrary, relativePath) !== undefined,
           relativePath,
         })),
       };
@@ -29781,19 +29918,47 @@ export class LibraryService {
       stagedEntries = [];
       entries.forEach((entry, index) => {
         const stagedPath = path.join(stagePath, String(index));
-        const byteSize = this.copySourceSnapshot(entry, stagedPath);
-        const hashes = sha256AndContentFingerprintFileAtPath(stagedPath);
-        stagedEntries.push({
-          ...entry,
-          byteSize,
-          sha256: hashes.sha256,
-          contentFingerprint: hashes.contentFingerprint,
-          sourcePath: stagedPath,
-        });
+        const byteSize = this.copySourceSnapshot(
+          entry,
+          stagedPath,
+          skipContentHash ? { bulk: true } : undefined,
+        );
+        if (skipContentHash) {
+          const staged: ImportSourceEntry = {
+            ...entry,
+            byteSize,
+            sourcePath: stagedPath,
+          };
+          if (entry.eagleMetadata?.thumbnailPath) {
+            try {
+              const copied = this.copyEagleThumbnailFile(
+                openLibrary,
+                entry.destinationRelativePath,
+                entry.eagleMetadata,
+              );
+              if (copied) staged.copiedThumbnail = copied;
+            } catch (error) {
+              this.diagnose('eagle-import.thumbnail-skipped', error, {
+                reason: 'EAGLE_THUMBNAIL_FAILED',
+              });
+            }
+          }
+          stagedEntries.push(staged);
+        } else {
+          const hashes = sha256AndContentFingerprintFileAtPath(stagedPath);
+          stagedEntries.push({
+            ...entry,
+            byteSize,
+            sha256: hashes.sha256,
+            contentFingerprint: hashes.contentFingerprint,
+            sourcePath: stagedPath,
+          });
+        }
         input.onStagedEntry?.(index + 1, byteSize);
         if (index === 0) this.failAt('crash-during-prepare-stage');
       });
     } catch (error) {
+      if (error instanceof LibraryServiceError && error.code === 'CANCELLED') throw error;
       if (error instanceof SimulatedCrashError) {
         throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
       }
@@ -29809,10 +29974,12 @@ export class LibraryService {
     // Intra-batch identical bytes are common in particle/VFX sequences (clear frames).
     // Treat those as distinct assets when destination basenames form a numbered run.
     const sequenceBatchPaths = new Set<string>();
-    for (const candidate of detectImageSequences(
-      stagedEntries.map((entry) => entry.destinationRelativePath),
-    )) {
-      for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+    if (!skipContentHash) {
+      for (const candidate of detectImageSequences(
+        stagedEntries.map((entry) => entry.destinationRelativePath),
+      )) {
+        for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+      }
     }
     let suspectedDuplicateCount = 0;
     let libraryDuplicateCount = 0;
@@ -29821,14 +29988,17 @@ export class LibraryService {
 
     try {
       for (const entry of stagedEntries) {
-        const entrySha256 = entry.sha256 ?? sha256FileAtPath(entry.sourcePath);
+        const entrySha256 = skipContentHash
+          ? `bulk:${portablePathIdentity(entry.destinationRelativePath)}`
+          : (entry.sha256 ?? sha256FileAtPath(entry.sourcePath));
         const identity = portablePathIdentity(entry.destinationRelativePath);
         let existingSize = seenDestinations.get(identity);
         let existingAbsolutePath: string | undefined;
         if (existingSize === undefined) {
-          const destination = this.portableDiskDestination(
+          const destination = this.lookupImportDestination(
             openLibrary,
             entry.destinationRelativePath,
+            destinationIndex,
           );
           existingSize = destination?.size;
           if (destination && destination.size !== -1) {
@@ -29885,9 +30055,10 @@ export class LibraryService {
             // Serpent-793k: surface the colliding (already-existing) asset's
             // display name + thumbnail in the name-conflict dialog, matching
             // what content duplicates already show.
-            const destination = this.portableDiskDestination(
+            const destination = this.lookupImportDestination(
               openLibrary,
               entry.destinationRelativePath,
+              destinationIndex,
             );
             const existing =
               destination && destination.size !== -1
@@ -29951,6 +30122,8 @@ export class LibraryService {
       ...(input.skipLibraryDuplicateScan === true
         ? { skipLibraryDuplicateScan: true }
         : {}),
+      ...(skipContentHash ? { skipContentHash: true } : {}),
+      ...(destinationIndex ? { destinationIndex } : {}),
     };
     this.pendingImports.set(importId, pending);
     this.scheduleImportExpiry(importId, pending);
@@ -30132,11 +30305,11 @@ export class LibraryService {
     tagIdsByName: ReadonlyMap<string, string>,
   ): ImportSourceEntry | null {
     try {
-      const canonicalSourcePath = realpathSync(item.sourcePath);
-      if (!pathIsWithin(sourceRootPath, canonicalSourcePath)) {
+      const resolvedSourcePath = path.resolve(item.sourcePath);
+      if (!pathIsWithin(sourceRootPath, resolvedSourcePath)) {
         throw new EagleLibraryReadError('Eagle source escaped its library root.');
       }
-      const sourceStat = lstatSync(item.sourcePath, { bigint: true });
+      const sourceStat = lstatSync(resolvedSourcePath, { bigint: true });
       if (
         sourceStat.isSymbolicLink()
         || !sourceStat.isFile()
@@ -30167,10 +30340,13 @@ export class LibraryService {
           sourcePageUrl: item.sourcePageUrl,
           sourceRootPath,
           tagIds,
-          thumbnailPath: item.thumbnailPath,
+          thumbnailPath: item.thumbnailPath ? path.resolve(item.thumbnailPath) : null,
+          ...(item.width && item.height
+            ? { width: item.width, height: item.height }
+            : {}),
         },
         sourceSnapshot: sourceSnapshot(sourceStat),
-        sourcePath: item.sourcePath,
+        sourcePath: resolvedSourcePath,
       };
     } catch (error) {
       this.diagnose('eagle-import.item-skipped', error, { itemId: item.itemId });
@@ -30219,11 +30395,11 @@ export class LibraryService {
     tagIdsByName: ReadonlyMap<string, string>,
   ): ImportSourceEntry | null {
     try {
-      const canonicalSourcePath = realpathSync(item.sourcePath);
-      if (!pathIsWithin(sourceRootPath, canonicalSourcePath)) {
+      const resolvedSourcePath = path.resolve(item.sourcePath);
+      if (!pathIsWithin(sourceRootPath, resolvedSourcePath)) {
         throw new BillfishLibraryReadError('Billfish source escaped its library root.');
       }
-      const sourceStat = lstatSync(item.sourcePath, { bigint: true });
+      const sourceStat = lstatSync(resolvedSourcePath, { bigint: true });
       if (
         sourceStat.isSymbolicLink()
         || !sourceStat.isFile()
@@ -30250,12 +30426,12 @@ export class LibraryService {
               sourcePageUrl: metadata.sourcePageUrl,
               sourceRootPath,
               tagIds,
-              thumbnailPath: metadata.thumbnailPath,
+              thumbnailPath: metadata.thumbnailPath ? path.resolve(metadata.thumbnailPath) : null,
               thumbnailGeneratorVersion: 'billfish-thumbnail@1',
             }
           : undefined,
         sourceSnapshot: sourceSnapshot(sourceStat),
-        sourcePath: item.sourcePath,
+        sourcePath: resolvedSourcePath,
       };
     } catch (error) {
       this.diagnose('billfish-import.item-skipped', error, {
@@ -30286,79 +30462,108 @@ export class LibraryService {
    * Keep that preview as Serpent's ready card artifact; importing a video
    * must not decode the full source merely to make the first screen visible.
    */
+  private copyEagleThumbnailFile(
+    openLibrary: OpenLibrary,
+    destinationRelativePath: string,
+    metadata: EagleImportedMetadata,
+  ): EagleCopiedThumbnail | undefined {
+    if (!metadata.thumbnailPath) return undefined;
+    const maxBytes = 32 * 1024 * 1024;
+    const canonicalRoot = path.resolve(metadata.sourceRootPath);
+    const resolvedThumbnailPath = path.resolve(metadata.thumbnailPath);
+    if (!pathIsWithin(canonicalRoot, resolvedThumbnailPath)) {
+      throw new EagleLibraryReadError('Eagle thumbnail escaped its library root.');
+    }
+    const thumbnailStat = lstatSync(resolvedThumbnailPath, { bigint: true });
+    if (
+      thumbnailStat.isSymbolicLink()
+      || !thumbnailStat.isFile()
+      || thumbnailStat.size <= 0n
+      || thumbnailStat.size > BigInt(maxBytes)
+    ) {
+      throw new EagleLibraryReadError('Eagle thumbnail is not a supported regular file.');
+    }
+    const extension = path.extname(resolvedThumbnailPath).toLowerCase();
+    const mimeType = directImageMimeForExtension(extension);
+    if (!mimeType || !mimeType.startsWith('image/')) {
+      throw new EagleLibraryReadError('Eagle thumbnail format is not supported.');
+    }
+    const artifactId = randomUUID();
+    const artifactRelPath = `${artifactId}${extension || '.png'}`;
+    const artifactsDir = this.artifactsDir(openLibrary);
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    if (!this.artifactsDirReady.has(openLibrary)) {
+      mkdirSync(artifactsDir, { recursive: true });
+      this.artifactsDirReady.add(openLibrary);
+    }
+    copyFileExclusive(resolvedThumbnailPath, artifactAbsPath);
+    return {
+      artifactAbsPath,
+      artifactId,
+      artifactKind: LibraryService.detectMediaType(destinationRelativePath) === 'video'
+        ? 'video_poster'
+        : 'thumbnail',
+      artifactRelPath,
+      byteSize: Number(thumbnailStat.size),
+      generatorVersion: metadata.thumbnailGeneratorVersion ?? 'eagle-thumbnail@1',
+      height: metadata.height ?? null,
+      mimeType,
+      width: metadata.width ?? null,
+    };
+  }
+
+  private insertCopiedEagleThumbnail(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    copied: EagleCopiedThumbnail,
+  ): void {
+    const now = new Date().toISOString();
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL`,
+      )
+      .run(now, revisionId, copied.artifactKind);
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            width, height, generator_version, status, generated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+      )
+      .run(
+        copied.artifactId,
+        revisionId,
+        copied.artifactKind,
+        copied.mimeType,
+        copied.byteSize,
+        copied.artifactRelPath,
+        copied.width,
+        copied.height,
+        copied.generatorVersion,
+        now,
+      );
+  }
+
   private persistEagleThumbnailArtifact(
     openLibrary: OpenLibrary,
     assetId: string,
     revisionId: string,
+    destinationRelativePath: string,
     metadata: EagleImportedMetadata,
   ): void {
-    if (!metadata.thumbnailPath) return;
-    const maxBytes = 32 * 1024 * 1024;
     let artifactAbsPath: string | undefined;
     try {
-      const canonicalRoot = realpathSync(metadata.sourceRootPath);
-      const canonicalThumbnailPath = realpathSync(metadata.thumbnailPath);
-      if (!pathIsWithin(canonicalRoot, canonicalThumbnailPath)) {
-        throw new EagleLibraryReadError('Eagle thumbnail escaped its library root.');
-      }
-      const thumbnailStat = lstatSync(canonicalThumbnailPath, { bigint: true });
-      if (
-        thumbnailStat.isSymbolicLink()
-        || !thumbnailStat.isFile()
-        || thumbnailStat.size <= 0n
-        || thumbnailStat.size > BigInt(maxBytes)
-      ) {
-        throw new EagleLibraryReadError('Eagle thumbnail is not a supported regular file.');
-      }
-
-      const extension = path.extname(canonicalThumbnailPath).toLowerCase();
-      const mimeType = directImageMimeForExtension(extension);
-      if (!mimeType || !mimeType.startsWith('image/')) {
-        throw new EagleLibraryReadError('Eagle thumbnail format is not supported.');
-      }
-      const artifactId = randomUUID();
-      const artifactRelPath = `${artifactId}${extension || '.png'}`;
-      const artifactsDir = this.artifactsDir(openLibrary);
-      artifactAbsPath = path.join(artifactsDir, artifactRelPath);
-      mkdirSync(artifactsDir, { recursive: true });
-      copyFileSync(canonicalThumbnailPath, artifactAbsPath, constants.COPYFILE_EXCL);
-      const dimensions = readImageDimensionsSync(artifactAbsPath);
-      // The media type is derived from the imported asset path below; assetId
-      // is only used as a stable lookup key here, never as a filename.
-      const assetRow = openLibrary.connection
-        .prepare('SELECT relative_file_path FROM assets WHERE asset_id = ?')
-        .get(assetId) as { relative_file_path: string } | undefined;
-      const artifactKind = assetRow && LibraryService.detectMediaType(assetRow.relative_file_path) === 'video'
-        ? 'video_poster'
-        : 'thumbnail';
-      const now = new Date().toISOString();
+      const copied = this.copyEagleThumbnailFile(
+        openLibrary,
+        destinationRelativePath,
+        metadata,
+      );
+      if (!copied) return;
+      artifactAbsPath = copied.artifactAbsPath;
       openLibrary.connection.transaction(() => {
-        openLibrary.connection
-          .prepare(
-            `UPDATE revision_artifacts
-                SET invalidated_at = ?
-              WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL`,
-          )
-          .run(now, revisionId, artifactKind);
-        openLibrary.connection
-          .prepare(
-            `INSERT INTO revision_artifacts
-               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-                width, height, generator_version, status, generated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?)`,
-          )
-          .run(
-            artifactId,
-            revisionId,
-            artifactKind,
-            mimeType,
-            Number(thumbnailStat.size),
-            artifactRelPath,
-            dimensions?.width ?? null,
-            dimensions?.height ?? null,
-            metadata.thumbnailGeneratorVersion ?? 'eagle-thumbnail@1',
-            now,
-          );
+        this.insertCopiedEagleThumbnail(openLibrary, revisionId, copied);
       })();
     } catch (error) {
       if (artifactAbsPath) rmSync(artifactAbsPath, { force: true });
@@ -30421,17 +30626,9 @@ export class LibraryService {
     try {
       throwIfCancelled();
       const collectionIdsByFolder = this.ensureEagleCollections(openLibrary, root.folders);
-      emitEagleProgress('validate', 0, bytesProcessed);
+      emitEagleProgress('validate', 0, 0);
       await transferCheckpoint();
       throwIfCancelled();
-      let importedCount = 0;
-      let skippedCount = 0;
-      let replacedCount = 0;
-      let invalidItemCount = 0;
-      const sampleAssets: AssetSummary[] = [];
-      const tagIdsByName = new Map<string, string>();
-      const batchSize = 32;
-
       const imagesPath = root.imagesPath;
       if (!imagesPath || root.infoDirectoryNames.length === 0) {
         emitEagleProgress('complete', 0, 0);
@@ -30448,6 +30645,30 @@ export class LibraryService {
           assets: [],
         };
       }
+      const sizeScanBatch = 256;
+      for (let offset = 0; offset < root.infoDirectoryNames.length; offset += sizeScanBatch) {
+        throwIfCancelled();
+        const slice = root.infoDirectoryNames.slice(offset, offset + sizeScanBatch);
+        totalBytes += sumEagleLibrarySourceBytes(imagesPath, slice);
+        emitEagleProgress('validate', Math.min(totalFiles, offset + slice.length), 0);
+        await transferCheckpoint();
+      }
+      emitEagleProgress('validate', 0, 0);
+      let importedCount = 0;
+      let skippedCount = 0;
+      let replacedCount = 0;
+      let invalidItemCount = 0;
+      const sampleAssets: AssetSummary[] = [];
+      const tagIdsByName = new Map<string, string>();
+      const batchSize = 128;
+      const destinationIndex = this.managedDestinationIndex(openLibrary);
+      let lastCopyProgressAt = 0;
+      const emitCopyProgress = (force = false): void => {
+        const now = Date.now();
+        if (!force && now - lastCopyProgressAt < 250) return;
+        lastCopyProgressAt = now;
+        emitEagleProgress('copy');
+      };
 
       for (let offset = 0; offset < root.infoDirectoryNames.length; offset += batchSize) {
         throwIfCancelled();
@@ -30458,7 +30679,6 @@ export class LibraryService {
           const result = readEagleAssetCandidate(imagesPath, infoDirectoryName);
           if ('item' in result) {
             items.push(result.item);
-            totalBytes += result.item.byteSize;
             continue;
           }
           skippedCount += 1;
@@ -30482,6 +30702,7 @@ export class LibraryService {
         const batchBytesBefore = bytesProcessed;
         let batchBytesCopied = 0;
         if (batch.length > 0) {
+          const batchStarted = performance.now();
           let plan;
           try {
             plan = this.prepareImport({
@@ -30493,17 +30714,22 @@ export class LibraryService {
               createImageSequence: false,
               dedupeSameNameByContent: true,
               skipLibraryDuplicateScan: true,
+              skipContentHash: true,
+              destinationIndex,
               onStagedEntry: (batchProcessed, stagedBytes) => {
+                throwIfCancelled();
                 batchBytesCopied += stagedBytes;
                 filesProcessed = offset + batchProcessed;
                 bytesProcessed = batchBytesBefore + batchBytesCopied;
-                emitEagleProgress('copy');
+                emitCopyProgress();
               },
               suppressAssetChangeEvents: true,
             });
           } catch (error) {
             throw this.wrapEagleImportStageError(error, 'IMPORT_COPY_FAILED');
           }
+          const copyMs = performance.now() - batchStarted;
+          const applyStarted = performance.now();
           let completion;
           try {
             completion = this.resolveImport({
@@ -30536,8 +30762,9 @@ export class LibraryService {
         }
         filesProcessed = Math.min(totalFiles, offset + infoNames.length);
         bytesProcessed = Math.min(totalBytes, batchBytesBefore + items.reduce((total, item) => total + item.byteSize, 0));
-        emitEagleProgress('copy');
+        emitCopyProgress(true);
         await transferCheckpoint();
+        throwIfCancelled();
       }
       emitEagleProgress('complete', totalFiles, totalBytes);
       return {
@@ -30608,15 +30835,16 @@ export class LibraryService {
     let parentPath: string;
     try {
       sourceRoot = realpathSync(normalizeAbsolutePath(input.sourceRootPath));
-      parentPath = normalizeAbsolutePath(input.selectedParentPath);
-      if (existsSync(parentPath) && directoryExists(parentPath)) {
-        parentPath = realpathSync(parentPath);
-      }
+      parentPath = resolveWritableLibraryParent({
+        selectedParentPath: input.selectedParentPath,
+        sourceRootPath: sourceRoot,
+        createIfMissing: true,
+      });
     } catch (error) {
+      if (error instanceof LibraryParentError) {
+        throw new LibraryServiceError(error.code, { reason: error.reason, cause: error });
+      }
       throw serviceError(error, 'INVALID_LIBRARY_PATH');
-    }
-    if (pathIsWithin(sourceRoot, parentPath)) {
-      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
     const displayName = input.displayName.trim() || root.displayName.trim() || path.basename(sourceRoot);
@@ -30706,7 +30934,15 @@ export class LibraryService {
     let invalidItemCount = root.skippedCount;
     let metadataCount = 0;
     const sampleAssets: AssetSummary[] = [];
-    const batchSize = 32;
+    const batchSize = 128;
+    const destinationIndex = this.managedDestinationIndex(openLibrary);
+    let lastCopyProgressAt = 0;
+    const emitCopyProgress = (force = false): void => {
+      const now = Date.now();
+      if (!force && now - lastCopyProgressAt < 250) return;
+      lastCopyProgressAt = now;
+      emitBillfishProgress('copy');
+    };
 
     try {
       for (let offset = 0; offset < root.items.length; offset += batchSize) {
@@ -30739,11 +30975,14 @@ export class LibraryService {
               createImageSequence: false,
               dedupeSameNameByContent: true,
               skipLibraryDuplicateScan: true,
+              skipContentHash: true,
+              destinationIndex,
               onStagedEntry: (batchProcessed, stagedBytes) => {
+                throwIfCancelled();
                 batchBytesCopied += stagedBytes;
                 filesProcessed = offset + batchProcessed;
                 bytesProcessed = batchBytesBefore + batchBytesCopied;
-                emitBillfishProgress('copy');
+                emitCopyProgress();
               },
               suppressAssetChangeEvents: true,
             });
@@ -30785,8 +31024,9 @@ export class LibraryService {
           totalBytes,
           batchBytesBefore + items.reduce((total, item) => total + item.byteSize, 0),
         );
-        emitBillfishProgress('copy');
+        emitCopyProgress(true);
         await transferCheckpoint();
+        throwIfCancelled();
       }
       emitBillfishProgress('complete', totalFiles, totalBytes);
       return {
@@ -30856,15 +31096,16 @@ export class LibraryService {
     let parentPath: string;
     try {
       sourceRoot = realpathSync(normalizeAbsolutePath(input.sourceRootPath));
-      parentPath = normalizeAbsolutePath(input.selectedParentPath);
-      if (existsSync(parentPath) && directoryExists(parentPath)) {
-        parentPath = realpathSync(parentPath);
-      }
+      parentPath = resolveWritableLibraryParent({
+        selectedParentPath: input.selectedParentPath,
+        sourceRootPath: sourceRoot,
+        createIfMissing: true,
+      });
     } catch (error) {
+      if (error instanceof LibraryParentError) {
+        throw new LibraryServiceError(error.code, { reason: error.reason, cause: error });
+      }
       throw serviceError(error, 'INVALID_LIBRARY_PATH');
-    }
-    if (pathIsWithin(sourceRoot, parentPath)) {
-      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
     }
 
     const displayName = input.displayName.trim() || root.displayName.trim() || path.basename(sourceRoot);
@@ -30962,7 +31203,8 @@ export class LibraryService {
 
     const destination = (relativePath: string): ExistingDestination | undefined => {
       const identity = portablePathIdentity(relativePath);
-      return occupied.get(identity) ?? this.portableDiskDestination(openLibrary, relativePath);
+      return occupied.get(identity)
+        ?? this.lookupImportDestination(openLibrary, relativePath, pending.destinationIndex);
     };
     const copyPath = (relativePath: string): string => {
       const directory = path.posix.dirname(relativePath);
@@ -30996,13 +31238,17 @@ export class LibraryService {
       const seenContentHashes = new Set<string>();
       const occupiedContentHashes = new Map<string, string>();
       const sequenceBatchPaths = new Set<string>();
-      for (const candidate of detectImageSequences(
-        pending.entries.map((entry) => entry.destinationRelativePath),
-      )) {
-        for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+      if (!pending.skipContentHash) {
+        for (const candidate of detectImageSequences(
+          pending.entries.map((entry) => entry.destinationRelativePath),
+        )) {
+          for (const frame of candidate.frames) sequenceBatchPaths.add(frame.value);
+        }
       }
       for (const entry of pending.entries) {
-        const entrySha256 = entry.sha256 ?? sha256FileAtPath(entry.sourcePath);
+        const entrySha256 = pending.skipContentHash
+          ? `bulk:${portablePathIdentity(entry.destinationRelativePath)}`
+          : (entry.sha256 ?? sha256FileAtPath(entry.sourcePath));
         const requestedDirectory = path.posix.dirname(entry.destinationRelativePath);
         const resolvedDirectory =
           requestedDirectory === '.'
@@ -31031,7 +31277,8 @@ export class LibraryService {
           skipLibraryDuplicateScan: pending.skipLibraryDuplicateScan,
         });
         if (
-          pending.dedupeSameNameByContent
+          !pending.skipContentHash
+          && pending.dedupeSameNameByContent
           && classified === 'name-conflict'
           && existingAbsolutePath !== undefined
         ) {
@@ -31127,6 +31374,10 @@ export class LibraryService {
           actualRelativePath: destinationRelativePath,
           size: entry.byteSize,
         });
+        pending.destinationIndex?.set(pathIdentity, {
+          actualRelativePath: destinationRelativePath,
+          size: entry.byteSize,
+        });
         actionIndexByIdentity.set(pathIdentity, actions.length);
         actions.push({
           destinationRelativePath,
@@ -31174,11 +31425,15 @@ export class LibraryService {
       files: actions.map((action, index) => ({
         backupName: String(index),
         destinationRelativePath: action.destinationRelativePath,
-        hadDestination: existsSync(this.folderPath(openLibrary, action.destinationRelativePath)),
+        hadDestination: pending.skipContentHash
+          ? false
+          : existsSync(this.folderPath(openLibrary, action.destinationRelativePath)),
         stageName: path.basename(action.entry.sourcePath),
       })),
       directories: sortedDirectories.map((relativePath) => ({
-        existed: existsSync(this.folderPath(openLibrary, relativePath)),
+        existed: pending.skipContentHash
+          ? false
+          : existsSync(this.folderPath(openLibrary, relativePath)),
         relativePath,
       })),
     };
@@ -31279,6 +31534,7 @@ export class LibraryService {
       }
 
       actions.forEach((action, index) => {
+        if (pending.skipContentHash) return;
         const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
         if (existsSync(destinationPath)) {
           const existingBackupPath = path.join(backupPath, String(index));
@@ -31359,24 +31615,50 @@ export class LibraryService {
         }
       })();
 
+      const deferredThumbnails: Array<{
+        assetId: string;
+        copied?: EagleCopiedThumbnail;
+        destinationRelativePath: string;
+        metadata: EagleImportedMetadata;
+        revisionId: string;
+      }> = [];
+      const bulkCommit = pending.skipContentHash === true;
+      const collectionNextPosition = bulkCommit ? new Map<string, number>() : undefined;
+      const commitImportedAssets = (): void => {
       for (const action of actions) {
         this.failAt('before-db-commit');
         let committedAssetId: string | null = null;
         let committedRevisionId: string | null = null;
         openLibrary.connection.transaction(() => {
           const destinationPath = this.folderPath(openLibrary, action.destinationRelativePath);
-          // Persist the exact same millisecond representation used by watcher
-          // refreshes. Mixing Stats.mtime (Date) with BigIntStats.mtimeMs can
-          // manufacture a phantom external revision for freshly imported files
-          // on filesystems that retain sub-millisecond timestamps.
-          const fileStat = lstatSync(destinationPath, { bigint: true });
-          const fileByteSize = Number(fileStat.size);
-          if (!Number.isSafeInteger(fileByteSize)) {
-            throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
-              reason: 'UNSUPPORTED_FILE_ENTRY',
-            });
+          let fileByteSize: number;
+          let fileModifiedAt: string;
+          if (bulkCommit) {
+            fileByteSize = action.entry.byteSize;
+            if (!Number.isSafeInteger(fileByteSize) || fileByteSize < 0) {
+              throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+                reason: 'UNSUPPORTED_FILE_ENTRY',
+              });
+            }
+            const sourceModifiedAtMs = action.entry.eagleMetadata?.sourceModifiedAtMs;
+            fileModifiedAt =
+              sourceModifiedAtMs !== undefined && Number.isFinite(sourceModifiedAtMs)
+                ? new Date(sourceModifiedAtMs).toISOString()
+                : now;
+          } else {
+            // Persist the exact same millisecond representation used by watcher
+            // refreshes. Mixing Stats.mtime (Date) with BigIntStats.mtimeMs can
+            // manufacture a phantom external revision for freshly imported files
+            // on filesystems that retain sub-millisecond timestamps.
+            const fileStat = lstatSync(destinationPath, { bigint: true });
+            fileByteSize = Number(fileStat.size);
+            if (!Number.isSafeInteger(fileByteSize)) {
+              throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
+                reason: 'UNSUPPORTED_FILE_ENTRY',
+              });
+            }
+            fileModifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
           }
-          const fileModifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
           const directory = path.posix.dirname(action.destinationRelativePath);
           const managedFolderId =
             directory === '.'
@@ -31422,7 +31704,10 @@ export class LibraryService {
               path.posix.basename(action.entry.destinationRelativePath),
               action.existingAsset ? 'replace' : 'import',
               now,
-              action.entry.contentFingerprint ?? this.computeContentFingerprint(destinationPath),
+              action.entry.contentFingerprint
+                ?? (pending.skipContentHash
+                  ? null
+                  : this.computeContentFingerprint(destinationPath)),
             );
           openLibrary.connection
             .prepare(
@@ -31439,17 +31724,29 @@ export class LibraryService {
               now,
               assetId,
             );
-          this.persistSourceImageDimensions(openLibrary, revisionId, {
-            relative_file_path: action.destinationRelativePath,
-            location_kind: 'managed',
-            linked_folder_id: null,
-          });
+          const eagleSize =
+            action.entry.eagleMetadata?.width && action.entry.eagleMetadata.height
+              ? {
+                  width: action.entry.eagleMetadata.width,
+                  height: action.entry.eagleMetadata.height,
+                }
+              : null;
+          if (eagleSize) {
+            this.persistExtractedImageDimensions(openLibrary, revisionId, eagleSize);
+          } else if (!pending.skipContentHash) {
+            this.persistSourceImageDimensions(openLibrary, revisionId, {
+              relative_file_path: action.destinationRelativePath,
+              location_kind: 'managed',
+              linked_folder_id: null,
+            });
+          }
           if (action.entry.eagleMetadata) {
             this.persistEagleImportedMetadata(
               openLibrary,
               assetId,
               action.entry.eagleMetadata,
               now,
+              collectionNextPosition,
             );
           }
           if (action.entry.sourcePageUrl !== undefined) {
@@ -31478,14 +31775,25 @@ export class LibraryService {
         if (committedAssetId) {
           affectedAssetIds.push(committedAssetId);
           if (action.entry.eagleMetadata && committedRevisionId) {
-            this.persistEagleThumbnailArtifact(
-              openLibrary,
-              committedAssetId,
-              committedRevisionId,
-              action.entry.eagleMetadata,
-            );
+            if (bulkCommit) {
+              deferredThumbnails.push({
+                assetId: committedAssetId,
+                copied: action.entry.copiedThumbnail,
+                destinationRelativePath: action.destinationRelativePath,
+                metadata: action.entry.eagleMetadata,
+                revisionId: committedRevisionId,
+              });
+            } else {
+              this.persistEagleThumbnailArtifact(
+                openLibrary,
+                committedAssetId,
+                committedRevisionId,
+                action.destinationRelativePath,
+                action.entry.eagleMetadata,
+              );
+            }
           }
-          this.noteClientFilesystemMutation();
+          if (!bulkCommit) this.noteClientFilesystemMutation();
           if (!pending.suppressAssetChangeEvents) {
             this.options.onAssetsChanged?.({
               type: 'asset.changed',
@@ -31496,6 +31804,50 @@ export class LibraryService {
             });
           }
         }
+      }
+      };
+
+      if (bulkCommit) {
+        openLibrary.connection.transaction(commitImportedAssets)();
+        this.noteClientFilesystemMutation();
+        const copiedThumbs: Array<{
+          copied: EagleCopiedThumbnail;
+          revisionId: string;
+        }> = [];
+        for (const item of deferredThumbnails) {
+          try {
+            const copied = item.copied ?? this.copyEagleThumbnailFile(
+              openLibrary,
+              item.destinationRelativePath,
+              item.metadata,
+            );
+            if (copied) copiedThumbs.push({ copied, revisionId: item.revisionId });
+          } catch (error) {
+            this.diagnose('eagle-import.thumbnail-skipped', error, {
+              assetId: item.assetId,
+              reason: 'EAGLE_THUMBNAIL_FAILED',
+            });
+          }
+        }
+        if (copiedThumbs.length > 0) {
+          try {
+            openLibrary.connection.transaction(() => {
+              for (const item of copiedThumbs) {
+                this.insertCopiedEagleThumbnail(openLibrary, item.revisionId, item.copied);
+              }
+            })();
+          } catch (error) {
+            for (const item of copiedThumbs) {
+              rmSync(item.copied.artifactAbsPath, { force: true });
+            }
+            this.diagnose('eagle-import.thumbnail-skipped', error, {
+              reason: 'EAGLE_THUMBNAIL_BATCH_FAILED',
+              count: copiedThumbs.length,
+            });
+          }
+        }
+      } else {
+        commitImportedAssets();
       }
 
       jobLease.assertCurrent();
@@ -31523,8 +31875,13 @@ export class LibraryService {
       let assets: AssetSummary[] = [];
       try {
         this.failAt('committed-result-list');
-        const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
-        assets = allAssets.filter((asset) => affected.has(asset.assetId));
+        if (pending.skipContentHash) {
+          this.suppressAutoAnalysisForAssets(pending.libraryId, affectedAssetIds);
+          assets = [];
+        } else {
+          const allAssets = this.listAssets({ libraryId: pending.libraryId, recursive: true });
+          assets = allAssets.filter((asset) => affected.has(asset.assetId));
+        }
       } catch {
         // A committed import is still success. A later list/refresh supplies cards.
       }
@@ -33868,11 +34225,6 @@ export class LibraryService {
   private static readonly ZIP_MAX_BYTES = 4 * 1024 * 1024 * 1024;
   /** Maximum entry count for a standard (non-ZIP64) ZIP archive: 65535. */
   private static readonly ZIP_MAX_ENTRIES = 65534;
-  /** Import budget for uncompressed standard-ZIP content. */
-  private static readonly ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
-  /** Reject highly compressible payloads commonly used as decompression bombs. */
-  private static readonly ZIP_IMPORT_MAX_COMPRESSION_RATIO = 100;
-  private static readonly ZIP_COMPRESSION_RATIO_MIN_SIZE = 1024 * 1024;
 
   async exportLibraryToZip(input: {
     libraryId: string;
@@ -34359,13 +34711,7 @@ export class LibraryService {
           sourceZipPath: input.sourceZipPath,
           destinationRoot: extractPath,
           signal: abortController.signal,
-          limits: {
-            maxEntries: LibraryService.ZIP_MAX_ENTRIES,
-            maxUncompressedBytes: LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES,
-            maxEntryUncompressedBytes: LibraryService.ZIP_IMPORT_MAX_UNCOMPRESSED_BYTES,
-            maxCompressionRatio: LibraryService.ZIP_IMPORT_MAX_COMPRESSION_RATIO,
-            compressionRatioMinSize: LibraryService.ZIP_COMPRESSION_RATIO_MIN_SIZE,
-          },
+          limits: zipBombProtectionLimits(),
           validateManifest: (manifest: ZipArchiveManifest) => {
             const hasAssetFiles = manifest.entries.some(
               (entry) => !entry.isDirectory && entry.name.startsWith('Assets/'),

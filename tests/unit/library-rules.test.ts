@@ -12,6 +12,7 @@ import {
   isPortablePathEqualOrDescendant,
   portablePathIdentity,
   stripWindowsExtendedPathPrefix,
+  stripTrailingPathSeparators,
   targetLibraryPath,
 } from '../../src/worker/library-rules';
 
@@ -50,6 +51,21 @@ describe('library path rules', () => {
     expect(targetLibraryPath(parentPath, 'Concept Art')).toBe(
       path.join(parentPath, 'Concept Art'),
     );
+  });
+
+  it('strips trailing separators so Windows folder-picker paths still join (Serpent-sq4i)', () => {
+    const parentPath = path.resolve('/tmp', 'Serpent tests');
+    const withTrailing = `${parentPath}${path.sep}`;
+    expect(stripTrailingPathSeparators(withTrailing)).toBe(parentPath);
+    expect(normalizeAbsolutePath(withTrailing)).toBe(path.normalize(parentPath));
+    expect(targetLibraryPath(withTrailing, 'Concept Art')).toBe(
+      path.join(parentPath, 'Concept Art'),
+    );
+  });
+
+  it('allows a filesystem root as the library parent (Serpent-qn6k)', () => {
+    const root = path.parse(process.cwd()).root;
+    expect(targetLibraryPath(root, 'Concept Art')).toBe(path.join(root, 'Concept Art'));
   });
 
   it.each(['relative/path', ' /tmp/library', '/tmp/library ', '/tmp/bad\0path'])(

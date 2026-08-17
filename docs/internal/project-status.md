@@ -1,7 +1,21 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-16
+> 更新时间：2026-08-17
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-17 用户验收**：EXTLIB-006 / `Serpent-qn6k` 通过；PERF-004（占位布局 + 去扫光）通过，占位文件名中间省略跟进 `Serpent-n485`；PERF-005 / Eagle 导入仍巨慢，不通过。新开 `Serpent-onch`（插桩热区，阻塞再优化 `7tjg`）、`Serpent-tz35`（有后台处理时查看器必须优先当前操作）。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 `Serpent-qn6k`**：Eagle 名称面板去掉「下一步选择的是父文件夹…不能选磁盘根」说明。创建/打开外部库允许把新库建在磁盘根下（如 `E:\名称`）；没有写权限才报权限不足。把整个磁盘当导入来源仍然禁止。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 `Serpent-j3ba`**：打开 Eagle/Billfish 进度条左侧主题色点改为垂直居中；复制进度 `xxGB/xxGB` 的分母改为全库源文件总量，不再随当前已读批次增长。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 `Serpent-qc7v`**：瀑布流占位卡曾把分辨率放在文件名之上，加载完成后变成文件名 + 大小/日期，文字跳动。占位 caption 已与完成卡对齐。分辨率作为可选卡片字段为 P2 `Serpent-rzqj`。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 `Serpent-o4id` / `Serpent-7tjg`**：未就绪卡片缩略图改为默认文件图标，去掉扫光。Eagle/Billfish 转换再砍软件开销（进度 IPC 节流、合集位置不再 O(n²)、重复 FTS、无意义 existsSync/readdir、缩略图与源文件同趟拷贝）。10 分钟仍是性能目标不是硬超时。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 `Serpent-4s8b`**：大型 Eagle 打开快完成时曾因 Main 30 分钟墙钟超时失败。打开/转换/导入/导出类 Worker RPC 不再设墙钟超时；外部库归档与 ZIP 导入去掉 GB/条目数产品门（ZIP 导出仍受标准 ZIP 格式限制；RAR/7z 整包内存读取须先解压成文件夹）。10 分钟是性能目标不是硬超时。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+
+- **2026-08-17 Eagle 打开进度/错误/性能（`Serpent-lvif` / `sq4i` / `l2at` / `7tjg` / `joz6`）**：打开 Eagle 进度条不再写成 Billfish 或卡在「导入资源库: 验证中」；保存位置先校验再关旧库，尾斜杠/缺失父目录/源内路径有独立错误；转换跳过整文件哈希。卡片布局占位不再空白。真实 2w+ Eagle 库五项门槛待人类计时，路径不进仓库。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
 
 - **2026-08-16 大型库夹具 v3**：补齐格式多样性（gif/tiff、mp4/webm/mov）、200×200 噪声马赛克，以及图片长边 1% 8K / 3% 4K / 30% 2K / 余量 1K。旧库需 `--reset`。这是 `Serpent-sa65` 的前置，不是该工单本身。
 

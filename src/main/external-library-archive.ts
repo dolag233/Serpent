@@ -11,17 +11,15 @@ import {
 } from 'node:fs/promises';
 
 import { ArchiveReader, libarchiveWasm } from 'libarchive-wasm';
-import { extractZipStream } from '../worker/zip-import-stream';
+import { extractZipStream, zipBombProtectionLimits } from '../worker/zip-import-stream';
 
 // Main is emitted as CommonJS by Vite. Using the runtime filename keeps this
 // resolvable in both development and packaged ASAR builds (Vite rewrites
 // `import.meta.url` to an unusable empty object for this target).
 const require = createRequire(__filename);
 
-const MAX_ARCHIVE_BYTES = 1_024 * 1024 * 1024;
-const MAX_ARCHIVE_ENTRIES = 100_000;
-const MAX_ENTRY_BYTES = 1_024 * 1024 * 1024;
-const MAX_UNPACKED_BYTES = 4 * 1024 * 1024 * 1024;
+/** Non-streamable formats (RAR/7z/TAR) are loaded entirely into memory. */
+const MAX_IN_MEMORY_ARCHIVE_BYTES = 1_024 * 1024 * 1024;
 const MAX_LIBRARY_ROOT_DEPTH = 5;
 
 const ARCHIVE_EXTENSIONS = new Set([
@@ -105,28 +103,24 @@ async function extractArchive(archivePath: string, destinationRoot: string): Pro
   if (!archiveStat.isFile()) {
     throw new ExternalLibraryArchiveError('The selected archive is not a regular file.');
   }
-  if (archiveStat.size > MAX_ARCHIVE_BYTES) {
-    if (!STREAMABLE_ZIP_EXTENSIONS.has(path.extname(archivePath).toLocaleLowerCase())) {
-      throw new ExternalLibraryArchiveError('The selected archive is too large to inspect.');
-    }
-  }
-
   if (STREAMABLE_ZIP_EXTENSIONS.has(path.extname(archivePath).toLocaleLowerCase())) {
     try {
       await extractZipStream({
         sourceZipPath: archivePath,
         destinationRoot,
-        limits: {
-          maxEntries: MAX_ARCHIVE_ENTRIES,
-          maxUncompressedBytes: MAX_UNPACKED_BYTES,
-          maxEntryUncompressedBytes: MAX_ENTRY_BYTES,
-        },
+        limits: zipBombProtectionLimits(),
       });
       return;
     } catch (error) {
       if (error instanceof ExternalLibraryArchiveError) throw error;
       throw new ExternalLibraryArchiveError('Could not read the selected ZIP archive.', { cause: error });
     }
+  }
+
+  if (archiveStat.size > MAX_IN_MEMORY_ARCHIVE_BYTES) {
+    throw new ExternalLibraryArchiveError(
+      'This archive format is loaded entirely into memory. Extract it to a folder first, then open that folder.',
+    );
   }
 
   let reader: ArchiveReader | undefined;
@@ -137,13 +131,7 @@ async function extractArchive(archivePath: string, destinationRoot: string): Pro
       locateFile: (fileName: string) => fileName === 'libarchive.wasm' ? modulePath : fileName,
     });
     reader = new ArchiveReader(libarchive, data);
-    let entryCount = 0;
-    let unpackedBytes = 0;
     for (const entry of reader.entries()) {
-      entryCount += 1;
-      if (entryCount > MAX_ARCHIVE_ENTRIES) {
-        throw new ExternalLibraryArchiveError('The archive contains too many entries.');
-      }
       const relativePath = normalizeArchiveEntryPath(entry.getPathname());
       const outputPath = safeOutputPath(destinationRoot, relativePath);
       const symlinkTarget = entry.getSymlinkTarget();
@@ -156,12 +144,8 @@ async function extractArchive(archivePath: string, destinationRoot: string): Pro
         continue;
       }
       const entrySize = entry.getSize();
-      if (!Number.isSafeInteger(entrySize) || entrySize < 0 || entrySize > MAX_ENTRY_BYTES) {
-        throw new ExternalLibraryArchiveError('The archive contains an entry that is too large.');
-      }
-      unpackedBytes += entrySize;
-      if (unpackedBytes > MAX_UNPACKED_BYTES) {
-        throw new ExternalLibraryArchiveError('The extracted library is too large.');
+      if (!Number.isSafeInteger(entrySize) || entrySize < 0) {
+        throw new ExternalLibraryArchiveError('The archive contains an unreadable entry.');
       }
       const contents = entry.readData();
       if (!contents && entrySize !== 0) {

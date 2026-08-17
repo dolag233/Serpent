@@ -65,8 +65,8 @@ describe("native dialog i18n (Serpent-bwb)", () => {
     const zhDest = resolveNativeDialogCopy("zh-CN", "openEagleLibraryDestination");
     expect(enSource.title).toBe("Open Eagle Library");
     expect(zhSource.title).toBe("\u6253\u5f00 Eagle \u8d44\u6e90\u5e93");
-    expect(enDest.title).toBe("Choose where to save the Serpent library");
-    expect(zhDest.title).toBe("\u9009\u62e9 Serpent \u8d44\u6e90\u5e93\u4fdd\u5b58\u4f4d\u7f6e");
+    expect(enDest.title).toBe("Choose the parent folder for the new Serpent library");
+    expect(zhDest.title).toBe("\u9009\u62e9\u7528\u6765\u5b58\u653e\u65b0 Serpent \u8d44\u6e90\u5e93\u7684\u7236\u6587\u4ef6\u5939");
     expect(enDest.title).not.toBe(enSource.title);
     expect(zhDest.title).not.toBe(zhSource.title);
   });

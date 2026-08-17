@@ -166,6 +166,47 @@ describe('Eagle external-library opening (Serpent-768x.1)', () => {
         selectedParentPath: eagleRoot,
         displayName: 'Reference',
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_LIBRARY_PATH' });
+    ).rejects.toMatchObject({
+      code: 'INVALID_LIBRARY_PATH',
+      reason: 'LIBRARY_PARENT_INSIDE_SOURCE',
+    });
+  });
+
+  it('creates a missing destination parent instead of calling it an invalid path', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-mkdir-'));
+    roots.push(root);
+    const eagleRoot = path.join(root, 'Reference.library');
+    writeEagleFixture(eagleRoot);
+    const missingParent = path.join(root, 'new-parent');
+
+    const service = new LibraryService();
+    services.push(service);
+    const converted = await service.openEagleLibrary({
+      sourceRootPath: eagleRoot,
+      selectedParentPath: missingParent,
+      displayName: 'Reference',
+    });
+    expect(converted.libraryPath).toBe(path.join(realpathSync(missingParent), 'Reference'));
+  });
+
+  it('accepts a trailing separator on the destination parent (Serpent-sq4i)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-eagle-open-trail-'));
+    roots.push(root);
+    const eagleRoot = path.join(root, 'Reference.library');
+    const destinationParent = path.join(root, 'serpent-destination');
+    mkdirSync(eagleRoot, { recursive: true });
+    mkdirSync(destinationParent);
+    writeEagleFixture(eagleRoot);
+
+    const service = new LibraryService();
+    services.push(service);
+    const converted = await service.openEagleLibrary({
+      sourceRootPath: eagleRoot,
+      selectedParentPath: `${destinationParent}${path.sep}`,
+      displayName: 'Reference',
+    });
+    expect(converted.libraryPath).toBe(
+      path.join(realpathSync(destinationParent), 'Reference'),
+    );
   });
 });

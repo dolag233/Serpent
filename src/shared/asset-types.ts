@@ -174,6 +174,12 @@ export const browseLayoutEntrySchema = z.strictObject({
   height: z.number().int().positive().nullable(),
   /** Ready persistent preview; lets an unseen virtual slot paint before its full summary. */
   previewArtifactId: nonBlankString.nullable().optional(),
+  /** Caption fields so layout slots are not blank while AssetSummary pages stream in (Serpent-l2at). */
+  displayName: nonBlankString.optional(),
+  relativeFilePath: portableRelativePathSchema.optional(),
+  byteSize: z.number().int().nonnegative().optional(),
+  modifiedAt: nonBlankString.optional(),
+  rating: z.number().int().min(0).max(5).optional(),
 });
 
 export type BrowseLayoutEntry = z.infer<typeof browseLayoutEntrySchema>;

@@ -42,6 +42,8 @@ export interface EagleAssetCandidate {
   sourcePageUrl: string | null;
   tags: string[];
   folderIds: string[];
+  width: number | null;
+  height: number | null;
 }
 
 export interface EagleLibrarySnapshot {
@@ -115,6 +117,13 @@ function ratingValue(value: unknown): number {
   const number = finiteNumber(value);
   if (number === undefined) return 0;
   return Math.max(0, Math.min(5, Math.trunc(number)));
+}
+
+function positiveDimension(value: unknown): number | null {
+  const number = finiteNumber(value);
+  if (number === undefined || number < 1) return null;
+  const truncated = Math.trunc(number);
+  return truncated >= 1 && truncated <= 1_000_000 ? truncated : null;
 }
 
 function httpUrlValue(value: unknown): string | null {
@@ -205,6 +214,99 @@ function sourceCandidateScore(
   return 0;
 }
 
+const EAGLE_THUMBNAIL_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+
+function inspectRegularFile(filePath: string): BigIntStats | undefined {
+  try {
+    const stat = lstatSync(filePath, { bigint: true });
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return undefined;
+    }
+    return stat;
+  } catch {
+    return undefined;
+  }
+}
+
+function preferredThumbnailPath(infoPath: string, metadataName: string): string | null {
+  const names: string[] = [];
+  if (metadataName !== '') {
+    for (const extension of EAGLE_THUMBNAIL_EXTENSIONS) {
+      names.push(`${metadataName}_thumbnail${extension}`);
+    }
+  }
+  names.push('_thumbnail.png');
+  for (const fileName of names) {
+    const thumbnailPath = path.join(infoPath, fileName);
+    const stat = inspectRegularFile(thumbnailPath);
+    if (stat && stat.size > 0n) return thumbnailPath;
+  }
+  return null;
+}
+
+function tryPreferredSourceFile(
+  infoPath: string,
+  metadata: JsonObject,
+): {
+  sourcePath: string;
+  fileName: string;
+  stat: BigIntStats;
+  thumbnailPath: string | null;
+} | undefined {
+  const metadataName = textValue(metadata.name, 255);
+  const metadataExtension = textValue(metadata.ext, 32).replace(/^\./u, '');
+  if (metadataName === '' || metadataExtension === '') return undefined;
+  const fileName = `${metadataName}.${metadataExtension}`;
+  if (isMetadataBackupFile(fileName) || isThumbnailFile(fileName)) return undefined;
+  const sourcePath = path.join(infoPath, fileName);
+  const stat = inspectRegularFile(sourcePath);
+  if (!stat) return undefined;
+  return {
+    sourcePath,
+    fileName,
+    stat,
+    thumbnailPath: preferredThumbnailPath(infoPath, metadataName),
+  };
+}
+
+function metadataSourceByteSize(metadata: JsonObject): number | undefined {
+  const fromMeta = finiteNumber(metadata.size);
+  if (
+    fromMeta === undefined
+    || fromMeta <= 0
+    || !Number.isSafeInteger(fromMeta)
+  ) {
+    return undefined;
+  }
+  return Math.trunc(fromMeta);
+}
+
+/** Sum source-file bytes for progress denominators without importing yet. */
+export function sumEagleLibrarySourceBytes(
+  imagesPath: string,
+  infoDirectoryNames: readonly string[],
+): number {
+  let total = 0;
+  for (const infoDirectoryName of infoDirectoryNames) {
+    const infoPath = path.join(imagesPath, infoDirectoryName);
+    let metadata: JsonObject;
+    try {
+      metadata = readJsonObject(path.join(infoPath, 'metadata.json'));
+    } catch {
+      continue;
+    }
+    if (metadata.isDeleted === true) continue;
+    const fromMeta = metadataSourceByteSize(metadata);
+    if (fromMeta !== undefined) {
+      total += fromMeta;
+      continue;
+    }
+    const selected = chooseSourceFile(infoPath, metadata);
+    if (selected) total += Number(selected.stat.size);
+  }
+  return total;
+}
+
 function chooseSourceFile(
   infoPath: string,
   metadata: JsonObject,
@@ -214,6 +316,8 @@ function chooseSourceFile(
   stat: BigIntStats;
   thumbnailPath: string | null;
 } | undefined {
+  const preferred = tryPreferredSourceFile(infoPath, metadata);
+  if (preferred) return preferred;
   let entries: Dirent[];
   try {
     entries = readdirSync(infoPath, { withFileTypes: true });
@@ -294,6 +398,8 @@ function itemFromInfoDirectory(
     sourcePageUrl: httpUrlValue(metadata.url),
     tags: stringArray(metadata.tags, MAX_TAG_LENGTH),
     folderIds: stringArray(metadata.folders, 255),
+    width: positiveDimension(metadata.width),
+    height: positiveDimension(metadata.height),
   };
 }
 

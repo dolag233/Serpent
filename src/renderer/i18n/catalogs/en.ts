@@ -692,7 +692,7 @@ export const en = {
     },
     openEagleLibrary: {
       title: "Open Eagle library",
-      body: "Convert the selected Eagle library into a Serpent library.",
+      body: "Convert the selected Eagle library into a new Serpent library.",
       name: "Name",
       help: "",
       submit: "Choose save location"
@@ -1563,6 +1563,7 @@ export const en = {
     exportingLibrary: "Exporting library:",
     importingLibrary: "Importing library:",
     openingLibrary: "Opening library: {name}",
+    validatingEagleLibrary: "Opening Eagle library…",
     validatingBillfishLibrary: "Validating Billfish library…",
     cancelExport: "Cancel export",
     cancelImport: "Cancel import",
@@ -1987,6 +1988,11 @@ export const en = {
       IMPORT_COPY_FAILED: "Copying source files into the library failed. Check disk space and that the source files are still readable, then see the app log.",
       IMPORT_REGISTER_FAILED: "Files started copying, but registering them in the library failed. Check the app log and retry; do not re-import items that already succeeded.",
       EAGLE_THUMBNAIL_FAILED: "Eagle still thumbnails could not be written to the preview cache. The assets still import; refresh thumbnails later.",
+      LIBRARY_PARENT_MISSING: "The save location does not exist and could not be created. Choose an existing local folder.",
+      LIBRARY_PARENT_IS_ROOT: "A library cannot be created at a drive root (for example E:\\). Choose a subfolder.",
+      LIBRARY_PARENT_NOT_DIRECTORY: "The selected path is not a folder. Choose a local folder as the save location.",
+      LIBRARY_PARENT_INSIDE_SOURCE: "The new Serpent library cannot be saved inside the Eagle/Billfish source. Choose a folder outside the source library.",
+      LIBRARY_TRANSFER_TIMEOUT: "Opening or converting the library timed out. Make sure the disk is not busy and try again. A large Eagle library can take several minutes on first conversion.",
       SYNC_AUTH_FAILED: "The username or password is incorrect.",
       SYNC_PERMISSION_DENIED: "This account cannot upload or download files on the server.",
       SYNC_NOT_FOUND: "The sync path could not be found on the server.",

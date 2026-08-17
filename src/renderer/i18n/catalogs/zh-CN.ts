@@ -680,7 +680,7 @@ export const zhCN = {
     },
     openEagleLibrary: {
       title: "打开 Eagle 资源库",
-      body: "将所选 Eagle 资源库转换为 Serpent 资源库。",
+      body: "将所选 Eagle 资源库转换为新的 Serpent 资源库。",
       name: "名称",
       help: "",
       submit: "选择保存位置"
@@ -1546,6 +1546,7 @@ export const zhCN = {
     exportingLibrary: "正在导出资源库：",
     importingLibrary: "导入资源库：",
     openingLibrary: "正在打开资源库：{name}",
+    validatingEagleLibrary: "正在打开 Eagle 资源库…",
     validatingBillfishLibrary: "正在验证 Billfish 资源库…",
     cancelExport: "取消导出",
     cancelImport: "取消导入",
@@ -1968,6 +1969,11 @@ export const zhCN = {
       IMPORT_COPY_FAILED: "复制源文件到资源库时失败。请检查磁盘空间与源文件是否仍可读取，并查看应用日志。",
       IMPORT_REGISTER_FAILED: "文件已开始复制，但登记到资源库时失败。请查看应用日志后重试，不要重复选择同一批已成功的条目。",
       EAGLE_THUMBNAIL_FAILED: "Eagle 静态缩略图未能写入预览缓存；资产文件仍会导入，可稍后刷新缩略图。",
+      LIBRARY_PARENT_MISSING: "所选保存位置不存在，也无法自动创建。请改选一个已有的本地文件夹。",
+      LIBRARY_PARENT_IS_ROOT: "不能把资源库直接建在磁盘根目录（例如 E:\\）。请选择一个子文件夹。",
+      LIBRARY_PARENT_NOT_DIRECTORY: "所选路径不是文件夹。请选择一个本地文件夹作为保存位置。",
+      LIBRARY_PARENT_INSIDE_SOURCE: "不能把新 Serpent 资源库保存在 Eagle/Billfish 源库内部。请选择源库以外的文件夹。",
+      LIBRARY_TRANSFER_TIMEOUT: "打开或转换资源库超时。请确认磁盘不忙后重试；大型 Eagle 库首次转换可能需要数分钟。",
       SYNC_AUTH_FAILED: "用户名或密码不正确。",
       SYNC_PERMISSION_DENIED: "该账号没有上传或下载文件的权限。",
       SYNC_NOT_FOUND: "服务器上找不到该同步路径。",

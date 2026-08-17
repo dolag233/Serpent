@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
 import {
   LibraryWorkerClient,
   requestTimeoutForCommand,
+  WorkerRequestTimeoutError,
 } from '../../src/main/worker-client';
 
 describe('requestTimeoutForCommand', () => {
@@ -34,27 +35,95 @@ describe('requestTimeoutForCommand', () => {
     expect(requestTimeoutForCommand('media.get-asset-drag-infos')).toBe(60_000);
   });
 
-  it('allows library create and automation plan previews to finish before Main times out', () => {
-    expect(requestTimeoutForCommand('library.create')).toBe(5 * 60_000);
+  it('does not impose a wall-clock timeout on disk-bound library transfers (Serpent-4s8b)', () => {
+    expect(requestTimeoutForCommand('library.create')).toBeNull();
+    expect(requestTimeoutForCommand('library.open')).toBeNull();
+    expect(requestTimeoutForCommand('library.open-eagle')).toBeNull();
+    expect(requestTimeoutForCommand('library.open-billfish')).toBeNull();
+    expect(requestTimeoutForCommand('library.inspect-eagle')).toBeNull();
+    expect(requestTimeoutForCommand('asset.import-eagle')).toBeNull();
+    expect(requestTimeoutForCommand('asset.import-billfish')).toBeNull();
+    expect(requestTimeoutForCommand('library.export')).toBeNull();
+    expect(requestTimeoutForCommand('library.import-folder')).toBeNull();
+    expect(requestTimeoutForCommand('library.import-zip')).toBeNull();
+    expect(requestTimeoutForCommand('asset.refresh')).toBeNull();
+    expect(requestTimeoutForCommand('asset.delete-linked')).toBeNull();
+    expect(requestTimeoutForCommand('sync.preview')).toBeNull();
+    expect(requestTimeoutForCommand('sync.run')).toBeNull();
+    expect(requestTimeoutForCommand('sync.list-remote-libraries')).toBeNull();
+    expect(requestTimeoutForCommand('sync.open-remote-library')).toBeNull();
+    expect(requestTimeoutForCommand({
+      type: 'asset.import.prepare',
+      libraryId: 'library-1',
+      sourceKind: 'files',
+      sourcePaths: ['/tmp/a.png'],
+    })).toBeNull();
     expect(requestTimeoutForCommand({
       type: 'automation.file-import-plan',
       libraryId: 'library-1',
       sourceKind: 'files',
       sourcePaths: ['/tmp/a.png'],
-    })).toBe(5 * 60_000);
+    })).toBeNull();
     expect(requestTimeoutForCommand({
       type: 'automation.file-operation-plan',
       libraryId: 'library-1',
       operation: 'trash',
       assetIds: ['asset-1'],
-    })).toBe(5 * 60_000);
+    })).toBeNull();
   });
 
-  it('gives Eagle library imports the long archive-import timeout', () => {
-    expect(requestTimeoutForCommand('asset.import-eagle')).toBe(30 * 60_000);
-    expect(requestTimeoutForCommand('library.open-eagle')).toBe(30 * 60_000);
-    expect(requestTimeoutForCommand('library.open-billfish')).toBe(30 * 60_000);
-    expect(requestTimeoutForCommand('asset.import-billfish')).toBe(30 * 60_000);
+  it('names worker timeouts so Main can map them to a public reason (Serpent-sq4i)', () => {
+    const error = new WorkerRequestTimeoutError('req-1', 'library.open-eagle');
+    expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe('WORKER_REQUEST_TIMEOUT');
+    expect(error.commandType).toBe('library.open-eagle');
+  });
+
+  it('lets an unbounded Eagle conversion finish after the old 30-minute deadline (Serpent-4s8b)', async () => {
+    vi.useFakeTimers();
+    const previousFfmpegPath = process.env.SERPENT_FFMPEG_PATH;
+    const previousOiioPath = process.env.SERPENT_OIIO_PATH;
+    process.env.SERPENT_FFMPEG_PATH = '/usr/bin/true';
+    process.env.SERPENT_OIIO_PATH = '/usr/bin/true';
+    try {
+      const child = new FakeUtilityProcess();
+      utilityProcessFork.mockReturnValueOnce(child);
+      const logger = {
+        worker: vi.fn(),
+        error: vi.fn(),
+        info: vi.fn(),
+      } as unknown as AppLogger;
+      const client = new LibraryWorkerClient('/tmp/library-worker.js', logger);
+      const start = client.start();
+      child.emit('message', { type: 'worker.ready' });
+      await start;
+
+      let settled = false;
+      const pending = client.request({
+        type: 'library.open-eagle',
+        sourceRootPath: 'C:\\eagle',
+        selectedParentPath: 'C:\\out',
+        displayName: 'Eagle',
+      }).finally(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(31 * 60_000);
+      expect(settled).toBe(false);
+
+      const posted = child.postMessage.mock.calls.at(-1)?.[0] as { requestId: string };
+      child.emit('message', {
+        requestId: posted.requestId,
+        result: { ok: true, type: 'library.closed', libraryId: 'library-1' },
+      });
+      await expect(pending).resolves.toMatchObject({ ok: true, type: 'library.closed' });
+    } finally {
+      vi.useRealTimers();
+      if (previousFfmpegPath === undefined) delete process.env.SERPENT_FFMPEG_PATH;
+      else process.env.SERPENT_FFMPEG_PATH = previousFfmpegPath;
+      if (previousOiioPath === undefined) delete process.env.SERPENT_OIIO_PATH;
+      else process.env.SERPENT_OIIO_PATH = previousOiioPath;
+    }
   });
 
   it('gives AI queue processing a long timeout (Serpent-iokf)', () => {

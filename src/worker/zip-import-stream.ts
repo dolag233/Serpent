@@ -17,8 +17,8 @@ import * as yauzl from 'yauzl';
 
 import { pathIsWithin } from './path-utils';
 
-const DEFAULT_MAX_ENTRIES = 65_534;
-const DEFAULT_MAX_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024;
+const DEFAULT_MAX_ENTRIES = Number.MAX_SAFE_INTEGER;
+const DEFAULT_MAX_UNCOMPRESSED_BYTES = Number.MAX_SAFE_INTEGER;
 const DEFAULT_MAX_COMPRESSION_RATIO = 100;
 const DEFAULT_COMPRESSION_RATIO_MIN_SIZE = 1024 * 1024;
 const FILESYSTEM_ERROR_CODES = new Set([
@@ -60,6 +60,17 @@ export interface ZipImportLimits {
   maxEntryUncompressedBytes?: number;
   maxCompressionRatio?: number;
   compressionRatioMinSize?: number;
+}
+
+/** Reject zip bombs; do not cap library size or entry count. */
+export function zipBombProtectionLimits(): ZipImportLimits {
+  return {
+    maxEntries: DEFAULT_MAX_ENTRIES,
+    maxUncompressedBytes: DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    maxEntryUncompressedBytes: DEFAULT_MAX_UNCOMPRESSED_BYTES,
+    maxCompressionRatio: DEFAULT_MAX_COMPRESSION_RATIO,
+    compressionRatioMinSize: DEFAULT_COMPRESSION_RATIO_MIN_SIZE,
+  };
 }
 
 export interface ZipImportProgress {

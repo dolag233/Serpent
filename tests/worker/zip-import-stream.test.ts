@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   extractZipStream,
+  zipBombProtectionLimits,
   ZipImportStreamError,
   type ZipImportProgress,
 } from '../../src/worker/zip-import-stream';
@@ -106,6 +107,15 @@ afterEach(() => {
 });
 
 describe('extractZipStream', () => {
+  it('protects against zip bombs without capping library size (Serpent-4s8b)', () => {
+    expect(zipBombProtectionLimits()).toEqual({
+      maxEntries: Number.MAX_SAFE_INTEGER,
+      maxUncompressedBytes: Number.MAX_SAFE_INTEGER,
+      maxEntryUncompressedBytes: Number.MAX_SAFE_INTEGER,
+      maxCompressionRatio: 100,
+      compressionRatioMinSize: 1024 * 1024,
+    });
+  });
   it('keeps a missing source as an observable filesystem error with a cause', async () => {
     const root = temporaryRoot();
     const destinationRoot = path.join(root, 'destination');

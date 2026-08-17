@@ -8545,8 +8545,14 @@ select.ai-config-input.ai-config-languages {
 }
 
 .import-progress-strip {
-  align-items: flex-start;
+  align-items: center;
   border-radius: 10px;
+}
+
+.import-progress-strip .activity-pulse {
+  display: block;
+  flex: 0 0 auto;
+  align-self: center;
 }
 
 .import-progress-body {
@@ -8598,10 +8604,14 @@ select.ai-config-input.ai-config-languages {
 }
 
 .activity-pulse {
+  display: block;
   width: 7px;
   height: 7px;
+  flex: 0 0 auto;
+  align-self: center;
   border-radius: 50%;
   background: var(--accent);
+  transform-origin: center;
   animation: pulse 900ms ease-in-out infinite alternate;
 }
 @keyframes pulse {
@@ -9268,58 +9278,25 @@ select.ai-config-input.ai-config-languages {
   pointer-events: none;
 }
 
-/* Serpent-1tio: progressive loading — a subtle shimmer while the
-   poster/thumbnail artifact is still generating. Never interactive. */
-.asset-card-media.is-pending {
-  background: linear-gradient(
-    100deg,
-    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 40%,
-    rgba(128, 128, 128, 0.22) 50%,
-    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 60%
-  );
-  background-size: 200% 100%;
-  animation: serpent-card-pending-shimmer 1.4s ease-in-out infinite;
-}
-
-@keyframes serpent-card-pending-shimmer {
-  from {
-    background-position: 120% 0;
-  }
-  to {
-    background-position: -80% 0;
-  }
-}
-
-/* Serpent-l2at: 布局占位卡的骨架文字条——完整 AssetSummary（名称/大小/日期）
-   流式到达前，用与缩略图 pending 相同的微光动画占位，避免卡片下方空白。 */
-.asset-card.is-layout-preview .asset-caption-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 7px 8px 8px;
-}
-
+/* Serpent-l2at / Serpent-qc7v: 占位 caption 与完成卡共用 .asset-caption 间距；
+   骨架条只填尚未到达的文件名/大小日期行，高度贴近对应文字行。 */
 .asset-caption-skeleton-line {
   display: block;
+  flex-shrink: 0;
   border-radius: 3px;
-  background: linear-gradient(
-    100deg,
-    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 40%,
-    rgba(128, 128, 128, 0.22) 50%,
-    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 60%
-  );
-  background-size: 200% 100%;
-  animation: serpent-card-pending-shimmer 1.4s ease-in-out infinite;
+  background: color-mix(in srgb, var(--text) 10%, var(--raised-2));
 }
 
 .asset-caption-skeleton-line.is-name {
   width: 72%;
-  height: 12px;
+  height: 11px;
+  margin: 1.5px 0;
 }
 
 .asset-caption-skeleton-line.is-meta {
   width: 46%;
   height: 9px;
+  margin: 1.5px 0;
 }
 
 .image-sequence-dialog-section {

@@ -39,10 +39,18 @@ describe("library lifecycle detach rules", () => {
     ).toBe(false);
     expect(
       shouldApplyLibraryLifecycleEvent({
-        event: { type: "library.closed", libraryId: "meme-library" },
-        currentLibraryId: "meme-library",
+        event: {
+          type: "library.opened",
+          library: {
+            libraryId: "meme-library",
+            displayName: "meme",
+            displayPath: "/libraries/meme",
+          },
+          source: "replacement-restore",
+        },
+        currentLibraryId: undefined,
         scriptSandboxPreviewOpen: false,
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

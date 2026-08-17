@@ -105,6 +105,31 @@ export function stripWindowsExtendedPathPrefix(normalized: string): string {
   return withoutPrefix;
 }
 
+/**
+ * Windows folder pickers often return `E:\设计\`. `path.dirname(join(parent, name))`
+ * then disagrees with the trailing-separator parent and every create/open
+ * destination is rejected as INVALID_LIBRARY_PATH (Serpent-sq4i).
+ */
+export function stripTrailingPathSeparators(input: string): string {
+  const { root } = path.parse(input);
+  if (input === root) return input;
+  let end = input.length;
+  while (end > root.length) {
+    const character = input[end - 1];
+    if (character !== '/' && character !== '\\') break;
+    end -= 1;
+  }
+  return input.slice(0, Math.max(end, root.length));
+}
+
+export function sameNormalizedPath(left: string, right: string): boolean {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+  return process.platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
 export function normalizeAbsolutePath(input: string): string {
   if (input.includes('\0') || input.trim() !== input || !path.isAbsolute(input)) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid library path.');
@@ -115,10 +140,10 @@ export function normalizeAbsolutePath(input: string): string {
   // for the same location and bypass root/identity checks; strip the prefix
   // for identity and reject overly long library parents (paths beyond ~260
   // chars fail later with ENOENT on Windows).
-  if (process.platform === 'win32') {
-    return stripWindowsExtendedPathPrefix(normalized);
-  }
-  return normalized;
+  const withoutExtendedPrefix = process.platform === 'win32'
+    ? stripWindowsExtendedPathPrefix(normalized)
+    : normalized;
+  return stripTrailingPathSeparators(withoutExtendedPrefix);
 }
 
 export function targetLibraryPath(selectedParentPath: string, displayName: string): string {
@@ -126,14 +151,8 @@ export function targetLibraryPath(selectedParentPath: string, displayName: strin
   const safeName = normalizeLibraryName(displayName);
   const targetPath = path.join(parentPath, safeName);
 
-  if (path.dirname(targetPath) !== parentPath) {
+  if (!sameNormalizedPath(path.dirname(targetPath), parentPath)) {
     throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Invalid library path.');
-  }
-  // Serpent-8b5b.3: a library directly at a filesystem root ('/' or 'C:\')
-  // is never a legitimate managed-library parent; reject it explicitly so
-  // Windows drive roots are covered even when they are writable.
-  if (parentPath === path.parse(parentPath).root) {
-    throw new LibraryInputError('INVALID_LIBRARY_PATH', 'Library parent must not be a filesystem root.');
   }
   // Windows review: keep the full library path inside the classic 260-char
   // limit so later filesystem operations do not fail with ENOENT/EINVAL.

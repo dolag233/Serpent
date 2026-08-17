@@ -6,6 +6,7 @@ import {
   browsePageOffsetsForRange,
   contiguousBrowsePageRuns,
   mergeLoadedBrowsePage,
+  assetSummaryFromLayoutEntry,
 } from "../../src/renderer/browse-window-slots";
 
 function asset(assetId: string): AssetSummary {
@@ -85,5 +86,28 @@ describe("browse window virtualization (Serpent-sa65)", () => {
       ],
     });
     expect(jumped.map((item) => item.assetId)).toEqual(["a", "middle", "tail"]);
+  });
+
+  it("builds a first-paint AssetSummary from layout caption fields (Serpent-l2at)", () => {
+    const summary = assetSummaryFromLayoutEntry({
+      assetId: "hero",
+      width: 1920,
+      height: 1080,
+      displayName: "hero.png",
+      relativeFilePath: "hero.png",
+      byteSize: 12,
+      modifiedAt: "2026-08-17T00:00:00.000Z",
+      rating: 4,
+      previewArtifactId: "thumb-1",
+    });
+    expect(summary).toMatchObject({
+      assetId: "hero",
+      displayName: "hero.png",
+      byteSize: 12,
+      rating: 4,
+      thumbnailArtifactId: "thumb-1",
+      width: 1920,
+      height: 1080,
+    });
   });
 });

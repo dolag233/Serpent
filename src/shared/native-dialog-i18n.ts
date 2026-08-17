@@ -96,7 +96,7 @@ const EN: DialogCatalog = {
     buttonLabel: "Open Billfish Library",
   },
   openEagleLibraryDestination: {
-    title: "Choose where to save the Serpent library",
+    title: "Choose the parent folder for the new Serpent library",
     buttonLabel: "Save here",
   },
   openSyncLibraryDestination: {
@@ -187,7 +187,7 @@ const ZH_CN: DialogCatalog = {
     buttonLabel: "\u6253\u5f00 Billfish \u8d44\u6e90\u5e93",
   },
   openEagleLibraryDestination: {
-    title: "\u9009\u62e9 Serpent \u8d44\u6e90\u5e93\u4fdd\u5b58\u4f4d\u7f6e",
+    title: "\u9009\u62e9\u7528\u6765\u5b58\u653e\u65b0 Serpent \u8d44\u6e90\u5e93\u7684\u7236\u6587\u4ef6\u5939",
     buttonLabel: "\u4fdd\u5b58\u5230\u6b64\u5904",
   },
   openSyncLibraryDestination: {
