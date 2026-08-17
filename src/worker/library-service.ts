@@ -5092,6 +5092,11 @@ export class LibraryService {
   private readonly applicationSessionId = randomUUID();
   private readonly openById = new Map<string, OpenLibrary>();
   private readonly openIdByPath = new Map<string, string>();
+  /**
+   * 进行中的同步会话（libraryId → sessionId）。内存级互斥：自动同步与
+   * 手动同步不能同时在跑；进程退出自动释放，崩溃残留不会误锁。
+   */
+  private readonly activeSyncSessions = new Map<string, string>();
   private readonly databaseBackupInFlight = new Map<string, Promise<boolean>>();
   private readonly databaseBackupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingImports = new Map<string, PendingImport>();
@@ -18011,7 +18016,15 @@ export class LibraryService {
   /** Serpent-xffq：开始一次同步会话（sync_sessions 记录，供 UI 查询状态）。 */
   beginSyncSession(libraryId: string): string {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // 内存级互斥：自动同步（Main 调度器）与手动同步不能同时在跑。
+    // 内存锁随进程消亡自动释放，崩溃残留不会误锁。
+    if (this.activeSyncSessions.has(libraryId)) {
+      throw new LibraryServiceError('SYNC_IN_PROGRESS', {
+        reason: 'FILE_BUSY',
+      });
+    }
     const sessionId = randomUUID();
+    this.activeSyncSessions.set(libraryId, sessionId);
     openLibrary.connection
       .prepare(
         `INSERT INTO sync_sessions (session_id, library_id, status, phase, progress_total, progress_done, started_at)
@@ -18024,6 +18037,9 @@ export class LibraryService {
   /** Serpent-xffq：结束同步会话。 */
   finishSyncSession(libraryId: string, sessionId: string, status: 'done' | 'failed' | 'cancelled', errorMessage?: string): void {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    if (this.activeSyncSessions.get(libraryId) === sessionId) {
+      this.activeSyncSessions.delete(libraryId);
+    }
     openLibrary.connection
       .prepare(
         `UPDATE sync_sessions

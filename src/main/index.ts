@@ -241,6 +241,7 @@ import {
   parseAiContentClearedEvent,
 } from "../shared/protocol/responses";
 import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client";
+import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
 import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
 import {
@@ -379,6 +380,8 @@ let mainWindow: BrowserWindow | undefined;
 /** Effective UI locale for native dialogs; synced from Renderer (Serpent-bwb). */
 let appLocale: AppLocale = "en";
 let workerClient: LibraryWorkerClient | undefined;
+/** 自动同步调度器（Serpent-bfsb 后续），随 Worker 生命周期启停。 */
+let syncAutoScheduler: SyncAutoScheduler | undefined;
 type ArtifactPathBatchWaiter = {
   artifactId: string;
   resolve: (absolutePath: string) => void;
@@ -693,6 +696,8 @@ interface SyncBindingRecord {
   subPath?: string;
   /** 上次成功同步时间（ISO 字符串）。 */
   lastSyncedAt?: string;
+  /** 自动同步开关（用户决定：在资源库设置里开启/关闭）。 */
+  enabled?: boolean;
 }
 
 /** 兼容旧格式绑定：directoryName 优先，其次旧 subPath。 */
@@ -3234,6 +3239,62 @@ async function commandFor(
 function assertNever(value: never): never {
   throw new Error(`Unhandled Renderer request: ${String(value)}`);
 }
+
+/** 测试连接的最大尝试次数（含首次）。 */
+const SYNC_PROBE_MAX_ATTEMPTS = 3;
+const SYNC_PROBE_RETRY_DELAY_MS = [1_000, 2_000];
+
+/**
+ * 测试连接（sync.probe）：单次请求超时或网络类失败后自动重试，
+ * 最大重试后返回带“已自动重试”提示的可读错误（用户决定 2026-08-17）。
+ * 认证失败等确定性错误不重试，直接返回。
+ */
+async function runSyncProbeWithRetry(
+  command: Extract<WorkerCommand, { type: "sync.probe" }>,
+): Promise<WorkerResult> {
+  if (!workerClient) throw new Error("Library Worker is unavailable.");
+  let lastError: WorkerResult & { ok: false } | undefined;
+  let lastTimeout = false;
+  for (let attempt = 0; attempt < SYNC_PROBE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await workerClient.request(command);
+      if (result.ok) return result;
+      // 确定性错误（认证失败/服务器不支持等）不重试。
+      if (!isRetryableProbeError(result.error)) return result;
+      lastError = result;
+    } catch (error) {
+      if (error instanceof WorkerRequestTimeoutError) {
+        lastTimeout = true;
+      } else {
+        throw error;
+      }
+    }
+    if (attempt < SYNC_PROBE_MAX_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, SYNC_PROBE_RETRY_DELAY_MS[attempt] ?? 1_000));
+    }
+  }
+  if (lastTimeout) {
+    return {
+      ok: false,
+      error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_TIMEOUT"),
+    } satisfies WorkerResult;
+  }
+  return lastError ?? {
+    ok: false,
+    error: createPublicError("SYNC_CONNECTION_FAILED", "SYNC_NETWORK"),
+  } satisfies WorkerResult;
+}
+
+function isRetryableProbeError(error: { code: string; reason?: string }): boolean {
+  if (error.code !== "SYNC_CONNECTION_FAILED") return false;
+  return (
+    error.reason === "SYNC_TIMEOUT"
+    || error.reason === "SYNC_DNS"
+    || error.reason === "SYNC_CONNECTION_REFUSED"
+    || error.reason === "SYNC_NETWORK"
+  );
+}
+
 async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
   let operation: "create" | "open" | "import" | "open-eagle" | "open-billfish" | undefined;
   let lifecyclePublished = false;
@@ -3382,6 +3443,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         serverId: request.serverId,
         directoryName: request.directoryName,
         lastSyncedAt: previous?.lastSyncedAt,
+        enabled: request.enabled ?? previous?.enabled ?? false,
       };
       writeSyncBindings(bindings);
       return {
@@ -3390,6 +3452,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         libraryId: request.libraryId,
         serverId: request.serverId,
         directoryName: request.directoryName,
+        enabled: request.enabled ?? previous?.enabled ?? false,
       } satisfies RendererResult;
     }
 
@@ -3400,7 +3463,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         type: "sync.binding.got",
         libraryId: request.libraryId,
         binding: binding
-          ? { serverId: binding.serverId, directoryName: effectiveSyncDirectoryName(binding), lastSyncedAt: binding.lastSyncedAt }
+          ? {
+              serverId: binding.serverId,
+              directoryName: effectiveSyncDirectoryName(binding),
+              lastSyncedAt: binding.lastSyncedAt,
+              enabled: binding.enabled ?? false,
+            }
           : null,
       } satisfies RendererResult;
     }
@@ -4240,7 +4308,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       previousLibraryPaths = await closeOpenLibrariesBeforeReplacement();
     }
 
-    const workerResult = await workerClient.request(command);
+    // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
+    // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
+    const workerResult = command.type === "sync.probe"
+      ? await runSyncProbeWithRetry(command)
+      : await workerClient.request(command);
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
@@ -4365,6 +4437,21 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         serverId: request.serverId,
         directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
         lastSyncedAt: new Date().toISOString(),
+        enabled: previous?.enabled ?? false,
+      };
+      writeSyncBindings(syncBindings);
+    }
+
+    // 打开同步资源库成功：自动绑定服务器并开启自动同步（用户决定），
+    // 免去手动进入资源库设置重选服务器；此后本地变更/云端变更自动同步。
+    if (workerResult.ok && request.type === "sync.open-remote-library.request") {
+      const syncBindings = readSyncBindings();
+      const previous = syncBindings[request.libraryId];
+      syncBindings[request.libraryId] = {
+        serverId: request.serverId,
+        directoryName: request.directoryName ?? effectiveSyncDirectoryName(previous),
+        lastSyncedAt: new Date().toISOString(),
+        enabled: true,
       };
       writeSyncBindings(syncBindings);
     }
@@ -6493,6 +6580,19 @@ async function startApplication(): Promise<void> {
     void enqueueAutoAnalyzeAfterImport(event.libraryId, [event.assetId]);
   });
 
+  // Serpent-bfsb 后续：自动同步调度器。打开同步资源库后自动绑定并开启
+  // （见 handleLibraryRequest 的 sync.open-remote-library.request 成功分支）；
+  // 本地资产变更 debounce 后自动同步；固定间隔轮询云端 manifest 变化。
+  syncAutoScheduler = new SyncAutoScheduler({
+    workerClient,
+    deviceId: () => syncDeviceId(),
+    readBindings: () => readSyncBindings() as unknown as Record<string, SyncBindingLike>,
+    writeBindings: (bindings) => writeSyncBindings(bindings as unknown as Record<string, SyncBindingRecord>),
+    resolveCredentials: (serverId) => resolveSyncServerCredentials(serverId),
+    logger,
+  });
+  syncAutoScheduler.start();
+
   const recentPath = readActiveLibraryPath(recentLibraryPath(), (error) => {
     logger?.error("recent-library.read", error);
   });
@@ -7327,6 +7427,8 @@ if (!hasSingleInstanceLock) {
 
   app.on("will-quit", () => {
     void cleanupAllExternalSources();
+    syncAutoScheduler?.stop();
+    syncAutoScheduler = undefined;
     windowsTray?.destroy();
     windowsTray = undefined;
   });

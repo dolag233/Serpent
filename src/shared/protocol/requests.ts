@@ -957,6 +957,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     serverId: nonBlankString,
     directoryName: z.string().optional(),
+    /** 自动同步开关（Serpent-bfsb 后续：打开远程库后默认开启）。 */
+    enabled: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('sync.library.binding.get.request'),
@@ -1245,6 +1247,16 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('sync.run'),
+    libraryId: identifierSchema,
+    deviceId: nonBlankString,
+    baseUrl: nonBlankString,
+    username: z.string().optional(),
+    password: z.string().optional(),
+    allowInsecureTls: z.boolean().optional(),
+    directoryName: z.string().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('sync.poll-remote'),
     libraryId: identifierSchema,
     deviceId: nonBlankString,
     baseUrl: nonBlankString,

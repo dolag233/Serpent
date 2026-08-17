@@ -304,9 +304,32 @@ export function parseImportProgressEvent(input: unknown): ImportProgressEvent {
   return importProgressEventSchema.parse(input);
 }
 
+/**
+ * 同步传输进度（Serpent-xffq 增量）：done/total 为文件动作数，
+ * bytesDone/bytesTotal 为已传输与总字节（含上传与下载），供 UI
+ * 显示进度条与传输速度。phase=run 为执行中；preview 为差异计算阶段；
+ * complete 表示本次同步已结束（UI 据此收起进度条）。
+ */
+export const syncProgressEventSchema = z.strictObject({
+  type: z.literal('sync.progress'),
+  libraryId: nonBlankString,
+  phase: z.enum(['preview', 'run', 'complete']),
+  filesDone: z.number().int().nonnegative(),
+  filesTotal: z.number().int().nonnegative(),
+  bytesDone: z.number().int().nonnegative(),
+  bytesTotal: z.number().int().nonnegative(),
+});
+
+export type SyncProgressEvent = z.infer<typeof syncProgressEventSchema>;
+
+export function parseSyncProgressEvent(input: unknown): SyncProgressEvent {
+  return syncProgressEventSchema.parse(input);
+}
+
 export const progressEventSchema = z.union([
   exportProgressEventSchema,
   importProgressEventSchema,
+  syncProgressEventSchema,
 ]);
 
 export type ProgressEvent = z.infer<typeof progressEventSchema>;
@@ -1794,6 +1817,12 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('sync.poll-remote.result'),
+    /** true = 远端 manifest 与本地缓存不一致，需要一次完整同步。 */
+    changed: z.boolean(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('ai.jobs.enqueued'),
     libraryId: nonBlankString,
     enqueued: z.number().int().nonnegative(),
@@ -2032,6 +2061,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     serverId: nonBlankString,
     directoryName: z.string().optional(),
+    enabled: z.boolean().optional(),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2041,6 +2071,7 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
       serverId: nonBlankString,
       directoryName: z.string().optional(),
       lastSyncedAt: z.string().optional(),
+      enabled: z.boolean().optional(),
     }).nullable(),
   }),
   z.strictObject({

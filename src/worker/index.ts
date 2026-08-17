@@ -25,7 +25,7 @@ import {
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
-import { SyncEngine } from './sync/sync-engine';
+import { SyncEngine, type SyncEngineOptions } from './sync/sync-engine';
 import { createLibrarySyncPort } from './sync/library-port';
 import { WebDAVDriver } from './sync/webdav-driver';
 import { parseManifest, serializeManifest } from './sync/manifest';
@@ -143,8 +143,11 @@ const libraryService = new LibraryService({
 const processLifetime = setInterval(() => {}, 60 * 60_000);
 
 /** Serpent-xffq：按设备身份构建同步引擎（deviceId 由 Main 持久化生成）。 */
-function buildSyncEngine(deviceId: string): SyncEngine {
-  return new SyncEngine(createLibrarySyncPort(libraryService), { deviceId });
+function buildSyncEngine(
+  deviceId: string,
+  onProgress?: SyncEngineOptions['onProgress'],
+): SyncEngine {
+  return new SyncEngine(createLibrarySyncPort(libraryService), { deviceId, onProgress });
 }
 
 function requestPluginMediaProvider(input: Omit<PluginMediaProviderRequest, 'type' | 'requestId'>): Promise<PluginMediaProviderResult> {
@@ -1051,10 +1054,23 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'sync.previewed', report };
     }
     case 'sync.run': {
-      const engine = buildSyncEngine(request.command.deviceId);
-      const sessionId = libraryService.beginSyncSession(request.command.libraryId);
+      const libraryId = request.command.libraryId;
+      const engine = buildSyncEngine(request.command.deviceId, (done, total, bytesDone, bytesTotal) => {
+        if (parentPort) {
+          parentPort.postMessage({
+            type: 'sync.progress',
+            libraryId,
+            phase: 'run',
+            filesDone: done,
+            filesTotal: total,
+            bytesDone,
+            bytesTotal,
+          });
+        }
+      });
+      const sessionId = libraryService.beginSyncSession(libraryId);
       try {
-        const outcome = await engine.syncOnce(request.command.libraryId, {
+        const outcome = await engine.syncOnce(libraryId, {
           id: 'request',
           baseUrl: request.command.baseUrl,
           username: request.command.username,
@@ -1062,17 +1078,53 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           allowInsecureTls: request.command.allowInsecureTls,
           directoryName: request.command.directoryName,
         });
-        libraryService.finishSyncSession(request.command.libraryId, sessionId, 'done');
+        libraryService.finishSyncSession(libraryId, sessionId, 'done');
+        if (parentPort) {
+          parentPort.postMessage({
+            type: 'sync.progress',
+            libraryId,
+            phase: 'complete',
+            filesDone: 0,
+            filesTotal: 0,
+            bytesDone: 0,
+            bytesTotal: 0,
+          });
+        }
         return { ok: true, type: 'sync.completed', report: outcome.report, conflicts: outcome.conflicts };
       } catch (error) {
         libraryService.finishSyncSession(
-          request.command.libraryId,
+          libraryId,
           sessionId,
           'failed',
           error instanceof Error ? error.message : String(error),
         );
+        if (parentPort) {
+          parentPort.postMessage({
+            type: 'sync.progress',
+            libraryId,
+            phase: 'complete',
+            filesDone: 0,
+            filesTotal: 0,
+            bytesDone: 0,
+            bytesTotal: 0,
+          });
+        }
         throw error;
       }
+    }
+    case 'sync.poll-remote': {
+      // 自动同步轮询（Serpent-bfsb 后续）：轻量检测远端 manifest 变化，
+      // 不做本地全量 hash，供 Main 定时调度器决定是否触发完整同步。
+      const engine = buildSyncEngine(request.command.deviceId);
+      const changed = await engine.pollRemoteChange(request.command.libraryId, {
+        id: 'request',
+        baseUrl: request.command.baseUrl,
+        username: request.command.username,
+        password: request.command.password,
+        allowInsecureTls: request.command.allowInsecureTls,
+        directoryName: request.command.directoryName,
+      });
+      return { ok: true, type: 'sync.poll-remote.result', changed };
     }
     case 'sync.list-remote-libraries': {
       const driver = new WebDAVDriver({

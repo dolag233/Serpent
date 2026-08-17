@@ -11160,6 +11160,15 @@ select.ai-config-input.ai-config-languages {
   transition: width 250ms ease;
 }
 
+/* 同步传输进度（资源库设置 → 同步页）：进度条 + 文件/字节统计。 */
+.sync-progress-block {
+  margin-top: 10px;
+}
+
+.sync-progress-track {
+  margin-top: 0;
+}
+
 .plugin-job-progress-message {
   margin-top: 4px;
   color: var(--secondary);

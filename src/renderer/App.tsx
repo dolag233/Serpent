@@ -340,6 +340,7 @@ import type {
   RendererLibrarySummary,
   ExportProgressEvent,
   ImportProgressEvent,
+  SyncProgressEvent,
 } from "../shared/protocol/responses";
 import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewModal";
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
@@ -1074,6 +1075,8 @@ function AppInner() {
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
   const [gitignoreContent, setGitignoreContent] = useState("");
+  /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
+  const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -7356,6 +7359,12 @@ function AppInner() {
           setImportProgress(null);
           setLibraryTransferKind("import");
         }
+      } else if (event.type === "sync.progress") {
+        if (event.phase === "complete") {
+          setSyncProgress(null);
+        } else {
+          setSyncProgress(event);
+        }
       }
     });
   }, [api, setNotice, t]);
@@ -10828,6 +10837,7 @@ function AppInner() {
             return { ok: true, value: result.value };
           },
         }}
+        syncProgress={syncProgress}
       />
       <OpenSyncLibraryDialog
         callbacks={{

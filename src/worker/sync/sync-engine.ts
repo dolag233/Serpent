@@ -87,7 +87,12 @@ export interface SyncOutcome {
 export interface SyncEngineOptions {
   deviceId: string;
   now?(): string;
-  onProgress?: (done: number, total: number) => void;
+  /**
+   * 传输进度回调（Serpent-xffq 增量）：done/total 为已处理动作数，
+   * bytesDone/bytesTotal 为已传输与总字节（含上传与下载）。供日志
+   * 显示进度条与传输速度；数据传输本身无墙钟超时（用户决定）。
+   */
+  onProgress?(done: number, total: number, bytesDone: number, bytesTotal: number): void;
   isCancelled?(): boolean;
 }
 
@@ -122,8 +127,7 @@ export class SyncEngine {
   }
 
   /** 完整同步：plan → 执行 → 写回 manifest。 */
-  async syncOnce(libraryId: string, root: SyncRootConfig): Promise<SyncOutcome> {
-    const driver = this.buildDriver(root);
+  async syncOnce(libraryId: string, root: SyncRootConfig): Promise<SyncOutcome> {    const driver = this.buildDriver(root);
     const capabilities = await driver.probe();
     if (!capabilities.supportsContentTransfer) {
       throw new RemoteStorageError('WRITE_UNSUPPORTED', '服务器不支持上传文件，无法用于同步。');
@@ -157,28 +161,44 @@ export class SyncEngine {
 
     const total = actions.length;
     let done = 0;
+    // 预计算总字节：upload=本地大小、download=远端大小、conflict=双端之和。
+    let bytesTotal = 0;
+    for (const action of actions) {
+      if (action.type === 'upload') {
+        bytesTotal += localAssets.get(action.assetId)?.size ?? 0;
+      } else if (action.type === 'download') {
+        bytesTotal += action.entry.size ?? 0;
+      } else if (action.type === 'conflict') {
+        bytesTotal += (action.local.size ?? 0) + (action.remote.size ?? 0);
+      }
+    }
+    let bytesDone = 0;
+    const reportBytes = (body: Buffer) => {
+      bytesDone += body.length;
+      this.options.onProgress?.(done, total, bytesDone, bytesTotal);
+    };
     const wrappedContext: SyncRunnerContext = {
       ...context,
       readLocalAsset: async (syncId) => {
         const body = await context.readLocalAsset(syncId);
         done += 1;
-        this.options.onProgress?.(done, total);
+        reportBytes(body);
         return body;
       },
       writeLocalAsset: async (syncId, path, body) => {
         await context.writeLocalAsset(syncId, path, body);
         done += 1;
-        this.options.onProgress?.(done, total);
+        reportBytes(body);
       },
       recycleLocalAsset: async (syncId) => {
         await context.recycleLocalAsset(syncId);
         done += 1;
-        this.options.onProgress?.(done, total);
+        this.options.onProgress?.(done, total, bytesDone, bytesTotal);
       },
       saveLocalConflictCopy: async (syncId, path, body, conflictName) => {
         const meta = await context.saveLocalConflictCopy(syncId, path, body, conflictName);
         done += 1;
-        this.options.onProgress?.(done, total);
+        reportBytes(body);
         return meta;
       },
     };
@@ -199,6 +219,56 @@ export class SyncEngine {
       manifest: result.manifest,
       conflicts: result.conflicts.map((conflict) => ({ syncId: conflict.assetId, conflictCopyPath: conflict.conflictCopyPath })),
     };
+  }
+
+  /**
+   * 轻量云端变化检测（自动同步轮询）：只读远端 manifest 与本地缓存对比，
+   * 不扫描本地资产、不计算差异动作。true = 远端有改动（新增/版本推进/
+   * 删除/内容变化），需要一次完整同步。远端无 manifest 视为有变化
+   * （首次同步需要初始化）。
+   */
+  async pollRemoteChange(libraryId: string, root: SyncRootConfig): Promise<boolean> {
+    const driver = this.buildDriver(root);
+    const library = { libraryId, displayName: root.directoryName ?? '' };
+    const directoryName = sanitizeSyncDirectoryName(root.directoryName ?? library.displayName, libraryId);
+    const prefix = directoryName === '' ? '' : `${directoryName}/`;
+    let remoteManifest: SyncManifest;
+    try {
+      const read = await driver.read(`${prefix}${SYNC_MANIFEST_FILE}`);
+      remoteManifest = parseManifest(read.body.toString('utf-8'));
+    } catch {
+      // 远端无 manifest：首次同步或远端被清空，都需要一次完整同步。
+      return true;
+    }
+    const cached = await this.library.readSyncManifestCache(libraryId);
+    if (!cached) return true;
+    let localManifest: SyncManifest;
+    try {
+      localManifest = parseManifest(cached);
+    } catch {
+      return true;
+    }
+    // 逐条比较关键字段；不依赖 JSON 键序（entries 是对象，序列化顺序不定）。
+    const remoteEntries = remoteManifest.entries;
+    const localEntries = localManifest.entries;
+    const remoteKeys = Object.keys(remoteEntries);
+    const localKeys = Object.keys(localEntries);
+    if (remoteKeys.length !== localKeys.length) return true;
+    for (const syncId of remoteKeys) {
+      const remote = remoteEntries[syncId];
+      const local = localEntries[syncId];
+      if (!remote || !local) return true;
+      if (
+        remote.contentHash !== local.contentHash
+        || remote.version !== local.version
+        || remote.path !== local.path
+        || remote.size !== local.size
+        || remote.metadataVersion !== local.metadataVersion
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private snapshotToMap(snapshot: Awaited<ReturnType<SyncLibraryPort['syncSnapshot']>>): Map<string, LocalAssetSnapshotEntry> {

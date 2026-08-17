@@ -60,6 +60,7 @@ import type {
   RendererLifecycleEvent,
   ExportProgressEvent,
   ImportProgressEvent,
+  SyncProgressEvent,
   MediaJob,
   AiJob,
   TagOperationSkip,
@@ -524,7 +525,7 @@ export interface SerpentLibraryApi {
   cancelLibraryImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
-  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void): () => void;
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent) => void): () => void;
   // AI
   getAiConfig(): Promise<LibraryApiResult<{
     apiFormat: AiApiFormat | null;
@@ -616,10 +617,10 @@ export interface SerpentLibraryApi {
   syncSaveServer(input: { id?: string; baseUrl: string; username?: string; password?: string; allowInsecureTls?: boolean }): Promise<LibraryApiResult<{ id: string }>>;
   /** Serpent-xffq: 删除同步服务器。 */
   syncDeleteServer(input: { id: string }): Promise<LibraryApiResult<{ id: string }>>;
-  /** Serpent-xffq: 保存库绑定（服务器 + 可选同步文件夹名，默认库名）。 */
-  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<void>>;
+  /** Serpent-xffq: 保存库绑定（服务器 + 可选同步文件夹名，默认库名；enabled=自动同步开关）。 */
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean }): Promise<LibraryApiResult<void>>;
   /** Serpent-xffq: 读取库绑定。 */
-  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string } | null>>;
+  syncGetBinding(input: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean } | null>>;
   /** Serpent-xffq: 对指定服务器做连接能力探测（不触碰库）。 */
   syncProbe(input: { serverId: string }): Promise<LibraryApiResult<SyncCapabilities>>;
   /** Serpent-xffq: 列出服务器上可打开的同步库（读远端 manifest）。 */

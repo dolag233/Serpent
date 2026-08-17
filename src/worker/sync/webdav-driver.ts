@@ -41,6 +41,11 @@ export interface WebDAVDriverConfig {
   password?: string;
   /** 显式允许自签名/无效 TLS 证书（仅 HTTPS，需用户确认）。 */
   allowInsecureTls?: boolean;
+  /**
+   * 仅能力探测（probe）使用的单请求超时。数据传输（read/write/delete/
+   * mkdir/move）不做墙钟超时：慢机器或大文件下载一天也要跑完
+   * （Serpent-4s8b 用户决定），只依赖 TCP 层行为与用户取消。
+   */
   timeoutMs?: number;
 }
 
@@ -125,7 +130,8 @@ function rawRequest(options: {
   headers?: Record<string, string>;
   body?: Buffer;
   rejectUnauthorized: boolean;
-  timeoutMs: number;
+  /** 单请求墙钟超时；undefined = 无超时（数据传输路径，用户决定）。 */
+  timeoutMs?: number;
 }): Promise<RawResponse> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(options.url);
@@ -141,12 +147,12 @@ function rawRequest(options: {
         ...(options.body ? { 'Content-Length': String(options.body.length) } : {}),
       },
       rejectUnauthorized: options.rejectUnauthorized,
-      timeout: options.timeoutMs,
+      ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on('data', (chunk: Buffer) => chunks.push(chunk));
       response.on('end', () => {
-        clearTimeout(hardTimer);
+        if (options.timeoutMs !== undefined) clearTimeout(hardTimer);
         resolve({
           status: response.statusCode ?? 0,
           headers: response.headers as Record<string, string>,
@@ -156,11 +162,14 @@ function rawRequest(options: {
     });
     // 硬超时：socket 空闲超时管不住"服务器持续流式响应但非常慢"的情况
     // （如低效的 Depth: infinity 遍历），必须给整个请求一个总时限。
-    const hardTimer = setTimeout(() => {
-      request.destroy(new RemoteStorageError('TIMEOUT', '连接超时，请检查地址与网络。', true));
-    }, options.timeoutMs);
+    // 仅能力探测路径设置；数据传输不做墙钟超时（用户决定，可下载一天）。
+    const hardTimer = options.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          request.destroy(new RemoteStorageError('TIMEOUT', '连接超时，请检查地址与网络。', true));
+        }, options.timeoutMs);
     request.on('error', (error: NodeJS.ErrnoException) => {
-      clearTimeout(hardTimer);
+      if (hardTimer !== undefined) clearTimeout(hardTimer);
       if (error instanceof RemoteStorageError) {
         reject(error);
         return;
@@ -217,13 +226,15 @@ export class WebDAVDriver implements RemoteStorageDriver {
     if (options.destination) headers.Destination = options.destination;
     if (this.basicAuthorization) headers.Authorization = this.basicAuthorization;
 
+    // 数据传输不设墙钟超时（用户决定：慢机器/大文件下载一天也要跑完）；
+    // 只有能力探测显式传 timeoutMs。
     let response = await rawRequest({
       url,
       method,
       headers,
       body: options.body,
       rejectUnauthorized: !this.config.allowInsecureTls,
-      timeoutMs: options.timeoutMs ?? this.config.timeoutMs,
+      timeoutMs: options.timeoutMs,
     });
 
     // Digest 挑战：401 + WWW-Authenticate: Digest → 计算并重试一次。
@@ -239,7 +250,7 @@ export class WebDAVDriver implements RemoteStorageDriver {
           headers,
           body: options.body,
           rejectUnauthorized: !this.config.allowInsecureTls,
-          timeoutMs: this.config.timeoutMs,
+          timeoutMs: options.timeoutMs,
         });
       }
     }

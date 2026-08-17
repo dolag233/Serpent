@@ -63,6 +63,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   HISTORY_STALE: 'The files or records changed, so this operation cannot be reversed safely.',
   HISTORY_TOO_LARGE: 'This operation is too large to retain in the undo history.',
   SYNC_CONNECTION_FAILED: 'Serpent could not connect to the sync server.',
+  SYNC_IN_PROGRESS: 'This library is syncing right now. Try again after the current sync finishes.',
 } as const;
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_MESSAGES;

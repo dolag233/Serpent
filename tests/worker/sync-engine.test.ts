@@ -270,4 +270,108 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     expect(report.uploads).toBe(1);
     expect(driver.files.size).toBe(0);
   });
+
+  it('pollRemoteChange reports no change when remote matches the local cache (auto-sync)', async () => {
+    const driver = new MemoryDriver();
+    driver.files.set('参考库/manifest.json', Buffer.from(JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-x', size: 1, version: 2,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T12:00:00Z', metadataVersion: 1,
+        },
+      },
+    })));
+    const library = new FakeLibrary();
+    // 本地缓存与远端一致 → 无需同步。
+    await library.writeSyncManifestCache('lib-1', JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-x', size: 1, version: 2,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T12:00:00Z', metadataVersion: 1,
+        },
+      },
+    }));
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+    const pollRoot: SyncRootConfig = { id: 'root-1', baseUrl: 'https://mock/', directoryName: '参考库' };
+
+    await expect(engine.pollRemoteChange('lib-1', pollRoot)).resolves.toBe(false);
+  });
+
+  it('pollRemoteChange reports change when remote advanced or local cache is missing (auto-sync)', async () => {
+    const driver = new MemoryDriver();
+    driver.files.set('参考库/manifest.json', Buffer.from(JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-new', size: 2, version: 3,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T13:00:00Z', metadataVersion: 1,
+        },
+      },
+    })));
+    const library = new FakeLibrary();
+    // 本地缓存仍是旧版本 → 需要同步。
+    await library.writeSyncManifestCache('lib-1', JSON.stringify({
+      formatVersion: 1,
+      libraryId: 'lib-1',
+      displayName: '参考库',
+      directoryName: '参考库',
+      entries: {
+        s1: {
+          path: 'a.png', contentHash: 'hash-x', size: 1, version: 2,
+          deviceId: 'dev-b', modifiedAt: '2026-08-15T12:00:00Z', metadataVersion: 1,
+        },
+      },
+    }));
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+    const pollRoot: SyncRootConfig = { id: 'root-1', baseUrl: 'https://mock/', directoryName: '参考库' };
+    await expect(engine.pollRemoteChange('lib-1', pollRoot)).resolves.toBe(true);
+
+    // 无本地缓存 → 需要同步。
+    const fresh = new FakeLibrary();
+    const freshEngine = new SyncEngine(fresh, { deviceId: 'dev-a' });
+    freshEngine.buildDriver = () => driver;
+    await expect(freshEngine.pollRemoteChange('lib-1', pollRoot)).resolves.toBe(true);
+
+    // 远端无 manifest → 需要同步（首次初始化）。
+    const emptyDriver = new MemoryDriver();
+    const emptyLibrary = new FakeLibrary();
+    const emptyEngine = new SyncEngine(emptyLibrary, { deviceId: 'dev-a' });
+    emptyEngine.buildDriver = () => emptyDriver;
+    await expect(emptyEngine.pollRemoteChange('lib-1', root)).resolves.toBe(true);
+  });
+
+  it('reports byte progress for uploads and downloads (Serpent-bfsb 后续)', async () => {
+    const driver = new MemoryDriver();
+    const library = new FakeLibrary();
+    library.assets.set('s1', { syncId: 's1', relativePath: 'a.png', body: Buffer.from('aaaa') });
+    const progress: Array<{ done: number; total: number; bytesDone: number; bytesTotal: number }> = [];
+    const engine = new SyncEngine(library, {
+      deviceId: 'dev-a',
+      onProgress: (done, total, bytesDone, bytesTotal) => {
+        progress.push({ done, total, bytesDone, bytesTotal });
+      },
+    });
+    engine.buildDriver = () => driver;
+
+    await engine.syncOnce('lib-1', root);
+    expect(progress.length).toBeGreaterThan(0);
+    const last = progress.at(-1)!;
+    expect(last.done).toBe(last.total);
+    // 上传 4 字节（1 个文件）。
+    expect(last.bytesDone).toBe(4);
+    expect(last.bytesTotal).toBe(4);
+  });
 });

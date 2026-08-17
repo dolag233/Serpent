@@ -159,6 +159,8 @@ import {
   parseExportProgressEvent,
   type ImportProgressEvent,
   parseImportProgressEvent,
+  type SyncProgressEvent,
+  parseSyncProgressEvent,
   type TagOperationSkip,
 } from '../shared/protocol/responses';
 import type {
@@ -1577,7 +1579,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result };
   },
 
-  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent) => void) {
+  onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseExportProgressEvent(input));
@@ -1587,6 +1589,12 @@ const library: SerpentLibraryApi = Object.freeze({
       }
       try {
         listener(parseImportProgressEvent(input));
+        return;
+      } catch {
+        // Try sync progress.
+      }
+      try {
+        listener(parseSyncProgressEvent(input));
       } catch {
         // Not a progress event.
       }
@@ -1780,13 +1788,13 @@ const library: SerpentLibraryApi = Object.freeze({
     if (result.type !== 'sync.server.deleted') throw new Error('Unexpected sync server delete response.');
     return { ok: true, value: { id: result.id } };
   },
-  async syncSaveBinding({ libraryId, serverId, directoryName }: { libraryId: string; serverId: string; directoryName?: string }): Promise<LibraryApiResult<void>> {
-    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName });
+  async syncSaveBinding({ libraryId, serverId, directoryName, enabled }: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean }): Promise<LibraryApiResult<void>> {
+    const result = await request({ type: 'sync.library.binding.save.request', libraryId, serverId, directoryName, enabled });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.saved') throw new Error('Unexpected sync binding response.');
     return { ok: true, value: undefined };
   },
-  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string } | null>> {
+  async syncGetBinding({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{ serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean } | null>> {
     const result = await request({ type: 'sync.library.binding.get.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'sync.binding.got') throw new Error('Unexpected sync binding get response.');

@@ -126,6 +126,8 @@ describe("BrowseLayoutPreview caption (Serpent-l2at / Serpent-qc7v)", () => {
           createElement(BrowseLayoutPreview, {
             entry: {
               assetId: "asset-ellipsis",
+              width: 800,
+              height: 600,
               displayName: "wghuasgfsad.jpg",
               byteSize: 2048,
               modifiedAt: "2026-08-17T00:00:00.000Z",

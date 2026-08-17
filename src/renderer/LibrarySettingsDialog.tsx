@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import type { RendererLibrarySummary, SyncProgressEvent } from "../shared/protocol/responses";
 import type { SyncCapabilities, SyncReport } from "../shared/library-api";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
+import { formatBytes } from "./format-file-meta";
 import type { SyncServerSummary } from "./sync-settings-types";
 
 type LibrarySettingsCategory = "general" | "ignore" | "sync";
@@ -14,8 +15,8 @@ export interface SyncSettingsCallbacks {
   syncProbe(input: { serverId: string }): Promise<{ ok: true; value: SyncCapabilities } | { ok: false; message: string }>;
   syncPreview(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: SyncReport } | { ok: false; message: string }>;
   syncRun(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true; value: { report: SyncReport; conflicts: Array<{ syncId: string; conflictCopyPath: string }> } } | { ok: false; message: string }>;
-  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string }): Promise<{ ok: true } | { ok: false; message: string }>;
-  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string } | null } | { ok: false; message: string }>;
+  syncSaveBinding(input: { libraryId: string; serverId: string; directoryName?: string; enabled?: boolean }): Promise<{ ok: true } | { ok: false; message: string }>;
+  syncGetBinding(input: { libraryId: string }): Promise<{ ok: true; value: { serverId: string; directoryName?: string; lastSyncedAt?: string; enabled?: boolean } | null } | { ok: false; message: string }>;
 }
 
 type ConnectionState = "checking" | "connected" | "failed";
@@ -38,14 +39,18 @@ function SyncStatusDot({
 function SyncSettingsSection({
   library,
   callbacks,
+  syncProgress,
 }: {
   library: RendererLibrarySummary;
   callbacks: SyncSettingsCallbacks;
+  /** 当前同步传输进度（自动或手动），用于进度条与速度显示。 */
+  syncProgress: SyncProgressEvent | null;
 }): ReactNode {
   const t = useT();
   const [servers, setServers] = useState<SyncServerSummary[]>([]);
   const [serverId, setServerId] = useState("");
   const [directoryName, setDirectoryName] = useState(() => library.displayName);
+  const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState<"preview" | "run" | "save" | null>(null);
   const [connection, setConnection] = useState<{
     serverId: string;
@@ -83,6 +88,7 @@ function SyncSettingsSection({
         setServerId(binding.value.serverId);
         setDirectoryName(binding.value.directoryName || library.displayName);
         setLastSyncedAt(binding.value.lastSyncedAt ?? null);
+        setEnabled(binding.value.enabled ?? false);
         void probeSelected(binding.value.serverId);
       } else if (listed.value.length > 0) {
         const first = listed.value[0]!.id;
@@ -135,7 +141,7 @@ function SyncSettingsSection({
     setBusy("save");
     setError(null);
     try {
-      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, directoryName });
+      const saved = await callbacks.syncSaveBinding({ libraryId: library.libraryId, serverId, directoryName, enabled });
       if (!saved.ok) setError(saved.message);
       else setResult(t("settings.sync.bindingSaved"));
     } finally {
@@ -210,6 +216,20 @@ function SyncSettingsSection({
           <input className="text-field" aria-label={t("settings.sync.directoryName")} value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
         </div>
         <div className="app-settings-card-divider" />
+        <div className="app-settings-row app-settings-row-stack">
+          <div className="app-settings-row-copy">
+            <strong>{t("settings.sync.autoSync")}</strong>
+            <span>{t("settings.sync.autoSyncHint")}</span>
+          </div>
+          <label className="dialog-checkbox-row is-centered">
+            <input
+              aria-label={t("settings.sync.autoSync")}
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+              type="checkbox"
+            />
+          </label>
+        </div>
         <div className="library-settings-gitignore-actions library-sync-actions">
           <button className="secondary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
             {busy === "save" ? t("common.saving") : t("common.save")}
@@ -245,6 +265,36 @@ function SyncSettingsSection({
             })}
           </p>
         ) : null}
+        {syncProgress && syncProgress.filesTotal > 0 ? (
+          <div className="sync-progress-block">
+            <div
+              aria-valuemax={syncProgress.filesTotal}
+              aria-valuemin={0}
+              aria-valuenow={Math.min(syncProgress.filesDone, syncProgress.filesTotal)}
+              className="task-progress-track sync-progress-track"
+              role="progressbar"
+            >
+              <div
+                className="task-progress-fill"
+                style={{
+                  width: `${Math.round(
+                    (Math.min(syncProgress.filesDone, syncProgress.filesTotal) /
+                      syncProgress.filesTotal) *
+                      100,
+                  )}%`,
+                }}
+              />
+            </div>
+            <p className="library-settings-gitignore-help">
+              {t("settings.sync.transferProgress", {
+                filesDone: syncProgress.filesDone,
+                filesTotal: syncProgress.filesTotal,
+                bytesDone: formatBytes(syncProgress.bytesDone),
+                bytesTotal: formatBytes(syncProgress.bytesTotal),
+              })}
+            </p>
+          </div>
+        ) : null}
         {result ? <p className="library-settings-gitignore-help">{result}</p> : null}
         {error ? <p className="settings-error-message">{error}</p> : null}
       </section>
@@ -261,6 +311,7 @@ export function LibrarySettingsDialog({
   onSaveName,
   onSaveGitignore,
   syncCallbacks,
+  syncProgress,
 }: {
   library: RendererLibrarySummary | null;
   gitignoreContent: string;
@@ -270,6 +321,7 @@ export function LibrarySettingsDialog({
   onSaveName: (name: string) => Promise<void>;
   onSaveGitignore: (content: string) => Promise<void>;
   syncCallbacks: SyncSettingsCallbacks;
+  syncProgress: SyncProgressEvent | null;
 }): ReactNode {
   const t = useT();
   const [category, setCategory] = useState<LibrarySettingsCategory>("general");
@@ -428,7 +480,7 @@ export function LibrarySettingsDialog({
                 </section>
               </>
             ) : (
-              <SyncSettingsSection library={library} callbacks={syncCallbacks} />
+              <SyncSettingsSection library={library} callbacks={syncCallbacks} syncProgress={syncProgress} />
             )}
           </main>
         </div>
