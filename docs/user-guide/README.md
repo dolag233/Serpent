@@ -5,6 +5,7 @@
 - [安装](installation.md)——macOS / Windows 安装、浏览器扩展、升级
 - [基本使用](basics.md)——资源库、导入、浏览、标签、合集、文件操作和查看器
 - [搜索与过滤](search-and-filters.md)——高级搜索语法、过滤维度和 Shift 多选
+- [同步与外部资源库](sync.md)——WebDAV 双向同步、打开同步库、Eagle / Billfish 打开
 - [AI 分析](ai.md)——连接 AI 服务、自动/手动分析、任务进度和隐私提示
 - [插件使用](plugins.md)——安装、启用、更新和卸载插件，以及浏览器扩展
 - [自动化功能](automation.md)——自动化脚本和 MCP 外部客户端连接
