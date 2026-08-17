@@ -34,6 +34,8 @@ artifacts/media-binaries/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads/issues.jsonl.lock
+.beads/issues.jsonl.*.tmp
 /skills
 
 # 媒体产物目录（manifest 等为构建生成，来源/锁文件在 media-binaries/ 根）

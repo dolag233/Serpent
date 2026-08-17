@@ -513,6 +513,13 @@
 | AUT-034 | MCP/桌面关键危险操作确认 | 自动化证据不足 | 对托管资产、文件夹、链接源文件、清空回收站和整库从磁盘删除分别触发操作；观察独立窗口后测试取消、Escape、关闭窗口和红色确认。 | 每次独立确认；默认焦点为取消；取消/关闭不产生磁盘变化；确认按钮红色；没有「不再显示」「本会话总是通过」或 MCP 权限绕过。 | [关键窗口](../../../src/main/critical-confirmation-window.ts) / [共享协议](../../../src/shared/critical-confirmation.ts) / [窗口单测](../../../tests/unit/critical-confirmation-window.test.ts) / [Electron E2E](../../../tests/e2e/critical-confirmation.test.ts) / [链接/回收站 E2E](../../../tests/e2e/linked-folders.test.ts) / 工单 `Serpent-9rbn.8` | `critical-confirmation.test.ts`：1 passed；`linked-folders.test.ts` 的链接源文件 critical 路径：3 passed；回收站 critical 焦点/红色确认：1 passed。覆盖独立窗口、取消/Escape、红色确认和磁盘结果。真实桌面视觉、packaged/Windows 尚未执行；Computer Use 因 macOS 锁屏未执行。 |
 | AUT-035 | MCP 文档与 Registry/权限事实对齐 | 自动化证据不足 | 对照 Registry、设置页、`tools/list` 和 MCP 手册中的权限名称、普通/关键分类与配置步骤。 | 不再出现 `skipApproval`、旧 stdio/headless 假设或整包读写授权描述；权限名称只使用 Auto / Full Access；危险操作不受 Full Access 绕过且必须使用 Agent challenge。 | [Registry](../../../src/automation/command-registry.ts) / [MCP 手册](../../manual/mcp/api-reference.md) / [开发指南](../../manual/mcp/development.md) / [ADR-0031](../adr/0031-stateless-unattended-mcp.md) | 手册、共享 schema、设置 UI、Broker/Policy Store 已同步；`typecheck`、定向权限测试 40 passed、定向 ESLint 通过。文档契约自动化检查、packaged/Windows 证据待补。 |
 
+#### 纯文本工单脚本
+
+| ID | 功能 | 状态 | 自动化/操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| AUT-TICKET-001 | JSONL 工单最小生命周期 | 自动化验收通过 | 在临时项目中运行 `node scripts/ticket.mjs add/show/desc/status/claim/dep/ready/delete`，并用 `--json` 检查结果 | 所有工单数据只存在 `.beads/issues.jsonl`；描述和状态可修改；认领冲突被拒绝；未关闭阻塞项不出现在 `ready`；有依赖的工单不能直接删除，强制删除会清理引用；不创建数据库、daemon 或每工单文件 | [脚本](../../../scripts/ticket.mjs) / [定向测试](../../../tests/unit/ticket-script.test.ts) / [开发日志](../development/2026-08-17-text-ticket-tracker-development-log.md) | 当次定向命令：`npm run test:unit -- tests/unit/ticket-script.test.ts`，366 个测试文件通过、2695 个测试通过、4 个跳过；定向 ESLint 通过；当前仓库 JSONL 读取 smoke 通过。packaged/Windows 未执行（不适用桌面旅程）。 |
+| AUT-TICKET-002 | 评论、重开审计与精简列表 | 自动化验收通过 | 在临时项目中运行 `comment <id> --text`；关闭后分别无理由和带理由执行 `status <id> open/in_progress`；运行 `list --all --ids-only --json` 与 `list --fields id,title,status,priority --json` | 评论追加到工单内；关闭工单无理由重开被拒绝；带理由重开成功且理由保留为评论；`--all` 不增加过滤；精简列表只输出指定字段；默认 `list --json` 仍输出完整字段；写入遵守单写者约束 | [脚本](../../../scripts/ticket.mjs) / [定向测试](../../../tests/unit/ticket-script.test.ts) / [开发日志](../development/2026-08-17-text-ticket-tracker-development-log.md) | 当次命令：`npm run test:unit -- tests/unit/ticket-script.test.ts`（366 个测试文件通过、2695 个测试通过、4 个跳过）；`npx eslint scripts/ticket.mjs tests/unit/ticket-script.test.ts` 通过；帮助信息和当前仓库 P0 精简列表 smoke 通过；packaged/Windows 未执行（不适用桌面旅程）。 |
+
 #### 统一撤回/重做
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

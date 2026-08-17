@@ -76,51 +76,58 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 不变量：Renderer 永远不接收任意路径读写或 SQL 能力；Main 不打开资源库数据库或扫描资产目录；Library Worker 是数据库和文件操作唯一所有者；所有跨进程 I/O 经 Zod 运行时校验。
 
-## 工单管理（beads）
+## 工单管理（纯文本 JSONL）
 
-- **Git hooks（必装，一次性）**：工单镜像随提交/推送自动同步依赖 `.beads/hooks/` 的 git hooks。新 clone 后执行：
-  ```bash
-  bd hooks install
-  chmod +x .beads/hooks/*   # bd install 未设执行权限，git 会忽略无权限 hook
-  ```
-  安装后 pre-commit 自动导出 `.beads/issues.jsonl`，pre-push 触发 bd 同步（2026-08-08 实测：此前 hook 无执行权限被 git 忽略，导致镜像与 Dolt 长期漂移、需手动 `bd export`）。
+当前工单真相源是 `.beads/issues.jsonl`，每行一个 JSON 工单对象，随普通 Git 提交、
+拉取和合并。工单脚本不使用 SQLite、Dolt、daemon 或远端工单数据库；禁止运行
+`bd dolt push`、`bd dolt pull`、`bd export`、`bd import` 来同步工单。
 
-本仓库使用 beads（`bd` CLI）作为唯一工单系统，`.beads/` 进版本控制随 git 同步。`docs/internal/implementation/mvp-ui-ux-requirements-backlog.md` 保留为需求来源、用户原话与验收记录；工单状态以 bd 为准。
+统一使用：
 
-- **三套存储，禁止混读（2026-08-16 复盘）**：
-  - **本地 Dolt**（`.beads/embeddeddolt`）：`bd show` / `bd ready` 的实际数据源；**不进 git**，**不随 `git checkout` 切换**。
-  - **JSONL 镜像**（`.beads/issues.jsonl`、`.beads/interactions.jsonl`）：随 git 提交/拉取的**被动导出**；另一台机器或 agent 主要靠它恢复工单视图。
-  - **远端 Dolt**（`refs/dolt/data`）：`bd dolt push` / `bd dolt pull` 同步的多设备真相。
-  - **`git pull` 只更新 JSONL，不会自动更新本地 Dolt。** 会话开工前必须对齐，否则会出现「用户已验收、清单已绿，但 `bd ready` 仍显示 `in_progress`」的假象（2026-08-16：`Serpent-vacp` / `g8u9` / `wgl2` / `hf1t` / `lxmx` 即此案例）。
-- **会话开工对齐（每个 agent 会话强制）**：
-  ```bash
-  git pull
-  bd dolt pull                              # 有多设备写入时
-  bd import .beads/issues.jsonl --json      # JSONL 比本地 Dolt 新或有 JSONL-only 记录时（禁止 bd init --from-jsonl 覆盖重建）
-  bd export -o .beads/issues.jsonl          # 核对镜像；若 auto-export 报 JSONL-only 漂移，先 import 再 export
-  bd ready --json
-  bd list --status=in_progress --json
-  ```
-  查队列**只信**对齐后的 `bd show <id>`，**不要**凭聊天记忆、旧 `project-status.md` 或清单滞后行判断工单是否仍 open。
-- **用户验收必须写回 beads（强制）**：产品负责人口头/聊天确认「验收通过」后，实施者或记录者**同一会话内**必须：
-  1. `bd close <id> --reason "用户验收通过；…"`（附清单 ID / 提交哈希；有条件保留写进 reason，不得因此不关单）
-  2. 同步更新 `docs/internal/qa/human-acceptance-checklist.md` 对应条目为「人类验收通过」
-  3. `bd export -o .beads/issues.jsonl` → `bd dolt push` → 与 `.beads/` 变更**同一 git 提交**
-  - **禁止**：只在清单或聊天里记「已通过」却不 `bd close`；**禁止**关单后又无 reason 地 `bd update … --status open`（`Serpent-g8u9` 曾因此回退为 `in_progress`）。
-  - **人类验收清单不是执行队列**：「待人类验收」≠ 未实现；「人类验收不通过」才是缺陷池。关单依据是用户确认 + 四列证据，不是 agent 自测绿。
-- **关单后不得假 reopen**：只有用户明确报回归或证据失效时才 reopen；reopen 必须在 reason/评论写明触发反馈，并同步改清单状态。
+```bash
+npm run ticket -- <命令>
+# 等价于
+node scripts/ticket.mjs <命令>
+```
 
-- 开工前先跑 `bd ready --json` 取当前无阻塞工单，按优先级（P1 最高）选任务，不凭记忆挑活。`bd ready` 会排除已 `in_progress` / blocked / deferred 的工单。
-- **排他认领（强制）**：同一工单同一时间只允许一个 agent 实施。选中后立刻 `bd update <id> --claim`（原子认领：设 assignee + `in_progress`）；不要只改状态却不认领。禁止对已是 `in_progress`、或已有其他 assignee 的工单动手；不确定时先 `bd show <id>` / `bd list --status=in_progress`。不得与其他 agent「一起做」同一工单，也不得绕过 `bd ready` 凭标题或记忆开干。
-- 完成后 `bd close <id> --reason "<完成说明与提交哈希>"`。若中途放弃，把状态改回 `open` 并清掉自己的 assignee，否则会长期挡住 ready 队列。
-- 发现新需求/缺陷随时开单：`bd create "<标题>" -d "<说明>" -p <0-4> -t <feature|bug|task|epic> -l "<标签>"`。优先级语义：P1=用户点名/验收失败修复，P2=本迭代主线，P3=后续打磨。
-- 阻塞关系：`bd dep add <被阻塞 id> <阻塞 id>`；被澄清队列（`Serpent-w3b`）阻塞的工单不得自行猜测实施。
-- 跨设备 / 多 agent：先 `git pull` 再用 bd；认领或关闭后尽快 `bd dolt push`（并随代码提交同步 `.beads/`），否则其他会话看不到认领状态，仍可能撞单。
-- **分支合并工单（强制）**：内置 Dolt 数据库位于未纳入 Git 分支切换的 `.beads/embeddeddolt`，不能把 `git merge` 当作工单合并；合并前必须在两个分支分别记录 `git rev-parse HEAD`、`bd export --all` 快照和 `bd stats`。合并后以两份快照按工单 ID 做并集，按 `updated_at` 逐项迁移；同时间戳或状态/优先级语义冲突必须人工记录和解决，禁止直接选 ours/theirs。
-- **工单迁移安全**：已有 Dolt 数据库禁止直接运行 `bd init --from-jsonl`、`--reinit-local` 或覆盖式重建。使用 `bd import <snapshot> --json` 做增量 upsert，检查实际 ID 集合、重复 ID、状态/优先级冲突和依赖，再运行 `bd export -o .beads/issues.jsonl` 生成完整镜像；`bd import --dry-run` 的批次计数不能作为逐项迁移证据。
-- **合并后的提交门禁**：`.beads/issues.jsonl` 与 `.beads/interactions.jsonl` 的工单变更必须和代码合并一起提交；提交前核对 `bd list --all --json` 与完整导出的 ID 集合一致，并在开发日志中记录来源快照、迁移结果和未解决冲突。若原分支只有本地 Dolt、没有快照，不能凭标题猜测恢复描述、依赖或验收条件。
-- 可运行 `bd prime` 获取完整命令参考。
-- **真实编码待办怎么查**（与「待人类验收」清单区分）：见 [`docs/internal/agent-work-queue.md`](docs/internal/agent-work-queue.md)。开工顺序：`bd ready --json` → `docs/internal/project-status.md` 当前前沿 → 清单中仅「人类验收不通过」作缺陷池。
+常用命令：
+
+```bash
+npm run ticket -- add "工单标题" -d "详细描述" -p 1 -t bug -l "标签1,标签2"
+npm run ticket -- show <id> --json
+npm run ticket -- list --status open --json
+npm run ticket -- ready --json
+npm run ticket -- claim <id>
+npm run ticket -- desc <id> --body "替换后的描述"
+npm run ticket -- desc <id> --file description.md
+npm run ticket -- comment <id> --text "验收记录或澄清说明"
+npm run ticket -- status <id> closed --reason "完成原因"
+npm run ticket -- status <id> open --reason "用户报告回归，需要重新验证"
+npm run ticket -- dep add <被阻塞工单> <阻塞工单>
+npm run ticket -- dep remove <被阻塞工单> <阻塞工单>
+npm run ticket -- delete <id>
+npm run ticket -- list --all --ids-only --json
+npm run ticket -- list --fields id,title,status,priority --json
+```
+
+规则：
+
+- `add` 的优先级为 `0–4`（0 最高），类型为 `bug|feature|task|epic|chore`。
+- `ready` 只列出 `open` 且没有未关闭阻塞项的工单；`claim` 会原子设置负责人和 `in_progress`。
+- `desc` 支持 `--body`、`--file`、`--stdin`；`status` 支持 `open|in_progress|closed|deferred`。
+- `comment` 使用 `--text` 追加对话式记录；关闭工单重开为 `open` 或 `in_progress` 时必须提供非空 `--reason`，理由会保留为评论。
+- `list --all` 表示不增加过滤；`--ids-only` 和 `--fields` 用于精简 JSON 输出，默认 `--json` 仍保留完整记录。
+- 有其他工单依赖时，`delete` 默认拒绝；确认清理依赖引用时才使用 `--force`。
+- 脚本写入前会在锁内重新读取 JSONL 并原子替换文件；同一文件仍只允许一个写者，不要与手工编辑或其他并行写入同时操作。
+- 每次会话先执行 `git pull`、`npm run ticket -- ready --json` 和
+  `npm run ticket -- list --status in_progress --json`。
+- 用户验收通过后用 `status <id> closed --reason "..."` 关闭工单，并同步更新
+  `docs/internal/qa/human-acceptance-checklist.md`；脚本不自动 commit/push。
+
+## 历史工单实现（Beads/Dolt，仅供迁移参考）
+
+该实现及相关 hook 仅保留作历史迁移背景。当前工单一律按上方的纯文本
+JSONL 流程操作，禁止重新启用旧数据库同步。
 
 ## 当前开发状态
 
@@ -196,81 +203,9 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 - 当前环境没有 Computer Use 或等价真实桌面控制能力时，该项必须记为未执行并移交给具备能力的 agent 或人工 QA；不得自行跳过或标记为通过。
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
-## Beads Issue Tracker
-
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   bd dolt push
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
+> 旧版托管配置，当前工单流程以本文前面的“纯文本 JSONL”章节为准，禁止执行。
 <!-- END BEADS INTEGRATION -->
 
 <!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+> 旧版托管配置，当前工单流程以本文前面的“纯文本 JSONL”章节为准，禁止执行。
 <!-- END BEADS CODEX SETUP -->
