@@ -1357,7 +1357,6 @@ export const zhCN = {
       statusUnsynced: "未同步",
       statusSyncing: "正在同步",
       statusSynced: "已同步",
-      syncingProgress: "正在同步 {done}/{total}",
       lastSyncedAt: "上次同步：{time}",
       operationFailed: "同步操作失败，请重试。",
       listRemoteLibraries: "列出服务器上的库",

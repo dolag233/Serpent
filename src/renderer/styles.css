@@ -1242,6 +1242,15 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+}
+
+/* 已连接：非常淡的绿色（--success 派生，亮/暗主题自适应）；
+   断连/未启用：灰色。 */
+.library-switcher-sync-status[data-state="enabled"] {
+  color: color-mix(in srgb, var(--success) 52%, transparent);
+}
+
+.library-switcher-sync-status[data-state="disabled"] {
   color: var(--secondary);
 }
 
@@ -5845,27 +5854,6 @@ body.serpent-modal-open .app-shell {
 
 .library-settings-gitignore-actions.library-sync-actions {
   justify-content: flex-end;
-}
-
-/* 工具栏同步进行中指示（Serpent-ae7257）：rotate-cw 图标旋转 + 进度文案。 */
-.sync-toolbar-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 9px;
-  color: var(--secondary);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.sync-toolbar-indicator svg {
-  animation: sync-spin 1.2s linear infinite;
-}
-
-@keyframes sync-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 
 .open-sync-library-dialog {

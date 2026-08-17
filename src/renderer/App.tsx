@@ -1077,11 +1077,10 @@ function AppInner() {
   const [gitignoreContent, setGitignoreContent] = useState("");
   /** 同步传输进度（手动/自动），供资源库设置同步页显示进度条与速度。 */
   const [syncProgress, setSyncProgress] = useState<SyncProgressEvent | null>(null);
-  /** 同步完成后的短暂提示（3 秒后消失），让用户感知自动同步发生过。 */
-  const [syncDone, setSyncDone] = useState<{ label: string } | null>(null);
-  const syncDoneTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** 当前库的同步绑定状态（库切换器 link/link-off 图标）。 */
   const [syncBindingStatus, setSyncBindingStatus] = useState<"none" | "disabled" | "enabled">("none");
+  /** 本次同步是否已弹过「正在同步」toast（有实际传输才提示）。 */
+  const syncRunNotifiedRef = useRef(false);
   const [showIgnoredItems, setShowIgnoredItems] = useState(false);
   const [appLogEntries, setAppLogEntries] = useState<AppLogEntry[]>([]);
   const [appLogLoading, setAppLogLoading] = useState(false);
@@ -7367,16 +7366,19 @@ function AppInner() {
       } else if (event.type === "sync.progress") {
         if (event.phase === "complete") {
           setSyncProgress(null);
-          // 完成事件 filesDone=0（worker 不携带 report），只显示中性
-          // 「已同步」提示，3 秒后消失；新一轮同步开始即清除。
-          if (syncDoneTimer.current) clearTimeout(syncDoneTimer.current);
-          setSyncDone({ label: t("settings.sync.statusSynced") });
-          syncDoneTimer.current = setTimeout(() => {
-            setSyncDone(null);
-          }, 3_000);
+          // 完成事件 filesDone=0（worker 不携带 report），只弹中性
+          // 「已同步」toast；仅当本次同步实际发生过传输（progress 曾
+          // 显示 filesTotal>0）才提示，空跑同步不打扰。
+          if (syncRunNotifiedRef.current) {
+            syncRunNotifiedRef.current = false;
+            setNotice(t("settings.sync.statusSynced"));
+          }
         } else {
           setSyncProgress(event);
-          setSyncDone(null);
+          if (event.filesTotal > 0 && !syncRunNotifiedRef.current) {
+            syncRunNotifiedRef.current = true;
+            setNotice(t("settings.sync.statusSyncing"));
+          }
         }
       }
     });
@@ -8819,19 +8821,6 @@ function AppInner() {
                 }}
               />
             )}
-            {syncProgress && syncProgress.filesTotal > 0 ? (
-              <span className="sync-toolbar-indicator" role="status" aria-live="polite">
-                <Icon name="rotate-cw" size={12} />
-                {t("settings.sync.syncingProgress", {
-                  done: syncProgress.filesDone,
-                  total: syncProgress.filesTotal,
-                })}
-              </span>
-            ) : syncDone ? (
-              <span className="sync-toolbar-indicator sync-toolbar-indicator-done" role="status" aria-live="polite">
-                {syncDone.label}
-              </span>
-            ) : null}
             <LibrarySwitcher
               busy={busy}
               disabled={busy}

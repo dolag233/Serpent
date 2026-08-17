@@ -185,6 +185,7 @@ export function LibrarySwitcher({
         {syncStatus !== "none" ? (
           <span
             className="library-switcher-sync-status"
+            data-state={syncStatus}
             data-hover-tip={
               syncStatus === "enabled"
                 ? t("shell.syncConnected")
