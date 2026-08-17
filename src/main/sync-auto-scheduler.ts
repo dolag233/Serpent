@@ -10,7 +10,8 @@
  * 触发源：
  * 1. 资产变更事件（worker 广播 asset.changed）→ debounce 后自动 sync.run；
  * 2. 固定间隔轮询 sync.poll-remote（只读远端 manifest 对比本地缓存，
- *    不做本地全量 hash），有变化则自动 sync.run。
+ *    不做本地全量 hash），有变化则自动 sync.run；
+ * 3. 绑定保存（binding-save）→ 立即触发一次同步。
  *
  * 只对 enabled 的绑定生效；与手动同步经 worker 端 beginSyncSession
  * 内存互斥（SYNC_IN_PROGRESS）。失败只记日志，不打扰用户。
@@ -26,6 +27,9 @@ export interface SyncBindingLike {
   lastSyncedAt?: string;
   enabled?: boolean;
 }
+
+/** 自动同步触发原因（日志与互斥语义）。 */
+export type SyncReason = 'local-change' | 'remote-change' | 'binding-save';
 
 export interface SyncAutoSchedulerOptions {
   workerClient: LibraryWorkerClient;
@@ -62,7 +66,9 @@ export class SyncAutoScheduler {
 
   constructor(options: SyncAutoSchedulerOptions) {
     this.#options = options;
-    this.#pollIntervalMs = options.pollIntervalMs ?? 5 * 60_000;
+    // 用户决定（2026-08-18）：轮询间隔 5 秒（原 5 分钟太长，保存后
+    // 长时间无反馈，用户感知不到自动同步）。
+    this.#pollIntervalMs = options.pollIntervalMs ?? 5_000;
     this.#localChangeDebounceMs = options.localChangeDebounceMs ?? 10_000;
   }
 
@@ -76,6 +82,17 @@ export class SyncAutoScheduler {
       void this.#pollRemoteChanges();
     }, this.#pollIntervalMs);
     this.#pollTimer.unref?.();
+    // 启动立即查一次云端，避免重启后首个周期（5s）内对已存在的远端
+    // 变化毫无感知。
+    void this.#pollRemoteChanges();
+  }
+
+  /**
+   * 立即触发一次同步（如绑定保存后）。与手动同步经 worker 端
+   * beginSyncSession 互斥；绑定未启用或同步进行中则静默跳过。
+   */
+  syncNow(libraryId: string, reason: SyncReason = 'binding-save'): void {
+    void this.#autoSync(libraryId, reason);
   }
 
   stop(): void {
@@ -126,7 +143,7 @@ export class SyncAutoScheduler {
     }
   }
 
-  async #autoSync(libraryId: string, reason: 'local-change' | 'remote-change'): Promise<void> {
+  async #autoSync(libraryId: string, reason: SyncReason): Promise<void> {
     if (this.#running.has(libraryId)) return;
     const binding = this.#options.readBindings()[libraryId];
     if (!binding?.enabled) return;

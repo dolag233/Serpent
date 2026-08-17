@@ -216,21 +216,19 @@ function SyncSettingsSection({
           <input className="text-field" aria-label={t("settings.sync.directoryName")} value={directoryName} onChange={(event) => setDirectoryName(event.target.value)} />
         </div>
         <div className="app-settings-card-divider" />
-        <div className="app-settings-row app-settings-row-stack">
-          <div className="app-settings-row-copy">
-            <strong>{t("settings.sync.autoSync")}</strong>
-            <span>{t("settings.sync.autoSyncHint")}</span>
-          </div>
-          <label className="dialog-checkbox-row is-centered">
-            <input
-              aria-label={t("settings.sync.autoSync")}
-              checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
-              type="checkbox"
-            />
-          </label>
-        </div>
         <div className="library-settings-gitignore-actions library-sync-actions">
+          <label className="sync-auto-toggle" title={t("settings.sync.autoSyncHint")}>
+            <span className="toggle-switch">
+              <input
+                aria-label={t("settings.sync.autoSync")}
+                checked={enabled}
+                onChange={(event) => setEnabled(event.target.checked)}
+                type="checkbox"
+              />
+              <span className="toggle-switch-thumb" />
+            </span>
+            <span>{t("settings.sync.autoSync")}</span>
+          </label>
           <button className="secondary-button" disabled={busy !== null || !serverId} onClick={() => void saveBinding()} type="button">
             {busy === "save" ? t("common.saving") : t("common.save")}
           </button>

@@ -113,4 +113,60 @@ describe('SyncAutoScheduler (Serpent-bfsb 后续)', () => {
 
     expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
   });
+
+  it('polls remote changes immediately on start, without waiting for the first interval', async () => {
+    const { options, client } = makeOptions();
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    // 不做任何计时推进：start() 里的首次 poll 应立即发出。
+    await settle();
+    scheduler.stop();
+
+    const polls = client.posts.filter((post) => post.type === 'sync.poll-remote');
+    expect(polls.length).toBeGreaterThanOrEqual(1);
+    expect(polls.map((poll) => poll.libraryId)).toContain('lib-enabled');
+  });
+
+  it('syncNow triggers an immediate sync.run for an enabled binding (binding-save)', async () => {
+    const { options, client } = makeOptions();
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    scheduler.syncNow('lib-enabled');
+    await settle();
+    scheduler.stop();
+
+    const runs = client.posts.filter((post) => post.type === 'sync.run');
+    expect(runs.map((run) => run.libraryId)).toContain('lib-enabled');
+  });
+
+  it('syncNow skips disabled or unknown bindings', async () => {
+    const { options, client } = makeOptions();
+    const scheduler = new SyncAutoScheduler(options);
+    scheduler.start();
+    scheduler.syncNow('lib-disabled');
+    scheduler.syncNow('lib-unknown');
+    await settle();
+    scheduler.stop();
+
+    expect(client.posts.filter((post) => post.type === 'sync.run')).toHaveLength(0);
+  });
+
+  it('polls at the 5-second default interval (user decision 2026-08-18)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { options, client } = makeOptions();
+      const scheduler = new SyncAutoScheduler(options);
+      scheduler.start();
+      const pollsBefore = client.posts.filter((post) => post.type === 'sync.poll-remote').length;
+      // 4 秒内不出现第二个轮询（首个为 start 立即轮询）。
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote').length).toBe(pollsBefore);
+      // 满 5 秒后出现第二个轮询。
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(client.posts.filter((post) => post.type === 'sync.poll-remote').length).toBe(pollsBefore + 1);
+      scheduler.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

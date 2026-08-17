@@ -8785,6 +8785,15 @@ function AppInner() {
                 }}
               />
             )}
+            {syncProgress && syncProgress.filesTotal > 0 ? (
+              <span className="sync-toolbar-indicator" role="status" aria-live="polite">
+                <Icon name="rotate-cw" size={12} />
+                {t("settings.sync.syncingProgress", {
+                  done: syncProgress.filesDone,
+                  total: syncProgress.filesTotal,
+                })}
+              </span>
+            ) : null}
             <LibrarySwitcher
               busy={busy}
               disabled={busy}

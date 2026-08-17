@@ -3458,6 +3458,12 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         enabled: request.enabled ?? previous?.enabled ?? false,
       };
       writeSyncBindings(bindings);
+      // Serpent-7405ef: 保存绑定（含开启自动同步）后立即触发一次同步，
+      // 用户不需要等下一个 5s 轮询周期（更不会等不到同步）。
+      const savedBinding = bindings[request.libraryId];
+      if (savedBinding?.enabled) {
+        syncAutoScheduler?.syncNow(request.libraryId);
+      }
       return {
         ok: true,
         type: "sync.binding.saved",

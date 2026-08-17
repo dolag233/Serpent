@@ -1369,6 +1369,7 @@ export const en = {
       statusUnsynced: "Not synced",
       statusSyncing: "Syncing…",
       statusSynced: "Synced",
+      syncingProgress: "Syncing {done}/{total}",
       lastSyncedAt: "Last synced: {time}",
       operationFailed: "The sync operation failed. Please try again.",
       listRemoteLibraries: "List libraries on server",
