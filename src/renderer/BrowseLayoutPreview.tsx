@@ -26,6 +26,12 @@ export function BrowseLayoutPreview({
           src={`serpent://preview/${libraryId}/${artifactId}`}
         />
       </div>
+      {/* Serpent-l2at: 完整 AssetSummary（名称/大小/日期）流式到达前，
+          用骨架文字条占位，避免卡片下方一片空白。 */}
+      <div className="asset-caption asset-caption-skeleton">
+        <span className="asset-caption-skeleton-line is-name" />
+        <span className="asset-caption-skeleton-line is-meta" />
+      </div>
     </div>
   );
 }

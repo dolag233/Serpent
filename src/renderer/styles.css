@@ -9290,6 +9290,38 @@ select.ai-config-input.ai-config-languages {
   }
 }
 
+/* Serpent-l2at: 布局占位卡的骨架文字条——完整 AssetSummary（名称/大小/日期）
+   流式到达前，用与缩略图 pending 相同的微光动画占位，避免卡片下方空白。 */
+.asset-card.is-layout-preview .asset-caption-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px 8px;
+}
+
+.asset-caption-skeleton-line {
+  display: block;
+  border-radius: 3px;
+  background: linear-gradient(
+    100deg,
+    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 40%,
+    rgba(128, 128, 128, 0.22) 50%,
+    var(--color-canvas-secondary, rgba(128, 128, 128, 0.12)) 60%
+  );
+  background-size: 200% 100%;
+  animation: serpent-card-pending-shimmer 1.4s ease-in-out infinite;
+}
+
+.asset-caption-skeleton-line.is-name {
+  width: 72%;
+  height: 12px;
+}
+
+.asset-caption-skeleton-line.is-meta {
+  width: 46%;
+  height: 9px;
+}
+
 .image-sequence-dialog-section {
   display: flex;
   flex-direction: column;
