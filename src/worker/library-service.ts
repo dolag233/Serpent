@@ -20988,6 +20988,11 @@ export class LibraryService {
       '.aac': 'audio/aac',
       '.flac': 'audio/flac',
       '.opus': 'audio/ogg',
+      // Serpent-8ca259: PDF/HTML source responses need their real MIME so the
+      // renderer can present them (pdfjs / iframe) instead of downloading.
+      '.pdf': 'application/pdf',
+      '.html': 'text/html; charset=utf-8',
+      '.htm': 'text/html; charset=utf-8',
     };
     const mimeType = directImageMimeForExtension(extension)
       ?? videoMimeForExtension(extension)

@@ -1900,4 +1900,34 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
 
     service.closeAll();
   });
+
+  it('serves PDF and HTML sources with their real MIME for the viewer (Serpent-8ca259)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'DocMime', selectedParentPath: root });
+    const pdfPath = path.join(root, 'page.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4\n%%EOF\n');
+    importNoConflict(service, created.libraryId, pdfPath);
+    const htmlPath = path.join(root, 'page.html');
+    writeFileSync(htmlPath, '<!doctype html><html><body>Hi</body></html>');
+    importNoConflict(service, created.libraryId, htmlPath);
+
+    const pdfAsset = service.listAssets({ libraryId: created.libraryId, recursive: true })!
+      .find((asset) => asset.displayName.endsWith('.pdf'))!;
+    const htmlAsset = service.listAssets({ libraryId: created.libraryId, recursive: true })!
+      .find((asset) => asset.displayName.endsWith('.html'))!;
+
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      pdfAsset.assetId,
+      pdfAsset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'application/pdf' });
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      htmlAsset.assetId,
+      htmlAsset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'text/html; charset=utf-8' });
+
+    service.closeAll();
+  });
 });
