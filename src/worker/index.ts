@@ -28,6 +28,7 @@ import {
   DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
   parseDocumentThumbnailRenderResponse,
   type DocumentThumbnailRenderRequest,
+  type DocumentThumbnailRenderResponse,
 } from '../shared/document-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import { SyncEngine, type SyncEngineOptions } from './sync/sync-engine';
@@ -238,14 +239,14 @@ function requestModelThumbnailRender(
  * abort); a missing Main response degrades to DOCUMENT_RENDER_TIMEOUT.
  */
 const pendingDocumentThumbnailRenders = new Map<string, {
-  resolve: (result: DocumentThumbnailRenderResponse) => void;
+  resolve: (result: DocumentThumbnailRenderResponse['result']) => void;
   timer: ReturnType<typeof setTimeout>;
 }>();
 
 function requestDocumentThumbnailRender(
   input: Omit<DocumentThumbnailRenderRequest, 'type' | 'requestId'>,
   signal?: AbortSignal,
-): Promise<DocumentThumbnailRenderResponse> {
+): Promise<DocumentThumbnailRenderResponse['result']> {
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -278,7 +279,7 @@ async function renderDocumentThumbnailViaMain(input: {
   assetId: string;
   revisionId: string;
   url: string;
-  signal: AbortSignal;
+  signal?: AbortSignal;
 }): Promise<{ png: Uint8Array; width: number; height: number } | null> {
   try {
     const result = await requestDocumentThumbnailRender(
@@ -605,8 +606,6 @@ function scheduleThumbnailQueue(
         // most one render in flight process-wide.
         modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
-        // Serpent-8ca259: HTML document thumbnails capture offscreen in Main.
-        documentThumbnailRenderer: (input) => renderDocumentThumbnailViaMain(input),
       });
       continueImmediately = processed === processWaveSize;
       if (!continueImmediately) {

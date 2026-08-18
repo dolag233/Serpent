@@ -5646,7 +5646,7 @@ async function startApplication(): Promise<void> {
   // Serpent-8ca259: HTML document thumbnails capture the source in a fresh
   // offscreen window in Main; the Worker persists the artifact bytes.
   workerClient.onDocumentThumbnailRenderRequest((request) =>
-    renderDocumentThumbnail(request, logger),
+    renderDocumentThumbnail(request, logger!),
   );
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(

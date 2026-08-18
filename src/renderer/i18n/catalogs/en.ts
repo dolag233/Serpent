@@ -1819,6 +1819,8 @@ export const en = {
     exportComplete: "Export complete: {files} files, {bytes}.",
     pdfLoadFailed: "Could not load the PDF file.",
     pdfPages: "Loaded {loaded}/{count} pages",
+    htmlLoadFailed: "Could not load the HTML file.",
+    htmlLoading: "Loading HTML…",
     paletteTooMany: "Failed to save palette. Reason: manual palette allows at most 20 colors.",
     paletteBadFormat: "Failed to save palette. Reason: colors must use #RRGGBB format.",
     batchRatingFailed: "Failed to set rating in batch.",

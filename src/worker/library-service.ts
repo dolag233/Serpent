@@ -3521,7 +3521,7 @@ export interface LibraryServiceOptions {
     assetId: string;
     revisionId: string;
     url: string;
-    signal: AbortSignal;
+    signal?: AbortSignal;
   }) => Promise<{ png: Uint8Array; width: number; height: number } | null>;
   /** Test-only override for deterministic SQLite writer-contention tests. */
   sqliteBusyTimeoutMsForTests?: number;  /** Test-only clock for the 24-hour database-backup throttle. */

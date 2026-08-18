@@ -37,7 +37,7 @@ function isPng(buffer: Buffer): boolean {
 export async function renderDocumentThumbnail(
   request: DocumentThumbnailRenderRequest,
   logger: AppLogger,
-): Promise<DocumentThumbnailRenderResponse> {
+): Promise<DocumentThumbnailRenderResponse['result']> {
   let window: BrowserWindow | null = null;
   const timeout = setTimeout(() => {
     try {

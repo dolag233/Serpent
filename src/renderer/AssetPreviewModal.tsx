@@ -36,6 +36,7 @@ import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { PdfViewerSurface } from "./PdfViewerSurface";
+import { HtmlViewerSurface } from "./HtmlViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { detectPbrTextureChannel } from "./pbr-texture-channel";
@@ -881,14 +882,22 @@ export const AssetPreviewModal = forwardRef<
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
-            <PdfViewerSurface
-              api={api}
-              assetId={asset.assetId}
-              isFullscreen={isFullscreen}
-              key={`${libraryId}:${asset.assetId}`}
-              libraryId={libraryId}
-              sourceUrl={resolution.url}
-            />
+            resolution.sourceMimeType === "application/pdf" ? (
+              <PdfViewerSurface
+                api={api}
+                assetId={asset.assetId}
+                isFullscreen={isFullscreen}
+                key={`${libraryId}:${asset.assetId}`}
+                libraryId={libraryId}
+                sourceUrl={resolution.url}
+              />
+            ) : (
+              <HtmlViewerSurface
+                isFullscreen={isFullscreen}
+                key={`${libraryId}:${asset.assetId}`}
+                sourceUrl={resolution.url}
+              />
+            )
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
               key={`${libraryId}:${asset.assetId}`}

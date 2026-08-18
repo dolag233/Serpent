@@ -1801,6 +1801,8 @@ export const zhCN = {
     exportComplete: "导出完成：{files} 文件，{bytes}。",
     pdfLoadFailed: "无法加载 PDF 文件。",
     pdfPages: "已加载 {loaded}/{count} 页",
+    htmlLoadFailed: "无法加载 HTML 文件。",
+    htmlLoading: "正在加载 HTML…",
     paletteTooMany: "保存色卡失败。原因：人工色卡最多包含 20 个颜色值。",
     paletteBadFormat: "保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。",
     batchRatingFailed: "批量设置评分失败。",
