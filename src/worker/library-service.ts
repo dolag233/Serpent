@@ -475,6 +475,7 @@ import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
   MODEL_THUMBNAIL_MAX_PNG_BYTES,
 } from '../shared/model-thumbnail-protocol';
+import { DOCUMENT_THUMBNAIL_GENERATOR_VERSION } from '../shared/document-thumbnail-protocol';
 import { MODEL_MAX_SOURCE_BYTES } from '../renderer/3d-viewer/limits';
 import {
   COMMON_IMAGE_COLOR_SPACE_OPTIONS,
@@ -3510,9 +3511,20 @@ export interface LibraryServiceOptions {
   beforeContentReplaceBatchBackup?: (input: { assetId: string; libraryId: string }) => void;
   /** Test-only seam invoked after BEGIN IMMEDIATE acquires the migration mutex. */
   afterSchemaMigrationTransactionBegin?: () => void;
+  /**
+   * Serpent-8ca259: offscreen HTML document thumbnail renderer, injected by
+   * the Worker (asks Main to capture the source). When absent, HTML thumbnails
+   * stay a benign no-op (generic file icon, never `failed`).
+   */
+  documentThumbnailRenderer?: (input: {
+    libraryId: string;
+    assetId: string;
+    revisionId: string;
+    url: string;
+    signal: AbortSignal;
+  }) => Promise<{ png: Uint8Array; width: number; height: number } | null>;
   /** Test-only override for deterministic SQLite writer-contention tests. */
-  sqliteBusyTimeoutMsForTests?: number;
-  /** Test-only clock for the 24-hour database-backup throttle. */
+  sqliteBusyTimeoutMsForTests?: number;  /** Test-only clock for the 24-hour database-backup throttle. */
   databaseBackupClock?: { now(): number };
   /**
    * Test-only seam (Serpent-xoaz): receives every SQL statement executed on
@@ -16960,14 +16972,21 @@ export class LibraryService {
 
     // Serpent-8ca259: PDF thumbnails render the first page with pdfjs-dist in
     // the Worker (pure JS, no offscreen window). HTML thumbnails render
-    // offscreen in Main and are routed before this function (like model).
+    // offscreen in Main through the injected documentThumbnailRenderer.
     if (mediaType === 'document' && ext === '.pdf') {
       return this.generatePdfThumbnail(input, openLibrary, assetPath, revisionId, execution);
     }
     if (mediaType === 'document') {
-      // HTML: rendered offscreen in Main (commit 2). Explicit command path
-      // stays a benign no-op like model until then.
-      return null;
+      const renderer = this.options.documentThumbnailRenderer;
+      if (!renderer) return null;
+      return this.generateHtmlThumbnail(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        execution,
+        renderer,
+      );
     }
 
     const isGifAsset = assetPath.toLowerCase().endsWith('.gif');
@@ -17378,6 +17397,69 @@ export class LibraryService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Serpent-8ca259: HTML thumbnail via the injected Main offscreen capture.
+   * The PNG is downscaled with sharp and stored as a standard thumbnail
+   * artifact; a null render or a failed record keeps the card on the generic
+   * file icon (never `failed` for a benign missing renderer).
+   */
+  private async generateHtmlThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    execution: MediaExecutionContext,
+    renderer: NonNullable<LibraryServiceOptions['documentThumbnailRenderer']>,
+  ): Promise<{ artifactId: string } | null> {
+    const url = `serpent://source/${encodeURIComponent(input.libraryId)}/${encodeURIComponent(input.assetId)}?revision=${encodeURIComponent(revisionId)}`;
+    if (execution.signal?.aborted) {
+      throw new DOMException('Media job cancelled before HTML render.', 'AbortError');
+    }
+    const rendered = await renderer({
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+      revisionId,
+      url,
+      signal: execution.signal,
+    });
+    if (!rendered) return null;
+    if (execution.signal?.aborted) {
+      throw new DOMException('Media job cancelled after HTML render.', 'AbortError');
+    }
+
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.jpg`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const sharp = this.options.sharpFn ?? requireSharp();
+    await sharp(Buffer.from(rendered.png))
+      .rotate()
+      .toColourspace('srgb')
+      .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 72 })
+      .toFile(artifactAbsPath);
+    const outputStat = statSync(artifactAbsPath);
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO revision_artifacts
+           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+            width, height, generator_version, status, generated_at)
+         VALUES (?, ?, 'thumbnail', 'image/jpeg', ?, ?, ?, ?, ?, 'ready', ?)`,
+      )
+      .run(
+        artifactId,
+        revisionId,
+        outputStat.size,
+        artifactRelPath,
+        rendered.width || null,
+        rendered.height || null,
+        DOCUMENT_THUMBNAIL_GENERATOR_VERSION,
+        new Date().toISOString(),
+      );
+    return { artifactId };
   }
 
   // ── Image thumbnail (sharp) ────────────────────────────────────────

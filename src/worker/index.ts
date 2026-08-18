@@ -24,6 +24,11 @@ import {
   type ModelThumbnailRenderRequest,
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
+import {
+  DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS,
+  parseDocumentThumbnailRenderResponse,
+  type DocumentThumbnailRenderRequest,
+} from '../shared/document-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
 import { SyncEngine, type SyncEngineOptions } from './sync/sync-engine';
 import { createLibrarySyncPort } from './sync/library-port';
@@ -125,6 +130,8 @@ const libraryService = new LibraryService({
   onAssetsChanged: (event) => parentPort.postMessage(event),
   onLibraryChanged: (event) => parentPort.postMessage(event),
   onProgress: (event) => parentPort.postMessage(event),
+  // Serpent-8ca259: HTML document thumbnails capture offscreen in Main.
+  documentThumbnailRenderer: (input) => renderDocumentThumbnailViaMain(input),
   onDiagnostic: ({ scope, error, context }) => {
     try {
       console.error(JSON.stringify({
@@ -224,8 +231,74 @@ function requestModelThumbnailRender(
  * any time (the shared offscreen window renders serially in Main; a second
  * concurrent request would only queue there and fight the worker deadline).
  * The acquire waits for the previous render and honors cancellation.
+ */let modelRenderTail: Promise<void> = Promise.resolve();
+/**
+ * Serpent-8ca259: ask Main to capture an HTML document thumbnail in a fresh
+ * offscreen window. Resolves with the typed result (never rejects except on
+ * abort); a missing Main response degrades to DOCUMENT_RENDER_TIMEOUT.
  */
-let modelRenderTail: Promise<void> = Promise.resolve();
+const pendingDocumentThumbnailRenders = new Map<string, {
+  resolve: (result: DocumentThumbnailRenderResponse) => void;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
+function requestDocumentThumbnailRender(
+  input: Omit<DocumentThumbnailRenderRequest, 'type' | 'requestId'>,
+  signal?: AbortSignal,
+): Promise<DocumentThumbnailRenderResponse> {
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingDocumentThumbnailRenders.delete(requestId);
+      resolve({
+        status: 'failed',
+        errorCode: 'DOCUMENT_RENDER_TIMEOUT',
+        reason: 'no render response from Main within the worker deadline',
+      });
+    }, DOCUMENT_THUMBNAIL_WORKER_REQUEST_TIMEOUT_MS);
+    timer.unref?.();
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      pendingDocumentThumbnailRenders.delete(requestId);
+      reject(new DOMException('Document thumbnail render request aborted.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    pendingDocumentThumbnailRenders.set(requestId, { resolve, timer });
+    parentPort?.postMessage({
+      type: 'document-thumbnail.render-request',
+      requestId,
+      ...input,
+    });
+  });
+}
+
+/** Worker-side handler consumed by the LibraryService documentThumbnailRenderer. */
+async function renderDocumentThumbnailViaMain(input: {
+  libraryId: string;
+  assetId: string;
+  revisionId: string;
+  url: string;
+  signal: AbortSignal;
+}): Promise<{ png: Uint8Array; width: number; height: number } | null> {
+  try {
+    const result = await requestDocumentThumbnailRender(
+      { url: input.url, width: 1024 },
+      input.signal,
+    );
+    if (result.status === 'ok') {
+      return { png: result.png, width: result.width, height: result.height };
+    }
+    return null;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    libraryService.reportDiagnostic('document-thumbnail.orchestrate', error, {
+      libraryId: input.libraryId,
+      assetId: input.assetId,
+    });
+    return null;
+  }
+}
+
 async function withModelRenderGate<T>(
   signal: AbortSignal | undefined,
   fn: () => Promise<T>,
@@ -532,6 +605,8 @@ function scheduleThumbnailQueue(
         // most one render in flight process-wide.
         modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
+        // Serpent-8ca259: HTML document thumbnails capture offscreen in Main.
+        documentThumbnailRenderer: (input) => renderDocumentThumbnailViaMain(input),
       });
       continueImmediately = processed === processWaveSize;
       if (!continueImmediately) {
@@ -3547,6 +3622,20 @@ parentPort.on('message', async (event) => {
       clearTimeout(pending.timer);
       pendingModelThumbnailRenders.delete(renderResponse.requestId);
       pending.resolve(renderResponse.result);
+    }
+    return;
+  } catch {
+    // A normal Worker request or control message; validate it below.
+  }
+
+  try {
+    // Serpent-8ca259: Main's offscreen document capture result.
+    const documentResponse = parseDocumentThumbnailRenderResponse(input);
+    const pendingDocument = pendingDocumentThumbnailRenders.get(documentResponse.requestId);
+    if (pendingDocument) {
+      clearTimeout(pendingDocument.timer);
+      pendingDocumentThumbnailRenders.delete(documentResponse.requestId);
+      pendingDocument.resolve(documentResponse.result);
     }
     return;
   } catch {

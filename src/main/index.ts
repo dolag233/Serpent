@@ -302,6 +302,7 @@ import {
   resolveOffscreenPageUrl,
   type OffscreenThumbnailRenderer,
 } from "./offscreen-thumbnail-renderer";
+import { renderDocumentThumbnail } from "./document-thumbnail-renderer";
 import {
   clearModelThumbnailSourceAuthorizations,
   registerModelThumbnailSourceAuthorizations,
@@ -5642,6 +5643,11 @@ async function startApplication(): Promise<void> {
       clearModelThumbnailSourceAuthorizations(sourceAuthorizations);
     });
   });
+  // Serpent-8ca259: HTML document thumbnails capture the source in a fresh
+  // offscreen window in Main; the Worker persists the artifact bytes.
+  workerClient.onDocumentThumbnailRenderRequest((request) =>
+    renderDocumentThumbnail(request, logger),
+  );
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(
       path.join(app.getPath('userData'), 'automation-executions.json'),
