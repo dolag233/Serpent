@@ -1861,4 +1861,43 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
 
     service.closeAll();
   });
+
+  it('stores an offscreen-captured HTML thumbnail as a JPEG artifact (Serpent-8ca259)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      documentThumbnailRenderer: async ({ url, signal }) => {
+        expect(url).toContain('serpent://source/');
+        expect(signal?.aborted ?? false).toBe(false);
+        // 1x1 white PNG returned by the Main offscreen capture.
+        return {
+          png: new Uint8Array(VALID_1X1_PNG),
+          width: 6,
+          height: 6,
+        };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'HTML', selectedParentPath: root });
+    const sourcePath = path.join(root, 'sample.html');
+    writeFileSync(sourcePath, '<!doctype html><html><body>Hello</body></html>');
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(asset).toMatchObject({ mediaType: 'document' });
+
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    expect(result.artifactId).toBeTruthy();
+
+    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`);
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare('SELECT kind, status, mime_type, generator_version FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { kind: string; status: string; mime_type: string; generator_version: string };
+    expect(row.kind).toBe('thumbnail');
+    expect(row.status).toBe('ready');
+    expect(row.mime_type).toBe('image/jpeg');
+    expect(row.generator_version).toContain('offscreen-web-1');
+    db.close();
+
+    service.closeAll();
+  });
 });
