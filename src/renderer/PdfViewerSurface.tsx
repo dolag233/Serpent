@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask } from "pdfjs-dist/types/src/display/api";
+import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import { useT } from "./i18n";
@@ -37,6 +38,9 @@ export function PdfViewerSurface({
     void (async () => {
       try {
         const pdfjs = await import("pdfjs-dist");
+        // Bundle the pdf.js worker locally (vite emits it as a static asset);
+        // the CSP (script-src 'self') forbids CDN/blob worker sources.
+        pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
         loadingTask = pdfjs.getDocument({ url: sourceUrl });
         const pdf = await loadingTask.promise;
         if (cancelled) {
