@@ -3676,7 +3676,7 @@ function AppInner() {
         busyState === "creating"
           ? t("dialog.blockingError.libraryCreateFailed")
           : t("dialog.blockingError.libraryOpenFailed"),
-        toMessage(caught, failureMessage),
+        toMessage(caught, failureMessage, locale),
       );
       // Serpent-s0oq: opening an invalid library removes it from the recent
       // store in Main — refresh so the switcher menu and the no-library

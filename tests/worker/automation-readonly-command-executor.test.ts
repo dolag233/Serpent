@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { PUBLIC_ERROR_MESSAGES } from '../../src/shared/protocol/errors';
 import {
   executeAutomationReadOnlyWorkerCommand,
   isAutomationReadOnlyWorkerCommand,
@@ -52,7 +53,7 @@ describe('Automation read-only Worker dispatch', () => {
       ok: false,
       error: {
         code: 'INTERNAL_ERROR',
-        message: 'Serpent could not complete the request.',
+        message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
       },
     });
     expect(createTagCalls).toBe(0);

@@ -5,7 +5,7 @@ import {
   parseRendererRequest,
   parseWorkerRequest,
 } from '../../src/shared/protocol/requests';
-import { createPublicError, publicReasonFromError, toPublicError } from '../../src/shared/protocol/errors';
+import { classifyUnknownFailure, createPublicError, publicReasonFromError, toPublicError, PUBLIC_ERROR_MESSAGES } from '../../src/shared/protocol/errors';
 import {
   importConflictPlanSchema,
   parseAssetChangeEvent,
@@ -2070,16 +2070,38 @@ describe('public errors', () => {
 
     expect(publicError).toEqual({
       code: 'INTERNAL_ERROR',
-      message: 'Serpent could not complete the request.',
+      message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
     });
     expect(JSON.stringify(publicError)).not.toContain('/Users/private');
     expect(JSON.stringify(publicError)).not.toContain('SQLITE');
   });
 
+  it('classifies SQLite IOERR as a network-share library error without copying the message', () => {
+    const sqliteError = Object.assign(new Error('disk I/O error at /secret/library.db'), {
+      code: 'SQLITE_IOERR_IN_PAGE',
+    });
+    expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_NETWORK_SHARE' });
+    const publicError = toPublicError(sqliteError);
+    expect(publicError.code).toBe('LIBRARY_NETWORK_SHARE');
+    expect(JSON.stringify(publicError)).not.toContain('/secret');
+  });
+
+  it('attaches a filesystem reason to INTERNAL_ERROR when the errno is known', () => {
+    const accessError = Object.assign(new Error('EACCES: permission denied, open /secret/file'), {
+      code: 'EACCES',
+    });
+    expect(toPublicError(accessError)).toEqual({
+      code: 'INTERNAL_ERROR',
+      message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
+      reason: 'PERMISSION_DENIED',
+    });
+    expect(JSON.stringify(toPublicError(accessError))).not.toContain('/secret');
+  });
+
   it('carries only a stable renderer-safe failure reason', () => {
     expect(createPublicError('IMPORT_APPLY_FAILED', 'PATH_LIMIT_EXCEEDED')).toEqual({
       code: 'IMPORT_APPLY_FAILED',
-      message: 'Serpent could not apply the import safely.',
+      message: PUBLIC_ERROR_MESSAGES.IMPORT_APPLY_FAILED,
       reason: 'PATH_LIMIT_EXCEEDED',
     });
   });

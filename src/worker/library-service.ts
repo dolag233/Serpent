@@ -393,7 +393,7 @@ class OiioInvocationError extends Error {
   }
 }
 import type { PublicErrorCode } from '../shared/protocol/errors';
-import { publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
+import { classifyUnknownFailure, publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
@@ -3662,6 +3662,13 @@ export class LibraryServiceError extends Error {
 function serviceError(error: unknown, fallback: PublicErrorCode): LibraryServiceError {
   if (error instanceof LibraryServiceError) return error;
   if (error instanceof LibraryInputError) return new LibraryServiceError(error.code, { cause: error });
+  const classified = classifyUnknownFailure(error);
+  if (classified) {
+    return new LibraryServiceError(classified.code, {
+      cause: error,
+      reason: classified.reason,
+    });
+  }
   return new LibraryServiceError(fallback, { cause: error });
 }
 

@@ -4625,6 +4625,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       try {
         const openError = await shell.openPath(workerResult.absolutePath);
         if (openError) {
+          logger?.error("main.open-external", new Error(openError));
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4717,6 +4718,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           createFileClipboardDeps(),
         );
         if (!wrote) {
+          logger?.error(
+            "main.copy-asset-files",
+            new Error("clipboard file copy produced no file list"),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4754,6 +4759,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       try {
         const openError = await shell.openPath(workerResult.absolutePath);
         if (openError) {
+          logger?.error(
+            "main.open-folder-in-file-manager",
+            new Error(openError),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4825,6 +4834,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           createFileClipboardDeps(),
         );
         if (!wrote) {
+          logger?.error(
+            "main.copy-folder-files",
+            new Error("clipboard file copy produced no file list"),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),

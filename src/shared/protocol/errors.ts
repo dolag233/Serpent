@@ -2,14 +2,17 @@ import { z } from 'zod';
 
 export const PUBLIC_ERROR_MESSAGES = {
   CANCELLED: 'The request was cancelled.',
-  INTERNAL_ERROR: 'Serpent could not complete the request.',
+  INTERNAL_ERROR:
+    'Serpent hit an unexpected error and could not finish. Open Diagnostics in the app to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.',
   INVALID_LIBRARY_NAME: 'Choose a library name that is safe on macOS and Windows.',
-  INVALID_LIBRARY_PATH: 'Choose a valid local folder for the library.',
+  INVALID_LIBRARY_PATH:
+    'The selected location is not a usable folder for a library. Choose an existing writable folder on a local disk — not a file, and not a disconnected drive.',
   INVALID_FOLDER_NAME: 'Choose a folder name that is safe on macOS and Windows.',
   FOLDER_ALREADY_EXISTS: 'A folder with this name already exists in the selected location.',
   FOLDER_NAME_CONFLICT: 'A folder or file with this name already exists in the selected location.',
   FOLDER_NOT_EMPTY: 'Only folders with no assets, child folders, or unmanaged files can be deleted by this operation.',
-  FOLDER_NOT_FOUND: 'The selected library folder could not be found.',
+  FOLDER_NOT_FOUND:
+    'That library folder is no longer at this location. It may have been moved, renamed, or the disk may be disconnected. Reconnect the drive or choose the folder again.',
   INVALID_IMPORT_SOURCE: 'Choose readable local files or a folder without symbolic links.',
   INVALID_DROP_SELECTION: 'Drop either one local folder or one or more local files.',
   WEB_MEDIA_NOT_FOUND: 'The dropped browser content does not contain a downloadable image or video URL.',
@@ -21,24 +24,33 @@ export const PUBLIC_ERROR_MESSAGES = {
   IMPORT_COLLECTION_ASSIGN_FAILED: 'The assets were imported, but Serpent could not add them to the selected collection.',
   INVALID_IMPORT_DECISION: 'Choose a valid import conflict decision.',
   IMPORT_NOT_FOUND: 'The pending import no longer exists.',
-  IMPORT_APPLY_FAILED: 'Serpent could not apply the import safely.',
-  LIBRARY_ALREADY_EXISTS: 'A file or folder with this library name already exists.',
-  LIBRARY_NOT_FOUND: 'The selected library folder could not be found.',
-  NOT_A_LIBRARY: 'The selected folder is not a Serpent library.',
-  LIBRARY_CORRUPT: 'The library database or migration history is damaged.',
-  LIBRARY_VERSION_TOO_NEW: 'This library was created by a newer version of Serpent.',
+  IMPORT_APPLY_FAILED:
+    'Import stopped before every file was copied and registered. Nothing was silently overwritten. Check disk space and that the source files are still readable, then retry; already-imported items do not need to be selected again.',
+  LIBRARY_ALREADY_EXISTS: 'A file or folder with this library name already exists. Choose another name or another parent folder.',
+  LIBRARY_NOT_FOUND:
+    'Serpent cannot find that library folder. It may have been moved, renamed, or the disk may be disconnected. Reconnect the drive or choose the library again from Open Library.',
+  NOT_A_LIBRARY:
+    'The selected folder is not a Serpent library (it has no .serpent database).',
+  LIBRARY_CORRUPT:
+    'Serpent could not read this library’s database (integrity check or migration history failed). Reopen the library so Serpent can restore from a backup. Copy the whole library folder to a local disk first if you want a safety copy.',
+  LIBRARY_VERSION_TOO_NEW:
+    'This library was created by a newer version of Serpent, so this app cannot open it. Install the latest Serpent, then open the library again.',
   LIBRARY_READ_ONLY:
-    'Serpent cannot write to this library. Check that the files are not locked or marked read-only.',
+    'Serpent cannot write to this library because the files are locked or marked read-only. Clear the read-only flag, close other programs using the folder, and retry.',
   LIBRARY_MIGRATION_FAILED:
-    'The library migration failed and was rolled back. Serpent will retry it automatically when you open the library again.',
+    'Upgrading this library’s database failed and was rolled back. Your files are unchanged. Open the library again to retry the upgrade; if it keeps failing, copy the library to a local disk and retry.',
   LIBRARY_MIGRATION_STUCK:
-    'This library could not be migrated after repeated attempts. Serpent opened it at the last working schema so you can keep using it.',
+    'This library could not be migrated after repeated attempts. Serpent opened it at the last working schema so you can keep using it. Upgrade Serpent when a fix is available; do not delete the library folder.',
   LIBRARY_STRUCTURE_MISMATCH:
-    'This library has an incompatible structure for this operation. Upgrade Serpent to the latest version.',
-  LIBRARY_NOT_WRITABLE: 'Serpent cannot write to the selected location.',
-  LIBRARY_BUSY: 'This library is being updated by another Serpent session. Try again in a moment.',
-  LIBRARY_CLEANUP_FAILED: 'Library creation failed and temporary files could not be removed.',
-  LIBRARY_NOT_OPEN: 'The library is not currently open.',
+    'This library’s database structure does not match this version of Serpent. Upgrade to the latest Serpent and reopen the library.',
+  LIBRARY_NOT_WRITABLE:
+    'Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Choose a writable folder on a local disk and retry.',
+  LIBRARY_NETWORK_SHARE:
+    'Serpent cannot keep a library database on this network share (NAS/SMB). SQLite needs local-disk file locking, which many shares do not provide. Create or copy the library on a local disk, then use WebDAV sync if you need the same library on other computers.',
+  LIBRARY_BUSY: 'This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.',
+  LIBRARY_CLEANUP_FAILED:
+    'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable local-disk folder.',
+  LIBRARY_NOT_OPEN: 'That library is not open in this window. Open it again, then retry the action.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
   ASSET_FILE_NAME_CONFLICT: 'A file with this name already exists in the asset folder.',
@@ -62,7 +74,8 @@ export const PUBLIC_ERROR_MESSAGES = {
   HISTORY_TRANSITION_IN_PROGRESS: 'Another undo or redo operation is already in progress.',
   HISTORY_STALE: 'The files or records changed, so this operation cannot be reversed safely.',
   HISTORY_TOO_LARGE: 'This operation is too large to retain in the undo history.',
-  SYNC_CONNECTION_FAILED: 'Serpent could not connect to the sync server.',
+  SYNC_CONNECTION_FAILED:
+    'Serpent could not reach the sync server. Check the address, username, password, and that the computer is online. A more specific reason is listed when Serpent can classify the failure.',
   SYNC_IN_PROGRESS: 'This library is syncing right now. Try again after the current sync finishes.',
   DISK_FULL: 'The disk does not have enough free space to complete this operation. Free up space and try again.',
 } as const;
@@ -133,6 +146,7 @@ export const publicErrorReasonSchema = z.enum([
   'SYNC_CONFLICT',
   'SYNC_METHOD_NOT_ALLOWED',
   'SYNC_WRITE_UNSUPPORTED',
+  'SYNC_HTTP_ERROR',
 ]);
 
 export type PublicErrorReason = z.infer<typeof publicErrorReasonSchema>;
@@ -211,12 +225,67 @@ export function publicReasonFromError(error: unknown): PublicErrorReason | undef
   return undefined;
 }
 
+function walkErrorCodes(error: unknown): Array<{ code: string; message?: string }> {
+  const visited = new Set<unknown>();
+  const collected: Array<{ code: string; message?: string }> = [];
+  let current = error;
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    visited.add(current);
+    const code = 'code' in current && typeof current.code === 'string' ? current.code : undefined;
+    const message = current instanceof Error ? current.message : undefined;
+    if (code || message) collected.push({ ...(code ? { code } : { code: '' }), ...(message ? { message } : {}) });
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return collected;
+}
+
+/**
+ * Maps SQLite / disk failures to a renderer-safe public code without copying
+ * Error.message (which may contain filesystem paths).
+ */
+export function classifyUnknownFailure(
+  error: unknown,
+): { code: PublicErrorCode; reason?: PublicErrorReason } | undefined {
+  if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'DriverUnsupportedError') {
+    return { code: 'SYNC_CONNECTION_FAILED', reason: 'SYNC_METHOD_NOT_ALLOWED' };
+  }
+
+  for (const { code, message } of walkErrorCodes(error)) {
+    if (code === 'ENOSPC' || code === 'EDQUOT' || code === 'SQLITE_FULL') {
+      return { code: 'DISK_FULL' };
+    }
+    if (code === 'SQLITE_READONLY' || code === 'SQLITE_READONLY_CANTINIT') {
+      return { code: 'LIBRARY_READ_ONLY' };
+    }
+    if (
+      code === 'SQLITE_BUSY'
+      || code.startsWith('SQLITE_BUSY_')
+      || code === 'SQLITE_LOCKED'
+      || code.startsWith('SQLITE_LOCKED_')
+      || (code === 'SQLITE_ERROR' && message !== undefined && /database is locked/i.test(message))
+    ) {
+      return { code: 'LIBRARY_BUSY' };
+    }
+    if (code.startsWith('SQLITE_IOERR')) {
+      return { code: 'LIBRARY_NETWORK_SHARE' };
+    }
+    if (code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_') || code === 'SQLITE_NOTADB') {
+      return { code: 'LIBRARY_CORRUPT' };
+    }
+    if (code === 'SQLITE_CANTOPEN' || code.startsWith('SQLITE_CANTOPEN_')) {
+      return { code: 'LIBRARY_NOT_WRITABLE', reason: 'IO_ERROR' };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Converts an untrusted internal failure into the stable renderer-safe shape.
- * Deliberately do not inspect or serialize the input: Error messages can contain
- * filesystem paths, database details, credentials, or other diagnostics.
+ * Inspects only errno / SQLite codes (and DriverUnsupportedError.name). Never
+ * copies Error.message into the public payload.
  */
-export function toPublicError(_error: unknown): PublicError {
-  void _error;
-  return createPublicError('INTERNAL_ERROR');
+export function toPublicError(error: unknown): PublicError {
+  const classified = classifyUnknownFailure(error);
+  if (classified) return createPublicError(classified.code, classified.reason);
+  return createPublicError('INTERNAL_ERROR', publicReasonFromError(error));
 }
