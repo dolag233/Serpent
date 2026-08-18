@@ -93,6 +93,7 @@ export function LibrarySwitcher({
   syncStatus = "none",
   busy = false,
   onImportLibrary,
+  onExportLibrary,
 }: LibrarySwitcherProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -237,6 +238,18 @@ export function LibrarySwitcher({
             type="button"
           >
             {t("toolbar.importLibrary")}
+          </button>
+          <button
+            className="library-switcher-item"
+            disabled={!onExportLibrary || !libraryOpen || busy}
+            onClick={() => {
+              if (onExportLibrary) runMenuAction(onExportLibrary);
+            }}
+            role="menuitem"
+            tabIndex={-1}
+            type="button"
+          >
+            {t("toolbar.exportLibrary")}
           </button>
           <button
             className="library-switcher-item"
