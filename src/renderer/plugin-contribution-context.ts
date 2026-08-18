@@ -16,6 +16,7 @@ const MIME_BY_MEDIA_TYPE: Record<AssetSummary["mediaType"], string> = {
   audio: "audio/*",
   text: "text/*",
   model: "model/*",
+  document: "application/pdf",
   other: "application/octet-stream",
 };
 

@@ -99,6 +99,7 @@ export function pluginViewerMimeType(mediaType: AssetSummary["mediaType"]): stri
     case "audio": return "audio/*";
     case "text": return "text/*";
     case "model": return "model/*";
+    case "document": return "application/pdf";
     case "other": return "application/octet-stream";
   }
 }

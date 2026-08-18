@@ -1815,4 +1815,50 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
 
     service.closeAll();
   });
+
+  it('generates a first-page thumbnail for a PDF asset (Serpent-8ca259)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'PDF', selectedParentPath: root });
+
+    // Minimal single-page PDF with the text "Hello PDF" (hand-assembled).
+    const pdfBytes = Buffer.from(
+      '%PDF-1.4\n'
+      + '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+      + '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+      + '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n'
+      + '4 0 obj<</Length 46>>stream\n'
+      + 'BT /F1 24 Tf 30 100 Td (Hello PDF) Tj ET\n'
+      + 'endstream endobj\n'
+      + '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n'
+      + 'xref\n0 6\n0000000000 65535 f \n'
+      + '0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000290 00000 n \n0000000385 00000 n \n'
+      + 'trailer<</Size 6/Root 1 0 R>>\n'
+      + 'startxref\n470\n%%EOF\n',
+      'latin1',
+    );
+
+    const sourcePath = path.join(root, 'sample.pdf');
+    writeFileSync(sourcePath, pdfBytes);
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(asset).toMatchObject({ mediaType: 'document' });
+
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    expect(result.artifactId).toBeTruthy();
+
+    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`);
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare('SELECT kind, status, mime_type, generator_version FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { kind: string; status: string; mime_type: string; generator_version: string };
+    expect(row.kind).toBe('thumbnail');
+    expect(row.status).toBe('ready');
+    expect(row.mime_type).toBe('image/jpeg');
+    expect(row.generator_version).toContain('pdfjs@');
+    db.close();
+
+    service.closeAll();
+  });
 });

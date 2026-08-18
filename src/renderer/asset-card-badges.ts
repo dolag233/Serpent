@@ -29,7 +29,7 @@ export function fileExtensionLabel(displayName: string): string {
  * when the extension chip (FBX…) is enabled the extension wins, same as video.
  */
 export function assetTypeBadgeLabel(
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other",
   displayName: string,
 ): string | null {
   const ext = fileExtensionLabel(displayName);
@@ -45,13 +45,13 @@ export function assetTypeBadgeLabel(
  * Images never show an extension corner badge.
  */
 export function shouldShowExtensionBadge(
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other",
 ): boolean {
   return mediaType !== "image";
 }
 
 export function shouldShowDurationBadge(
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "other",
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other",
   displayName: string,
   durationMs: number | null | undefined,
 ): boolean {

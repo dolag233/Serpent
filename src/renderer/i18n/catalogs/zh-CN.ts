@@ -1799,6 +1799,8 @@ export const zhCN = {
     textFileSaved: "文件已保存。",
     diskChangedRefreshFailed: "磁盘内容已变化，但界面刷新失败。",
     exportComplete: "导出完成：{files} 文件，{bytes}。",
+    pdfLoadFailed: "无法加载 PDF 文件。",
+    pdfPages: "已加载 {loaded}/{count} 页",
     paletteTooMany: "保存色卡失败。原因：人工色卡最多包含 20 个颜色值。",
     paletteBadFormat: "保存色卡失败。原因：颜色必须使用 #RRGGBB 格式。",
     batchRatingFailed: "批量设置评分失败。",

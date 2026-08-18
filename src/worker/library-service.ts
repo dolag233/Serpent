@@ -16860,7 +16860,7 @@ export class LibraryService {
    * `model` covers the T1 3D set (fbx/obj/gltf/glb/stl); its preview and
    * thumbnails are renderer-side (slices C/E), never Worker raster jobs.
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (isSupportedImageExtension(lower)) {
       return 'image';
@@ -16873,6 +16873,12 @@ export class LibraryService {
     }
     if (isAudioFileName(lower)) {
       return 'audio';
+    }
+    // Serpent-8ca259: PDF and HTML are documents previewed in a browser-like
+    // renderer, not plain text. Check before the text whitelist (HTML is
+    // currently listed there) so they classify as `document`.
+    if (lower.endsWith('.pdf') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+      return 'document';
     }
     if (isTextFileName(lower)) {
       return 'text';
@@ -16888,12 +16894,13 @@ export class LibraryService {
    */
   static toSummaryMediaType(
     detected: ReturnType<typeof LibraryService.detectMediaType>,
-  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' {
+  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
     return detected === 'image' ||
       detected === 'video' ||
       detected === 'audio' ||
       detected === 'text' ||
-      detected === 'model'
+      detected === 'model' ||
+      detected === 'document'
       ? detected
       : 'other';
   }
@@ -16948,6 +16955,18 @@ export class LibraryService {
     // nothing is written, thumbnailStatus stays null → the card shows the
     // generic 3D icon (never `failed`).
     if (mediaType === 'model') {
+      return null;
+    }
+
+    // Serpent-8ca259: PDF thumbnails render the first page with pdfjs-dist in
+    // the Worker (pure JS, no offscreen window). HTML thumbnails render
+    // offscreen in Main and are routed before this function (like model).
+    if (mediaType === 'document' && ext === '.pdf') {
+      return this.generatePdfThumbnail(input, openLibrary, assetPath, revisionId, execution);
+    }
+    if (mediaType === 'document') {
+      // HTML: rendered offscreen in Main (commit 2). Explicit command path
+      // stays a benign no-op like model until then.
       return null;
     }
 
@@ -17247,6 +17266,118 @@ export class LibraryService {
       row !== undefined
       && LibraryService.detectMediaType(row.relative_file_path) === 'model'
     );
+  }
+
+  /**
+   * Serpent-8ca259: render the first page of a PDF to a standard thumbnail
+   * artifact with pdfjs-dist (pure JS) + @napi-rs/canvas (NAPI, no node-gyp).
+   * The render result is written through the same revision_artifacts pipeline
+   * as image thumbnails, so cards/Inspector/hover work unchanged.
+   */
+  private async generatePdfThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<{ artifactId: string }> {
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    mkdirSync(artifactsDir, { recursive: true });
+    const artifactRelPath = `${artifactId}.jpg`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+
+    try {
+      const pdfBytes = readFileSync(assetPath);
+      if (pdfBytes.length === 0) {
+        throw new Error('PDF file is empty.');
+      }
+      if (execution.signal?.aborted) {
+        throw new DOMException('Media job cancelled before PDF load.', 'AbortError');
+      }
+      // pdfjs-dist 6.x ships an ESM build; load lazily so Worker startup is
+      // unaffected when no PDFs are queued. The legacy build runs in Node.
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const { createCanvas } = await import('@napi-rs/canvas');
+      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(pdfBytes) });
+      const pdfDocument = await loadingTask.promise;
+      try {
+        const page = await pdfDocument.getPage(1);
+        // Render at a fixed 1024px-longest-edge for a crisp 512 card after
+        // sharp downscale (pdfjs viewport units are PDF points, 72dpi).
+        const baseViewport = page.getViewport({ scale: 1 });
+        const longestEdge = Math.max(baseViewport.width, baseViewport.height);
+        const scale = longestEdge > 0 ? 1024 / longestEdge : 1;
+        const viewport = page.getViewport({ scale });
+        const canvas = createCanvas(
+          Math.max(1, Math.ceil(viewport.width)),
+          Math.max(1, Math.ceil(viewport.height)),
+        );
+        const context = canvas.getContext('2d');
+        await page.render({
+          canvas: canvas as never,
+          canvasContext: context as never,
+          viewport,
+        }).promise;
+        if (execution.signal?.aborted) {
+          throw new DOMException('Media job cancelled after PDF render.', 'AbortError');
+        }
+        const pngBuffer = canvas.toBuffer('image/png');
+        const sharp = this.options.sharpFn ?? requireSharp();
+        const width = Math.round(viewport.width);
+        const height = Math.round(viewport.height);
+        await sharp(pngBuffer)
+          .rotate()
+          .toColourspace('srgb')
+          .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 72 })
+          .toFile(artifactAbsPath);
+        const outputStat = statSync(artifactAbsPath);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                width, height, generator_version, status, generated_at)
+             VALUES (?, ?, 'thumbnail', 'image/jpeg', ?, ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            revisionId,
+            outputStat.size,
+            artifactRelPath,
+            width || null,
+            height || null,
+            `pdfjs@${pdfjs.version ?? '6'}`,
+            new Date().toISOString(),
+          );
+        return { artifactId };
+      } finally {
+        await loadingTask.destroy();
+      }
+    } catch (error) {
+      // Failed PDF artifacts must land in revision_artifacts so the card shows
+      // the failure badge and repair can re-run, mirroring image failures.
+      try {
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                width, height, generator_version, status, error_code, generated_at)
+             VALUES (?, ?, 'thumbnail', 'application/pdf', 0, ?, NULL, NULL, ?, 'failed', ?, ?)`,
+          )
+          .run(
+            artifactId,
+            revisionId,
+            artifactRelPath,
+            `pdfjs@failed`,
+            'UNSUPPORTED_FORMAT',
+            new Date().toISOString(),
+          );
+      } catch {
+        // Preserve the original error if the failure record itself fails.
+      }
+      throw error;
+    }
   }
 
   // ── Image thumbnail (sharp) ────────────────────────────────────────
@@ -19905,7 +20036,7 @@ export class LibraryService {
     assetId: string,
     intent: 'viewer' | 'hover' | 'proxy-fallback' = 'viewer',
   ): {
-    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
     artifactId?: string;
@@ -19961,6 +20092,27 @@ export class LibraryService {
         kind,
         mimeType,
         errorCode: 'UNSUPPORTED_FORMAT',
+      };
+    }
+
+    // Serpent-8ca259: PDF/HTML documents open the original source through
+    // serpent://source (Main serves the file); the renderer previews them with
+    // pdfjs / an embedded browser. No thumbnail job is required to open.
+    if (mediaType === 'document' && asset.current_revision_id) {
+      const extension = path.extname(asset.relative_file_path).toLowerCase();
+      const documentMime = extension === '.pdf'
+        ? 'application/pdf'
+        : extension === '.html' || extension === '.htm'
+          ? 'text/html'
+          : 'application/octet-stream';
+      return {
+        mediaType,
+        status: 'ready',
+        kind,
+        mimeType: documentMime,
+        playbackMode: 'source',
+        sourceRevisionId: asset.current_revision_id,
+        sourceMimeType: documentMime,
       };
     }
 
@@ -23857,7 +24009,7 @@ export class LibraryService {
       trashed_from_tombstone_id?: string | null;
       thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
       thumbnail_artifact_id?: string | null;
-      media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'other' | null;
+      media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' | null;
       artifact_width?: number | null;
       artifact_height?: number | null;
       artifact_duration_ms?: number | null;

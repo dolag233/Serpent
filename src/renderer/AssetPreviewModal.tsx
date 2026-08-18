@@ -35,6 +35,7 @@ import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
+import { PdfViewerSurface } from "./PdfViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { detectPbrTextureChannel } from "./pbr-texture-channel";
@@ -877,6 +878,15 @@ export const AssetPreviewModal = forwardRef<
               libraryId={libraryId}
               onFullscreen={() => void toggleFullscreen()}
               onInfoNotice={onInfoNotice}
+              sourceUrl={resolution.url}
+            />
+          ) : ready && resolution?.mediaType === "document" && resolution.url ? (
+            <PdfViewerSurface
+              api={api}
+              assetId={asset.assetId}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "text" ? (
