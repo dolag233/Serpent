@@ -1495,6 +1495,12 @@ export const en = {
     requestFailed: "{prefix}: {detail}",
     requestFailedWithReason: "{prefix}: {detail} ({reason})"
   },
+  viewer: {
+    pdfLoadFailed: "Could not load the PDF file.",
+    pdfPages: "Loaded {loaded}/{count} pages",
+    htmlLoadFailed: "Could not load the HTML file.",
+    htmlLoading: "Loading HTML…"
+  },
   viewer3d: {
     ariaLabel: "3D model preview",
     loading: "Loading 3D model…",
@@ -1817,10 +1823,6 @@ export const en = {
     textFileSaved: "File saved.",
     diskChangedRefreshFailed: "Disk contents changed, but refreshing the UI failed.",
     exportComplete: "Export complete: {files} files, {bytes}.",
-    pdfLoadFailed: "Could not load the PDF file.",
-    pdfPages: "Loaded {loaded}/{count} pages",
-    htmlLoadFailed: "Could not load the HTML file.",
-    htmlLoading: "Loading HTML…",
     paletteTooMany: "Failed to save palette. Reason: manual palette allows at most 20 colors.",
     paletteBadFormat: "Failed to save palette. Reason: colors must use #RRGGBB format.",
     batchRatingFailed: "Failed to set rating in batch.",
