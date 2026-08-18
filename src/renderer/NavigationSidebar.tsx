@@ -60,6 +60,7 @@ import {
   loadNavTreePreferences,
   saveNavTreePreferences,
   withCollapsedFolderIds,
+  withCollapsedCollectionIds,
   type NavTreePreferences,
 } from "./nav-tree-preferences";
 import { PaneSurface } from "./ui/surfaces";
@@ -733,6 +734,32 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     saveNavTreePreferences(next);
   }
 
+  // Serpent-c42eb1: collection subtree collapse, mirroring folder collapse.
+  const persistedCollapsedCollectionIds = new Set(
+    navTreePrefs.collapsedCollectionIds ?? [],
+  );
+  // Creating a sub-collection under a collapsed parent must reveal the inline
+  // create row; keep this derived so opening/cancelling an editor never
+  // mutates the persisted navigation preference.
+  const collapsedCollectionIds = new Set(persistedCollapsedCollectionIds);
+  if (
+    showCollectionInput &&
+    newCollectionParentId &&
+    collapsedCollectionIds.has(newCollectionParentId)
+  ) {
+    collapsedCollectionIds.delete(newCollectionParentId);
+  }
+
+  function toggleCollectionCollapsed(collectionId: string) {
+    const current = navTreePrefs.collapsedCollectionIds ?? [];
+    const nextIds = persistedCollapsedCollectionIds.has(collectionId)
+      ? current.filter((id) => id !== collectionId)
+      : [...current, collectionId];
+    const next = withCollapsedCollectionIds(navTreePrefs, nextIds);
+    setNavTreePrefs(next);
+    saveNavTreePreferences(next);
+  }
+
   function revealCreatedFolderParent(
     _folderId: string,
     parentId: string | null,
@@ -1217,6 +1244,28 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           />
         ) : (
           <NavRow
+            disclosure={
+              (collectionTree.get(c.collectionId) ?? []).length > 0 ? (
+                <button
+                  aria-expanded={!collapsedCollectionIds.has(c.collectionId)}
+                  aria-label={
+                    collapsedCollectionIds.has(c.collectionId)
+                      ? t("nav.expandCollection", { name: c.name })
+                      : t("nav.collapseCollection", { name: c.name })
+                  }
+                  className={`nav-disclosure${
+                    collapsedCollectionIds.has(c.collectionId) ? "" : " is-expanded"
+                  }`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleCollectionCollapsed(c.collectionId);
+                  }}
+                  type="button"
+                >
+                  <Icon name="chevron-right" size={12} />
+                </button>
+              ) : undefined
+            }
             icon="collection"
             label={c.name}
             count={c.assetCount}
@@ -1267,7 +1316,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onClick={() => void onChooseCollection(c.collectionId)}
           />
         )}
-        {renderCollectionNodes(c.collectionId, depth + 1)}
+        {!collapsedCollectionIds.has(c.collectionId) &&
+          renderCollectionNodes(c.collectionId, depth + 1)}
       </div>
     )));
     return rows;

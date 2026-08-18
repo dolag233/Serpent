@@ -198,6 +198,8 @@ export const en = {
     emptyManagedOrLinked: "No managed or linked folders yet",
     collapseFolder: "Collapse {name}",
     expandFolder: "Expand {name}",
+    collapseCollection: "Collapse collection {name}",
+    expandCollection: "Expand collection {name}",
     emptyCollections: "No collections yet",
     emptySmartCollections: "No smart collections yet",
     addSmartCollection: "New smart collection",

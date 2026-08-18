@@ -187,6 +187,8 @@ export const zhCN = {
     emptyManagedOrLinked: "尚无托管或链接文件夹",
     collapseFolder: "折叠 {name}",
     expandFolder: "展开 {name}",
+    collapseCollection: "折叠合集 {name}",
+    expandCollection: "展开合集 {name}",
     emptyCollections: "尚无合集",
     emptySmartCollections: "尚无智能合集",
     addSmartCollection: "新建智能合集",
