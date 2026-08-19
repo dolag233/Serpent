@@ -35,6 +35,8 @@ import { isTransientMediaPlaybackError } from "./media-seek-session";
 import { VideoPlayerControls } from "./VideoPlayerControls";
 import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
+import { PdfViewerSurface } from "./PdfViewerSurface";
+import { HtmlViewerSurface } from "./HtmlViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { detectPbrTextureChannel } from "./pbr-texture-channel";
@@ -681,6 +683,7 @@ export const AssetPreviewModal = forwardRef<
     Boolean(imageSrc) &&
     (ready || Boolean(placeholderUrl));
   const isTextViewer = ready && resolution?.mediaType === "text";
+  const isDocumentViewer = ready && resolution?.mediaType === "document";
   const viewerTransformable =
     Boolean(asset.sequence) ||
     asset.mediaType === "image" ||
@@ -757,7 +760,7 @@ export const AssetPreviewModal = forwardRef<
   return (
     <ViewerSurface
       aria-label={t("preview.viewPage", { name: asset.displayName })}
-      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}`}
+      className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}`}
       onContextMenu={(event) => {
         if (!viewerTransformable) return;
         event.preventDefault();
@@ -773,7 +776,7 @@ export const AssetPreviewModal = forwardRef<
     >
       <ShellSurface className="preview-modal">
         {/* REQ-VIEW-006: no top filename/toolbar bar; nav sits on the edges. */}
-        <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}`}>
+        <div className={`preview-content${isTextViewer ? " is-text-mode" : ""}${isDocumentViewer ? " is-document-mode" : ""}`}>
           {primarySurface === "loading" && !placeholderUrl ? (
             <div
               aria-busy="true"
@@ -879,6 +882,23 @@ export const AssetPreviewModal = forwardRef<
               onInfoNotice={onInfoNotice}
               sourceUrl={resolution.url}
             />
+          ) : ready && resolution?.mediaType === "document" && resolution.url ? (
+            resolution.sourceMimeType === "application/pdf" ? (
+              <PdfViewerSurface
+                api={api}
+                assetId={asset.assetId}
+                isFullscreen={isFullscreen}
+                key={`${libraryId}:${asset.assetId}`}
+                libraryId={libraryId}
+                sourceUrl={resolution.url}
+              />
+            ) : (
+              <HtmlViewerSurface
+                isFullscreen={isFullscreen}
+                key={`${libraryId}:${asset.assetId}`}
+                sourceUrl={resolution.url}
+              />
+            )
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
               key={`${libraryId}:${asset.assetId}`}

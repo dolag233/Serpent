@@ -1478,6 +1478,12 @@ export const zhCN = {
     requestFailed: "{prefix}：{detail}",
     requestFailedWithReason: "{prefix}：{detail}（{reason}）"
   },
+  viewer: {
+    pdfLoadFailed: "无法加载 PDF 文件。",
+    pdfPages: "已加载 {loaded}/{count} 页",
+    htmlLoadFailed: "无法加载 HTML 文件。",
+    htmlLoading: "正在加载 HTML…"
+  },
   viewer3d: {
     ariaLabel: "3D 模型预览",
     loading: "正在加载 3D 模型…",

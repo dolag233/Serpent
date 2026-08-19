@@ -22,6 +22,7 @@ export type ThumbnailSupportMediaType =
   | "audio"
   | "text"
   | "model"
+  | "document"
   | "other";
 
 export function assetSupportsThumbnail(asset: {
@@ -29,6 +30,9 @@ export function assetSupportsThumbnail(asset: {
   displayName: string;
 }): boolean {
   if (asset.mediaType === "text") return false;
+  // Documents (PDF etc.) get a first-page thumbnail; HTML thumbnails render
+  // offscreen in Main (Serpent-8ca259).
+  if (asset.mediaType === "document") return true;
   return asset.mediaType !== "other";
 }
 

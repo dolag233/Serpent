@@ -1495,6 +1495,12 @@ export const en = {
     requestFailed: "{prefix}: {detail}",
     requestFailedWithReason: "{prefix}: {detail} ({reason})"
   },
+  viewer: {
+    pdfLoadFailed: "Could not load the PDF file.",
+    pdfPages: "Loaded {loaded}/{count} pages",
+    htmlLoadFailed: "Could not load the HTML file.",
+    htmlLoading: "Loading HTML…"
+  },
   viewer3d: {
     ariaLabel: "3D model preview",
     loading: "Loading 3D model…",

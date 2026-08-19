@@ -385,6 +385,7 @@
 | VIEWER-019 | 左右切图先缩略图再安静升级原图 | 待人类验收 | 打开含就绪缩略图的多张图片查看页；快速按 ←→ 切图 | 切图时先见可解码缩略图/预览，原图就绪后无闪黑或长时间空白 | [mip 单测](../../../tests/unit/viewer-mip-upgrade.test.ts) / [策略单测](../../../tests/unit/viewer-preview-policy.test.ts) / `Serpent-eh07` | 2026-07-21 实现：占位图先绘，原图 decode（naturalWidth>0）后升级。2026-08-14：模糊→原图路径本身正确，快慢与视图重置见 VIEWER-027。 |
 | VIEWER-027 | 模糊预览升级原图不无故变慢、不重置视图 | 人类验收不通过 | 分别双击 `illust_108061707_20230516_091122.jpg`（约 3MB，体感慢）与 `illust_108042542_20230516_091142.png`（约 11MB，体感快）；打开后先缩放/平移，等原图替换 | 模糊→原图路径保留；体积更小的 jpg 不得无故明显慢于更大 png；原图替换时不得把缩放/平移打回 Fit | `Serpent-esuj` / [mip 升级](../../../tests/unit/viewer-mip-upgrade.test.ts) | 2026-08-14 用户反馈；尚未修复。 |
 | VIEWER-028 | 损坏图片查看占位 | 人类验收通过 | 双击一个无法解码的图片资产进入查看器 | 不显示浏览器原生 broken-image 图标或白色 alt 文本；显示统一的损坏文件图标，并用低对比度深色文字标识文件名；正常图片查看不受影响 | `Serpent-atj7` / [ZoomableImage](../../../src/renderer/zoomable-preview-image.tsx) / [查看器单测](../../../tests/unit/zoomable-preview-image-fallback.test.ts) | 2026-08-16：用户验收通过。 |
+| VIEWER-029 | PDF 查看器按页宽铺满并可滚动翻页 | 待人类验收 | 双击多页 PDF（如 17 页论文）。确认每页宽度抵满查看区、高度按比例、可上下滚动看完整页；不得再出现一排被裁切的圆角细条（百叶窗） | 每页一张完整纸面；滚动可看后续页；文字与插图可见 | `Serpent-8ca259` / [PdfViewerSurface](../../../src/renderer/PdfViewerSurface.tsx) / [E2E](../../../tests/e2e/document-preview.test.ts) / [开发日志](../development/2026-08-19-pdf-viewer-and-ime-dismiss-development-log.md) | 2026-08-19：页高改为 `--pdf-page-height` 像素盒，避免 aspect-ratio + min-height:0 再被裁成细条。真机待产品负责人复验。 |
 
 ### G. 回收站与重新定位
 
