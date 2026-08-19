@@ -1215,11 +1215,13 @@ export const zhCN = {
       "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。媒体由浏览器侧下载（携带 Cookie 与页面 Referer）再上传到本机应用，可绕过多数防盗链限制。保持本应用运行并打开资源库即可。",
     browserExtensionDownload: "前往下载",
     browserExtensionStepDownload:
-      "点击「前往下载」打开扩展发布页，下载最新的 serpent-extension-<版本>.zip。",
+      "点击「前往下载」打开扩展发布页，按浏览器下载对应文件：Chrome/Edge 用 serpent-extension-<版本>.zip，Firefox 用 serpent-extension-firefox-<版本>-signed.xpi。",
     browserExtensionStepExtract:
-      "解压到固定文件夹（如「文档/Serpent-extension」），文件夹内需直接包含 manifest.json。",
+      "Chrome / Edge：解压 zip 到固定文件夹（如「文档/Serpent-extension」），文件夹内需直接包含 manifest.json。",
     browserExtensionStepLoad:
-      "打开 chrome://extensions 或 edge://extensions，开启「开发者模式」，点击「加载已解压的扩展程序」并选择解压出的文件夹。",
+      "Chrome / Edge：打开 chrome://extensions 或 edge://extensions，开启「开发者模式」，点击「加载已解压的扩展程序」并选择解压出的文件夹。",
+    browserExtensionFirefoxStepInstall:
+      "Firefox：打开 about:addons → 齿轮 →「从文件安装附加组件…」并选择下载的 xpi；安装后重启 Firefox 仍然生效。",
     browserExtensionNote:
       "扩展尚未上架浏览器商店，安装后不会自动更新——新版本发布后重新下载 zip，并在扩展管理页点击「刷新」即可。",
     diagnosticsTitle: "诊断日志",

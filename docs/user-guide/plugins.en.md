@@ -33,7 +33,7 @@ Uninstalling a plugin does not remove personal settings it may have saved. Reins
 
 ## Browser extension
 
-Serpent’s browser extension saves web images or videos to a library and also supports drag-and-drop saving. Download the latest version from the [browser extension releases](https://github.com/dolag233/Serpent-Extension/releases), then follow Chrome or Edge’s extension installation prompt.
+For the browser extension (Chrome / Edge / Firefox), see [Browser extension](browser-extension.en.md).
 
 ## If a plugin does not work
 

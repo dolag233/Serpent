@@ -29,4 +29,4 @@ For developers writing plugins, scripts or MCP adapters. **No software-architect
 - [Script development guide](../manual/scripts/development.md) + [API reference](../manual/scripts/api-reference.md)
 - [MCP development guide](../manual/mcp/development.md) + [API reference](../manual/mcp/api-reference.md)
 
-End users: see [Using plugins](../user-guide/plugins.en.md) and [Automation](../user-guide/automation.en.md).
+End users: see [Using plugins](../user-guide/plugins.en.md), [Browser extension](../user-guide/browser-extension.en.md), and [Automation](../user-guide/automation.en.md).

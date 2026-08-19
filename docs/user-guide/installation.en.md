@@ -32,12 +32,7 @@ Unsigned development builds may trigger SmartScreen. Verify the source, then cho
 
 ## Browser extension
 
-Download the latest extension from the [browser extension releases](https://github.com/dolag233/Serpent-Extension/releases). For a development checkout, open `chrome://extensions` in Chrome or Edge, enable Developer mode, choose **Load unpacked**, and select:
-
-- macOS: `Serpent.app/Contents/Resources/extension`
-- Windows: `resources/extension` inside the install directory
-
-The extension can save a web image or video from its context menu or by drag-and-drop. See [Using plugins](plugins.en.md) for plugin and extension usage.
+Download the browser extension (Chrome / Edge / Firefox) from the [extension releases](https://github.com/dolag233/Serpent-Extension/releases). Installation and usage: see [Browser extension](browser-extension.en.md).
 
 ## Upgrading
 

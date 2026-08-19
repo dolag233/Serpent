@@ -1231,11 +1231,13 @@ export const en = {
       "Save web images and videos into the active library with the Chrome / Edge extension. Media is downloaded by the browser (with cookies and the page Referer) and uploaded to this machine, bypassing most hotlink protections. Keep Serpent running with a library open.",
     browserExtensionDownload: "Go to downloads",
     browserExtensionStepDownload:
-      "Click “Go to downloads” to open the extension release page and download the latest serpent-extension-<version>.zip.",
+      "Click “Go to downloads” to open the release page and download the file for your browser: serpent-extension-<version>.zip for Chrome/Edge, serpent-extension-firefox-<version>-signed.xpi for Firefox.",
     browserExtensionStepExtract:
-      "Extract to a fixed folder (e.g. Documents/Serpent-extension). The folder must directly contain manifest.json.",
+      "Chrome / Edge: extract the zip to a fixed folder (e.g. Documents/Serpent-extension). The folder must directly contain manifest.json.",
     browserExtensionStepLoad:
-      "Open chrome://extensions or edge://extensions, enable Developer mode, click “Load unpacked” and select the extracted folder.",
+      "Chrome / Edge: open chrome://extensions or edge://extensions, enable Developer mode, click “Load unpacked” and select the extracted folder.",
+    browserExtensionFirefoxStepInstall:
+      "Firefox: open about:addons → gear → “Install Add-on From File…” and select the downloaded xpi. It stays installed across restarts.",
     browserExtensionNote:
       "The extension is not on a browser store yet and will not update automatically — after a new release, download the zip again and click Refresh on the extension card.",
     diagnosticsTitle: "Diagnostics",

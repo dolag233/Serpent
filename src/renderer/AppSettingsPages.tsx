@@ -133,6 +133,7 @@ export function GeneralSettingsPage({
             <li>{t("settings.browserExtensionStepDownload")}</li>
             <li>{t("settings.browserExtensionStepExtract")}</li>
             <li>{t("settings.browserExtensionStepLoad")}</li>
+            <li>{t("settings.browserExtensionFirefoxStepInstall")}</li>
           </ol>
           <p className="app-settings-help-note">
             {t("settings.browserExtensionNote")}
