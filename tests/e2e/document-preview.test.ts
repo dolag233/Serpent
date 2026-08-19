@@ -163,6 +163,92 @@ test("opens a multi-page PDF with one rendered wrap per page, no placeholder lef
   }
 });
 
+test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 工单)", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-pdf-zoom-e2e-"));
+  const libraryName = "PDF 缩放验收";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const pdfSourcePath = path.join(temporaryRoot, "multi.pdf");
+  writeFileSync(pdfSourcePath, buildMultiPagePdf(3));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      SERPENT_E2E_IMPORT_FILES: pdfSourcePath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
+
+    const assetCard = window.locator(".asset-card").filter({ hasText: "multi.pdf" });
+    await expect(assetCard).toBeVisible({ timeout: 20_000 });
+    await assetCard.dblclick();
+
+    const viewer = window.locator(".pdf-viewer");
+    await expect(viewer).toBeVisible({ timeout: 30_000 });
+    const zoomLabel = window.locator(".pdf-viewer-zoom-label");
+    await expect(zoomLabel).toHaveText("100%", { timeout: 30_000 });
+
+    // Toolbar zoom-in: 100% → 125%.
+    const tools = window.locator(".pdf-viewer-tool");
+    await tools.nth(1).click();
+    await expect(zoomLabel).toHaveText("125%");
+
+    // Ctrl+wheel zooms further (125% × exp(0.12) ≈ 141%).
+    const pages = window.locator(".pdf-viewer-pages");
+    await pages.hover();
+    await pages.evaluate((element) => {
+      element.dispatchEvent(
+        new WheelEvent("wheel", {
+          ctrlKey: true,
+          deltaY: -120,
+          clientX: 200,
+          clientY: 200,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await expect(zoomLabel).toHaveText("141%");
+
+    // Zoom far enough that pages overflow the viewport, then drag to pan.
+    for (let i = 0; i < 4; i += 1) {
+      await tools.nth(1).click();
+    }
+    await expect(zoomLabel).toHaveText("344%");
+    const box = await pages.boundingBox();
+    expect(box).not.toBeNull();
+    const before = await pages.evaluate((el) => ({ l: el.scrollLeft, t: el.scrollTop }));
+    await window.mouse.move(box!.x + 320, box!.y + 300);
+    await window.mouse.down();
+    await window.mouse.move(box!.x + 160, box!.y + 240, { steps: 6 });
+    await window.mouse.up();
+    const after = await pages.evaluate((el) => ({ l: el.scrollLeft, t: el.scrollTop }));
+    expect(after.l).toBeGreaterThan(before.l);
+    expect(after.t).toBeGreaterThan(before.t);
+
+    // Fit width resets to 100%.
+    await tools.nth(2).click();
+    await expect(zoomLabel).toHaveText("100%");
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test("opens a PDF asset in the scrollable page viewer (Serpent-8ca259)", async () => {
   const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-pdf-viewer-e2e-"));
   const libraryName = "PDF 查看验收";

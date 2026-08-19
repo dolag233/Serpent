@@ -4729,6 +4729,40 @@ body.serpent-modal-open .app-shell {
   color: var(--text);
 }
 
+.pdf-viewer-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.pdf-viewer-tool {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pdf-viewer-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pdf-viewer-zoom-label {
+  min-width: 52px;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .pdf-viewer-meta {
   flex: 0 0 auto;
   padding: 6px 12px;
@@ -4740,14 +4774,22 @@ body.serpent-modal-open .app-shell {
 .pdf-viewer-pages {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  /* Zoomed-in pages widen beyond the viewport; scroll both ways to move the view.
+     align-items: flex-start (not center) so an overflowing page does not clip
+     its left edge unreachably; pages center themselves via margin auto. */
+  overflow: auto;
   overscroll-behavior: contain;
   padding: 16px;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 14px;
+}
+
+.pdf-viewer-page-wrap,
+.pdf-viewer-page-placeholder {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .pdf-viewer-page-wrap,

@@ -1487,6 +1487,9 @@ export const zhCN = {
   viewer: {
     pdfLoadFailed: "无法加载 PDF 文件。",
     pdfPages: "已加载 {loaded}/{count} 页",
+    zoomIn: "放大",
+    zoomOut: "缩小",
+    zoomFit: "适应宽度",
     htmlLoadFailed: "无法加载 HTML 文件。",
     htmlLoading: "正在加载 HTML…"
   },
