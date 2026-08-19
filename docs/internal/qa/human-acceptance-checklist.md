@@ -977,3 +977,4 @@
 
 
 | 2026-08-06 | 晚间验收批次 | 部分通过 | 通过：TITLE-001、SETTINGS-004、PLATFORM-001、CANVAS-021、NOTIFY-001/002、MENU-014、IMPORT-008/009、MODEL-001/002/003。不通过：FILTER-001（分类勾选）、IMPORT-007（同名优先）、MODEL-004（Info 常驻底部）。PBR-001 保留待验。跟进 beads：`yc9n`/`12ae`/`osr0`/`s09p`。 | 分类勾选+规范化 UI；同名冲突优先于内容重复；3D 提示改 Info 栈；HDRI 名称简化。 |
+| CLIP-001 | Windows Ctrl+C 复制资产可在外部应用（PureRef 等）粘贴 | 人类验收通过 | ① Serpent 画布选中图片资产按 Ctrl+C。② 打开 PureRef 按 Ctrl+V。③ 对比从文件资源管理器复制粘贴的行为 | PureRef 可粘贴出图片（与资源管理器复制效果一致）；Serpent 内部粘贴不回归 | [win32-file-clipboard](../../../src/main/win32-file-clipboard.ts) / [file-clipboard](../../../src/main/file-clipboard.ts) / Serpent-1bcc2a | 2026-08-19：koffi 原生 CF_HDROP（预定义 ID 15）写入，替代 Electron 自定义格式；单测 PowerShell FileDropList 读回 9/9。**2026-08-19 用户验收通过（PureRef 可粘贴）。** |
