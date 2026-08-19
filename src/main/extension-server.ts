@@ -112,11 +112,14 @@ function isLoopback(addr: string | undefined): boolean {
 
 function isAllowedOrigin(origin: string | string[] | undefined): boolean {
   // Chromium MV3 service-worker fetches may omit Origin. Any explicit browser
-  // Origin must be a real unpacked/store-installed Chromium extension origin.
+  // Origin must be a real unpacked/store-installed extension origin:
+  // - Chromium: chrome-extension://<32 lowercase a-p chars>
+  // - Firefox:  moz-extension://<UUID> (Serpent-54122a)
   // Auth is loopback-only (product decision: no pairing token — Serpent-1cxv).
   if (origin === undefined) return true;
   if (Array.isArray(origin)) return false;
-  return /^chrome-extension:\/\/[a-p]{32}$/u.test(origin);
+  if (/^chrome-extension:\/\/[a-p]{32}$/u.test(origin)) return true;
+  return /^moz-extension:\/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(origin);
 }
 
 const MAX_SAVE_JSON_BYTES = 16 * 1024;

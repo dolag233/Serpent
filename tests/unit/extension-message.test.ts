@@ -528,7 +528,21 @@ describe('createExtensionServer', () => {
     expect(res.status).toBe(202);
   });
 
-  it.each(['https://evil.example', 'http://127.0.0.1:9999', 'null', 'chrome-extension://short'])(
+  it('accepts a valid Firefox extension Origin (Serpent-54122a)', async () => {
+    server = await startServer({ port: TEST_PORT });
+    const res = await post(
+      server.port,
+      {
+        kind: 'image',
+        sourcePageUrl: 'https://example.com',
+        mediaUrl: 'https://example.com/a.png',
+      },
+      { origin: 'moz-extension://6e8e0e2f-1f5d-4a6b-9c3d-2b5a8e0f7c1a' },
+    );
+    expect(res.status).toBe(202);
+  });
+
+  it.each(['https://evil.example', 'http://127.0.0.1:9999', 'null', 'chrome-extension://short', 'moz-extension://not-a-uuid'])(
     'rejects untrusted POST Origin %s',
     async (origin) => {
       server = await startServer({ port: TEST_PORT });
