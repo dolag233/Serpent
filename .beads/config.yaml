@@ -67,6 +67,6 @@
 
 sync.remote: "git+https://github.com/dolag233/Serpent.git"
 dolt:
-    auto-commit: "on"
+    auto-commit: "off"
 export:
-    auto: true
+    auto: false
