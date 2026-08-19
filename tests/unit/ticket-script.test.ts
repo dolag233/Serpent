@@ -4,6 +4,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { issuesPath, readIssues, TicketError, writeIssues } from '../../scripts/ticket.mjs';
+
 const scriptPath = path.resolve(process.cwd(), 'scripts/ticket.mjs');
 const temporaryRoots: string[] = [];
 
@@ -146,6 +148,14 @@ describe('text ticket CLI', () => {
     const full = JSON.parse(run(root, 'list', '--all', '--json').stdout);
     expect(full[0]).toHaveProperty('comments');
     expect(full[0]).toHaveProperty('dependencies');
+  });
+
+  it('refuses to overwrite a non-empty JSONL with an empty issue list', () => {
+    const root = createRoot();
+    add(root, '不得被空写覆盖');
+    const filePath = issuesPath(root);
+    expect(() => writeIssues(filePath, [])).toThrow(TicketError);
+    expect(readIssues(filePath)).toHaveLength(1);
   });
 
 });

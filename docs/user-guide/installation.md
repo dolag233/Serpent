@@ -32,12 +32,7 @@ xattr -cr /Applications/Serpent.app
 
 ## 浏览器扩展
 
-从[浏览器扩展发布页](https://github.com/dolag233/Serpent-Extension/releases)下载最新扩展。开发态可在 Chrome 或 Edge 打开 `chrome://extensions`，启用「开发者模式」，点击「加载已解压的扩展程序」，选择：
-
-- macOS：`Serpent.app/Contents/Resources/extension`
-- Windows：安装目录下的 `resources/extension`
-
-加载后可在网页图片或视频上右键保存到 Serpent，也可以直接拖拽保存。插件和扩展的使用方式见[插件功能](plugins.md)。
+从[扩展发布页](https://github.com/dolag233/Serpent-Extension/releases)下载浏览器扩展（Chrome / Edge / Firefox），安装与使用见[浏览器扩展](browser-extension.md)。
 
 ## 升级
 

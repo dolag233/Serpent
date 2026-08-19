@@ -1,4 +1,5 @@
 import {
+  classifyUnknownFailure,
   createPublicError,
   toPublicError,
   type PublicError,
@@ -52,20 +53,15 @@ function syncReasonForRemoteStorageCode(code: string): PublicErrorReason | undef
     case 'PRECONDITION_FAILED': return 'SYNC_CONFLICT';
     case 'METHOD_NOT_ALLOWED': return 'SYNC_METHOD_NOT_ALLOWED';
     case 'WRITE_UNSUPPORTED': return 'SYNC_WRITE_UNSUPPORTED';
-    default: return undefined;
+    default:
+      return code.startsWith('HTTP_') ? 'SYNC_HTTP_ERROR' : undefined;
   }
 }
 
 export function publicErrorForWorkerFailure(error: unknown): PublicError {
-  // 裸文件系统写满（ENOSPC/EDQUOT，如同步库下载写入、导入、缩略图落盘）
-  // 必须给出可操作原因，而不是落到 INTERNAL_ERROR 兜底。
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error.code === 'ENOSPC' || error.code === 'EDQUOT')
-  ) {
-    return createPublicError('DISK_FULL');
+  const classified = classifyUnknownFailure(error);
+  if (classified) {
+    return createPublicError(classified.code, classified.reason);
   }
   if (isSqliteReadonlyFailure(error)) {
     // The SQLite file or connection itself is read-only (OS attribute,

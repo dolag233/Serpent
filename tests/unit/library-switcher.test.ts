@@ -106,6 +106,7 @@ describe("LibrarySwitcher external library action", () => {
             onCreateLibrary: vi.fn(),
             onOpenLibrary: vi.fn(),
             onImportLibrary: vi.fn(),
+            onExportLibrary: vi.fn(),
             onRemoveLibrary: vi.fn(),
             onDeleteLibraryFromDisk: vi.fn(),
             onOpenLibrarySettings: vi.fn(),
@@ -127,6 +128,7 @@ describe("LibrarySwitcher external library action", () => {
       "新建资源库…",
       "打开资源库…",
       "导入资源库",
+      "导出资源库",
       "移除资源库",
       "从硬盘删除资源库…",
       "资源库设置",
@@ -175,5 +177,43 @@ describe("LibrarySwitcher external library action", () => {
     )].map((button) => button.textContent ?? "");
     expect(labels.some((text) => text.includes("重命名资源库"))).toBe(false);
     expect(labels.some((text) => text.includes("打开同步资源库"))).toBe(false);
+  });
+
+  it("opens the export-library dialog from the library-name menu (Serpent-27e1fc)", async () => {
+    const onExportLibrary = vi.fn();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(LibrarySwitcher, {
+            libraryName: "Current",
+            libraryOpen: true,
+            onCreateLibrary: vi.fn(),
+            onOpenLibrary: vi.fn(),
+            onImportLibrary: vi.fn(),
+            onExportLibrary,
+            onCloseLibrary: vi.fn(),
+          }),
+        ),
+      );
+    });
+
+    await act(async () => {
+      container?.querySelector<HTMLButtonElement>(".library-switcher-trigger")?.click();
+    });
+    const exportLibrary = [...container.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((button) => button.textContent?.trim() === "导出资源库");
+    expect(exportLibrary).toBeDefined();
+
+    await act(async () => {
+      exportLibrary?.click();
+    });
+    expect(onExportLibrary).toHaveBeenCalledTimes(1);
   });
 });

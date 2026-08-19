@@ -56,12 +56,14 @@
     "release:local": "node scripts/release/pipeline.mjs all",
     "test:watch": "node scripts/run-vitest-with-electron.mjs --config vitest.config.ts",
     "icons:generate": "node scripts/generate-app-icons.mjs",
-    "ticket": "node scripts/ticket.mjs"
+    "ticket": "node scripts/ticket.mjs",
+    "install:git-hooks": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-sc": "5.2.10",
     "@fontsource/ibm-plex-mono": "5.2.7",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/canvas": "^1.0.7",
     "@types/adm-zip": "^0.5.8",
     "@types/archiver": "^8.0.0",
     "adm-zip": "^0.6.0",
@@ -71,6 +73,7 @@
     "harmonyos-sans-sc-webfont-splitted": "^1.1.0",
     "koffi": "^3.1.2",
     "libarchive-wasm": "^1.2.0",
+    "pdfjs-dist": "^6.2.108",
     "quickjs-emscripten": "0.32.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",

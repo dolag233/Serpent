@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import { isImeKeyboardEvent } from "../../ime-safe-dismiss";
 
 /** A stable entry in the host's modal stack. */
 export interface DialogStackEntry {
@@ -171,6 +172,10 @@ export function DialogShell({
       aria-describedby={descriptionId}
       onKeyDown={(event) => {
         if (open && event.key === "Escape" && isTopmost && onRequestClose) {
+          if (isImeKeyboardEvent(event.nativeEvent)) {
+            rest.onKeyDown?.(event);
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           onRequestClose();

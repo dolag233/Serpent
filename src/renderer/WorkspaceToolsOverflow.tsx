@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import {
   MenuSurface,
   resolveMenuNodes,
@@ -45,6 +46,7 @@ export function WorkspaceToolsOverflow({
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
+      if (isImeKeyboardEvent(event)) return;
       if (event.key === "Escape") setOpen(false);
     }
     document.addEventListener("pointerdown", onPointerDown);

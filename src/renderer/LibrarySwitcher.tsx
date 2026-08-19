@@ -9,6 +9,7 @@ import {
 import type { ImportMenuCopy } from "./browse-empty-state";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
@@ -93,6 +94,7 @@ export function LibrarySwitcher({
   syncStatus = "none",
   busy = false,
   onImportLibrary,
+  onExportLibrary,
 }: LibrarySwitcherProps) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -136,6 +138,7 @@ export function LibrarySwitcher({
   }
 
   function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (isImeKeyboardEvent(event.nativeEvent)) return;
     const menu = event.currentTarget;
     const result = handleRovingListKeyDown({
       key: event.key,
@@ -237,6 +240,18 @@ export function LibrarySwitcher({
             type="button"
           >
             {t("toolbar.importLibrary")}
+          </button>
+          <button
+            className="library-switcher-item"
+            disabled={!onExportLibrary || !libraryOpen || busy}
+            onClick={() => {
+              if (onExportLibrary) runMenuAction(onExportLibrary);
+            }}
+            role="menuitem"
+            tabIndex={-1}
+            type="button"
+          >
+            {t("toolbar.exportLibrary")}
           </button>
           <button
             className="library-switcher-item"

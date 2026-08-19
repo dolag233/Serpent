@@ -33,7 +33,7 @@ GitHub 插件可以在插件设置中检查更新。自动更新默认关闭，�
 
 ## 浏览器扩展
 
-Serpent 的浏览器扩展可以把网页图片或视频保存到资源库，也支持拖拽保存。请从[浏览器扩展发布页](https://github.com/dolag233/Serpent-Extension/releases)下载最新版本，然后按 Chrome 或 Edge 的扩展安装提示操作。
+浏览器扩展（Chrome / Edge / Firefox）的安装与使用见[浏览器扩展](browser-extension.md)。
 
 ## 遇到问题
 

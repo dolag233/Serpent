@@ -38,6 +38,11 @@ import {
   type ModelThumbnailRenderRequest,
   type ModelThumbnailRenderResult,
 } from '../shared/model-thumbnail-protocol';
+import {
+  parseDocumentThumbnailRenderRequest,
+  type DocumentThumbnailRenderRequest,
+  type DocumentThumbnailRenderResponse,
+} from '../shared/document-thumbnail-protocol';
 
 interface PendingRequest {
   resolve(result: WorkerResult): void;
@@ -171,6 +176,8 @@ export class LibraryWorkerClient {
       request: ModelThumbnailRenderRequest,
       sourceAuthorizations: readonly ModelThumbnailSourceAuthorization[],
     ) => Promise<ModelThumbnailRenderResult>) | undefined;
+  #documentThumbnailRenderListener:
+    ((request: DocumentThumbnailRenderRequest) => Promise<DocumentThumbnailRenderResponse["result"]>) | undefined;
 
   constructor(modulePath: string, private readonly logger: AppLogger) {
     this.#modulePath = modulePath;
@@ -371,6 +378,18 @@ export class LibraryWorkerClient {
     };
   }
 
+  /** Serpent-8ca259: worker asks Main to capture an HTML document thumbnail. */
+  onDocumentThumbnailRenderRequest(
+    listener: (request: DocumentThumbnailRenderRequest) => Promise<DocumentThumbnailRenderResponse["result"]>,
+  ): () => void {
+    this.#documentThumbnailRenderListener = listener;
+    return () => {
+      if (this.#documentThumbnailRenderListener === listener) {
+        this.#documentThumbnailRenderListener = undefined;
+      }
+    };
+  }
+
   /**
    * Handle a worker `model-thumbnail.render-request` (slice E): hand it to the
    * offscreen renderer listener and post the typed result back to the Worker.
@@ -446,6 +465,74 @@ export class LibraryWorkerClient {
     return true;
   }
 
+  /**
+   * Handle a worker `document-thumbnail.render-request` (Serpent-8ca259):
+   * hand it to the offscreen document renderer listener and post the typed
+   * result back to the Worker. Returns true when consumed.
+   */
+  #dispatchDocumentThumbnailRenderRequest(message: unknown): boolean {
+    let renderRequest;
+    try {
+      renderRequest = parseDocumentThumbnailRenderRequest(message);
+    } catch {
+      if (
+        typeof message !== 'object'
+        || message === null
+        || !('type' in message)
+        || message.type !== 'document-thumbnail.render-request'
+      ) {
+        return false;
+      }
+      const requestId = 'requestId' in message && typeof message.requestId === 'string'
+        ? message.requestId
+        : undefined;
+      this.logger.error('worker.document-thumbnail.invalid-request', new Error('Malformed document thumbnail render request.'), {
+        hasRequestId: requestId !== undefined,
+      });
+      const child = this.#child;
+      if (child && requestId) {
+        child.postMessage({
+          type: 'document-thumbnail.render-response',
+          requestId,
+          result: {
+            status: 'failed',
+            errorCode: 'DOCUMENT_FRAME_INVALID',
+            reason: 'The document thumbnail request was invalid.',
+          },
+        });
+      }
+      return true;
+    }
+    const child = this.#child;
+    if (!child) {
+      this.logger.error(
+        'worker.document-thumbnail.render-request',
+        new Error('Received a document render request without a live worker.'),
+      );
+      return true;
+    }
+    void (this.#documentThumbnailRenderListener
+      ? this.#documentThumbnailRenderListener(renderRequest)
+      : Promise.resolve({
+          status: 'failed' as const,
+          errorCode: 'DOCUMENT_WINDOW_FAILED' as const,
+          reason: 'document thumbnail renderer unavailable',
+        }))
+      .catch(() => ({
+        status: 'failed' as const,
+        errorCode: 'DOCUMENT_WINDOW_FAILED' as const,
+        reason: 'document thumbnail renderer failed',
+      }))
+      .then((result) => {
+        child.postMessage({
+          type: 'document-thumbnail.render-response',
+          requestId: renderRequest.requestId,
+          result,
+        });
+      });
+    return true;
+  }
+
   async shutdown(): Promise<void> {
     const child = this.#child;
     if (!child) return;
@@ -472,6 +559,9 @@ export class LibraryWorkerClient {
     // Slice E render requests must be handled before the generic event
     // parsers: the request is answered with a typed response, not forwarded.
     if (this.#dispatchModelThumbnailRenderRequest(message)) return;
+    // Serpent-8ca259: HTML document thumbnail capture, same request/response
+    // pattern as model thumbnails.
+    if (this.#dispatchDocumentThumbnailRenderRequest(message)) return;
 
     try {
       const providerRequest = parsePluginMediaProviderRequest(message);

@@ -15,6 +15,7 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { moveTagSuggestionIndex } from "./tag-suggestions";
 import {
   buildTagAssignCandidates,
@@ -86,6 +87,7 @@ export function TagPickerMenu({
   };
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKeyboardEvent(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       // Keep ContextMenu from treating these as menuitem navigation.
       event.preventDefault();

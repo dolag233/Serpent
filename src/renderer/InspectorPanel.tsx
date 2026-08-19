@@ -22,6 +22,7 @@ import {
 } from "./inspector-multi-edit";
 import { toOpenableExternalUrl } from "../shared/external-url";
 import { shouldShowAutoPaletteSection } from "../shared/palette-visibility";
+import { isImeKeyboardEvent, shouldHoldDismissForIme } from "./ime-safe-dismiss";
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import {
   buildTagSuggestions,
@@ -657,6 +658,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const [showTagInput, setShowTagInput] = useState(false);
   const [activeTagSuggestionIndex, setActiveTagSuggestionIndex] = useState(-1);
   const tagInputRef = useRef<HTMLInputElement>(null);
+  const tagInputComposingRef = useRef(false);
   const [videoTechCache, setVideoTechCache] = useState<{
     assetId: string;
     metadata: ExtractedVideoMetadata;
@@ -787,6 +789,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     setTagInputValue("");
     setActiveTagSuggestionIndex(-1);
     setShowTagInput(false);
+    tagInputComposingRef.current = false;
   };
 
   const submitTagSuggestion = (suggestion: TagSuggestion) => {
@@ -830,6 +833,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
   }, [displayDescription, descriptionIsAi, selectedAsset?.assetId]);
 
   const handleAddTagKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (isImeKeyboardEvent(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setActiveTagSuggestionIndex((current) =>
@@ -1087,9 +1091,23 @@ export function InspectorPanel(props: InspectorPanelProps) {
                       className="tag-add-input"
                       maxLength={255}
                       onBlur={(event) => {
+                        if (tagInputComposingRef.current) return;
+                        if (
+                          shouldHoldDismissForIme({
+                            focusEvent: event,
+                          })
+                        ) {
+                          return;
+                        }
                         if (!event.currentTarget.parentElement?.parentElement?.contains(event.relatedTarget)) {
                           closeTagInput();
                         }
+                      }}
+                      onCompositionEnd={() => {
+                        tagInputComposingRef.current = false;
+                      }}
+                      onCompositionStart={() => {
+                        tagInputComposingRef.current = true;
                       }}
                       onChange={(event) => {
                         setTagInputValue(event.target.value);

@@ -65,6 +65,8 @@
   --ink: var(--ui-content-inverse, #111314);
   /* Viewer stage follows theme (not always near-black --ink). */
   --viewer-stage: var(--ui-surface-canvas, #1e2022);
+  /* PDF page paper stays white in both themes (document content, not chrome). */
+  --viewer-document-page: #fff;
   /* Serpent-627: viewer bottom chrome (zoom bar / video transport /
      fullscreen chip) is semi-transparent rather than near-opaque —
      moderate enough to still read clearly over any media, in both themes. */
@@ -178,6 +180,7 @@
   --warning-muted: var(--ui-status-warning-surface, #ffedd5);
   --ink: var(--ui-content-inverse, #0f1010);
   --viewer-stage: var(--ui-surface-canvas, #ebeceb);
+  --viewer-document-page: #fff;
   --border: var(--divider);
   /* Light: softer elev base alphas; still scaled by --elev-* (Serpent-zcyg).
      Toolbar softer/shorter than panes/cards (casts onto browse header too). */
@@ -4240,8 +4243,17 @@ body.serpent-modal-open .app-shell {
   max-width: none;
   align-self: stretch;
 }
-.preview-content.is-text-mode {
+.preview-content.is-text-mode,
+.preview-content.is-document-mode {
   place-items: stretch;
+}
+.preview-content.is-document-mode > .pdf-viewer,
+.preview-content.is-document-mode > .html-viewer {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 .preview-text-stage {
   display: flex;
@@ -4701,6 +4713,117 @@ body.serpent-modal-open .app-shell {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Serpent-8ca259: PDF viewer — vertical page column rendered by pdfjs. */
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--viewer-stage);
+  color: var(--text);
+}
+
+.pdf-viewer-meta {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-align: center;
+}
+
+.pdf-viewer-pages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.pdf-viewer-page-wrap,
+.pdf-viewer-page-placeholder {
+  /* Explicit pixel height (--pdf-page-height) is the blinds fix. flex-shrink
+     plus min-height:0 and overflow:hidden collapsed aspect-ratio pages into
+     rounded strips (Serpent-8ca259). */
+  box-sizing: border-box;
+  flex: 0 0 var(--pdf-page-height, auto);
+  flex-shrink: 0;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  height: var(--pdf-page-height, auto);
+  min-height: var(--pdf-page-height, auto);
+  max-height: none;
+  background: var(--viewer-document-page);
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.pdf-viewer-page {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pdf-viewer-page-placeholder {
+  background: color-mix(in srgb, var(--hover) 40%, transparent);
+  box-shadow: none;
+}
+
+.pdf-viewer-error {
+  padding: 16px;
+  color: var(--warning);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Serpent-8ca259: HTML viewer — sandboxed iframe. */
+.html-viewer {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--viewer-stage);
+}
+
+.html-viewer-iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: white;
+}
+
+.html-viewer-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--viewer-stage);
+  color: var(--tertiary);
+  font-size: 13px;
+}
+
+.html-viewer-error {
+  padding: 16px;
+  color: var(--warning);
+  font-size: 12px;
+  text-align: center;
 }
 .preview-image-full {
   visibility: hidden;

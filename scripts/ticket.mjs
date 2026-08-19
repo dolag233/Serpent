@@ -42,6 +42,8 @@ class TicketError extends Error {
   }
 }
 
+export { readIssues, writeIssues, issuesPath, TicketError };
+
 function parseArgs(argv) {
   const positionals = [];
   const options = {};
@@ -135,6 +137,16 @@ function readIssues(filePath) {
 }
 
 function writeIssues(filePath, issues) {
+  if (issues.length === 0 && fs.existsSync(filePath)) {
+    const existing = fs.readFileSync(filePath, 'utf8').trim();
+    if (existing) {
+      throw new TicketError(
+        '拒绝将工单文件写成空：当前 .beads/issues.jsonl 仍有内容。'
+        + '若本地 Dolt 与 JSONL 脱节，勿运行 bd export；用 npm run ticket 维护工单。',
+        2,
+      );
+    }
+  }
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const content = issues.length
     ? `${issues.map((issue) => JSON.stringify(issue)).join('\n')}\n`

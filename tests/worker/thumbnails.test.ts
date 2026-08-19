@@ -1815,4 +1815,158 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
 
     service.closeAll();
   });
+
+  it('generates a first-page thumbnail for a PDF asset (Serpent-8ca259)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'PDF', selectedParentPath: root });
+
+    // Minimal single-page PDF with the text "Hello PDF" (hand-assembled).
+    const pdfBytes = Buffer.from(
+      '%PDF-1.4\n'
+      + '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+      + '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+      + '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n'
+      + '4 0 obj<</Length 46>>stream\n'
+      + 'BT /F1 24 Tf 30 100 Td (Hello PDF) Tj ET\n'
+      + 'endstream endobj\n'
+      + '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n'
+      + 'xref\n0 6\n0000000000 65535 f \n'
+      + '0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000290 00000 n \n0000000385 00000 n \n'
+      + 'trailer<</Size 6/Root 1 0 R>>\n'
+      + 'startxref\n470\n%%EOF\n',
+      'latin1',
+    );
+
+    const sourcePath = path.join(root, 'sample.pdf');
+    writeFileSync(sourcePath, pdfBytes);
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(asset).toMatchObject({ mediaType: 'document' });
+
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    expect(result.artifactId).toBeTruthy();
+
+    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`);
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare('SELECT kind, status, mime_type, generator_version FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { kind: string; status: string; mime_type: string; generator_version: string };
+    expect(row.kind).toBe('thumbnail');
+    expect(row.status).toBe('ready');
+    expect(row.mime_type).toBe('image/jpeg');
+    expect(row.generator_version).toContain('pdfjs@');
+    db.close();
+
+    service.closeAll();
+  });
+
+  it('stores an offscreen-captured HTML thumbnail as a JPEG artifact (Serpent-8ca259)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      documentThumbnailRenderer: async ({ url, signal }) => {
+        expect(url).toContain('serpent://source/');
+        expect(signal?.aborted ?? false).toBe(false);
+        // 1x1 white PNG returned by the Main offscreen capture.
+        return {
+          png: new Uint8Array(VALID_1X1_PNG),
+          width: 6,
+          height: 6,
+        };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'HTML', selectedParentPath: root });
+    const sourcePath = path.join(root, 'sample.html');
+    writeFileSync(sourcePath, '<!doctype html><html><body>Hello</body></html>');
+    importNoConflict(service, created.libraryId, sourcePath);
+
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(asset).toMatchObject({ mediaType: 'document' });
+
+    const result = (await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId }))!;
+    expect(result.artifactId).toBeTruthy();
+
+    const artifactPath = path.join(created.libraryPath, '.serpent', 'artifacts', `${result.artifactId}.jpg`);
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const row = db.prepare('SELECT kind, status, mime_type, generator_version FROM revision_artifacts WHERE artifact_id = ?').get(result.artifactId) as { kind: string; status: string; mime_type: string; generator_version: string };
+    expect(row.kind).toBe('thumbnail');
+    expect(row.status).toBe('ready');
+    expect(row.mime_type).toBe('image/jpeg');
+    expect(row.generator_version).toContain('offscreen-web-1');
+    db.close();
+
+    service.closeAll();
+  });
+
+  it('enqueues generate_thumbnail jobs for PDF and HTML document assets (Serpent-8ca259)', () => {
+    // Regression: the enqueue gate used to whitelist only image/video/audio/
+    // model extensions, so document assets never received a generate_thumbnail
+    // job — cards stayed on the generic icon with no artifact row at all.
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'DocEnqueue', selectedParentPath: root });
+    const pdfPath = path.join(root, 'page.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4\n%%EOF\n');
+    importNoConflict(service, created.libraryId, pdfPath);
+    const htmlPath = path.join(root, 'page.html');
+    writeFileSync(htmlPath, '<!doctype html><html><body>Hi</body></html>');
+    importNoConflict(service, created.libraryId, htmlPath);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const pdfAsset = assets.find((asset) => asset.displayName.endsWith('.pdf'))!;
+    const htmlAsset = assets.find((asset) => asset.displayName.endsWith('.html'))!;
+    expect(pdfAsset.mediaType).toBe('document');
+    expect(htmlAsset.mediaType).toBe('document');
+
+    service.enqueueThumbnailJobs(created.libraryId);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const queuedFor = (assetId: string): number => {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM jobs
+            WHERE asset_id = ? AND kind = 'generate_thumbnail' AND status = 'queued'`,
+        )
+        .get(assetId) as { count: number };
+      return row.count;
+    };
+    expect(queuedFor(pdfAsset.assetId)).toBeGreaterThanOrEqual(1);
+    expect(queuedFor(htmlAsset.assetId)).toBeGreaterThanOrEqual(1);
+    db.close();
+
+    service.closeAll();
+  });
+
+  it('serves PDF and HTML sources with their real MIME for the viewer (Serpent-8ca259)', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'DocMime', selectedParentPath: root });
+    const pdfPath = path.join(root, 'page.pdf');
+    writeFileSync(pdfPath, '%PDF-1.4\n%%EOF\n');
+    importNoConflict(service, created.libraryId, pdfPath);
+    const htmlPath = path.join(root, 'page.html');
+    writeFileSync(htmlPath, '<!doctype html><html><body>Hi</body></html>');
+    importNoConflict(service, created.libraryId, htmlPath);
+
+    const pdfAsset = service.listAssets({ libraryId: created.libraryId, recursive: true })!
+      .find((asset) => asset.displayName.endsWith('.pdf'))!;
+    const htmlAsset = service.listAssets({ libraryId: created.libraryId, recursive: true })!
+      .find((asset) => asset.displayName.endsWith('.html'))!;
+
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      pdfAsset.assetId,
+      pdfAsset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'application/pdf' });
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      htmlAsset.assetId,
+      htmlAsset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'text/html; charset=utf-8' });
+
+    service.closeAll();
+  });
 });

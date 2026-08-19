@@ -21,6 +21,7 @@ import {
 } from "./context-menu";
 import { Icon } from "./Icons";
 import { useLocale, useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import {
   applyTagSelectionClick,
   filterTagsByQuery,
@@ -199,6 +200,7 @@ export function TagManagementWorkspace({
     if (!activeDialog) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (isImeKeyboardEvent(event)) return;
       event.preventDefault();
       setPendingDeleteIds(null);
       setPendingMergeIds(null);
@@ -227,6 +229,7 @@ export function TagManagementWorkspace({
       data-testid="tag-management-workspace"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !menu && !activeDialog) {
+          if (isImeKeyboardEvent(event.nativeEvent)) return;
           setSelection({ selectedIds: [], anchorId: null });
         }
         if (
@@ -399,6 +402,7 @@ export function TagManagementWorkspace({
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={(event) => {
                       event.stopPropagation();
+                      if (isImeKeyboardEvent(event)) return;
                       if (event.key === "Enter") {
                         event.preventDefault();
                         void submitRename(tag.tagId);

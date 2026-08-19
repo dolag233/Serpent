@@ -302,6 +302,7 @@ import {
   resolveOffscreenPageUrl,
   type OffscreenThumbnailRenderer,
 } from "./offscreen-thumbnail-renderer";
+import { renderDocumentThumbnail } from "./document-thumbnail-renderer";
 import {
   clearModelThumbnailSourceAuthorizations,
   registerModelThumbnailSourceAuthorizations,
@@ -4625,6 +4626,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       try {
         const openError = await shell.openPath(workerResult.absolutePath);
         if (openError) {
+          logger?.error("main.open-external", new Error(openError));
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4717,6 +4719,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           createFileClipboardDeps(),
         );
         if (!wrote) {
+          logger?.error(
+            "main.copy-asset-files",
+            new Error("clipboard file copy produced no file list"),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4754,6 +4760,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       try {
         const openError = await shell.openPath(workerResult.absolutePath);
         if (openError) {
+          logger?.error(
+            "main.open-folder-in-file-manager",
+            new Error(openError),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -4825,6 +4835,10 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           createFileClipboardDeps(),
         );
         if (!wrote) {
+          logger?.error(
+            "main.copy-folder-files",
+            new Error("clipboard file copy produced no file list"),
+          );
           return {
             ok: false,
             error: createPublicError("INTERNAL_ERROR"),
@@ -5642,6 +5656,11 @@ async function startApplication(): Promise<void> {
       clearModelThumbnailSourceAuthorizations(sourceAuthorizations);
     });
   });
+  // Serpent-8ca259: HTML document thumbnails capture the source in a fresh
+  // offscreen window in Main; the Worker persists the artifact bytes.
+  workerClient.onDocumentThumbnailRenderRequest((request) =>
+    renderDocumentThumbnail(request, logger!),
+  );
   automationExecutionJournal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(
       path.join(app.getPath('userData'), 'automation-executions.json'),

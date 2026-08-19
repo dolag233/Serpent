@@ -2,12 +2,13 @@
 
 面向最终用户的 Serpent 使用指南。英文版：[README.en.md](README.en.md)
 
-- [安装](installation.md)——macOS / Windows 安装、浏览器扩展、升级
+- [安装](installation.md)——macOS / Windows 安装、升级
 - [基本使用](basics.md)——资源库、导入、浏览、标签、合集、文件操作和查看器
 - [搜索与过滤](search-and-filters.md)——高级搜索语法、过滤维度和 Shift 多选
 - [WebDAV 云同步](sync.md)——服务器配置、资源库绑定、自动同步与打开远端同步库
 - [AI 分析](ai.md)——支持的资产、自动/手动分析、任务进度和隐私提示
-- [插件功能](plugins.md)——安装、启用、更新和卸载插件，以及浏览器扩展
+- [浏览器扩展](browser-extension.md)——Chrome / Edge / Firefox 保存网页图片视频
+- [插件使用](plugins.md)——安装、启用、更新和卸载插件
 - [自动化功能](automation.md)——自动化脚本和 MCP 外部客户端连接
 - [故障排查](troubleshooting.md)——常见问题与解决
 

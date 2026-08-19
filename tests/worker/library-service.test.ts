@@ -25,6 +25,7 @@ import {
 } from '../../src/worker/library-service';
 import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
 import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
+import { PUBLIC_ERROR_MESSAGES } from '../../src/shared/protocol/errors';
 import { removePathWithSyncRetry } from '../../src/worker/windows-fs-retry';
 import { build } from 'vite';
 
@@ -444,7 +445,7 @@ describe('LibraryService lifecycle', () => {
       expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
       expect(publicErrorForWorkerFailure(failure)).toEqual({
         code: 'LIBRARY_BUSY',
-        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+        message: PUBLIC_ERROR_MESSAGES.LIBRARY_BUSY,
       });
     } finally {
       lease.release();
@@ -477,7 +478,7 @@ describe('LibraryService lifecycle', () => {
       expect(failure).toBeInstanceOf(LibraryWriteCoordinatorError);
       expect(publicErrorForWorkerFailure(failure)).toEqual({
         code: 'LIBRARY_BUSY',
-        message: 'This library is being updated by another Serpent session. Try again in a moment.',
+        message: PUBLIC_ERROR_MESSAGES.LIBRARY_BUSY,
       });
     } finally {
       contender?.exec('ROLLBACK');

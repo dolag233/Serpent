@@ -52,6 +52,10 @@ import { useT } from "./i18n";
 import type { TagSummary } from "../shared/asset-types";
 import type { SortDefinition } from "../shared/asset-types";
 import { PortaledPopover } from "./PortaledPopover";
+import {
+  attachCompositionLock,
+  shouldHoldDismissForIme,
+} from "./ime-safe-dismiss";
 
 export type DimensionId =
   | "color"
@@ -271,7 +275,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   useEffect(() => {
     if (!openDimension) return;
+    const composition = attachCompositionLock();
     const onMouseDown = (event: MouseEvent) => {
+      if (composition.isActive()) return;
       const root = rootRef.current;
       if (!root || !(event.target instanceof Element)) return;
       // Portaled popovers live under document.body (MENU-015), so outside-click
@@ -281,6 +287,9 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       setOpenDimension(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (shouldHoldDismissForIme({ composing: composition.isActive(), keyEvent: event })) {
+        return;
+      }
       if (event.key === "Escape") {
         event.stopPropagation();
         setOpenDimension(null);
@@ -289,6 +298,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
+      composition.dispose();
       document.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
@@ -312,6 +322,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
       return;
     }
 
+    const composition = attachCompositionLock();
     let closeTimer: ReturnType<typeof setTimeout> | null = null;
     const clearCloseTimer = () => {
       if (closeTimer !== null) {
@@ -347,6 +358,8 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     const onPointerOut = (event: PointerEvent) => {
       if (!isFilterChrome(event.target)) return;
       if (isFilterChrome(event.relatedTarget)) return;
+      // IME candidate HWND is not in-document; relatedTarget is null.
+      if (composition.isActive() || event.relatedTarget === null) return;
       scheduleClose();
     };
     const onFocusIn = (event: FocusEvent) => {
@@ -357,6 +370,14 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     const onFocusOut = (event: FocusEvent) => {
       if (!isFilterChrome(event.target)) return;
       if (isFilterChrome(event.relatedTarget)) return;
+      if (
+        shouldHoldDismissForIme({
+          composing: composition.isActive(),
+          focusEvent: event,
+        })
+      ) {
+        return;
+      }
       scheduleClose();
     };
 
@@ -367,6 +388,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     document.addEventListener("focusin", onFocusIn, true);
     document.addEventListener("focusout", onFocusOut, true);
     return () => {
+      composition.dispose();
       clearCloseTimer();
       document.removeEventListener("pointerover", onPointerOver, true);
       document.removeEventListener("pointerout", onPointerOut, true);

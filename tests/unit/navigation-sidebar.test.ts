@@ -268,4 +268,90 @@ describe("NavigationSidebar virtual library root", () => {
     );
     expect(styles).not.toContain(".nav-child-count");
   });
+
+  it("collapses and expands collection children via the disclosure button (Serpent-c42eb1)", async () => {
+    const parentId = "collection-parent";
+    const childId = "collection-child";
+    const parentCollection = {
+      collectionId: parentId,
+      parentId: null,
+      name: "Parent",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 4,
+      childCollectionCount: 1,
+    };
+    const childCollection = {
+      collectionId: childId,
+      parentId,
+      name: "Child",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 2,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [parentCollection, childCollection],
+      collectionTree: new Map([
+        [null, [parentCollection]],
+        [parentId, [childCollection]],
+      ]),
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const rows = () => [
+      ...(container as HTMLDivElement).querySelectorAll<HTMLButtonElement>(
+        "button[data-nav-collection-id]",
+      ),
+    ];
+    // Both rows visible initially (expanded).
+    expect(rows().map((row) => row.dataset.navCollectionId)).toEqual([
+      parentId,
+      childId,
+    ]);
+
+    // Parent row exposes a disclosure button with the chevron icon.
+    const parentRow = rows().find(
+      (row) => row.dataset.navCollectionId === parentId,
+    );
+    const disclosure = parentRow
+      ? [...(container as HTMLDivElement).querySelectorAll<HTMLButtonElement>(".nav-disclosure")]
+          .find((button) =>
+            button.getAttribute("aria-label")?.includes("Parent"),
+          )
+      : undefined;
+    expect(disclosure).toBeDefined();
+    expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+
+    // Collapse: child row disappears, disclosure flips to collapsed.
+    await act(async () => disclosure?.click());
+    expect(rows().map((row) => row.dataset.navCollectionId)).toEqual([
+      parentId,
+    ]);
+    const collapsedDisclosure = [
+      ...(container as HTMLDivElement).querySelectorAll<HTMLButtonElement>(".nav-disclosure"),
+    ].find((button) => button.getAttribute("aria-label")?.includes("Parent"));
+    expect(collapsedDisclosure?.getAttribute("aria-expanded")).toBe("false");
+
+    // Expand: child row returns.
+    await act(async () => collapsedDisclosure?.click());
+    expect(rows().map((row) => row.dataset.navCollectionId)).toEqual([
+      parentId,
+      childId,
+    ]);
+  });
 });

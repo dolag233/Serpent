@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 
 /**
  * 让原生 <details> 披露控件具备现代浮层行为：指针在面板外按下或按 Escape
@@ -38,6 +39,7 @@ export function useDismissibleDetails<T extends HTMLElement>() {
       if (!element || event.key !== "Escape" || !element.hasAttribute("open")) {
         return;
       }
+      if (isImeKeyboardEvent(event)) return;
       event.stopPropagation();
       element.removeAttribute("open");
     };

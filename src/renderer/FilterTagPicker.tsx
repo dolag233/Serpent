@@ -7,6 +7,7 @@ import {
 } from "./tag-filter-suggestions";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 
 // ---------------------------------------------------------------------------
 // FilterTagPicker (REQ-TAG-002)
@@ -111,6 +112,7 @@ export function FilterTagPicker({
         disabled={disabled}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             if (firstCandidate) add(firstCandidate.name, event.shiftKey);

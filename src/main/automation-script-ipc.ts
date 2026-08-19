@@ -167,7 +167,14 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
     rawInput: unknown,
   ): Promise<AutomationScriptCommandResult> => {
     const gateway = options.gateway();
-    if (!gateway) return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+    if (!gateway) {
+      options.logger()?.error(
+        'automation.script.gateway-unavailable',
+        new Error('The command gateway is not available; script command was rejected.'),
+        { executionId, commandId },
+      );
+      return { ok: false, error: createPublicError('INTERNAL_ERROR') };
+    }
     const commandInput = commandId === 'asset.search'
       ? normalizeAutomationAssetSearchInput(rawInput)
       : rawInput;
@@ -246,6 +253,11 @@ export function registerAutomationScriptIpc(options: AutomationScriptIpcOptions)
           source: parsed.data.source,
         });
       if (parsed.data.scriptId !== undefined && savedScript === undefined) {
+        options.logger()?.error(
+          'automation.script.resolve-failed',
+          new Error('A saved script referenced by id could not be resolved for execution.'),
+          { scriptId: parsed.data.scriptId },
+        );
         return { ok: false, error: createPublicError('INTERNAL_ERROR') };
       }
       const source = savedScript === undefined ? 'desktop-console' : 'script';

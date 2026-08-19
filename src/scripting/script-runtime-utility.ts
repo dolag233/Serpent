@@ -9,6 +9,7 @@ import {
 } from '../shared/script-runtime-utility-protocol';
 import type { AutomationScriptCommandId } from '../shared/automation-script-api';
 import { AutomationScriptHostCommandError } from '../shared/automation-host-command-error';
+import { PUBLIC_ERROR_MESSAGES } from '../shared/protocol/errors';
 
 type PendingHostRequest = {
   resolve(value: unknown): void;
@@ -144,7 +145,7 @@ export function createScriptRuntimeUtilityHandler(options: {
       else pending.reject(new AutomationScriptHostCommandError(
         message.error ?? {
           code: 'INTERNAL_ERROR',
-          message: 'Serpent could not complete the request.',
+          message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
         },
       ));
     },

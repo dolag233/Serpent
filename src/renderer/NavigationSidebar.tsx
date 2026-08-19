@@ -12,6 +12,7 @@ import {
   linkedFolderNavAffordance,
 } from "./availability-affordance";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent, shouldHoldDismissForIme } from "./ime-safe-dismiss";
 import type {
   CollectionSummary,
   LinkedFolderSummary,
@@ -60,6 +61,7 @@ import {
   loadNavTreePreferences,
   saveNavTreePreferences,
   withCollapsedFolderIds,
+  withCollapsedCollectionIds,
   type NavTreePreferences,
 } from "./nav-tree-preferences";
 import { PaneSurface } from "./ui/surfaces";
@@ -206,9 +208,13 @@ function InlineFolderEditRow({
         }
         className="text-field"
         maxLength={80}
-        onBlur={() => onCommit()}
+        onBlur={(event) => {
+          if (shouldHoldDismissForIme({ focusEvent: event })) return;
+          onCommit();
+        }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             onCommit();
@@ -303,7 +309,8 @@ function InlineCollectionEditRow({
           aria-label={ariaLabel ?? t("nav.newCollection")}
           className="text-field"
           maxLength={255}
-          onBlur={() => {
+          onBlur={(event) => {
+            if (shouldHoldDismissForIme({ focusEvent: event })) return;
             cancelScheduledBlurCommit();
             blurCommitTimerRef.current = window.setTimeout(() => {
               blurCommitTimerRef.current = null;
@@ -313,6 +320,7 @@ function InlineCollectionEditRow({
           onChange={(event) => onChange(event.target.value)}
           onFocus={cancelScheduledBlurCommit}
           onKeyDown={(event) => {
+            if (isImeKeyboardEvent(event)) return;
             if (event.key === "Enter") {
               event.preventDefault();
               commitOnce();
@@ -371,9 +379,13 @@ function InlineSmartCollectionEditRow({
         aria-label={t("nav.newSmartCollectionName")}
         className="text-field"
         maxLength={80}
-        onBlur={() => onCommit()}
+        onBlur={(event) => {
+          if (shouldHoldDismissForIme({ focusEvent: event })) return;
+          onCommit();
+        }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             onCommit();
@@ -729,6 +741,32 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       ? navTreePrefs.collapsedFolderIds.filter((id) => id !== folderId)
       : [...navTreePrefs.collapsedFolderIds, folderId];
     const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+    setNavTreePrefs(next);
+    saveNavTreePreferences(next);
+  }
+
+  // Serpent-c42eb1: collection subtree collapse, mirroring folder collapse.
+  const persistedCollapsedCollectionIds = new Set(
+    navTreePrefs.collapsedCollectionIds ?? [],
+  );
+  // Creating a sub-collection under a collapsed parent must reveal the inline
+  // create row; keep this derived so opening/cancelling an editor never
+  // mutates the persisted navigation preference.
+  const collapsedCollectionIds = new Set(persistedCollapsedCollectionIds);
+  if (
+    showCollectionInput &&
+    newCollectionParentId &&
+    collapsedCollectionIds.has(newCollectionParentId)
+  ) {
+    collapsedCollectionIds.delete(newCollectionParentId);
+  }
+
+  function toggleCollectionCollapsed(collectionId: string) {
+    const current = navTreePrefs.collapsedCollectionIds ?? [];
+    const nextIds = persistedCollapsedCollectionIds.has(collectionId)
+      ? current.filter((id) => id !== collectionId)
+      : [...current, collectionId];
+    const next = withCollapsedCollectionIds(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
   }
@@ -1217,6 +1255,28 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           />
         ) : (
           <NavRow
+            disclosure={
+              (collectionTree.get(c.collectionId) ?? []).length > 0 ? (
+                <button
+                  aria-expanded={!collapsedCollectionIds.has(c.collectionId)}
+                  aria-label={
+                    collapsedCollectionIds.has(c.collectionId)
+                      ? t("nav.expandCollection", { name: c.name })
+                      : t("nav.collapseCollection", { name: c.name })
+                  }
+                  className={`nav-disclosure${
+                    collapsedCollectionIds.has(c.collectionId) ? "" : " is-expanded"
+                  }`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleCollectionCollapsed(c.collectionId);
+                  }}
+                  type="button"
+                >
+                  <Icon name="chevron-right" size={12} />
+                </button>
+              ) : undefined
+            }
             icon="collection"
             label={c.name}
             count={c.assetCount}
@@ -1267,7 +1327,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             onClick={() => void onChooseCollection(c.collectionId)}
           />
         )}
-        {renderCollectionNodes(c.collectionId, depth + 1)}
+        {!collapsedCollectionIds.has(c.collectionId) &&
+          renderCollectionNodes(c.collectionId, depth + 1)}
       </div>
     )));
     return rows;

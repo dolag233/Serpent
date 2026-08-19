@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { PUBLIC_ERROR_MESSAGES } from '../../src/shared/protocol/errors';
 import { parseRendererResult, parseWorkerResponse } from '../../src/shared/protocol/responses';
 import { LibraryServiceError } from '../../src/worker/library-service';
 import { LibraryWriteCoordinatorError } from '../../src/worker/library-write-coordinator';
 import { publicErrorForWorkerFailure } from '../../src/worker/public-error';
-import { RemoteStorageError } from '../../src/worker/sync/remote-storage';
+import { DriverUnsupportedError, RemoteStorageError } from '../../src/worker/sync/remote-storage';
 
 describe('Library Worker public error boundary', () => {
   it('preserves the current entity version for optimistic-lock conflicts', () => {
@@ -31,7 +32,7 @@ describe('Library Worker public error boundary', () => {
       new Error('SQLITE_CANTOPEN at /Users/private/library.db'),
     )).toEqual({
       code: 'INTERNAL_ERROR',
-      message: 'Serpent could not complete the request.',
+      message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
     });
   });
 
@@ -49,7 +50,7 @@ describe('Library Worker public error boundary', () => {
       new LibraryWriteCoordinatorError('Another process owns /private/Library/.serpent/library.db', 'timed-out'),
     )).toEqual({
       code: 'LIBRARY_BUSY',
-      message: 'This library is being updated by another Serpent session. Try again in a moment.',
+      message: PUBLIC_ERROR_MESSAGES.LIBRARY_BUSY,
     });
   });
 
@@ -59,16 +60,16 @@ describe('Library Worker public error boundary', () => {
     expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
       code: 'LIBRARY_STRUCTURE_MISMATCH',
       message:
-        'This library has an incompatible structure for this operation. Upgrade Serpent to the latest version.',
+        PUBLIC_ERROR_MESSAGES.LIBRARY_STRUCTURE_MISMATCH,
     });
   });
 
-  it('keeps unrelated SQLITE_ERROR failures generic', () => {
+  it('maps a locked SQLite database to LIBRARY_BUSY instead of INTERNAL_ERROR', () => {
     const sqliteError = new Error('database is locked');
     Object.assign(sqliteError, { code: 'SQLITE_ERROR' });
     expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
-      code: 'INTERNAL_ERROR',
-      message: 'Serpent could not complete the request.',
+      code: 'LIBRARY_BUSY',
+      message: PUBLIC_ERROR_MESSAGES.LIBRARY_BUSY,
     });
   });
 
@@ -80,7 +81,7 @@ describe('Library Worker public error boundary', () => {
       expect(() => publicErrorForWorkerFailure(malformed)).not.toThrow();
       expect(publicErrorForWorkerFailure(malformed)).toEqual({
         code: 'INTERNAL_ERROR',
-        message: 'Serpent could not complete the request.',
+        message: PUBLIC_ERROR_MESSAGES.INTERNAL_ERROR,
       });
     }
   });
@@ -90,15 +91,56 @@ describe('Library Worker public error boundary', () => {
       new RemoteStorageError('AUTH_FAILED', '认证失败：用户名或密码不正确。'),
     )).toEqual({
       code: 'SYNC_CONNECTION_FAILED',
-      message: 'Serpent could not connect to the sync server.',
+      message: PUBLIC_ERROR_MESSAGES.SYNC_CONNECTION_FAILED,
       reason: 'SYNC_AUTH_FAILED',
     });
     expect(publicErrorForWorkerFailure(
       new RemoteStorageError('PERMISSION_DENIED', '没有权限执行该操作，请检查账号权限。'),
     )).toEqual({
       code: 'SYNC_CONNECTION_FAILED',
-      message: 'Serpent could not connect to the sync server.',
+      message: PUBLIC_ERROR_MESSAGES.SYNC_CONNECTION_FAILED,
       reason: 'SYNC_PERMISSION_DENIED',
+    });
+  });
+
+  it('maps NAS SQLite IOERR to LIBRARY_NETWORK_SHARE (Serpent-4f44f1)', () => {
+    const sqliteError = new Error('disk I/O error');
+    Object.assign(sqliteError, { code: 'SQLITE_IOERR_IN_PAGE' });
+    expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
+      code: 'LIBRARY_NETWORK_SHARE',
+      message: PUBLIC_ERROR_MESSAGES.LIBRARY_NETWORK_SHARE,
+    });
+  });
+
+  it('maps SQLITE_CANTOPEN codes without leaking the path', () => {
+    const sqliteError = new Error('unable to open database file: /Users/private/library.db');
+    Object.assign(sqliteError, { code: 'SQLITE_CANTOPEN' });
+    const publicError = publicErrorForWorkerFailure(sqliteError);
+    expect(publicError).toEqual({
+      code: 'LIBRARY_NOT_WRITABLE',
+      message: PUBLIC_ERROR_MESSAGES.LIBRARY_NOT_WRITABLE,
+      reason: 'IO_ERROR',
+    });
+    expect(JSON.stringify(publicError)).not.toContain('/Users/private');
+  });
+
+  it('maps WebDAV MOVE-unsupported to a sync method reason', () => {
+    expect(publicErrorForWorkerFailure(
+      new DriverUnsupportedError('WebDAV 服务器不支持 MOVE。'),
+    )).toEqual({
+      code: 'SYNC_CONNECTION_FAILED',
+      message: PUBLIC_ERROR_MESSAGES.SYNC_CONNECTION_FAILED,
+      reason: 'SYNC_METHOD_NOT_ALLOWED',
+    });
+  });
+
+  it('maps unclassified HTTP status codes to SYNC_HTTP_ERROR', () => {
+    expect(publicErrorForWorkerFailure(
+      new RemoteStorageError('HTTP_502', '服务器返回错误（502）。'),
+    )).toEqual({
+      code: 'SYNC_CONNECTION_FAILED',
+      message: PUBLIC_ERROR_MESSAGES.SYNC_CONNECTION_FAILED,
+      reason: 'SYNC_HTTP_ERROR',
     });
   });
 });

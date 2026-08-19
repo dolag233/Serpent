@@ -8,6 +8,11 @@ export interface NavTreePreferences {
   readonly version: 1;
   /** Folder ids whose children are hidden. Empty = fully expanded (legacy). */
   readonly collapsedFolderIds: readonly string[];
+  /**
+   * Collection ids whose child collections are hidden (Serpent-c42eb1).
+   * Optional so v1 data written before collections could collapse loads fine.
+   */
+  readonly collapsedCollectionIds?: readonly string[];
 }
 
 export interface NavTreePreferencesStorage {
@@ -19,6 +24,7 @@ export interface NavTreePreferencesStorage {
 const navTreePreferencesSchema = z.object({
   version: z.literal(1),
   collapsedFolderIds: z.array(z.string().min(1)).max(2000),
+  collapsedCollectionIds: z.array(z.string().min(1)).max(2000).optional(),
 });
 
 export const NAV_TREE_PREF_KEY = "serpent.nav-tree-prefs.v1";
@@ -26,6 +32,7 @@ export const NAV_TREE_PREF_KEY = "serpent.nav-tree-prefs.v1";
 export const DEFAULT_NAV_TREE_PREFERENCES: NavTreePreferences = {
   version: 1,
   collapsedFolderIds: [],
+  collapsedCollectionIds: [],
 };
 
 function resolveStorage(
@@ -69,4 +76,11 @@ export function withCollapsedFolderIds(
   collapsedFolderIds: readonly string[],
 ): NavTreePreferences {
   return { ...prefs, collapsedFolderIds: [...collapsedFolderIds] };
+}
+
+export function withCollapsedCollectionIds(
+  prefs: NavTreePreferences,
+  collapsedCollectionIds: readonly string[],
+): NavTreePreferences {
+  return { ...prefs, collapsedCollectionIds: [...collapsedCollectionIds] };
 }
