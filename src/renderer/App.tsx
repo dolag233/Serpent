@@ -347,6 +347,7 @@ import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewM
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { useViewerVolume } from "./use-viewer-volume";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
 import {
@@ -1297,6 +1298,11 @@ function AppInner() {
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
+  // Hover live previews (audio/video) carry the viewer volume preference over.
+  const {
+    volume: viewerVolume,
+    muted: viewerVolumeMuted,
+  } = useViewerVolume();
   const assetViewMode = canvasPrefs.viewMode;
   const assetCardSize = canvasPrefs.cardSize;
   const [canvasWidthPx, setCanvasWidthPx] = useState(0);
@@ -10098,10 +10104,13 @@ function AppInner() {
                                 <AssetCardMedia
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
+                                  hovering={hoveredAssetId === asset.assetId}
                                   hoverAudioPlay={canvasPrefs.hoverAudioPlay}
                                   hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={sequenceActive}
                                   libraryId={library.libraryId}
+                                  mediaMuted={viewerVolumeMuted}
+                                  mediaVolume={viewerVolume}
                                   preview={null}
                                   sequence={asset.sequence}
                                 />
@@ -10123,10 +10132,13 @@ function AppInner() {
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
                                   failed={cardThumbFailed}
+                                  hovering={hoveredAssetId === asset.assetId}
                                   hoverAudioPlay={canvasPrefs.hoverAudioPlay}
                                   hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={cardActive}
                                   libraryId={library.libraryId}
+                                  mediaMuted={viewerVolumeMuted}
+                                  mediaVolume={viewerVolume}
                                   preview={
                                     cardActive ? activeResolution : null
                                   }
@@ -10142,10 +10154,13 @@ function AppInner() {
                                 alt={asset.displayName}
                                 coverUrl={thumbCover}
                                 failed={cardThumbFailed}
+                                hovering={hoveredAssetId === asset.assetId}
                                 hoverAudioPlay={canvasPrefs.hoverAudioPlay}
                                 hoverVideoSound={canvasPrefs.hoverVideoSound}
                                 isActive={false}
                                 libraryId={library.libraryId}
+                                mediaMuted={viewerVolumeMuted}
+                                mediaVolume={viewerVolume}
                                 preview={null}
                               />
                             );

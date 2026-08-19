@@ -12,6 +12,12 @@ interface AssetCardMediaProps {
   /** Static thumbnail; shown whenever live preview is inactive or not ready. */
   coverUrl: string | null;
   isActive: boolean;
+  /**
+   * Whether this card is under the pointer. Sound-bearing live previews
+   * (audio play, video sound) only run on hover — primary selection keeps
+   * the silent video preview and never plays audio (Serpent hover 音频工单).
+   */
+  hovering?: boolean;
   preview: PreviewResolution | null;
   libraryId?: string;
   sequence?: ImageSequenceSummary | null;
@@ -21,6 +27,10 @@ interface AssetCardMediaProps {
   hoverAudioPlay?: boolean;
   /** Video hover preview plays sound (defaults to muted). */
   hoverVideoSound?: boolean;
+  /** Linear gain 0..1, carried over from the viewer volume preference. */
+  mediaVolume?: number;
+  /** Muted flag carried over from the viewer volume preference. */
+  mediaMuted?: boolean;
 }
 
 /**
@@ -32,12 +42,15 @@ export function AssetCardMedia({
   alt,
   coverUrl,
   isActive,
+  hovering = false,
   libraryId,
   preview,
   sequence,
   failed = false,
   hoverAudioPlay = true,
   hoverVideoSound = false,
+  mediaVolume = 1,
+  mediaMuted = false,
 }: AssetCardMediaProps) {
   const isSequence =
     Boolean(sequence) && (sequence?.frameCount ?? 0) >= 3 && Boolean(libraryId);
@@ -130,19 +143,27 @@ export function AssetCardMedia({
           autoPlay
           className="asset-card-media-live"
           loop
-          muted={!hoverVideoSound}
+          muted={!hovering || !hoverVideoSound || mediaMuted}
           playsInline
           poster={preview?.posterUrl}
           preload="metadata"
+          // volume is a DOM property, not a JSX attribute — set it via ref.
+          ref={(element) => {
+            if (element) element.volume = mediaVolume;
+          }}
           src={live.url}
         />
       ) : null}
-      {live.kind === "audio" && live.url && hoverAudioPlay ? (
+      {live.kind === "audio" && live.url && hoverAudioPlay && hovering ? (
         <audio
           autoPlay
           className="asset-card-media-live"
           loop
+          muted={mediaMuted}
           preload="metadata"
+          ref={(element) => {
+            if (element) element.volume = mediaVolume;
+          }}
           src={live.url}
         />
       ) : null}
