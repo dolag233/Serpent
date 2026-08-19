@@ -1209,6 +1209,10 @@ export const zhCN = {
     inspectorCardFeel: "侧边栏预览卡片动效",
     inspectorCardFeelHint:
       "侧边栏预览卡在指针悬停时的倾斜、高光与按下景深；浏览网格卡片不受影响。开启时仍遵循系统「减少动态效果」。",
+    hoverAudioPlay: "音频卡片悬停播放",
+    hoverAudioPlayHint: "鼠标悬停音频卡片时在画布内播放，移开即停止。",
+    hoverVideoSound: "视频悬停播放带声音",
+    hoverVideoSoundHint: "悬停视频卡片播放时播放声音（默认关闭，避免噪音）。",
     languageHint: "控制界面文案语言，立即生效。",
     browserExtensionTitle: "浏览器扩展",
     browserExtensionIntro:

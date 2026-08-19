@@ -9574,6 +9574,15 @@ select.ai-config-input.ai-config-languages {
   z-index: 1;
 }
 
+/* Serpent hover 音频: hover 播放只需出声，不显示播放控件。 */
+.asset-card-media-live.audio-live,
+.asset-card-media audio.asset-card-media-live {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
 .asset-card-media-live.is-sequence-front {
   opacity: 1;
   z-index: 2;

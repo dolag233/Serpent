@@ -9,7 +9,7 @@ import {
 } from "../../src/renderer/asset-card-hover-preview";
 
 describe("isCardHoverPreviewable", () => {
-  it("accepts gif and video when available", () => {
+  it("accepts gif, video and audio when available", () => {
     expect(
       isCardHoverPreviewable({
         mediaType: "image",
@@ -22,6 +22,14 @@ describe("isCardHoverPreviewable", () => {
       isCardHoverPreviewable({
         mediaType: "video",
         displayName: "clip.mp4",
+        availability: "available",
+        deletedAt: null,
+      }),
+    ).toBe(true);
+    expect(
+      isCardHoverPreviewable({
+        mediaType: "audio",
+        displayName: "track.mp3",
         availability: "available",
         deletedAt: null,
       }),
@@ -149,6 +157,16 @@ describe("resolveLivePreviewMedia (Serpent-a9n)", () => {
         posterUrl: "serpent://preview/lib/poster-1",
       }),
     ).toEqual({ url: "serpent://source/lib/vid-1", kind: "video" });
+  });
+
+  it("plays a ready audio as 'audio' when active (Serpent hover 音频工单)", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "ready",
+        url: "serpent://source/lib/aud-1",
+        mediaType: "audio",
+      }),
+    ).toEqual({ url: "serpent://source/lib/aud-1", kind: "audio" });
   });
 
   it("plays an animated GIF webm proxy as 'video' (Serpent-azf6 — <img> cannot decode webm)", () => {

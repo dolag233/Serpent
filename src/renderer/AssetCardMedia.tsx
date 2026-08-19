@@ -17,10 +17,14 @@ interface AssetCardMediaProps {
   sequence?: ImageSequenceSummary | null;
   /** Serpent-2ajm: generation failed — show the cracked-file icon fallback. */
   failed?: boolean;
+  /** Audio assets play in-place on hover (Serpent hover 音频工单). */
+  hoverAudioPlay?: boolean;
+  /** Video hover preview plays sound (defaults to muted). */
+  hoverVideoSound?: boolean;
 }
 
 /**
- * Grid card media: static cover by default; GIF/video play in-place when
+ * Grid card media: static cover by default; GIF/video/audio play in-place when
  * active. Image sequences paint decoded thumbnails to a canvas so changing
  * frames never exposes an image loading gap.
  */
@@ -32,6 +36,8 @@ export function AssetCardMedia({
   preview,
   sequence,
   failed = false,
+  hoverAudioPlay = true,
+  hoverVideoSound = false,
 }: AssetCardMediaProps) {
   const isSequence =
     Boolean(sequence) && (sequence?.frameCount ?? 0) >= 3 && Boolean(libraryId);
@@ -124,9 +130,18 @@ export function AssetCardMedia({
           autoPlay
           className="asset-card-media-live"
           loop
-          muted
+          muted={!hoverVideoSound}
           playsInline
           poster={preview?.posterUrl}
+          preload="metadata"
+          src={live.url}
+        />
+      ) : null}
+      {live.kind === "audio" && live.url && hoverAudioPlay ? (
+        <audio
+          autoPlay
+          className="asset-card-media-live"
+          loop
           preload="metadata"
           src={live.url}
         />

@@ -1225,6 +1225,10 @@ export const en = {
     inspectorCardFeel: "Sidebar preview card motion",
     inspectorCardFeelHint:
       "Pointer tilt, glare, and press depth on the Inspector preview card. Browse grid cards are unchanged. Respects system reduced-motion when on.",
+    hoverAudioPlay: "Play audio on hover",
+    hoverAudioPlayHint: "Hovering an audio card plays it in place; leaving stops it.",
+    hoverVideoSound: "Video hover preview with sound",
+    hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
     languageHint: "Controls the interface language. Changes apply immediately.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:

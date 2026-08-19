@@ -10098,6 +10098,8 @@ function AppInner() {
                                 <AssetCardMedia
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
+                                  hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                  hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={sequenceActive}
                                   libraryId={library.libraryId}
                                   preview={null}
@@ -10121,6 +10123,8 @@ function AppInner() {
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
                                   failed={cardThumbFailed}
+                                  hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                  hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={cardActive}
                                   libraryId={library.libraryId}
                                   preview={
@@ -10138,6 +10142,8 @@ function AppInner() {
                                 alt={asset.displayName}
                                 coverUrl={thumbCover}
                                 failed={cardThumbFailed}
+                                hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                hoverVideoSound={canvasPrefs.hoverVideoSound}
                                 isActive={false}
                                 libraryId={library.libraryId}
                                 preview={null}
@@ -10767,6 +10773,12 @@ function AppInner() {
             ...p,
             fields: { ...p.fields, [field]: !p.fields[field] },
           }));
+        }}
+        onToggleHoverAudioPlay={() => {
+          setCanvasPrefs((p) => ({ ...p, hoverAudioPlay: !p.hoverAudioPlay }));
+        }}
+        onToggleHoverVideoSound={() => {
+          setCanvasPrefs((p) => ({ ...p, hoverVideoSound: !p.hoverVideoSound }));
         }}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
