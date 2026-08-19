@@ -1,5 +1,0 @@
-#!/usr/bin/env sh
-# Serpent: 工单真相源是 .beads/issues.jsonl + npm run ticket（scripts/ticket.mjs）。
-# 禁止在此运行 bd export / bd hooks：本地 Dolt 常与 JSONL 脱节，空库会覆盖并清空 issues.jsonl。
-# 见 docs/internal/development/2026-08-19-beads-jsonl-export-wipe-incident.md
-exit 0

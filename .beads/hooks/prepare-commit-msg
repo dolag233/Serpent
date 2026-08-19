@@ -1,3 +1,0 @@
-#!/usr/bin/env sh
-# Serpent: 勿运行 bd prepare-commit-msg（历史 Beads 集成已退役）。
-exit 0
