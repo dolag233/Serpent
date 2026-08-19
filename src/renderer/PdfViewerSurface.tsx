@@ -68,6 +68,13 @@ export function PdfViewerSurface({
   const [loadedPages, setLoadedPages] = useState<number>(0);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [zoom, setZoom] = useState(1);
+  /**
+   * Scroll position to restore after the pages re-render on a zoom change.
+   * Pointer-anchored zooming computes the target scroll in the old geometry;
+   * rebuilding the column resets scrolling, so the render effect applies this
+   * once the new pages exist (keeps the pointer-anchored content stationary).
+   */
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   // Load the document once per source; rendering reacts to pdfDoc/zoom below.
   // The parent keys the surface by asset, so a source change remounts this
@@ -226,6 +233,15 @@ export function PdfViewerSurface({
           if (pageNumber === 1) void renderPage(1);
         }
 
+        // Restore the pointer-anchored scroll position after the zoom
+        // rebuild (the column reset scrolling when its content was cleared).
+        const pending = pendingScrollRef.current;
+        if (pending) {
+          host.scrollLeft = pending.left;
+          host.scrollTop = pending.top;
+          pendingScrollRef.current = null;
+        }
+
         resizeObserver = new ResizeObserver(() => {
           if (!cancelled) relayoutPages();
         });
@@ -248,8 +264,9 @@ export function PdfViewerSurface({
 
   /**
    * Apply a new zoom while keeping the content under `clientX/clientY`
-   * stationary (pointer-anchored zooming, like the image viewer). The pages
-   * re-render asynchronously, so the scroll correction lands on the next frame.
+   * stationary (pointer-anchored zooming, like the image viewer's zoomAt).
+   * The pages re-render asynchronously; the target scroll is stashed and the
+   * render effect applies it once the new pages exist.
    */
   const stepZoomAt = (clientX: number, clientY: number, nextZoom: number) => {
     const host = hostRef.current;
@@ -260,12 +277,11 @@ export function PdfViewerSurface({
     const anchorX = host.scrollLeft + px;
     const anchorY = host.scrollTop + py;
     const ratio = nextZoom / zoom;
+    pendingScrollRef.current = {
+      left: Math.max(0, anchorX * ratio - px),
+      top: Math.max(0, anchorY * ratio - py),
+    };
     setZoom(nextZoom);
-    requestAnimationFrame(() => {
-      if (!host.isConnected) return;
-      host.scrollLeft = Math.max(0, anchorX * ratio - px);
-      host.scrollTop = Math.max(0, anchorY * ratio - py);
-    });
   };
 
   const wheelZoom = (event: React.WheelEvent<HTMLDivElement>) => {

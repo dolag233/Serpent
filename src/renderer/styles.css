@@ -4776,7 +4776,8 @@ body.serpent-modal-open .app-shell {
   min-height: 0;
   /* Zoomed-in pages widen beyond the viewport; scroll both ways to move the view.
      align-items: flex-start (not center) so an overflowing page does not clip
-     its left edge unreachably; pages center themselves via margin auto. */
+     its left edge unreachably; pages center themselves via margin auto.
+     Grab cursor while dragging to pan, same as the image/video viewer. */
   overflow: auto;
   overscroll-behavior: contain;
   padding: 16px;
@@ -4784,6 +4785,11 @@ body.serpent-modal-open .app-shell {
   flex-direction: column;
   align-items: flex-start;
   gap: 14px;
+  cursor: grab;
+}
+
+.pdf-viewer-pages:active {
+  cursor: grabbing;
 }
 
 .pdf-viewer-page-wrap,
