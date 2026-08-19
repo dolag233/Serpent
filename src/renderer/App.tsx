@@ -239,6 +239,7 @@ import { useInspectorAssetMetadata } from "./use-inspector-asset-metadata";
 import { useInspectorFieldHandlers } from "./use-inspector-field-handlers";
 import { useAssetDragDropHandlers } from "./use-asset-drag-drop-handlers";
 import { useDialogEscapeDismiss } from "./use-dialog-escape-dismiss";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { PluginToolbarButtons } from "./plugin-toolbar-contributions";
 import { usePluginShortcutKeyboard } from "./plugin-shortcut-contributions";
 import { usePluginInputCaptureFanIn } from "./use-plugin-input-capture-fanin";
@@ -7657,6 +7658,7 @@ function AppInner() {
   useEffect(() => {
     const onEscapeCapture = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (isImeKeyboardEvent(event)) return;
       if (document.querySelector(".context-menu")) {
         event.stopPropagation();
       }

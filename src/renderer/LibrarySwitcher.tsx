@@ -9,6 +9,7 @@ import {
 import type { ImportMenuCopy } from "./browse-empty-state";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import {
   focusFirstRovingItem,
   handleRovingListKeyDown,
@@ -137,6 +138,7 @@ export function LibrarySwitcher({
   }
 
   function onMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (isImeKeyboardEvent(event.nativeEvent)) return;
     const menu = event.currentTarget;
     const result = handleRovingListKeyDown({
       key: event.key,

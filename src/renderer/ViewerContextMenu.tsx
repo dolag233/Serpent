@@ -8,6 +8,7 @@ import {
 
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { PopoverSurface } from "./ui/patterns";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 
@@ -98,6 +99,7 @@ export function ViewerContextMenu({
       if (!menu?.contains(event.target as Node)) onClose();
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeKeyboardEvent(event)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();

@@ -8,6 +8,7 @@ import {
   type DialogEscapeSnapshot,
 } from "./dialog-escape-stack";
 import { LibraryOperationError, toMessage } from "./error-utils";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { useLocale, useT } from "./i18n";
 
 export type UseDialogEscapeDismissParams = {
@@ -86,6 +87,7 @@ export function useDialogEscapeDismiss({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (isImeKeyboardEvent(event)) return;
       event.preventDefault();
       // Dialogs are the topmost interaction layer. Handle Escape during the
       // capture phase so a viewer/workspace listener cannot close a surface

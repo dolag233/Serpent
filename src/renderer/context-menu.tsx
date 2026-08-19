@@ -15,6 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
 // ---------------------------------------------------------------------------
@@ -173,6 +174,7 @@ export function ContextMenuBackdrop({
   // Escape key (document-level, capture phase)
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (isImeKeyboardEvent(e)) return;
       if (e.key === "Escape") dismiss();
     };
     document.addEventListener("keydown", handleKeyDown, { capture: true });
@@ -336,6 +338,7 @@ export function ContextMenu({
 
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (isImeKeyboardEvent(e.nativeEvent)) return;
     const menu = e.currentTarget;
     initialFocusPendingRef.current = false;
     // A pointer hover may have queued a post-commit focus reassertion. Once

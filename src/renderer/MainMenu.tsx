@@ -12,6 +12,7 @@ import {
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import type { MainMenuItem, MainMenuSection } from "./main-menu-items";
 import { MenuSurface, resolveMenuNodes } from "./ui/patterns";
 
@@ -150,6 +151,7 @@ export function MainMenu({
       if (!rootRef.current?.contains(event.target as Node)) closeMenu(false);
     };
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (isImeKeyboardEvent(event)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         closeMenu(true);

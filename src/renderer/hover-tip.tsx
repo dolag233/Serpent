@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { isImeKeyboardEvent } from './ime-safe-dismiss';
 
 /** Quiet delay before a hover tip appears (REQ-SHELL-013 follow-up). */
 export const HOVER_TIP_SHOW_DELAY_MS = 420;
@@ -157,6 +158,7 @@ export function HoverTipHost() {
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isImeKeyboardEvent(event)) return;
       if (event.key === 'Escape') hide();
     };
     const onScroll = () => hide();

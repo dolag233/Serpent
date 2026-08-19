@@ -10,6 +10,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocale } from '../i18n';
+import { isImeKeyboardEvent } from '../ime-safe-dismiss';
 import { Icon } from '../Icons';
 import { LIGHT_INTENSITY_MAX, LIGHT_INTENSITY_MIN } from './light-intensity';
 import {
@@ -77,6 +78,7 @@ export function ModelViewerToolbar(props: ModelViewerToolbarProps) {
       setHdriOpen(false);
     }
     function onKeyDown(event: KeyboardEvent) {
+      if (isImeKeyboardEvent(event)) return;
       if (event.key === 'Escape') setHdriOpen(false);
     }
     window.addEventListener('pointerdown', onPointerDown);

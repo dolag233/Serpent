@@ -8,6 +8,7 @@ import {
 
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent } from "./ime-safe-dismiss";
 import type { SortDefinition } from "../shared/asset-types";
 import { PortaledPopover } from "./PortaledPopover";
 import {
@@ -153,6 +154,7 @@ export function SortModeControl({
   }, [listId, open]);
 
   function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (isImeKeyboardEvent(event.nativeEvent)) return;
     const list = event.currentTarget;
     const result = handleRovingListKeyDown({
       key: event.key,

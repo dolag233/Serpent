@@ -12,6 +12,7 @@ import {
   linkedFolderNavAffordance,
 } from "./availability-affordance";
 import { useT } from "./i18n";
+import { isImeKeyboardEvent, shouldHoldDismissForIme } from "./ime-safe-dismiss";
 import type {
   CollectionSummary,
   LinkedFolderSummary,
@@ -207,9 +208,13 @@ function InlineFolderEditRow({
         }
         className="text-field"
         maxLength={80}
-        onBlur={() => onCommit()}
+        onBlur={(event) => {
+          if (shouldHoldDismissForIme({ focusEvent: event })) return;
+          onCommit();
+        }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             onCommit();
@@ -304,7 +309,8 @@ function InlineCollectionEditRow({
           aria-label={ariaLabel ?? t("nav.newCollection")}
           className="text-field"
           maxLength={255}
-          onBlur={() => {
+          onBlur={(event) => {
+            if (shouldHoldDismissForIme({ focusEvent: event })) return;
             cancelScheduledBlurCommit();
             blurCommitTimerRef.current = window.setTimeout(() => {
               blurCommitTimerRef.current = null;
@@ -314,6 +320,7 @@ function InlineCollectionEditRow({
           onChange={(event) => onChange(event.target.value)}
           onFocus={cancelScheduledBlurCommit}
           onKeyDown={(event) => {
+            if (isImeKeyboardEvent(event)) return;
             if (event.key === "Enter") {
               event.preventDefault();
               commitOnce();
@@ -372,9 +379,13 @@ function InlineSmartCollectionEditRow({
         aria-label={t("nav.newSmartCollectionName")}
         className="text-field"
         maxLength={80}
-        onBlur={() => onCommit()}
+        onBlur={(event) => {
+          if (shouldHoldDismissForIme({ focusEvent: event })) return;
+          onCommit();
+        }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
+          if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
             onCommit();
