@@ -10,7 +10,8 @@
 
 ## 2. 分支与代码基线
 
-- **main = 发布分支**：只含完整软件代码库（`src` / `tests` / `resources` / `scripts` / `assets` / 产品文档 `docs/user-guide`、`docs/manual`、`docs/assets`、`README`、`website` 等）。开发文件（`.beads/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`docs/developer/`、`benchmark.md`）只存在于 dev。main 剥离动作见历史提交 `3d6474fc`（strip dev-only files）与对应恢复提交 `b4ca9b98`。
+- **main = 发布分支**：只含完整软件代码库（`src` / `tests` / `resources` / `scripts` / `assets` / 产品文档 `docs/user-guide`、`docs/manual`、`docs/assets`、`README`、`website` 等）。开发文件（`.beads/`、`.github/`、`.codex/`、`.cursor/`、`AGENTS.md`、`CLAUDE.md`、`CONTEXT.md`、`docs/internal/`、`docs/developer/`、`benchmark.md`）只存在于 dev。main 剥离动作见历史提交 `3d6474fc`（strip dev-only files）、`0a8984f`（移除 .beads/.github）与对应恢复提交 `b4ca9b98`。
+- **主分支切勿引入开发相关文件（强制）**：`.beads/`（工单数据）与 `.github/`（CI 配置）只属于 dev；dev → main 合并前必须从合并结果中剥离两者（`git rm -r .beads .github` 后提交），禁止将工单/CI 文件带入 main。2026-08-19 用户明确要求：main 只保留产品代码与产品文档。
 - **打包在 dev 分支进行**：`verify-package.mjs` 要求 `docs/internal/skills/serpent-automation/automation-api.d.ts`（从 `src/automation/command-registry.ts` 生成、随 dev 提交），main 剥离该目录后无法通过发布门禁。发布前核对代码一致性：
   ```bash
   git diff main dev --stat -- src/ tests/ package.json package-lock.json   # 应为空
