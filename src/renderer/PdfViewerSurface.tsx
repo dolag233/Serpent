@@ -190,6 +190,12 @@ export function PdfViewerSurface({
             wrap.className = "pdf-viewer-page-wrap";
             layoutNode(wrap, size);
             wrap.append(canvas);
+            // Render BEFORE mounting: swapping the placeholder for a wrap that
+            // still holds a blank canvas flashes white. Rendering off-DOM and
+            // replacing afterwards keeps the previous page visible until the
+            // crisp bitmap is ready (Serpent P2: no white flash on zoom).
+            await page.render({ canvas, canvasContext: context, viewport }).promise;
+            if (cancelled) return;
             const placeholder = pageNodes[pageNumber - 1];
             if (placeholder?.isConnected) {
               observer?.unobserve(placeholder);
@@ -198,8 +204,7 @@ export function PdfViewerSurface({
               host.append(wrap);
             }
             pageNodes[pageNumber - 1] = wrap;
-            await page.render({ canvas, canvasContext: context, viewport }).promise;
-            if (!cancelled) setLoadedPages((count) => count + 1);
+            setLoadedPages((count) => count + 1);
           } catch {
             rendered.delete(pageNumber);
             if (!cancelled) {
