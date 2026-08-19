@@ -2,8 +2,12 @@ import { useEffect, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { PreviewResolution } from "../shared/library-api";
-import { coverSrc } from "./asset-card-hover-preview";
-import { resolveLivePreviewMedia } from "./asset-card-hover-preview";
+import {
+  coverSrc,
+  resolveLivePreviewMedia,
+  resolveLiveVideoMuted,
+  shouldPlayLiveAudio,
+} from "./asset-card-hover-preview";
 import { Icon } from "./Icons";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 
@@ -143,7 +147,11 @@ export function AssetCardMedia({
           autoPlay
           className="asset-card-media-live"
           loop
-          muted={!hovering || !hoverVideoSound || mediaMuted}
+          muted={resolveLiveVideoMuted({
+            hovering,
+            hoverVideoSound,
+            mediaMuted,
+          })}
           playsInline
           poster={preview?.posterUrl}
           preload="metadata"
@@ -154,7 +162,7 @@ export function AssetCardMedia({
           src={live.url}
         />
       ) : null}
-      {live.kind === "audio" && live.url && hoverAudioPlay && hovering ? (
+      {live.kind === "audio" && live.url && shouldPlayLiveAudio({ hovering, hoverAudioPlay }) ? (
         <audio
           autoPlay
           className="asset-card-media-live"

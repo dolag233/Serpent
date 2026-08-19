@@ -132,3 +132,28 @@ export function resolveLivePreviewMedia(
   if (preview?.mediaType === "audio") return { url, kind: "audio" };
   return { url: undefined, kind: null };
 }
+
+/**
+ * Video hover preview muted state (Serpent hover 音频工单): sound only plays
+ * while the pointer is actually hovering and the preference is on; primary
+ * selection keeps the silent preview, and the viewer's own mute wins always.
+ */
+export function resolveLiveVideoMuted(input: {
+  hovering: boolean;
+  hoverVideoSound: boolean;
+  mediaMuted: boolean;
+}): boolean {
+  const { hovering, hoverVideoSound, mediaMuted } = input;
+  return mediaMuted || !hovering || !hoverVideoSound;
+}
+
+/**
+ * Whether the in-place audio preview should play: pointer hover only, gated by
+ * the preference. Selection never plays audio.
+ */
+export function shouldPlayLiveAudio(input: {
+  hovering: boolean;
+  hoverAudioPlay: boolean;
+}): boolean {
+  return input.hovering && input.hoverAudioPlay;
+}
