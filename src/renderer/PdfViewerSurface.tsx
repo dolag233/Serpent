@@ -118,6 +118,11 @@ export function PdfViewerSurface({
     const rendered = new Set<number>();
     const pageNodes: HTMLElement[] = [];
     const pageSizes = new Map<number, PdfPageSize>();
+    // Nodes from the previous render pass (zoom change). Kept as transition
+    // placeholders so the column never blanks out between zoom levels — the
+    // old bitmap stretches to the new geometry until the crisp re-render
+    // replaces it in place (Serpent P2: no white flash on zoom).
+    const staleNodes = [...host.children] as HTMLElement[];
 
     const contentWidth = () => pdfViewerContentWidth(host.clientWidth, hostPaddingX(host)) * zoom;
 
@@ -224,6 +229,17 @@ export function PdfViewerSurface({
         for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
           if (cancelled) break;
           pageSizes.set(pageNumber, firstSize);
+          const stale = staleNodes[pageNumber - 1];
+          if (stale && stale.isConnected) {
+            // Zoom transition: keep the previous page node as the placeholder —
+            // it stretches to the new geometry immediately (no white flash)
+            // and the crisp re-render replaces it in place when ready.
+            layoutNode(stale, firstSize);
+            pageNodes.push(stale);
+            observer.observe(stale);
+            if (pageNumber === 1) void renderPage(1);
+            continue;
+          }
           const placeholder = document.createElement("div");
           placeholder.className = "pdf-viewer-page-placeholder";
           layoutNode(placeholder, firstSize);
@@ -258,7 +274,9 @@ export function PdfViewerSurface({
       observer?.disconnect();
       resizeObserver?.disconnect();
       hostWidthObserver?.disconnect();
-      host.textContent = "";
+      // Do NOT clear host.textContent here: zoom re-renders reuse the previous
+      // page nodes as transition placeholders (no white flash). The component
+      // unmount is handled by React removing the subtree.
     };
   }, [pdfDoc, zoom, t]);
 
