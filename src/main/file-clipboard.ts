@@ -9,6 +9,8 @@
 
 import path from "node:path";
 
+import { writeWin32FileClipboard } from "./win32-file-clipboard";
+
 export type FileClipboardPlatform = "darwin" | "win32" | "other";
 
 export type FileClipboardDeps = {
@@ -19,6 +21,11 @@ export type FileClipboardDeps = {
   readonly clear: () => void;
   /** Optional text fallback (path list) for apps that only paste text. */
   readonly writeText: (text: string) => void;
+  /**
+   * Windows-only native clipboard writer (standard CF_HDROP, ID 15). Injected
+   * so unit tests can stub it; defaults to the koffi implementation.
+   */
+  readonly writeNativeWin32?: (filePaths: readonly string[]) => boolean;
 };
 
 export function detectFileClipboardPlatform(
@@ -48,6 +55,7 @@ export function createFileClipboardDeps(): FileClipboardDeps {
     hasFormat: (format) => clipboard.has(format),
     clear: () => clipboard.clear(),
     writeText: (text) => clipboard.writeText(text),
+    writeNativeWin32: writeWin32FileClipboard,
   };
 }
 
@@ -157,6 +165,11 @@ export function writeFilePathsToClipboard(
       return true;
     }
     if (deps.platform === "win32") {
+      // Prefer the native Win32 clipboard (standard CF_HDROP, ID 15) so
+      // Explorer/PureRef/Get-Clipboard -Format FileDropList can read it;
+      // Electron's writeBuffer('CF_HDROP') registers a custom format with the
+      // same name, which external apps cannot see.
+      if (deps.writeNativeWin32?.(absolute)) return true;
       deps.writeBuffer("CF_HDROP", buildCfHdrop(absolute));
       // FileNameW: first path, UCS-2, double-null terminated.
       const first = `${absolute[0]!}\0\0`;
