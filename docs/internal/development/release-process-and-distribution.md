@@ -86,17 +86,25 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 
 ## 6. Release 创建与上传
 
+> Windows 上 `gh` 安装于 `C:\Program Files\GitHub CLI\gh.exe`，用户 PATH 可能缺失——用全路径调用或先修复 PATH。先 `gh auth status` 确认登录（keyring 凭据）。
+
 ```bash
-# 创建（target 指向发布分支 main）
+# 创建（target 指向发布分支 main；tag 指向 main 发布基线）
 gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main
 
-# 上传资产（macOS 4 个：dmg/portable + 各自 sha256；Windows 同模式）
+# 上传资产（macOS 4 个：dmg/portable + 各自 sha256）
 gh release upload v<ver> \
   Serpent-darwin-arm64-<ver>-package.dmg Serpent-darwin-arm64-<ver>-package.dmg.sha256 \
   Serpent-darwin-arm64-<ver>-portable.zip Serpent-darwin-arm64-<ver>-portable.zip.sha256
+
+# 上传资产（Windows 4 个：portable/setup + 各自 sha256）
+gh release upload v<ver> \
+  Serpent-win-x86-64-<ver>-portable.zip Serpent-win-x86-64-<ver>-portable.zip.sha256 \
+  Serpent-win-x86-64-<ver>-setup.zip Serpent-win-x86-64-<ver>-setup.zip.sha256
 ```
 
 发布后核对 release 页：标题、notes、资产齐全、`--target main` 正确。
+**禁止上传裸 `SerpentSetup.exe` 或 Forge 默认名产物**（如 `Serpent-win32-x64-<ver>.zip`）——自动更新器按 §4 规范名选择资产。
 
 ## 7. 平台注意事项
 
@@ -110,12 +118,16 @@ gh release upload v<ver> \
 - 打包产物 `.app` 不能从 SMB/NAS 路径运行，先复制到本地 APFS。
 - 用户测试临时产物（out/、test-results/）用后清理。
 
-## 8. 发布检查清单
+## 8. 发布检查清单（逐条对照，禁止凭印象执行）
 
-- [ ] 版本号已改（package.json + lock，提交）
-- [ ] dev 与 main 的 `src/ tests/ package.json` 一致；main 无开发文件（`.beads`/`CLAUDE.md`/`AGENTS.md`/`docs/internal` 等）
-- [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）
-- [ ] 产物按规范名重命名 + sha256 齐备
-- [ ] Changelog 中英双语、按重要度排序、次要改动概括
-- [ ] `gh release create --target main` + 资产上传成功
+- [ ] 版本号已改（package.json + lock，提交 `chore(release): 版本号 …`），先落 dev
+- [ ] dev 与 main 的 `src/ tests/ package.json` 一致；main 无开发文件（`.beads`/`CLAUDE.md`/`AGENTS.md`/`docs/internal`/`.github` 等）
+- [ ] main 合流用**单一提交**完成（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交
+- [ ] 全部发布门禁通过（media verify / verify-package / ufbx WASM）——**在 dev 分支打包**
+- [ ] 产物按 §4 规范名精确重命名（`win-x86-64` 不是 `win32-x64`；安装包是 `-setup.zip` 不是裸 exe）+ 每个资产同名 `.sha256`（只含哈希）
+- [ ] Changelog 中英双语（中文在前，标题 `**Serpent <版本>** — 一句话 · English one-liner`）、按重要度排序、次要改动概括
+- [ ] `gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`（gh 全路径调用）
+- [ ] 资产上传齐全（macOS 4 / Windows 4），release 页核对标题/notes/资产/`--target main`
+- [ ] tag `v<ver>` 指向 main 发布基线（`git tag v<ver> <main-commit>` + `git push origin v<ver>`）
 - [ ] `npm run rebuild:native` 已恢复 dev 环境（FTS5 probe OK）
+- [ ] 切回 dev 分支

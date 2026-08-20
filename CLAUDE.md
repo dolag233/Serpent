@@ -90,6 +90,22 @@ Library Worker (UtilityProcess; filesystem + SQLite owner)
 
 不变量：Renderer 永远不接收任意路径读写或 SQL 能力；Main 不打开资源库数据库或扫描资产目录；Library Worker 是数据库和文件操作唯一所有者；所有跨进程 I/O 经 Zod 运行时校验。
 
+## 发布规范（强制，2026-08-21 用户要求：所有规范必须强调）
+
+发布全流程按 `docs/internal/development/release-process-and-distribution.md` 逐条执行，**禁止凭印象**。要点：
+
+- **版本号**：`npm version <ver> --no-git-tag-version`（改 package.json + package-lock.json），提交 `chore(release): 版本号 x.y.z → x.y.z+1`，先落 dev。
+- **打包只在 dev 分支**：main 剥离 docs/internal 后 `verify-package` 门禁过不了（设计如此，不是缺陷）。main 仅作发布基线，不承载构建。
+- **main 合流纪律**：dev→main 必须剥离全部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/` 等），**用单一提交完成**（merge --no-commit → git rm 开发文件 → 一次 commit），禁止「引入又删除」的来回提交；`scripts/hooks/pre-commit` 守卫 main 提交（`npm run install:git-hooks` 安装）。
+- **产物命名规范**（自动更新按名字选资产，必须精确，禁止上传裸 exe 或 Forge 默认名）：
+  - Windows 便携版 `Serpent-win-x86-64-<ver>-portable.zip`
+  - Windows 安装包 `Serpent-win-x86-64-<ver>-setup.zip`（Inno 的 `SerpentSetup.exe` **打包成 zip** 上传）
+  - macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`
+  - 每个资产配套同名 `.sha256`（只含哈希）
+- **Changelog**：中英双语（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序、次要改动概括；保存 `release-notes-<ver>.md`。
+- **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`；gh 在 `C:\Program Files\GitHub CLI\gh.exe`（PATH 可能缺失，全路径调用）；tag `v<ver>` 指向 main 发布基线。
+- **打包后必须** `npm run rebuild:native` 恢复 dev 环境（FTS5 probe OK），并切回 dev 分支。
+
 ## 工单管理（纯文本 JSONL）
 
 当前工单真相源是 `.beads/issues.jsonl`，每行一个 JSON 工单对象，随普通 Git 提交、

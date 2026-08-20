@@ -142,6 +142,18 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - 2026-07-16 真实使用反馈新增 0015–0019 MVP 产品化范围：中英文、亮/暗主题、命令快捷键、应用壳与发现工具栏、文件夹卡片/文件操作、标签体验与 Label 退役、Inspector/选择/瀑布流正确性。开始相关工作前必须读取 `docs/internal/implementation/mvp-ui-ux-requirements-backlog.md`。
 - 当前事实、优先级和保留条件以 `docs/internal/project-status.md` 为准，不在本文件复制逐切片细节。
 
+## 发布规范（强制，2026-08-21 用户要求：所有规范必须强调）
+
+发布全流程按 `docs/internal/development/release-process-and-distribution.md` 逐条执行，禁止凭印象：
+
+- 版本号用 `npm version --no-git-tag-version`，提交 `chore(release): 版本号 x.y.z → x.y.z+1`，先落 dev。
+- **打包只在 dev 分支**（main 剥离 docs/internal 后 verify-package 门禁过不了，设计如此）；main 仅作发布基线。
+- **main 合流纪律**：剥离全部开发文件（`AGENTS.md`/`CLAUDE.md`/`docs/internal/`/`.beads/`/`.github/`），**单一提交完成**（merge --no-commit → git rm → 一次 commit），禁止「引入又删除」来回提交；`scripts/hooks/pre-commit` 守卫 main（`npm run install:git-hooks`）。
+- **产物命名**（自动更新按名字选资产，禁止裸 exe 或 Forge 默认名）：`Serpent-win-x86-64-<ver>-portable.zip` / `-setup.zip`（Inno `SerpentSetup.exe` 打包成 zip）/ macOS `Serpent-darwin-arm64-<ver>-portable.zip` / `-package.dmg`；每个资产配同名 `.sha256`。
+- **Changelog 中英双语**（中文在前），标题 `**Serpent <版本>** — 一句话 · English one-liner`，按重要度排序，次要改动概括；保存 `release-notes-<ver>.md`。
+- **Release**：`gh release create v<ver> --title "Serpent <ver>" --notes-file release-notes-<ver>.md --target main`（gh 在 `C:\Program Files\GitHub CLI\gh.exe`，PATH 可能缺失用全路径）；tag `v<ver>` 指向 main 发布基线。
+- 打包后必须 `npm run rebuild:native` 恢复 dev 环境（FTS5 probe OK），并切回 dev 分支。
+
 ## 关键约束
 
 - **平台**：macOS arm64 已验证；Windows 完全未验证（无 runner）。Windows 行为（命名冲突、rename 语义、打包）是显式未验证项，不能写成"通过"。
