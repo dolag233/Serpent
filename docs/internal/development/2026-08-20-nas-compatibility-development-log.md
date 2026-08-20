@@ -2,7 +2,7 @@
 
 > 关联工单：`Serpent-4f44f1`、`Serpent-6156e9`、`Serpent-f863df`
 > 关联研究：[NAS 兼容性研究](../research/2026-08-20-nas-compatibility-research.md)
-> 本地提交：待本次验证后填写；按产品要求不推送，等待 NAS 真机测试
+> 本地提交：`cd11c89c`；按产品要求不推送，等待 NAS 真机测试
 > 代码审查：[双轴审查记录](../reviews/2026-08-20-nas-compatibility-code-review.md)；QA：[QA 报告](../qa/2026-08-20-nas-compatibility-qa-report.md)
 
 ## 目标与边界

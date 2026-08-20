@@ -1,7 +1,7 @@
 # 2026-08-20 NAS 兼容性双轴代码审查
 
 > 审查基点：`e12e40e87b91da8ced451c0362ff642768ce4929`
-> 审查范围：该基点到当前 NAS 工作树；本地提交 SHA 待回填；未推送
+> 审查范围：`e12e40e87b91da8ced451c0362ff642768ce4929...cd11c89c`；未推送
 > 审查模型：`gpt-5.6-luna`（Chandrasekhar）
 > 审查方式：1 个独立 agent 同时覆盖 Standards 与 Spec，符合仓库“每次会话只启动 1 个审查 agent”的门禁
 
