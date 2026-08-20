@@ -18,6 +18,7 @@ import {
   createToneWavBytes,
   createUniqueVideoFile,
   createUnsupportedBytes,
+  hasTestFixtureFfmpeg,
   imageChannelVariance,
 } from '../worker/large-library-media';
 import {
@@ -165,7 +166,7 @@ describe('large-library media bytes', () => {
     expect(createUnsupportedBytes(3).includes(Buffer.from('SERPENT-UNSUPPORTED'))).toBe(true);
   });
 
-  it('encodes short unique mp4 and webm clips when ffmpeg is available', () => {
+  it.skipIf(!hasTestFixtureFfmpeg())('encodes short unique mp4 and webm clips when ffmpeg is available', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'serpent-large-video-'));
     try {
       const mp4Path = path.join(directory, 'clip.mp4');

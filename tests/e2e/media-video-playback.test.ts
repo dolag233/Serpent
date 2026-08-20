@@ -336,7 +336,7 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
       name: "direct-playback.mp4 查看页面",
     });
     // REQ-VIEW-002: the viewer always plays the ORIGINAL source when the
-    // container is natively playable. A ready WebM proxy must never take over
+    // container is natively playable. A ready H.264/MP4 proxy must never take over
     // the viewer (it is only a hover/scrub derivative and the AVI/WMV path).
     const directVideo = directViewer.locator("video.preview-video");
     await expect

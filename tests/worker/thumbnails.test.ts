@@ -696,11 +696,11 @@ describe('preview availability while derivatives are generated', () => {
       `INSERT INTO revision_artifacts
          (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
           generator_version, status, generated_at)
-       VALUES (?, ?, 'webm_proxy', 'video/webm', 0, ?, 'test', 'generating', ?)`,
+       VALUES (?, ?, 'webm_proxy', 'video/mp4', 0, ?, 'test', 'generating', ?)`,
     ).run(
       'art-generating-proxy',
       asset.currentRevisionId,
-      'artifacts/pending-proxy.webm',
+      'artifacts/pending-proxy.mp4',
       new Date().toISOString(),
     );
     db.close();
@@ -717,7 +717,7 @@ describe('preview availability while derivatives are generated', () => {
       sourceRevisionId: asset.currentRevisionId,
     });
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
-      .toMatchObject({ status: 'generating', mimeType: 'video/webm' });
+      .toMatchObject({ status: 'generating', mimeType: 'video/mp4' });
 
     service.closeAll();
   });
@@ -739,11 +739,11 @@ describe('preview availability while derivatives are generated', () => {
       `INSERT INTO revision_artifacts
          (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
           generator_version, status, error_code, generated_at)
-       VALUES (?, ?, 'webm_proxy', 'video/webm', 0, ?, 'test', 'failed', 'MEDIA_PROCESSING_FAILED', ?)`,
+       VALUES (?, ?, 'webm_proxy', 'video/mp4', 0, ?, 'test', 'failed', 'MEDIA_PROCESSING_FAILED', ?)`,
     ).run(
       'art-failed-proxy',
       asset.currentRevisionId,
-      'artifacts/failed-proxy.webm',
+      'artifacts/failed-proxy.mp4',
       new Date().toISOString(),
     );
     db.close();
@@ -1461,7 +1461,7 @@ describe('generateThumbnail (animated GIF still page)', () => {
   });
 });
 
-describe('animated GIF webm proxy (Serpent-azf6)', () => {
+describe('animated GIF native image preview', () => {
   async function buildGif(root: string, frames: number): Promise<string> {
     const { execFileSync } = await import('node:child_process');
     const ffmpeg = process.env['SERPENT_FFMPEG_PATH'] ?? 'ffmpeg';
@@ -1503,7 +1503,7 @@ describe('animated GIF webm proxy (Serpent-azf6)', () => {
     };
   }
 
-  it('enqueues a low-priority webm proxy job behind the still thumbnail for animated GIFs', async () => {
+  it('keeps animated GIFs on the native image path without a proxy job', async () => {
     const root = temporaryRoot();
     const gifPath = await buildGif(root, 4);
     if (gifPath === '') return; // ffmpeg unavailable in this environment
@@ -1520,13 +1520,18 @@ describe('animated GIF webm proxy (Serpent-azf6)', () => {
         WHERE asset_id = ? AND kind = 'generate_webm_proxy'`,
       asset.assetId,
     ) as Array<{ kind: string; status: string; priority: number }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.status).toBe('queued');
-    expect(rows[0]!.priority).toBe(100);
+    expect(rows).toHaveLength(0);
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      kind: 'thumbnail',
+      playbackMode: 'source',
+      sourceMimeType: 'image/gif',
+    });
     service.closeAll();
   });
 
-  it('resolves the preview through the webm proxy once it is ready', async () => {
+  it('does not create a proxy when resolving an animated GIF', async () => {
     const root = temporaryRoot();
     const gifPath = await buildGif(root, 4);
     if (gifPath === '') return;
@@ -1536,15 +1541,22 @@ describe('animated GIF webm proxy (Serpent-azf6)', () => {
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
     service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] });
-    // Drain 1: still thumbnail (+ proxy enqueued). Drain 2: the proxy itself.
+    // Drain the still thumbnail and palette work. GIFs never enter the video
+    // proxy lane, even after the frame metadata is available.
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 4 });
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 4 });
 
     const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
     expect(preview.mediaType).toBe('image');
-    expect(preview.kind).toBe('webm_proxy');
-    expect(preview.playbackMode).toBe('proxy');
+    expect(preview.kind).toBe('thumbnail');
+    expect(preview.playbackMode).toBe('source');
+    expect(preview.sourceMimeType).toBe('image/gif');
     expect(preview.status).toBe('ready');
+    const rows = openJobs(created)(
+      `SELECT kind FROM jobs WHERE asset_id = ? AND kind = 'generate_webm_proxy'`,
+      asset.assetId,
+    ) as Array<{ kind: string }>;
+    expect(rows).toHaveLength(0);
     service.closeAll();
   });
 

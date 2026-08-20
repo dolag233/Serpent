@@ -276,14 +276,14 @@ const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
-const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
+const MAX_VIDEO_PROXY_BYTES = 512 * 1024 * 1024;
 const VIDEO_PROXY_SCALE_FILTER =
   'scale=w=min(720\\,iw):h=min(720\\,ih):force_original_aspect_ratio=decrease:force_divisible_by=2';
 type VideoProxyProfile = {
-  codec: 'h264' | 'vp9';
+  codec: 'h264';
   encoder: string;
-  extension: 'mp4' | 'webm';
-  mimeType: 'video/mp4' | 'video/webm';
+  extension: 'mp4';
+  mimeType: 'video/mp4';
   args: string[];
 };
 const SERPENT_OCIO_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
@@ -1678,7 +1678,7 @@ const TRASH_TOMBSTONE_ASSET_BIND_SCHEMA_CHECKSUM = createHash('sha256')
 
 // Migration v21 (Serpent-aav1): audio must not depend on Chromium's variable
 // container/codec support. Add a distinct Opus/Ogg playback proxy and job kind
-// without changing the established video WebM artifact contract.
+// without changing the established video proxy artifact contract.
 const MEDIA_PROXY_SCHEMA_SQL = `
   CREATE TABLE revision_artifacts_v21 (
     artifact_id TEXT PRIMARY KEY,
@@ -19336,31 +19336,13 @@ export class LibraryService {
     };
   }
 
-  private vp9VideoProxyProfile(): VideoProxyProfile {
-    return {
-      codec: 'vp9',
-      encoder: 'libvpx-vp9',
-      extension: 'webm',
-      mimeType: 'video/webm',
-      args: [
-        '-c:v', 'libvpx-vp9',
-        '-threads', '1',
-        '-b:v', '1M',
-        '-deadline', 'realtime',
-        '-cpu-used', '8',
-        '-row-mt', '1',
-        '-g', '60',
-        '-c:a', 'libopus',
-        '-b:a', '128k',
-      ],
-    };
-  }
-
   /**
    * Listing an encoder in `ffmpeg -encoders` is not a capability proof.
-   * Probe a 1-frame lavfi encode and keep the first encoder that writes a
+   * Probe a 1-frame image encode and keep the first encoder that writes a
    * non-empty file. Hardware names that fail fall through to the next listed
-   * candidate, then to VP9.
+   * H.264 candidate. The input is a temporary PPM rather than `lavfi`, because
+   * the distributed LGPL bundle intentionally does not ship the avdevice
+   * module.
    */
   private async probeVideoProxyEncoder(
     ffmpegPath: string,
@@ -19384,6 +19366,14 @@ export class LibraryService {
 
     const probeRoot = mkdtempSync(path.join(tmpdir(), 'serpent-proxy-encoder-'));
     try {
+      const probeInputPath = path.join(probeRoot, 'input.ppm');
+      writeFileSync(
+        probeInputPath,
+        Buffer.concat([
+          Buffer.from('P6\n128 72\n255\n', 'ascii'),
+          Buffer.alloc(128 * 72 * 3, 128),
+        ]),
+      );
       for (const candidate of listed) {
         const outputPath = path.join(probeRoot, `${candidate}.mp4`);
         let encodeOk = false;
@@ -19391,7 +19381,7 @@ export class LibraryService {
         try {
           const result = await this.runFfmpeg(
             ffmpegPath,
-            ffmpegOneFrameEncodeArgs(candidate, outputPath),
+            ffmpegOneFrameEncodeArgs(candidate, probeInputPath, outputPath),
             { timeoutMs: 20_000, signal: execution.signal },
           );
           encodeOk = result.exitCode === 0
@@ -19429,12 +19419,10 @@ export class LibraryService {
       this.videoProxyEncoderByFfmpegPath.set(ffmpegPath, encoder);
     }
 
-    return encoder === null
-      ? [this.vp9VideoProxyProfile()]
-      : [this.h264VideoProxyProfile(encoder), this.vp9VideoProxyProfile()];
+    return encoder === null ? [] : [this.h264VideoProxyProfile(encoder)];
   }
 
-  /** Generate an H.264/MP4 proxy, with fast VP9/WebM fallback. */
+  /** Generate the H.264/MP4 proxy used after a source playback failure. */
   private async generateVideoProxy(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -19447,7 +19435,7 @@ export class LibraryService {
     const artifactId = randomUUID();
     const profiles = await this.resolveVideoProxyProfiles(ffmpegPath, execution);
     let lastError: unknown = new Error('No video proxy encoder is available.');
-    let failedProfile = profiles[0] ?? this.vp9VideoProxyProfile();
+    let failedProfile = this.h264VideoProxyProfile('unavailable');
 
     for (const profile of profiles) {
       failedProfile = profile;
@@ -19469,7 +19457,7 @@ export class LibraryService {
         }
 
         const outputStat = statSync(artifactAbsPath);
-        if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+        if (outputStat.size > MAX_VIDEO_PROXY_BYTES) {
           const error = new Error(
             `Generated ${profile.codec} proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
           ) as Error & { code: string };
@@ -19550,7 +19538,7 @@ export class LibraryService {
         throw new Error(`ffmpeg audio proxy exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`);
       }
       const outputStat = statSync(artifactAbsPath);
-      if (outputStat.size > MAX_WEBM_PROXY_BYTES) {
+      if (outputStat.size > MAX_VIDEO_PROXY_BYTES) {
         rmSync(artifactAbsPath, { force: true });
         const error = new Error(
           `Generated audio proxy exceeds the 512 MiB safety limit (${outputStat.size} bytes).`,
@@ -19720,7 +19708,12 @@ export class LibraryService {
     } else if (typeof error === 'object' && error !== null && 'code' in error) {
       errorCode = String((error as Record<string, unknown>).code);
     } else {
-      errorCode = `${kind.toUpperCase()}_GENERATION_FAILED`;
+      // `webm_proxy` is the historical schema/job kind. The generated
+      // artifact is now an H.264/MP4 video proxy, so do not expose the old
+      // container name in the user-facing failure code.
+      errorCode = kind === 'webm_proxy'
+        ? 'VIDEO_PROXY_GENERATION_FAILED'
+        : `${kind.toUpperCase()}_GENERATION_FAILED`;
     }
     openLibrary.connection
       .prepare(
@@ -20355,54 +20348,6 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
-    // Serpent-azf6: animated GIFs play through their WebM proxy like videos —
-    // the proxy is a far lighter decode than the original multi-megabyte GIF.
-    // The fast still thumbnail stays the grid preview; the viewer/hover uses
-    // the proxy once ready, and a missing proxy is enqueued on demand here.
-    // (Static GIFs fall through to the plain image path.)
-    // Contrast with REQ-VIEW-002: videos keep the ORIGINAL source in the
-    // viewer when the container is natively playable (the WebM proxy was
-    // stealing playback from perfectly fine MP4s); GIFs are proxy-first on
-    // purpose — a raw GIF is an oversized animated container whose proxy
-    // decode is strictly cheaper, and the renderer renders it as <video>.
-    if (extension === '.gif') {
-      const extracted = this.getExtractedMetadata({ libraryId, assetId });
-      const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
-        && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
-        ? (extracted.metadata as { frameCount: number }).frameCount
-        : undefined;
-      if (frameCount !== undefined && frameCount > 1) {
-        const proxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
-        if (proxy?.status === 'ready') {
-          return {
-            mediaType,
-            status: 'ready',
-            kind: 'webm_proxy',
-            artifactId: proxy.artifactId,
-            mimeType: proxy.mimeType,
-            playbackMode: 'proxy',
-          };
-        }
-        const activeProxyJob = openLibrary.connection
-          .prepare(
-            `SELECT job_id FROM jobs
-              WHERE asset_id = ?
-                AND kind = 'generate_webm_proxy'
-                AND status IN ('queued', 'running', 'paused')
-              LIMIT 1`,
-          )
-          .get(assetId) as { job_id: string } | undefined;
-        if (!activeProxyJob && asset.current_revision_id) {
-          this.enqueueVideoDerivativeJob(
-            openLibrary,
-            assetId,
-            asset.current_revision_id,
-            'generate_webm_proxy',
-            300,
-          );
-        }
-      }
-    }
     if (mediaType === 'video' || mediaType === 'audio') {
       // Serpent-cljb: source playback is the only viewer starting point for
       // every video container. A container/MIME hint is not proof that
@@ -21798,7 +21743,7 @@ export class LibraryService {
 
     // Video AI consumes the timestamped contact sheet, not the browsing
     // poster. Probe metadata is therefore its own durable, higher-priority
-    // job: it can enqueue a contact sheet immediately while poster and WebM
+    // job: it can enqueue a contact sheet immediately while poster and video
     // work continue independently.
     const videoMetadataRows = openLibrary.connection
       .prepare(
@@ -21835,7 +21780,7 @@ export class LibraryService {
 
     // Audio still receives its owned Ogg route for formats without a reliable
     // browser source. Videos intentionally do not have a corresponding
-    // startup/visible-window wave: a WebM proxy is created only by the
+    // startup/visible-window wave: an H.264/MP4 proxy is created only by the
     // viewer's real source-playback failure path (Serpent-cljb).
     const audioPlaybackExtensionSql = AUDIO_EXTENSION_NAMES
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
@@ -22161,20 +22106,6 @@ export class LibraryService {
           ).get(job.asset_id) as { relative_file_path: string } | undefined;
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'audio') {
             this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
-          }
-          // Serpent-azf6: animated GIFs are treated like videos — the fast
-          // still thumbnail IS the preview, the heavy WebM proxy drains
-          // behind it at low priority. frameCount comes from the GIF metadata
-          // the thumbnail job itself just persisted.
-          if (asset && asset.relative_file_path.toLowerCase().endsWith('.gif')) {
-            const extracted = this.getExtractedMetadata({ libraryId, assetId: job.asset_id });
-            const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
-              && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
-              ? (extracted.metadata as { frameCount: number }).frameCount
-              : undefined;
-            if (frameCount !== undefined && frameCount > 1) {
-              this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
-            }
           }
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
           // generated stays null when the offscreen renderer failed with a

@@ -838,9 +838,8 @@ export const AssetPreviewModal = forwardRef<
               sequence={asset.sequence}
             />
           ) : ready && (resolution?.mediaType === "video" || resolution?.kind === "webm_proxy") && resolution.url ? (
-            // Serpent-azf6: animated GIFs play through their WebM proxy — the
-            // viewer must use the <video> surface (Chromium cannot decode
-            // video/webm in <img>), while mediaType stays "image".
+            // Generated video proxies are H.264/MP4. Native GIFs remain on
+            // the image surface and are not transcoded just for viewing.
             <VideoPlayerControls
               key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
               displayTransform={displayTransform}

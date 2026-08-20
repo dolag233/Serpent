@@ -1,6 +1,7 @@
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -31,7 +32,7 @@ describe('resolveWritableLibraryParent (Serpent-sq4i)', () => {
       selectedParentPath: missing,
       createIfMissing: true,
     });
-    expect(resolved).toBe(path.resolve(missing));
+    expect(resolved).toBe(realpathSync(missing));
   });
 
   it('accepts a trailing separator from a folder picker', () => {
@@ -41,7 +42,7 @@ describe('resolveWritableLibraryParent (Serpent-sq4i)', () => {
       selectedParentPath: `${root}${path.sep}`,
       createIfMissing: false,
     });
-    expect(resolved).toBe(path.resolve(root));
+    expect(resolved).toBe(realpathSync(root));
   });
 
   it('rejects a destination inside the source library', () => {

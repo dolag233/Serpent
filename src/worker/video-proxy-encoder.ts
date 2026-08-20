@@ -24,16 +24,18 @@ export function encoderUsesHardwareName(encoder: string): boolean {
   return /videotoolbox|nvenc|qsv|amf|_mf$/u.test(encoder);
 }
 
-export function ffmpegOneFrameEncodeArgs(encoder: string, outputPath: string): string[] {
+export function ffmpegOneFrameEncodeArgs(
+  encoder: string,
+  inputPath: string,
+  outputPath: string,
+): string[] {
   return [
     '-hide_banner',
     '-loglevel',
     'error',
     '-y',
-    '-f',
-    'lavfi',
     '-i',
-    'testsrc2=size=128x72:rate=12:duration=0.25',
+    inputPath,
     '-an',
     '-c:v',
     encoder,
