@@ -5484,6 +5484,24 @@ body.serpent-modal-open .app-shell {
   left: 12px;
 }
 
+/* Serpent-e56a1f: 代理生成中/加载中的状态提示（非警告样式）。 */
+.preview-proxy-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 5px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pane) 92%, transparent);
+  color: var(--secondary);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
 .create-dialog {
   width: min(420px, calc(100vw - 40px));
   flex: 0 0 auto;
