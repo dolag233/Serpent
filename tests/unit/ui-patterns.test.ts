@@ -30,7 +30,6 @@ describe("UI patterns: modal focus boundary", () => {
     }) as ReactElement<{ onKeyDown?: (event: unknown) => void }>;
     topmost.props.onKeyDown?.({
       key: "Escape",
-      nativeEvent: {},
       preventDefault: () => { prevented = true; },
       stopPropagation: () => { stopped = true; },
     });
@@ -46,7 +45,6 @@ describe("UI patterns: modal focus boundary", () => {
     }) as ReactElement<{ onKeyDown?: (event: unknown) => void }>;
     background.props.onKeyDown?.({
       key: "Escape",
-      nativeEvent: {},
       preventDefault: () => undefined,
       stopPropagation: () => undefined,
     });

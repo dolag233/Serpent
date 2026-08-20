@@ -1,9 +1,10 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 import sharp, { type Sharp } from 'sharp';
 
+import { resolveFfmpegPath } from '../../src/worker/binary-resolver';
 import {
   imageGeometryForIndex,
   pad,
@@ -17,20 +18,6 @@ export const IMAGE_MOSAIC_TILE_PX = 200;
 const MOSAIC_PALETTE_SIZE = 8;
 const MOSAIC_CELL_TILES = 4;
 const VIDEO_DURATION_SECONDS = 0.5;
-const FIXTURE_FFMPEG_PATH = process.env['SERPENT_TEST_FIXTURE_FFMPEG_PATH'] ?? 'ffmpeg';
-
-/**
- * Synthetic fixtures are test inputs, not evidence about the product bundle.
- * Keep their generator separate because the shipped LGPL runtime intentionally
- * omits avdevice/lavfi.
- */
-export function hasTestFixtureFfmpeg(): boolean {
-  const result = spawnSync(FIXTURE_FFMPEG_PATH, ['-version'], {
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-  return result.error === undefined && result.status === 0;
-}
 
 function hash32(value: number): number {
   let hash = value >>> 0;
@@ -315,7 +302,7 @@ function videoEncoderArgs(extension: string, index: number): string[] {
 
 export function createUniqueVideoFile(outputPath: string, index: number, extension = 'mp4'): void {
   mkdirSync(path.dirname(outputPath), { recursive: true });
-  const ffmpeg = FIXTURE_FFMPEG_PATH;
+  const ffmpeg = resolveFfmpegPath();
   execFileSync(ffmpeg, [...videoEncoderArgs(extension, index), outputPath], { timeout: 30_000 });
 }
 

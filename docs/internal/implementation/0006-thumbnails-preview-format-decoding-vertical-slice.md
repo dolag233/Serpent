@@ -13,23 +13,23 @@
 2. 鼠标悬停资产卡片时看到放大缩略图；GIF 和可播放视频在放大状态下自动播放（原型验证后确认最终交互）。
 3. 双击、Space 或 Enter 进入中央资产查看页面；按 Esc 或“返回”回到来源资产浏览。显式全屏是查看页面内的独立动作。
 4. 右键"使用外部应用打开"，调用系统默认或用户指定的软件处理源文件。
-5. 视频在资产查看页面和显式全屏中直接播放；仅当原视频实际播放失败时才自动生成 H.264/AAC MP4 代理后播放。GIF 不生成代理。
+5. 视频在资产查看页面和显式全屏中直接播放；不可直放的格式（AVI/WMV/部分 MOV/MP4）自动生成 WebM 代理后播放。
 6. EXR 和 TGA 资产显示经过色彩管理和曝光补偿的常规预览；通道/多 part 专业结构检查推迟。
-7. 缩略图、封面、联系表和 H.264/AAC MP4 代理在后台渐进生成；失败时资产保留通用图标，允许重试。
+7. 缩略图、封面、联系表和 WebM 代理在后台渐进生成；失败时资产保留通用图标，允许重试。
 
 ## 范围
 
 ### 包含
 
 - schema v5→v6 migration runner：保留 migration checksum 审计。
-- `revision_artifacts` 表：缓存缩略图、视频封面、联系表、视频代理、提取元信息与自动色卡。
+- `revision_artifacts` 表：缓存缩略图、视频封面、联系表、WebM 代理、提取元信息与自动色卡。
 - `jobs` 表：持久化后台衍生物生成任务，支持排队、暂停、继续、取消、重试和崩溃恢复。
 - sharp 图片解码：PNG/JPEG/GIF/普通 TIFF 的元信息提取与缩略图生成；EXIF 方向校正、等比缩放、sRGB 输出。
 - OIIO `oiiotool` CLI 子进程：EXR/TGA/复杂 TIFF 解码，OCIO display transform，曝光补偿；默认使用 `ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5` 内置 config。
 - FFmpeg `ffprobe` 探测：container、codec、duration、宽高、帧率、旋转、色度信息、字幕流。
 - FFmpeg 视频封面：优先内嵌 cover，否则 `thumbnail` 过滤器统计选帧；跳过片头黑场。
 - FFmpeg 视频联系表：等间隔抽帧 + `scale` + `drawtext` 时间编号 + `tile` 拼图，供 AI 切片 0009 使用。
-- FFmpeg H.264/AAC MP4 代理：限制长边、码率和短 GOP；原视频实际播放失败后才转代理再交给 `<video>`。GIF 不进入该队列。
+- FFmpeg WebM/VP9/Opus 代理：限制长边、码率和短 GOP；不可直放的视频先转代理再交给 `<video>`。
 - Chromium 运行时能力缓存：`canPlayType` + 真实加载测试，按平台/架构缓存结果；可直放时跳过代理。
 - 渐进加载：Renderer 资产网格先渲染占位，收到 `asset.thumbnail.ready` 事件后替换；启动 3 秒内可交互。
 - `assetSummarySchema` 扩展：`thumbnailStatus`、`mediaType`、`durationMs?`、`width?`、`height?`。
@@ -65,7 +65,7 @@ revision_artifacts
       'webm_proxy', 'extracted_metadata', 'extracted_palette'
     )
   )
-  mime_type TEXT NOT NULL            -- e.g. 'image/webp', 'video/mp4', 'application/json'
+  mime_type TEXT NOT NULL            -- e.g. 'image/webp', 'video/webm', 'application/json'
   byte_size INTEGER NOT NULL CHECK (byte_size >= 0)
   file_path TEXT NOT NULL            -- relative to .serpent/artifacts/<artifact_id>.<ext>
   width INTEGER                      -- px, nullable for non-image artifacts
@@ -118,7 +118,7 @@ CREATE INDEX jobs_library_status_priority
 - 应用异常退出后，`status = 'running'` 的 job 在下次打开资源库时恢复为 `queued`，`attempt_count` 不变。
 - `extracted_metadata` artifact 的 `file_path` 指向 JSON 文件，内容结构化存储宽高、duration、codec、色彩空间等；不写入 asset 或 revision 主表冗余列。
 - `extracted_palette` 的 `file_path` 指向 JSON 文件，存储算法提取的代表色数组（hex + 比例）；用户编辑后的色卡另存于 `AssetMetadata.palette`（切片 0004）。
-- 缩略图默认输出 WebP（质量 80，长边 512px），视频封面 JPEG（质量 85，长边 640px），联系表 JPEG（质量 85），H.264/AAC MP4 代理（长边 720px，GOP ≤ 60 帧）。
+- 缩略图默认输出 WebP（质量 80，长边 512px），视频封面 JPEG（质量 85，长边 640px），联系表 JPEG（质量 85），WebM 代理 VP9/Opus（长边 720px，GOP ≤ 60 帧）。
 
 ## 协议
 
@@ -162,7 +162,7 @@ media.cancel           { libraryId, jobId }
   不支持和其他解码失败不自动循环重试；每个资源库会话每个组件只触发一轮
   自动修复；组件探测失败在本会话内短暂负缓存，避免每个可见区请求同步
   启动外部进程。
-- 优先级：缩略图优先（用户可见），其次视频封面，再次元信息提取，最后联系表和 H.264/AAC MP4 代理。`webm_proxy` 是为兼容既有 schema 保留的历史任务名。
+- 优先级：缩略图优先（用户可见），其次视频封面，再次元信息提取，最后联系表和 WebM 代理。
 - 并发限制：sharp 队列最多 2 并发；FFmpeg/OIIO 子进程最多 1 并发（各子进程内流控）。
 
 预览 URL 策略：
@@ -185,7 +185,7 @@ media.cancel           { libraryId, jobId }
 - FFmpeg `ffprobe` 探测：MP4/MOV/AVI/WMV JSON 输出解析，旋转 side_data、VFR 检测、无音轨/多音轨。
 - FFmpeg 视频封面：内嵌 cover 优先、`thumbnail` 统计选帧、跳过片头百分比、无封面时的 fallback 策略。
 - FFmpeg 联系表：`fps` + `scale` + `drawtext` + `tile` 管道输出，时间戳正确性，网格行列计算。
-- FFmpeg 视频代理：H.264/AAC MP4 编码、分辨率/码率限制、短 GOP seek、取消/KILL 清理临时文件、输出大小上限拦截；无可用 H.264 编码器时记录失败，不回退 VP9。
+- FFmpeg WebM 代理：VP9/Opus 编码、分辨率/码率限制、短 GOP seek、取消/KILL 清理临时文件、输出大小上限拦截。
 - Chromium 能力缓存：`canPlayType` + 真实加载测试，平台/架构差异记录，直放失败自动切换代理。
 - 渐进加载：资产网格先占位后替换，`asset.thumbnail.ready` 事件传播，滚动虚拟列表不泄漏。
 - 预览 IPC：`serpent://` 协议 handler，Renderer 不接触绝对路径，MIME type 正确返回。
@@ -195,13 +195,13 @@ media.cancel           { libraryId, jobId }
   打开/触发调度后自动重排队；非组件失败保持终态。
 - artifact 失效：内容变化 → 生成新 revision → 旧 artifact 标记 `invalidated_at`，新 revision 排队新衍生物。
 - 错误可观测性：Renderer 接收安全的错误码与原因文本；应用日志保留系统错误码、stderr 摘要、退出码和 cause 链。
-- Electron 用户流：导入各格式后缩略图渐进显示、视频资产查看/显式全屏播放、H.264/AAC MP4 代理降级、GIF 原生预览、EXR 预览 + 曝光 slider、外部打开、取消重试。
+- Electron 用户流：导入各格式后缩略图渐进显示、视频资产查看/显式全屏播放、WebM 代理降级、EXR 预览 + 曝光 slider、外部打开、取消重试。
 
 ## 完成标准
 
 - 全部自动化门禁通过；macOS 打包全部首发格式预览冒烟有明确结果，Windows 保留为显式未验证项。
 - 所有支持格式的资产在导入后 10 秒内出现缩略图（10 万资产库中后台渐进，首屏 50 项 3 秒内替换完成）。
-- 视频原文件播放失败时自动生成 H.264/AAC MP4 代理并播放；GIF 始终使用原生图片预览，无代理任务。数据库中的 `webm_proxy` kind/job 名称仅为兼容旧数据。
+- 视频可直放格式在 `<video>` 中稳定播放；不可直放格式自动生成 WebM 代理并播放。
 - EXR/TGA 显示经过色彩管理和曝光补偿的可识别预览，不确定色彩空间时显式标注。
 - 缩略图或预览失败时资产保留通用图标，不阻止入库、不影响其他资产，可手动重试。
 - 内容变化后旧衍生物失效，新衍生物再生。

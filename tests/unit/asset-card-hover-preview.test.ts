@@ -171,12 +171,12 @@ describe("resolveLivePreviewMedia (Serpent-a9n)", () => {
     ).toEqual({ url: "serpent://source/lib/aud-1", kind: "audio" });
   });
 
-  it("plays a generated video proxy as 'video'", () => {
+  it("plays an animated GIF webm proxy as 'video' (Serpent-azf6 — <img> cannot decode webm)", () => {
     expect(
       resolveLivePreviewMedia(true, {
         status: "ready",
         url: "serpent://proxy/lib/proxy-1",
-        mediaType: "video",
+        mediaType: "image",
         kind: "webm_proxy",
       }),
     ).toEqual({ url: "serpent://proxy/lib/proxy-1", kind: "video" });

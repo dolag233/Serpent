@@ -13,13 +13,6 @@ describe('video proxy encoder listing', () => {
     expect(listedH264ProxyEncoders(available)).toEqual(['h264_videotoolbox', 'libopenh264']);
     expect(encoderUsesHardwareName('h264_videotoolbox')).toBe(true);
     expect(encoderUsesHardwareName('libopenh264')).toBe(false);
-    const args = ffmpegOneFrameEncodeArgs(
-      'h264_videotoolbox',
-      '/tmp/probe.ppm',
-      '/tmp/probe.mp4',
-    );
-    expect(args).toContain('h264_videotoolbox');
-    expect(args).toContain('/tmp/probe.ppm');
-    expect(args).not.toContain('lavfi');
+    expect(ffmpegOneFrameEncodeArgs('h264_videotoolbox', '/tmp/probe.mp4')).toContain('h264_videotoolbox');
   });
 });

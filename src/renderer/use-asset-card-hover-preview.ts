@@ -99,7 +99,7 @@ export function useAssetCardHoverPreview(input: {
             libraryId,
             assetId: targetAssetId,
             mode: "client",
-            // Hover previews must stay lightweight: play the generated video proxy when
+            // Hover previews must stay lightweight: play the WebM proxy when
             // one exists, never the original source (REQ-VIEW-002 only
             // applies to the double-click viewer).
             intent: "hover",

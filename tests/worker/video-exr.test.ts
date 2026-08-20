@@ -596,7 +596,7 @@ describe('video (ffprobe + ffmpeg)', () => {
           };
         }
         const outPath = args[args.length - 1];
-        if (args.includes('h264_videotoolbox') && args.includes('-frames:v')) {
+        if (args.includes('h264_videotoolbox') && args.includes('lavfi')) {
           return { stdout: Buffer.alloc(0), stderr: 'VideoToolbox probe failed', exitCode: 1 };
         }
         if (outPath && (outPath.endsWith('.mp4') || outPath.endsWith('.webm') || outPath.endsWith('.jpg') || outPath.endsWith('.json'))) {
@@ -617,11 +617,6 @@ describe('video (ffprobe + ffmpeg)', () => {
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
-    service.enqueueArtifactRetry({
-      libraryId: created.libraryId,
-      assetId: asset.assetId,
-      kind: 'webm_proxy',
-    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
@@ -653,7 +648,7 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.closeAll();
   });
 
-  it('fails the H.264/MP4 proxy when FFmpeg has no H.264 encoder', async () => {
+  it('falls back to realtime VP9/WebM when FFmpeg has no H.264 encoder', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
@@ -692,13 +687,22 @@ describe('video (ffprobe + ffmpeg)', () => {
     await service.processThumbnailQueue(created.libraryId);
 
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
-      .toMatchObject({ status: 'failed', mimeType: 'video/mp4' });
-    expect(capturedSpawnArgs.some((call) => call.args.includes('libvpx-vp9'))).toBe(false);
+      .toMatchObject({ status: 'ready', mimeType: 'video/webm' });
+    const proxyCall = capturedSpawnArgs.find(
+      (c) => c.command === '/fake/ffmpeg' && c.args.includes('libvpx-vp9'),
+    );
+    expect(proxyCall).toBeDefined();
+    expect(proxyCall!.args).toContain('-deadline');
+    expect(proxyCall!.args).toContain('realtime');
+    expect(proxyCall!.args).toContain('-cpu-used');
+    expect(proxyCall!.args).toContain('8');
+    expect(proxyCall!.args).toContain('-row-mt');
+    expect(proxyCall!.args).toContain('libopus');
 
     service.closeAll();
   });
 
-  it('does not fall back to VP9 when the selected H.264 encoder fails at runtime', async () => {
+  it('falls back to VP9/WebM when the selected H.264 encoder fails at runtime', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
@@ -744,9 +748,9 @@ describe('video (ffprobe + ffmpeg)', () => {
     await service.processThumbnailQueue(created.libraryId);
 
     expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'webm_proxy'))
-      .toMatchObject({ status: 'failed', mimeType: 'video/mp4' });
+      .toMatchObject({ status: 'ready', mimeType: 'video/webm' });
     expect(capturedSpawnArgs.some((call) => call.args.includes('h264_videotoolbox'))).toBe(true);
-    expect(capturedSpawnArgs.some((call) => call.args.includes('libvpx-vp9'))).toBe(false);
+    expect(capturedSpawnArgs.some((call) => call.args.includes('libvpx-vp9'))).toBe(true);
 
     service.closeAll();
   });
@@ -754,7 +758,7 @@ describe('video (ffprobe + ffmpeg)', () => {
   it('keeps the ORIGINAL source for natively playable videos even when a proxy artifact exists (REQ-VIEW-002)', async () => {
     // Regression: the video resolution branch used to return playbackMode
     // 'proxy' whenever a ready webm_proxy artifact existed, so the viewer
-    // played the H.264 derivative instead of the original MP4. REQ-VIEW-002
+    // played the WebM derivative instead of the original MP4. REQ-VIEW-002
     // requires the viewer to always present the original source; the proxy
     // stays for non-native containers (AVI/WMV) and hover derivatives.
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
@@ -798,12 +802,12 @@ describe('video (ffprobe + ffmpeg)', () => {
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
-    // Premise: a ready H.264/MP4 proxy derivative exists for the MP4.
+    // Premise: a ready WebM proxy derivative exists for the MP4.
     const proxyArtifact = service.writeDerivedArtifact({
       libraryId: created.libraryId,
       assetId: assets[0]!.assetId,
       kind: 'webm_proxy',
-      mimeType: 'video/mp4',
+      mimeType: 'video/webm',
       bytes: Buffer.from('mock-proxy-bytes'),
       generatorVersion: 'test',
       maxBytes: 1024 * 1024,
@@ -824,7 +828,7 @@ describe('video (ffprobe + ffmpeg)', () => {
       sourceCodecs: ['h264'],
     });
 
-    // An explicit fallback request uses the ready H.264 proxy; ordinary viewer and
+    // An explicit fallback request uses the ready proxy; ordinary viewer and
     // hover requests still start from the original source.
     expect(
       service.getPreviewArtifact(created.libraryId, assets[0]!.assetId, 'proxy-fallback'),
@@ -832,14 +836,14 @@ describe('video (ffprobe + ffmpeg)', () => {
       mediaType: 'video',
       status: 'ready',
       kind: 'webm_proxy',
-      mimeType: 'video/mp4',
+      mimeType: 'video/webm',
       playbackMode: 'proxy',
     });
 
     service.closeAll();
   });
 
-  it('rejects and removes an H.264 proxy above the 512 MiB safety limit', async () => {
+  it('rejects and removes a WebM proxy above the 512 MiB safety limit', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const diagnostics: LibraryServiceDiagnostic[] = [];
@@ -847,11 +851,7 @@ describe('video (ffprobe + ffmpeg)', () => {
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
       spawnFn: async (_command, args) => {
         if (args.includes('-encoders')) {
-          return {
-            stdout: Buffer.from(' V....D h264_videotoolbox H.264 VideoToolbox encoder\n', 'utf-8'),
-            stderr: '',
-            exitCode: 0,
-          };
+          return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
         }
         const outputPath = args[args.length - 1]!;
         mkdirSync(path.dirname(outputPath), { recursive: true });
