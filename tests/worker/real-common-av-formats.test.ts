@@ -133,6 +133,11 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
             status: 'ready',
             playbackMode: 'source',
           });
+          // Serpent-c8a1a3: hover 预览是 proxy-first——无 proxy 时绝不返回
+          // 原视频 source（浏览器无法解码的容器会让卡片 hover 播放挂起）。
+          expect(service.getPreviewArtifact(library.libraryId, asset.assetId, 'hover')).not.toMatchObject({
+            playbackMode: 'source',
+          });
           continue;
         }
         const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'audio_proxy');
