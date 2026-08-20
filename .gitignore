@@ -41,3 +41,12 @@ artifacts/media-binaries/
 # 媒体产物目录（manifest 等为构建生成，来源/锁文件在 media-binaries/ 根）
 resources/media-binaries/*/
 !resources/media-binaries/vcpkg/
+
+# 开发文件（2026-08-21 用户要求：仅属 dev，main 不得引入）
+# 注意：ignore 只拦未跟踪文件——dev 上已跟踪的开发文件不受影响照常提交；
+# merge 挡不住已跟踪文件，main 防污染由 scripts/hooks/pre-commit 钩子兜底。
+AGENTS.md
+CLAUDE.md
+.beads/
+.github/
+docs/internal/

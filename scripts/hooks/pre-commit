@@ -1,0 +1,26 @@
+#!/bin/sh
+# Serpent main-branch guard: development files must never reach main.
+#
+# Development-only paths (AI guides AGENTS.md/CLAUDE.md, ticket data .beads/,
+# CI config .github/, internal docs docs/internal/) are tracked on dev and
+# must be stripped before any main commit/merge (2026-08-21 用户要求 +
+# 发布手册 §2). gitignore alone cannot stop merges — tracked files merge
+# regardless — so this hook rejects any main commit that stages them.
+#
+# Installed by `npm run hooks:install` (scripts/install-git-hooks.mjs).
+
+branch="$(git branch --show-current 2>/dev/null || true)"
+[ "$branch" = "main" ] || exit 0
+
+files="$(
+  git diff --cached --name-only --diff-filter=ACMR 2>/dev/null \
+    | grep -E '^(AGENTS\.md|CLAUDE\.md|\.beads/|\.github/|docs/internal/)' \
+    || true
+)"
+if [ -n "$files" ]; then
+  echo "pre-commit: 开发文件禁止进入 main 分支（仅属 dev）：" >&2
+  echo "$files" | sed 's/^/  /' >&2
+  echo "请先剥离后再提交：git rm -r --cached <上述文件>" >&2
+  exit 1
+fi
+exit 0
