@@ -169,6 +169,7 @@ import { AppSettingsDialog } from "./AppSettingsDialog";
 import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { OpenSyncLibraryDialog } from "./OpenSyncLibraryDialog";
 import { AppLogDialog } from "./AppLogDialog";
+import { LibraryRecoveryDialog } from "./LibraryRecoveryDialog";
 import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
 import {
   shouldApplyLibraryLifecycleEvent,
@@ -677,6 +678,29 @@ function AppInner() {
     },
     [setFatal],
   );
+
+  // NAS/SMB 库提示不再用常驻 banner（破坏界面一体性），改为每次打开库时
+  // 弹一次普通 warning toast。networkStorage 由打开动作决定，同一库不变，
+  // 按库身份（libraryId）去重即可，不必依赖整个 library 对象。
+  useEffect(() => {
+    if (library?.networkStorage) {
+      setWarning(t("shell.networkStorageNotice"));
+    }
+  }, [library?.networkStorage, library?.libraryId, setWarning, t]);
+
+  // 恢复提示（备份/抢救后）不再用常驻 banner，改为打开库时弹一次确认弹窗；
+  // 同一库只弹一次（ref 记录），避免 recovery 对象引用抖动导致重复弹窗。
+  const recoveryNotifiedLibraryIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const recovery = library?.recovery;
+    if (
+      recovery &&
+      library?.libraryId !== recoveryNotifiedLibraryIdRef.current
+    ) {
+      recoveryNotifiedLibraryIdRef.current = library.libraryId;
+      setLibraryRecoveryDialogOpen(true);
+    }
+  }, [library?.recovery, library?.libraryId]);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
@@ -1079,6 +1103,8 @@ function AppInner() {
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
+  const [libraryRecoveryDialogOpen, setLibraryRecoveryDialogOpen] =
+    useState(false);
   const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [appUpdateCheck, setAppUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
@@ -9037,46 +9063,6 @@ function AppInner() {
           <WindowsWindowControls shell={shellApi} />
         ) : null}
       </header>
-      {library?.recovery ? (
-        <div className="library-readonly-banner" role="status">
-          <Icon name="info" size={14} />
-          <span>
-            {library.recovery.mode === "backup-1"
-              ? t("library.recoveryBackup1")
-              : library.recovery.mode === "backup-2"
-                ? t("library.recoveryBackup2")
-                : t("library.recoveryRescue")}
-          </span>
-          {library.recovery?.mode === "rescue" &&
-          library.recovery.recoveredAssetCount !== undefined ? (
-            <span className="library-recovery-report-note">
-              {t("library.recoveryRescueDetails", {
-                count: library.recovery.recoveredAssetCount,
-              })}
-            </span>
-          ) : null}
-          {library.recovery?.reportAvailable ? (
-            <>
-              <span className="library-recovery-report-note">
-                {t("library.recoveryReportAvailable")}
-              </span>
-              <button
-                className="secondary-button library-recovery-report-button"
-                onClick={() => void revealRecoveryReport()}
-                type="button"
-              >
-                {t("library.recoveryOpenReport")}
-              </button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-      {library?.networkStorage ? (
-        <div className="library-readonly-banner" role="status">
-          <Icon name="info" size={14} />
-          <span>{t("shell.networkStorageBanner")}</span>
-        </div>
-      ) : null}
       <NavigationSidebar
         library={library}
         assetScope={assetScope}
@@ -11038,6 +11024,14 @@ function AppInner() {
         }}
         open={appLogOpen}
       />
+      {library?.recovery && (
+        <LibraryRecoveryDialog
+          onClose={() => setLibraryRecoveryDialogOpen(false)}
+          onRevealReport={() => void revealRecoveryReport()}
+          open={libraryRecoveryDialogOpen}
+          recovery={library.recovery}
+        />
+      )}
       <ScriptSandboxPreviewDialog
         automation={(window as RendererWindow).serpent?.automation}
         libraryId={library?.libraryId ?? null}
