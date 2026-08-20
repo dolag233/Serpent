@@ -23,6 +23,7 @@ import type {
   AppUpdateCheckResult,
   AppUpdateDistribution,
   AppUpdateInstallResult,
+  AppUpdateProgress,
 } from '../shared/app-update';
 
 export const SERPENT_GITHUB_REPOSITORY = 'dolag233/Serpent';
@@ -97,6 +98,8 @@ export type AppUpdateServiceOptions = {
   fetchImpl?: AppUpdateFetch;
   openPath?: (filePath: string) => Promise<string>;
   showItemInFolder?: (filePath: string) => void;
+  launchInstaller?: (installerPath: string) => Promise<void>;
+  onDownloadProgress?: (progress: AppUpdateProgress) => void;
   logger?: AppUpdateLogger;
 };
 
@@ -191,11 +194,18 @@ export function parseSha256(text: string): string | undefined {
 }
 
 export function detectAppDistribution(input: AppUpdateDistributionInput): AppUpdateDistribution {
-  if (!input.isPackaged) return 'development';
-
   const environment = input.environment ?? {};
   const forced = environment.SERPENT_DISTRIBUTION;
-  if (forced === 'portable' || forced === 'installed') return forced;
+  if (forced === 'portable' || forced === 'installed' || forced === 'development') {
+    return forced;
+  }
+
+  if (!input.isPackaged) {
+    // Dev builds check GitHub Releases by default as installed distribution so
+    // update UI and installer flow can be exercised without packaging.
+    // Override with SERPENT_DISTRIBUTION=portable or =development when needed.
+    return 'installed';
+  }
 
   if (
     environment.PORTABLE_EXECUTABLE_FILE !== undefined
@@ -315,38 +325,74 @@ function parseVersionForComparison(value: string): ParsedSemver | undefined {
   return parseSemver(stripVersionPrefix(value));
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+function emitDownloadProgress(
+  onProgress: AppUpdateServiceOptions['onDownloadProgress'],
+  progress: AppUpdateProgress,
+): void {
+  onProgress?.(progress);
+}
+
 async function writeDownloadedResponse(
   response: Response,
   targetPath: string,
+  options: {
+    signal?: AbortSignal;
+    totalBytes?: number;
+    onProgress?: AppUpdateServiceOptions['onDownloadProgress'];
+  } = {},
 ): Promise<string> {
   const hash = createHash('sha256');
   await mkdir(path.dirname(targetPath), { recursive: true });
+  const reportProgress = (downloadedBytes: number) => {
+    emitDownloadProgress(options.onProgress, {
+      phase: 'downloading',
+      downloadedBytes,
+      totalBytes: options.totalBytes,
+    });
+  };
   if (response.body === null) {
     const bytes = Buffer.from(await response.arrayBuffer());
+    if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
       throw new Error('The update response is too large.');
     }
     hash.update(bytes);
     await writeFile(targetPath, bytes, { mode: 0o600, flag: 'wx' });
+    reportProgress(bytes.byteLength);
     return hash.digest('hex');
   }
   let downloadedBytes = 0;
   const hashingTransform = new Transform({
     transform(chunk: Buffer | string, _encoding, callback) {
+      if (options.signal?.aborted) {
+        callback(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
       downloadedBytes += Buffer.byteLength(chunk);
       if (downloadedBytes > MAX_DOWNLOAD_BYTES) {
         callback(new Error('The update response is too large.'));
         return;
       }
       hash.update(chunk);
+      reportProgress(downloadedBytes);
       callback(null, chunk);
     },
   });
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    hashingTransform,
-    createWriteStream(targetPath, { flags: 'wx', mode: 0o600 }),
-  );
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+      hashingTransform,
+      createWriteStream(targetPath, { flags: 'wx', mode: 0o600 }),
+      { signal: options.signal },
+    );
+  } catch (error) {
+    await rm(targetPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
   return hash.digest('hex');
 }
 
@@ -400,10 +446,15 @@ export class AppUpdateService {
   readonly #fetch: AppUpdateFetch;
   #cachedUpdate: CachedUpdate | undefined;
   #busy = false;
+  #downloadAbort: AbortController | undefined;
 
   constructor(options: AppUpdateServiceOptions) {
     this.#options = options;
     this.#fetch = options.fetchImpl ?? fetch;
+  }
+
+  cancelDownload(): void {
+    this.#downloadAbort?.abort();
   }
 
   async checkForUpdates(): Promise<AppUpdateCheckResult> {
@@ -508,6 +559,8 @@ export class AppUpdateService {
   async downloadAndInstall(): Promise<AppUpdateInstallResult> {
     if (this.#busy) return installResultError('busy');
     this.#busy = true;
+    this.#downloadAbort = new AbortController();
+    const { signal } = this.#downloadAbort;
     let downloadPath: string | undefined;
     try {
       const cached = this.#cachedUpdate;
@@ -521,9 +574,14 @@ export class AppUpdateService {
       let expectedSha256 = asset.digest;
       if (checksumUrl !== undefined) {
         validateDownloadUrl(checksumUrl);
+        emitDownloadProgress(this.#options.onDownloadProgress, {
+          phase: 'verifying',
+          downloadedBytes: 0,
+        });
         const checksumResponse = await this.#fetch(checksumUrl, {
           headers: { Accept: 'application/octet-stream', 'User-Agent': `Serpent/${this.#options.currentVersion}` },
           redirect: 'follow',
+          signal,
         });
         if (!checksumResponse.ok) {
           this.#options.logger?.info('app-update.verify', 'Update checksum asset request failed.', {
@@ -558,6 +616,7 @@ export class AppUpdateService {
       const response = await this.#fetch(asset.browserDownloadUrl, {
         headers: { Accept: 'application/octet-stream', 'User-Agent': `Serpent/${this.#options.currentVersion}` },
         redirect: 'follow',
+        signal,
       });
       if (!response.ok) {
         this.#options.logger?.info('app-update.download', 'Update asset request failed.', {
@@ -567,7 +626,17 @@ export class AppUpdateService {
         });
         return installResultError('download-failed');
       }
-      const actualSha256 = await writeDownloadedResponse(response, downloadPath);
+      const totalBytes = asset.size > 0 ? asset.size : undefined;
+      emitDownloadProgress(this.#options.onDownloadProgress, {
+        phase: 'downloading',
+        downloadedBytes: 0,
+        totalBytes,
+      });
+      const actualSha256 = await writeDownloadedResponse(response, downloadPath, {
+        signal,
+        totalBytes,
+        onProgress: this.#options.onDownloadProgress,
+      });
       if (actualSha256 !== expectedSha256) {
         await rm(downloadPath, { force: true }).catch(() => undefined);
         this.#options.logger?.info('app-update.verify', 'Downloaded update checksum mismatch.', {
@@ -599,15 +668,29 @@ export class AppUpdateService {
 
       let launchPath = downloadPath;
       if (update.target.platform === 'win32') {
+        emitDownloadProgress(this.#options.onDownloadProgress, {
+          phase: 'extracting',
+          downloadedBytes: totalBytes ?? asset.size,
+          totalBytes,
+        });
         launchPath = await extractWindowsInstaller(downloadPath, this.#options.tempDirectory);
       }
-      const openError = await (this.#options.openPath?.(launchPath) ?? Promise.resolve(''));
-      if (openError !== '') {
-        this.#options.logger?.error('app-update.open', new Error(openError), {
-          version: update.release.version,
-          assetName: asset.name,
-        });
-        return installResultError('open-failed');
+      emitDownloadProgress(this.#options.onDownloadProgress, {
+        phase: 'launching',
+        downloadedBytes: totalBytes ?? asset.size,
+        totalBytes,
+      });
+      if (this.#options.launchInstaller !== undefined) {
+        await this.#options.launchInstaller(launchPath);
+      } else {
+        const openError = await (this.#options.openPath?.(launchPath) ?? Promise.resolve(''));
+        if (openError !== '') {
+          this.#options.logger?.error('app-update.open', new Error(openError), {
+            version: update.release.version,
+            assetName: asset.name,
+          });
+          return installResultError('open-failed');
+        }
       }
       this.#options.logger?.info('app-update.install', 'Update installer opened.', {
         version: update.release.version,
@@ -625,9 +708,14 @@ export class AppUpdateService {
       if (downloadPath !== undefined) {
         await rm(downloadPath, { force: true }).catch(() => undefined);
       }
+      if (isAbortError(error)) {
+        this.#options.logger?.info('app-update.download', 'Update download cancelled.');
+        return installResultError('cancelled');
+      }
       this.#options.logger?.error('app-update.install', error, { code: 'download-failed' });
       return installResultError('download-failed');
     } finally {
+      this.#downloadAbort = undefined;
       this.#busy = false;
     }
   }

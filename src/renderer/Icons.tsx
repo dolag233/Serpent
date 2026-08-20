@@ -54,6 +54,7 @@ export type IconName =
   | "sort-asc"
   | "sort-desc"
   | "star"
+  | "stop"
   | "tag"
   | "copy"
   | "trash"
@@ -383,6 +384,17 @@ const iconPaths: Record<IconName, ReactNode> = {
   ),
   star: (
     <path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.9-6.2-3.3-6.2 3.3 1.2-6.9-5-4.9 6.9-1z" />
+  ),
+  stop: (
+    <rect
+      fill="currentColor"
+      height="10"
+      rx="1.2"
+      stroke="none"
+      width="10"
+      x="7"
+      y="7"
+    />
   ),
   tag: <path d="M4 5h7l9 9-6 6-9-9zM8 8h.01" />,
   trash: (
