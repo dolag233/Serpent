@@ -150,7 +150,13 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");
       await refreshButton.hover();
       await expect(window.locator(".hover-tip")).toHaveText("检查更新");
-      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toBeVisible();
+      const updateStatus = aboutDialog.locator(".about-dialog-update-status");
+      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toHaveCount(0);
+      await expect(updateStatus).toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => {
+        const text = await updateStatus.textContent();
+        return text !== null && text !== "正在检查 GitHub Releases…";
+      }, { timeout: 30_000 }).toBe(true);
       await window.keyboard.press("Escape");
     } else {
       await application.evaluate(({ BrowserWindow, Menu }) => {
@@ -165,7 +171,13 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");
       await refreshButton.hover();
       await expect(window.locator(".hover-tip")).toHaveText("检查更新");
-      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toBeVisible();
+      const updateStatus = aboutDialog.locator(".about-dialog-update-status");
+      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toHaveCount(0);
+      await expect(updateStatus).toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => {
+        const text = await updateStatus.textContent();
+        return text !== null && text !== "正在检查 GitHub Releases…";
+      }, { timeout: 30_000 }).toBe(true);
       await window.keyboard.press("Escape");
 
       await settingsButton.click();

@@ -20,6 +20,10 @@ export const OPEN_EXTERNAL_URL_CHANNEL = 'serpent:shell:open-external-url' as co
 export const APP_UPDATE_CHECK_CHANNEL = 'serpent:app-update:check' as const;
 /** Renderer → Main: download and open the verified update asset. */
 export const APP_UPDATE_INSTALL_CHANNEL = 'serpent:app-update:install' as const;
+/** Renderer → Main: cancel an in-flight update download. */
+export const APP_UPDATE_CANCEL_CHANNEL = 'serpent:app-update:cancel' as const;
+/** Main → Renderer: update download/install progress for the About dialog. */
+export const APP_UPDATE_PROGRESS_CHANNEL = 'serpent:app-update:progress' as const;
 /** Main → Renderer: script/MCP/plugin user-visible toast or blocking dialog. */
 export const SHELL_NOTIFY_CHANNEL = 'serpent:shell:notify' as const;
 /**

@@ -179,6 +179,7 @@ import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import type {
   AppUpdateCheckResult,
   AppUpdateInstallResult,
+  AppUpdateProgress,
   SerpentAppUpdateApi,
 } from "../shared/app-update";
 import { AppSettingsEntry } from "./AppSettingsEntry";
@@ -1084,6 +1085,7 @@ function AppInner() {
   const [appUpdateInstall, setAppUpdateInstall] = useState<AppUpdateInstallResult | null>(null);
   const [appUpdateChecking, setAppUpdateChecking] = useState(false);
   const [appUpdateInstalling, setAppUpdateInstalling] = useState(false);
+  const [appUpdateProgress, setAppUpdateProgress] = useState<AppUpdateProgress | null>(null);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
@@ -1103,10 +1105,19 @@ function AppInner() {
   >(null);
 
   const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
+
+  useEffect(() => {
+    if (appUpdateApi?.onDownloadProgress === undefined) return undefined;
+    return appUpdateApi.onDownloadProgress((progress) => {
+      setAppUpdateProgress(progress);
+    });
+  }, [appUpdateApi]);
+
   const checkForAppUpdates = useCallback(async (): Promise<void> => {
     setAppUpdateChecking(true);
     setAppUpdateCheck(null);
     setAppUpdateInstall(null);
+    setAppUpdateProgress(null);
     try {
       const result = appUpdateApi === undefined
         ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
@@ -1122,6 +1133,7 @@ function AppInner() {
   const downloadAndInstallAppUpdate = useCallback(async (): Promise<void> => {
     setAppUpdateInstalling(true);
     setAppUpdateInstall(null);
+    setAppUpdateProgress(null);
     try {
       const result = appUpdateApi === undefined
         ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
@@ -1131,7 +1143,12 @@ function AppInner() {
       setAppUpdateInstall({ ok: false, status: "error", code: "download-failed" });
     } finally {
       setAppUpdateInstalling(false);
+      setAppUpdateProgress(null);
     }
+  }, [appUpdateApi]);
+
+  const cancelAppUpdateDownload = useCallback((): void => {
+    appUpdateApi?.cancelDownload();
   }, [appUpdateApi]);
 
   const openAbout = useCallback(() => {
@@ -11036,8 +11053,10 @@ function AppInner() {
         updateInstall={appUpdateInstall}
         updateChecking={appUpdateChecking}
         updateInstalling={appUpdateInstalling}
+        updateProgress={appUpdateProgress}
         onCheckForUpdates={() => void checkForAppUpdates()}
         onDownloadAndInstall={() => void downloadAndInstallAppUpdate()}
+        onCancelDownload={cancelAppUpdateDownload}
         onOpenGitHub={() => {
           const bridge = (window as RendererWindow).serpent?.shell;
           if (!bridge?.openExternalUrl) return;

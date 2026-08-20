@@ -49,6 +49,12 @@ if (process.env.SERPENT_ALLOW_MULTI_INSTANCE === "1") {
   );
 }
 
+if (process.env.SERPENT_DISTRIBUTION === undefined) {
+  console.log(
+    "[serpent:dev] app updates enabled (default installed distribution; SERPENT_DISTRIBUTION=portable|development to override).",
+  );
+}
+
 const forgeBin = path.join(
   projectRoot,
   "node_modules",

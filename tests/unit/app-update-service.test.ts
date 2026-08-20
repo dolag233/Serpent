@@ -41,7 +41,21 @@ describe('Serpent app update release contract', () => {
       isPackaged: false,
       platform: 'darwin',
       executablePath: '/Applications/Serpent.app/Contents/MacOS/Serpent',
+    })).toBe('installed');
+
+    expect(detectAppDistribution({
+      isPackaged: false,
+      platform: 'darwin',
+      executablePath: '/Applications/Serpent.app/Contents/MacOS/Serpent',
+      environment: { SERPENT_DISTRIBUTION: 'development' },
     })).toBe('development');
+
+    expect(detectAppDistribution({
+      isPackaged: false,
+      platform: 'win32',
+      executablePath: 'C:\\Dev\\Serpent\\node_modules\\electron\\dist\\electron.exe',
+      environment: { SERPENT_DISTRIBUTION: 'portable' },
+    })).toBe('portable');
 
     expect(detectAppDistribution({
       isPackaged: true,
@@ -155,6 +169,64 @@ describe('Serpent app update release contract', () => {
     expect(JSON.stringify(result)).not.toContain('/tmp');
   });
 
+  it('checks updates from an unpackaged dev build by default', async () => {
+    const service = createAppUpdateService({
+      currentVersion: '0.1.1',
+      isPackaged: false,
+      platform: 'win32',
+      arch: 'x64',
+      executablePath: 'C:\\Dev\\Serpent\\node_modules\\electron\\dist\\electron.exe',
+      tempDirectory: '/tmp',
+      downloadsDirectory: '/tmp',
+      fetchImpl: async () => new Response(JSON.stringify(releasePayload({
+        assets: [{
+          name: 'Serpent-win-x86-64-0.1.3-setup.zip',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-setup.zip',
+          size: 123,
+          digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        }],
+      })), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    });
+
+    const result = await service.checkForUpdates();
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'available',
+      latestVersion: '0.1.3',
+      distribution: 'installed',
+      assetName: 'Serpent-win-x86-64-0.1.3-setup.zip',
+    });
+  });
+
+  it('honors SERPENT_DISTRIBUTION=development to disable dev update checks', async () => {
+    const service = createAppUpdateService({
+      currentVersion: '0.1.1',
+      isPackaged: false,
+      platform: 'win32',
+      arch: 'x64',
+      executablePath: 'C:\\Dev\\Serpent\\node_modules\\electron\\dist\\electron.exe',
+      tempDirectory: '/tmp',
+      downloadsDirectory: '/tmp',
+      environment: { SERPENT_DISTRIBUTION: 'development' },
+      fetchImpl: async () => new Response(JSON.stringify(releasePayload()), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    });
+
+    const result = await service.checkForUpdates();
+    expect(result).toEqual({
+      ok: true,
+      status: 'unsupported',
+      reason: 'development',
+      currentVersion: '0.1.1',
+      distribution: 'development',
+    });
+  });
+
   it('downloads, verifies, and reveals a portable update without replacing the running app', async () => {
     const portableBytes = Buffer.from('portable update bytes');
     const checksum = createHash('sha256').update(portableBytes).digest('hex');
@@ -205,13 +277,185 @@ describe('Serpent app update release contract', () => {
     }
   });
 
-  it('extracts and opens the verified Windows installer for an installed launch', async () => {
+  it('emits download progress while fetching an update', async () => {
+    const portableBytes = Buffer.from('portable update bytes');
+    const checksum = createHash('sha256').update(portableBytes).digest('hex');
+    const root = await mkdtemp(path.join(tmpdir(), 'serpent-app-update-progress-test-'));
+    const progressEvents: Array<{ phase: string; downloadedBytes: number }> = [];
+    try {
+      const payload = releasePayload({
+        assets: [{
+          name: 'Serpent-win-x86-64-0.1.3-portable.zip',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-portable.zip',
+          size: portableBytes.byteLength,
+        }, {
+          name: 'Serpent-win-x86-64-0.1.3-portable.zip.sha256',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-portable.zip.sha256',
+          size: checksum.length,
+        }],
+      });
+      const service = createAppUpdateService({
+        currentVersion: '0.1.1',
+        isPackaged: true,
+        platform: 'win32',
+        arch: 'x64',
+        executablePath: path.join(root, 'Serpent.exe'),
+        tempDirectory: root,
+        downloadsDirectory: path.join(root, 'Downloads'),
+        environment: { SERPENT_DISTRIBUTION: 'portable' },
+        fetchImpl: async (url) => {
+          if (url.endsWith('/releases/latest')) return new Response(JSON.stringify(payload));
+          if (url.endsWith('.sha256')) return new Response(`${checksum}\n`);
+          return new Response(portableBytes);
+        },
+        showItemInFolder: () => undefined,
+        onDownloadProgress: (progress) => {
+          progressEvents.push({
+            phase: progress.phase,
+            downloadedBytes: progress.downloadedBytes,
+          });
+        },
+      });
+
+      await service.checkForUpdates();
+      await service.downloadAndInstall();
+      expect(progressEvents.some((event) => event.phase === 'verifying')).toBe(true);
+      expect(progressEvents.some((event) =>
+        event.phase === 'downloading' && event.downloadedBytes === portableBytes.byteLength)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels an in-progress download and returns cancelled', async () => {
+    const portableBytes = Buffer.from('portable update bytes that are long enough to stream');
+    const checksum = createHash('sha256').update(portableBytes).digest('hex');
+    const root = await mkdtemp(path.join(tmpdir(), 'serpent-app-update-cancel-test-'));
+    try {
+      const payload = releasePayload({
+        assets: [{
+          name: 'Serpent-win-x86-64-0.1.3-portable.zip',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-portable.zip',
+          size: portableBytes.byteLength,
+        }, {
+          name: 'Serpent-win-x86-64-0.1.3-portable.zip.sha256',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-portable.zip.sha256',
+          size: checksum.length,
+        }],
+      });
+      const service = createAppUpdateService({
+        currentVersion: '0.1.1',
+        isPackaged: true,
+        platform: 'win32',
+        arch: 'x64',
+        executablePath: path.join(root, 'Serpent.exe'),
+        tempDirectory: root,
+        downloadsDirectory: path.join(root, 'Downloads'),
+        environment: { SERPENT_DISTRIBUTION: 'portable' },
+        fetchImpl: async (url, init) => {
+          if (url.endsWith('/releases/latest')) return new Response(JSON.stringify(payload));
+          if (url.endsWith('.sha256')) return new Response(`${checksum}\n`);
+          const signal = init?.signal;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              let offset = 0;
+              const push = () => {
+                if (signal?.aborted) {
+                  controller.error(new DOMException('Aborted', 'AbortError'));
+                  return;
+                }
+                if (offset >= portableBytes.byteLength) {
+                  controller.close();
+                  return;
+                }
+                const next = portableBytes.subarray(offset, offset + 8);
+                offset += next.byteLength;
+                controller.enqueue(next);
+                setTimeout(push, 20);
+              };
+              push();
+            },
+          });
+          return new Response(stream, {
+            headers: { 'content-type': 'application/octet-stream' },
+          });
+        },
+        showItemInFolder: () => undefined,
+      });
+
+      await service.checkForUpdates();
+      const downloadPromise = service.downloadAndInstall();
+      await new Promise((resolve) => { setTimeout(resolve, 40); });
+      service.cancelDownload();
+      const result = await downloadPromise;
+      expect(result).toEqual({ ok: false, status: 'error', code: 'cancelled' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses launchInstaller for installed Windows updates when provided', async () => {
     const installerBytes = Buffer.from('Serpent installer bytes');
     const archive = new AdmZip();
     archive.addFile('SerpentSetup.exe', installerBytes);
     const archiveBytes = archive.toBuffer();
     const checksum = createHash('sha256').update(archiveBytes).digest('hex');
     const root = await mkdtemp(path.join(tmpdir(), 'serpent-app-update-installer-test-'));
+    const launched: string[] = [];
+    try {
+      const payload = releasePayload({
+        assets: [{
+          name: 'Serpent-win-x86-64-0.1.3-setup.zip',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-setup.zip',
+          size: archiveBytes.byteLength,
+        }, {
+          name: 'Serpent-win-x86-64-0.1.3-setup.zip.sha256',
+          browser_download_url: 'https://github.com/dolag233/Serpent/releases/download/v0.1.3/Serpent-win-x86-64-0.1.3-setup.zip.sha256',
+          size: checksum.length,
+        }],
+      });
+      const service = createAppUpdateService({
+        currentVersion: '0.1.1',
+        isPackaged: true,
+        platform: 'win32',
+        arch: 'x64',
+        executablePath: path.join(root, 'Serpent.exe'),
+        tempDirectory: root,
+        downloadsDirectory: path.join(root, 'Downloads'),
+        environment: { SERPENT_DISTRIBUTION: 'installed' },
+        fetchImpl: async (url) => {
+          if (url.endsWith('/releases/latest')) return new Response(JSON.stringify(payload));
+          if (url.endsWith('.sha256')) return new Response(`${checksum}\n`);
+          return new Response(archiveBytes as unknown as BodyInit);
+        },
+        launchInstaller: async (installerPath) => {
+          launched.push(installerPath);
+        },
+      });
+
+      const result = await service.downloadAndInstall();
+      expect(result).toEqual({
+        ok: true,
+        status: 'completed',
+        action: 'installer-opened',
+        version: '0.1.3',
+        distribution: 'installed',
+      });
+      expect(launched).toHaveLength(1);
+      expect(path.basename(launched[0]!)).toBe('SerpentSetup.exe');
+      expect(await readFile(launched[0]!)).toEqual(installerBytes);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('extracts and opens the verified Windows installer for an installed launch', async () => {
+    const installerBytes = Buffer.from('Serpent installer bytes');
+    const archive = new AdmZip();
+    archive.addFile('SerpentSetup.exe', installerBytes);
+    const archiveBytes = archive.toBuffer();
+    const checksum = createHash('sha256').update(archiveBytes).digest('hex');
+    const root = await mkdtemp(path.join(tmpdir(), 'serpent-app-update-installer-openpath-test-'));
     const opened: string[] = [];
     try {
       const payload = releasePayload({

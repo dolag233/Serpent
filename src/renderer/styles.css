@@ -8659,6 +8659,44 @@ select.ai-config-input.ai-config-languages {
   text-align: center;
 }
 
+.about-dialog-update-progress {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(100%, 270px);
+  margin-top: 4px;
+}
+
+.about-dialog-update-progress-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.about-dialog-update-stop {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--divider-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger-muted) 56%, var(--raised-2));
+  color: var(--danger);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease,
+    transform 140ms ease;
+}
+
+.about-dialog-update-stop:hover:not(:disabled),
+.about-dialog-update-stop:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--divider));
+  background: var(--danger-muted);
+  color: var(--danger);
+  outline: none;
+  transform: translateY(-1px);
+}
+
 @keyframes about-dialog-update-spin {
   to {
     transform: rotate(360deg);

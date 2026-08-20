@@ -21,6 +21,7 @@ export const APP_UPDATE_ERROR_CODES = [
   'open-failed',
   'busy',
   'not-available',
+  'cancelled',
 ] as const;
 export type AppUpdateErrorCode = (typeof APP_UPDATE_ERROR_CODES)[number];
 
@@ -86,6 +87,19 @@ export const appUpdateInstallResultSchema = z.discriminatedUnion('status', [
 
 export type AppUpdateInstallResult = z.infer<typeof appUpdateInstallResultSchema>;
 
+export const appUpdateProgressSchema = z.object({
+  phase: z.enum(['downloading', 'verifying', 'extracting', 'launching']),
+  downloadedBytes: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative().optional(),
+});
+
+export type AppUpdateProgress = z.infer<typeof appUpdateProgressSchema>;
+
+export function parseAppUpdateProgress(input: unknown): AppUpdateProgress | null {
+  const parsed = appUpdateProgressSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}
+
 export function parseAppUpdateCheckResult(input: unknown): AppUpdateCheckResult {
   const parsed = appUpdateCheckResultSchema.safeParse(input);
   return parsed.success
@@ -103,4 +117,6 @@ export function parseAppUpdateInstallResult(input: unknown): AppUpdateInstallRes
 export interface SerpentAppUpdateApi {
   checkForUpdates(): Promise<AppUpdateCheckResult>;
   downloadAndInstall(): Promise<AppUpdateInstallResult>;
+  cancelDownload(): void;
+  onDownloadProgress(listener: (progress: AppUpdateProgress) => void): () => void;
 }

@@ -4,10 +4,13 @@ import type {
   AppUpdateCheckResult,
   AppUpdateErrorCode,
   AppUpdateInstallResult,
+  AppUpdateProgress,
 } from "../shared/app-update";
+import { formatBytes } from "./format-file-meta";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
+import { Progress } from "./ui/primitives/Progress";
 import { type ReactNode } from "react";
 
 export type AboutDialogProps = {
@@ -19,9 +22,22 @@ export type AboutDialogProps = {
   readonly updateInstall: AppUpdateInstallResult | null;
   readonly updateChecking: boolean;
   readonly updateInstalling: boolean;
+  readonly updateProgress: AppUpdateProgress | null;
   readonly onCheckForUpdates: () => void;
   readonly onDownloadAndInstall: () => void;
+  readonly onCancelDownload: () => void;
 };
+
+function updateProgressLabel(
+  progress: AppUpdateProgress | null,
+  t: ReturnType<typeof useT>,
+): string {
+  if (progress === null) return t("dialog.about.updateDownloading");
+  if (progress.phase === "verifying") return t("dialog.about.updateVerifying");
+  if (progress.phase === "extracting") return t("dialog.about.updateExtracting");
+  if (progress.phase === "launching") return t("dialog.about.updateLaunching");
+  return t("dialog.about.updateDownloading");
+}
 
 export function AboutDialog({
   open,
@@ -32,8 +48,10 @@ export function AboutDialog({
   updateInstall,
   updateChecking,
   updateInstalling,
+  updateProgress,
   onCheckForUpdates,
   onDownloadAndInstall,
+  onCancelDownload,
 }: AboutDialogProps): ReactNode {
   const t = useT();
   if (!open) return null;
@@ -46,14 +64,22 @@ export function AboutDialog({
     if (code === "verification-failed") return t("dialog.about.updateVerificationFailed");
     if (code === "download-failed") return t("dialog.about.updateDownloadFailed");
     if (code === "open-failed") return t("dialog.about.updateOpenFailed");
+    if (code === "cancelled") return t("dialog.about.updateDownloadCancelled");
     return t("dialog.about.updateFailed");
   };
   const updateBusy = updateChecking || updateInstalling;
+  const showDownloadProgress = updateInstalling;
+  const canCancelDownload = updateInstalling && updateProgress?.phase !== "launching";
   const canInstall = updateCheck?.ok === true
     && updateCheck.status === "available"
     && updateInstall?.ok !== true;
   const updateStatusMessage = (() => {
-    if (updateInstalling) return t("dialog.about.updateDownloading");
+    if (showDownloadProgress) {
+      if (updateProgress?.phase === "launching") {
+        return t("dialog.about.updateLaunching");
+      }
+      return "";
+    }
     if (updateInstall?.ok === true) {
       return updateInstall.action === "portable-downloaded"
         ? t("dialog.about.updatePortableDownloaded")
@@ -71,6 +97,17 @@ export function AboutDialog({
     if (updateCheck.status === "up-to-date") return t("dialog.about.updateUpToDate");
     return "";
   })();
+  const progressIndeterminate = updateProgress === null
+    || updateProgress.phase !== "downloading"
+    || updateProgress.totalBytes === undefined;
+  const progressMessage = updateProgress?.phase === "downloading"
+    ? t("dialog.about.updateDownloadProgress", {
+        downloaded: formatBytes(updateProgress.downloadedBytes),
+        total: updateProgress.totalBytes === undefined
+          ? ""
+          : ` / ${formatBytes(updateProgress.totalBytes)}`,
+      })
+    : undefined;
 
   return (
     <div
@@ -123,6 +160,30 @@ export function AboutDialog({
               >
                 <Icon name="download" size={15} />
               </button>
+            </div>
+          ) : null}
+          {showDownloadProgress ? (
+            <div className="about-dialog-update-progress" role="status">
+              <Progress
+                aria-label={updateProgressLabel(updateProgress, t)}
+                className="about-dialog-update-progress-bar"
+                indeterminate={progressIndeterminate}
+                label={updateProgressLabel(updateProgress, t)}
+                max={updateProgress?.totalBytes ?? 100}
+                message={progressMessage}
+                showValue={!progressIndeterminate}
+                value={updateProgress?.downloadedBytes}
+              />
+              {canCancelDownload ? (
+                <button
+                  className="about-dialog-update-stop"
+                  onClick={onCancelDownload}
+                  type="button"
+                  {...iconActionAttrs(t("dialog.about.updateStopDownload"))}
+                >
+                  <Icon name="stop" size={14} />
+                </button>
+              ) : null}
             </div>
           ) : null}
           {updateStatusMessage ? (

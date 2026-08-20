@@ -1,4 +1,5 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -105,6 +106,8 @@ import {
   OPEN_EXTERNAL_URL_CHANNEL,
   APP_UPDATE_CHECK_CHANNEL,
   APP_UPDATE_INSTALL_CHANNEL,
+  APP_UPDATE_CANCEL_CHANNEL,
+  APP_UPDATE_PROGRESS_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
@@ -5575,6 +5578,20 @@ async function startApplication(): Promise<void> {
     environment: process.env,
     openPath: (filePath) => shell.openPath(filePath),
     showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
+    launchInstaller: async (installerPath) => {
+      if (process.platform === 'win32') {
+        spawn(installerPath, [], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        const openError = await shell.openPath(installerPath);
+        if (openError !== '') throw new Error(openError);
+      }
+      setImmediate(() => {
+        app.quit();
+      });
+    },
+    onDownloadProgress: (progress) => {
+      mainWindow?.webContents.send(APP_UPDATE_PROGRESS_CHANNEL, progress);
+    },
     logger,
   });
   // Serpent-wgmy: 会话日志最多保留最近 100 份，启动时清理最旧；
@@ -7209,6 +7226,16 @@ async function startApplication(): Promise<void> {
       return appUpdateService.downloadAndInstall();
     },
   );
+
+  ipcMain.on(APP_UPDATE_CANCEL_CHANNEL, (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      logger?.info('ipc.app-update', 'Rejected update cancel request.', {
+        code: 'unauthorized-sender',
+      });
+      return;
+    }
+    appUpdateService?.cancelDownload();
+  });
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
   // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。失败回传公开错误码；日志不含 URL。
