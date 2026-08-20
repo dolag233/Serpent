@@ -26,13 +26,13 @@ describe("AboutDialog update controls", () => {
       withChineseLocale(
         createElement(AboutDialog, {
           open: true,
-          version: "0.1.2",
+          version: "0.1.1",
           onClose: () => undefined,
           onOpenGitHub: () => undefined,
           updateCheck: {
             ok: true,
             status: "available",
-            currentVersion: "0.1.2",
+            currentVersion: "0.1.1",
             latestVersion: "0.1.3",
             distribution: "portable",
             assetKind: "portable",

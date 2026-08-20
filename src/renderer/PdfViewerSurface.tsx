@@ -14,7 +14,14 @@ import {
   shouldIgnoreGlobalZoomShortcut,
 } from "./global-zoom-shortcuts";
 import { useT } from "./i18n";
-import { applyPdfPageBox, pdfViewerContentWidth } from "./pdf-viewer-layout";
+import type { PdfZoomAnchor } from "./pdf-viewer-layout";
+import {
+  applyPdfPageBox,
+  hitPdfPageColumn,
+  pdfPageBoxesFromViewportRects,
+  pdfPointerAnchoredScroll,
+  pdfViewerContentWidth,
+} from "./pdf-viewer-layout";
 
 export type PdfViewerSurfaceProps = {
   api: SerpentLibraryApi;
@@ -51,7 +58,8 @@ function clampZoom(zoom: number): number {
  *   (global-zoom-shortcuts, same chords as images/videos);
  * - Ctrl+wheel / pinch zooms; the plain wheel scrolls the column (page
  *   flipping stays native — documents must scroll);
- * - zooming keeps the pointer-anchored content in place (re-render model);
+ * - zooming keeps the pointer-anchored page-local point in place on every
+ *   page (gap/padding do not scale, so origin-uniform scroll is wrong);
  * - when zoomed past the viewport, drag with the left button to pan, or
  *   scroll both axes.
  */
@@ -75,12 +83,12 @@ export function PdfViewerSurface({
   const [zoom, setZoom] = useState(1);
   const [hostClientWidth, setHostClientWidth] = useState(0);
   /**
-   * Scroll position to restore after the pages re-render on a zoom change.
-   * Pointer-anchored zooming computes the target scroll in the old geometry;
-   * rebuilding the column resets scrolling, so the render effect applies this
-   * once the new pages exist (keeps the pointer-anchored content stationary).
+   * Page-local zoom anchor. Flex gap and padding do not scale with zoom, so
+   * later pages cannot use origin-uniform `(scroll + pointer) * ratio`.
+   * All page boxes are resized to the new zoom first, then this point is
+   * restored under the pointer.
    */
-  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
+  const pendingZoomAnchorRef = useRef<PdfZoomAnchor | null>(null);
 
   // PDF canvas backing stores are sized from the host's CSS width. Re-render
   // after a pane/window resize so a page is never stretched into a larger CSS
@@ -152,9 +160,9 @@ export function PdfViewerSurface({
     const renderTasks = new Set<RenderTask>();
     const pageNodes: HTMLElement[] = [];
     // Nodes from the previous render pass (zoom change). Kept as transition
-    // placeholders so the column never blanks out between zoom levels. They
-    // keep their old geometry until the crisp re-render replaces them in place;
-    // stretching an old bitmap to the new box makes zoom visibly blurry.
+    // placeholders so the column never blanks out between zoom levels. Page
+    // boxes resize immediately (required for later-page pointer anchors);
+    // canvases still swap in place after the new bitmap is ready.
     const staleNodes = [...host.children] as HTMLElement[];
 
     const contentWidth = () => pdfViewerContentWidth(host.clientWidth, hostPaddingX(host)) * zoom;
@@ -164,7 +172,60 @@ export function PdfViewerSurface({
       // The wrap CSS pins width:100% to the viewport; an explicit width lets
       // zoomed pages overflow and unlocks horizontal scrolling (Serpent P2).
       element.style.width = `${Math.round(contentWidth())}px`;
+      element.dataset.pdfPageWidth = String(size.width);
+      element.dataset.pdfPageHeight = String(size.height);
     };
+
+    const pageSizeFromNode = (element: HTMLElement, fallback: PdfPageSize): PdfPageSize => {
+      const width = Number(element.dataset.pdfPageWidth);
+      const height = Number(element.dataset.pdfPageHeight);
+      if (width > 0 && height > 0) return { width, height };
+      if (element.offsetWidth > 0 && element.offsetHeight > 0) {
+        return { width: element.offsetWidth, height: element.offsetHeight };
+      }
+      return fallback;
+    };
+
+    const restoreZoomAnchor = (nodes: HTMLElement[]) => {
+      const pending = pendingZoomAnchorRef.current;
+      pendingZoomAnchorRef.current = null;
+      if (!pending || nodes.length === 0) return pending;
+      const hostRect = host.getBoundingClientRect();
+      const boxes = pdfPageBoxesFromViewportRects(
+        nodes.map((node) => node.getBoundingClientRect()),
+        {
+          left: hostRect.left,
+          top: hostRect.top,
+          scrollLeft: host.scrollLeft,
+          scrollTop: host.scrollTop,
+        },
+      );
+      const page = boxes[Math.min(pending.pageIndex, boxes.length - 1)];
+      if (!page) return pending;
+      const next = pdfPointerAnchoredScroll({
+        pointerX: pending.pointerX,
+        pointerY: pending.pointerY,
+        page,
+        fracX: pending.fracX,
+        fracY: pending.fracY,
+      });
+      host.scrollLeft = next.left;
+      host.scrollTop = next.top;
+      return pending;
+    };
+
+    // Resize every existing page box to the new zoom before restoring scroll.
+    // Off-screen pages used to keep their old height, so a later-page pointer
+    // anchor was computed against a column that had not actually grown.
+    const fallbackSize: PdfPageSize = { width: 612, height: 792 };
+    const existingFallback = staleNodes[0]
+      ? pageSizeFromNode(staleNodes[0], fallbackSize)
+      : fallbackSize;
+    for (const node of staleNodes) {
+      layoutNode(node, pageSizeFromNode(node, existingFallback));
+    }
+    const restoredAnchor = restoreZoomAnchor(staleNodes);
+    const priorityPage = restoredAnchor ? restoredAnchor.pageIndex + 1 : 1;
 
     void (async () => {
       try {
@@ -245,12 +306,8 @@ export function PdfViewerSurface({
           if (cancelled) break;
           const stale = staleNodes[pageNumber - 1];
           if (stale && stale.isConnected) {
-            // Zoom/resize transition: keep the previous page node at its old
-            // geometry until the crisp re-render replaces it. A stale bitmap
-            // must not be stretched into the new CSS box while it is waiting.
             pageNodes.push(stale);
             observer.observe(stale);
-            if (pageNumber === 1) void renderPage(1);
             continue;
           }
           const placeholder = document.createElement("div");
@@ -259,17 +316,10 @@ export function PdfViewerSurface({
           host.append(placeholder);
           pageNodes.push(placeholder);
           observer.observe(placeholder);
-          if (pageNumber === 1) void renderPage(1);
         }
 
-        // Restore the pointer-anchored scroll position after the zoom
-        // rebuild (the column reset scrolling when its content was cleared).
-        const pending = pendingScrollRef.current;
-        if (pending) {
-          host.scrollLeft = pending.left;
-          host.scrollTop = pending.top;
-          pendingScrollRef.current = null;
-        }
+        void renderPage(priorityPage);
+        if (priorityPage !== 1) void renderPage(1);
 
       } catch {
         if (!cancelled) {
@@ -290,23 +340,31 @@ export function PdfViewerSurface({
   }, [hostClientWidth, pdfDoc, t, zoom]);
 
   /**
-   * Apply a new zoom while keeping the content under `clientX/clientY`
-   * stationary (pointer-anchored zooming, like the image viewer's zoomAt).
-   * The pages re-render asynchronously; the target scroll is stashed and the
-   * render effect applies it once the new pages exist.
+   * Apply a new zoom while keeping the page-local point under the pointer
+   * stationary. Record the hit against the current column; the render effect
+   * resizes every page box, then restores that point.
    */
   const stepZoomAt = (clientX: number, clientY: number, nextZoom: number) => {
     const host = hostRef.current;
     if (!host || nextZoom === zoom) return;
     const rect = host.getBoundingClientRect();
-    const px = clientX - rect.left;
-    const py = clientY - rect.top;
-    const anchorX = host.scrollLeft + px;
-    const anchorY = host.scrollTop + py;
-    const ratio = nextZoom / zoom;
-    pendingScrollRef.current = {
-      left: Math.max(0, anchorX * ratio - px),
-      top: Math.max(0, anchorY * ratio - py),
+    const pointerX = clientX - rect.left;
+    const pointerY = clientY - rect.top;
+    const children = [...host.children] as HTMLElement[];
+    const boxes = pdfPageBoxesFromViewportRects(
+      children.map((child) => child.getBoundingClientRect()),
+      {
+        left: rect.left,
+        top: rect.top,
+        scrollLeft: host.scrollLeft,
+        scrollTop: host.scrollTop,
+      },
+    );
+    const hit = hitPdfPageColumn(boxes, host.scrollLeft + pointerX, host.scrollTop + pointerY);
+    pendingZoomAnchorRef.current = {
+      ...hit,
+      pointerX,
+      pointerY,
     };
     setZoom(nextZoom);
   };

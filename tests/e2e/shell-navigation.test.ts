@@ -144,7 +144,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await window.getByRole("menuitem", { name: "关于 Serpent", exact: true }).click();
       const aboutDialog = window.getByRole("dialog", { name: "Serpent" });
       await expect(aboutDialog).toBeVisible();
-      await expect(window.getByText("版本 0.1.2", { exact: true })).toBeVisible();
+      await expect(window.getByText("版本 0.1.1", { exact: true })).toBeVisible();
       const refreshButton = aboutDialog.getByRole("button", { name: "检查更新" });
       await expect(refreshButton).toBeVisible();
       await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");

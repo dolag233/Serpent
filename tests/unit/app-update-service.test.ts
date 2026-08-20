@@ -131,7 +131,7 @@ describe('Serpent app update release contract', () => {
 
   it('checks a newer release without exposing a filesystem path to the result', async () => {
     const service = createAppUpdateService({
-      currentVersion: '0.1.2',
+      currentVersion: '0.1.1',
       isPackaged: true,
       platform: 'darwin',
       arch: 'arm64',
@@ -173,7 +173,7 @@ describe('Serpent app update release contract', () => {
         }],
       });
       const service = createAppUpdateService({
-        currentVersion: '0.1.2',
+        currentVersion: '0.1.1',
         isPackaged: true,
         platform: 'win32',
         arch: 'x64',
@@ -226,7 +226,7 @@ describe('Serpent app update release contract', () => {
         }],
       });
       const service = createAppUpdateService({
-        currentVersion: '0.1.2',
+        currentVersion: '0.1.1',
         isPackaged: true,
         platform: 'win32',
         arch: 'x64',
