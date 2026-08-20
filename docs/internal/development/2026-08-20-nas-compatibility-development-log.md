@@ -42,6 +42,19 @@ node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/wo
 
 `npm run typecheck` 当前仍被仓库既有的 `tests/unit/ticket-script.test.ts` 对 `scripts/ticket.mjs` 的缺失导出声明阻断（`issuesPath`、`readIssues`、`TicketError`、`writeIssues`）；本次新增源码未产生该错误。全文件 ESLint 仍有 `library-service.ts` 既有未使用变量和 `App.tsx` 既有 Hook warning；新增 `network-storage.ts` 与其单测已通过 ESLint。
 
+## 真实 SMB 复验与 banner 文案修正
+
+用户在 `/Volumes/smb/nas资源库` 上复现了网络存储 banner 显示翻译键的问题。Computer Use 实际打开该资源库后确认：资源库可打开并读取 3 个资产，但 Renderer 显示 `library.networkStorageBanner`。
+
+根因为调用路径写成了 `library.networkStorageBanner`，而中英文 catalog 都将该文案定义在 `shell.networkStorageBanner`。已修正 `src/renderer/App.tsx`，并在 `tests/unit/i18n-translate.test.ts` 增加中英文断言。修复后通过资源库选择器重新打开同一路径，实际显示中文网络共享提示；未将本次对用户已有库的读取测试记录为完整 NAS 写入/重启验收。
+
+定向回归命令：
+
+```text
+npx vitest run --config vitest.config.ts tests/unit/i18n-translate.test.ts
+# 1 file, 6 tests passed
+```
+
 补充回归：
 
 ```text

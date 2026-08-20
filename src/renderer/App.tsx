@@ -9057,7 +9057,7 @@ function AppInner() {
       {library?.networkStorage ? (
         <div className="library-readonly-banner" role="status">
           <Icon name="info" size={14} />
-          <span>{t("library.networkStorageBanner")}</span>
+          <span>{t("shell.networkStorageBanner")}</span>
         </div>
       ) : null}
       <NavigationSidebar

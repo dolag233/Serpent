@@ -18,7 +18,7 @@
 | macOS/Linux/Windows 网络卷识别 | `src/worker/network-storage.ts:63-190` | `tests/unit/network-storage.test.ts:10-71`；5/5 通过 | macOS 当前挂载 `/Volumes/Working` 的只读检测返回 `network`；Windows 和真实 Linux/NFS 未在目标平台执行 |
 | 本地卷 WAL、网络/未知卷 rollback journal | `src/worker/library-service.ts:4088-4161` | `tests/worker/security-durability.test.ts:108-132`；9/9 Worker 测试通过 | 本地临时库自动化通过；真实 SMB 上 `.serpent/library.db` journal 尚未由人工确认 |
 | NAS 打开 I/O 与通用磁盘 I/O 分开分类 | `src/worker/library-service.ts:4156-4160`、`src/shared/protocol/errors.ts:248-275` | `tests/unit/protocol.test.ts:2080-2089`、`tests/worker/public-error.test.ts:106-115`；相关 100/21 测试通过 | 真实 NAS 失败复现和日志对照待产品测试 |
-| 打开结果显示实验性网络存储提示 | `src/shared/protocol/responses.ts:101-128`、`src/main/index.ts:1745-1785`、`src/renderer/App.tsx:9057-9061` | 协议覆盖包含在 `tests/unit/protocol.test.ts` 100/100 中；UI 自动化未执行 | `LIB-NAS-001` 待用户在真实 SMB/NAS 上验收；Computer Use/packaged 尚未执行 |
+| 打开结果显示实验性网络存储提示 | `src/shared/protocol/responses.ts:101-128`、`src/main/index.ts:1745-1785`、`src/renderer/App.tsx:9057-9061` | 协议覆盖包含在 `tests/unit/protocol.test.ts` 100/100 中；`tests/unit/i18n-translate.test.ts` 6/6 通过 | Computer Use 在 `/Volumes/smb/nas资源库` 复现并修复 banner 字面量键；修复后重新打开显示中文文案，读取 3 个资产；完整写入/退出恢复仍待 `LIB-NAS-001` |
 
 ## 自动化证据
 
@@ -34,6 +34,16 @@
 Worker 全量的两个失败仍为环境相关的既有媒体能力问题：`tests/worker/thumbnails.test.ts` animated GIF webm proxy 返回 `thumbnail` 而非 `webm_proxy`；`tests/worker/video-exr.test.ts` 硬件编码器一帧 probe 未生成 ready mp4。失败不在本次网络卷、journal 或错误分类路径。
 
 `npm run typecheck` 仍被既有 `tests/unit/ticket-script.test.ts` 缺失 `scripts/ticket.mjs` 类型导出阻断：`issuesPath`、`readIssues`、`TicketError`、`writeIssues`。全文件 ESLint 仍有 `library-service.ts` 既有未使用变量和 `App.tsx` 既有 Hook warning；新增网络检测模块及单测的 ESLint 已通过。
+
+## 2026-08-20 真实 SMB 开发态复验
+
+使用 Computer Use 操作本地 Electron 开发态，打开用户指定的 `/Volumes/smb/nas资源库`：
+
+1. 修复前实际显示字面量 `library.networkStorageBanner`，与用户截图一致；资源库成功打开并读到 3 个资产。
+2. 根因为 Renderer 调用了 `library.networkStorageBanner`，而中英文 catalog 的实际路径是 `shell.networkStorageBanner`。
+3. 修复 `src/renderer/App.tsx` 调用并新增中英文 catalog 路径断言；重新通过资源库选择器打开同一路径后，banner 显示“该资源库位于网络共享（NAS/SMB）上……”而不是 key。
+
+本次只验证了已存在资源库的打开、读取和提示显示，没有把用户库作为临时数据执行导入、元数据写入或删除；因此不替代 `LIB-NAS-001` 的完整退出恢复验收。
 
 ## 平台与人工验收
 
