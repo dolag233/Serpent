@@ -119,6 +119,7 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
 
       const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
       expect(assets).toHaveLength(sourcePaths.length);
+      let firstVideoAssetId: string | null = null;
       for (const asset of assets) {
         const jobs = service.listMediaJobs(library.libraryId).jobs
           .filter((job) => job.assetId === asset.assetId)
@@ -133,6 +134,14 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
             status: 'ready',
             playbackMode: 'source',
           });
+          // Serpent-c8a1a3: 无 proxy 时 hover 保持 source——浏览器可解码的
+          // 容器（如 mp4）hover 播放原视频，行为与之前一致。
+          expect(service.getPreviewArtifact(library.libraryId, asset.assetId, 'hover')).toMatchObject({
+            mediaType: 'video',
+            status: 'ready',
+            playbackMode: 'source',
+          });
+          if (firstVideoAssetId === null) firstVideoAssetId = asset.assetId;
           continue;
         }
         const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'audio_proxy');
@@ -149,6 +158,22 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
         const expectedAudioCodec = 'opus';
         expect(streams.streams?.some((stream) => stream.codec_name === expectedAudioCodec && stream.codec_type === 'audio'))
           .toBe(true);
+      }
+      // Serpent-c8a1a3: 代理生成后 hover 意图返回 proxy（无法解码容器的
+      // hover 预览依赖这条路径；循环内已先验证所有视频无 proxy）。
+      if (firstVideoAssetId !== null) {
+        service.enqueueArtifactRetry({
+          libraryId: library.libraryId,
+          assetId: firstVideoAssetId,
+          kind: 'webm_proxy',
+        });
+        while (service.listMediaJobs(library.libraryId).queued > 0) {
+          expect(await service.processThumbnailQueue(library.libraryId)).toBeGreaterThan(0);
+        }
+        expect(service.getPreviewArtifact(library.libraryId, firstVideoAssetId, 'hover')).toMatchObject({
+          mediaType: 'video',
+          playbackMode: 'proxy',
+        });
       }
     } finally {
       service.closeAll();

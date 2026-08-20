@@ -15,6 +15,8 @@ export function isCardHoverPreviewable(asset: {
   // request client preview (that stacks a second layer and flickers).
   if (asset.sequence && asset.sequence.frameCount >= 3) return false;
   if (asset.mediaType === "video") return true;
+  // Audio plays in-place on hover (Serpent hover 音频工单).
+  if (asset.mediaType === "audio") return true;
   return fileExtensionLabel(asset.displayName) === "GIF";
 }
 
@@ -98,7 +100,7 @@ export interface LivePreviewMedia {
   /** Playable URL, present only when this preview should actually render. */
   url: string | undefined;
   /** Which live element to render; `null` means fall back to the static cover. */
-  kind: "gif" | "video" | null;
+  kind: "gif" | "video" | "audio" | null;
 }
 
 /**
@@ -127,5 +129,31 @@ export function resolveLivePreviewMedia(
   if (preview?.kind === "webm_proxy") return { url, kind: "video" };
   if (preview?.mediaType === "image") return { url, kind: "gif" };
   if (preview?.mediaType === "video") return { url, kind: "video" };
+  if (preview?.mediaType === "audio") return { url, kind: "audio" };
   return { url: undefined, kind: null };
+}
+
+/**
+ * Video hover preview muted state (Serpent hover 音频工单): sound only plays
+ * while the pointer is actually hovering and the preference is on; primary
+ * selection keeps the silent preview, and the viewer's own mute wins always.
+ */
+export function resolveLiveVideoMuted(input: {
+  hovering: boolean;
+  hoverVideoSound: boolean;
+  mediaMuted: boolean;
+}): boolean {
+  const { hovering, hoverVideoSound, mediaMuted } = input;
+  return mediaMuted || !hovering || !hoverVideoSound;
+}
+
+/**
+ * Whether the in-place audio preview should play: pointer hover only, gated by
+ * the preference. Selection never plays audio.
+ */
+export function shouldPlayLiveAudio(input: {
+  hovering: boolean;
+  hoverAudioPlay: boolean;
+}): boolean {
+  return input.hovering && input.hoverAudioPlay;
 }

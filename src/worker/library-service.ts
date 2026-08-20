@@ -428,6 +428,10 @@ import {
   targetLibraryPath,
 } from './library-rules';
 import {
+  classifyLibraryStorage,
+  type LibraryStorageKind,
+} from './network-storage';
+import {
   LibraryParentError,
   resolveWritableLibraryParent,
 } from './library-parent';
@@ -4076,11 +4080,18 @@ function readGitignoreText(libraryPath: string): string {
   }
 }
 
+function isSqliteIoError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error &&
+    typeof error.code === 'string' && error.code.startsWith('SQLITE_IOERR');
+}
+
 export function openConfiguredDatabase(
   filename: string,
   busyTimeoutMs = 5_000,
   options: {
     readonly?: boolean;
+    /** Test seam; production classifies the database path before opening it. */
+    storageKind?: LibraryStorageKind;
     /**
      * Test-only seam (Serpent-xoaz): per-statement trace used to assert DB
      * write counts in queue-throughput benchmarks. better-sqlite3's `verbose`
@@ -4097,10 +4108,14 @@ export function openConfiguredDatabase(
   // read-only connection so those checks cannot mutate the file. Desktop
   // never uses this flag for a user-facing library handle. journal_mode /
   // synchronous are write PRAGMAs and must be skipped here.
-  const connection = options.readonly
-    ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
-    : new Database(filename, options.trace ? { verbose: options.trace } : {});
+  const storageKind = options.readonly
+    ? 'unknown'
+    : (options.storageKind ?? classifyLibraryStorage(filename));
+  let connection: DatabaseConnection | undefined;
   try {
+    connection = options.readonly
+      ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
+      : new Database(filename, options.trace ? { verbose: options.trace } : {});
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
     // A second Serpent process may be finishing a short SQLite transaction
@@ -4117,10 +4132,20 @@ export function openConfiguredDatabase(
       }
       return connection;
     }
-    const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
+    // SQLite WAL relies on -wal/-shm sidecars and shared-memory locking. NAS
+    // implementations vary in how faithfully SMB/NFS emulate those
+    // semantics, while rollback journaling only needs ordinary file locks.
+    // Keep confirmed local/removable volumes on WAL; confirmed network and
+    // unknown volumes use the safer, slower rollback journal required by
+    // ADR-0014/0019.
+    const expectedJournalMode = storageKind === 'local' ? 'wal' : 'delete';
+    const journalMode = connection.pragma(
+      `journal_mode = ${storageKind === 'local' ? 'WAL' : 'DELETE'}`,
+      { simple: true },
+    );
     connection.pragma('synchronous = FULL');
     if (
-      journalMode !== 'wal' ||
+      journalMode !== expectedJournalMode ||
       connection.pragma('foreign_keys', { simple: true }) !== 1 ||
       connection.pragma('synchronous', { simple: true }) !== 2 ||
       connection.pragma('busy_timeout', { simple: true }) !== busyTimeoutMs
@@ -4130,6 +4155,9 @@ export function openConfiguredDatabase(
     return connection;
   } catch (error) {
     closeIgnoringFailure(connection);
+    if (storageKind === 'network' && isSqliteIoError(error)) {
+      throw new LibraryServiceError('LIBRARY_NETWORK_SHARE', { cause: error });
+    }
     throw error;
   }
 }
@@ -20381,7 +20409,25 @@ export class LibraryService {
       // Chromium can decode the file, so the renderer mounts the original and
       // requests a proxy only after the media element reports a real codec or
       // decode failure. This keeps large imports from encoding every video.
+      // Hover (Serpent-c8a1a3): a ready WebM proxy wins so undecodable
+      // containers (e.g. some .mov) can still preview in-place; otherwise the
+      // original source stays, which keeps browser-decodable formats (mp4)
+      // playing their original file on hover as before.
       if (mediaType === 'video' && intent !== 'proxy-fallback' && asset.current_revision_id) {
+        if (intent === 'hover') {
+          const hoverProxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
+          if (hoverProxy?.status === 'ready') {
+            return {
+              mediaType,
+              status: 'ready',
+              kind,
+              artifactId: hoverProxy.artifactId,
+              mimeType: hoverProxy.mimeType,
+              playbackMode: 'proxy',
+              ...(posterArtifactId ? { posterArtifactId } : {}),
+            };
+          }
+        }
         const extracted =
           this.getExtractedMetadata({ libraryId, assetId });
         const sourceCodecs =
@@ -22685,8 +22731,57 @@ export class LibraryService {
       input.filters ?? [],
     );
 
-    // Build ORDER BY clause. Parameters used by a correlated ordering
-    // expression appear after WHERE parameters in the final data query.
+    // A collection browse is a relational scope, not an asset-id list. Build
+    // that scope once per SQL statement so the recursive tree walk and the
+    // collection-position lookup are shared by COUNT, first-page, ids-only,
+    // and layout queries. The old shape repeated the recursive CTE inside a
+    // correlated ORDER BY subquery for every candidate asset, which made a
+    // recursive collection disproportionately slower than an equivalent
+    // folder browse on large libraries.
+    const collectionScope = input.scope?.kind === 'collection'
+      ? (() => {
+          const collection = connection
+            .prepare('SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?')
+            .get(input.scope.collectionId, openLibrary.summary.libraryId);
+          if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          if (input.scope.recursive) {
+            return {
+              queryPrefix: `WITH RECURSIVE collection_descendants(collection_id) AS (
+                SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
+                UNION ALL
+                SELECT child.collection_id FROM collections child
+                  JOIN collection_descendants parent ON child.parent_id = parent.collection_id
+                 WHERE child.library_id = ?
+              ),
+              collection_scope AS (
+                SELECT ca.asset_id, MIN(ca.position) AS collection_position
+                  FROM collection_assets ca
+                  JOIN collection_descendants d ON d.collection_id = ca.collection_id
+                 GROUP BY ca.asset_id
+              ) `,
+              join: 'JOIN collection_scope ON collection_scope.asset_id = a.asset_id',
+              params: [
+                input.scope.collectionId,
+                openLibrary.summary.libraryId,
+                openLibrary.summary.libraryId,
+              ],
+            };
+          }
+          return {
+            queryPrefix: `WITH collection_scope AS (
+              SELECT asset_id, position AS collection_position
+                FROM collection_assets
+               WHERE collection_id = ?
+            ) `,
+            join: 'JOIN collection_scope ON collection_scope.asset_id = a.asset_id',
+            params: [input.scope.collectionId],
+          };
+        })()
+      : null;
+
+    // Build ORDER BY clause. Search relevance parameters appear after WHERE
+    // parameters in the final data query; collection scope parameters belong
+    // to the CTE prefix and are supplied before the WHERE parameters below.
     let orderBy: string;
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
@@ -22776,33 +22871,8 @@ export class LibraryService {
         default:
           orderBy = defaultNameSort;
       }
-    } else if (input.scope?.kind === 'collection') {
-      if (input.scope.recursive) {
-        orderBy = `(SELECT MIN(ca.position)
-                      FROM collection_assets ca
-                     WHERE ca.asset_id = a.asset_id
-                       AND ca.collection_id IN (
-                         WITH RECURSIVE descendants(collection_id) AS (
-                           SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
-                           UNION ALL
-                           SELECT child.collection_id FROM collections child
-                             JOIN descendants parent ON child.parent_id = parent.collection_id
-                            WHERE child.library_id = ?
-                         )
-                         SELECT collection_id FROM descendants
-                       )) ASC, a.relative_file_path ASC, a.asset_id ASC`;
-        orderParams.push(
-          input.scope.collectionId,
-          openLibrary.summary.libraryId,
-          openLibrary.summary.libraryId,
-        );
-      } else {
-        orderBy = `(SELECT ca.position
-                      FROM collection_assets ca
-                     WHERE ca.asset_id = a.asset_id
-                       AND ca.collection_id = ?) ASC, a.relative_file_path ASC, a.asset_id ASC`;
-        orderParams.push(input.scope.collectionId);
-      }
+    } else if (collectionScope) {
+      orderBy = 'collection_scope.collection_position ASC, a.relative_file_path ASC, a.asset_id ASC';
     } else if (input.scope?.kind === 'trash') {
       orderBy = `a.deleted_at DESC, a.asset_id ASC`;
     } else {
@@ -22890,7 +22960,9 @@ export class LibraryService {
           ${artifactColumns.has('status') ? "AND layout_preview.status = 'ready'" : ''}
           AND layout_preview.invalidated_at IS NULL`
       : '';
+    const collectionScopeJoin = collectionScope?.join ?? '';
     const dataFrom = `FROM assets a
+         ${collectionScopeJoin}
          LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
          LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
          ${durationMetaJoin}
@@ -22907,6 +22979,7 @@ export class LibraryService {
       filterFields.has('favorite') ||
       filterFields.has('source_url');
     const countFrom = `FROM assets a
+         ${collectionScopeJoin}
          ${needsMetadataForFilter ? 'LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id' : ''}
          ${durationMetaJoin}
          ${paletteMetaJoin}
@@ -23011,28 +23084,6 @@ export class LibraryService {
           }
         }
       }
-    } else if (input.scope?.kind === 'collection') {
-      const collection = connection
-        .prepare('SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?')
-        .get(input.scope.collectionId, openLibrary.summary.libraryId);
-      if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
-      if (input.scope.recursive) {
-        whereParts.push(`a.asset_id IN (
-          WITH RECURSIVE descendants(collection_id) AS (
-            SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
-            UNION ALL
-            SELECT child.collection_id FROM collections child
-              JOIN descendants parent ON child.parent_id = parent.collection_id
-             WHERE child.library_id = ?
-          )
-          SELECT ca.asset_id FROM collection_assets ca
-            JOIN descendants d ON d.collection_id = ca.collection_id
-        )`);
-        allParams.push(input.scope.collectionId, openLibrary.summary.libraryId, openLibrary.summary.libraryId);
-      } else {
-        whereParts.push('a.asset_id IN (SELECT asset_id FROM collection_assets WHERE collection_id = ?)');
-        allParams.push(input.scope.collectionId);
-      }
     }
 
     const whereClause =
@@ -23065,8 +23116,10 @@ export class LibraryService {
     ].join(',\n');
 
     // Total count query.
-    const countSql = `SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
-    const countRow = connection.prepare(countSql).get(...allParams) as {
+    const countSql = `${collectionScope?.queryPrefix ?? ''}SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
+    const countRow = connection
+      .prepare(countSql)
+      .get(...(collectionScope?.params ?? []), ...allParams) as {
       total: number;
     };
     const total = countRow.total;
@@ -23089,10 +23142,10 @@ export class LibraryService {
       : layoutOnly
         ? layoutColumns
         : dataColumns;
-    const dataSql = `SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const dataSql = `${collectionScope?.queryPrefix ?? ''}SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
-      .all(...allParams, ...orderParams, limit, offset) as Array<{
+      .all(...(collectionScope?.params ?? []), ...allParams, ...orderParams, limit, offset) as Array<{
         asset_id: string;
         location_kind: 'managed' | 'linked';
         managed_folder_id: string | null;
@@ -33203,6 +33256,7 @@ export class LibraryService {
     library: LibraryRow;
     canonicalPath: string;
     serpentPath: string;
+    networkStorage?: boolean;
     libraryVersion?: number;
     supportedSchemaVersion?: number;
     migrationStuck?: boolean;
@@ -33225,6 +33279,7 @@ export class LibraryService {
       displayName: input.library.display_name,
       libraryPath: input.canonicalPath,
       readOnly: false,
+      ...(input.networkStorage ? { networkStorage: true } : {}),
       ...(input.libraryVersion === undefined ? {} : { libraryVersion: input.libraryVersion }),
       ...(input.supportedSchemaVersion === undefined
         ? {}
@@ -33315,6 +33370,8 @@ export class LibraryService {
     if (!realDirectoryExists(serpentPath) || !realFileExists(databasePath(canonicalPath))) {
       throw new LibraryServiceError('NOT_A_LIBRARY');
     }
+    const storageKind = classifyLibraryStorage(canonicalPath);
+    const networkStorage = storageKind === 'network';
 
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
@@ -33349,7 +33406,10 @@ export class LibraryService {
         connection = openConfiguredDatabase(
           databasePath(canonicalPath),
           this.options.sqliteBusyTimeoutMsForTests,
-          this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
+          {
+            storageKind,
+            ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
+          },
         );
         const library = verifyOpenableSchema(connection);
         return this.adoptWritableOpenLibrary({
@@ -33357,6 +33417,7 @@ export class LibraryService {
           library,
           canonicalPath,
           serpentPath,
+          networkStorage,
           libraryVersion: probedVersion,
           supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
           migrationStuck,
@@ -33368,7 +33429,10 @@ export class LibraryService {
       connection = openConfiguredDatabase(
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
-        this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
+        {
+          storageKind,
+          ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
+        },
       );
       migrationAttempted = true;
       migrateDatabase(connection, false, this.options);
@@ -33382,6 +33446,7 @@ export class LibraryService {
         library,
         canonicalPath,
         serpentPath,
+        networkStorage,
         startServices: true,
       });
     } catch (error) {
@@ -33449,6 +33514,7 @@ export class LibraryService {
     if (!realDirectoryExists(serpentPath) || !realFileExists(filename)) {
       throw new LibraryServiceError('NOT_A_LIBRARY');
     }
+    const networkStorage = classifyLibraryStorage(canonicalPath) === 'network';
 
     let connection: DatabaseConnection | undefined;
     try {
@@ -33467,6 +33533,7 @@ export class LibraryService {
         libraryId: library.library_id,
         displayName: library.display_name,
         libraryPath: canonicalPath,
+        ...(networkStorage ? { networkStorage: true } : {}),
       };
       this.openById.set(summary.libraryId, {
         connection,

@@ -16,7 +16,8 @@ export function ProxyPlaybackNotice({
   const t = useT();
   if (visible) {
     return (
-      <div className="preview-proxy-notice" role="status">
+      // preview-chrome-fade: 随查看器 UI 一起在鼠标停驻时渐隐（Serpent-d259bc）。
+      <div className="preview-proxy-notice preview-chrome-fade" role="status">
         <span>{t("preview.proxyPlaybackNotice")}</span>
         <button
           aria-label={t("preview.hideProxyPlaybackNotice")}
@@ -32,7 +33,7 @@ export function ProxyPlaybackNotice({
   return (
     <button
       aria-label={t("preview.showProxyPlaybackNotice")}
-      className="preview-proxy-notice-restore"
+      className="preview-proxy-notice-restore preview-chrome-fade"
       onClick={onShow}
       tabIndex={VIEWER_CHROME_TAB_INDEX}
       type="button"

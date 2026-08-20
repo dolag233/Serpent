@@ -25,7 +25,6 @@ function makeDeps(
     get text() {
       return text;
     },
-    platform: overrides.platform,
     writeBuffer:
       overrides.writeBuffer ??
       ((format, buffer) => {
@@ -47,6 +46,8 @@ function makeDeps(
       ((value) => {
         text = value;
       }),
+    ...overrides,
+    platform: overrides.platform,
   };
 }
 
@@ -85,13 +86,24 @@ describe("file-clipboard (Serpent-vgp)", () => {
     ]);
   });
 
-  it("Windows write uses CF_HDROP", () => {
-    const deps = makeDeps({ platform: "win32" });
+  it("Windows write uses CF_HDROP (native unavailable → Electron fallback)", () => {
+    const deps = makeDeps({ platform: "win32", writeNativeWin32: () => false });
     const target = "C:\\Library\\Assets\\Folder";
     expect(writeFilePathsToClipboard([target], deps)).toBe(true);
     expect(deps.hasFormat("CF_HDROP")).toBe(true);
     expect(deps.hasFormat("FileNameW")).toBe(true);
     expect(readFilePathsFromClipboard(deps)).toEqual([target]);
+  });
+
+  it("Windows write prefers the native CF_HDROP writer", () => {
+    const native = vi.fn(() => true);
+    const deps = makeDeps({ platform: "win32", writeNativeWin32: native });
+    const target = "C:\\Library\\Assets\\Folder";
+    expect(writeFilePathsToClipboard([target], deps)).toBe(true);
+    expect(native).toHaveBeenCalledWith([target]);
+    // Electron fallback formats are not written when the native path succeeds.
+    expect(deps.hasFormat("CF_HDROP")).toBe(false);
+    expect(deps.hasFormat("FileNameW")).toBe(false);
   });
 
   it("rejects empty path lists", () => {

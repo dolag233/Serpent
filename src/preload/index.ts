@@ -33,6 +33,10 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  APP_UPDATE_CHECK_CHANNEL,
+  APP_UPDATE_INSTALL_CHANNEL,
+  APP_UPDATE_CANCEL_CHANNEL,
+  APP_UPDATE_PROGRESS_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
@@ -115,6 +119,13 @@ import {
   type SerpentShellApi,
   type ShellSwipeDirection,
 } from '../shared/external-url';
+import {
+  parseAppUpdateCheckResult,
+  parseAppUpdateInstallResult,
+  parseAppUpdateProgress,
+  type AppUpdateProgress,
+  type SerpentAppUpdateApi,
+} from '../shared/app-update';
 import { shellNotifyPayloadSchema, type ShellNotifyPayload } from '../shared/shell-notify';
 import {
   commandCompletedPayloadSchema,
@@ -2512,6 +2523,32 @@ const shell: SerpentShellApi = Object.freeze({
   },
 });
 
+const appUpdate: SerpentAppUpdateApi = Object.freeze({
+  async checkForUpdates() {
+    return parseAppUpdateCheckResult(
+      await ipcRenderer.invoke(APP_UPDATE_CHECK_CHANNEL),
+    );
+  },
+  async downloadAndInstall() {
+    return parseAppUpdateInstallResult(
+      await ipcRenderer.invoke(APP_UPDATE_INSTALL_CHANNEL),
+    );
+  },
+  cancelDownload() {
+    ipcRenderer.send(APP_UPDATE_CANCEL_CHANNEL);
+  },
+  onDownloadProgress(listener: (progress: AppUpdateProgress) => void) {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      const progress = parseAppUpdateProgress(payload);
+      if (progress !== null) listener(progress);
+    };
+    ipcRenderer.on(APP_UPDATE_PROGRESS_CHANNEL, handler);
+    return () => {
+      ipcRenderer.removeListener(APP_UPDATE_PROGRESS_CHANNEL, handler);
+    };
+  },
+});
+
 const automation: SerpentAutomationScriptApi = Object.freeze({
   async open() {
     return automationScriptFileResultSchema.parse(
@@ -2696,6 +2733,7 @@ contextBridge.exposeInMainWorld(
   Object.freeze({
     library,
     shell,
+    appUpdate,
     automation,
     mcp,
     plugins,

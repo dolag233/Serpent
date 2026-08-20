@@ -43,6 +43,10 @@ The current product registry includes:
 
 Serpent copies managed files into the library and assigns a stable asset ID. Name or content duplicates open a conflict dialog. Thumbnails, technical metadata, and eligible AI analysis are generated in the background, so you can keep browsing immediately.
 
+#### Sequence-frame import
+
+When you drop or paste a set of numbered frames (for example `00001.png`…`00150.png`), Serpent recognizes them as a sequence and opens a sequence import dialog where you can set the FPS. The frames import as one playable asset you can play in the viewer, and you can dissolve it back into individual frames.
+
 ## Browse and organize
 
 - Sidebar: All assets, Trash, folders, collections, and smart collections. Folders and collections can include descendants; a collection is a many-to-many relationship, so an asset may belong to several collections.
@@ -56,9 +60,9 @@ Click to select and double-click to open the viewer. Drag on empty canvas space 
 
 ## Viewer
 
-Double-click an asset to open the viewer. Images, SVG, RAW, PSD, TIFF, TGA, and EXR use their decoder or a generated derivative; SVG is rendered from its vector source in the viewer, not treated as the thumbnail. Videos loop by default and may use a Serpent-generated compatible proxy. Audio shows a waveform and playback controls. 3D models use the dedicated model viewer.
+Double-click an asset to open the viewer. Images, SVG, RAW, PSD, TIFF, TGA, and EXR use their decoder or a generated derivative; SVG is rendered from its vector source in the viewer, not treated as the thumbnail. Videos loop by default and may use a Serpent-generated compatible proxy. Audio shows a waveform and playback controls. 3D models use the dedicated model viewer. PDF files render page-by-page in the built-in pdf.js viewer.
 
-The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and rotate/horizontal/vertical mirror transforms for images and video. For formats other than PNG/JPEG, Serpent uses a detected color space when available and lets you choose among supported spaces. EXR can expose multiple planes/parts when present; this is not a professional channel-grading tool.
+The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and rotate/horizontal/vertical mirror transforms for images and video. PDF preview supports zoom (0.25×–8×), pan, and fit-to-page; scrolling zooms around the mouse pointer. For formats other than PNG/JPEG, Serpent uses a detected color space when available and lets you choose among supported spaces. EXR can expose multiple planes/parts when present; this is not a professional channel-grading tool.
 
 ![3D viewer and Inspector](../assets/ui/3D-inspector.png)
 
@@ -71,6 +75,10 @@ The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and r
 ## Trash and deletion
 
 Normal `Delete` / macOS `⌘⌫` moves an asset or folder to Trash. Windows `Shift+Delete` and macOS `⌥⌘Delete` delete from disk after a confirmation. The undo icon in the notification can reverse the most recent undoable file operation and refreshes the current view.
+
+## Linked folders
+
+**Import linked folder** in the **File** menu references a real folder outside the library (such as a project or material directory). Assets are not copied into the library; they are referenced in place in their original folder. You can later copy a linked folder into the library (making it managed), relink it, or set rules for it.
 
 ## WebDAV cloud sync
 

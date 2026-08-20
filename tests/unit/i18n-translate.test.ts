@@ -39,7 +39,9 @@ describe('i18n translate', () => {
     const zh = createTranslator(catalogs['zh-CN']);
     const en = createTranslator(catalogs.en, catalogs['zh-CN']);
     expect(zh('shell.libraryMenu')).toBe('资源库菜单');
+    expect(zh('shell.networkStorageNotice')).toContain('网络共享');
     expect(en('shell.libraryMenu')).toBe('Library menu');
+    expect(en('shell.networkStorageNotice')).toContain('network share');
     expect(en('toast.colorCopied', { color: '#381444' })).toBe(
       'Copied #381444',
     );

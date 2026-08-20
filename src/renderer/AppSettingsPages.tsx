@@ -266,12 +266,16 @@ export type BrowseSettingsPageProps = {
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
+  onToggleHoverAudioPlay: () => void;
+  onToggleHoverVideoSound: () => void;
 };
 
 export function BrowseSettingsPage({
   canvasPrefs,
   onSetViewMode,
   onToggleField,
+  onToggleHoverAudioPlay,
+  onToggleHoverVideoSound,
 }: BrowseSettingsPageProps): ReactNode {
   const t = useT();
   return (
@@ -340,6 +344,19 @@ export function BrowseSettingsPage({
           </label>
         ))}
       </div>
+      <div className="app-settings-card-divider" />
+      <SettingsToggleRow
+        checked={canvasPrefs.hoverAudioPlay}
+        hint={t("settings.hoverAudioPlayHint")}
+        label={t("settings.hoverAudioPlay")}
+        onChange={onToggleHoverAudioPlay}
+      />
+      <SettingsToggleRow
+        checked={canvasPrefs.hoverVideoSound}
+        hint={t("settings.hoverVideoSoundHint")}
+        label={t("settings.hoverVideoSound")}
+        onChange={onToggleHoverVideoSound}
+      />
     </SettingsCard>
   );
 }

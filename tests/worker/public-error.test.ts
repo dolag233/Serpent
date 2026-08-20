@@ -103,12 +103,13 @@ describe('Library Worker public error boundary', () => {
     });
   });
 
-  it('maps NAS SQLite IOERR to LIBRARY_NETWORK_SHARE (Serpent-4f44f1)', () => {
+  it('maps unqualified SQLite IOERR to LIBRARY_IO_ERROR without claiming NAS', () => {
     const sqliteError = new Error('disk I/O error');
     Object.assign(sqliteError, { code: 'SQLITE_IOERR_IN_PAGE' });
     expect(publicErrorForWorkerFailure(sqliteError)).toEqual({
-      code: 'LIBRARY_NETWORK_SHARE',
-      message: PUBLIC_ERROR_MESSAGES.LIBRARY_NETWORK_SHARE,
+      code: 'LIBRARY_IO_ERROR',
+      message: PUBLIC_ERROR_MESSAGES.LIBRARY_IO_ERROR,
+      reason: 'IO_ERROR',
     });
   });
 

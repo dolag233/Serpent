@@ -6,10 +6,12 @@ import {
   resolveActivePreviewAssetId,
   resolveAssetCardCoverUrl,
   resolveLivePreviewMedia,
+  resolveLiveVideoMuted,
+  shouldPlayLiveAudio,
 } from "../../src/renderer/asset-card-hover-preview";
 
 describe("isCardHoverPreviewable", () => {
-  it("accepts gif and video when available", () => {
+  it("accepts gif, video and audio when available", () => {
     expect(
       isCardHoverPreviewable({
         mediaType: "image",
@@ -22,6 +24,14 @@ describe("isCardHoverPreviewable", () => {
       isCardHoverPreviewable({
         mediaType: "video",
         displayName: "clip.mp4",
+        availability: "available",
+        deletedAt: null,
+      }),
+    ).toBe(true);
+    expect(
+      isCardHoverPreviewable({
+        mediaType: "audio",
+        displayName: "track.mp3",
         availability: "available",
         deletedAt: null,
       }),
@@ -151,6 +161,16 @@ describe("resolveLivePreviewMedia (Serpent-a9n)", () => {
     ).toEqual({ url: "serpent://source/lib/vid-1", kind: "video" });
   });
 
+  it("plays a ready audio as 'audio' when active (Serpent hover 音频工单)", () => {
+    expect(
+      resolveLivePreviewMedia(true, {
+        status: "ready",
+        url: "serpent://source/lib/aud-1",
+        mediaType: "audio",
+      }),
+    ).toEqual({ url: "serpent://source/lib/aud-1", kind: "audio" });
+  });
+
   it("plays an animated GIF webm proxy as 'video' (Serpent-azf6 — <img> cannot decode webm)", () => {
     expect(
       resolveLivePreviewMedia(true, {
@@ -256,5 +276,59 @@ describe("resolveAssetCardCoverUrl", () => {
         thumbnailArtifactId: null,
       }).url,
     ).toBeNull();
+  });
+});
+
+describe("resolveLiveVideoMuted (Serpent hover 音频工单)", () => {
+  it("plays sound only on hover with the preference on", () => {
+    expect(
+      resolveLiveVideoMuted({
+        hovering: true,
+        hoverVideoSound: true,
+        mediaMuted: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveLiveVideoMuted({
+        hovering: true,
+        hoverVideoSound: false,
+        mediaMuted: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps primary selection silent (hover only)", () => {
+    expect(
+      resolveLiveVideoMuted({
+        hovering: false,
+        hoverVideoSound: true,
+        mediaMuted: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("viewer mute wins over everything", () => {
+    expect(
+      resolveLiveVideoMuted({
+        hovering: true,
+        hoverVideoSound: true,
+        mediaMuted: true,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("shouldPlayLiveAudio (Serpent hover 音频工单)", () => {
+  it("plays audio only on hover with the preference on", () => {
+    expect(
+      shouldPlayLiveAudio({ hovering: true, hoverAudioPlay: true }),
+    ).toBe(true);
+    expect(
+      shouldPlayLiveAudio({ hovering: true, hoverAudioPlay: false }),
+    ).toBe(false);
+    // Selection never plays audio.
+    expect(
+      shouldPlayLiveAudio({ hovering: false, hoverAudioPlay: true }),
+    ).toBe(false);
   });
 });

@@ -19,6 +19,10 @@ export interface CanvasPreferences {
     /** Non-image extension chip, bottom-left (Serpent-cs1). */
     readonly badgeExtension: boolean;
   };
+  /** Audio assets play in-place on hover (Serpent hover 音频). */
+  readonly hoverAudioPlay: boolean;
+  /** Video hover preview plays sound (off by default to avoid noise). */
+  readonly hoverVideoSound: boolean;
 }
 
 export interface CanvasPreferencesStorage {
@@ -58,12 +62,23 @@ const canvasFieldsSchema = z
     badgeExtension: fields.badgeExtension ?? true,
   }));
 
-const canvasPreferencesSchema = z.object({
-  version: z.literal(1),
-  viewMode: z.enum(['grid', 'masonry']),
-  cardSize: z.number().int().min(CARD_SIZE_MIN).max(CARD_SIZE_MAX),
-  fields: canvasFieldsSchema,
-});
+const canvasPreferencesSchema = z
+  .object({
+    version: z.literal(1),
+    viewMode: z.enum(['grid', 'masonry']),
+    cardSize: z.number().int().min(CARD_SIZE_MIN).max(CARD_SIZE_MAX),
+    fields: canvasFieldsSchema,
+    hoverAudioPlay: z.boolean().optional(),
+    hoverVideoSound: z.boolean().optional(),
+  })
+  .transform((value) => ({
+    version: value.version,
+    viewMode: value.viewMode,
+    cardSize: value.cardSize,
+    fields: value.fields,
+    hoverAudioPlay: value.hoverAudioPlay ?? true,
+    hoverVideoSound: value.hoverVideoSound ?? false,
+  }));
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -86,6 +101,8 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
     badgeSource: true,
     badgeExtension: true,
   },
+  hoverAudioPlay: true,
+  hoverVideoSound: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -153,6 +170,8 @@ function migrateLegacy(
     viewMode,
     cardSize: clampCardSize(cardSize),
     fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+    hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+    hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
   };
 
   // Clear legacy keys so migration only happens once.

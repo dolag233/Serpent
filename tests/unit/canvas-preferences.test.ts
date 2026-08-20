@@ -72,6 +72,8 @@ describe('loadCanvasPreferences', () => {
       viewMode: 'masonry',
       cardSize: 200,
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+      hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
     });
     expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
     expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
@@ -133,6 +135,8 @@ describe('loadCanvasPreferences', () => {
       viewMode: 'masonry',
       cardSize: 240,
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+      hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
     });
     expect(storage.getItem(LEGACY_VIEW_MODE_KEY)).toBeNull();
     expect(storage.getItem(LEGACY_CARD_SIZE_KEY)).toBeNull();
@@ -182,6 +186,8 @@ describe('loadCanvasPreferences', () => {
         viewMode: 'masonry',
         cardSize: 200,
         fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+        hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+        hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
       });
     });
 
@@ -231,6 +237,8 @@ describe('loadCanvasPreferences', () => {
           ...DEFAULT_CANVAS_PREFERENCES.fields,
           date: false,
         },
+        hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+        hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
       });
       // Legacy keys should be left untouched (new key takes precedence)
     });
@@ -269,6 +277,8 @@ describe('saveCanvasPreferences', () => {
         ...DEFAULT_CANVAS_PREFERENCES.fields,
         name: false,
       },
+      hoverAudioPlay: true,
+      hoverVideoSound: false,
     };
 
     saveCanvasPreferences(prefs, storage);
@@ -297,6 +307,8 @@ describe('saveCanvasPreferences', () => {
       viewMode: 'grid',
       cardSize: 50,
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      hoverAudioPlay: true,
+      hoverVideoSound: false,
     };
 
     saveCanvasPreferences(prefs, storage);
@@ -316,6 +328,8 @@ describe('saveCanvasPreferences', () => {
         name: false,
         size: false,
       },
+      hoverAudioPlay: true,
+      hoverVideoSound: false,
     };
 
     saveCanvasPreferences(prefs, saveStorage);
@@ -356,6 +370,8 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       viewMode: 'grid',
       cardSize: 160,
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
+      hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
     });
   });
 });

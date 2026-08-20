@@ -92,5 +92,5 @@ export function parseAppLogEntry(input: unknown): AppLogEntry | null {
 }
 
 export type ReadAppLogResult =
-  | { ok: true; entries: AppLogEntry[]; fileName: "serpent.log" }
+  | { ok: true; entries: AppLogEntry[]; fileName: string }
   | { ok: false; code: "unauthorized_sender" | "malformed_request" | "log_missing" | "read_failure" };

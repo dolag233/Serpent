@@ -21,6 +21,7 @@ import sharp from "sharp";
 import {
   closeLibraryViaSwitcher,
   resolveElectronExecutablePath,
+  resolveSessionLogPath,
 } from "./electron-test-helpers";
 
 test.describe.configure({ timeout: 120_000 });
@@ -394,7 +395,7 @@ test("video preview reports a specific generation failure and persists its diagn
     const logsPath = await application.evaluate(({ app }) =>
       app.getPath("logs"),
     );
-    const logPath = path.join(logsPath, "serpent.log");
+    const logPath = resolveSessionLogPath(logsPath);
     const initialLogLength = existsSync(logPath)
       ? readFileSync(logPath).byteLength
       : 0;

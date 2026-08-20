@@ -2076,13 +2076,14 @@ describe('public errors', () => {
     expect(JSON.stringify(publicError)).not.toContain('SQLITE');
   });
 
-  it('classifies SQLite IOERR as a network-share library error without copying the message', () => {
+  it('classifies unqualified SQLite IOERR as a disk I/O library error without copying the message', () => {
     const sqliteError = Object.assign(new Error('disk I/O error at /secret/library.db'), {
       code: 'SQLITE_IOERR_IN_PAGE',
     });
-    expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_NETWORK_SHARE' });
+    expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_IO_ERROR', reason: 'IO_ERROR' });
     const publicError = toPublicError(sqliteError);
-    expect(publicError.code).toBe('LIBRARY_NETWORK_SHARE');
+    expect(publicError.code).toBe('LIBRARY_IO_ERROR');
+    expect(publicError.reason).toBe('IO_ERROR');
     expect(JSON.stringify(publicError)).not.toContain('/secret');
   });
 

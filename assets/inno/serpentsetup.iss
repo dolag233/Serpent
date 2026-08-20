@@ -54,5 +54,18 @@ Source: "..\..\out\Serpent-win32-x64\*"; DestDir: "{app}"; Flags: ignoreversion 
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\.serpent-installed'), 'installed', False);
+end;
+
+procedure CurUninstallStepChanged(UninstallStep: TUninstallStep);
+begin
+  if UninstallStep = usUninstall then
+    DeleteFile(ExpandConstant('{app}\.serpent-installed'));
+end;
+
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent

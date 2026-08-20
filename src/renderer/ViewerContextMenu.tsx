@@ -18,10 +18,12 @@ export interface ViewerContextMenuPosition {
 }
 
 interface ViewerContextMenuProps {
+  copyShortcut: string;
   flipHorizontal: boolean;
   flipVertical: boolean;
   fitShortcut?: string;
   isFullscreen: boolean;
+  onCopy: () => void;
   onClose: () => void;
   onFit: () => void;
   onFlipHorizontal: () => void;
@@ -29,6 +31,7 @@ interface ViewerContextMenuProps {
   onFullscreen: () => void;
   onRotate: () => void;
   position: ViewerContextMenuPosition;
+  transformable: boolean;
 }
 
 /**
@@ -37,10 +40,12 @@ interface ViewerContextMenuProps {
  * steals the asset selection menu's descriptor or its asynchronous pickers.
  */
 export function ViewerContextMenu({
+  copyShortcut,
   flipHorizontal,
   flipVertical,
   fitShortcut,
   isFullscreen,
+  onCopy,
   onClose,
   onFit,
   onFlipHorizontal,
@@ -48,6 +53,7 @@ export function ViewerContextMenu({
   onFullscreen,
   onRotate,
   position,
+  transformable,
 }: ViewerContextMenuProps) {
   const t = useT();
   const menuId = useId();
@@ -146,64 +152,82 @@ export function ViewerContextMenu({
       role="menu"
       style={style}
     >
+      {transformable ? (
+        <div className="context-menu-section" role="group">
+          <button
+            className="context-menu-item"
+            onClick={action(onRotate)}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+          >
+            <span className="context-menu-item-icon">
+              <Icon name="rotate-cw" size={14} />
+            </span>
+            <span className="context-menu-item-label">
+              {t("preview.rotateClockwise")}
+            </span>
+          </button>
+          <button
+            className={`context-menu-item${flipHorizontal ? " is-active" : ""}`}
+            onClick={action(onFlipHorizontal)}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+          >
+            <span className="context-menu-item-icon">
+              <Icon name="flip-horizontal-2" size={14} />
+            </span>
+            <span className="context-menu-item-label">
+              {t("preview.flipHorizontal")}
+            </span>
+          </button>
+          <button
+            className={`context-menu-item${flipVertical ? " is-active" : ""}`}
+            onClick={action(onFlipVertical)}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+          >
+            <span className="context-menu-item-icon">
+              <Icon name="flip-vertical-2" size={14} />
+            </span>
+            <span className="context-menu-item-label">
+              {t("preview.flipVertical")}
+            </span>
+          </button>
+        </div>
+      ) : null}
       <div className="context-menu-section" role="group">
         <button
           className="context-menu-item"
-          onClick={action(onRotate)}
+          onClick={action(onCopy)}
           tabIndex={VIEWER_CHROME_TAB_INDEX}
           type="button"
         >
           <span className="context-menu-item-icon">
-            <Icon name="rotate-cw" size={14} />
+            <Icon name="copy" size={14} />
           </span>
           <span className="context-menu-item-label">
-            {t("preview.rotateClockwise")}
+            {t("preview.copyAsset")}
           </span>
+          <span className="context-menu-item-shortcut">{copyShortcut}</span>
         </button>
-        <button
-          className={`context-menu-item${flipHorizontal ? " is-active" : ""}`}
-          onClick={action(onFlipHorizontal)}
-          tabIndex={VIEWER_CHROME_TAB_INDEX}
-          type="button"
-        >
-          <span className="context-menu-item-icon">
-            <Icon name="flip-horizontal-2" size={14} />
-          </span>
-          <span className="context-menu-item-label">
-            {t("preview.flipHorizontal")}
-          </span>
-        </button>
-        <button
-          className={`context-menu-item${flipVertical ? " is-active" : ""}`}
-          onClick={action(onFlipVertical)}
-          tabIndex={VIEWER_CHROME_TAB_INDEX}
-          type="button"
-        >
-          <span className="context-menu-item-icon">
-            <Icon name="flip-vertical-2" size={14} />
-          </span>
-          <span className="context-menu-item-label">
-            {t("preview.flipVertical")}
-          </span>
-        </button>
-      </div>
-      <div className="context-menu-section" role="group">
-        <button
-          className="context-menu-item"
-          onClick={action(onFit)}
-          tabIndex={VIEWER_CHROME_TAB_INDEX}
-          type="button"
-        >
-          <span className="context-menu-item-icon">
-            <Icon name="fit-window" size={14} />
-          </span>
-          <span className="context-menu-item-label">
-            {t("preview.fitWindow")}
-          </span>
-          {fitShortcut ? (
-            <span className="context-menu-item-shortcut">{fitShortcut}</span>
-          ) : null}
-        </button>
+        {transformable ? (
+          <button
+            className="context-menu-item"
+            onClick={action(onFit)}
+            tabIndex={VIEWER_CHROME_TAB_INDEX}
+            type="button"
+          >
+            <span className="context-menu-item-icon">
+              <Icon name="fit-window" size={14} />
+            </span>
+            <span className="context-menu-item-label">
+              {t("preview.fitWindow")}
+            </span>
+            {fitShortcut ? (
+              <span className="context-menu-item-shortcut">{fitShortcut}</span>
+            ) : null}
+          </button>
+        ) : null}
         <button
           className="context-menu-item"
           onClick={action(onFullscreen)}

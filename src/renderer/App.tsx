@@ -88,6 +88,7 @@ import {
 import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
+  shouldShowFolderBrowseCards,
 } from "./folder-browse-canvas";
 import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
 import {
@@ -168,6 +169,7 @@ import { AppSettingsDialog } from "./AppSettingsDialog";
 import { LibrarySettingsDialog } from "./LibrarySettingsDialog";
 import { OpenSyncLibraryDialog } from "./OpenSyncLibraryDialog";
 import { AppLogDialog } from "./AppLogDialog";
+import { LibraryRecoveryDialog } from "./LibraryRecoveryDialog";
 import { ScriptSandboxPreviewDialog } from "./ScriptSandboxPreviewDialog";
 import {
   shouldApplyLibraryLifecycleEvent,
@@ -175,6 +177,12 @@ import {
 } from "./library-lifecycle-sync";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
+import type {
+  AppUpdateCheckResult,
+  AppUpdateInstallResult,
+  AppUpdateProgress,
+  SerpentAppUpdateApi,
+} from "../shared/app-update";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -347,6 +355,7 @@ import { AssetPreviewModal, type AssetPreviewModalHandle } from "./AssetPreviewM
 import { TextAssetPreviewTile } from "./TextAssetPreviewTile";
 import { WindowsWindowControls } from "./WindowsWindowControls";
 import { useViewerChromeIdle } from "./use-viewer-chrome-idle";
+import { useViewerVolume } from "./use-viewer-volume";
 import { useDialogFocusTrap } from "./use-dialog-focus-trap";
 import { AssetContextMenu } from "./AssetContextMenu";
 import {
@@ -438,6 +447,7 @@ type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
     shell?: SerpentShellApi;
+    appUpdate?: SerpentAppUpdateApi;
     automation?: SerpentAutomationScriptApi;
     plugins?: SerpentPluginManagerApi;
     mcp?: SerpentMcpSettingsApi;
@@ -668,6 +678,29 @@ function AppInner() {
     },
     [setFatal],
   );
+
+  // NAS/SMB 库提示不再用常驻 banner（破坏界面一体性），改为每次打开库时
+  // 弹一次普通 warning toast。networkStorage 由打开动作决定，同一库不变，
+  // 按库身份（libraryId）去重即可，不必依赖整个 library 对象。
+  useEffect(() => {
+    if (library?.networkStorage) {
+      setWarning(t("shell.networkStorageNotice"));
+    }
+  }, [library?.networkStorage, library?.libraryId, setWarning, t]);
+
+  // 恢复提示（备份/抢救后）不再用常驻 banner，改为打开库时弹一次确认弹窗；
+  // 同一库只弹一次（ref 记录），避免 recovery 对象引用抖动导致重复弹窗。
+  const recoveryNotifiedLibraryIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const recovery = library?.recovery;
+    if (
+      recovery &&
+      library?.libraryId !== recoveryNotifiedLibraryIdRef.current
+    ) {
+      recoveryNotifiedLibraryIdRef.current = library.libraryId;
+      setLibraryRecoveryDialogOpen(true);
+    }
+  }, [library?.recovery, library?.libraryId]);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [createLibraryPhase, setCreateLibraryPhase] =
     useState<CreateLibraryPhase>("start");
@@ -1070,8 +1103,15 @@ function AppInner() {
   const [smartCollectionSettings, setSmartCollectionSettings] =
     useState<SmartCollectionSettingsTarget | null>(null);
   const [appLogOpen, setAppLogOpen] = useState(false);
+  const [libraryRecoveryDialogOpen, setLibraryRecoveryDialogOpen] =
+    useState(false);
   const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [appUpdateCheck, setAppUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
+  const [appUpdateInstall, setAppUpdateInstall] = useState<AppUpdateInstallResult | null>(null);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
+  const [appUpdateInstalling, setAppUpdateInstalling] = useState(false);
+  const [appUpdateProgress, setAppUpdateProgress] = useState<AppUpdateProgress | null>(null);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
@@ -1089,6 +1129,58 @@ function AppInner() {
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
+
+  const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
+
+  useEffect(() => {
+    if (appUpdateApi?.onDownloadProgress === undefined) return undefined;
+    return appUpdateApi.onDownloadProgress((progress) => {
+      setAppUpdateProgress(progress);
+    });
+  }, [appUpdateApi]);
+
+  const checkForAppUpdates = useCallback(async (): Promise<void> => {
+    setAppUpdateChecking(true);
+    setAppUpdateCheck(null);
+    setAppUpdateInstall(null);
+    setAppUpdateProgress(null);
+    try {
+      const result = appUpdateApi === undefined
+        ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
+        : await appUpdateApi.checkForUpdates();
+      setAppUpdateCheck(result);
+    } catch {
+      setAppUpdateCheck({ ok: false, status: "error", code: "network" });
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  }, [appUpdateApi]);
+
+  const downloadAndInstallAppUpdate = useCallback(async (): Promise<void> => {
+    setAppUpdateInstalling(true);
+    setAppUpdateInstall(null);
+    setAppUpdateProgress(null);
+    try {
+      const result = appUpdateApi === undefined
+        ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
+        : await appUpdateApi.downloadAndInstall();
+      setAppUpdateInstall(result);
+    } catch {
+      setAppUpdateInstall({ ok: false, status: "error", code: "download-failed" });
+    } finally {
+      setAppUpdateInstalling(false);
+      setAppUpdateProgress(null);
+    }
+  }, [appUpdateApi]);
+
+  const cancelAppUpdateDownload = useCallback((): void => {
+    appUpdateApi?.cancelDownload();
+  }, [appUpdateApi]);
+
+  const openAbout = useCallback(() => {
+    setAboutOpen(true);
+    void checkForAppUpdates();
+  }, [checkForAppUpdates]);
 
   async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
     const bridge = (window as RendererWindow).serpent?.shell;
@@ -1297,6 +1389,11 @@ function AppInner() {
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
+  // Hover live previews (audio/video) carry the viewer volume preference over.
+  const {
+    volume: viewerVolume,
+    muted: viewerVolumeMuted,
+  } = useViewerVolume();
   const assetViewMode = canvasPrefs.viewMode;
   const assetCardSize = canvasPrefs.cardSize;
   const [canvasWidthPx, setCanvasWidthPx] = useState(0);
@@ -2010,6 +2107,7 @@ function AppInner() {
     clearHoveredAssetId,
     activePreviewAssetId,
     activeResolution,
+    retryLiveVideoProxyFallback,
   } = useAssetCardHoverPreview({
     api,
     libraryId: library?.libraryId,
@@ -2243,6 +2341,13 @@ function AppInner() {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
+      // Serpent-7a9e89: 「递归显示子文件夹内容」的浏览语义是把子级资产
+      // 摊平进画布，子文件夹卡片会与摊平结果冲突——递归开启时不再
+      // 查询/展示子文件夹卡片（关闭后由 mutable 依赖恢复原行为）。
+      if (!shouldShowFolderBrowseCards(assetScope, folderRecursive)) {
+        if (!cancelled) setFolderBrowseEntries([]);
+        return;
+      }
       const result = await api.listFolderBrowseEntries({
         libraryId: library.libraryId,
         parentFolderId,
@@ -2266,6 +2371,7 @@ function AppInner() {
     linkedFolders,
     searchValue,
     showIgnoredItems,
+    folderRecursive,
     // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
     // the row re-fetches and the generated cover appears without navigation.
     folderBrowseRefreshToken,
@@ -8692,7 +8798,7 @@ function AppInner() {
       },
       openBackgroundJobs: () => setMediaJobsOpen(true),
       openAppLog,
-      openAbout: () => setAboutOpen(true),
+      openAbout,
       openGitHub: () => {
         void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
       },
@@ -8958,40 +9064,6 @@ function AppInner() {
           <WindowsWindowControls shell={shellApi} />
         ) : null}
       </header>
-      {library?.recovery ? (
-        <div className="library-readonly-banner" role="status">
-          <Icon name="info" size={14} />
-          <span>
-            {library.recovery.mode === "backup-1"
-              ? t("library.recoveryBackup1")
-              : library.recovery.mode === "backup-2"
-                ? t("library.recoveryBackup2")
-                : t("library.recoveryRescue")}
-          </span>
-          {library.recovery?.mode === "rescue" &&
-          library.recovery.recoveredAssetCount !== undefined ? (
-            <span className="library-recovery-report-note">
-              {t("library.recoveryRescueDetails", {
-                count: library.recovery.recoveredAssetCount,
-              })}
-            </span>
-          ) : null}
-          {library.recovery?.reportAvailable ? (
-            <>
-              <span className="library-recovery-report-note">
-                {t("library.recoveryReportAvailable")}
-              </span>
-              <button
-                className="secondary-button library-recovery-report-button"
-                onClick={() => void revealRecoveryReport()}
-                type="button"
-              >
-                {t("library.recoveryOpenReport")}
-              </button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
       <NavigationSidebar
         library={library}
         assetScope={assetScope}
@@ -10098,8 +10170,13 @@ function AppInner() {
                                 <AssetCardMedia
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
+                                  hovering={hoveredAssetId === asset.assetId}
+                                  hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                  hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={sequenceActive}
                                   libraryId={library.libraryId}
+                                  mediaMuted={viewerVolumeMuted}
+                                  mediaVolume={viewerVolume}
                                   preview={null}
                                   sequence={asset.sequence}
                                 />
@@ -10121,8 +10198,16 @@ function AppInner() {
                                   alt={asset.displayName}
                                   coverUrl={thumbCover}
                                   failed={cardThumbFailed}
+                                  hovering={hoveredAssetId === asset.assetId}
+                                  hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                  hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={cardActive}
                                   libraryId={library.libraryId}
+                                  mediaMuted={viewerVolumeMuted}
+                                  mediaVolume={viewerVolume}
+                                  onLiveVideoError={() =>
+                                    retryLiveVideoProxyFallback(asset.assetId)
+                                  }
                                   preview={
                                     cardActive ? activeResolution : null
                                   }
@@ -10138,8 +10223,13 @@ function AppInner() {
                                 alt={asset.displayName}
                                 coverUrl={thumbCover}
                                 failed={cardThumbFailed}
+                                hovering={hoveredAssetId === asset.assetId}
+                                hoverAudioPlay={canvasPrefs.hoverAudioPlay}
+                                hoverVideoSound={canvasPrefs.hoverVideoSound}
                                 isActive={false}
                                 libraryId={library.libraryId}
+                                mediaMuted={viewerVolumeMuted}
+                                mediaVolume={viewerVolume}
                                 preview={null}
                               />
                             );
@@ -10768,6 +10858,12 @@ function AppInner() {
             fields: { ...p.fields, [field]: !p.fields[field] },
           }));
         }}
+        onToggleHoverAudioPlay={() => {
+          setCanvasPrefs((p) => ({ ...p, hoverAudioPlay: !p.hoverAudioPlay }));
+        }}
+        onToggleHoverVideoSound={() => {
+          setCanvasPrefs((p) => ({ ...p, hoverVideoSound: !p.hoverVideoSound }));
+        }}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
         }}
@@ -10932,6 +11028,14 @@ function AppInner() {
         }}
         open={appLogOpen}
       />
+      {library?.recovery && (
+        <LibraryRecoveryDialog
+          onClose={() => setLibraryRecoveryDialogOpen(false)}
+          onRevealReport={() => void revealRecoveryReport()}
+          open={libraryRecoveryDialogOpen}
+          recovery={library.recovery}
+        />
+      )}
       <ScriptSandboxPreviewDialog
         automation={(window as RendererWindow).serpent?.automation}
         libraryId={library?.libraryId ?? null}
@@ -10949,6 +11053,14 @@ function AppInner() {
         open={aboutOpen}
         version={SERPENT_VERSION}
         onClose={() => setAboutOpen(false)}
+        updateCheck={appUpdateCheck}
+        updateInstall={appUpdateInstall}
+        updateChecking={appUpdateChecking}
+        updateInstalling={appUpdateInstalling}
+        updateProgress={appUpdateProgress}
+        onCheckForUpdates={() => void checkForAppUpdates()}
+        onDownloadAndInstall={() => void downloadAndInstallAppUpdate()}
+        onCancelDownload={cancelAppUpdateDownload}
         onOpenGitHub={() => {
           const bridge = (window as RendererWindow).serpent?.shell;
           if (!bridge?.openExternalUrl) return;

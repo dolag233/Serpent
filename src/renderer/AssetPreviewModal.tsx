@@ -56,8 +56,10 @@ import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
 import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
 import { createProxyFallbackRunGuard } from "./proxy-fallback-run";
+import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
+import { isMacPlatform } from "./commands/command-types";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -199,6 +201,11 @@ export const AssetPreviewModal = forwardRef<
   const [directApproved, setDirectApproved] = useState(false);
   const [proxyNoticeAvailable, setProxyNoticeAvailable] = useState(false);
   const [proxyNoticeVisible, setProxyNoticeVisible] = useState(false);
+  // Serpent-e56a1f: 代理回退的可见状态。生成中/加载中显示普通状态提示
+  // （非警告），只有生成失败才显示警告。
+  const [proxyFallbackState, setProxyFallbackState] = useState<
+    "idle" | "generating" | "loading" | "failed"
+  >("idle");
   const [displayTransform, setDisplayTransform] =
     useState<ViewerDisplayTransform>(IDENTITY_VIEWER_DISPLAY_TRANSFORM);
   const [viewerContextMenu, setViewerContextMenu] =
@@ -330,6 +337,7 @@ export const AssetPreviewModal = forwardRef<
     requestedProxyFallbackRef.current = null;
     setProxyNoticeAvailable(false);
     setProxyNoticeVisible(false);
+    setProxyFallbackState("idle");
     setManualRetryError(null);
     return () => {
       runGuard.invalidate();
@@ -353,17 +361,20 @@ export const AssetPreviewModal = forwardRef<
           detail,
         })
         .catch(() => undefined);
+      // Serpent-e56a1f: 生成中显示状态提示（非警告），失败才警告。
+      setProxyFallbackState("generating");
       const result = await api.retryArtifact({
         libraryId,
         assetId: asset.assetId,
         kind: "webm_proxy",
       });
       if (!isCurrentRun()) return;
-      if (!result.ok)
+      if (!result.ok) {
+        setProxyFallbackState("failed");
         setError(
           requestFailureMessage(t("preview.proxyFailed"), result.error, t),
         );
-      else {
+      } else {
         // The pending response intentionally keeps the failed source mounted
         // so the viewer does not flash a blocking generation surface. That
         // also means the normal "direct playback is approved" polling gate
@@ -387,11 +398,15 @@ export const AssetPreviewModal = forwardRef<
             preview.value.playbackMode === "proxy" &&
             preview.value.url
           ) {
+            // Proxy 已就绪，video 即将重新挂载加载——进入「加载中」状态，
+            // onReady 时清除（Serpent-e56a1f）。
+            setProxyFallbackState("loading");
             return;
           }
           await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
         }
         if (!isCurrentRun()) return;
+        setProxyFallbackState("failed");
         setError(t("preview.proxyFailed"));
       }
     },
@@ -475,6 +490,8 @@ export const AssetPreviewModal = forwardRef<
     proxyFallbackRunGuardRef.current.invalidate();
     requestedProxyFallbackRef.current = null;
     setRetrying(true);
+    // Serpent-e56a1f: 手动重试同样进入生成中状态，失败前不显示警告。
+    setProxyFallbackState("generating");
     setPlaybackRetryGeneration((generation) => generation + 1);
     // For a source-backed video, keep the existing playback error until
     // `loadedmetadata` gives proof that the recreated media element can play.
@@ -644,13 +661,23 @@ export const AssetPreviewModal = forwardRef<
         previewErrorDetail(resolution.errorCode, t) ??
         t("preview.videoFailed", { code: errorCode });
       playbackErrorRef.current = message;
-      setError(message);
+      // Serpent-e56a1f: 进入代理生成流程后不再显示「视频无法播放」警告——
+      // 由「代理生成中」状态提示替代；无 playbackToken（无法生成代理）时
+      // 保留原始错误供用户看到。
+      if (resolution?.playbackToken) {
+        setError(null);
+      } else {
+        setError(message);
+      }
       void ensureProxyFallback(errorCode);
       return;
     }
     const message = t("preview.videoFailed", { code: errorCode });
     playbackErrorRef.current = message;
     setError(message);
+    // 代理本身也播放失败：从「加载中」转入失败态，状态条不再显示
+    // （Serpent-e56a1f）。
+    setProxyFallbackState("failed");
     void api
       .reportPreviewError({
         libraryId,
@@ -684,11 +711,13 @@ export const AssetPreviewModal = forwardRef<
     (ready || Boolean(placeholderUrl));
   const isTextViewer = ready && resolution?.mediaType === "text";
   const isDocumentViewer = ready && resolution?.mediaType === "document";
+  const viewerContextMenuAvailable = ready && !isTextViewer;
   const viewerTransformable =
     Boolean(asset.sequence) ||
     asset.mediaType === "image" ||
     asset.mediaType === "video";
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
+  const copyShortcut = isMacPlatform(navigator.userAgent) ? "⌘C" : "Ctrl+C";
 
   const rotateViewer = useCallback(() => {
     setDisplayTransform((current) =>
@@ -738,6 +767,42 @@ export const AssetPreviewModal = forwardRef<
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleTextSave, isTextViewer]);
 
+  const copyViewerAsset = useCallback(async () => {
+    // Serpent-f8e175: 与右键「复制」一致，把当前资产源文件复制到剪贴板。
+    const result = await api.copyAssetFiles({
+      libraryId,
+      assetIds: [asset.assetId],
+    });
+    if (!result.ok) {
+      setError(requestFailureMessage(t("preview.copyFailed"), result.error, t));
+    }
+    // 成功静默：不打断查看器浏览（复制动作本身即反馈）。
+  }, [api, libraryId, asset.assetId, setError, t]);
+
+  useEffect(() => {
+    // Serpent-f8e175: 图片/视频/PDF/音频等非文本查看器聚焦时 Ctrl/Cmd+C
+    // 复制当前资产；文本查看器让渡给原生（复制选中文本），输入框/可编辑
+    // 元素聚焦时不抢键（判定见 shouldCopyAssetOnShortcut）。
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        !shouldCopyAssetOnShortcut({
+          isTextViewer,
+          metaOrCtrl: event.metaKey || event.ctrlKey,
+          key: event.key,
+          targetTag: target?.tagName ?? null,
+          contentEditable: Boolean(target?.isContentEditable),
+        })
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void copyViewerAsset();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isTextViewer, copyViewerAsset]);
+
   useEffect(() => {
     setViewerContextMenu(null);
   }, [asset.assetId]);
@@ -762,7 +827,7 @@ export const AssetPreviewModal = forwardRef<
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}`}
       onContextMenu={(event) => {
-        if (!viewerTransformable) return;
+        if (!viewerContextMenuAvailable) return;
         event.preventDefault();
         event.stopPropagation();
         onChromeActivity("pointerdownOrClick");
@@ -812,6 +877,7 @@ export const AssetPreviewModal = forwardRef<
               onMutedChange={setViewerMuted}
               onReady={() => {
                 setDirectApproved(true);
+                setProxyFallbackState("idle");
                 if (
                   resolution?.mediaType === "video" &&
                   resolution.playbackMode === "proxy"
@@ -972,6 +1038,17 @@ export const AssetPreviewModal = forwardRef<
               )}
             </div>
           )}
+          {proxyFallbackState === "generating" ||
+          proxyFallbackState === "loading" ? (
+            <div className="preview-proxy-status" role="status">
+              <span className="activity-pulse" aria-hidden />
+              <span>
+                {proxyFallbackState === "generating"
+                  ? t("preview.proxyGenerating")
+                  : t("preview.proxyLoading")}
+              </span>
+            </div>
+          ) : null}
           {proxyNoticeAvailable ? (
             <ProxyPlaybackNotice
               visible={proxyNoticeVisible}
@@ -1057,12 +1134,14 @@ export const AssetPreviewModal = forwardRef<
             </>
           ) : null}
         </div>
-        {viewerContextMenu && viewerTransformable ? (
+        {viewerContextMenu && viewerContextMenuAvailable ? (
           <ViewerContextMenu
+            copyShortcut={copyShortcut}
             flipHorizontal={displayTransform.flipHorizontal}
             flipVertical={displayTransform.flipVertical}
             fitShortcut={fitShortcut}
             isFullscreen={isFullscreen}
+            onCopy={() => void copyViewerAsset()}
             onClose={closeViewerContextMenu}
             onFit={fitViewer}
             onFlipHorizontal={flipViewerHorizontal}
@@ -1070,6 +1149,7 @@ export const AssetPreviewModal = forwardRef<
             onFullscreen={() => void toggleFullscreen()}
             onRotate={rotateViewer}
             position={viewerContextMenu}
+            transformable={viewerTransformable}
           />
         ) : null}
       </ShellSurface>
