@@ -20,7 +20,7 @@ test("ordinary browsing continuously appends every asset without page controls",
   );
   const sourceRoot = path.join(temporaryRoot, "sources");
   const libraryName = "分页验收";
-  const assetCount = 73;
+  const assetCount = 173;
   mkdirSync(sourceRoot);
   const sourcePaths = Array.from({ length: assetCount }, (_, index) => {
     const sourcePath = path.join(
@@ -95,6 +95,17 @@ test("ordinary browsing continuously appends every asset without page controls",
     const middleCard = window
       .locator(".asset-card")
       .filter({ hasText: "asset-050.txt" });
+    await expect
+      .poll(
+        async () => {
+          await workspaceCanvas.evaluate((element) =>
+            element.scrollTo({ top: element.scrollHeight * 0.5 }),
+          );
+          return (await middleCard.count()) > 0;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
     await middleCard.scrollIntoViewIfNeeded();
     await expect(middleCard).toBeVisible();
     await workspaceCanvas.evaluate((element) => element.scrollTo(0, 0));
@@ -345,7 +356,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await expect(allAssetsRow).toHaveClass(/is-active/);
     await expect(window.locator(".item-count")).toContainText(String(assetCount));
 
-    const setup = await window.evaluate(async () => {
+    const setup = await window.evaluate(async (expectedAssetCount) => {
       const serpent = (
         globalThis as typeof globalThis & {
           serpent: {
@@ -369,6 +380,7 @@ test("ordinary browsing continuously appends every asset without page controls",
               }): Promise<{ ok: boolean }>;
               createCollection(input: {
                 libraryId: string;
+                parentId?: string;
                 name: string;
               }): Promise<{ ok: boolean; value?: { collectionId: string } }>;
               addCollectionAssets(input: {
@@ -405,13 +417,22 @@ test("ordinary browsing continuously appends every asset without page controls",
         libraryId,
         name: "分页合集",
       });
+      const childCollection = collection.ok && collection.value
+        ? await serpent.library.createCollection({
+            libraryId,
+            parentId: collection.value.collectionId,
+            name: "分页子合集",
+          })
+        : { ok: false as const };
       if (
         !listed.ok ||
-        assetIds.length !== 73 ||
+        assetIds.length !== expectedAssetCount ||
         !tag.ok ||
         !tag.value ||
         !collection.ok ||
-        !collection.value
+        !collection.value ||
+        !childCollection.ok ||
+        !childCollection.value
       ) {
         throw new Error("Could not prepare organization pagination fixture.");
       }
@@ -426,12 +447,22 @@ test("ordinary browsing continuously appends every asset without page controls",
       ) {
         throw new Error("Could not assign tag fixture.");
       }
+      const directAssetCount = Math.floor(assetIds.length / 2);
+      const directMembers = assetIds.slice(0, directAssetCount);
+      const childMembers = assetIds.slice(directAssetCount);
       if (
         !(
           await serpent.library.addCollectionAssets({
             libraryId,
             collectionId: collection.value.collectionId,
-            assetIds,
+            assetIds: directMembers,
+          })
+        ).ok ||
+        !(
+          await serpent.library.addCollectionAssets({
+            libraryId,
+            collectionId: childCollection.value.collectionId,
+            assetIds: childMembers,
           })
         ).ok
       ) {
@@ -448,8 +479,8 @@ test("ordinary browsing continuously appends every asset without page controls",
       ) {
         throw new Error("Could not create smart collection fixture.");
       }
-      return { assetIds, libraryId };
-    });
+      return { assetIds, directAssetCount, libraryId };
+    }, assetCount);
 
     // The large-library navigation path intentionally keeps sidebar queries
     // out of every scope click. This fixture mutates collections/tags through
@@ -461,10 +492,37 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByRole("button", { name: "格式", exact: true }).click();
     await window.getByLabel("格式过滤").fill("png");
     await expect(window.locator(".asset-card")).toHaveCount(0);
-    await window.getByRole("button", { name: /分页合集/ }).click();
+    const collectionSwitchStartedAt = Date.now();
+    await window.getByRole("button", { name: /^分页合集/ }).click();
+    await expect(window.locator(".asset-card").first()).toBeVisible();
+    const collectionSwitchMs = Date.now() - collectionSwitchStartedAt;
+    console.info(
+      `[collection-switch-e2e] ${JSON.stringify({
+        assets: assetCount,
+        collectionSwitchMs,
+      })}`,
+    );
+    expect(collectionSwitchMs).toBeLessThan(5_000);
     await expect(
       window.getByRole("button", { name: "格式", exact: true }),
     ).not.toHaveClass(/is-active/);
+
+    const collectionScopeToggle = window.getByRole("button", {
+      name: "包含子合集",
+    });
+    await expect(collectionScopeToggle).toHaveAttribute("aria-pressed", "true");
+    await loadEveryAssetInCurrentScope();
+    await collectionScopeToggle.click();
+    await expect(collectionScopeToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(window.locator(".item-count")).toContainText(
+      String(setup.directAssetCount),
+    );
+    await expect(
+      window.locator(".asset-card").filter({ hasText: tailName }),
+    ).toHaveCount(0);
+    await collectionScopeToggle.click();
+    await expect(collectionScopeToggle).toHaveAttribute("aria-pressed", "true");
+    await expect(window.locator(".item-count")).toContainText(String(assetCount));
     await loadEveryAssetInCurrentScope();
     // The sidebar no longer enumerates tags (REQ-TAG-001); enter the
     // tag-filtered view through the retained 标签过滤 entry instead.
@@ -472,7 +530,7 @@ test("ordinary browsing continuously appends every asset without page controls",
     await window.getByLabel("标签过滤").fill("分页标签");
     await window.getByRole("option", { name: /分页标签/ }).click();
     await loadEveryAssetInCurrentScope();
-    await window.getByRole("button", { name: /分页合集/ }).click();
+    await window.getByRole("button", { name: /^分页合集/ }).click();
     await loadEveryAssetInCurrentScope();
     await window
       .getByRole("button", { name: /分页智能合集/ })
@@ -505,7 +563,7 @@ test("ordinary browsing continuously appends every asset without page controls",
       .poll(() => window.locator(".item-count").textContent(), {
         timeout: 30_000,
       })
-      .toContain("73");
+      .toContain(String(assetCount));
     await window
       .locator(".workspace-canvas")
       .evaluate((element) => element.scrollTo(0, element.scrollHeight));

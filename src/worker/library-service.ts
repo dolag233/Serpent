@@ -22685,8 +22685,57 @@ export class LibraryService {
       input.filters ?? [],
     );
 
-    // Build ORDER BY clause. Parameters used by a correlated ordering
-    // expression appear after WHERE parameters in the final data query.
+    // A collection browse is a relational scope, not an asset-id list. Build
+    // that scope once per SQL statement so the recursive tree walk and the
+    // collection-position lookup are shared by COUNT, first-page, ids-only,
+    // and layout queries. The old shape repeated the recursive CTE inside a
+    // correlated ORDER BY subquery for every candidate asset, which made a
+    // recursive collection disproportionately slower than an equivalent
+    // folder browse on large libraries.
+    const collectionScope = input.scope?.kind === 'collection'
+      ? (() => {
+          const collection = connection
+            .prepare('SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?')
+            .get(input.scope.collectionId, openLibrary.summary.libraryId);
+          if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+          if (input.scope.recursive) {
+            return {
+              queryPrefix: `WITH RECURSIVE collection_descendants(collection_id) AS (
+                SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
+                UNION ALL
+                SELECT child.collection_id FROM collections child
+                  JOIN collection_descendants parent ON child.parent_id = parent.collection_id
+                 WHERE child.library_id = ?
+              ),
+              collection_scope AS (
+                SELECT ca.asset_id, MIN(ca.position) AS collection_position
+                  FROM collection_assets ca
+                  JOIN collection_descendants d ON d.collection_id = ca.collection_id
+                 GROUP BY ca.asset_id
+              ) `,
+              join: 'JOIN collection_scope ON collection_scope.asset_id = a.asset_id',
+              params: [
+                input.scope.collectionId,
+                openLibrary.summary.libraryId,
+                openLibrary.summary.libraryId,
+              ],
+            };
+          }
+          return {
+            queryPrefix: `WITH collection_scope AS (
+              SELECT asset_id, position AS collection_position
+                FROM collection_assets
+               WHERE collection_id = ?
+            ) `,
+            join: 'JOIN collection_scope ON collection_scope.asset_id = a.asset_id',
+            params: [input.scope.collectionId],
+          };
+        })()
+      : null;
+
+    // Build ORDER BY clause. Search relevance parameters appear after WHERE
+    // parameters in the final data query; collection scope parameters belong
+    // to the CTE prefix and are supplied before the WHERE parameters below.
     let orderBy: string;
     const orderParams: unknown[] = [];
     if (hasPositiveQuery && !input.sort) {
@@ -22776,33 +22825,8 @@ export class LibraryService {
         default:
           orderBy = defaultNameSort;
       }
-    } else if (input.scope?.kind === 'collection') {
-      if (input.scope.recursive) {
-        orderBy = `(SELECT MIN(ca.position)
-                      FROM collection_assets ca
-                     WHERE ca.asset_id = a.asset_id
-                       AND ca.collection_id IN (
-                         WITH RECURSIVE descendants(collection_id) AS (
-                           SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
-                           UNION ALL
-                           SELECT child.collection_id FROM collections child
-                             JOIN descendants parent ON child.parent_id = parent.collection_id
-                            WHERE child.library_id = ?
-                         )
-                         SELECT collection_id FROM descendants
-                       )) ASC, a.relative_file_path ASC, a.asset_id ASC`;
-        orderParams.push(
-          input.scope.collectionId,
-          openLibrary.summary.libraryId,
-          openLibrary.summary.libraryId,
-        );
-      } else {
-        orderBy = `(SELECT ca.position
-                      FROM collection_assets ca
-                     WHERE ca.asset_id = a.asset_id
-                       AND ca.collection_id = ?) ASC, a.relative_file_path ASC, a.asset_id ASC`;
-        orderParams.push(input.scope.collectionId);
-      }
+    } else if (collectionScope) {
+      orderBy = 'collection_scope.collection_position ASC, a.relative_file_path ASC, a.asset_id ASC';
     } else if (input.scope?.kind === 'trash') {
       orderBy = `a.deleted_at DESC, a.asset_id ASC`;
     } else {
@@ -22890,7 +22914,9 @@ export class LibraryService {
           ${artifactColumns.has('status') ? "AND layout_preview.status = 'ready'" : ''}
           AND layout_preview.invalidated_at IS NULL`
       : '';
+    const collectionScopeJoin = collectionScope?.join ?? '';
     const dataFrom = `FROM assets a
+         ${collectionScopeJoin}
          LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
          LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id
          ${durationMetaJoin}
@@ -22907,6 +22933,7 @@ export class LibraryService {
       filterFields.has('favorite') ||
       filterFields.has('source_url');
     const countFrom = `FROM assets a
+         ${collectionScopeJoin}
          ${needsMetadataForFilter ? 'LEFT JOIN asset_metadata m ON m.asset_id = a.asset_id' : ''}
          ${durationMetaJoin}
          ${paletteMetaJoin}
@@ -23011,28 +23038,6 @@ export class LibraryService {
           }
         }
       }
-    } else if (input.scope?.kind === 'collection') {
-      const collection = connection
-        .prepare('SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?')
-        .get(input.scope.collectionId, openLibrary.summary.libraryId);
-      if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
-      if (input.scope.recursive) {
-        whereParts.push(`a.asset_id IN (
-          WITH RECURSIVE descendants(collection_id) AS (
-            SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
-            UNION ALL
-            SELECT child.collection_id FROM collections child
-              JOIN descendants parent ON child.parent_id = parent.collection_id
-             WHERE child.library_id = ?
-          )
-          SELECT ca.asset_id FROM collection_assets ca
-            JOIN descendants d ON d.collection_id = ca.collection_id
-        )`);
-        allParams.push(input.scope.collectionId, openLibrary.summary.libraryId, openLibrary.summary.libraryId);
-      } else {
-        whereParts.push('a.asset_id IN (SELECT asset_id FROM collection_assets WHERE collection_id = ?)');
-        allParams.push(input.scope.collectionId);
-      }
     }
 
     const whereClause =
@@ -23065,8 +23070,10 @@ export class LibraryService {
     ].join(',\n');
 
     // Total count query.
-    const countSql = `SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
-    const countRow = connection.prepare(countSql).get(...allParams) as {
+    const countSql = `${collectionScope?.queryPrefix ?? ''}SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
+    const countRow = connection
+      .prepare(countSql)
+      .get(...(collectionScope?.params ?? []), ...allParams) as {
       total: number;
     };
     const total = countRow.total;
@@ -23089,10 +23096,10 @@ export class LibraryService {
       : layoutOnly
         ? layoutColumns
         : dataColumns;
-    const dataSql = `SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    const dataSql = `${collectionScope?.queryPrefix ?? ''}SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
     const rows = connection
       .prepare(dataSql)
-      .all(...allParams, ...orderParams, limit, offset) as Array<{
+      .all(...(collectionScope?.params ?? []), ...allParams, ...orderParams, limit, offset) as Array<{
         asset_id: string;
         location_kind: 'managed' | 'linked';
         managed_folder_id: string | null;

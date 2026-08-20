@@ -46,9 +46,16 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     const startupMs = performance.now() - startupStartedAt;
     startupService.closeAll();
 
-    // Serpent-6355d7: 对比合集切换 vs 普通浏览（all 范围）的查询耗时。
+    // Serpent-6355d7: keep the all-scope baseline separate from a real folder
+    // scope so collection switching has a like-for-like navigation reference.
+    const allBrowseMs = benchmark(() => service.searchAssets({
+      libraryId: manifest.libraryId,
+      limit: 50,
+      offset: 0,
+    }));
     const folderSwitchMs = benchmark(() => service.searchAssets({
       libraryId: manifest.libraryId,
+      scope: { kind: 'folder', folderId: manifest.sampleFolderId, recursive: false },
       limit: 50,
       offset: 0,
     }));
@@ -56,12 +63,18 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     const firstCollectionId = service.listCollections(manifest.libraryId)[0]?.collectionId;
     let collectionSwitchMs = -1;
     let collectionRecursiveSwitchMs = -1;
+    let collectionRecursiveLayoutMs = -1;
     if (firstCollectionId) {
       collectionSwitchMs = benchmark(() => service.searchAssets({
         libraryId: manifest.libraryId,
         scope: { kind: 'collection', collectionId: firstCollectionId, recursive: false },
         limit: 50,
         offset: 0,
+      }));
+      collectionRecursiveLayoutMs = benchmark(() => service.searchAssets({
+        libraryId: manifest.libraryId,
+        scope: { kind: 'collection', collectionId: firstCollectionId, recursive: true },
+        layoutOnly: true,
       }));
       collectionRecursiveSwitchMs = benchmark(() => service.searchAssets({
         libraryId: manifest.libraryId,
@@ -94,9 +107,11 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       suite: 'large-library-20k',
       assets: manifest.assetCount,
       startupMs: Number(startupMs.toFixed(1)),
+      allBrowseMs: Number(allBrowseMs.toFixed(1)),
       folderSwitchMs: Number(folderSwitchMs.toFixed(1)),
       collectionSwitchMs: collectionSwitchMs < 0 ? null : Number(collectionSwitchMs.toFixed(1)),
       collectionRecursiveSwitchMs: collectionRecursiveSwitchMs < 0 ? null : Number(collectionRecursiveSwitchMs.toFixed(1)),
+      collectionRecursiveLayoutMs: collectionRecursiveLayoutMs < 0 ? null : Number(collectionRecursiveLayoutMs.toFixed(1)),
       searchMs: Number(searchMs.toFixed(1)),
       layoutMs: Number(layoutMs.toFixed(1)),
       inspectorMs: Number(inspectorMs.toFixed(1)),
@@ -109,6 +124,7 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     // 合集切换 ≤ 5s 兜底线；真实目标随报告与文件夹同量级（500ms 首屏）。
     if (collectionSwitchMs >= 0) expect(collectionSwitchMs).toBeLessThan(5_000);
     if (collectionRecursiveSwitchMs >= 0) expect(collectionRecursiveSwitchMs).toBeLessThan(5_000);
+    if (collectionRecursiveLayoutMs >= 0) expect(collectionRecursiveLayoutMs).toBeLessThan(5_000);
     expect(inspectorMs).toBeLessThan(5_000);
   }, 120_000);
 });
