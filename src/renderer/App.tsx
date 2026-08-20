@@ -176,6 +176,11 @@ import {
 } from "./library-lifecycle-sync";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
+import type {
+  AppUpdateCheckResult,
+  AppUpdateInstallResult,
+  SerpentAppUpdateApi,
+} from "../shared/app-update";
 import { AppSettingsEntry } from "./AppSettingsEntry";
 import type { AppSettingsCategoryId } from "./app-settings-sections";
 import {
@@ -440,6 +445,7 @@ type RendererWindow = Window & {
   serpent?: {
     library?: SerpentLibraryApi;
     shell?: SerpentShellApi;
+    appUpdate?: SerpentAppUpdateApi;
     automation?: SerpentAutomationScriptApi;
     plugins?: SerpentPluginManagerApi;
     mcp?: SerpentMcpSettingsApi;
@@ -1074,6 +1080,10 @@ function AppInner() {
   const [appLogOpen, setAppLogOpen] = useState(false);
   const [scriptSandboxPreviewOpen, setScriptSandboxPreviewOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [appUpdateCheck, setAppUpdateCheck] = useState<AppUpdateCheckResult | null>(null);
+  const [appUpdateInstall, setAppUpdateInstall] = useState<AppUpdateInstallResult | null>(null);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
+  const [appUpdateInstalling, setAppUpdateInstalling] = useState(false);
   const [openSourceLicensesOpen, setOpenSourceLicensesOpen] = useState(false);
   const [librarySettingsOpen, setLibrarySettingsOpen] = useState(false);
   const [openSyncLibraryOpen, setOpenSyncLibraryOpen] = useState(false);
@@ -1091,6 +1101,37 @@ function AppInner() {
   const [appLogErrorCode, setAppLogErrorCode] = useState<
     Extract<ReadAppLogResult, { ok: false }>["code"] | null
   >(null);
+
+  const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
+  const checkForAppUpdates = useCallback(async (): Promise<void> => {
+    setAppUpdateChecking(true);
+    setAppUpdateInstall(null);
+    try {
+      const result = appUpdateApi === undefined
+        ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
+        : await appUpdateApi.checkForUpdates();
+      setAppUpdateCheck(result);
+    } catch {
+      setAppUpdateCheck({ ok: false, status: "error", code: "network" });
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  }, [appUpdateApi]);
+
+  const downloadAndInstallAppUpdate = useCallback(async (): Promise<void> => {
+    setAppUpdateInstalling(true);
+    setAppUpdateInstall(null);
+    try {
+      const result = appUpdateApi === undefined
+        ? { ok: false as const, status: "error" as const, code: "service-unavailable" as const }
+        : await appUpdateApi.downloadAndInstall();
+      setAppUpdateInstall(result);
+    } catch {
+      setAppUpdateInstall({ ok: false, status: "error", code: "download-failed" });
+    } finally {
+      setAppUpdateInstalling(false);
+    }
+  }, [appUpdateApi]);
 
   async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
     const bridge = (window as RendererWindow).serpent?.shell;
@@ -10985,6 +11026,12 @@ function AppInner() {
         open={aboutOpen}
         version={SERPENT_VERSION}
         onClose={() => setAboutOpen(false)}
+        updateCheck={appUpdateCheck}
+        updateInstall={appUpdateInstall}
+        updateChecking={appUpdateChecking}
+        updateInstalling={appUpdateInstalling}
+        onCheckForUpdates={() => void checkForAppUpdates()}
+        onDownloadAndInstall={() => void downloadAndInstallAppUpdate()}
         onOpenGitHub={() => {
           const bridge = (window as RendererWindow).serpent?.shell;
           if (!bridge?.openExternalUrl) return;

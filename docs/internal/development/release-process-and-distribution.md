@@ -62,6 +62,19 @@ Windows 安装器（Inno Setup，2026-08-08 决策替代 WiX MSI）：
 - `npm run make:inno`（`scripts/inno-build.mjs` + `assets/inno/serpentsetup.iss`），需先 `npm run package`；支持安装时语言选择（中/英）、per-machine 路径、干净卸载。
 - Inno 工具获取：NuGet `Tools.InnoSetup` 或官方安装，免管理员优先。
 
+### 自动更新资产契约（2026-08-20）
+
+当前 Serpent 已在「帮助 > 关于 Serpent」提供更新检查和更新入口。更新器运行在 Main，访问公开仓库的 GitHub Releases API，只接受 HTTPS 的 GitHub asset，并要求目标资产拥有同名 `.sha256` sidecar 或 GitHub `sha256` digest；下载后先校验再打开安装器/显示便携包。
+
+当前格式不能直接接入 Electron `autoUpdater` / `electron-updater`：原生 `autoUpdater` 需要 Squirrel/Mac、Squirrel.Windows 或 MSIX，`electron-updater` 的 Windows 路径需要 NSIS，而当前项目是 Forge ZIP + Inno Setup。研究记录见 [`docs/internal/research/2026-08-20-electron-forge-github-release-auto-update.md`](../research/2026-08-20-electron-forge-github-release-auto-update.md)。
+
+- 已安装版：macOS 选择 `*-package.dmg`；Windows 选择 `*-setup.zip`，下载校验后打开 DMG 或解压并打开 `SerpentSetup.exe`。Inno 安装完成后会在应用目录写入 `.serpent-installed` 标记；旧安装仍以 `unins*.exe` 兼容识别。
+- 便携版：macOS/Windows 选择各自 `*-portable.zip`，下载校验后显示文件位置；不能覆盖正在运行的便携目录，用户退出后解压并启动新版本。
+- 资产名是运行时选择器的一部分，不能只改 Release 上传名而不改客户端。每个平台和分发形态必须同时上传目标资产与 `.sha256`。
+- GitHub Release 必须是公开、稳定、已发布的 SemVer Release；`/releases/latest` 不会返回 draft/prerelease。当前 `v0.1.2` 已验证包含 macOS DMG/portable ZIP、Windows setup/portable ZIP 及对应校验文件，但没有 `latest*.yml`、`RELEASES` 或 `RELEASES.json`。
+
+若未来要改为静默原生更新，需要另行迁移打包协议：Forge 原生路线使用签名 macOS ZIP + `RELEASES.json` 和 Squirrel.Windows；`electron-updater` 路线则完整迁移到 electron-builder，使用 macOS DMG/ZIP、Windows NSIS 与 `latest-mac.yml`/`latest.yml`。不能仅添加一个 updater 依赖或把普通 ZIP 当作可原地覆盖包。
+
 ## 5. Changelog 规范
 
 - **中英双语**：中文在前、英文在后，标题 `**Serpent <版本>** — <一句话主题> · <English one-liner>`。

@@ -61,6 +61,14 @@ import {
   tryParseAppLocaleSync,
   type AppLocale,
 } from "../shared/native-dialog-i18n";
+import {
+  createAppUpdateService,
+  type AppUpdateService,
+} from './app-update-service';
+import type {
+  AppUpdateCheckResult,
+  AppUpdateInstallResult,
+} from '../shared/app-update';
 
 import { popupEditContextMenu } from "./edit-context-menu";
 import {
@@ -95,6 +103,8 @@ import {
   AI_COMPLETED_CHANNEL,
   AI_CLEARED_CHANNEL,
   OPEN_EXTERNAL_URL_CHANNEL,
+  APP_UPDATE_CHECK_CHANNEL,
+  APP_UPDATE_INSTALL_CHANNEL,
   REVEAL_APP_LOG_CHANNEL,
   READ_APP_LOG_CHANNEL,
   SHOW_EDIT_CONTEXT_MENU_CHANNEL,
@@ -449,6 +459,7 @@ let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
 let appLogPath: string | undefined;
+let appUpdateService: AppUpdateService | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
 let embeddedMcpServer: EmbeddedMcpServer | undefined;
 let automationCommandGateway: AutomationCommandGateway | undefined;
@@ -5553,6 +5564,19 @@ async function startApplication(): Promise<void> {
   }
   appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  appUpdateService = createAppUpdateService({
+    currentVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    executablePath: app.getPath('exe'),
+    tempDirectory: app.getPath('temp'),
+    downloadsDirectory: app.getPath('downloads'),
+    environment: process.env,
+    openPath: (filePath) => shell.openPath(filePath),
+    showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
+    logger,
+  });
   // Serpent-wgmy: 会话日志最多保留最近 100 份，启动时清理最旧；
   // 清理失败不得阻断启动。
   try {
@@ -7153,6 +7177,38 @@ async function startApplication(): Promise<void> {
     }
     return pluginPackageRequest(input);
   });
+
+  ipcMain.handle(
+    APP_UPDATE_CHECK_CHANNEL,
+    async (event): Promise<AppUpdateCheckResult> => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info('ipc.app-update', 'Rejected update check request.', {
+          code: 'unauthorized-sender',
+        });
+        return { ok: false, status: 'error', code: 'unauthorized-sender' };
+      }
+      if (appUpdateService === undefined) {
+        return { ok: false, status: 'error', code: 'service-unavailable' };
+      }
+      return appUpdateService.checkForUpdates();
+    },
+  );
+
+  ipcMain.handle(
+    APP_UPDATE_INSTALL_CHANNEL,
+    async (event): Promise<AppUpdateInstallResult> => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        logger?.info('ipc.app-update', 'Rejected update install request.', {
+          code: 'unauthorized-sender',
+        });
+        return { ok: false, status: 'error', code: 'unauthorized-sender' };
+      }
+      if (appUpdateService === undefined) {
+        return { ok: false, status: 'error', code: 'service-unavailable' };
+      }
+      return appUpdateService.downloadAndInstall();
+    },
+  );
 
   // 渲染进程请求在系统浏览器打开外部链接（检查器「源链接」跳转）。
   // 发送者与 URL 双重校验，仅放行不含凭据的 HTTP(S)。失败回传公开错误码；日志不含 URL。

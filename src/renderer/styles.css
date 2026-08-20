@@ -8638,6 +8638,47 @@ select.ai-config-input.ai-config-languages {
   letter-spacing: 0.01em;
 }
 
+.about-dialog-update {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider-soft);
+  text-align: left;
+}
+
+.about-dialog-update-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.about-dialog-update-heading strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.about-dialog-update-heading span,
+.about-dialog-update-detail {
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.about-dialog-update-detail {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about-dialog-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .open-source-dialog {
   display: flex;
   width: min(560px, calc(100vw - 40px));
