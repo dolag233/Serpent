@@ -201,14 +201,42 @@ test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 
     await expect(viewer).toBeVisible({ timeout: 30_000 });
     const zoomLabel = window.locator(".pdf-viewer-zoom-label");
     await expect(zoomLabel).toHaveText("100%", { timeout: 30_000 });
+    const pages = window.locator(".pdf-viewer-pages");
+    const readGeometry = () => pages.evaluate((element) => {
+      const wrap = element.querySelector<HTMLElement>(".pdf-viewer-page-wrap");
+      const canvas = element.querySelector<HTMLCanvasElement>("canvas.pdf-viewer-page");
+      return {
+        dpr: document.defaultView?.devicePixelRatio ?? 1,
+        host: { clientWidth: element.clientWidth, clientHeight: element.clientHeight },
+        wrap: wrap === null ? null : {
+          clientWidth: wrap.clientWidth,
+          clientHeight: wrap.clientHeight,
+          rectWidth: wrap.getBoundingClientRect().width,
+          rectHeight: wrap.getBoundingClientRect().height,
+        },
+        canvas: canvas === null ? null : {
+          bitmapWidth: canvas.width,
+          bitmapHeight: canvas.height,
+          rectWidth: canvas.getBoundingClientRect().width,
+          rectHeight: canvas.getBoundingClientRect().height,
+        },
+      };
+    });
+    const readResolutionScore = async () => {
+      const geometry = await readGeometry();
+      if (geometry.wrap === null || geometry.canvas === null || geometry.wrap.rectWidth <= 0) {
+        return 0;
+      }
+      return geometry.canvas.bitmapWidth / geometry.wrap.rectWidth / Math.max(1, geometry.dpr);
+    };
 
     // Toolbar zoom-in: 100% → 125%.
     const tools = window.locator(".pdf-viewer-tool");
     await tools.nth(1).click();
     await expect(zoomLabel).toHaveText("125%");
+    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
 
     // Ctrl+wheel zooms further (125% × exp(0.12) ≈ 141%).
-    const pages = window.locator(".pdf-viewer-pages");
     await pages.hover();
     await pages.evaluate((element) => {
       element.dispatchEvent(
@@ -223,12 +251,14 @@ test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 
       );
     });
     await expect(zoomLabel).toHaveText("141%");
+    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
 
     // Zoom far enough that pages overflow the viewport, then drag to pan.
     for (let i = 0; i < 4; i += 1) {
       await tools.nth(1).click();
     }
     await expect(zoomLabel).toHaveText("344%");
+    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
     const box = await pages.boundingBox();
     expect(box).not.toBeNull();
     const before = await pages.evaluate((el) => ({ l: el.scrollLeft, t: el.scrollTop }));
@@ -243,6 +273,35 @@ test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 
     // Fit width resets to 100%.
     await tools.nth(2).click();
     await expect(zoomLabel).toHaveText("100%");
+
+    // A wider window must trigger a fresh bitmap at the new fit width instead
+    // of only stretching the previously rendered canvas.
+    const beforeResize = await readGeometry();
+    const viewport = window.viewportSize();
+    await window.setViewportSize({
+      width: Math.max((viewport?.width ?? 1280) + 400, 1600),
+      height: viewport?.height ?? 720,
+    });
+    await expect
+      .poll(() => readGeometry().then((geometry) => geometry.host.clientWidth), { timeout: 3_000 })
+      .toBeGreaterThan(beforeResize.host.clientWidth + 100);
+    await expect
+      .poll(async () => {
+        const geometry = await readGeometry();
+        if (geometry.wrap === null || geometry.canvas === null || geometry.wrap.rectWidth <= 0) {
+          return 0;
+        }
+        const fitWidth = Math.max(1, geometry.host.clientWidth - 32);
+        const fitScore = Math.min(
+          geometry.wrap.rectWidth / fitWidth,
+          fitWidth / geometry.wrap.rectWidth,
+        );
+        const resolutionScore = geometry.canvas.bitmapWidth
+          / geometry.wrap.rectWidth
+          / Math.max(1, geometry.dpr);
+        return Math.min(fitScore, resolutionScore);
+      }, { timeout: 3_000 })
+      .toBeGreaterThanOrEqual(0.95);
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

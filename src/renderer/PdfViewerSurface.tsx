@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
+import type {
+  PDFDocumentLoadingTask,
+  PDFDocumentProxy,
+  PDFPageProxy,
+  RenderTask,
+} from "pdfjs-dist/types/src/display/api";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
@@ -68,6 +73,7 @@ export function PdfViewerSurface({
   const [loadedPages, setLoadedPages] = useState<number>(0);
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [hostClientWidth, setHostClientWidth] = useState(0);
   /**
    * Scroll position to restore after the pages re-render on a zoom change.
    * Pointer-anchored zooming computes the target scroll in the old geometry;
@@ -75,6 +81,34 @@ export function PdfViewerSurface({
    * once the new pages exist (keeps the pointer-anchored content stationary).
    */
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
+
+  // PDF canvas backing stores are sized from the host's CSS width. Re-render
+  // after a pane/window resize so a page is never stretched into a larger CSS
+  // box than the bitmap that backs it. requestAnimationFrame coalesces the
+  // stream of ResizeObserver notifications produced while a window is dragged.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let frame: number | null = null;
+    const measure = () => {
+      frame = null;
+      const nextWidth = host.clientWidth;
+      setHostClientWidth((previousWidth) => (
+        previousWidth === nextWidth ? previousWidth : nextWidth
+      ));
+    };
+    const scheduleMeasure = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    measure();
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   // Load the document once per source; rendering reacts to pdfDoc/zoom below.
   // The parent keys the surface by asset, so a source change remounts this
@@ -107,43 +141,23 @@ export function PdfViewerSurface({
   }, [sourceUrl, t]);
 
   // Render the page column. Re-runs when the document loads or the zoom
-  // changes; the loaded document is reused so zooming never re-fetches.
+  // or host width changes; the loaded document is reused so zooming never
+  // re-fetches.
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !pdfDoc) return;
+    if (!host || !pdfDoc || hostClientWidth <= 48) return;
     let cancelled = false;
     let observer: IntersectionObserver | null = null;
-    let resizeObserver: ResizeObserver | null = null;
-    let hostWidthObserver: ResizeObserver | null = null;
     const rendered = new Set<number>();
+    const renderTasks = new Set<RenderTask>();
     const pageNodes: HTMLElement[] = [];
-    const pageSizes = new Map<number, PdfPageSize>();
     // Nodes from the previous render pass (zoom change). Kept as transition
-    // placeholders so the column never blanks out between zoom levels — the
-    // old bitmap stretches to the new geometry until the crisp re-render
-    // replaces it in place (Serpent P2: no white flash on zoom).
+    // placeholders so the column never blanks out between zoom levels. They
+    // keep their old geometry until the crisp re-render replaces them in place;
+    // stretching an old bitmap to the new box makes zoom visibly blurry.
     const staleNodes = [...host.children] as HTMLElement[];
 
     const contentWidth = () => pdfViewerContentWidth(host.clientWidth, hostPaddingX(host)) * zoom;
-
-    const waitForHostWidth = async () => {
-      if (host.clientWidth > 48) return;
-      await new Promise<void>((resolve) => {
-        hostWidthObserver = new ResizeObserver(() => {
-          if (cancelled || host.clientWidth > 48) {
-            hostWidthObserver?.disconnect();
-            hostWidthObserver = null;
-            resolve();
-          }
-        });
-        hostWidthObserver.observe(host);
-        if (cancelled || host.clientWidth > 48) {
-          hostWidthObserver?.disconnect();
-          hostWidthObserver = null;
-          resolve();
-        }
-      });
-    };
 
     const layoutNode = (element: HTMLElement, size: PdfPageSize) => {
       applyPdfPageBox(element, contentWidth(), size.width, size.height);
@@ -152,17 +166,8 @@ export function PdfViewerSurface({
       element.style.width = `${Math.round(contentWidth())}px`;
     };
 
-    const relayoutPages = () => {
-      for (const [index, node] of pageNodes.entries()) {
-        if (!node.isConnected) continue;
-        const size = pageSizes.get(index + 1);
-        if (size) layoutNode(node, size);
-      }
-    };
-
     void (async () => {
       try {
-        await waitForHostWidth();
         if (cancelled) return;
         const renderPage = async (pageNumber: number) => {
           if (rendered.has(pageNumber) || cancelled) return;
@@ -173,7 +178,6 @@ export function PdfViewerSurface({
             if (cancelled) return;
             const unscaled = page.getViewport({ scale: 1 });
             const size = { width: unscaled.width, height: unscaled.height };
-            pageSizes.set(pageNumber, size);
             const dpr = Math.max(1, window.devicePixelRatio || 1);
             const cssScale = unscaled.width > 0 ? contentWidth() / unscaled.width : 1;
             const viewport = page.getViewport({ scale: cssScale * dpr });
@@ -194,7 +198,13 @@ export function PdfViewerSurface({
             // still holds a blank canvas flashes white. Rendering off-DOM and
             // replacing afterwards keeps the previous page visible until the
             // crisp bitmap is ready (Serpent P2: no white flash on zoom).
-            await page.render({ canvas, canvasContext: context, viewport }).promise;
+            const renderTask = page.render({ canvas, canvasContext: context, viewport });
+            renderTasks.add(renderTask);
+            try {
+              await renderTask.promise;
+            } finally {
+              renderTasks.delete(renderTask);
+            }
             if (cancelled) return;
             const placeholder = pageNodes[pageNumber - 1];
             if (placeholder?.isConnected) {
@@ -233,13 +243,11 @@ export function PdfViewerSurface({
 
         for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
           if (cancelled) break;
-          pageSizes.set(pageNumber, firstSize);
           const stale = staleNodes[pageNumber - 1];
           if (stale && stale.isConnected) {
-            // Zoom transition: keep the previous page node as the placeholder —
-            // it stretches to the new geometry immediately (no white flash)
-            // and the crisp re-render replaces it in place when ready.
-            layoutNode(stale, firstSize);
+            // Zoom/resize transition: keep the previous page node at its old
+            // geometry until the crisp re-render replaces it. A stale bitmap
+            // must not be stretched into the new CSS box while it is waiting.
             pageNodes.push(stale);
             observer.observe(stale);
             if (pageNumber === 1) void renderPage(1);
@@ -263,10 +271,6 @@ export function PdfViewerSurface({
           pendingScrollRef.current = null;
         }
 
-        resizeObserver = new ResizeObserver(() => {
-          if (!cancelled) relayoutPages();
-        });
-        resizeObserver.observe(host);
       } catch {
         if (!cancelled) {
           setError(t("viewer.pdfLoadFailed"));
@@ -277,13 +281,13 @@ export function PdfViewerSurface({
     return () => {
       cancelled = true;
       observer?.disconnect();
-      resizeObserver?.disconnect();
-      hostWidthObserver?.disconnect();
+      for (const renderTask of renderTasks) renderTask.cancel();
+      renderTasks.clear();
       // Do NOT clear host.textContent here: zoom re-renders reuse the previous
       // page nodes as transition placeholders (no white flash). The component
       // unmount is handled by React removing the subtree.
     };
-  }, [pdfDoc, zoom, t]);
+  }, [hostClientWidth, pdfDoc, t, zoom]);
 
   /**
    * Apply a new zoom while keeping the content under `clientX/clientY`
