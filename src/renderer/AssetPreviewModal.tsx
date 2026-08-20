@@ -686,6 +686,7 @@ export const AssetPreviewModal = forwardRef<
     (ready || Boolean(placeholderUrl));
   const isTextViewer = ready && resolution?.mediaType === "text";
   const isDocumentViewer = ready && resolution?.mediaType === "document";
+  const viewerContextMenuAvailable = ready && !isTextViewer;
   const viewerTransformable =
     Boolean(asset.sequence) ||
     asset.mediaType === "image" ||
@@ -801,7 +802,7 @@ export const AssetPreviewModal = forwardRef<
       aria-label={t("preview.viewPage", { name: asset.displayName })}
       className={`workspace-viewer${chromeIdle ? " is-chrome-idle" : ""}${isTextViewer ? " is-text-viewer" : ""}${isDocumentViewer ? " is-document-viewer" : ""}`}
       onContextMenu={(event) => {
-        if (!viewerTransformable) return;
+        if (!viewerContextMenuAvailable) return;
         event.preventDefault();
         event.stopPropagation();
         onChromeActivity("pointerdownOrClick");
@@ -1096,7 +1097,7 @@ export const AssetPreviewModal = forwardRef<
             </>
           ) : null}
         </div>
-        {viewerContextMenu && viewerTransformable ? (
+        {viewerContextMenu && viewerContextMenuAvailable ? (
           <ViewerContextMenu
             copyShortcut={copyShortcut}
             flipHorizontal={displayTransform.flipHorizontal}
@@ -1111,6 +1112,7 @@ export const AssetPreviewModal = forwardRef<
             onFullscreen={() => void toggleFullscreen()}
             onRotate={rotateViewer}
             position={viewerContextMenu}
+            transformable={viewerTransformable}
           />
         ) : null}
       </ShellSurface>

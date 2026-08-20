@@ -48,6 +48,7 @@ describe("ViewerContextMenu", () => {
               onFullscreen: () => undefined,
               onRotate: () => undefined,
               position: { x: 20, y: 20 },
+              transformable: true,
             }),
           },
         ),
