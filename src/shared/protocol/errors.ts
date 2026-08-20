@@ -6,7 +6,7 @@ export const PUBLIC_ERROR_MESSAGES = {
     'Serpent hit an unexpected error and could not finish. Open Diagnostics in the app to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.',
   INVALID_LIBRARY_NAME: 'Choose a library name that is safe on macOS and Windows.',
   INVALID_LIBRARY_PATH:
-    'The selected location is not a usable folder for a library. Choose an existing writable folder on a local disk — not a file, and not a disconnected drive.',
+    'The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.',
   INVALID_FOLDER_NAME: 'Choose a folder name that is safe on macOS and Windows.',
   FOLDER_ALREADY_EXISTS: 'A folder with this name already exists in the selected location.',
   FOLDER_NAME_CONFLICT: 'A folder or file with this name already exists in the selected location.',
@@ -44,12 +44,14 @@ export const PUBLIC_ERROR_MESSAGES = {
   LIBRARY_STRUCTURE_MISMATCH:
     'This library’s database structure does not match this version of Serpent. Upgrade to the latest Serpent and reopen the library.',
   LIBRARY_NOT_WRITABLE:
-    'Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Choose a writable folder on a local disk and retry.',
+    'Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Check the folder and NAS connection, then retry.',
   LIBRARY_NETWORK_SHARE:
-    'Serpent cannot keep a library database on this network share (NAS/SMB). SQLite needs local-disk file locking, which many shares do not provide. Create or copy the library on a local disk, then use WebDAV sync if you need the same library on other computers.',
+    'Serpent could not open or write the library database on this network share (NAS/SMB). NAS libraries use rollback journaling and depend on the share’s file-locking and reconnect behavior. Check the NAS connection and permissions; if it keeps failing, copy the library to a local disk or use WebDAV sync.',
+  LIBRARY_IO_ERROR:
+    'Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.',
   LIBRARY_BUSY: 'This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.',
   LIBRARY_CLEANUP_FAILED:
-    'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable local-disk folder.',
+    'Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.',
   LIBRARY_NOT_OPEN: 'That library is not open in this window. Open it again, then retry the action.',
   ASSET_NOT_FOUND: 'The requested asset could not be found.',
   INVALID_ASSET_FILE_NAME: 'Choose a file name that is safe on macOS and Windows.',
@@ -267,7 +269,7 @@ export function classifyUnknownFailure(
       return { code: 'LIBRARY_BUSY' };
     }
     if (code.startsWith('SQLITE_IOERR')) {
-      return { code: 'LIBRARY_NETWORK_SHARE' };
+      return { code: 'LIBRARY_IO_ERROR', reason: 'IO_ERROR' };
     }
     if (code === 'SQLITE_CORRUPT' || code.startsWith('SQLITE_CORRUPT_') || code === 'SQLITE_NOTADB') {
       return { code: 'LIBRARY_CORRUPT' };

@@ -101,6 +101,10 @@ export const internalLibrarySummarySchema = z.strictObject({
   // columns/rows are ignored). libraryVersion/supportedSchemaVersion remain
   // for diagnostics. Inspection-only handles may still set readOnly.
   readOnly: z.boolean().optional(),
+  // True when the library root is on a confirmed NAS/SMB/NFS volume. The
+  // Worker uses rollback journaling there and the Desktop shows the
+  // experimental-storage warning; absence means local or undetected.
+  networkStorage: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
   // True when a migration failed repeatedly and this build skipped further
@@ -117,6 +121,7 @@ export const rendererLibrarySummarySchema = z.strictObject({
   displayName: nonBlankString,
   displayPath: nonBlankString,
   readOnly: z.boolean().optional(),
+  networkStorage: z.boolean().optional(),
   libraryVersion: z.number().int().positive().optional(),
   supportedSchemaVersion: z.number().int().positive().optional(),
   // True when a migration failed repeatedly and this build skipped further

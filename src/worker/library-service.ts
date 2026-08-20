@@ -428,6 +428,10 @@ import {
   targetLibraryPath,
 } from './library-rules';
 import {
+  classifyLibraryStorage,
+  type LibraryStorageKind,
+} from './network-storage';
+import {
   LibraryParentError,
   resolveWritableLibraryParent,
 } from './library-parent';
@@ -4076,11 +4080,18 @@ function readGitignoreText(libraryPath: string): string {
   }
 }
 
+function isSqliteIoError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error &&
+    typeof error.code === 'string' && error.code.startsWith('SQLITE_IOERR');
+}
+
 export function openConfiguredDatabase(
   filename: string,
   busyTimeoutMs = 5_000,
   options: {
     readonly?: boolean;
+    /** Test seam; production classifies the database path before opening it. */
+    storageKind?: LibraryStorageKind;
     /**
      * Test-only seam (Serpent-xoaz): per-statement trace used to assert DB
      * write counts in queue-throughput benchmarks. better-sqlite3's `verbose`
@@ -4097,10 +4108,14 @@ export function openConfiguredDatabase(
   // read-only connection so those checks cannot mutate the file. Desktop
   // never uses this flag for a user-facing library handle. journal_mode /
   // synchronous are write PRAGMAs and must be skipped here.
-  const connection = options.readonly
-    ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
-    : new Database(filename, options.trace ? { verbose: options.trace } : {});
+  const storageKind = options.readonly
+    ? 'unknown'
+    : (options.storageKind ?? classifyLibraryStorage(filename));
+  let connection: DatabaseConnection | undefined;
   try {
+    connection = options.readonly
+      ? new Database(filename, { readonly: true, ...(options.trace ? { verbose: options.trace } : {}) })
+      : new Database(filename, options.trace ? { verbose: options.trace } : {});
     connection.pragma('foreign_keys = ON');
     connection.pragma('trusted_schema = ON');
     // A second Serpent process may be finishing a short SQLite transaction
@@ -4117,10 +4132,20 @@ export function openConfiguredDatabase(
       }
       return connection;
     }
-    const journalMode = connection.pragma('journal_mode = WAL', { simple: true });
+    // SQLite WAL relies on -wal/-shm sidecars and shared-memory locking. NAS
+    // implementations vary in how faithfully SMB/NFS emulate those
+    // semantics, while rollback journaling only needs ordinary file locks.
+    // Keep confirmed local/removable volumes on WAL; confirmed network and
+    // unknown volumes use the safer, slower rollback journal required by
+    // ADR-0014/0019.
+    const expectedJournalMode = storageKind === 'local' ? 'wal' : 'delete';
+    const journalMode = connection.pragma(
+      `journal_mode = ${storageKind === 'local' ? 'WAL' : 'DELETE'}`,
+      { simple: true },
+    );
     connection.pragma('synchronous = FULL');
     if (
-      journalMode !== 'wal' ||
+      journalMode !== expectedJournalMode ||
       connection.pragma('foreign_keys', { simple: true }) !== 1 ||
       connection.pragma('synchronous', { simple: true }) !== 2 ||
       connection.pragma('busy_timeout', { simple: true }) !== busyTimeoutMs
@@ -4130,6 +4155,9 @@ export function openConfiguredDatabase(
     return connection;
   } catch (error) {
     closeIgnoringFailure(connection);
+    if (storageKind === 'network' && isSqliteIoError(error)) {
+      throw new LibraryServiceError('LIBRARY_NETWORK_SHARE', { cause: error });
+    }
     throw error;
   }
 }
@@ -33210,6 +33238,7 @@ export class LibraryService {
     library: LibraryRow;
     canonicalPath: string;
     serpentPath: string;
+    networkStorage?: boolean;
     libraryVersion?: number;
     supportedSchemaVersion?: number;
     migrationStuck?: boolean;
@@ -33232,6 +33261,7 @@ export class LibraryService {
       displayName: input.library.display_name,
       libraryPath: input.canonicalPath,
       readOnly: false,
+      ...(input.networkStorage ? { networkStorage: true } : {}),
       ...(input.libraryVersion === undefined ? {} : { libraryVersion: input.libraryVersion }),
       ...(input.supportedSchemaVersion === undefined
         ? {}
@@ -33322,6 +33352,8 @@ export class LibraryService {
     if (!realDirectoryExists(serpentPath) || !realFileExists(databasePath(canonicalPath))) {
       throw new LibraryServiceError('NOT_A_LIBRARY');
     }
+    const storageKind = classifyLibraryStorage(canonicalPath);
+    const networkStorage = storageKind === 'network';
 
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
@@ -33356,7 +33388,10 @@ export class LibraryService {
         connection = openConfiguredDatabase(
           databasePath(canonicalPath),
           this.options.sqliteBusyTimeoutMsForTests,
-          this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
+          {
+            storageKind,
+            ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
+          },
         );
         const library = verifyOpenableSchema(connection);
         return this.adoptWritableOpenLibrary({
@@ -33364,6 +33399,7 @@ export class LibraryService {
           library,
           canonicalPath,
           serpentPath,
+          networkStorage,
           libraryVersion: probedVersion,
           supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
           migrationStuck,
@@ -33375,7 +33411,10 @@ export class LibraryService {
       connection = openConfiguredDatabase(
         databasePath(canonicalPath),
         this.options.sqliteBusyTimeoutMsForTests,
-        this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement },
+        {
+          storageKind,
+          ...(this.options.onDbStatement === undefined ? {} : { trace: this.options.onDbStatement }),
+        },
       );
       migrationAttempted = true;
       migrateDatabase(connection, false, this.options);
@@ -33389,6 +33428,7 @@ export class LibraryService {
         library,
         canonicalPath,
         serpentPath,
+        networkStorage,
         startServices: true,
       });
     } catch (error) {
@@ -33456,6 +33496,7 @@ export class LibraryService {
     if (!realDirectoryExists(serpentPath) || !realFileExists(filename)) {
       throw new LibraryServiceError('NOT_A_LIBRARY');
     }
+    const networkStorage = classifyLibraryStorage(canonicalPath) === 'network';
 
     let connection: DatabaseConnection | undefined;
     try {
@@ -33474,6 +33515,7 @@ export class LibraryService {
         libraryId: library.library_id,
         displayName: library.display_name,
         libraryPath: canonicalPath,
+        ...(networkStorage ? { networkStorage: true } : {}),
       };
       this.openById.set(summary.libraryId, {
         connection,

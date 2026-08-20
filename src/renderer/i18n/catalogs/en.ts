@@ -93,6 +93,8 @@ export const en = {
     libraryNamed: "Library: {name}",
     syncConnected: "Connected to sync server, auto-sync on",
     syncDisconnected: "Bound to sync server, auto-sync off",
+    networkStorageBanner:
+      "This library is on a network share (NAS/SMB). Serpent uses rollback journaling here; file locking and disconnect recovery depend on the NAS. Keep one Serpent instance writing at a time and maintain backups.",
     readOnlyBanner:
       "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
     readOnlyBannerMigrationStuck:
@@ -1670,7 +1672,7 @@ export const en = {
     aiContentPromoted: "Promoted to human content",
     aiContentPromoteFailed: "Failed to promote AI content to human.",
     libraryOpFailed: "The library action could not finish. See the reason below; if it is still unclassified, open Diagnostics.",
-    openRecentFailed: "Could not open that recent library. The folder may have moved, the disk may be disconnected, or the database cannot open on a network share. Choose it again from Open Library, or copy it to a local disk.",
+    openRecentFailed: "Could not open that recent library. The folder may have moved, the disk may be disconnected, or the database may be temporarily unavailable on a network share. Choose it again from Open Library, or copy it to a local disk.",
     readAssetsFailed: "Could not read assets.",
     readTrashFailed: "Could not read Trash.",
     readTagAssetsFailed: "Could not read tagged assets.",
@@ -1938,7 +1940,7 @@ export const en = {
       CANCELLED: "Operation cancelled.",
       INTERNAL_ERROR: "Serpent hit an unexpected error and could not finish. Open Diagnostics to inspect this session’s log, then retry. If you were opening a library, copy the whole library folder onto a local disk and open it from there.",
       INVALID_LIBRARY_NAME: "Enter a library name that is safe across platforms.",
-      INVALID_LIBRARY_PATH: "The selected location is not a usable folder for a library. Choose an existing writable folder on a local disk — not a file, and not a disconnected drive.",
+      INVALID_LIBRARY_PATH: "The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.",
       INVALID_FOLDER_NAME: "The name contains unsupported characters.",
       FOLDER_ALREADY_EXISTS:
         "A folder or file already exists at this path, so restore cannot reuse the original location (nothing is overwritten). Rename or move the conflicting item, then restore again.",
@@ -1968,10 +1970,11 @@ export const en = {
       LIBRARY_MIGRATION_FAILED: "Upgrading this library’s database failed and was rolled back. Your files are unchanged. Open the library again to retry the upgrade; if it keeps failing, copy the library to a local disk and retry.",
       LIBRARY_MIGRATION_STUCK: "This library could not be migrated after repeated attempts. Serpent opened it at the last working schema so you can keep using it. Upgrade Serpent when a fix is available; do not delete the library folder.",
       LIBRARY_STRUCTURE_MISMATCH: "This library’s database structure does not match this version of Serpent. Upgrade to the latest Serpent and reopen the library.",
-      LIBRARY_NOT_WRITABLE: "Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Choose a writable folder on a local disk and retry.",
-      LIBRARY_NETWORK_SHARE: "Serpent cannot keep a library database on this network share (NAS/SMB). SQLite needs local-disk file locking, which many shares do not provide. Create or copy the library on a local disk, then use WebDAV sync if you need the same library on other computers.",
+      LIBRARY_NOT_WRITABLE: "Serpent could not write files in the selected folder. The folder may lack write permission, the disk may be full or read-only, or another program may have the files locked. Check the folder and NAS connection, then retry.",
+      LIBRARY_NETWORK_SHARE: "Serpent could not open or write the library database on this network share (NAS/SMB). NAS libraries use rollback journaling and depend on the share’s file-locking and reconnect behavior. Check the NAS connection and permissions; if it keeps failing, copy the library to a local disk or use WebDAV sync.",
+      LIBRARY_IO_ERROR: "Serpent could not complete the library operation because the disk or filesystem reported an I/O error. Check the drive connection, free space, and permissions; if it keeps failing, copy the library to a local disk and inspect Diagnostics.",
       LIBRARY_BUSY: "This library is being updated by another Serpent window or a brief database lock. Wait a few seconds and retry; do not open the same library from two computers at once.",
-      LIBRARY_CLEANUP_FAILED: "Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable local-disk folder.",
+      LIBRARY_CLEANUP_FAILED: "Creating the library failed, and leftover temporary files could not be removed automatically. Delete any `.serpent-create-*.partial` folder next to the chosen location, then retry with a writable folder.",
       LIBRARY_NOT_OPEN: "That library is not open in this window. Open it again, then retry the action.",
       ASSET_NOT_FOUND: "Could not find the selected asset.",
       INVALID_ASSET_FILE_NAME: "Enter a file name that is safe across platforms.",

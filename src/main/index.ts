@@ -1745,6 +1745,7 @@ function toRendererResult(
         displayPath: result.library.libraryPath,
         // Serpent-033e: read-only degrade for newer-schema libraries.
         readOnly: result.library.readOnly,
+        networkStorage: result.library.networkStorage,
         libraryVersion: result.library.libraryVersion,
         supportedSchemaVersion: result.library.supportedSchemaVersion,
         // Serpent-verg.5: read-only because the migration is stuck.
@@ -1779,6 +1780,7 @@ function toRendererResult(
         libraryId: result.library.libraryId,
         displayName: result.library.displayName,
         displayPath: result.library.libraryPath,
+        networkStorage: result.library.networkStorage,
       },
     });
   }
@@ -5495,6 +5497,7 @@ async function executeMcpLibraryContextCommand(input: {
           displayName: selected.displayName,
           displayPath: selected.libraryPath,
           ...(selected.readOnly === undefined ? {} : { readOnly: selected.readOnly }),
+          ...(selected.networkStorage === undefined ? {} : { networkStorage: selected.networkStorage }),
           ...(selected.libraryVersion === undefined ? {} : { libraryVersion: selected.libraryVersion }),
           ...(selected.supportedSchemaVersion === undefined ? {} : { supportedSchemaVersion: selected.supportedSchemaVersion }),
           ...(selected.migrationStuck === undefined ? {} : { migrationStuck: selected.migrationStuck }),

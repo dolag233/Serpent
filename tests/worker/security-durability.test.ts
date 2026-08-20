@@ -115,6 +115,22 @@ describe('database and path hardening', () => {
     database.close();
   });
 
+  it('uses rollback journaling for confirmed network and unknown storage paths', () => {
+    const root = temporaryRoot();
+    for (const storageKind of ['network', 'unknown'] as const) {
+      const database = openConfiguredDatabase(
+        path.join(root, `${storageKind}.db`),
+        5_000,
+        { storageKind },
+      );
+      expect(database.pragma('journal_mode', { simple: true })).toBe('delete');
+      expect(database.pragma('synchronous', { simple: true })).toBe(2);
+      expect(database.pragma('foreign_keys', { simple: true })).toBe(1);
+      expect(database.pragma('busy_timeout', { simple: true })).toBe(5_000);
+      database.close();
+    }
+  });
+
   it('rejects an Assets symlink and a symlinked destination ancestor', () => {
     const root = temporaryRoot();
     const external = path.join(root, 'external');
