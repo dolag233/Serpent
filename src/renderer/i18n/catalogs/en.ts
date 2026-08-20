@@ -1462,6 +1462,7 @@ export const en = {
     retrying: "Retrying…",
     retryGenerate: "Retry generation",
     actualSize: "Actual size",
+    copyAsset: "Copy asset",
     fitWindow: "Fit",
     pbrBaseColorTitle: "PBR channel: Base Color",
     pbrNormalTitle: "PBR channel: Normal",

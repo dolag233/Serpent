@@ -59,6 +59,7 @@ import { createProxyFallbackRunGuard } from "./proxy-fallback-run";
 import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
+import { isMacPlatform } from "./commands/command-types";
 
 interface AssetPreviewModalProps {
   api: SerpentLibraryApi;
@@ -690,6 +691,7 @@ export const AssetPreviewModal = forwardRef<
     asset.mediaType === "image" ||
     asset.mediaType === "video";
   const fitShortcut = viewerTransformable ? "Numpad ." : undefined;
+  const copyShortcut = isMacPlatform(navigator.userAgent) ? "⌘C" : "Ctrl+C";
 
   const rotateViewer = useCallback(() => {
     setDisplayTransform((current) =>
@@ -1096,10 +1098,12 @@ export const AssetPreviewModal = forwardRef<
         </div>
         {viewerContextMenu && viewerTransformable ? (
           <ViewerContextMenu
+            copyShortcut={copyShortcut}
             flipHorizontal={displayTransform.flipHorizontal}
             flipVertical={displayTransform.flipVertical}
             fitShortcut={fitShortcut}
             isFullscreen={isFullscreen}
+            onCopy={() => void copyViewerAsset()}
             onClose={closeViewerContextMenu}
             onFit={fitViewer}
             onFlipHorizontal={flipViewerHorizontal}

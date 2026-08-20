@@ -18,10 +18,12 @@ export interface ViewerContextMenuPosition {
 }
 
 interface ViewerContextMenuProps {
+  copyShortcut: string;
   flipHorizontal: boolean;
   flipVertical: boolean;
   fitShortcut?: string;
   isFullscreen: boolean;
+  onCopy: () => void;
   onClose: () => void;
   onFit: () => void;
   onFlipHorizontal: () => void;
@@ -37,10 +39,12 @@ interface ViewerContextMenuProps {
  * steals the asset selection menu's descriptor or its asynchronous pickers.
  */
 export function ViewerContextMenu({
+  copyShortcut,
   flipHorizontal,
   flipVertical,
   fitShortcut,
   isFullscreen,
+  onCopy,
   onClose,
   onFit,
   onFlipHorizontal,
@@ -188,6 +192,20 @@ export function ViewerContextMenu({
         </button>
       </div>
       <div className="context-menu-section" role="group">
+        <button
+          className="context-menu-item"
+          onClick={action(onCopy)}
+          tabIndex={VIEWER_CHROME_TAB_INDEX}
+          type="button"
+        >
+          <span className="context-menu-item-icon">
+            <Icon name="copy" size={14} />
+          </span>
+          <span className="context-menu-item-label">
+            {t("preview.copyAsset")}
+          </span>
+          <span className="context-menu-item-shortcut">{copyShortcut}</span>
+        </button>
         <button
           className="context-menu-item"
           onClick={action(onFit)}

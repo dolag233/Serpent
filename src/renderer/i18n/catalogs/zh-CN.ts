@@ -1445,6 +1445,7 @@ export const zhCN = {
     retrying: "正在重试…",
     retryGenerate: "重试生成",
     actualSize: "实际大小",
+    copyAsset: "复制资产",
     fitWindow: "适应",
     pbrBaseColorTitle: "PBR 通道：基础色",
     pbrNormalTitle: "PBR 通道：法线",

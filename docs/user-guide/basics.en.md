@@ -43,10 +43,6 @@ The current product registry includes:
 
 Serpent copies managed files into the library and assigns a stable asset ID. Name or content duplicates open a conflict dialog. Thumbnails, technical metadata, and eligible AI analysis are generated in the background, so you can keep browsing immediately.
 
-#### Clipboard import (paste)
-
-Press `Ctrl+V` (macOS `⌘V`) or use **Paste** in the **Edit** menu to import from the clipboard: an image on the clipboard becomes a new asset, and copied file paths import those files (copy paths in Finder/Explorer and paste to import). Clipboard contents interoperate through the operating-system formats (NSFilenames on macOS and CF_HDROP on Windows).
-
 #### Sequence-frame import
 
 When you drop or paste a set of numbered frames (for example `00001.png`…`00150.png`), Serpent recognizes them as a sequence and opens a sequence import dialog where you can set the FPS. The frames import as one playable asset you can play in the viewer, and you can dissolve it back into individual frames.
