@@ -15,10 +15,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import {
-  closeLibraryViaSwitcher,
-  resolveElectronExecutablePath,
-} from './electron-test-helpers';
+import { closeLibraryViaSwitcher, resolveElectronExecutablePath, resolveSessionLogPath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -225,7 +222,7 @@ test('shows a specific safe import reason and persists the complete Worker error
     );
 
     const logsPath = await application.evaluate(({ app }) => app.getPath('logs'));
-    const logPath = path.join(logsPath, 'serpent.log');
+    const logPath = resolveSessionLogPath(logsPath);
     await expect.poll(() => readFileSync(logPath, 'utf8')).toContain('SYMBOLIC_LINK_NOT_ALLOWED');
     expect(readFileSync(logPath, 'utf8')).toContain('worker.request');
   } finally {
@@ -259,7 +256,7 @@ test('maps a real filesystem permission failure and logs its complete cause chai
 
   try {
     const logsPath = await application.evaluate(({ app }) => app.getPath('logs'));
-    const logPath = path.join(logsPath, 'serpent.log');
+    const logPath = resolveSessionLogPath(logsPath);
     const logOffset = existsSync(logPath) ? readFileSync(logPath).length : 0;
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();

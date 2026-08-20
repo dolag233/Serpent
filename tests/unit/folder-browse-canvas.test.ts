@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveBrowseCanvasBodyLayout } from "../../src/renderer/folder-browse-canvas";
+import {
+  resolveBrowseCanvasBodyLayout,
+  shouldShowFolderBrowseCards,
+} from "../../src/renderer/folder-browse-canvas";
 
 describe("resolveBrowseCanvasBodyLayout (CANVAS-022 / Serpent-an1)", () => {
   it("returns empty when there are no folders and no assets", () => {
@@ -29,5 +32,25 @@ describe("resolveBrowseCanvasBodyLayout (CANVAS-022 / Serpent-an1)", () => {
       showFolders: true,
       showAssetGrid: true,
     });
+  });
+});
+
+describe("shouldShowFolderBrowseCards (Serpent-7a9e89)", () => {
+  it("hides child folder cards when recursive browse is on for a folder scope", () => {
+    expect(shouldShowFolderBrowseCards("folder-1", true)).toBe(false);
+  });
+
+  it("keeps folder cards when recursive browse is off", () => {
+    expect(shouldShowFolderBrowseCards("folder-1", false)).toBe(true);
+  });
+
+  it("never hides folder cards for all/root scopes", () => {
+    expect(shouldShowFolderBrowseCards("all", true)).toBe(true);
+    expect(shouldShowFolderBrowseCards("root", true)).toBe(true);
+  });
+
+  it("is scoped to a concrete folder id only (recursive is never set outside it)", () => {
+    expect(shouldShowFolderBrowseCards("all", false)).toBe(true);
+    expect(shouldShowFolderBrowseCards("root", false)).toBe(true);
   });
 });

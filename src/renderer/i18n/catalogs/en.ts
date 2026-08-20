@@ -914,7 +914,7 @@ export const en = {
     },
     appLog: {
       title: "Diagnostics",
-      subtitle: "Recent app, background-job, and AI failures. Full details are also saved to serpent.log.",
+      subtitle: "Recent app, background-job, and AI failures. Full details are saved to the current session log (one per launch).",
       closeAria: "Close diagnostics",
       filterLabel: "Filter by automation execution or log ID",
       filterPlaceholder: "Execution or log ID",
@@ -1495,6 +1495,7 @@ export const en = {
     sequenceFrame: "Sequence frame",
     cannotOpen: "Could not open preview",
     cannotOpenNoResponse: "Could not open preview: desktop service did not respond. Retry or restart the app.",
+    copyFailed: "Failed to copy asset",
     proxyFailed: "Could not generate a compatible proxy",
     retryFailed: "Retry failed",
     retryFailedNoResponse: "Retry failed: desktop service did not respond. Retry or restart the app.",

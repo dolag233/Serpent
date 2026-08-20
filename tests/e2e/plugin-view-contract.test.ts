@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Frame } from '@playwright/test';
 
-import { resolveElectronExecutablePath, electronLaunchEnv } from './electron-test-helpers';
+import { resolveElectronExecutablePath, resolveSessionLogPath, electronLaunchEnv } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -127,7 +127,9 @@ test('plugin view contract: mount, theme-without-reload, reload, unmount, librar
     } catch (error) {
       // Dump the main-process log — the install path logs every rejection.
       const { readFileSync, existsSync } = await import('node:fs');
-      const logPath = path.join(temporaryRoot, 'user-data', 'logs', 'serpent.log');
+      const logPath = resolveSessionLogPath(
+        path.join(temporaryRoot, 'user-data', 'logs'),
+      );
       if (existsSync(logPath)) {
         console.log(`INSTALL-LOG:\n${readFileSync(logPath, 'utf8')}`);
       }

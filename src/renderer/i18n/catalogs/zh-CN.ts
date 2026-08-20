@@ -901,7 +901,7 @@ export const zhCN = {
     },
     appLog: {
       title: "诊断日志",
-      subtitle: "显示应用、后台任务和 AI 分析的近期失败；完整信息也会保存到 serpent.log。",
+      subtitle: "显示应用、后台任务和 AI 分析的近期失败；完整信息保存到当前会话日志（每次启动一份）。",
       closeAria: "关闭诊断日志",
       filterLabel: "按自动化执行或日志编号筛选",
       filterPlaceholder: "执行编号或日志编号",
@@ -1478,6 +1478,7 @@ export const zhCN = {
     sequenceFrame: "序列帧",
     cannotOpen: "无法打开预览",
     cannotOpenNoResponse: "无法打开预览：桌面服务没有响应，请重试或重新启动应用。",
+    copyFailed: "复制资产失败",
     proxyFailed: "无法生成兼容代理",
     retryFailed: "重试失败",
     retryFailedNoResponse: "重试失败：桌面服务没有响应，请重试或重新启动应用。",

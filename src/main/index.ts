@@ -245,6 +245,7 @@ import { LibraryWorkerClient, WorkerRequestTimeoutError } from "./worker-client"
 import { SyncAutoScheduler, type SyncBindingLike } from "./sync-auto-scheduler";
 import { resolveImageSequenceImportPaths } from "./image-sequence-import";
 import { AppLogger } from "./app-logger";
+import { chooseUniqueSessionLogPath, pruneSessionLogs } from "./session-log";
 import {
   logRendererChildProcessGone,
   logRendererConsoleMessage,
@@ -5550,8 +5551,15 @@ async function startApplication(): Promise<void> {
   } else {
     app.setAppLogsPath();
   }
-  appLogPath = path.join(app.getPath("logs"), "serpent.log");
+  appLogPath = chooseUniqueSessionLogPath(app.getPath("logs"), new Date());
   logger = new AppLogger(appLogPath);
+  // Serpent-wgmy: 会话日志最多保留最近 100 份，启动时清理最旧；
+  // 清理失败不得阻断启动。
+  try {
+    pruneSessionLogs(app.getPath("logs"));
+  } catch (error) {
+    logger?.error("session-log.prune", error);
+  }
   criticalConfirmationWindowManager = new CriticalConfirmationWindowManager({
     getParentWindow: () => mainWindow ?? null,
     createWindow: (options) => new BrowserWindow(options),
@@ -7231,7 +7239,7 @@ async function startApplication(): Promise<void> {
             redactPaths: true,
             automationCorrelationId: request.automationCorrelationId,
           }) ?? [],
-          fileName: "serpent.log",
+          fileName: path.basename(appLogPath),
         };
       } catch (error) {
         logger?.error("ipc.read-app-log", error, { code: "read_failure" });

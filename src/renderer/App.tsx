@@ -88,6 +88,7 @@ import {
 import {
   resolveBrowseCanvasBodyLayout,
   resolveFolderBrowseParentId,
+  shouldShowFolderBrowseCards,
 } from "./folder-browse-canvas";
 import { collectFolderCoverCandidateAssetIds } from "./folder-cover-refresh";
 import {
@@ -2249,6 +2250,13 @@ function AppInner() {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
+      // Serpent-7a9e89: 「递归显示子文件夹内容」的浏览语义是把子级资产
+      // 摊平进画布，子文件夹卡片会与摊平结果冲突——递归开启时不再
+      // 查询/展示子文件夹卡片（关闭后由 mutable 依赖恢复原行为）。
+      if (!shouldShowFolderBrowseCards(assetScope, folderRecursive)) {
+        if (!cancelled) setFolderBrowseEntries([]);
+        return;
+      }
       const result = await api.listFolderBrowseEntries({
         libraryId: library.libraryId,
         parentFolderId,
@@ -2272,6 +2280,7 @@ function AppInner() {
     linkedFolders,
     searchValue,
     showIgnoredItems,
+    folderRecursive,
     // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
     // the row re-fetches and the generated cover appears without navigation.
     folderBrowseRefreshToken,

@@ -56,6 +56,7 @@ import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
 import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
 import { createProxyFallbackRunGuard } from "./proxy-fallback-run";
+import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
 import { ShellSurface, ViewerSurface } from "./ui/surfaces";
 import { ModelViewerSurface } from "./3d-viewer/viewer-surface";
 
@@ -737,6 +738,42 @@ export const AssetPreviewModal = forwardRef<
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleTextSave, isTextViewer]);
+
+  const copyViewerAsset = useCallback(async () => {
+    // Serpent-f8e175: 与右键「复制」一致，把当前资产源文件复制到剪贴板。
+    const result = await api.copyAssetFiles({
+      libraryId,
+      assetIds: [asset.assetId],
+    });
+    if (!result.ok) {
+      setError(requestFailureMessage(t("preview.copyFailed"), result.error, t));
+    }
+    // 成功静默：不打断查看器浏览（复制动作本身即反馈）。
+  }, [api, libraryId, asset.assetId, setError, t]);
+
+  useEffect(() => {
+    // Serpent-f8e175: 图片/视频/PDF/音频等非文本查看器聚焦时 Ctrl/Cmd+C
+    // 复制当前资产；文本查看器让渡给原生（复制选中文本），输入框/可编辑
+    // 元素聚焦时不抢键（判定见 shouldCopyAssetOnShortcut）。
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        !shouldCopyAssetOnShortcut({
+          isTextViewer,
+          metaOrCtrl: event.metaKey || event.ctrlKey,
+          key: event.key,
+          targetTag: target?.tagName ?? null,
+          contentEditable: Boolean(target?.isContentEditable),
+        })
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void copyViewerAsset();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isTextViewer, copyViewerAsset]);
 
   useEffect(() => {
     setViewerContextMenu(null);

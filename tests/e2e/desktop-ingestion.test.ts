@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 
-import { resolveElectronExecutablePath } from './electron-test-helpers';
+import { resolveElectronExecutablePath, resolveSessionLogPath } from './electron-test-helpers';
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -138,7 +138,7 @@ test('returns specific safe desktop-ingestion errors and records their diagnosti
     expect(invalidDrop).toMatchObject({ ok: false, error: { code: 'INVALID_DROP_SELECTION' } });
 
     const logsPath = await application.evaluate(({ app }) => app.getPath('logs'));
-    const logPath = path.join(logsPath, 'serpent.log');
+    const logPath = resolveSessionLogPath(logsPath);
     await expect.poll(() => readFileSync(logPath, 'utf8')).toContain('desktop-ingestion.clipboard-stage');
     await expect.poll(() => readFileSync(logPath, 'utf8')).toContain('desktop-ingestion.drop-file-handle');
   } finally {
