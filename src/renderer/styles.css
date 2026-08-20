@@ -460,30 +460,6 @@ summary:focus-visible {
   z-index: calc(var(--ui-layer-shell) + 1);
 }
 
-/* Serpent-033e: read-only degrade banner (library written by a newer build). */
-.library-readonly-banner {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text);
-  background: var(--notice-info-bg, var(--pane-raised));
-  border-bottom: 1px solid var(--divider-soft);
-}
-
-.library-recovery-report-note {
-  color: var(--secondary);
-}
-
-.library-recovery-report-button {
-  margin-left: auto;
-  padding: 3px 8px;
-  font-size: 11px;
-}
-
 .app-toolbar {
   /* Above workspace content so library/settings menus are never covered by
      the asset viewer (REQ-VIEW-004 stacking isolation). */
@@ -5506,6 +5482,24 @@ body.serpent-modal-open .app-shell {
   position: absolute;
   top: 12px;
   left: 12px;
+}
+
+/* Serpent-e56a1f: 代理生成中/加载中的状态提示（非警告样式）。 */
+.preview-proxy-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 5px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--pane) 92%, transparent);
+  color: var(--secondary);
+  font-size: 12px;
+  transform: translateX(-50%);
 }
 
 .create-dialog {

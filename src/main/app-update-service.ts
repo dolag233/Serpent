@@ -426,15 +426,35 @@ function safeInstallerEntryName(entryName: string): boolean {
 async function extractWindowsInstaller(
   archivePath: string,
   tempDirectory: string,
-): Promise<string> {
+): Promise<{ installerPath: string; outputDirectory: string }> {
   const archive = new AdmZip(archivePath);
   const entry = archive.getEntries().find((candidate) =>
     !candidate.isDirectory && safeInstallerEntryName(candidate.entryName));
   if (entry === undefined) throw new Error('The Windows update archive has no SerpentSetup.exe.');
   const outputDirectory = await mkdtemp(path.join(tempDirectory, 'serpent-installer-'));
-  const installerPath = path.join(outputDirectory, 'SerpentSetup.exe');
-  await writeFile(installerPath, entry.getData(), { mode: 0o700, flag: 'wx' });
-  return installerPath;
+  try {
+    const installerPath = path.join(outputDirectory, 'SerpentSetup.exe');
+    await writeFile(installerPath, entry.getData(), { mode: 0o700, flag: 'wx' });
+    return { installerPath, outputDirectory };
+  } catch (error) {
+    await rm(outputDirectory, {
+      force: true,
+      recursive: true,
+      maxRetries: 3,
+      retryDelay: 100,
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function removeUpdateArtifact(filePath: string | undefined): Promise<void> {
+  if (filePath === undefined) return;
+  await rm(filePath, {
+    force: true,
+    recursive: true,
+    maxRetries: 5,
+    retryDelay: 100,
+  });
 }
 
 function validateDownloadUrl(input: string): void {
@@ -562,6 +582,8 @@ export class AppUpdateService {
     this.#downloadAbort = new AbortController();
     const { signal } = this.#downloadAbort;
     let downloadPath: string | undefined;
+    let extractedInstallerDirectory: string | undefined;
+    let keepDownloadedUpdate = false;
     try {
       const cached = this.#cachedUpdate;
       const checked = cached === undefined ? await this.checkForUpdates() : undefined;
@@ -647,6 +669,10 @@ export class AppUpdateService {
       }
 
       if (update.target.distribution === 'portable') {
+        // A portable update is a user-facing download rather than an
+        // in-process install. Keep the archive so the user can launch or
+        // copy it after the update flow completes.
+        keepDownloadedUpdate = true;
         try {
           this.#options.showItemInFolder?.(downloadPath);
         } catch (error) {
@@ -673,7 +699,9 @@ export class AppUpdateService {
           downloadedBytes: totalBytes ?? asset.size,
           totalBytes,
         });
-        launchPath = await extractWindowsInstaller(downloadPath, this.#options.tempDirectory);
+        const extracted = await extractWindowsInstaller(downloadPath, this.#options.tempDirectory);
+        launchPath = extracted.installerPath;
+        extractedInstallerDirectory = extracted.outputDirectory;
       }
       emitDownloadProgress(this.#options.onDownloadProgress, {
         phase: 'launching',
@@ -705,9 +733,6 @@ export class AppUpdateService {
         distribution: 'installed',
       };
     } catch (error) {
-      if (downloadPath !== undefined) {
-        await rm(downloadPath, { force: true }).catch(() => undefined);
-      }
       if (isAbortError(error)) {
         this.#options.logger?.info('app-update.download', 'Update download cancelled.');
         return installResultError('cancelled');
@@ -715,6 +740,22 @@ export class AppUpdateService {
       this.#options.logger?.error('app-update.install', error, { code: 'download-failed' });
       return installResultError('download-failed');
     } finally {
+      if (!keepDownloadedUpdate) {
+        try {
+          await removeUpdateArtifact(downloadPath);
+        } catch (error) {
+          this.#options.logger?.error('app-update.cleanup', error, {
+            artifact: downloadPath,
+          });
+        }
+      }
+      try {
+        await removeUpdateArtifact(extractedInstallerDirectory);
+      } catch (error) {
+        this.#options.logger?.error('app-update.cleanup', error, {
+          artifact: extractedInstallerDirectory,
+        });
+      }
       this.#downloadAbort = undefined;
       this.#busy = false;
     }

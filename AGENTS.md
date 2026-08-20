@@ -90,6 +90,10 @@ npm run ticket -- <命令>
 node scripts/ticket.mjs <命令>
 ```
 
+> **Windows/PowerShell 注意（2026-08-20 实测）**：`npm run ticket --` 经 npm 透传时
+> 会丢失带值选项（`-p 1`/`-t bug`/`-l "标签"` 静默落到默认值 P2/task）。
+> 请直接使用 `node scripts/ticket.mjs <命令>` 调用，参数才完整生效。
+
 常用命令：
 
 ```bash

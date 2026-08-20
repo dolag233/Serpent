@@ -69,7 +69,10 @@ export function AboutDialog({
   };
   const updateBusy = updateChecking || updateInstalling;
   const showDownloadProgress = updateInstalling;
-  const canCancelDownload = updateInstalling && updateProgress?.phase !== "launching";
+  const canCancelDownload = updateInstalling
+    && (updateProgress === null
+      || updateProgress.phase === "downloading"
+      || updateProgress.phase === "verifying");
   const canInstall = updateCheck?.ok === true
     && updateCheck.status === "available"
     && updateInstall?.ok !== true;

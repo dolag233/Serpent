@@ -109,6 +109,18 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(edit?.items?.find((item) => item.id === "edit.clear-selection")?.disabled).toBe(true);
   });
 
+  it("replaces the version display with a check-for-updates item (Serpent-0fe8b4)", () => {
+    const { actions, sections } = build();
+    const about = sections.find((section) => section.id === "about");
+    expect(about?.items?.find((item) => item.id === "about.version")).toBeUndefined();
+    const checkUpdate = about?.items?.find(
+      (item) => item.id === "about.check-update",
+    );
+    expect(checkUpdate?.label).toBe("检查更新");
+    checkUpdate?.onSelect?.();
+    expect(actions.openAbout).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the action callbacks attached to their split menu items", () => {
     const { actions, sections } = build();
     const settings = sections.find((section) => section.id === "settings");

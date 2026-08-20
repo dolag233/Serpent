@@ -96,4 +96,42 @@ describe("AboutDialog update controls", () => {
     expect(html).not.toContain(">停止下载<");
     expect(html).toContain("已下载");
   });
+
+  it("does not offer cancellation after extraction has started", () => {
+    const html = renderToStaticMarkup(
+      withChineseLocale(
+        createElement(AboutDialog, {
+          open: true,
+          version: "0.1.1",
+          onClose: () => undefined,
+          onOpenGitHub: () => undefined,
+          updateCheck: {
+            ok: true,
+            status: "available",
+            currentVersion: "0.1.1",
+            latestVersion: "0.1.3",
+            distribution: "installed",
+            assetKind: "installer",
+            assetName: "Serpent-win-x86-64-0.1.3-setup.zip",
+            assetSize: 2048,
+            releaseNotes: "",
+          },
+          updateInstall: null,
+          updateChecking: false,
+          updateInstalling: true,
+          updateProgress: {
+            phase: "extracting",
+            downloadedBytes: 2048,
+            totalBytes: 2048,
+          },
+          onCheckForUpdates: () => undefined,
+          onDownloadAndInstall: () => undefined,
+          onCancelDownload: () => undefined,
+        }),
+      ),
+    );
+
+    expect(html).not.toContain('data-hover-tip="停止下载"');
+    expect(html).not.toContain('about-dialog-update-stop');
+  });
 });

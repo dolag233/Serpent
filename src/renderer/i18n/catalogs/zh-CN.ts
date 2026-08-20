@@ -84,7 +84,7 @@ export const zhCN = {
     libraryNamed: "资源库：{name}",
     syncConnected: "已连接同步服务器，自动同步开启",
     syncDisconnected: "已绑定同步服务器，自动同步未开启",
-    networkStorageBanner:
+    networkStorageNotice:
       "该资源库位于网络共享（NAS/SMB）上。Serpent 会在此使用回滚日志；文件锁和断线恢复取决于 NAS。请保持同一时间只有一个 Serpent 实例写入，并做好备份。",
     readOnlyBanner: "该资源库由更新版本的 Serpent 创建，当前为只读模式。升级 Serpent 后可继续编辑。",
     readOnlyBannerMigrationStuck: "该资源库多次尝试迁移均失败，现为只读模式。请保留当前版本的 Serpent，待新版可用后再升级。",
@@ -148,6 +148,7 @@ export const zhCN = {
     mainMenuVisitGitHub: "访问 GitHub 仓库",
     mainMenuOpenSource: "开源组件与许可",
     mainMenuVersion: "当前版本 {version}",
+    mainMenuCheckUpdate: "检查更新",
     windowControls: "窗口控制",
     windowMinimize: "最小化",
     windowMaximize: "最大化",
@@ -915,6 +916,9 @@ export const zhCN = {
       empty: "暂时还没有诊断记录。",
       details: "技术详情"
     },
+    libraryRecovery: {
+      title: "资源库恢复"
+    },
     about: {
       productName: "Serpent",
       tagline: "面向数字资产创作者的跨平台资产管理工具",
@@ -1512,6 +1516,8 @@ export const zhCN = {
     cannotOpenNoResponse: "无法打开预览：桌面服务没有响应，请重试或重新启动应用。",
     copyFailed: "复制资产失败",
     proxyFailed: "无法生成兼容代理",
+    proxyGenerating: "正在生成代理视频…",
+    proxyLoading: "正在加载代理视频…",
     retryFailed: "重试失败",
     retryFailedNoResponse: "重试失败：桌面服务没有响应，请重试或重新启动应用。",
     requestFailed: "{prefix}：{detail}",

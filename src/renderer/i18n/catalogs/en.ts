@@ -93,7 +93,7 @@ export const en = {
     libraryNamed: "Library: {name}",
     syncConnected: "Connected to sync server, auto-sync on",
     syncDisconnected: "Bound to sync server, auto-sync off",
-    networkStorageBanner:
+    networkStorageNotice:
       "This library is on a network share (NAS/SMB). Serpent uses rollback journaling here; file locking and disconnect recovery depend on the NAS. Keep one Serpent instance writing at a time and maintain backups.",
     readOnlyBanner:
       "This library is read-only because it was created by a newer version of Serpent. Upgrade Serpent to edit it.",
@@ -159,6 +159,7 @@ export const en = {
     mainMenuVisitGitHub: "Visit GitHub repository",
     mainMenuOpenSource: "Open-source components & licenses",
     mainMenuVersion: "Version {version}",
+    mainMenuCheckUpdate: "Check for updates",
     windowControls: "Window controls",
     windowMinimize: "Minimize",
     windowMaximize: "Maximize",
@@ -914,6 +915,9 @@ export const en = {
       revealLog: "Reveal app log",
       viewLog: "View diagnostics"
     },
+    libraryRecovery: {
+      title: "Library recovered"
+    },
     appLog: {
       title: "Diagnostics",
       subtitle: "Recent app, background-job, and AI failures. Full details are saved to the current session log (one per launch).",
@@ -1529,6 +1533,8 @@ export const en = {
     cannotOpenNoResponse: "Could not open preview: desktop service did not respond. Retry or restart the app.",
     copyFailed: "Failed to copy asset",
     proxyFailed: "Could not generate a compatible proxy",
+    proxyGenerating: "Generating proxy video…",
+    proxyLoading: "Loading proxy video…",
     retryFailed: "Retry failed",
     retryFailedNoResponse: "Retry failed: desktop service did not respond. Retry or restart the app.",
     requestFailed: "{prefix}: {detail}",

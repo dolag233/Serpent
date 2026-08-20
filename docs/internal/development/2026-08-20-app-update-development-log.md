@@ -23,6 +23,15 @@
 - `src/renderer/App.tsx`：Windows 自定义主菜单与 macOS 原生菜单统一走 `openAbout`，进入关于页时自动触发更新检查。
 - 发布手册补充资产命名、校验 sidecar 和未来迁移到 Squirrel/NSIS 的边界。
 
+## 2026-08-21 清理修复
+
+首次实现只负责下载、校验并启动安装器，安装版成功或打开失败后仍会留下 Downloads 中的压缩包；Windows 解压失败时也可能留下 `serpent-installer-*` 临时目录。本轮将安装产物生命周期收口：
+
+- 安装版在安装器启动成功、打开失败、校验/下载失败、取消或异常退出后，统一清理下载包；Windows 解压出的临时安装目录也会递归清理，并对短暂的文件占用进行有限重试。
+- Windows 安装器进程可能在 Serpent 退出后仍锁定自身 executable；主进程在启动安装器时额外安排一个 detached `cmd.exe` 清理兜底，等待安装器释放文件后删除临时目录。
+- 便携版下载成功后保留 ZIP，并在下载目录中显示，便于用户手动解压/替换；便携版校验、下载或取消失败仍清理不完整文件。
+- 安装进入解压阶段后不再显示“停止下载”，避免把无法中止的安装启动过程误导成可取消下载。
+
 独立双轴审查后补强：Windows Inno 安装器写入 `.serpent-installed` 标记并保留旧版 `unins*.exe` 兼容识别；校验/下载失败补充 Main 日志上下文；About 页面按网络、资产缺失、校验、下载和打开失败分别给出双语提示。macOS `/Applications` 之外的安装来源仍需显式 `SERPENT_DISTRIBUTION=installed` 或后续构建级 marker，不能宣称已绝对识别。
 
 ## 验证记录
@@ -39,8 +48,7 @@
 - `npm run package`（本轮 UI 收口后的当前 HEAD）：macOS arm64 打包通过；`npm run verify:package` 通过。
 - `SERPENT_E2E_PACKAGED_EXECUTABLE=/Users/dolag/Development/Serpent/out/Serpent-darwin-arm64/Serpent.app/Contents/MacOS/Serpent npm run test:e2e:packaged`：`2 passed / 1 skipped`；Windows 关闭按钮用例因平台跳过。
 - `npm run rebuild:native`：better-sqlite3 重编译完成，FTS5 probe 通过。
-- `npx vitest run --config vitest.config.ts tests/unit/app-update-service.test.ts`：`1 file / 6 passed`。
-- `npx vitest run --config vitest.config.ts tests/unit/about-dialog.test.ts tests/unit/app-update-service.test.ts`：`2 files / 7 passed`。
+- `npx vitest run --config vitest.config.ts tests/unit/app-update-service.test.ts tests/unit/about-dialog.test.ts`：`2 files / 16 passed`，覆盖便携版保留、安装版成功清理、打开失败、Windows 无效安装包、取消清理以及解压后隐藏取消按钮。
 - `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts`：`1 passed`；覆盖 macOS 原生菜单进入 About、进入页面后的开发态自动检查、版本行刷新按钮及 `data-hover-tip="检查更新"`。
 - 定向 ESLint：0 errors；保留既有 `src/renderer/App.tsx:7749` hook dependency warning。
 - `git diff --check`：通过。
