@@ -24,6 +24,13 @@ export function useAssetCardHoverPreview(input: {
   clearHoveredAssetId: (assetId: string) => void;
   activePreviewAssetId: string | null;
   activeResolution: PreviewResolution | null;
+  /**
+   * Live video failed to play in-place; request a WebM proxy fallback
+   * (Serpent-c8a1a3). Same rule as the viewer: a proxy is only created after
+   * a real source-playback failure. Once requested, the asset is not retried
+   * this session; the next hover picks up a ready proxy via the normal path.
+   */
+  retryLiveVideoProxyFallback: (assetId: string) => void;
 } {
   const {
     api,
@@ -43,6 +50,7 @@ export function useAssetCardHoverPreview(input: {
 
   const requestSeqRef = useRef(0);
   const debounceTimerRef = useRef(0);
+  const hoverProxyFallbackRef = useRef<string | null>(null);
 
   const hoveredAssetId =
     hoveredState.libraryId === libraryId ? hoveredState.assetId : null;
@@ -145,11 +153,47 @@ export function useAssetCardHoverPreview(input: {
     window.clearTimeout(debounceTimerRef.current);
   }, [libraryId]);
 
+  const retryLiveVideoProxyFallback = useCallback(
+    async (assetId: string) => {
+      if (!api || !libraryId) return;
+      if (hoverProxyFallbackRef.current === assetId) return;
+      hoverProxyFallbackRef.current = assetId;
+      const sequence = ++requestSeqRef.current;
+      try {
+        // 与查看器一致：源播放真实失败才生成代理；hover 静默降级，不弹警告。
+        const retried = await api.retryArtifact({
+          libraryId,
+          assetId,
+          kind: "webm_proxy",
+        });
+        if (sequence !== requestSeqRef.current) return;
+        if (!retried.ok) return;
+        const result = await api.requestPreview({
+          libraryId,
+          assetId,
+          mode: "client",
+          intent: "proxy-fallback",
+        });
+        if (sequence !== requestSeqRef.current) return;
+        if (!result.ok) return;
+        setResolutionsByAssetId((previous) => {
+          const next = new Map(previous);
+          next.set(resolutionKey(libraryId, assetId), result.value);
+          return next;
+        });
+      } catch {
+        // 保持封面；下次 hover 走正常路径重试。
+      }
+    },
+    [api, libraryId],
+  );
+
   return {
     hoveredAssetId,
     setHoveredAssetId,
     clearHoveredAssetId,
     activePreviewAssetId,
     activeResolution,
+    retryLiveVideoProxyFallback,
   };
 }

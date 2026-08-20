@@ -20409,11 +20409,25 @@ export class LibraryService {
       // Chromium can decode the file, so the renderer mounts the original and
       // requests a proxy only after the media element reports a real codec or
       // decode failure. This keeps large imports from encoding every video.
-      // Hover is the exception (Serpent-c8a1a3): card hover previews are
-      // proxy-first — an undecodable source would just hang the card. Hover
-      // falls through to the derivative path below and plays the WebM proxy
-      // when one exists, otherwise the static cover stays.
-      if (mediaType === 'video' && intent !== 'proxy-fallback' && intent !== 'hover' && asset.current_revision_id) {
+      // Hover (Serpent-c8a1a3): a ready WebM proxy wins so undecodable
+      // containers (e.g. some .mov) can still preview in-place; otherwise the
+      // original source stays, which keeps browser-decodable formats (mp4)
+      // playing their original file on hover as before.
+      if (mediaType === 'video' && intent !== 'proxy-fallback' && asset.current_revision_id) {
+        if (intent === 'hover') {
+          const hoverProxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
+          if (hoverProxy?.status === 'ready') {
+            return {
+              mediaType,
+              status: 'ready',
+              kind,
+              artifactId: hoverProxy.artifactId,
+              mimeType: hoverProxy.mimeType,
+              playbackMode: 'proxy',
+              ...(posterArtifactId ? { posterArtifactId } : {}),
+            };
+          }
+        }
         const extracted =
           this.getExtractedMetadata({ libraryId, assetId });
         const sourceCodecs =

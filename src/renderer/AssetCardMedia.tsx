@@ -35,6 +35,12 @@ interface AssetCardMediaProps {
   mediaVolume?: number;
   /** Muted flag carried over from the viewer volume preference. */
   mediaMuted?: boolean;
+  /**
+   * Live video failed to play in-place (Serpent-c8a1a3). The card calls this
+   * so the hover controller can request a WebM proxy fallback; the failed
+   * source stays mounted with its poster until the next hover resolves.
+   */
+  onLiveVideoError?: () => void;
 }
 
 /**
@@ -55,6 +61,7 @@ export function AssetCardMedia({
   hoverVideoSound = false,
   mediaVolume = 1,
   mediaMuted = false,
+  onLiveVideoError,
 }: AssetCardMediaProps) {
   const isSequence =
     Boolean(sequence) && (sequence?.frameCount ?? 0) >= 3 && Boolean(libraryId);
@@ -152,6 +159,7 @@ export function AssetCardMedia({
             hoverVideoSound,
             mediaMuted,
           })}
+          onError={() => onLiveVideoError?.()}
           playsInline
           poster={preview?.posterUrl}
           preload="metadata"

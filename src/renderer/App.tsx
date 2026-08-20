@@ -2107,6 +2107,7 @@ function AppInner() {
     clearHoveredAssetId,
     activePreviewAssetId,
     activeResolution,
+    retryLiveVideoProxyFallback,
   } = useAssetCardHoverPreview({
     api,
     libraryId: library?.libraryId,
@@ -10204,6 +10205,9 @@ function AppInner() {
                                   libraryId={library.libraryId}
                                   mediaMuted={viewerVolumeMuted}
                                   mediaVolume={viewerVolume}
+                                  onLiveVideoError={() =>
+                                    retryLiveVideoProxyFallback(asset.assetId)
+                                  }
                                   preview={
                                     cardActive ? activeResolution : null
                                   }
