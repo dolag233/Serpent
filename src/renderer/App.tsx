@@ -1105,6 +1105,7 @@ function AppInner() {
   const appUpdateApi = (window as RendererWindow).serpent?.appUpdate;
   const checkForAppUpdates = useCallback(async (): Promise<void> => {
     setAppUpdateChecking(true);
+    setAppUpdateCheck(null);
     setAppUpdateInstall(null);
     try {
       const result = appUpdateApi === undefined
@@ -1132,6 +1133,11 @@ function AppInner() {
       setAppUpdateInstalling(false);
     }
   }, [appUpdateApi]);
+
+  const openAbout = useCallback(() => {
+    setAboutOpen(true);
+    void checkForAppUpdates();
+  }, [checkForAppUpdates]);
 
   async function refreshAppLog(automationCorrelationId = appLogAutomationCorrelationId): Promise<void> {
     const bridge = (window as RendererWindow).serpent?.shell;
@@ -8748,7 +8754,7 @@ function AppInner() {
       },
       openBackgroundJobs: () => setMediaJobsOpen(true),
       openAppLog,
-      openAbout: () => setAboutOpen(true),
+      openAbout,
       openGitHub: () => {
         void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
       },

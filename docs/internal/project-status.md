@@ -5,7 +5,7 @@
 
 - **2026-08-17 用户验收**：EXTLIB-006 / `Serpent-qn6k` 通过；PERF-004（占位布局 + 去扫光）通过，占位文件名中间省略跟进 `Serpent-n485`；PERF-005 / Eagle 导入仍巨慢，不通过。新开 `Serpent-onch`（插桩热区，阻塞再优化 `7tjg`）、`Serpent-tz35`（有后台处理时查看器必须优先当前操作）。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
 
-- **2026-08-20 `Serpent-a3415e` 自动更新**：已核对公开 GitHub Release `v0.1.2` 的 macOS DMG/portable ZIP、Windows setup/portable ZIP 及 SHA-256 sidecar；当前 Forge ZIP + Inno Setup 不满足 Electron 原生 Squirrel/NSIS updater 协议。本次已实现 Main-owned GitHub Release 检查、资产校验、安装版打开安装器、便携版下载提示，以及「帮助 → 关于 Serpent」入口。更新服务单测 6 passed；当前 macOS arm64 packaged 启动 E2E 2 passed，Windows、真实更新/安装/退出重启旅程待人类验收。见 [研究记录](research/2026-08-20-electron-forge-github-release-auto-update.md) / [开发日志](development/2026-08-20-app-update-development-log.md)。
+- **2026-08-20 `Serpent-a3415e` 自动更新**：已核对公开 GitHub Release `v0.1.2` 的 macOS DMG/portable ZIP、Windows setup/portable ZIP 及 SHA-256 sidecar；当前 Forge ZIP + Inno Setup 不满足 Electron 原生 Squirrel/NSIS updater 协议。本次已实现 Main-owned GitHub Release 检查、资产校验、安装版打开安装器、便携版下载提示，以及「帮助 → 关于 Serpent」入口；本轮进一步将更新控件收紧到版本行（刷新/下载图标），并在进入关于页时自动检查。更新服务单测 6 passed；macOS 开发态关于入口 E2E 1 passed，当前 macOS arm64 packaged 启动 E2E 2 passed，Windows、真实更新/安装/退出重启旅程待人类验收。见 [研究记录](research/2026-08-20-electron-forge-github-release-auto-update.md) / [开发日志](development/2026-08-20-app-update-development-log.md)。
 
 - **2026-08-17 `Serpent-qn6k`**：Eagle 名称面板去掉「下一步选择的是父文件夹…不能选磁盘根」说明。创建/打开外部库允许把新库建在磁盘根下（如 `E:\名称`）；没有写权限才报权限不足。把整个磁盘当导入来源仍然禁止。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
 

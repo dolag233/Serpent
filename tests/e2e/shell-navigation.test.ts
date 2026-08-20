@@ -142,10 +142,32 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
       await settingsButton.click();
       await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
       await window.getByRole("menuitem", { name: "关于 Serpent", exact: true }).click();
-      await expect(window.getByRole("dialog", { name: "Serpent" })).toBeVisible();
-      await expect(window.getByText("版本 0.1.0", { exact: true })).toBeVisible();
+      const aboutDialog = window.getByRole("dialog", { name: "Serpent" });
+      await expect(aboutDialog).toBeVisible();
+      await expect(window.getByText("版本 0.1.2", { exact: true })).toBeVisible();
+      const refreshButton = aboutDialog.getByRole("button", { name: "检查更新" });
+      await expect(refreshButton).toBeVisible();
+      await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");
+      await refreshButton.hover();
+      await expect(window.locator(".hover-tip")).toHaveText("检查更新");
+      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toBeVisible();
       await window.keyboard.press("Escape");
     } else {
+      await application.evaluate(({ BrowserWindow, Menu }) => {
+        const item = Menu.getApplicationMenu()?.getMenuItemById("about.serpent");
+        if (!item?.click) throw new Error("The native About Serpent menu item is unavailable.");
+        item.click(item, BrowserWindow.getFocusedWindow() ?? undefined);
+      });
+      const aboutDialog = window.getByRole("dialog", { name: "Serpent" });
+      await expect(aboutDialog).toBeVisible();
+      const refreshButton = aboutDialog.getByRole("button", { name: "检查更新" });
+      await expect(refreshButton).toBeVisible();
+      await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");
+      await refreshButton.hover();
+      await expect(window.locator(".hover-tip")).toHaveText("检查更新");
+      await expect(aboutDialog.getByText("开发版本不检查更新。", { exact: true })).toBeVisible();
+      await window.keyboard.press("Escape");
+
       await settingsButton.click();
       const settingsDialog = window.getByRole("dialog");
       await expect(settingsDialog).toBeVisible();

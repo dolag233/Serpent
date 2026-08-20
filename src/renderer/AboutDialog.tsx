@@ -49,8 +49,10 @@ export function AboutDialog({
     return t("dialog.about.updateFailed");
   };
   const updateBusy = updateChecking || updateInstalling;
-  const canInstall = updateCheck?.ok === true && updateCheck.status === "available";
-  const updateMessage = (() => {
+  const canInstall = updateCheck?.ok === true
+    && updateCheck.status === "available"
+    && updateInstall?.ok !== true;
+  const updateStatusMessage = (() => {
     if (updateInstalling) return t("dialog.about.updateDownloading");
     if (updateInstall?.ok === true) {
       return updateInstall.action === "portable-downloaded"
@@ -67,7 +69,7 @@ export function AboutDialog({
       return t("dialog.about.updatePlatform");
     }
     if (updateCheck.status === "up-to-date") return t("dialog.about.updateUpToDate");
-    return t("dialog.about.updateAvailable", { version: updateCheck.latestVersion });
+    return "";
   })();
 
   return (
@@ -96,7 +98,38 @@ export function AboutDialog({
           <img alt={t("dialog.about.logoAlt")} src={appIcon} />
           <h2 id="about-dialog-title">{t("dialog.about.productName")}</h2>
           <p>{t("dialog.about.tagline")}</p>
-          <span>{t("dialog.about.version", { version })}</span>
+          <div className="about-dialog-version-row">
+            <span className="about-dialog-version">{t("dialog.about.version", { version })}</span>
+            <button
+              className="about-dialog-version-action"
+              data-checking={updateChecking ? "true" : undefined}
+              disabled={updateBusy}
+              onClick={onCheckForUpdates}
+              type="button"
+              {...iconActionAttrs(t("dialog.about.checkForUpdates"))}
+            >
+              <Icon name="refresh" size={15} />
+            </button>
+          </div>
+          {canInstall && updateCheck.ok && updateCheck.status === "available" ? (
+            <div className="about-dialog-update-available" role="status">
+              <span>{t("dialog.about.updateAvailable", { version: updateCheck.latestVersion })}</span>
+              <button
+                className="about-dialog-version-action about-dialog-download-action"
+                disabled={updateBusy}
+                onClick={onDownloadAndInstall}
+                type="button"
+                {...iconActionAttrs(t("dialog.about.downloadUpdate", { version: updateCheck.latestVersion }))}
+              >
+                <Icon name="download" size={15} />
+              </button>
+            </div>
+          ) : null}
+          {updateStatusMessage ? (
+            <span aria-live="polite" className="about-dialog-update-status">
+              {updateStatusMessage}
+            </span>
+          ) : null}
           <div className="about-dialog-socials">
             <button
               className="about-dialog-social-button"
@@ -111,39 +144,6 @@ export function AboutDialog({
         <div className="about-dialog-copy">
           <p>{t("dialog.about.description")}</p>
           <p className="about-dialog-etymology">{t("dialog.about.etymology")}</p>
-          <section aria-label={t("dialog.about.updateTitle")} className="about-dialog-update">
-            <div className="about-dialog-update-heading">
-              <strong>{t("dialog.about.updateTitle")}</strong>
-              <span aria-live="polite">{updateMessage}</span>
-            </div>
-            {canInstall && updateCheck.ok && updateCheck.status === "available" ? (
-              <p className="about-dialog-update-detail">
-                {t("dialog.about.updateAsset", { asset: updateCheck.assetName })}
-              </p>
-            ) : null}
-            <div className="about-dialog-update-actions">
-              <button
-                className="secondary-button"
-                disabled={updateBusy}
-                onClick={onCheckForUpdates}
-                type="button"
-              >
-                {updateChecking ? t("dialog.about.updateCheckingButton") : t("dialog.about.checkForUpdates")}
-              </button>
-              {canInstall && updateCheck.ok && updateCheck.status === "available" ? (
-                <button
-                  className="primary-button"
-                  disabled={updateBusy}
-                  onClick={onDownloadAndInstall}
-                  type="button"
-                >
-                  {updateCheck.distribution === "portable"
-                    ? t("dialog.about.downloadPortableUpdate")
-                    : t("dialog.about.installUpdate")}
-                </button>
-              ) : null}
-            </div>
-          </section>
         </div>
       </div>
     </div>

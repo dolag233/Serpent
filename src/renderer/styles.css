@@ -8585,11 +8585,84 @@ select.ai-config-input.ai-config-languages {
   font-size: 12px;
 }
 
-.about-dialog-brand span {
+.about-dialog-version-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-top: 3px;
+}
+
+.about-dialog-version {
   color: var(--accent);
   font-size: 12px;
   font-weight: 600;
+}
+
+.about-dialog-version-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--divider-soft));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 56%, var(--raised-2));
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease,
+    transform 140ms ease;
+}
+
+.about-dialog-version-action:hover:not(:disabled),
+.about-dialog-version-action:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--divider));
+  background: var(--accent-soft);
+  color: var(--text);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.about-dialog-version-action:disabled {
+  border-color: var(--divider-soft);
+  background: var(--raised-2);
+  color: var(--tertiary);
+  cursor: default;
+}
+
+.about-dialog-version-action[data-checking="true"] .icon {
+  animation: about-dialog-update-spin 850ms linear infinite;
+}
+
+.about-dialog-update-available {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.about-dialog-download-action {
+  width: 26px;
+  height: 26px;
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--divider-soft));
+}
+
+.about-dialog-update-status {
+  max-width: 270px;
+  color: var(--tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+@keyframes about-dialog-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .about-dialog-socials {
@@ -8636,47 +8709,6 @@ select.ai-config-input.ai-config-languages {
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px !important;
   letter-spacing: 0.01em;
-}
-
-.about-dialog-update {
-  display: grid;
-  gap: 10px;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--divider-soft);
-  text-align: left;
-}
-
-.about-dialog-update-heading {
-  display: grid;
-  gap: 4px;
-}
-
-.about-dialog-update-heading strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.about-dialog-update-heading span,
-.about-dialog-update-detail {
-  color: var(--secondary);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.about-dialog-update-detail {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.about-dialog-update-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .open-source-dialog {
