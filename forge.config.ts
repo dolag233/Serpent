@@ -40,6 +40,14 @@ const config: ForgeConfig = {
     // directly cannot bypass either the promoted-source gate or verification
     // of the bytes that Packager actually copied.
     prePackage: async (_forgeConfig, platform, arch) => {
+      // Serpent Windows 特别警告（2026-08-21 事故）：forge 会在打包时对
+      // native 依赖执行 @electron/rebuild，子进程（cp.fork）继承本进程
+      // 环境变量。本机若装有 vcpkg 用户级 MSBuild 集成，链接器会把
+      // better-sqlite3 自带静态 sqlite3 错解析为 vcpkg 的动态 sqlite3.dll，
+      // 打包产物 .node 依赖缺失 DLL 导致所有资源库打不开。必须在 forge
+      // rebuild 之前强制 VcpkgEnabled=false（与 scripts/rebuild-native.mjs
+      // 一致）。
+      process.env.VcpkgEnabled = 'false';
       const mediaPlatform = nativeMediaPlatform(platform, arch);
       runNodeGate('scripts/media-binaries.mjs', ['verify', '--platform', mediaPlatform]);
       // The browser extension is not shipped to a store yet; it ships inside

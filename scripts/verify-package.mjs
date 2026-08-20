@@ -59,6 +59,38 @@ if (missingPaths.length > 0) {
   throw new Error(`Package is missing required runtime files:\n${missingPaths.join('\n')}`);
 }
 
+// Serpent Windows 事故（2026-08-21）：vcpkg 用户级 MSBuild 集成会把
+// better-sqlite3 的静态 sqlite3 错解析为动态 sqlite3.dll，打包产物 .node
+// 依赖缺失 DLL（Worker 加载失败 → 所有资源库打不开）。校验：
+// 1) .node 体积下限（受控静态编译产物 ~1.9MB，坏编译产物仅 ~230KB）；
+// 2) PE 导入表不得包含 sqlite3.dll（二进制扫描导入名）。
+const sqliteNodePath = path.join(
+  resourcesPath,
+  'app.asar.unpacked',
+  'node_modules',
+  'better-sqlite3',
+  'build',
+  'Release',
+  'better_sqlite3.node',
+);
+if (existsSync(sqliteNodePath)) {
+  const nodeBytes = readFileSync(sqliteNodePath);
+  if (nodeBytes.length < 500 * 1024) {
+    throw new Error(
+      `Packaged better_sqlite3.node is suspiciously small (${nodeBytes.length} bytes); ` +
+        'it was likely compiled against the vcpkg sqlite3.dll. Rebuild with ' +
+        'VcpkgEnabled=false (scripts/rebuild-native.mjs) before packaging.',
+    );
+  }
+  if (nodeBytes.includes(Buffer.from('sqlite3.dll', 'utf8'))) {
+    throw new Error(
+      'Packaged better_sqlite3.node dynamically links sqlite3.dll (vcpkg pollution); ' +
+        'the DLL is not shipped, so every library would fail to open. Rebuild with ' +
+        'VcpkgEnabled=false before packaging.',
+    );
+  }
+}
+
 const asarPath = path.join(resourcesPath, 'app.asar');
 const asarFiles = asar.listPackage(asarPath);
 const requiredAsarEntries = [
