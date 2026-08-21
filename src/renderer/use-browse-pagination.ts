@@ -372,6 +372,18 @@ export function useBrowsePagination(
       if (coveredOffsets.every((covered) => filledOffsetsRef.current.has(covered))) return;
       if (coveredOffsets.some((covered) => inFlightOffsetsRef.current.has(covered))) return;
       for (const covered of coveredOffsets) inFlightOffsetsRef.current.add(covered);
+      if (browseDiagnosticsEnabled) {
+        // Serpent-9e1d8d: issue-time marker. The existing -result/-page events
+        // only fire on resolution/apply, so jump-latency attribution could not
+        // separate renderer decision delay from worker query cost.
+        window.dispatchEvent(new CustomEvent("serpent:e2e-browse-request", {
+          detail: {
+            requestOffset: offset,
+            requestLimit: limit,
+            requestGeneration: generation,
+          },
+        }));
+      }
       setLoadingMore(true);
       try {
         const result =

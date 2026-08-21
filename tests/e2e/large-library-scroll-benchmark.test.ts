@@ -221,6 +221,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       }) as EventListener;
       globalThis.addEventListener("serpent:e2e-browse-page", capture);
       globalThis.addEventListener("serpent:e2e-browse-result", capture);
+      globalThis.addEventListener("serpent:e2e-browse-request", capture);
     });
 
     let cdp: CDPSession | null = null;
@@ -269,7 +270,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       requestWaveCount: number;
       pageTimeline: Array<{
         relMs: number;
-        kind: "request" | "result";
+        kind: "issue" | "resolved" | "applied";
         offset: number | null;
       }>;
       fetchStages: Array<{
@@ -359,7 +360,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             requestWaveCount: number;
             pageTimeline: Array<{
               relMs: number;
-              kind: "request" | "result";
+              kind: "issue" | "resolved" | "applied";
               offset: number | null;
             }>;
             fetchStages: Array<{
@@ -458,7 +459,12 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   return [];
                 }
                 const detail = event.detail as Record<string, unknown>;
-                const kind: "request" | "result" = "resultOffset" in detail ? "result" : "request";
+                const kind: "issue" | "resolved" | "applied" =
+                  "resultOffset" in detail
+                    ? "applied"
+                    : "ok" in detail
+                      ? "resolved"
+                      : "issue";
                 const offset = typeof detail.requestOffset === "number"
                   ? detail.requestOffset
                   : typeof detail.resultOffset === "number"
@@ -467,7 +473,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                 return [{ relMs: Math.round((event.at - startedAt) * 10) / 10, kind, offset }];
               });
               const requestOffsets = pageTimeline
-                .filter((event) => event.kind === "request" && event.offset !== null)
+                .filter((event) => event.kind === "issue" && event.offset !== null)
                 .map((event) => event.offset as number);
               // Chromium resource timing for every thumbnail fetch issued by
               // this jump: startRelMs ≈ when the <img> request left the

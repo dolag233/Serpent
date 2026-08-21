@@ -304,6 +304,7 @@ import {
   type AiApiFormat,
 } from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
+import { PreviewCache } from "./preview-cache";
 import {
   bindLibraryMediaReadSignal,
   blockLibraryMediaReads,
@@ -456,6 +457,32 @@ function resolveArtifactPathBatched(
   });
 }
 const nativeAssetDragCache = new NativeAssetDragCache();
+/**
+ * Serpent-1e3d4f: Chromium never persists custom-protocol responses on disk,
+ * so every session re-reads preview bytes from (possibly remote) origin.
+ * Mirror served image previews into userData and serve later sessions from
+ * there. Image mimes only — video proxies/posters would thrash the budget
+ * with Range-streamed large files.
+ */
+let previewCache: PreviewCache | undefined;
+function initializePreviewCache(): void {
+  if (process.env.SERPENT_PREVIEW_CACHE_DISABLED === "1") return;
+  // E2E suites manipulate artifact files and rows directly; a mirror would
+  // serve phantom bytes. Probes that verify the cache opt in explicitly.
+  if (process.env.SERPENT_E2E === "1" && process.env.SERPENT_PREVIEW_CACHE_FORCE !== "1") {
+    return;
+  }
+  const budgetBytes = Number(process.env.SERPENT_PREVIEW_CACHE_BUDGET_BYTES ?? "");
+  const cacheLogEnabled = process.env.SERPENT_PREVIEW_CACHE_LOG === "1";
+  previewCache = new PreviewCache({
+    rootDir: path.join(app.getPath("userData"), "preview-cache"),
+    budgetBytes: Number.isFinite(budgetBytes) && budgetBytes > 0 ? budgetBytes : 2 * 1024 * 1024 * 1024,
+    onEvent: cacheLogEnabled
+      ? (event) => logger?.info("preview-cache", `${event.kind} ${event.libraryId} ${event.artifactId}${event.detail ? ` ${event.detail}` : ""}`)
+      : undefined,
+  });
+  void previewCache.evictToBudget();
+}
 /** Slice E: shared offscreen window that renders model thumbnails (Serpent-hnmg). */
 let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
 let quitAfterShutdown = false;
@@ -6951,8 +6978,37 @@ async function startApplication(): Promise<void> {
         return new Response("Library unavailable", { status: 410 });
       }
 
+      // Serpent-1e3d4f: image previews are mirrored into userData on first
+      // serve; later sessions stream from the local mirror instead of the
+      // (possibly remote) origin. Video proxies/posters stay uncached — they
+      // are large and Range-streamed.
+      const isCacheableImageMime = mimeType.startsWith("image/");
+      const cachedMirror = isCacheableImageMime
+        ? previewCache?.locateSync(libraryId, artifactId, ext)
+        : null;
+      if (cachedMirror) {
+        try {
+          return createArtifactResponse(
+            cachedMirror,
+            mimeType,
+            {
+              rangeHeader: request.headers.get("range"),
+              signal: bindLibraryMediaReadSignal(libraryId, request.signal),
+              onStreamError: (error) =>
+                logger?.error("preview-cache.stream", error, {
+                  libraryId,
+                  artifactId,
+                }),
+            },
+          );
+        } catch {
+          // Mirror unreadable (evicted mid-stream, permissions): fall through
+          // to the origin and let store() refresh the mirror.
+        }
+      }
+
       try {
-        return createArtifactResponse(
+        const response = createArtifactResponse(
           absoluteArtifactPath,
           mimeType,
           {
@@ -6965,6 +7021,10 @@ async function startApplication(): Promise<void> {
               }),
           },
         );
+        if (isCacheableImageMime && !request.headers.get("range")) {
+          void previewCache?.store(libraryId, artifactId, absoluteArtifactPath, ext);
+        }
+        return response;
       } catch (error) {
         logger?.error("serpent-protocol.read", error, {
           libraryId,
@@ -7552,6 +7612,8 @@ async function startApplication(): Promise<void> {
     logger?.error("extension-server", error);
     // Extension server failure is non-fatal; the app continues without it.
   }
+
+  initializePreviewCache();
 
   startupComplete = true;
 }
