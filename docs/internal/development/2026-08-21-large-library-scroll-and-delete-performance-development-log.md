@@ -64,3 +64,23 @@
 - lazy 修复的 macOS/packaged 证据未执行。
 - Eagle 翻页请求延迟优化、`revision_artifacts.width` 失真修正、动图缩略图策略(495 个失败样本)归 `Serpent-688714`/sa65。
 - 删除问题 Worker 插桩与修复归 `Serpent-a711e8`。
+
+## 2026-08-22 第二轮:预览镜像缓存落地与翻页延迟归因
+
+### Serpent-1e3d4f:serpent:// 跨会话缓存验证与 PreviewCache 实现(9fc5182)
+
+- 双会话探针(同一 userData):74 请求/2256KB 每会话完全重复——**自定义协议响应不进 Chromium 磁盘缓存**,immutable 头无效。
+- 实现 `PreviewCache`(src/main/preview-cache.ts):图片预览首访后台镜像到 `userData/preview-cache/<libraryId>/`,后续会话本地直出;LRU 字节预算(默认 2GB,`SERPENT_PREVIEW_CACHE_BUDGET_BYTES`);仅缓存 image/*;E2E 默认禁用(`SERPENT_PREVIEW_CACHE_FORCE=1` 显式启用)防测试幻影命中。
+- 端到端证据:会话1 241 store(7.1MB 落盘);会话2 **241 hit 零回源**;二三跳 285/237ms(冷 568/518ms)。单测 7 passed;library-availability 190 passed。
+- 待办:SMB 真机计时、macOS/packaged。
+
+### Serpent-9e1d8d:issue 时刻测量修正归因
+
+- 新增 `serpent:e2e-browse-request` 发出时刻事件 + `SERPENT_WORKER_CMD_LOG=1` 命令级日志(waitMs/runMs)。
+- 重测:issue 距跳转仅 3.4–16.6ms——渲染端决策链路无罪;此前「719ms 才发出」是旧埋点把解决时刻误标为发出的误读。真实方差在 resolved−issue=80–1018ms(worker/IPC 段)。
+- 观测到一次**间歇性慢窗口**(p50=961ms;零请求跳转卡 1.7s,23 张图同时完成=单点串行阻塞签名),随后同库同操作复测 277–385ms 且 worker 全命令 wait<20/run<40 健康。判定为间歇环境窗口,保持工单开放,复发时用新探针取证。
+- media-preview 2 项失败经 stash 对照为既有媒体生成管线问题(归 Serpent-140fe2),与 lazy/缓存无关。
+
+### Eagle 本机解剖结论(支撑 1e3d4f/90ff52/04ba9d)
+
+设计.library(29,079 资产)+ %APPDATA%/Eagle:普通 jpg/png 不生成缩略图直接源图作预览(源宽 p50=1606px/p50≈102KB);自产缩略图 p50 宽 564px≈88KB;元数据目录本地缓存(library-caches 28MB)+ Chromium 缓存 195MB 是其 NAS 快的核心。GPU 解码/BC7 分析:512² BC7 固定 256KB(比 JPEG 大 8–16 倍)、`<img>` 不支持需 WebGPU/WebGL 重写、编码慢——对网格缩略图是反优化,已向产品负责人说明。
