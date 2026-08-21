@@ -82,7 +82,7 @@ export function BrowseLayoutPreview({
             alt=""
             className="asset-thumbnail"
             decoding="async"
-            loading="eager"
+            loading="lazy"
             src={previewSrc}
           />
         ) : (
