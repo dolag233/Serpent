@@ -1977,6 +1977,7 @@ export const en = {
       LIBRARY_NOT_FOUND: "Serpent cannot find that library folder. It may have been moved, renamed, or the disk may be disconnected. Reconnect the drive or choose the library again from Open Library.",
       NOT_A_LIBRARY: "The selected folder is not a Serpent library (it has no .serpent database).",
       LIBRARY_CORRUPT: "Serpent could not read this library’s database (integrity check or migration history failed). Reopen the library so Serpent can restore from a backup. Copy the whole library folder to a local disk first if you want a safety copy.",
+      LIBRARY_ENGINE_UNAVAILABLE: "Serpent could not load its SQLite database engine. This is an application install problem, not damage to your library files. Reinstall Serpent or rebuild native modules; do not restore backups or delete the library folder.",
       LIBRARY_VERSION_TOO_NEW: "This library was created by a newer version of Serpent, so this app cannot open it. Install the latest Serpent, then open the library again.",
       LIBRARY_READ_ONLY: "Serpent cannot write to this library because the files are locked or marked read-only. Clear the read-only flag, close other programs using the folder, and retry.",
       LIBRARY_MIGRATION_FAILED: "Upgrading this library’s database failed and was rolled back. Your files are unchanged. Open the library again to retry the upgrade; if it keeps failing, copy the library to a local disk and retry.",

@@ -1960,6 +1960,7 @@ export const zhCN = {
       LIBRARY_NOT_FOUND: "找不到该资源库文件夹。它可能已被移动、重命名，或磁盘已断开。请重新连接磁盘，或从「打开资源库」再次选择。",
       NOT_A_LIBRARY: "所选文件夹不是 Serpent 资源库（缺少 .serpent 数据库）。",
       LIBRARY_CORRUPT: "无法读取该资源库的数据库（完整性检查或迁移记录失败）。请重新打开资源库，Serpent 会尝试从备份恢复。若需留底，请先把整个资源库文件夹复制到本机磁盘。",
+      LIBRARY_ENGINE_UNAVAILABLE: "无法加载 SQLite 数据库引擎。这是应用安装问题，不是资源库文件损坏。请重装 Serpent 或重建 native 模块；不要恢复备份，也不要删除资源库文件夹。",
       LIBRARY_VERSION_TOO_NEW: "该资源库由更新版本的 Serpent 创建，当前应用无法打开。请安装最新版 Serpent 后再打开。",
       LIBRARY_READ_ONLY: "无法写入该资源库：文件被锁定或标记为只读。请取消只读、关闭正在使用该文件夹的其他程序后重试。",
       LIBRARY_MIGRATION_FAILED: "升级该资源库数据库失败并已回滚，文件未被改写。请再次打开以重试升级；若反复失败，请把资源库复制到本机磁盘后再试。",

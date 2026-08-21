@@ -2076,6 +2076,27 @@ describe('public errors', () => {
     expect(JSON.stringify(publicError)).not.toContain('SQLITE');
   });
 
+  it('classifies a missing SQLite native module as an engine failure, not library damage', () => {
+    const sqliteError = Object.assign(
+      new Error(
+        'The specified module could not be found.\r\n\\\\?\\C:\\Program Files\\Serpent\\resources\\app.asar.unpacked\\node_modules\\better-sqlite3\\build\\Release\\better_sqlite3.node',
+      ),
+      { code: 'ERR_DLOPEN_FAILED' },
+    );
+    expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_ENGINE_UNAVAILABLE' });
+    const publicError = toPublicError(sqliteError);
+    expect(publicError.code).toBe('LIBRARY_ENGINE_UNAVAILABLE');
+    expect(publicError.message).toBe(PUBLIC_ERROR_MESSAGES.LIBRARY_ENGINE_UNAVAILABLE);
+    expect(JSON.stringify(publicError)).not.toContain('Program Files');
+  });
+
+  it('classifies a SQLite build without FTS5 as an engine failure', () => {
+    const sqliteError = Object.assign(new Error('no such module: fts5'), {
+      code: 'SQLITE_ERROR',
+    });
+    expect(classifyUnknownFailure(sqliteError)).toEqual({ code: 'LIBRARY_ENGINE_UNAVAILABLE' });
+  });
+
   it('classifies unqualified SQLite IOERR as a disk I/O library error without copying the message', () => {
     const sqliteError = Object.assign(new Error('disk I/O error at /secret/library.db'), {
       code: 'SQLITE_IOERR_IN_PAGE',

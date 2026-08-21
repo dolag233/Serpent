@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { LibraryService } from '../../src/worker/library-service';
+import { LibraryService, SUPPORTED_SCHEMA_VERSION } from '../../src/worker/library-service';
 
 const roots: string[] = [];
 const services: LibraryService[] = [];
@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 
 interface TestDatabase {
   close(): void;
+  pragma(source: string, options?: { simple?: boolean }): unknown;
   prepare(source: string): {
     get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): unknown;
@@ -105,6 +106,53 @@ describe('database damage recovery (Serpent-dw9a)', () => {
     const summary = reopened.openLibrary(library.libraryPath);
     expect(summary.recovery).toEqual({ mode: 'backup-1' });
     expect(existsSync(databasePath(library.libraryPath))).toBe(true);
+  });
+
+  it('restores a missing primary from a newer-schema backup instead of Assets rescue', async () => {
+    const service = newService();
+    const library = service.createLibrary({
+      displayName: 'Too New Backup',
+      selectedParentPath: temporaryRoot(),
+    });
+    await service.createDatabaseBackup(library.libraryId);
+    service.closeAll();
+
+    const backup = new Database(backupPath(library.libraryPath, 1));
+    const newerVersion = SUPPORTED_SCHEMA_VERSION + 1;
+    backup.pragma(`user_version = ${newerVersion}`);
+    backup.prepare(
+      'INSERT INTO schema_migrations (version, checksum, applied_at) VALUES (?, ?, ?)',
+    ).run(newerVersion, 'f'.repeat(64), new Date().toISOString());
+    backup.close();
+    rmSync(databasePath(library.libraryPath));
+
+    const reopened = newService();
+    const summary = reopened.openLibrary(library.libraryPath);
+    expect(summary.recovery).toEqual({ mode: 'backup-1' });
+    expect(summary.libraryId).toBe(library.libraryId);
+    expect(summary.libraryVersion).toBe(newerVersion);
+    expect(summary.readOnly).toBeFalsy();
+  });
+
+  it('puts the original primary back when Assets rescue cannot create a database', () => {
+    const created = newService();
+    const library = created.createLibrary({
+      displayName: 'Rescue Rollback',
+      selectedParentPath: temporaryRoot(),
+    });
+    created.closeAll();
+    writeFileSync(databasePath(library.libraryPath), 'not a sqlite database');
+    rmSync(backupPath(library.libraryPath, 1), { force: true });
+    rmSync(backupPath(library.libraryPath, 2), { force: true });
+
+    const failing = new LibraryService({
+      beforeLibraryRescueForTests: () => {
+        throw new Error('injected rescue failure');
+      },
+    });
+    services.push(failing);
+    expect(() => failing.openLibrary(library.libraryPath)).toThrow('LIBRARY_CORRUPT');
+    expect(readFileSync(databasePath(library.libraryPath), 'utf8')).toBe('not a sqlite database');
   });
 
   it('rebuilds from Assets when both backups are unusable', async () => {
