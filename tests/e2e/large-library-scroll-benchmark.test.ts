@@ -1,14 +1,17 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
+import type { CDPSession } from "@playwright/test";
 
 import {
   electronLaunchEnv,
@@ -30,27 +33,103 @@ const targetMs = 500;
 const observationTimeoutMs = Number(
   process.env.SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS ?? 5_000,
 );
+// sa65 gate is a 10k-asset library; real libraries can be smaller. Operators
+// measuring a smaller library can lower the bar explicitly.
+const minAssets = Number(process.env.SERPENT_LARGE_LIBRARY_E2E_MIN_ASSETS ?? 10_000);
+// Real libraries (converted Eagle/Billfish, hand-built) live outside tmpdir and
+// can be tens of GB; let the operator choose the clone volume.
+const cloneRoot = process.env.SERPENT_LARGE_LIBRARY_E2E_CLONE_ROOT ?? tmpdir();
+// Operator-managed library copy: skips the per-run clone (and its deletion) so
+// repeated baseline/optimization runs measure the same warm on-disk state.
+const reuseLibraryPath = process.env.SERPENT_LARGE_LIBRARY_E2E_REUSE_LIBRARY ?? "";
+// Full benchmark JSON (per-jump samples, stage breakdowns) is piped through
+// console.info, which CI logs can truncate; this mirrors it to a file.
+const resultPath = process.env.SERPENT_LARGE_LIBRARY_E2E_RESULT_PATH ?? "";
+// When set, sample the renderer main thread during every jump (CDP Profiler)
+// and write one .cpuprofile per jump for function-level hotspot attribution.
+const profileDir = process.env.SERPENT_LARGE_LIBRARY_E2E_PROFILE_DIR ?? "";
+// When set, record a devtools.timeline trace covering all jumps and write it
+// as one JSON file (event-level timeline: layout/style/paint/function calls).
+const traceDir = process.env.SERPENT_LARGE_LIBRARY_E2E_TRACE_DIR ?? "";
 
-test.describe.configure({ timeout: 300_000 });
+/**
+ * Count live assets without loading better-sqlite3 into the Playwright runner:
+ * dev node_modules are built for the Electron ABI, so the database is read
+ * through ELECTRON_RUN_AS_NODE instead of a direct require.
+ */
+function countLiveAssetsViaElectron(libraryPath: string): number {
+  const script = `
+    const { createRequire } = require("node:module");
+    const repoRequire = createRequire(${JSON.stringify(path.resolve("package.json"))});
+    const Database = repoRequire("better-sqlite3");
+    const db = new Database(${JSON.stringify(path.join(fixturePath ?? "", ".serpent", "library.db"))}, { readonly: true, fileMustExist: true });
+    const row = db.prepare("SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NULL").get();
+    db.close();
+    process.stdout.write(String(row.n));
+  `;
+  const stdout = execFileSync(
+    resolveElectronExecutablePath(),
+    ["-e", script],
+    {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      encoding: "utf8",
+      timeout: 60_000,
+    },
+  );
+  const count = Number(stdout.trim());
+  if (!Number.isFinite(count)) {
+    throw new Error(`Could not count assets in ${libraryPath}: got ${JSON.stringify(stdout)}`);
+  }
+  return count;
+}
+
+test.describe.configure({ timeout: 1_200_000 });
 
 test.skip(!fixturePath, "Set SERPENT_LARGE_LIBRARY_E2E_PATH to a generated 10k+ fixture.");
 
 test("fourth-stop random scrollbar jumps decode the visible viewport within 500ms", async () => {
   if (!fixturePath) throw new Error("Missing large-library fixture path.");
   const manifestPath = path.join(fixturePath, ".serpent", "large-library-fixture.json");
-  if (!existsSync(manifestPath)) throw new Error(`Missing fixture manifest: ${manifestPath}`);
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-    assetCount: number;
-    version: number;
-  };
-  expect(manifest.assetCount).toBeGreaterThanOrEqual(10_000);
+  let assetCount: number;
+  let fixtureVersion: number | string;
+  if (existsSync(manifestPath)) {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      assetCount: number;
+      version: number;
+    };
+    assetCount = manifest.assetCount;
+    fixtureVersion = manifest.version;
+  } else {
+    // Real-library mode: no generator manifest, count straight from the DB.
+    assetCount = countLiveAssetsViaElectron(fixturePath);
+    fixtureVersion = "real-library";
+  }
+  expect(assetCount).toBeGreaterThanOrEqual(minAssets);
 
-  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "serpent-large-scroll-benchmark-"));
-  const libraryPath = path.join(temporaryRoot, "benchmark-library");
+  mkdirSync(cloneRoot, { recursive: true });
+  const temporaryRoot = mkdtempSync(path.join(cloneRoot, "serpent-large-scroll-benchmark-"));
+  const libraryPath = reuseLibraryPath || path.join(temporaryRoot, "benchmark-library");
   const userDataPath = path.join(temporaryRoot, "user-data");
-  // APFS clone keeps each run isolated from background jobs/cache writes while
-  // avoiding a physical copy of the multi-gigabyte source fixture.
-  execFileSync("cp", ["-cR", fixturePath, libraryPath]);
+  if (!reuseLibraryPath) {
+    if (process.platform === "win32") {
+      // Robocopy exit codes are bit flags: 0-7 mean success, 8+ are failures.
+      // execFileSync throws on any non-zero status, so success flags are caught.
+      try {
+        execFileSync(
+          "robocopy",
+          [fixturePath, libraryPath, "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"],
+          { stdio: "ignore" },
+        );
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (typeof status !== "number" || status >= 8) throw error;
+      }
+    } else {
+      // APFS clone keeps each run isolated from background jobs/cache writes while
+      // avoiding a physical copy of the multi-gigabyte source fixture.
+      execFileSync("cp", ["-cR", fixturePath, libraryPath]);
+    }
+  }
 
   const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
   const application = await electron.launch({
@@ -131,12 +210,47 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
         });
         observer.observe({ entryTypes: ["longtask"] });
       }
+      // Stage breakdown needs every serpent://preview fetch of the current
+      // jump; the default 250-entry buffer overflows across jumps.
+      performance.setResourceTimingBufferSize(8192);
       const capture = ((event: CustomEvent) => {
-        root.__serpentBrowsePages!.push(event.detail);
+        root.__serpentBrowsePages!.push({
+          at: performance.now(),
+          detail: event.detail,
+        });
       }) as EventListener;
       globalThis.addEventListener("serpent:e2e-browse-page", capture);
       globalThis.addEventListener("serpent:e2e-browse-result", capture);
     });
+
+    let cdp: CDPSession | null = null;
+    if (profileDir || traceDir) {
+      cdp = await application.context().newCDPSession(window);
+    }
+    if (cdp && profileDir) {
+      mkdirSync(profileDir, { recursive: true });
+      await cdp.send("Profiler.enable");
+      // 100 µs sampling: fine enough to attribute single-frame hot functions.
+      await cdp.send("Profiler.setSamplingInterval", { interval: 100 });
+    }
+    const traceEvents: Array<Record<string, unknown>> = [];
+    let tracingComplete: Promise<unknown> | null = null;
+    if (cdp && traceDir) {
+      mkdirSync(traceDir, { recursive: true });
+      cdp.on("Tracing.dataCollected", (payload: { value?: unknown }) => {
+        if (Array.isArray(payload.value)) traceEvents.push(...payload.value);
+      });
+      await cdp.send("Tracing.start", {
+        traceConfig: {
+          includedCategories: [
+            "devtools.timeline",
+            "v8.execute",
+            "blink.user_timing",
+            "disabled-by-default-devtools.timeline.frame",
+          ],
+        },
+      });
+    }
 
     const samples: Array<{
       fraction: number;
@@ -153,6 +267,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       pageEvents: unknown[];
       requestOffsets: number[];
       requestWaveCount: number;
+      pageTimeline: Array<{
+        relMs: number;
+        kind: "request" | "result";
+        offset: number | null;
+      }>;
+      fetchStages: Array<{
+        artifactId: string;
+        startRelMs: number;
+        endRelMs: number;
+        durationMs: number;
+        transferSize: number;
+      }>;
+      doneTimeline: Array<{
+        relMs: number;
+        visibleCards: number;
+        decodedImages: number;
+        placeholders: number;
+        defaultIcons: number;
+        uncoveredLayoutIds: number;
+      }>;
       longTaskCount: number;
       longTaskMaxMs: number;
       imageStates: Array<{
@@ -166,7 +300,17 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       timedOut: boolean;
     }> = [];
 
+    let jumpIndex = 0;
     for (const fraction of effectiveJumpFractions) {
+      if (cdp && profileDir) await cdp.send("Profiler.start");
+      if (cdp && traceDir) {
+        // Give the just-started tracing session a macrotask turn so its first
+        // captured events are not dropped; otherwise the jump's opening phase
+        // (scroll → first page request) can fall outside the trace.
+        await window.evaluate(() => new Promise<void>((resolve) => {
+          setTimeout(resolve, 300);
+        }));
+      }
       const sample = await window.evaluate(
         async ({ fraction: targetFraction, timeoutMs }) => {
           const canvasElement = document.querySelector<HTMLElement>(".workspace-canvas");
@@ -181,6 +325,20 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
           };
           eventRoot.__serpentBrowsePages = [];
           const startedAt = performance.now();
+          const doneTimeline: Array<{
+            relMs: number;
+            visibleCards: number;
+            decodedImages: number;
+            placeholders: number;
+            defaultIcons: number;
+            uncoveredLayoutIds: number;
+          }> = [];
+          // Keep only this jump's serpent://preview resource entries so the
+          // stage breakdown never mixes jumps (or the initial open).
+          performance.clearResourceTimings();
+          // Trace anchor: blink.user_timing surfaces these in CDP traces so the
+          // analysis can bound the jump window exactly.
+          performance.mark("bench:jump-start");
           const maxScroll = Math.max(0, canvasElement.scrollHeight - canvasElement.clientHeight);
           canvasElement.scrollTop = maxScroll * targetFraction;
 
@@ -199,6 +357,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             pageEvents: unknown[];
             requestOffsets: number[];
             requestWaveCount: number;
+            pageTimeline: Array<{
+              relMs: number;
+              kind: "request" | "result";
+              offset: number | null;
+            }>;
+            fetchStages: Array<{
+              artifactId: string;
+              startRelMs: number;
+              endRelMs: number;
+              durationMs: number;
+              transferSize: number;
+            }>;
+            doneTimeline: Array<{
+              relMs: number;
+              visibleCards: number;
+              decodedImages: number;
+              placeholders: number;
+              defaultIcons: number;
+              uncoveredLayoutIds: number;
+            }>;
             longTaskCount: number;
             longTaskMaxMs: number;
             imageStates: Array<{
@@ -267,25 +445,63 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                 };
               });
               const pageEvents = eventRoot.__serpentBrowsePages ?? [];
-              const requestOffsets = pageEvents.flatMap((event) => {
+              const pageTimeline = pageEvents.flatMap((event) => {
                 if (
                   typeof event !== "object"
                   || event === null
-                  || !("requestOffset" in event)
-                  || "resultOffset" in event
-                  || typeof event.requestOffset !== "number"
+                  || !("at" in event)
+                  || !("detail" in event)
+                  || typeof event.at !== "number"
+                  || typeof event.detail !== "object"
+                  || event.detail === null
                 ) {
                   return [];
                 }
-                return [event.requestOffset];
+                const detail = event.detail as Record<string, unknown>;
+                const kind: "request" | "result" = "resultOffset" in detail ? "result" : "request";
+                const offset = typeof detail.requestOffset === "number"
+                  ? detail.requestOffset
+                  : typeof detail.resultOffset === "number"
+                    ? detail.resultOffset
+                    : null;
+                return [{ relMs: Math.round((event.at - startedAt) * 10) / 10, kind, offset }];
               });
+              const requestOffsets = pageTimeline
+                .filter((event) => event.kind === "request" && event.offset !== null)
+                .map((event) => event.offset as number);
+              // Chromium resource timing for every thumbnail fetch issued by
+              // this jump: startRelMs ≈ when the <img> request left the
+              // renderer, endRelMs ≈ when Main finished streaming the body.
+              const fetchStages = performance.getEntriesByType("resource")
+                .filter((entry): entry is PerformanceResourceTiming =>
+                  entry.name.startsWith("serpent://preview/"))
+                .filter((entry) => entry.startTime >= startedAt)
+                .map((entry) => ({
+                  artifactId: entry.name.slice(entry.name.lastIndexOf("/") + 1),
+                  startRelMs: Math.round((entry.startTime - startedAt) * 10) / 10,
+                  endRelMs: Math.round((entry.responseEnd - startedAt) * 10) / 10,
+                  durationMs: Math.round(entry.duration * 10) / 10,
+                  transferSize: entry.transferSize,
+                }));
               const loadedIds = new Set(visibleAssetIds);
               const done = visibleLayoutAssetIds.length >= 4
                 && visibleLayoutAssetIds.every((assetId) => loadedIds.has(assetId))
                 && placeholders === 0
                 && defaultIcons === 0
                 && decodedImages === visible.length;
+              doneTimeline.push({
+                relMs: Math.round(elapsedMs * 10) / 10,
+                visibleCards: visible.length,
+                decodedImages,
+                placeholders,
+                defaultIcons,
+                uncoveredLayoutIds: visibleLayoutAssetIds.filter(
+                  (assetId) => !loadedIds.has(assetId),
+                ).length,
+              });
               if (done || elapsedMs >= timeoutMs) {
+                performance.mark("bench:jump-done");
+                performance.measure("bench:jump", "bench:jump-start", "bench:jump-done");
                 resolve({
                   fraction: targetFraction,
                   elapsedMs,
@@ -301,6 +517,9 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   pageEvents,
                   requestOffsets,
                   requestWaveCount: requestOffsets.length,
+                  pageTimeline,
+                  fetchStages,
+                  doneTimeline,
                   longTaskCount: eventRoot.__serpentLongTasks?.length ?? 0,
                   longTaskMaxMs: Math.max(0, ...(eventRoot.__serpentLongTasks ?? [])),
                   imageStates,
@@ -315,7 +534,29 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
         },
         { fraction, timeoutMs: observationTimeoutMs },
       );
+      if (cdp && profileDir) {
+        const stopResult = await cdp.send("Profiler.stop");
+        if (stopResult.profile) {
+          writeFileSync(
+            path.join(profileDir, `jump-${jumpIndex}-fraction-${fraction}.cpuprofile`),
+            JSON.stringify(stopResult.profile),
+          );
+        }
+      }
+      jumpIndex += 1;
       samples.push(sample);
+    }
+
+    if (cdp && traceDir) {
+      tracingComplete = new Promise((resolve) => {
+        cdp!.once("Tracing.tracingComplete", resolve);
+      });
+      await cdp.send("Tracing.end");
+      await tracingComplete;
+      writeFileSync(
+        path.join(traceDir, "jumps-trace.json"),
+        JSON.stringify(traceEvents),
+      );
     }
 
     const elapsed = samples.map((sample) => sample.elapsedMs).sort((a, b) => a - b);
@@ -323,8 +564,8 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     const p95 = elapsed[Math.min(elapsed.length - 1, Math.ceil(elapsed.length * 0.95) - 1)]!;
     const result = {
       suite: "large-library-electron-scroll",
-      fixtureVersion: manifest.version,
-      assets: manifest.assetCount,
+      fixtureVersion,
+      assets: assetCount,
       cardSizeIndex: 3,
       jumps: samples.length,
       targetMs,
@@ -339,6 +580,9 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       })),
     };
     console.info(`[large-library-benchmark] ${JSON.stringify(result)}`);
+    if (resultPath) {
+      writeFileSync(resultPath, JSON.stringify(result, null, 2));
+    }
 
     expect(result.passed, JSON.stringify(result, null, 2)).toBe(samples.length);
   } finally {
