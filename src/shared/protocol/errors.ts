@@ -33,6 +33,8 @@ export const PUBLIC_ERROR_MESSAGES = {
     'The selected folder is not a Serpent library (it has no .serpent database).',
   LIBRARY_CORRUPT:
     'Serpent could not read this library’s database (integrity check or migration history failed). Reopen the library so Serpent can restore from a backup. Copy the whole library folder to a local disk first if you want a safety copy.',
+  LIBRARY_ENGINE_UNAVAILABLE:
+    'Serpent could not load its SQLite database engine. This is an application install problem, not damage to your library files. Reinstall Serpent or rebuild native modules; do not restore backups or delete the library folder.',
   LIBRARY_VERSION_TOO_NEW:
     'This library was created by a newer version of Serpent, so this app cannot open it. Install the latest Serpent, then open the library again.',
   LIBRARY_READ_ONLY:
@@ -245,11 +247,32 @@ function walkErrorCodes(error: unknown): Array<{ code: string; message?: string 
  * Maps SQLite / disk failures to a renderer-safe public code without copying
  * Error.message (which may contain filesystem paths).
  */
+export function isSqliteEngineUnavailableError(error: unknown): boolean {
+  for (const { code, message } of walkErrorCodes(error)) {
+    if (code === 'ERR_DLOPEN_FAILED') return true;
+    if (code === 'MODULE_NOT_FOUND' && message !== undefined && /better-sqlite3/i.test(message)) {
+      return true;
+    }
+    if (message !== undefined && /no such module:\s*fts5/i.test(message)) return true;
+    if (
+      message !== undefined
+      && /specified module could not be found/i.test(message)
+      && /better_sqlite3\.node/i.test(message)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function classifyUnknownFailure(
   error: unknown,
 ): { code: PublicErrorCode; reason?: PublicErrorReason } | undefined {
   if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'DriverUnsupportedError') {
     return { code: 'SYNC_CONNECTION_FAILED', reason: 'SYNC_METHOD_NOT_ALLOWED' };
+  }
+  if (isSqliteEngineUnavailableError(error)) {
+    return { code: 'LIBRARY_ENGINE_UNAVAILABLE' };
   }
 
   for (const { code, message } of walkErrorCodes(error)) {

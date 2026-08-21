@@ -1,53 +1,49 @@
-**Serpent 0.1.3** — NAS 资源库支持、GitHub Release 自动更新与视频代理播放 · NAS library support, GitHub Release auto-update, and video proxy playback
+**Serpent 0.1.3** — NAS 资源库、GitHub 自动更新、PDF 缩放与 Windows 文件复制 · NAS libraries, GitHub auto-update, PDF zoom, and Windows file copy
 
 ## 新增功能 / New features
 
 **NAS/网络共享资源库（实验性）**
-- 支持在网络共享（NAS/SMB）上打开与创建资源库，自动使用回滚日志模式；文件锁与断线恢复取决于 NAS，请保持同一时间只有一个实例写入并做好备份。
+- 支持在网络共享（NAS/SMB）上打开与创建资源库，自动使用回滚日志；文件锁与断线恢复取决于 NAS。同一时间请只让一个实例写入，并自行备份。
 
-*Libraries on network shares (NAS/SMB) are now supported (experimental): Serpent uses rollback journaling there, and file locking / disconnect recovery depend on the NAS. Keep a single instance writing at a time and maintain backups.*
+*Libraries on network shares (NAS/SMB) are now supported (experimental). Serpent uses rollback journaling there; file locking and disconnect recovery depend on the NAS. Keep a single writer at a time and keep your own backups.*
 
 **自动更新**
-- 接入 GitHub Release 更新流：检查/下载/取消/进度展示；Windows 安装流程收口（portable 更新保留下载包，安装型更新自动清理临时文件）。
+- 从 GitHub Release 检查、下载、取消更新，并显示进度；Windows 安装版与便携版走各自的安装/解压路径。
 
-*Auto-update now uses GitHub Releases: check, download, cancel, and progress are shown in-app; the Windows install flow was hardened (portable updates keep the downloaded archive, installed updates clean up temp files).*
+*Check, download, and cancel updates from GitHub Releases, with progress in-app. Windows installed and portable builds follow their own install/extract paths.*
 
-**视频代理播放**
-- 已生成代理的视频在卡片 hover 与查看界面播放代理视频；源播放失败时静默降级生成代理（与查看器「失败才生成」规则一致）。
+**PDF 查看器缩放与平移**
+- 滚轮缩放锚定鼠标位置，可拖拽平移，缩放后文字与页面保持清晰。
 
-*Videos with a generated proxy now play it on card hover and in the viewer; when the original cannot play, Serpent silently falls back to generating a proxy (same “generate on real failure” rule as the viewer).*
+*PDF viewer zoom and pan: wheel zoom anchors to the pointer, drag to pan, and pages stay sharp after zoom.*
 
-**PDF 查看器缩放/平移**
-- 滚轮缩放锚定鼠标位置、拖拽抓手、缩放渲染清晰。
+**画布悬停播放音频**
+- 鼠标悬停音频卡片即可在画布内播放，移开即停；视频悬停是否带声音可在设置中开关（默认静音）。
 
-*PDF viewer zoom/pan: wheel zoom anchors to the pointer, drag-to-pan, and crisp zoomed rendering.*
+*Audio cards play in place on hover and stop when the pointer leaves. Video hover sound is optional in Settings (off by default).*
 
-**查看器 Ctrl+C 复制**
-- 资产查看界面支持 Ctrl+C 复制资产；视频查看器右键菜单新增复制。
+**查看器复制**
+- 资产查看界面支持 Ctrl+C 复制；图片/视频等查看器右键菜单也可复制。
 
-*Ctrl+C copies assets from the viewer; video viewer context menu gained a Copy action.*
+*Ctrl+C copies the current asset from the viewer; image/video context menus also expose Copy.*
 
-**主菜单「检查更新」**
-- 关于菜单不再显示版本号，改为「检查更新」入口（打开关于页处理自动更新）。
+**诊断日志按会话拆分**
+- 每次启动写入独立日志文件，并自动清理过旧会话日志，不再无限追加到单一 `serpent.log`。
 
-*The About menu no longer shows the version; a “Check for updates” item opens the About page, which owns the update flow.*
+*Each launch writes its own session log; older session logs are pruned instead of appending forever to a single `serpent.log`.*
 
 ## 修复 / Fixes
 
-- 视频查看界面代理状态三态区分：仅「生成失败」显示警告，加载中/生成中为普通状态提示。
-  *Viewer proxy states are now distinct: only “generation failed” warns; loading/generating show ordinary status.*
-- 视频代理提示随鼠标停驻 UI 一并渐隐，不再遮挡画面。
-  *The proxy playback notice now fades with the rest of the chrome after the mouse rests.*
-- NAS 与恢复提示弃用常驻 banner——NAS 提示改为 warning toast，恢复提示改为确认弹窗（含「查看恢复报告」入口）。
-  *Persistent banners were retired: the NAS notice is now a warning toast, and library-recovery reports open a confirmation dialog (with a “view recovery report” action).*
-- PDF 白屏/闪烁：渲染完成再替换占位、缩放时旧节点作过渡占位、缩放中心精确锚定。
-  *PDF blanking/flicker fixed: the placeholder is replaced only after render completes, the old page stays as a transition placeholder while zooming, and zoom centers exactly on the pointer.*
-- 递归显示子文件夹时不再显示子文件夹卡片图标。
-  *Recursive folder view no longer shows child-folder cards.*
-- 合集浏览性能优化。
-  *Recursive collection browsing performance improved.*
+- Windows 上 Ctrl+C 写入标准文件剪贴板，可粘贴到 PureRef、LocalSend、资源管理器等外部应用。
+  *Windows Ctrl+C now writes a standard file drop list, so PureRef, LocalSend, Explorer, and similar apps can paste assets.*
+- 原视频无法播放时，卡片悬停与查看器应改播已生成的代理，而不是一直使用失败的源。
+  *When the original video cannot play, card hover and the viewer use a generated proxy instead of keeping the failed source.*
+- 文件夹「递归显示」时不再画出子文件夹卡片，避免与已展开的子内容重复。
+  *Recursive folder browse no longer shows child-folder cards on the canvas.*
+- 大型资源库中递归合集浏览更快。
+  *Recursive collection browsing is faster on large libraries.*
 
 ## 已知限制 / Known limitations
 
-- NAS 资源库为实验性支持：文件锁与断线恢复取决于共享盘实现；同一资源库仅支持单实例写入，多机同时写暂不支持。
-  *NAS libraries are experimental: file locking and disconnect recovery depend on the share; a library supports a single writer at a time — simultaneous multi-machine writing is not supported yet.*
+- NAS 资源库为实验性支持：文件锁与断线恢复取决于共享盘；同一资源库仅支持单实例写入，多机同时写暂不支持。
+  *NAS libraries are experimental: locking and reconnect behavior depend on the share; a library supports a single writer — simultaneous multi-machine writing is not supported yet.*

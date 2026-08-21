@@ -1803,6 +1803,7 @@ function toRendererResult(
         libraryId: library.libraryId,
         displayName: library.displayName,
         displayPath: library.libraryPath,
+        networkStorage: library.networkStorage,
       })),
     });
   }

@@ -175,6 +175,7 @@ import {
   shouldApplyLibraryLifecycleEvent,
   shouldDetachLibraryOnOpening,
 } from "./library-lifecycle-sync";
+import { shouldRefreshContentForLibraryChange } from "./library-change-refresh";
 import { AboutDialog } from "./AboutDialog";
 import { OpenSourceLicensesDialog } from "./OpenSourceLicensesDialog";
 import type {
@@ -442,6 +443,7 @@ const IS_WINDOWS_PLATFORM =
   resolveRendererPlatform(navigator.userAgent) === "windows";
 
 const SHORTCUT_PLATFORM: CommandPlatform = IS_MAC_PLATFORM ? "mac" : "windows";
+const NETWORK_LIBRARY_RELOAD_INTERVAL_MS = 750;
 
 type RendererWindow = Window & {
   serpent?: {
@@ -7339,6 +7341,8 @@ function AppInner() {
     let reloadTimer: number | undefined;
     let reloadInFlight = false;
     let reloadQueued = false;
+    let networkReloadCooldownTimer: number | undefined;
+    let lastNetworkReloadAt = 0;
     let assetChangeDebounceTimer: number | undefined;
     const scheduleSilentReload = () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
@@ -7360,6 +7364,24 @@ function AppInner() {
             }
           });
       }, 120);
+    };
+    const scheduleNetworkLibraryReload = () => {
+      const now = Date.now();
+      const elapsed = now - lastNetworkReloadAt;
+      if (lastNetworkReloadAt === 0 || elapsed >= NETWORK_LIBRARY_RELOAD_INTERVAL_MS) {
+        lastNetworkReloadAt = now;
+        scheduleSilentReload();
+        return;
+      }
+      // A burst of thumbnail/job writes can bump the shared sequence many
+      // times. Keep one trailing refresh so the latest committed asset set is
+      // observed without turning every sequence bump into a full search.
+      if (networkReloadCooldownTimer !== undefined) return;
+      networkReloadCooldownTimer = window.setTimeout(() => {
+        networkReloadCooldownTimer = undefined;
+        lastNetworkReloadAt = Date.now();
+        scheduleSilentReload();
+      }, NETWORK_LIBRARY_RELOAD_INTERVAL_MS - elapsed);
     };
     const unsubscribe = api.onAssetsChanged((event) => {
       if (event.libraryId !== library.libraryId) return;
@@ -7429,17 +7451,31 @@ function AppInner() {
       scheduleHistoryRefresh();
       // Cross-process change-sequence bumps are not asset mutation counts.
       // Refresh silently without forging an asset.changed payload.
-      if (uiStateRef.current === "importing" || importProgressRef.current) {
-        scheduleSilentReload();
+      const importing =
+        uiStateRef.current === "importing" || Boolean(importProgressRef.current);
+      if (shouldRefreshContentForLibraryChange({
+        networkStorage: library.networkStorage,
+        importing,
+      })) {
+        if (!importing && library.networkStorage === true) {
+          scheduleNetworkLibraryReload();
+        } else {
+          scheduleSilentReload();
+        }
         return;
       }
       // revision_artifacts / jobs writes also bump change-sequence. The grid
       // is patched by onThumbnailEvent; a full searchAssets here freezes the
       // canvas after large imports (Serpent-yti0). Asset-set mutations still
-      // arrive on asset.changed.
+      // arrive on asset.changed. NAS/SMB libraries are the exception: their
+      // database change sequence is the cross-instance signal because the
+      // other computer's asset.changed event cannot reach this renderer.
     });
     return () => {
       if (reloadTimer !== undefined) window.clearTimeout(reloadTimer);
+      if (networkReloadCooldownTimer !== undefined) {
+        window.clearTimeout(networkReloadCooldownTimer);
+      }
       if (historyTimer !== undefined) window.clearTimeout(historyTimer);
       if (assetChangeDebounceTimer !== undefined) {
         window.clearTimeout(assetChangeDebounceTimer);

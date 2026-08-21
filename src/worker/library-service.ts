@@ -393,7 +393,7 @@ class OiioInvocationError extends Error {
   }
 }
 import type { PublicErrorCode } from '../shared/protocol/errors';
-import { classifyUnknownFailure, publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
+import { classifyUnknownFailure, isSqliteEngineUnavailableError, publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
@@ -3515,6 +3515,12 @@ export interface LibraryServiceOptions {
   beforeContentReplaceBatchBackup?: (input: { assetId: string; libraryId: string }) => void;
   /** Test-only seam invoked after BEGIN IMMEDIATE acquires the migration mutex. */
   afterSchemaMigrationTransactionBegin?: () => void;
+  /**
+   * Test-only seam invoked after a damaged primary has been quarantined and
+   * before Assets rescue creates a replacement database. Used to prove a
+   * failed rescue puts the original file back.
+   */
+  beforeLibraryRescueForTests?: () => void;
   /**
    * Serpent-8ca259: offscreen HTML document thumbnail renderer, injected by
    * the Worker (asks Main to capture the source). When absent, HTML thumbnails
@@ -33063,7 +33069,13 @@ export class LibraryService {
       );
       if (connection.pragma('quick_check(1)', { simple: true }) !== 'ok') return true;
       try {
-        verifyDatabase(connection);
+        // Accept older, current, and newer-than-supported schemas. Exact
+        // current-schema matching belongs to migrate/verifyDatabase, not the
+        // destructive restore ladder. A newer library with a canonical prefix
+        // is openable writable; treating it as damage caused Assets rescue to
+        // replace a healthy too-new primary after backups were also rejected
+        // as LIBRARY_VERSION_TOO_NEW.
+        verifyOpenableSchema(connection);
         return false;
       } catch {
         // A structurally readable but incomplete database is still a damaged
@@ -33071,7 +33083,10 @@ export class LibraryService {
         // are excluded before this probe reaches here.
         return true;
       }
-    } catch {
+    } catch (error) {
+      // A missing/broken SQLite native module is an app install failure.
+      // It must not quarantine the user's primary or walk the rescue ladder.
+      if (isSqliteEngineUnavailableError(error)) return false;
       return true;
     } finally {
       closeIgnoringFailure(connection);
@@ -33091,7 +33106,9 @@ export class LibraryService {
         this.options.sqliteBusyTimeoutMsForTests,
         { readonly: true },
       );
-      verifyDatabase(connection);
+      // Too-new backups are still usable Serpent databases. Rejecting them as
+      // invalid used to skip both slots and fall through to empty Assets rescue.
+      verifyOpenableSchema(connection);
       return true;
     } catch (error) {
       this.diagnose('library.recovery.backup-invalid', error, {
@@ -33147,12 +33164,14 @@ export class LibraryService {
       `library.db.primary-${Date.now()}-${randomUUID()}.db`,
     );
     mkdirSync(quarantineDirectory, { recursive: true });
-    if (existsSync(primaryPath)) renameSync(primaryPath, quarantinePath);
+    const primaryExisted = existsSync(primaryPath);
+    if (primaryExisted) renameSync(primaryPath, quarantinePath);
     rmSync(`${primaryPath}-wal`, { force: true });
     rmSync(`${primaryPath}-shm`, { force: true });
 
     let connection: DatabaseConnection | undefined;
     try {
+      this.options.beforeLibraryRescueForTests?.();
       connection = openConfiguredDatabase(
         primaryPath,
         this.options.sqliteBusyTimeoutMsForTests,
@@ -33170,6 +33189,12 @@ export class LibraryService {
       connection = undefined;
     } catch (error) {
       closeIgnoringFailure(connection);
+      try { rmSync(primaryPath, { force: true }); } catch { /* best effort */ }
+      try { rmSync(`${primaryPath}-wal`, { force: true }); } catch { /* best effort */ }
+      try { rmSync(`${primaryPath}-shm`, { force: true }); } catch { /* best effort */ }
+      if (primaryExisted && existsSync(quarantinePath) && !existsSync(primaryPath)) {
+        try { renameSync(quarantinePath, primaryPath); } catch { /* best effort */ }
+      }
       throw new LibraryServiceError('LIBRARY_CORRUPT', { cause: error });
     }
 
