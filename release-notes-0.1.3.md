@@ -1,4 +1,4 @@
-**Serpent 0.1.3** — NAS 资源库、GitHub 自动更新、PDF 缩放与 Windows 文件复制 · NAS libraries, GitHub auto-update, PDF zoom, and Windows file copy
+**Serpent 0.1.3** — NAS 资源库、检查更新与一键更新、PDF 缩放与 Windows 文件复制 · NAS libraries, check-for-updates with one-click install, PDF zoom, and Windows file copy
 
 ## 新增功能 / New features
 
@@ -7,10 +7,10 @@
 
 *Libraries on network shares (NAS/SMB) are now supported (experimental). Serpent uses rollback journaling there; file locking and disconnect recovery depend on the NAS. Keep a single writer at a time and keep your own backups.*
 
-**自动更新**
+**支持检查更新并一键更新**
 - 从 GitHub Release 检查、下载、取消更新，并显示进度；Windows 安装版与便携版走各自的安装/解压路径。
 
-*Check, download, and cancel updates from GitHub Releases, with progress in-app. Windows installed and portable builds follow their own install/extract paths.*
+*Supports checking for updates and one-click update: check, download, and cancel updates from GitHub Releases, with progress in-app. Windows installed and portable builds follow their own install/extract paths.*
 
 **PDF 查看器缩放与平移**
 - 滚轮缩放锚定鼠标位置，可拖拽平移，缩放后文字与页面保持清晰。
