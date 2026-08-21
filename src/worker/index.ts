@@ -666,6 +666,9 @@ function scheduleThumbnailQueue(
 
 const STARTUP_THUMBNAIL_DELAY_MS = 1_000;
 
+// Serpent-onch/9e1d8d: per-command timing log, off by default.
+const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
+
 /**
  * Do not let the library-open backfill claim the primary decoder before the
  * renderer has had a chance to report its first visible window. Re-arm the
@@ -3675,6 +3678,12 @@ parentPort.on('message', async (event) => {
   const requestId = requestIdFrom(input);
   if (!requestId) return;
 
+  // Serpent-onch/9e1d8d: SERPENT_WORKER_CMD_LOG=1 emits one JSON line per
+  // command with event-loop wait (message → dispatch) and service time, so
+  // browse-latency attribution can see what the single Worker thread was
+  // doing while the renderer waited.
+  const cmdLogReceivedAt = WORKER_CMD_LOG ? performance.now() : 0;
+
   let response: WorkerResponse;
   try {
     const request = parseWorkerRequest(input);
@@ -3688,7 +3697,23 @@ parentPort.on('message', async (event) => {
     } else if (request.command.type === 'asset.thumbnail.visible-window') {
       noteInteractiveMediaRequest(request.command.libraryId);
     }
-    response = { requestId: request.requestId, result: await handleRequest(request) };
+    if (!WORKER_CMD_LOG) {
+      response = { requestId: request.requestId, result: await handleRequest(request) };
+    } else {
+      const dispatchStartedAt = performance.now();
+      try {
+        const result = await handleRequest(request);
+        response = { requestId: request.requestId, result };
+      } finally {
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          scope: 'worker.cmd',
+          type: request.command.type,
+          waitMs: Math.round((dispatchStartedAt - cmdLogReceivedAt) * 100) / 100,
+          runMs: Math.round((performance.now() - dispatchStartedAt) * 100) / 100,
+        }));
+      }
+    }
   } catch (error) {
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),
