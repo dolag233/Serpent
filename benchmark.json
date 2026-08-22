@@ -227,6 +227,23 @@
         "inspectorSummaryP50Ms": 28.2,
         "note": "热缓存下 NAS 库只读操作 p50 全部 28-35ms（SMB 往返底噪 ~28ms/查询）。冷缓存首屏的秒级开销是真正痛点，已由 v40 索引+cache_size 缓解。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T05:20:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+7f94fd5d",
+      "suite": "nas-clone-open-probe",
+      "library": "绘画资源库 DB-only 克隆（linked 源离线模拟）",
+      "metrics": {
+        "openLibraryMs": 222.2,
+        "backgroundReconciliationTotalMs": 14,
+        "firstPageColdMs": 0.2,
+        "firstPageWarmMs": 0.2,
+        "listFoldersWarmMs": 0.2,
+        "listCollectionsWarmMs": 0.2,
+        "reopenAfterV40MigrationMs": 7.6,
+        "note": "DB 在本地盘时的全链路数字。真实 SMB 场景的额外成本 = SQLite 页读取网络往返（cache_size=64MB 缓解）+ linked 源 stat（离线时跳过）。"
+      }
     }
   ]
 }
