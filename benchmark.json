@@ -170,6 +170,63 @@
         "libraryReopenAfterMutationsMs": 557,
         "note": "三处根因：(1) isExplicitlyIgnored 每文件 prepare() 重编译 SQL（410ms/20k 文件）→ prepareCached 实例级语句缓存；(2) refresh 收尾无条件 listAssets(recursive) 全量查询 ~200ms → includeAssets 可选参数；(3) compare 循环每资产 folderPath() 逐组件 lstat 防逃逸 ~290ms → 枚举已验证的路径走快照、fingerprint 按需解析。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T04:15:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+ef29f7d4",
+      "suite": "media-generation-cost-probe",
+      "fixture": "local APFS 20k",
+      "metrics": {
+        "paletteQueueThroughputMsPerJob": 4.77,
+        "paletteBareExtractionMedianMs": 3.6,
+        "queueSchedulingOverheadMsPerJob": 1.2,
+        "thumbnailRegenMedianByFormat": {
+          "jpg": 88.8,
+          "png": 33.8,
+          "webp50MP": 353,
+          "tiff": 29.5,
+          "gif": 13.7
+        },
+        "webpDecodeOnly50MPMs": 752,
+        "note": "纯 palette 队列吞吐 4.77ms/job（调度开销仅 ~1.2ms）→ 批量 claim 无收益空间，关闭该优化线。webp 慢是 50MP 无 shrink-on-load 的解码固有成本，不影响浏览路径。"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T04:55:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+b2fd7cfc",
+      "suite": "large-library-electron-scroll-e2e",
+      "fixture": "local APFS 20k v3 mixed (fresh regenerate, prewarmed)",
+      "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
+      "metrics": {
+        "jumpsPassedOf10": 4,
+        "firstFourJumpsMs": [
+          261.8,
+          339.2,
+          157.5,
+          131
+        ],
+        "jump5PlusDecoded": 0,
+        "observationTimeoutMs": 5000,
+        "note": "前 4 跳达标(131-394ms 全解码)；第 5 跳起 serpent://preview fetch 从未开始(Main 协议层挂起)。Renderer/Worker 存活。已立案 Serpent-7714df 深挖。竞争 worktree 同类基准 10/10 与 7/10 通过(fixture v4)，需对照其 E2E 改动与 fixture 差异。"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T05:05:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent (borrowed competitor script)",
+      "gitHead": "dev+b2fd7cfc",
+      "suite": "nas-readonly-benchmark (绘画资源库, warm cache)",
+      "source": "scripts/run-nas-readonly-benchmark.mjs from worktree codex/large-library-performance@15f3325c",
+      "metrics": {
+        "browseRootFirstPageP50Ms": 29.2,
+        "browseSortModifiedP50Ms": 34.9,
+        "searchFilenameTokenP50Ms": 30.7,
+        "listFoldersP50Ms": 30.6,
+        "listCollectionsP50Ms": 28.5,
+        "inspectorSummaryP50Ms": 28.2,
+        "note": "热缓存下 NAS 库只读操作 p50 全部 28-35ms（SMB 往返底噪 ~28ms/查询）。冷缓存首屏的秒级开销是真正痛点，已由 v40 索引+cache_size 缓解。"
+      }
     }
   ]
 }
