@@ -18953,7 +18953,7 @@ export class LibraryService {
     // Serpent-140fe2 review fix: overlapping analysis requests for the same
     // video must share one generation, or the losers hit
     // UNIQUE(revision_id, kind) and mask the real outcome.
-    const inFlightKey = `${libraryId} ${revisionId}`;
+    const inFlightKey = `${libraryId}\u0000${revisionId}`;
     const inFlight = this.videoContactSheetInFlight.get(inFlightKey);
     if (inFlight) return inFlight;
     if (existing) {
