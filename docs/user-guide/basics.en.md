@@ -47,6 +47,10 @@ Serpent copies managed files into the library and assigns a stable asset ID. Nam
 
 In **Settings → Assets**, turn **Detect image sequences during import** on or off (on by default). When enabled, dropping or importing consecutively numbered, same-size images (for example `00001.png`…`00150.png`) opens the sequence import dialog, where you can set the FPS. When disabled, the files are imported as ordinary images. A sequence appears as one playable asset in the viewer and can be dissolved back into individual frames.
 
+![Image sequence import dialog](../assets/ui/import-sequence.png)
+
+In the dialog, adjust the frame range and FPS, then choose whether to import only the current file or the selected frames as a sequence.
+
 ## Browse and organize
 
 - Sidebar: All assets, Trash, folders, collections, and smart collections. Folders and collections can include descendants; a collection is a many-to-many relationship, so an asset may belong to several collections.
