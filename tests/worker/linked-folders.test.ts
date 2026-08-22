@@ -183,6 +183,90 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('Serpent-c643c2: linked directories support create, rename, nested import and copy', () => {
+    const root = temporaryRoot();
+    const sourceRoot = path.join(root, 'source');
+    const incomingRoot = path.join(root, 'incoming');
+    mkdirSync(path.join(sourceRoot, 'existing'), { recursive: true });
+    mkdirSync(incomingRoot);
+    writeFileSync(path.join(sourceRoot, 'existing', 'art.png'), 'art');
+    writeFileSync(path.join(incomingRoot, 'new.png'), 'new');
+
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'LinkedDirectories', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    const created = service.createLinkedFolderDirectory({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: '',
+      name: 'empty',
+    });
+    expect(created.relativePath).toBe('empty');
+    expect(existsSync(path.join(sourceRoot, 'empty'))).toBe(true);
+    expect(service.listLinkedFolders(library.libraryId).map((folder) => folder.relativePath)).toContain('empty');
+    expect(
+      service.listFolderBrowseEntries({
+        libraryId: library.libraryId,
+        parentFolderId: linked.folderId,
+      }).map((entry) => entry.name),
+    ).toEqual(['empty', 'existing']);
+
+    const imported = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      targetFolderId: created.folderId,
+      sourceKind: 'files',
+      sourcePaths: [path.join(incomingRoot, 'new.png')],
+    });
+    if ('importId' in imported) throw new Error('Unexpected linked import conflict.');
+    expect(imported.importedCount).toBe(1);
+    expect(existsSync(path.join(sourceRoot, 'empty', 'new.png'))).toBe(true);
+
+    const renamed = service.renameLinkedFolderDirectory({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: 'existing',
+      newName: 'renamed',
+    });
+    expect(renamed.folderId).toBe(`lfv:${linked.folderId}/renamed`);
+    expect(existsSync(path.join(sourceRoot, 'existing'))).toBe(false);
+    expect(readFileSync(path.join(sourceRoot, 'renamed', 'art.png'), 'utf8')).toBe('art');
+    expect(
+      service.listAssets({ libraryId: library.libraryId, folderId: renamed.folderId, recursive: true })
+        .map((asset) => asset.relativeFilePath),
+    ).toEqual(['renamed/art.png']);
+
+    const rootRenamed = service.renameLinkedFolderDirectory({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: '',
+      newName: 'renamed-source',
+    });
+    expect(rootRenamed.folderId).toBe(linked.folderId);
+    expect(rootRenamed.name).toBe('renamed-source');
+    expect(existsSync(path.join(root, 'renamed-source', 'renamed', 'art.png'))).toBe(true);
+    expect(service.listLinkedFolders(library.libraryId).find((folder) => folder.folderId === linked.folderId)?.displayName)
+      .toBe('renamed-source');
+
+    // The virtual hierarchy is derived from the external directory, so the
+    // empty/renamed nodes must survive a full library close and reopen too.
+    service.closeAll();
+    service.openLibrary(library.libraryPath);
+    expect(service.listLinkedFolders(library.libraryId).map((folder) => folder.relativePath))
+      .toEqual(['', 'empty', 'renamed']);
+    expect(
+      service.listFolderBrowseEntries({
+        libraryId: library.libraryId,
+        parentFolderId: linked.folderId,
+      }).map((entry) => entry.name),
+    ).toEqual(['empty', 'renamed']);
+
+    service.closeAll();
+  });
+
   it('Serpent-l1oi: header-probed image dimensions are available before thumbnails', () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'source');
@@ -427,6 +511,21 @@ describe('Linked folder import', () => {
     expect(readFileSync(path.join(linkedRoot, 'managed.png'), 'utf8')).toBe('managed bytes');
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'managed.png'))).toBe(true);
     expect(result.assets[0]!.locationKind).toBe('linked');
+    const nested = service.createLinkedFolderDirectory({
+      libraryId: library.libraryId,
+      linkedFolderId: linked.folderId,
+      relativePath: '',
+      name: 'nested',
+    });
+    const nestedResult = service.copyAssetsToLinkedFolder({
+      libraryId: library.libraryId,
+      folderId: nested.linkedFolderId,
+      relativePath: nested.relativePath,
+      assetIds: [managed.assetId],
+      conflictStrategy: 'keep-both',
+    });
+    expect(nestedResult.copiedCount).toBe(1);
+    expect(readFileSync(path.join(linkedRoot, 'nested', 'managed.png'), 'utf8')).toBe('managed bytes');
     service.closeAll();
   });
 

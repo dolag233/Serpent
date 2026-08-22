@@ -11,6 +11,7 @@ import {
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
 } from "../../src/shared/media-formats";
 import {
   FORMAT_FILTER_GROUPS,
@@ -22,13 +23,14 @@ function allChipTokens(): string[] {
 }
 
 describe("format-filter-presets", () => {
-  it("covers every registered image/video/audio/model extension exactly once", () => {
+  it("covers every registered image/video/audio/document/model extension exactly once", () => {
     const chips = allChipTokens();
     const expected = [
       ...IMAGE_EXTENSIONS.map((extension) => extension.slice(1)),
       ...VIDEO_EXTENSIONS.map((extension) => extension.slice(1)),
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
+      ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     expect(new Set(chips)).toEqual(new Set(expected));
     expect(chips.length).toBe(new Set(chips).size);
@@ -53,5 +55,12 @@ describe("format-filter-presets", () => {
   it("ships the special text token separately from extension groups", () => {
     expect(FORMAT_TEXT_TOKEN).toBe("text");
     expect(allChipTokens()).not.toContain(FORMAT_TEXT_TOKEN);
+  });
+
+  it("exposes PDF and HTML as individually selectable document formats", () => {
+    const documentGroup = FORMAT_FILTER_GROUPS.find(
+      (group) => group.labelKey === "filter.formatGroupDocument",
+    );
+    expect(documentGroup?.extensions).toEqual(["pdf", "html", "htm"]);
   });
 });

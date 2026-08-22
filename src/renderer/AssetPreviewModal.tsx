@@ -350,6 +350,7 @@ export const AssetPreviewModal = forwardRef<
       if (!playbackToken || requestedProxyFallbackRef.current === playbackToken) return;
       requestedProxyFallbackRef.current = playbackToken;
       const isCurrentRun = proxyFallbackRunGuardRef.current.begin();
+      const proxyKind = asset.mediaType === "audio" ? "audio_proxy" : "webm_proxy";
       // REQ-VIEW-002: keep the current source/URL mounted. Proxy generation is a
       // quiet background upgrade — do not wipe into a blocking "generating" gate.
       const detail = `Direct playback unavailable: ${errorCode}`;
@@ -366,7 +367,7 @@ export const AssetPreviewModal = forwardRef<
       const result = await api.retryArtifact({
         libraryId,
         assetId: asset.assetId,
-        kind: "webm_proxy",
+        kind: proxyKind,
       });
       if (!isCurrentRun()) return;
       if (!result.ok) {
@@ -413,6 +414,7 @@ export const AssetPreviewModal = forwardRef<
     [
       api,
       asset.assetId,
+      asset.mediaType,
       libraryId,
       resolution?.playbackToken,
       resolvePreview,
@@ -635,6 +637,30 @@ export const AssetPreviewModal = forwardRef<
       mediaError?.message ??
         "HTMLMediaElement emitted an error without MediaError details.",
     );
+    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
+    // commonly appears when a Range fetch is cancelled during scrub.
+    const shouldProxyFallback =
+      resolution?.playbackMode === "source" &&
+      mediaError != null &&
+      (mediaError.code === 3 || mediaError.code === 4);
+    if (shouldProxyFallback) {
+      const message =
+        previewErrorDetail(resolution.errorCode, t) ??
+        (isAudio
+          ? t("preview.audioFailed", { code: errorCode })
+          : t("preview.videoFailed", { code: errorCode }));
+      playbackErrorRef.current = message;
+      // Serpent-e56a1f: 进入代理生成流程后不再显示「视频无法播放」警告——
+      // 由「代理生成中」状态提示替代；无 playbackToken（无法生成代理）时
+      // 保留原始错误供用户看到。
+      if (resolution?.playbackToken) {
+        setError(null);
+      } else {
+        setError(message);
+      }
+      void ensureProxyFallback(errorCode);
+      return;
+    }
     if (isAudio) {
       setError(
         previewErrorDetail(resolution?.errorCode, t) ??
@@ -648,28 +674,6 @@ export const AssetPreviewModal = forwardRef<
           detail,
         })
         .catch(() => undefined);
-      return;
-    }
-    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
-    // commonly appears when a Range fetch is cancelled during scrub.
-    const shouldProxyFallback =
-      resolution?.playbackMode === "source" &&
-      mediaError != null &&
-      (mediaError.code === 3 || mediaError.code === 4);
-    if (shouldProxyFallback) {
-      const message =
-        previewErrorDetail(resolution.errorCode, t) ??
-        t("preview.videoFailed", { code: errorCode });
-      playbackErrorRef.current = message;
-      // Serpent-e56a1f: 进入代理生成流程后不再显示「视频无法播放」警告——
-      // 由「代理生成中」状态提示替代；无 playbackToken（无法生成代理）时
-      // 保留原始错误供用户看到。
-      if (resolution?.playbackToken) {
-        setError(null);
-      } else {
-        setError(message);
-      }
-      void ensureProxyFallback(errorCode);
       return;
     }
     const message = t("preview.videoFailed", { code: errorCode });

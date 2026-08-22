@@ -762,7 +762,7 @@ describe('preview availability while derivatives are generated', () => {
     service.closeAll();
   });
 
-  it('queues an Ogg proxy for WAV playback rather than relying on a source codec', () => {
+  it('keeps natively playable WAV playback on the source without queuing a proxy', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -776,16 +776,18 @@ describe('preview availability while derivatives are generated', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'audio',
-      status: 'pending',
+      status: 'ready',
       kind: 'audio_proxy',
-      mimeType: 'audio/ogg',
+      mimeType: 'audio/wav',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
     });
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(
       db.prepare(
         "SELECT kind, status FROM jobs WHERE asset_id = ? AND kind = 'generate_audio_proxy'",
       ).get(asset.assetId),
-    ).toMatchObject({ kind: 'generate_audio_proxy', status: 'queued' });
+    ).toBeUndefined();
     db.close();
     service.closeAll();
   });

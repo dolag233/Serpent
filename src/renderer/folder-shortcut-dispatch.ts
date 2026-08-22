@@ -44,7 +44,7 @@ export type FolderShortcutResolveInput = {
   readonly selectedFolderCardIds: readonly string[];
   readonly selectedAssetCount: number;
   readonly resolveManagedFolderName: (folderId: string) => string | undefined;
-  /** Inline rename currently exists for managed folders only. */
+  /** Optional availability guard for managed and linked folders. */
   readonly canRenameFolder?: (folderId: string) => boolean;
 };
 
@@ -99,7 +99,7 @@ export function resolveFolderShortcutAction(
   } = input;
 
   if (commandId === "folder.create-subfolder") {
-    if (focusedNav?.locationKind === "managed") {
+    if (focusedNav?.locationKind === "managed" || focusedNav?.locationKind === "linked") {
       return {
         type: "create-subfolder",
         parentFolderId: focusedNav.folderId,

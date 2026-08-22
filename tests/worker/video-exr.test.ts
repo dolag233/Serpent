@@ -630,6 +630,14 @@ describe('video (ffprobe + ffmpeg)', () => {
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    // Playback proxies are opt-in now: the renderer requests this only after
+    // a real source decode failure. Keep the encoder-selection assertions, but
+    // model that explicit fallback request in the worker test.
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'webm_proxy',
+    });
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
@@ -2215,7 +2223,7 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
     service.closeAll();
   });
 
-  it('generates an Opus/Ogg playback proxy for WAV after its waveform is ready', async () => {
+  it('does not generate an Opus/Ogg playback proxy for WAV until explicitly requested', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const capturedSpawnArgs: Array<{ command: string; args: string[] }> = [];
@@ -2246,16 +2254,34 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
 
-    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy'))
-      .toMatchObject({ status: 'ready', mimeType: 'audio/ogg' });
-    // REQ-VIEW-002: WAV is natively playable, so the viewer resolution stays
-    // on the ORIGINAL source; the Ogg proxy remains a hover/derivative path.
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy')).toBeNull();
+    // REQ-VIEW-002: WAV is natively playable, so both viewer and hover stay on
+    // the ORIGINAL source. A proxy is only created after the renderer reports
+    // a real source decode failure and explicitly retries the artifact.
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
       mediaType: 'audio',
       status: 'ready',
       playbackMode: 'source',
       mimeType: 'audio/wav',
     });
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
+      mediaType: 'audio',
+      status: 'ready',
+      playbackMode: 'source',
+      mimeType: 'audio/wav',
+    });
+    expect(capturedSpawnArgs.some((call) =>
+      call.args.includes('libopus') && call.args.at(-1)?.endsWith('.ogg'),
+    )).toBe(false);
+
+    service.enqueueArtifactRetry({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+      kind: 'audio_proxy',
+    });
+    await service.processThumbnailQueue(created.libraryId);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'audio_proxy'))
+      .toMatchObject({ status: 'ready', mimeType: 'audio/ogg' });
     const proxyCall = capturedSpawnArgs.find((call) =>
       call.args.includes('libopus') && call.args.at(-1)?.endsWith('.ogg'),
     );

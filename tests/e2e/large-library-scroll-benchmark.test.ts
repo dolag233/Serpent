@@ -619,24 +619,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     expect(result.passed, JSON.stringify(result, null, 2)).toBe(samples.length);
   } catch (error) {
     bodyError = error;
-    throw error;
-  } finally {
-    await application.close();
+  }
+  await application.close();
+  // Serpent-140fe2: no-unsafe-finally — cleanup runs outside try/finally so
+  // its throws never mask the body error; the body error is rethrown after
+  // cleanup completes either way.
+  let cleanupError: unknown = undefined;
+  try {
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  } catch (firstCleanupError) {
+    // Windows can hold brief locks immediately after Electron exits; block
+    // shortly and retry once.
+    const buffer = new SharedArrayBuffer(4);
+    Atomics.wait(new Int32Array(buffer), 0, 0, 400);
     try {
       rmSync(temporaryRoot, { force: true, recursive: true });
-    } catch (cleanupError) {
-      // Windows can hold brief locks immediately after Electron exits; block
-      // shortly and retry once. If cleanup still fails AND the body had its
-      // own failure, surface the body error instead of teardown noise.
-      const buffer = new SharedArrayBuffer(4);
-      Atomics.wait(new Int32Array(buffer), 0, 0, 400);
-      try {
-        rmSync(temporaryRoot, { force: true, recursive: true });
-        if (bodyError !== undefined) throw bodyError;
-      } catch {
-        if (bodyError !== undefined) throw bodyError;
-        throw cleanupError;
-      }
+    } catch (retryError) {
+      cleanupError = retryError;
+      void firstCleanupError;
     }
   }
+  if (bodyError !== undefined) throw bodyError;
+  if (cleanupError !== undefined) throw cleanupError;
 });

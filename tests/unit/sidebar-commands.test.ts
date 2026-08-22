@@ -119,7 +119,7 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     ]);
   });
 
-  it('linked 根：trash + remove-from-library 可见，无 disk-delete', () => {
+  it('linked 根：按普通文件夹提供创建、重命名、粘贴、删除等基础操作', () => {
     const { ctx } = makeCtx({
       locationKind: 'linked',
       status: 'available',
@@ -129,15 +129,19 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.create-subfolder',
+      'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
+      'folder.paste',
       'folder.move-to-trash',
+      'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
   });
 
-  it('linked 子文件夹：trash / disk-delete 可见，无 remove-from-library', () => {
+  it('linked 子文件夹：基础文件夹操作可见且不显示移除资源库', () => {
     const { ctx } = makeCtx({
       locationKind: 'linked',
       status: 'available',
@@ -148,9 +152,12 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.create-subfolder',
+      'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
+      'folder.paste',
       'folder.move-to-trash',
       'folder.delete-from-disk',
     ]);
@@ -165,9 +172,13 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     });
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.create-subfolder',
+      'folder.rename',
       'folder.copy-path',
       'folder.copy',
+      'folder.paste',
       'folder.move-to-trash',
+      'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
   });
@@ -183,10 +194,14 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     const menu = registry.resolveMenu(ctx);
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
+      'folder.create-subfolder',
+      'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
       'folder.copy',
+      'folder.paste',
       'folder.move-to-trash',
+      'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
     for (const id of [
@@ -246,6 +261,36 @@ describe('文件夹分支：快捷键展示（Serpent-vf8x）', () => {
     expect(findItem(winMenu, 'folder.move-to-trash').shortcutLabel).toBe(
       'Delete',
     );
+  });
+
+  it('linked 子文件夹的操作使用虚拟目录 id，删除仍传入链接根和相对路径', () => {
+    const { ctx, calls } = makeCtx({
+      locationKind: 'linked',
+      status: 'available',
+      subjectId: 'lfv:folder-1/props/wood',
+      linkedFolderResolved: true,
+      linkedFolder: LINKED_FOLDER,
+      isLinkedRoot: false,
+      linkedRelativePath: 'props/wood',
+    });
+    const run = (id: string) => registry.get(id)?.run(ctx);
+
+    run('folder.create-subfolder');
+    run('folder.rename');
+    run('folder.paste');
+    run('folder.move-to-trash');
+    run('folder.delete-from-disk');
+
+    expect(calls).toEqual([
+      { action: 'createSubfolder', args: ['lfv:folder-1/props/wood'] },
+      { action: 'renameFolder', args: ['lfv:folder-1/props/wood', '素材'] },
+      { action: 'pasteIntoFolder', args: ['lfv:folder-1/props/wood'] },
+      {
+        action: 'trashLinkedFolderSubtree',
+        args: ['folder-1', 'props/wood', '素材'],
+      },
+      { action: 'deleteFolderFromDisk', args: ['lfv:folder-1/props/wood', '素材'] },
+    ]);
   });
 });
 

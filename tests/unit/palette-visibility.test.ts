@@ -6,9 +6,11 @@ import {
 } from "../../src/shared/palette-visibility";
 
 describe("palette-visibility (Serpent-uz1)", () => {
-  it("allows image and video only", () => {
+  it("allows visual media, models, and browser-previewable documents", () => {
     expect(mediaTypeSupportsAutoPalette("image")).toBe(true);
     expect(mediaTypeSupportsAutoPalette("video")).toBe(true);
+    expect(mediaTypeSupportsAutoPalette("model")).toBe(true);
+    expect(mediaTypeSupportsAutoPalette("document")).toBe(true);
     expect(mediaTypeSupportsAutoPalette("audio")).toBe(false);
     expect(mediaTypeSupportsAutoPalette("text")).toBe(false);
     expect(mediaTypeSupportsAutoPalette("other")).toBe(false);
@@ -25,10 +27,13 @@ describe("palette-visibility (Serpent-uz1)", () => {
     expect(shouldShowAutoPaletteSection(["video", null])).toBe(false);
   });
 
-  it("shows palette chrome only when every selected kind is image or video", () => {
+  it("shows palette chrome only when every selected kind is visual", () => {
     expect(shouldShowAutoPaletteSection(["image"])).toBe(true);
     expect(shouldShowAutoPaletteSection(["video"])).toBe(true);
+    expect(shouldShowAutoPaletteSection(["model"])).toBe(true);
+    expect(shouldShowAutoPaletteSection(["document"])).toBe(true);
     expect(shouldShowAutoPaletteSection(["image", "video"])).toBe(true);
+    expect(shouldShowAutoPaletteSection(["model", "document"])).toBe(true);
     expect(shouldShowAutoPaletteSection(["image", "image"])).toBe(true);
   });
 });

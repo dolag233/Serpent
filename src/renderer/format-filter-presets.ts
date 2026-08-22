@@ -1,6 +1,6 @@
 // REQ-FILTER-025 follow-up (Serpent-1d4w): the format filter quick-chips are
 // derived from the product format registries instead of a hardcoded list, so
-// every supported format (images incl. RAW, video, audio, 3D models) is
+// every supported format (images incl. RAW, video, audio, documents, 3D models) is
 // clickable without touching this module when the registry grows.
 //
 // The special `text` token (Serpent-4l7) is NOT an extension — the worker
@@ -10,6 +10,7 @@ import {
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
 } from "../shared/media-formats";
 import { AUDIO_EXTENSION_NAMES } from "../shared/audio-media";
 
@@ -40,6 +41,10 @@ export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   {
     labelKey: "filter.formatGroupModel",
     extensions: dotless(MODEL_EXTENSIONS),
+  },
+  {
+    labelKey: "filter.formatGroupDocument",
+    extensions: dotless(DOCUMENT_EXTENSIONS),
   },
 ];
 

@@ -207,6 +207,65 @@ describe('local extracted palette artifact', () => {
     service.closeAll();
   });
 
+  it('does not extract a palette from an audio waveform poster', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'AudioPalette', selectedParentPath: root });
+    const source = path.join(root, 'sound.mp3');
+    writeFileSync(source, Buffer.from('not decoded by this test'));
+    const assetId = importAsset(service, library.libraryId, source);
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const revision = db.prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string };
+    const posterId = 'audio-waveform-for-palette';
+    const posterPath = `${posterId}.png`;
+    const artifactsDir = path.join(library.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(path.join(artifactsDir, posterPath), VALID_1X1_PNG);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'video_poster', 'image/png', ?, ?, 'audio-waveform-test', 'ready', ?)`,
+    ).run(posterId, revision.current_revision_id, VALID_1X1_PNG.length, posterPath, new Date().toISOString());
+    db.close();
+
+    service.enqueueThumbnailJobs(library.libraryId);
+    expect(service.listMediaJobs(library.libraryId).jobs.some((job) =>
+      job.assetId === assetId && job.kind === 'extract_palette')).toBe(false);
+    expect(service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette')).toBeNull();
+    service.closeAll();
+  });
+
+  it.each(['pdf', 'html', 'obj'])('queues a palette for visual %s assets', async (extension) => {
+    const root = temporaryRoot();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'VisualPalette', selectedParentPath: root });
+    const source = path.join(root, `visual.${extension}`);
+    writeFileSync(source, Buffer.from(`visual ${extension} fixture`));
+    const assetId = importAsset(service, library.libraryId, source);
+    const db = new TestDatabase(path.join(library.libraryPath, '.serpent', 'library.db'));
+    const revision = db.prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string };
+    const thumbnailId = `thumbnail-for-${extension}`;
+    const thumbnailPath = `${thumbnailId}.png`;
+    const artifactsDir = path.join(library.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(path.join(artifactsDir, thumbnailPath), VALID_1X1_PNG);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, 'visual-palette-test', 'ready', ?)`,
+    ).run(thumbnailId, revision.current_revision_id, VALID_1X1_PNG.length, thumbnailPath, new Date().toISOString());
+    db.close();
+
+    service.enqueueThumbnailJobs(library.libraryId);
+    expect(service.listMediaJobs(library.libraryId).jobs.some((job) =>
+      job.assetId === assetId && job.kind === 'extract_palette')).toBe(true);
+    service.closeAll();
+  });
+
   it('recovers an interrupted palette job on reopen without resetting attempts', async () => {
     const root = temporaryRoot();
     const service = newService();

@@ -48,7 +48,7 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
         selectedAssetCount: 0,
         resolveManagedFolderName: resolveName,
       }),
-    ).toEqual({ type: "create-subfolder", parentFolderId: null });
+    ).toEqual({ type: "create-subfolder", parentFolderId: "linked-1" });
   });
 
   it("rename/trash defer to assets when any asset is selected", () => {

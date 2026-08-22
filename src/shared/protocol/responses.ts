@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
@@ -489,6 +489,8 @@ export function parseAiContentClearedEvent(input: unknown): AiContentClearedEven
 export const mediaJobSchema = z.strictObject({
   jobId: nonBlankString,
   assetId: nonBlankString,
+  /** Basename only; absolute and library-relative paths never cross the bridge. */
+  assetName: nonBlankString.nullable().optional(),
   revisionId: nonBlankString.nullable(),
   kind: z.enum([
     'generate_thumbnail',
@@ -513,6 +515,8 @@ export type MediaJob = z.infer<typeof mediaJobSchema>;
 export const aiJobSchema = z.strictObject({
   jobId: nonBlankString,
   assetId: nonBlankString,
+  /** Basename only; absolute and library-relative paths never cross the bridge. */
+  assetName: nonBlankString.nullable().optional(),
   kind: z.enum(['ai.image.analysis', 'ai.video.analysis']),
   status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
   errorCode: z.string().nullable(),
@@ -654,6 +658,16 @@ const assetOperationSuccessSchemas = [
     type: z.literal('folder.renamed'),
     folder: managedFolderSummarySchema,
     historyEntryId: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.directory-created'),
+    folder: linkedFolderDirectoryMutationSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.directory-renamed'),
+    folder: linkedFolderDirectoryMutationSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

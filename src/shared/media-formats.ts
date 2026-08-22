@@ -39,6 +39,11 @@ export const MODEL_EXTENSIONS = [
   '.fbx', '.obj', '.gltf', '.glb', '.stl',
 ] as const;
 
+/** Document formats with a native preview/viewer path. */
+export const DOCUMENT_EXTENSIONS = [
+  '.pdf', '.html', '.htm',
+] as const;
+
 export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
@@ -49,6 +54,7 @@ const oiioExtensions = new Set<string>([
 const imageExtensions = new Set<string>(IMAGE_EXTENSIONS);
 const videoExtensions = new Set<string>(VIDEO_EXTENSIONS);
 const modelExtensions = new Set<string>(MODEL_EXTENSIONS);
+const documentExtensions = new Set<string>(DOCUMENT_EXTENSIONS);
 
 function normalizedExtension(extensionOrFilename: string): string {
   const lower = extensionOrFilename.toLowerCase();
@@ -66,6 +72,10 @@ export function isSupportedVideoExtension(extensionOrFilename: string): boolean 
 
 export function isSupportedModelExtension(extensionOrFilename: string): boolean {
   return modelExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+export function isSupportedDocumentExtension(extensionOrFilename: string): boolean {
+  return documentExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
 export function imageDecoderForExtension(

@@ -984,6 +984,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         (folder) => folder.folderId === entry.folderId,
       );
       if (!lf) return null;
+      // Linked directories are physical folders with virtual ids in the
+      // library index.  Keep the same inline rename affordance as managed
+      // folders instead of falling back to a dialog or hiding the action.
+      if (
+        inlineFolderEdit?.kind === "rename" &&
+        inlineFolderEdit.folderId === entry.folderId
+      ) {
+        return (
+          <InlineFolderEditRow
+            depth={entry.depth}
+            key={entry.folderId}
+            onCancel={onInlineFolderEditCancel}
+            onChange={onInlineFolderEditChange}
+            onCommit={onInlineFolderEditCommit}
+            state={inlineFolderEdit}
+          />
+        );
+      }
       const offline = entry.status === "offline";
       const linkedAffordance = linkedFolderNavAffordance(entry.status);
       const hasChildren = foldersWithChildren.has(entry.folderId);
@@ -1099,10 +1117,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 const ids = serialized
                   ? (JSON.parse(serialized) as string[])
                   : fallbackIds!;
-                const root =
-                  linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
-                  lf;
-                void onCopyManagedToLinked(root, ids);
+                // `lf` retains the virtual child relativePath.  Passing the
+                // root summary here silently copied into the linked root and
+                // made child folders appear to accept drops without effect.
+                void onCopyManagedToLinked(lf, ids);
               } catch {
                 // drag data invalid — silently ignore
               }
@@ -1112,11 +1130,22 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             if (files.length > 0 && onResolveManagedAssetDrop) {
               event.preventDefault();
               setAssetDropTarget(null);
-              const root =
-                linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
-                lf;
+              const payload = externalImportPayload(event.dataTransfer);
               void onResolveManagedAssetDrop(files).then((ids) => {
-                if (ids.length > 0) void onCopyManagedToLinked(root, ids);
+                if (ids.length > 0) {
+                  void onCopyManagedToLinked(lf, ids);
+                  return;
+                }
+                // A native file that is not indexed yet must be imported
+                // directly into the selected linked directory.  Falling
+                // through to the resolver alone made Explorer/Finder drops
+                // appear to do nothing because no managed asset id existed.
+                void onImportDroppedFiles(
+                  payload.files,
+                  lf.folderId,
+                  undefined,
+                  payload,
+                );
               });
             }
           }}

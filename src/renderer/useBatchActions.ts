@@ -380,7 +380,8 @@ export function useBatchActions({
     try {
       const result = await api.copyAssetsToLinkedFolder({
         libraryId: library.libraryId,
-        folderId: folder.folderId,
+        folderId: folder.linkedFolderId ?? folder.folderId,
+        ...(folder.relativePath ? { relativePath: folder.relativePath } : {}),
         assetIds,
         conflictStrategy: "keep-both",
       });

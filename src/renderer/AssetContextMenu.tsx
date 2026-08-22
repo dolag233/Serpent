@@ -61,6 +61,7 @@ import {
   type PluginMenuDescriptor,
 } from "./plugin-menu-contributions";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
+import { linkedRevealFolderId } from "../shared/linked-folder-tree";
 
 const isMac = isMacPlatform(navigator.userAgent);
 
@@ -922,6 +923,14 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             desc.locationKind === "linked"
               ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
               : undefined;
+          // Linked child rows are virtual ids.  Actions that operate on the
+          // selected directory (create, rename, paste and copy) must receive
+          // that virtual scope, while disk-delete/trash still need the root
+          // id plus the relative path below.
+          const commandSubjectId =
+            desc.locationKind === "linked"
+              ? linkedRevealFolderId(desc.folderId, desc.linkedRelativePath)
+              : desc.folderId;
           const commandContext: SidebarCommandContext = {
             surface: "sidebar",
             locale,
@@ -931,7 +940,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             assetScope: "none",
             trashMode: false,
             menuKind: "folder",
-            subjectId: desc.folderId,
+            subjectId: commandSubjectId,
             subjectName: desc.name,
             locationKind: desc.locationKind,
             status: desc.status,
@@ -950,9 +959,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               cloneFolder: onCloneFolder,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
-              deleteFolderFromDisk: (folderId, name) =>
+              deleteFolderFromDisk: (_folderId, name) =>
                 onDeleteFolderFromDisk({
-                  folderId,
+                  folderId: desc.folderId,
                   name,
                   locationKind: desc.locationKind,
                   linkedRelativePath: desc.linkedRelativePath,

@@ -98,6 +98,26 @@ export const linkedFolderSummarySchema = z.strictObject({
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
 
+/**
+ * Result of creating or renaming a physical directory under a linked root.
+ * Linked subdirectories are virtual in the library index, so they cannot use
+ * ManagedFolderSummary (there is no managed_folders row).  The id remains the
+ * encoded linked scope id and the relative path is the canonical source path
+ * relative to the linked root.
+ */
+export const linkedFolderDirectoryMutationSchema = z.strictObject({
+  folderId: nonBlankString,
+  linkedFolderId: nonBlankString,
+  parentFolderId: nonBlankString.nullable(),
+  name: nonBlankString,
+  relativePath: z.string().max(4096),
+  status: z.enum(['available', 'offline']),
+});
+
+export type LinkedFolderDirectoryMutation = z.infer<
+  typeof linkedFolderDirectoryMutationSchema
+>;
+
 export const linkedFolderRuleSchema = z.strictObject({
   ruleId: nonBlankString,
   action: z.enum(['include', 'exclude']),
