@@ -113,7 +113,7 @@ import {
   CONTENT_REPLACE_MAX_BYTES,
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
-import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchScope, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
   createAutomationFilePlanHash,
@@ -11387,6 +11387,316 @@ export class LibraryService {
     return { deletedAssetCount, failedCount };
   }
 
+  /**
+   * Resolve a linked root/virtual directory without exposing its filesystem
+   * path to the renderer.  The relative path is validated at this boundary so
+   * every linked-directory mutation is confined to the imported root.
+   */
+  private resolveLinkedDirectoryMutationTarget(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    relativePath: string,
+  ): {
+    linkedFolderId: string;
+    relativePath: string;
+    absoluteRootPath: string;
+    absolutePath: string;
+    status: 'available' | 'offline';
+  } {
+    let normalizedPath: string;
+    try {
+      normalizedPath = relativePath === ''
+        ? ''
+        : normalizeRelativeAssetPath(relativePath);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION', { cause: error });
+    }
+    const linked = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE folder_id = ? AND library_id = ?`,
+      )
+      .get(linkedFolderId, openLibrary.summary.libraryId) as
+      | {
+          folder_id: string;
+          absolute_root_path: string;
+          status: 'available' | 'offline';
+        }
+      | undefined;
+    if (!linked) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    if (linked.status !== 'available' || this.linkedRootIsGone(linked.absolute_root_path)) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+
+    // Use the same component-by-component symlink guard as linkedAssetPath.
+    // A probe is intentionally not required to exist; missing final probe
+    // components stop validation after all real parent components are checked.
+    const probe = normalizedPath === ''
+      ? '.serpent-folder-probe'
+      : `${normalizedPath}/.serpent-folder-probe`;
+    this.linkedAssetPath(openLibrary, linked.folder_id, probe);
+    const absolutePath = normalizedPath === ''
+      ? linked.absolute_root_path
+      : path.join(linked.absolute_root_path, ...normalizedPath.split('/'));
+    if (!realDirectoryExists(absolutePath)) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    }
+    return {
+      linkedFolderId: linked.folder_id,
+      relativePath: normalizedPath,
+      absoluteRootPath: linked.absolute_root_path,
+      absolutePath,
+      status: linked.status,
+    };
+  }
+
+  private linkedDirectoryMutationSummary(
+    input: {
+      linkedFolderId: string;
+      relativePath: string;
+      name: string;
+      status: 'available' | 'offline';
+    },
+  ): LinkedFolderDirectoryMutation {
+    const parentRelativePath = parentLinkedRelativePath(input.relativePath);
+    return {
+      folderId: encodeLinkedVirtualFolderId(input.linkedFolderId, input.relativePath),
+      linkedFolderId: input.linkedFolderId,
+      parentFolderId: parentRelativePath === null || parentRelativePath === ''
+        ? input.relativePath === '' ? null : input.linkedFolderId
+        : encodeLinkedVirtualFolderId(input.linkedFolderId, parentRelativePath),
+      name: input.name,
+      relativePath: input.relativePath,
+      status: input.status,
+    };
+  }
+
+  private assertLinkedDirectorySiblingAvailable(
+    parentPath: string,
+    name: string,
+    sourceName?: string,
+  ): string {
+    let entries;
+    try {
+      entries = readdirSync(parentPath, { withFileTypes: true });
+    } catch (error) {
+      throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+    }
+    const targetIdentity = portablePathSegmentIdentity(name);
+    for (const entry of entries) {
+      if (sourceName !== undefined && entry.name === sourceName) continue;
+      if (portablePathSegmentIdentity(entry.name) === targetIdentity) {
+        throw new LibraryServiceError('FOLDER_NAME_CONFLICT');
+      }
+    }
+    return path.join(parentPath, name);
+  }
+
+  /** Create an actual directory inside a linked root or virtual child. */
+  createLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    name: string;
+  }): LinkedFolderDirectoryMutation {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    let name: string;
+    try {
+      name = normalizeFolderName(input.name);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
+    }
+    const parent = this.resolveLinkedDirectoryMutationTarget(
+      openLibrary,
+      input.linkedFolderId,
+      input.relativePath,
+    );
+    const targetPath = this.assertLinkedDirectorySiblingAvailable(parent.absolutePath, name);
+    try {
+      mkdirSync(targetPath);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+      }
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+    const relativePath = parent.relativePath === ''
+      ? name
+      : path.posix.join(parent.relativePath, name);
+    this.noteClientFilesystemMutation();
+    return this.linkedDirectoryMutationSummary({
+      linkedFolderId: parent.linkedFolderId,
+      relativePath,
+      name,
+      status: parent.status,
+    });
+  }
+
+  /** Rename a linked root or a physical virtual-child directory in place. */
+  renameLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    newName: string;
+  }): LinkedFolderDirectoryMutation {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    let name: string;
+    try {
+      name = normalizeFolderName(input.newName);
+    } catch (error) {
+      throw new LibraryServiceError('INVALID_FOLDER_NAME', { cause: error });
+    }
+    const target = this.resolveLinkedDirectoryMutationTarget(
+      openLibrary,
+      input.linkedFolderId,
+      input.relativePath,
+    );
+    const sourceName = path.basename(target.absolutePath);
+    const parentPath = path.dirname(target.absolutePath);
+    const destinationPath = this.assertLinkedDirectorySiblingAvailable(
+      parentPath,
+      name,
+      sourceName,
+    );
+    if (destinationPath === target.absolutePath) {
+      return this.linkedDirectoryMutationSummary({
+        linkedFolderId: target.linkedFolderId,
+        relativePath: target.relativePath,
+        name,
+        status: target.status,
+      });
+    }
+
+    let renamed = false;
+    try {
+      renamePathWithRetry(target.absolutePath, destinationPath);
+      renamed = true;
+      const now = new Date().toISOString();
+      if (target.relativePath === '') {
+        let canonicalDestination: string;
+        try {
+          canonicalDestination = realpathSync(destinationPath);
+        } catch (error) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+        }
+        openLibrary.connection.transaction(() => {
+          const changed = openLibrary.connection
+            .prepare(
+              `UPDATE linked_folders
+                  SET display_name = ?, absolute_root_path = ?, path_identity = ?, updated_at = ?
+                WHERE folder_id = ? AND library_id = ?`,
+            )
+            .run(name, canonicalDestination, canonicalDestination, now, target.linkedFolderId, input.libraryId);
+          if (changed.changes !== 1) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        })();
+        this.stopLinkedWatcher(input.libraryId, target.linkedFolderId);
+        this.reconcileLinkedWatchers(openLibrary);
+        this.noteClientFilesystemMutation();
+        return this.linkedDirectoryMutationSummary({
+          linkedFolderId: target.linkedFolderId,
+          relativePath: '',
+          name,
+          status: target.status,
+        });
+      }
+
+      const oldPrefix = `${target.relativePath}/`;
+      const newParent = parentLinkedRelativePath(target.relativePath) ?? '';
+      const newRelativePath = newParent === ''
+        ? name
+        : path.posix.join(newParent, name);
+      const prefixLength = [...oldPrefix].length;
+      const linkedAssets = openLibrary.connection
+        .prepare(
+          `SELECT asset_id, relative_file_path
+             FROM assets
+            WHERE linked_folder_id = ? AND location_kind = 'linked'
+              AND (relative_file_path = ? OR substr(relative_file_path, 1, ?) = ?)`,
+        )
+        .all(target.linkedFolderId, target.relativePath, prefixLength, oldPrefix) as Array<{
+          asset_id: string;
+          relative_file_path: string;
+        }>;
+      const ignoredPaths = hasTable(openLibrary.connection, 'explicit_ignored_paths')
+        ? openLibrary.connection
+          .prepare(
+            `SELECT location_kind, linked_folder_id, relative_path, path_kind, ignored_at
+               FROM explicit_ignored_paths
+              WHERE location_kind = 'linked' AND linked_folder_id = ?
+                AND path_kind IN ('asset', 'folder')
+                AND (relative_path = ? OR substr(relative_path, 1, ?) = ?)`,
+          )
+          .all(target.linkedFolderId, target.relativePath, prefixLength, oldPrefix) as Array<{
+            location_kind: 'linked';
+            linked_folder_id: string;
+            relative_path: string;
+            path_kind: 'asset' | 'folder';
+            ignored_at: string;
+          }>
+        : [];
+      openLibrary.connection.transaction(() => {
+        const updateAsset = openLibrary.connection.prepare(
+          `UPDATE assets
+              SET relative_file_path = ?, path_identity = ?, updated_at = ?
+            WHERE asset_id = ?`,
+        );
+        for (const asset of linkedAssets) {
+          const rewritten = asset.relative_file_path === target.relativePath
+            ? newRelativePath
+            : newRelativePath + asset.relative_file_path.slice(target.relativePath.length);
+          updateAsset.run(rewritten, portablePathIdentity(rewritten), now, asset.asset_id);
+          this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
+        }
+        if (ignoredPaths.length > 0) {
+          const remove = openLibrary.connection.prepare(
+            `DELETE FROM explicit_ignored_paths
+              WHERE location_kind = ? AND linked_folder_id = ?
+                AND relative_path = ? AND path_kind = ?`,
+          );
+          const insert = openLibrary.connection.prepare(
+            `INSERT OR REPLACE INTO explicit_ignored_paths
+              (location_kind, linked_folder_id, relative_path, path_kind, ignored_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          );
+          for (const ignored of ignoredPaths) {
+            const rewritten = ignored.relative_path === target.relativePath
+              ? newRelativePath
+              : newRelativePath + ignored.relative_path.slice(target.relativePath.length);
+            remove.run(ignored.location_kind, ignored.linked_folder_id, ignored.relative_path, ignored.path_kind);
+            insert.run(ignored.location_kind, ignored.linked_folder_id, rewritten, ignored.path_kind, ignored.ignored_at);
+          }
+        }
+      })();
+      this.noteClientFilesystemMutation();
+      return this.linkedDirectoryMutationSummary({
+        linkedFolderId: target.linkedFolderId,
+        relativePath: newRelativePath,
+        name,
+        status: target.status,
+      });
+    } catch (error) {
+      if (renamed) {
+        try {
+          renamePathWithRetry(destinationPath, target.absolutePath);
+        } catch (rollbackError) {
+          this.diagnose('linked-folder.rename.rollback', rollbackError, {
+            libraryId: input.libraryId,
+            linkedFolderId: input.linkedFolderId,
+            relativePath: input.relativePath,
+          });
+        }
+      }
+      if (isMissingPathError(error)) {
+        throw new LibraryServiceError('FOLDER_NOT_FOUND', { cause: error });
+      }
+      if (error instanceof LibraryServiceError) throw error;
+      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+    }
+  }
+
   private collectManagedFolderSubtree(
     openLibrary: OpenLibrary,
     folderId: string,
@@ -11769,7 +12079,19 @@ export class LibraryService {
       resolved.linkedFolderId,
       input.showIgnored === true,
     );
-    const prefixes = collectLinkedDirectoryPrefixes(paths);
+    const assetPrefixes = collectLinkedDirectoryPrefixes(paths);
+    const diskPrefixes = resolved.status === 'available' && !this.linkedRootIsGone(resolved.absoluteRootPath)
+      ? this.collectLinkedDirectoryPrefixesFromDisk(
+        openLibrary,
+        resolved.linkedFolderId,
+        resolved.absoluteRootPath,
+        this.getLinkedFolderRules({
+          libraryId: openLibrary.summary.libraryId,
+          folderId: resolved.linkedFolderId,
+        }),
+      )
+      : [];
+    const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
     const children = directChildLinkedDirectories(prefixes, resolved.relativePath);
     if (children.length === 0) return [];
 
@@ -12300,6 +12622,49 @@ export class LibraryService {
     };
   }
 
+  /**
+   * Linked subfolders are virtual rows.  Asset-derived prefixes cover normal
+   * populated folders, but an empty directory created from Serpent must also
+   * remain visible after refresh/reopen, so include real directories from the
+   * linked root as well.  Symlinks and ignored directories are never followed.
+   */
+  private collectLinkedDirectoryPrefixesFromDisk(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string,
+    rootPath: string,
+    rules: LinkedFolderRule[],
+  ): string[] {
+    const prefixes = new Set<string>();
+    const visit = (directoryPath: string, relativeDirectory: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(directoryPath, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        const relativePath = relativeDirectory === ''
+          ? entry.name
+          : path.posix.join(relativeDirectory, entry.name);
+        let normalized: string;
+        try {
+          normalized = normalizeRelativeAssetPath(relativePath);
+        } catch {
+          continue;
+        }
+        // Probe the folder target so folder rules (including default hidden
+        // directories) are applied with the same matcher as asset scans.
+        if (this.linkedPathIsIgnored(`${normalized}/__serpent_probe__`, rules)) continue;
+        if (this.explicitFolderIgnored(openLibrary, 'linked', linkedFolderId, normalized)) continue;
+        prefixes.add(normalized);
+        visit(path.join(directoryPath, entry.name), normalized);
+      }
+    };
+    visit(rootPath, '');
+    return [...prefixes].sort();
+  }
+
   listLinkedFolders(libraryId: string): LinkedFolderSummary[] {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
@@ -12316,7 +12681,16 @@ export class LibraryService {
       .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
       .flatMap((row) => {
         const paths = this.listLinkedAssetRelativePaths(openLibrary, row.folder_id, false);
-        const prefixes = collectLinkedDirectoryPrefixes(paths);
+        const assetPrefixes = collectLinkedDirectoryPrefixes(paths);
+        const diskPrefixes = row.status === 'available' && !this.linkedRootIsGone(row.absolute_root_path)
+          ? this.collectLinkedDirectoryPrefixesFromDisk(
+            openLibrary,
+            row.folder_id,
+            row.absolute_root_path,
+            this.getLinkedFolderRules({ libraryId, folderId: row.folder_id }),
+          )
+          : [];
+        const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
         const root: LinkedFolderSummary = {
           folderId: row.folder_id,
           displayName: row.display_name,
@@ -12422,6 +12796,7 @@ export class LibraryService {
   copyAssetsToLinkedFolder(input: {
     libraryId: string;
     folderId: string;
+    relativePath?: string;
     assetIds: string[];
     conflictStrategy: 'keep-both' | 'replace' | 'skip';
   }): { copiedCount: number; skippedCount: number; assets: AssetSummary[] } {
@@ -12435,6 +12810,11 @@ export class LibraryService {
     if (folder.status !== 'available' || !realDirectoryExists(folder.absolute_root_path)) {
       throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'SOURCE_NOT_FOUND' });
     }
+    const target = this.resolveLinkedDirectoryMutationTarget(
+      openLibrary,
+      input.folderId,
+      input.relativePath ?? '',
+    );
     const rows = openLibrary.connection.prepare(
       `SELECT a.asset_id, a.relative_file_path
          FROM assets a
@@ -12458,8 +12838,10 @@ export class LibraryService {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'UNSUPPORTED_FILE_ENTRY' });
         }
         const originalName = path.posix.basename(row.relative_file_path);
-        let relativeDestination = normalizeRelativeAssetPath(originalName);
-        let destination = path.join(folder.absolute_root_path, relativeDestination);
+        let relativeDestination = target.relativePath === ''
+          ? normalizeRelativeAssetPath(originalName)
+          : normalizeRelativeAssetPath(path.posix.join(target.relativePath, originalName));
+        let destination = path.join(folder.absolute_root_path, ...relativeDestination.split('/'));
         const destinationExists = (): boolean => occupied.has(portablePathIdentity(relativeDestination)) || existsSync(destination);
         if (destinationExists()) {
           if (input.conflictStrategy === 'skip') {
@@ -12470,8 +12852,10 @@ export class LibraryService {
             let found = false;
             for (let suffix = 2; suffix < 10_000 && !found; suffix += 1) {
               for (const candidate of copyNameCandidates(originalName, suffix)) {
-                relativeDestination = normalizeRelativeAssetPath(candidate);
-                destination = path.join(folder.absolute_root_path, relativeDestination);
+                relativeDestination = target.relativePath === ''
+                  ? normalizeRelativeAssetPath(candidate)
+                  : normalizeRelativeAssetPath(path.posix.join(target.relativePath, candidate));
+                destination = path.join(folder.absolute_root_path, ...relativeDestination.split('/'));
                 if (!destinationExists()) { found = true; break; }
               }
             }
@@ -21862,6 +22246,20 @@ export class LibraryService {
                 AND j.kind = 'generate_thumbnail'
                 AND j.status IN ('queued', 'running', 'paused')
             )
+            AND NOT EXISTS (
+              SELECT 1 FROM explicit_ignored_paths ip
+               WHERE ip.location_kind = a.location_kind
+                 AND ip.linked_folder_id = COALESCE(a.linked_folder_id, '')
+                 AND (
+                   (ip.path_kind = 'folder'
+                     AND (ip.relative_path = ''
+                          OR LOWER(a.relative_file_path) LIKE LOWER(ip.relative_path) || '/%'))
+                   OR (ip.path_kind = 'asset'
+                       AND ip.relative_path = a.relative_file_path)
+                   OR (ip.path_kind = 'extension'
+                       AND LOWER(a.relative_file_path) LIKE '%.' || LOWER(ip.relative_path))
+                 )
+            )
           ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
@@ -29770,6 +30168,7 @@ export class LibraryService {
   importPathsIntoLinkedFolder(input: {
     libraryId: string;
     linkedFolderId: string;
+    relativePath?: string;
     sourceKind: 'files' | 'folder';
     sourcePaths: string[];
     expandImageSequences?: boolean;
@@ -29792,10 +30191,20 @@ export class LibraryService {
       });
     }
 
+    let targetPrefix = '';
+    if (input.relativePath !== undefined && input.relativePath !== '') {
+      const target = this.resolveLinkedDirectoryMutationTarget(
+        openLibrary,
+        input.linkedFolderId,
+        input.relativePath,
+      );
+      targetPrefix = target.relativePath;
+    }
+
     const { entries } = this.enumerateImportSources({
       sourceKind: input.sourceKind,
       sourcePaths: input.sourcePaths,
-      targetPrefix: '',
+      targetPrefix,
       expandImageSequences: input.expandImageSequences === true,
     });
     if (entries.length === 0) {
@@ -29881,18 +30290,20 @@ export class LibraryService {
   private linkedFolderRowForImport(
     openLibrary: OpenLibrary,
     folderId: string | undefined,
-  ): { folder_id: string; absolute_root_path: string; status: string } | null {
+  ): { folder_id: string; absolute_root_path: string; status: string; relative_path: string } | null {
     if (!folderId) return null;
+    const virtual = parseLinkedVirtualFolderId(folderId);
+    const rootId = virtual?.linkedFolderId ?? folderId;
     const row = openLibrary.connection
       .prepare(
         `SELECT folder_id, absolute_root_path, status
            FROM linked_folders
           WHERE folder_id = ? AND library_id = ?`,
       )
-      .get(folderId, openLibrary.summary.libraryId) as
+      .get(rootId, openLibrary.summary.libraryId) as
       | { folder_id: string; absolute_root_path: string; status: string }
       | undefined;
-    return row ?? null;
+    return row ? { ...row, relative_path: virtual?.relativePath ?? '' } : null;
   }
 
   private findActiveManagedAssetByContent(
@@ -30564,6 +30975,7 @@ export class LibraryService {
       return this.importPathsIntoLinkedFolder({
         libraryId: input.libraryId,
         linkedFolderId: linked.folder_id,
+        relativePath: linked.relative_path,
         sourceKind: input.sourceKind,
         sourcePaths: input.sourcePaths,
         expandImageSequences: input.expandImageSequences === true,
