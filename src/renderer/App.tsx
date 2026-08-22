@@ -314,7 +314,7 @@ import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { resolveMasonryTabTarget } from "./masonry-focus-order";
-import { shuffleArray } from "./client-shuffle";
+import { shuffleBrowseItems } from "./client-shuffle";
 import { toMessage, messageForPublicError, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -1790,8 +1790,7 @@ function AppInner() {
           trashBrowseTombstoneId,
         )
       : assets;
-    if (shuffleSeed === null || showTrash) return base;
-    return shuffleArray(base, shuffleSeed);
+    return shuffleBrowseItems(base, shuffleSeed, !showTrash);
   }, [
     assets,
     showTrash,
@@ -1800,6 +1799,14 @@ function AppInner() {
     trashedAssets,
     trashedFolders,
   ]);
+
+  // Serpent-b963a9: masonry/justified canvases use the full-scope layout index
+  // for geometry, so shuffling only the loaded summaries leaves the cards in
+  // the original order whenever a filter is active. Keep the API rank index
+  // unchanged for pagination, but use the same client shuffle for rendering.
+  const visibleBrowseLayout = useMemo(() => {
+    return shuffleBrowseItems(browseLayout, shuffleSeed, !showTrash);
+  }, [browseLayout, showTrash, shuffleSeed]);
 
   // Report mounted cards and real layout slots. A fresh scrollbar destination
   // can queue its thumbnail work before the page summaries mount, while the
@@ -10520,7 +10527,7 @@ function AppInner() {
                         {assetViewMode === "masonry" ? (
                           <MasonryColumns
                             assets={section.assets}
-                            layout={browseLayout}
+                            layout={visibleBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry) =>
@@ -10550,7 +10557,7 @@ function AppInner() {
                         ) : (
                           <JustifiedAssetRows
                             assets={section.assets}
-                            layout={browseLayout}
+                            layout={visibleBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry) =>
