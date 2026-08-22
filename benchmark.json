@@ -329,6 +329,33 @@
         "p50Ms": 240.6,
         "note": "视口抢占收编后历史最佳：9/10 跳全解码（此前最好 4/10 或间歇 9/10）。唯一失败仍是 fraction=0.22（visibleCards=26 的密集区，decoded 21/26）——问题从系统性挂起缩小到特定区域个别资产，立案 Serpent-7714df 继续追。竞争者同 fixture v4 最新 firstDecoded p50=530ms。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T07:05:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+d58c2972+E2E判定修复",
+      "suite": "large-library-electron-scroll-e2e (FINAL: 10/10 PASS)",
+      "fixture": "local APFS 20k v3 mixed, prewarmed, cardSizeIndex=3",
+      "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
+      "metrics": {
+        "jumpsPassedOf10": 10,
+        "jumpElapsedMs": [
+          246.3,
+          382.9,
+          169.4,
+          293.5,
+          288.9,
+          194,
+          346.4,
+          109,
+          283,
+          243.1
+        ],
+        "p50Ms": 283,
+        "p95Ms": 382.9,
+        "targetMs": 500,
+        "note": "两项修复叠加达成 sa65 目标：(1) 视口抢占机制（b79a1e30）把解码资源让给当前视口；(2) E2E done 判定修正——旧判定把非图片卡（无img的图标卡）算进分母导致含非图片资产的视口永远超时（Serpent-7714df）。20k mixed 库全部 10 跳真实图片解码 109-383ms，p95 382.9ms 低于 500ms 预算。"
+      }
     }
   ]
 }

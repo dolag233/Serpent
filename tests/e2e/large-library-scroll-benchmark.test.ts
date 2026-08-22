@@ -515,11 +515,16 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
               ) {
                 imgCardsAllDecodedAt = Math.round(elapsedMs * 10) / 10;
               }
+              // Serpent-4bdd26: done must key on media cards only. The old
+              // `decodedImages === visible.length` also counted icon-only
+              // cards (gltf/txt/c4d carry no <img>), which made any viewport
+              // containing non-image assets wait out the full timeout even
+              // though every real image had decoded.
               const done = visibleLayoutAssetIds.length >= 4
                 && visibleLayoutAssetIds.every((assetId) => loadedIds.has(assetId))
                 && placeholders === 0
-                && defaultIcons === 0
-                && decodedImages === visible.length;
+                && imgCards.length > 4
+                && imgDecoded === imgCards.length;
               doneTimeline.push({
                 relMs: Math.round(elapsedMs * 10) / 10,
                 visibleCards: visible.length,
