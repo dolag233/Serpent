@@ -172,6 +172,49 @@ describe.skipIf(!fixturePath)('comprehensive perf benchmark', () => {
       svcRating.setAssetsRating({ libraryId: manifest.libraryId, assetIds: sampleIds, rating: 4 }))
         .toFixed(1));
 
+    // ── 12. 合集资产重排（goal 指标：资产重新排列）──
+    if (sampleCollectionId) {
+      const members = service.listCollectionAssets({
+        ...libId,
+        collectionId: sampleCollectionId,
+        recursive: false,
+      }).slice(0, 100);
+      const memberIds = members.map((m) => m.assetId);
+      if (memberIds.length >= 2) {
+        const reordered = [...memberIds].reverse();
+        results.collectionReorderAllMs = Number(once(() =>
+          (service as unknown as {
+            reorderCollectionAssets(input: { libraryId: string; collectionId: string; orderedAssetIds: string[] }): unknown;
+          }).reorderCollectionAssets({
+            libraryId: manifest.libraryId,
+            collectionId: sampleCollectionId,
+            orderedAssetIds: reordered,
+          })).toFixed(2));
+      }
+    }
+
+    // ── 13. 导入准备+放弃（goal 指标：添加文件；不落盘，保持 fixture 干净）──
+    const fsSync = await import('node:fs');
+    const osSync = await import('node:os');
+    const pathMod = await import('node:path');
+    const importStaging = fsSync.mkdtempSync(pathMod.join(osSync.tmpdir(), 'serpent-import-probe-'));
+    for (let i = 0; i < 5; i++) {
+      fsSync.writeFileSync(pathMod.join(importStaging, `probe-import-${i}.jpg`), Buffer.alloc(4096, i));
+    }
+    const svcImport = service as unknown as {
+      prepareImport(input: { libraryId: string; sourceKind: string; sourcePaths: string[] }): { importId: string };
+      abandonImport(importId: string): unknown;
+    };
+    results.importPrepareFiveFilesMs = Number(once(() => {
+      const plan = svcImport.prepareImport({
+        libraryId: manifest.libraryId,
+        sourceKind: 'files',
+        sourcePaths: [importStaging],
+      });
+      svcImport.abandonImport(plan.importId);
+    }).toFixed(2));
+    fsSync.rmSync(importStaging, { recursive: true, force: true });
+
     console.info(`PERF_BENCH_JSON ${JSON.stringify({ suite: 'comprehensive-20k', assets: manifest.assetCount, ...results })}`);
     expect(results.allBrowseFirstPageMs).toBeGreaterThan(0);
   }, 300_000);

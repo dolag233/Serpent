@@ -21938,8 +21938,37 @@ export class LibraryService {
         // throttled by the verified slot mtime to one backup per 24 hours.
         await this.createDatabaseBackupForOpenLibrary(current, 'open');
       }
+      await yieldTurn();
+      this.warmBrowseIndexCache(openLibrary);
     } catch (error) {
       this.diagnose('open.background-reconciliation', error, { libraryId });
+    }
+  }
+
+  /**
+   * Serpent-4bdd26: pull the hot browse/sort index pages into the SQLite page
+   * cache after open. On SMB/NAS each cold page is a network round trip —
+   * without warm-up the user's first sort-by-date or deep pagination pays
+   * seconds of latency that a background scan can absorb invisibly.
+   * Read-only and yielded between passes; correctness-neutral.
+   */
+  private warmBrowseIndexCache(openLibrary: OpenLibrary): void {
+    const queries = [
+      `SELECT r.modified_at FROM assets a
+         JOIN revisions r ON r.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL`,
+      `SELECT ra.artifact_id FROM assets a
+         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL`,
+    ];
+    for (const sql of queries) {
+      try {
+        // Single narrow column: materializing it is cheap, and reading every
+        // row is exactly what pulls the index pages into the cache.
+        openLibrary.connection.prepare(sql).all();
+      } catch {
+        // Warm-up is best-effort; any failure just skips the pass.
+      }
     }
   }
 

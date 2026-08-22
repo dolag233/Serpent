@@ -244,6 +244,38 @@
         "reopenAfterV40MigrationMs": 7.6,
         "note": "DB 在本地盘时的全链路数字。真实 SMB 场景的额外成本 = SQLite 页读取网络往返（cache_size=64MB 缓解）+ linked 源 stat（离线时跳过）。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T05:50:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+d7e8d389+WIP(warmBrowseIndexCache)",
+      "suite": "comprehensive-20k-worker (extended)",
+      "fixture": "local APFS 20k v3 mixed",
+      "metrics": {
+        "openLibraryMs": 577.3,
+        "allBrowseFirstPageMs": 10.33,
+        "folderSwitchMs": 1.03,
+        "collectionSwitchMs": 4.58,
+        "collectionRecursiveSwitchMs": 54.83,
+        "deepOffsetPageMs": 21.64,
+        "layoutOnlyMs": 110.88,
+        "searchFixedTokenMs": 69.58,
+        "sortNameAscMs": 10.79,
+        "sortCreatedAtDescMs": 42.23,
+        "sortModifiedDescMs": 41.74,
+        "sortByteSizeDescMs": 40.44,
+        "sortRatingDescMs": 42.81,
+        "filterRatingMs": 26.47,
+        "inspectorMetadataMs": 0.19,
+        "sidebarListFoldersMs": 32.88,
+        "sidebarListCollectionsMs": 0.22,
+        "trashFiveAssetsMs": 8.4,
+        "restoreSevenAssetsMs": 10.4,
+        "deletePermanentSevenAssetsMs": 21.3,
+        "setRatingFiveAssetsMs": 0.4,
+        "collectionReorderAllMs": 84.24,
+        "importPrepareFiveFilesMs": 41.05
+      }
     }
   ]
 }
