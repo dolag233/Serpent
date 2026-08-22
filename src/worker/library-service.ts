@@ -6964,6 +6964,16 @@ export class LibraryService {
     openLibrary.gitignoreText = text;
   }
 
+  /** Cheap liveness check for callers that must not open or mutate state. */
+  isLibraryOpen(libraryId: string): boolean {
+    try {
+      this.requireOpenLibrary(libraryId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private requireOpenLibrary(libraryId: string): OpenLibrary {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');

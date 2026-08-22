@@ -1224,6 +1224,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'sync.poll-remote': {
       // 自动同步轮询（Serpent-bfsb 后续）：轻量检测远端 manifest 变化，
       // 不做本地全量 hash，供 Main 定时调度器决定是否触发完整同步。
+      // Serpent-140fe2/308675: pollRemoteChange 先打一轮 WebDAV 网络请求、
+      // 之后才读本地缓存（需要库已打开）。对未打开的库必须快速跳过——
+      // 否则每个轮询周期都用一次网络往返占用单线程 Worker，交互命令
+      // （翻页/缩略图路径解析）在其后排队，表现为数秒级浏览卡顿。
+      if (!libraryService.isLibraryOpen(request.command.libraryId)) {
+        return {
+          ok: true,
+          type: 'sync.poll-remote.result',
+          changed: false,
+        };
+      }
       const engine = buildSyncEngine(request.command.deviceId);
       const changed = await engine.pollRemoteChange(request.command.libraryId, {
         id: 'request',
@@ -1712,6 +1723,24 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         relativePath: request.command.relativePath,
         ...result,
       };
+    }
+    case 'linked-folder.create-directory': {
+      const lease = await libraryService.acquireWriteLease(request.command.libraryId);
+      try {
+        const folder = libraryService.createLinkedFolderDirectory(request.command);
+        return { ok: true, type: 'linked-folder.directory-created', folder };
+      } finally {
+        lease.release();
+      }
+    }
+    case 'linked-folder.rename-directory': {
+      const lease = await libraryService.acquireWriteLease(request.command.libraryId);
+      try {
+        const folder = libraryService.renameLinkedFolderDirectory(request.command);
+        return { ok: true, type: 'linked-folder.directory-renamed', folder };
+      } finally {
+        lease.release();
+      }
     }
     case 'asset.list':
       {
