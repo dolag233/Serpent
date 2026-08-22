@@ -25,6 +25,13 @@ function dotless(extensions: readonly string[]): string[] {
   return extensions.map((extension) => extension.slice(1));
 }
 
+/** Formats shown in the catch-all filter group. */
+export const OTHER_FORMAT_EXTENSIONS = ["html", "hdf", "htm"] as const;
+const otherFormatExtensionSet = new Set<string>(OTHER_FORMAT_EXTENSIONS);
+const documentFilterExtensions = dotless(DOCUMENT_EXTENSIONS).filter(
+  (extension) => !otherFormatExtensionSet.has(extension),
+);
+
 export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   {
     labelKey: "filter.formatGroupImage",
@@ -44,7 +51,7 @@ export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   },
   {
     labelKey: "filter.formatGroupDocument",
-    extensions: dotless(DOCUMENT_EXTENSIONS),
+    extensions: documentFilterExtensions,
   },
 ];
 
