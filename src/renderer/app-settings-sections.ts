@@ -33,6 +33,7 @@ export type AppSettingsCanvasFieldOption = {
 
 export type AppSettingsCategoryId =
   | "general"
+  | "assets"
   | "appearance"
   | "browse"
   | "ai"
@@ -51,12 +52,12 @@ export type AppSettingsCategory = {
   readonly icon: IconName;
   readonly labelKey:
     | "settings.categoryGeneral"
+    | "settings.categoryAssets"
     | "settings.categoryAppearance"
     | "settings.categoryBrowse"
     | "settings.categoryAi"
     | "settings.categoryMcp"
     | "settings.categoryPlugins"
-    | "settings.categorySafety"
     | "settings.categorySync";
 };
 
@@ -65,6 +66,11 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "general",
     icon: "settings",
     labelKey: "settings.categoryGeneral",
+  },
+  {
+    id: "assets",
+    icon: "file",
+    labelKey: "settings.categoryAssets",
   },
   {
     id: "appearance",
@@ -90,11 +96,6 @@ export const APP_SETTINGS_CATEGORIES: readonly AppSettingsCategory[] = [
     id: "plugins",
     icon: "box",
     labelKey: "settings.categoryPlugins",
-  },
-  {
-    id: "safety",
-    icon: "warning",
-    labelKey: "settings.categorySafety",
   },
   {
     id: "sync",

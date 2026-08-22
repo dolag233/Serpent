@@ -31,14 +31,15 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
   it("uses stable, user-facing settings categories", () => {
     expect(APP_SETTINGS_CATEGORIES.map((category) => category.id)).toEqual([
       "general",
+      "assets",
       "appearance",
       "browse",
       "ai",
       "mcp",
       "plugins",
-      "safety",
       "sync",
     ]);
+    expect(isAppSettingsCategoryId("assets")).toBe(true);
     expect(isAppSettingsCategoryId("ai")).toBe(true);
     expect(isAppSettingsCategoryId("plugins")).toBe(true);
     expect(isAppSettingsCategoryId("sync")).toBe(true);

@@ -4870,18 +4870,6 @@ body.serpent-modal-open .app-shell {
 .preview-image-middle.is-hidden {
   visibility: hidden;
 }
-.preview-pbr-channel-notice {
-  position: absolute;
-  z-index: 2;
-  top: 12px;
-  left: 50%;
-  max-width: min(520px, calc(100% - 32px));
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-.preview-pbr-channel-notice .ui-feedback__message {
-  white-space: nowrap;
-}
 .preview-chrome-fade {
   opacity: 1;
   transition: opacity 280ms ease;
@@ -5852,6 +5840,13 @@ body.serpent-modal-open .app-shell {
   margin: 0 0 5px;
   font-size: 13px;
   font-weight: 590;
+}
+
+.media-jobs-grid-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dialog-heading {
@@ -6832,6 +6827,84 @@ select.ai-config-input.ai-config-languages {
   min-width: 0;
   flex-direction: column;
   gap: 3px;
+}
+
+.app-settings-memory-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.app-settings-memory-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 8px 5px 11px;
+  border: 1px solid var(--divider-soft);
+  border-radius: var(--ui-radius-pill);
+  background: var(--pane);
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.app-settings-memory-chip-copy {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.app-settings-memory-chip-label,
+.app-settings-memory-chip-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-settings-memory-chip-label {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.app-settings-memory-chip-value {
+  color: var(--secondary);
+}
+
+.app-settings-memory-chip-remove {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--tertiary);
+  cursor: pointer;
+}
+
+.app-settings-memory-chip-remove:hover,
+.app-settings-memory-chip-remove:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.app-settings-memory-chip-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.app-settings-empty-hint {
+  display: block;
+  margin-top: 12px;
+  color: var(--tertiary);
+  font-size: 12px;
 }
 
 .app-settings-row-copy strong {

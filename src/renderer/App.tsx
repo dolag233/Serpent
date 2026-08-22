@@ -83,6 +83,7 @@ import {
 import { folderBrowseScope } from "./folder-browse-scope";
 import {
   linkedDirectoryName,
+  linkedRevealFolderId,
   parseLinkedVirtualFolderId,
 } from "../shared/linked-folder-tree";
 import {
@@ -191,6 +192,10 @@ import {
   saveAiUiPreferences,
   type AiUiPreferences,
 } from "./ai-ui-preferences";
+import {
+  loadImageSequencePreferences,
+  saveImageSequencePreferences,
+} from "./image-sequence-preferences";
 import {
   SmartCollectionSettingsDialog,
   type SmartCollectionSettingsTarget,
@@ -1390,6 +1395,9 @@ function AppInner() {
   } = useViewerChromeIdle(undefined, Boolean(previewAsset));
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
+  );
+  const [imageSequencePrefs, setImageSequencePrefs] = useState(() =>
+    loadImageSequencePreferences(),
   );
   // Hover live previews (audio/video) carry the viewer volume preference over.
   const {
@@ -2593,6 +2601,10 @@ function AppInner() {
   useEffect(() => {
     saveAiUiPreferences(aiUiPrefs);
   }, [aiUiPrefs]);
+
+  useEffect(() => {
+    saveImageSequencePreferences(imageSequencePrefs);
+  }, [imageSequencePrefs]);
 
   useEffect(() => {
     const canvas = workspaceCanvasRef.current;
@@ -5450,6 +5462,7 @@ function AppInner() {
     library,
     busy,
     activeCollectionId,
+    autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
     previewBlocksDrop: Boolean(previewAsset),
     managedImportTargetFolderIdRef,
     reloadCurrentContent,
@@ -5498,6 +5511,14 @@ function AppInner() {
     library,
     setNotice,
     reloadCurrentContent,
+    isLinkedFolderId: (folderId) =>
+      parseLinkedVirtualFolderId(folderId) !== null ||
+      linkedFolders.some((folder) => folder.folderId === folderId),
+    onRenameSuccess: async (newFolderId, previousFolderId) => {
+      if (assetScope !== previousFolderId) return false;
+      await chooseFolder(newFolderId);
+      return true;
+    },
   });
 
   const reloadSmartCollections = useCallback(async () => {
@@ -5571,7 +5592,10 @@ function AppInner() {
     selectedAssetCount: selectedAssetIds.length,
     resolveManagedFolderName,
     canRenameFolder: (folderId) =>
-      folders.some((folder) => folder.folderId === folderId),
+      folders.some((folder) => folder.folderId === folderId) ||
+      linkedFolders.some(
+        (folder) => folder.folderId === folderId && folder.status === "available",
+      ),
     createSubfolder: (parentFolderId) => {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
@@ -5588,6 +5612,7 @@ function AppInner() {
       if (virtual) {
         openDiskDelete({
           kind: "linked-child",
+          folderId,
           linkedFolderId: virtual.linkedFolderId,
           relativePath: virtual.relativePath,
           name,
@@ -5595,6 +5620,13 @@ function AppInner() {
         return;
       }
       if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+        openDiskDelete({
+          kind: "linked-child",
+          folderId,
+          linkedFolderId: folderId,
+          relativePath: "",
+          name,
+        });
         return;
       }
       openDiskDelete({ kind: "managed", folderId, name });
@@ -5923,10 +5955,12 @@ function AppInner() {
           ? await api.importFiles({
               libraryId: library.libraryId,
               targetFolderId: selectedFolderId,
+              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             })
           : await api.importFolder({
               libraryId: library.libraryId,
               targetFolderId: selectedFolderId,
+              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
@@ -10879,6 +10913,7 @@ function AppInner() {
           />
         }
         aiUiPrefs={aiUiPrefs}
+        autoDetectImageSequences={imageSequencePrefs.autoDetectOnImport}
         canvasPrefs={canvasPrefs}
         onActiveCategoryChange={setAppSettingsCategory}
         onClose={() => {
@@ -10902,6 +10937,12 @@ function AppInner() {
         }}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
+        }}
+        onToggleAutoDetectImageSequences={() => {
+          setImageSequencePrefs((p) => ({
+            ...p,
+            autoDetectOnImport: !p.autoDetectOnImport,
+          }));
         }}
         onOpenAppLog={openAppLog}
         onOpenExtensionReleases={() => {
@@ -11428,8 +11469,17 @@ function AppInner() {
           if (linkedRelativePath) {
             openDiskDelete({
               kind: "linked-child",
+              folderId: linkedRevealFolderId(folderId, linkedRelativePath),
               linkedFolderId: folderId,
               relativePath: linkedRelativePath,
+              name,
+            });
+          } else {
+            openDiskDelete({
+              kind: "linked-child",
+              folderId,
+              linkedFolderId: folderId,
+              relativePath: "",
               name,
             });
           }

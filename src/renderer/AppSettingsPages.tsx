@@ -10,9 +10,16 @@ import type { CanvasPreferences } from "./canvas-preferences";
 import { useElevation } from "./ElevationProvider";
 import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import {
-  clearImportConflictPreferences,
-  hasRememberedImportConflictPreferences,
+  loadImportConflictPreferences,
+  saveImportConflictPreferences,
 } from "./import-conflict-preferences";
+import type {
+  ImportConflictPreferences,
+  RememberedDuplicateDecision,
+  RememberedNameConflictDecision,
+} from "./import-conflict-preferences";
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale, useT } from "./i18n";
 import {
   SHADOW_LEVEL_MAX,
@@ -139,6 +146,121 @@ export function GeneralSettingsPage({
             {t("settings.browserExtensionNote")}
           </p>
         </div>
+      </SettingsCard>
+    </>
+  );
+}
+
+type RememberedImportConflict = {
+  key: "nameConflict" | "duplicate";
+  label: string;
+  value: string;
+};
+
+function rememberedImportConflictEntries(
+  preferences: ImportConflictPreferences,
+  t: ReturnType<typeof useT>,
+): RememberedImportConflict[] {
+  const entries: RememberedImportConflict[] = [];
+  const nameDecisionLabels: Record<RememberedNameConflictDecision, string> = {
+    "keep-both": t("dialog.conflicts.autoRename"),
+    replace: t("dialog.conflicts.replace"),
+    skip: t("dialog.conflicts.skip"),
+  };
+  const duplicateDecisionLabels: Record<RememberedDuplicateDecision, string> = {
+    skip: t("dialog.conflicts.skip"),
+    "create-copy": t("dialog.conflicts.importAnyway"),
+    merge: t("dialog.conflicts.importAnyway"),
+  };
+  if (preferences.nameConflict !== null) {
+    entries.push({
+      key: "nameConflict",
+      label: t("settings.importConflictRememberName"),
+      value: nameDecisionLabels[preferences.nameConflict],
+    });
+  }
+  if (preferences.duplicate !== null) {
+    entries.push({
+      key: "duplicate",
+      label: t("settings.importConflictRememberDuplicate"),
+      value: duplicateDecisionLabels[preferences.duplicate],
+    });
+  }
+  return entries;
+}
+
+export function AssetsSettingsPage({
+  autoDetectImageSequences = true,
+  onToggleAutoDetectImageSequences,
+}: {
+  autoDetectImageSequences?: boolean;
+  onToggleAutoDetectImageSequences?: () => void;
+} = {}): ReactNode {
+  const t = useT();
+  const [importConflictPreferences, setImportConflictPreferences] = useState(() =>
+    loadImportConflictPreferences(),
+  );
+  const rememberedEntries = rememberedImportConflictEntries(
+    importConflictPreferences,
+    t,
+  );
+
+  function clearRememberedPreference(
+    key: RememberedImportConflict["key"],
+  ): void {
+    const next = {
+      ...importConflictPreferences,
+      [key]: null,
+    } as ImportConflictPreferences;
+    saveImportConflictPreferences(next);
+    setImportConflictPreferences(next);
+  }
+
+  return (
+    <>
+      {onToggleAutoDetectImageSequences ? (
+        <SettingsCard>
+          <SettingsToggleRow
+            checked={autoDetectImageSequences}
+            hint={t("settings.imageSequenceAutoDetectHint")}
+            label={t("settings.imageSequenceAutoDetect")}
+            onChange={onToggleAutoDetectImageSequences}
+          />
+        </SettingsCard>
+      ) : null}
+      <SettingsCard>
+        <div className="app-settings-row-copy">
+          <strong>{t("settings.importConflictRemember")}</strong>
+          <span>{t("settings.importConflictRememberHint")}</span>
+        </div>
+        {rememberedEntries.length > 0 ? (
+          <div
+            aria-label={t("settings.importConflictRemember")}
+            className="app-settings-memory-chips"
+            role="list"
+          >
+            {rememberedEntries.map((entry) => (
+              <div className="app-settings-memory-chip" key={entry.key} role="listitem">
+                <span className="app-settings-memory-chip-copy">
+                  <span className="app-settings-memory-chip-label">{entry.label}</span>
+                  <span className="app-settings-memory-chip-value">{entry.value}</span>
+                </span>
+                <button
+                  className="app-settings-memory-chip-remove"
+                  onClick={() => clearRememberedPreference(entry.key)}
+                  type="button"
+                  {...iconActionAttrs(t("settings.importConflictRememberClear"))}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="app-settings-empty-hint">
+            {t("settings.importConflictRememberEmpty")}
+          </span>
+        )}
       </SettingsCard>
     </>
   );
@@ -383,38 +505,6 @@ export function AiSettingsPage({
         label={t("settings.showAiBadges")}
         onChange={onToggleShowAiBadges}
       />
-    </SettingsCard>
-  );
-}
-
-export function SafetySettingsPage(): ReactNode {
-  const t = useT();
-  const [importConflictRemembered, setImportConflictRemembered] = useState(() =>
-    hasRememberedImportConflictPreferences(),
-  );
-  return (
-    <SettingsCard>
-      <div className="app-settings-action-row">
-        <div className="app-settings-row-copy">
-          <strong>{t("settings.importConflictRemember")}</strong>
-          <span>
-            {importConflictRemembered
-              ? t("settings.importConflictRememberActive")
-              : t("settings.importConflictRememberEmpty")}
-          </span>
-        </div>
-        <button
-          className="secondary-button"
-          disabled={!importConflictRemembered}
-          onClick={() => {
-            clearImportConflictPreferences();
-            setImportConflictRemembered(false);
-          }}
-          type="button"
-        >
-          {t("settings.importConflictRememberReset")}
-        </button>
-      </div>
     </SettingsCard>
   );
 }

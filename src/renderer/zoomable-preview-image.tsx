@@ -28,54 +28,10 @@ import {
   pbrTextureDisplayFilter,
   type PbrTextureChannelPresentation,
 } from "./pbr-texture-channel";
-import { Notice } from "./ui/patterns";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
 };
-
-function pbrChannelCopy(
-  presentation: PbrTextureChannelPresentation,
-  t: ReturnType<typeof useT>,
-): { title: string; message: string } {
-  switch (presentation.channel) {
-    case "base-color":
-      return {
-        title: t("preview.pbrBaseColorTitle"),
-        message: t("preview.pbrColorMode"),
-      };
-    case "normal":
-      return {
-        title: t("preview.pbrNormalTitle"),
-        message: t("preview.pbrNormalMode"),
-      };
-    case "roughness":
-      return {
-        title: t("preview.pbrRoughnessTitle"),
-        message: t("preview.pbrScalarMode"),
-      };
-    case "smoothness":
-      return {
-        title: t("preview.pbrSmoothnessTitle"),
-        message: t("preview.pbrSmoothnessMode"),
-      };
-    case "metallic":
-      return {
-        title: t("preview.pbrMetallicTitle"),
-        message: t("preview.pbrScalarMode"),
-      };
-    case "height":
-      return {
-        title: t("preview.pbrHeightTitle"),
-        message: t("preview.pbrScalarMode"),
-      };
-    case "metallic-roughness":
-      return {
-        title: t("preview.pbrMetallicRoughnessTitle"),
-        message: t("preview.pbrPackedMode"),
-      };
-  }
-}
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (target instanceof HTMLTextAreaElement) return true;
@@ -307,7 +263,6 @@ export const ZoomableImage = forwardRef<
     };
   }, [fullDecoded, hasFullUpgrade, src, viewportRef]);
 
-  const pbrChannelInfo = pbrChannel ? pbrChannelCopy(pbrChannel, t) : null;
   const pbrFilter = pbrChannel
     ? pbrTextureDisplayFilter(pbrChannel)
     : "none";
@@ -456,17 +411,6 @@ export const ZoomableImage = forwardRef<
           />
         )}
       </div>
-      {pbrChannelInfo ? (
-        <Notice
-          className="preview-pbr-channel-notice"
-          leading={<Icon name="info" size={14} />}
-          liveRegion={false}
-          message={pbrChannelInfo.message}
-          role="status"
-          title={pbrChannelInfo.title}
-          tone="info"
-        />
-      ) : null}
       <div
         className="preview-zoom-controls preview-chrome-fade"
         aria-label={t("preview.imageZoom")}

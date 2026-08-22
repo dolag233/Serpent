@@ -27,18 +27,21 @@ describe('desktop drop path resolution', () => {
     expect(() => resolveDroppedFilePaths([first], () => '')).toThrow('INVALID_DROP_FILE_HANDLE');
   });
 
-  it('classifies one folder or multiple files and rejects mixed/non-local selections', () => {
+  it('classifies one folder separately and accepts multi-source selections', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-drop-unit-'));
     roots.push(root);
     const folder = path.join(root, 'folder');
+    const secondFolder = path.join(root, 'second-folder');
     const first = path.join(root, 'first.png');
     const second = path.join(root, 'second.jpg');
     mkdirSync(folder);
+    mkdirSync(secondFolder);
     writeFileSync(first, 'first');
     writeFileSync(second, 'second');
     expect(classifyDroppedSourcePaths([folder])).toBe('folder');
     expect(classifyDroppedSourcePaths([first, second])).toBe('files');
-    expect(() => classifyDroppedSourcePaths([folder, first])).toThrow('INVALID_DROP_SELECTION');
+    expect(classifyDroppedSourcePaths([folder, first])).toBe('files');
+    expect(classifyDroppedSourcePaths([folder, secondFolder])).toBe('files');
     expect(() => classifyDroppedSourcePaths(['relative.png'])).toThrow('INVALID_DROP_SELECTION');
     const link = path.join(root, 'linked.png');
     symlinkSync(first, link);

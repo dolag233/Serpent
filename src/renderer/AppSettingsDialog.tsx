@@ -3,10 +3,10 @@ import { type ReactNode, useMemo, useState } from "react";
 import { AppSettingsNavigation } from "./AppSettingsNavigation";
 import {
   AiSettingsPage,
+  AssetsSettingsPage,
   AppearanceSettingsPage,
   BrowseSettingsPage,
   GeneralSettingsPage,
-  SafetySettingsPage,
 } from "./AppSettingsPages";
 import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginSettingsPage } from "./PluginSettingsPage";
@@ -41,6 +41,8 @@ export interface AppSettingsDialogProps {
   aiUiPrefs: AiUiPreferences;
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
+  autoDetectImageSequences: boolean;
+  onToggleAutoDetectImageSequences: () => void;
   onOpenAppLog?: () => void;
   onOpenExtensionReleases?: () => void;
   pluginApi?: SerpentPluginManagerApi;
@@ -68,6 +70,8 @@ export function AppSettingsDialog({
   aiUiPrefs,
   aiConfigPanel,
   onToggleShowAiBadges,
+  autoDetectImageSequences,
+  onToggleAutoDetectImageSequences,
   onOpenAppLog,
   onOpenExtensionReleases,
   pluginApi,
@@ -175,6 +179,12 @@ export function AppSettingsDialog({
                 onOpenExtensionReleases={onOpenExtensionReleases}
               />
             ) : null}
+            {!showingPluginSettings && activeCategory === "assets" ? (
+              <AssetsSettingsPage
+                autoDetectImageSequences={autoDetectImageSequences}
+                onToggleAutoDetectImageSequences={onToggleAutoDetectImageSequences}
+              />
+            ) : null}
             {!showingPluginSettings && activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}
             {!showingPluginSettings && activeCategory === "browse" ? (
               <BrowseSettingsPage
@@ -201,7 +211,6 @@ export function AppSettingsDialog({
                 refreshKey={pluginSettingsRefreshToken}
               />
             ) : null}
-            {!showingPluginSettings && activeCategory === "safety" ? <SafetySettingsPage /> : null}
             {!showingPluginSettings && activeCategory === "sync" ? (
               <SyncSettingsPage callbacks={syncServerCallbacks} />
             ) : null}

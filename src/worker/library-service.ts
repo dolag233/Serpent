@@ -10011,17 +10011,55 @@ export class LibraryService {
     };
 
     if (input.sourceKind === 'files') {
-      const filePaths = input.expandImageSequences
-        ? this.expandImageSequenceSourcePaths(input.sourcePaths)
-        : input.sourcePaths;
-      for (const rawSourcePath of filePaths) {
+      // Native Explorer drops can contain any mix of files and directories.
+      // Keep the single-directory path above for the traditional folder
+      // import, but treat every multi-source selection as a set of roots here.
+      // Sequence expansion is applied only to explicitly selected files;
+      // recursively walking a selected directory already discovers its files.
+      const selectedFiles: string[] = [];
+      const selectedDirectories: string[] = [];
+      for (const rawSourcePath of input.sourcePaths) {
         let sourcePath: string;
         try {
           sourcePath = normalizeAbsolutePath(rawSourcePath);
         } catch (error) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
+        let sourceStat: BigIntStats;
+        try {
+          sourceStat = lstatSync(sourcePath, { bigint: true });
+        } catch (error) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
+        }
+        if (sourceStat.isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+          });
+        }
+        if (sourceStat.isDirectory()) selectedDirectories.push(sourcePath);
+        else if (sourceStat.isFile()) selectedFiles.push(sourcePath);
+        else {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+      }
+      const filePaths = input.expandImageSequences
+        ? this.expandImageSequenceSourcePaths(selectedFiles)
+        : selectedFiles;
+      for (const sourcePath of filePaths) {
         addFile(sourcePath, path.posix.join(input.targetPrefix, path.basename(sourcePath)));
+      }
+      for (const sourcePath of selectedDirectories) {
+        if (sourcePath === path.parse(sourcePath).root) {
+          throw new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+            reason: 'ROOT_NOT_ALLOWED',
+          });
+        }
+        visitDirectory(
+          sourcePath,
+          path.posix.join(input.targetPrefix, path.basename(sourcePath)),
+        );
       }
     } else {
       if (input.sourcePaths.length !== 1) throw new LibraryServiceError('INVALID_IMPORT_SOURCE');

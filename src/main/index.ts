@@ -2306,6 +2306,9 @@ async function commandFor(
             sourcePaths,
             expandImageSequences:
               !app.isPackaged && process.env.SERPENT_E2E === "1",
+            ...(request.autoDetectImageSequences === false
+              ? { createImageSequence: false }
+              : {}),
             imageSequenceFps:
               !app.isPackaged && process.env.SERPENT_E2E === "1"
                 ? 30
@@ -2322,6 +2325,9 @@ async function commandFor(
             targetFolderId: request.targetFolderId,
             sourceKind: "folder",
             sourcePaths,
+            ...(request.autoDetectImageSequences === false
+              ? { createImageSequence: false }
+              : {}),
           }
         : undefined;
     }
@@ -4016,6 +4022,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         !app.isPackaged && process.env.SERPENT_E2E === "1";
       if (
         sourceKind === "files" &&
+        request.autoDetectImageSequences !== false &&
         !request.imageSequenceDecision &&
         !e2eAutoExpand
       ) {
@@ -4124,7 +4131,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(sourceKind === "files" && !e2eAutoExpand
+          ...(request.autoDetectImageSequences === false ||
+          (sourceKind === "files" && !e2eAutoExpand)
             ? { createImageSequence: false }
             : {}),
           imageSequenceFps: e2eAutoExpand ? 30 : undefined,
@@ -4299,6 +4307,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.type === "asset.import.prepare" &&
       command.sourceKind === "files" &&
       command.expandImageSequences !== true &&
+      (request.type === "asset.import-files.request"
+        ? request.autoDetectImageSequences !== false
+        : true) &&
       request.type !== "asset.import-drop.request" &&
       request.type !== "asset.import-sequence.confirm" &&
       // Clipboard paste into a folder must keep ordinary conflict flows

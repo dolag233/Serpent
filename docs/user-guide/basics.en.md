@@ -30,7 +30,7 @@ After conversion, browsing, search, tags, AI analysis, and everything else work 
 
 ## Import assets
 
-Drop one or more files or folders into Serpent, or use **Import files** / **Import folder**. Folder imports are recursive. The browser extension can save web images and videos from the context menu or by drag-and-drop.
+Drop one or more files, folders, or a mixed selection into Serpent, or use **Import files** / **Import folder**. Folder imports are recursive. The browser extension can save web images and videos from the context menu or by drag-and-drop.
 
 The current product registry includes:
 
@@ -45,7 +45,7 @@ Serpent copies managed files into the library and assigns a stable asset ID. Nam
 
 #### Sequence-frame import
 
-When you drop or paste a set of numbered frames (for example `00001.png`…`00150.png`), Serpent recognizes them as a sequence and opens a sequence import dialog where you can set the FPS. The frames import as one playable asset you can play in the viewer, and you can dissolve it back into individual frames.
+In **Settings → Assets**, turn **Detect image sequences during import** on or off (on by default). When enabled, dropping or importing consecutively numbered, same-size images (for example `00001.png`…`00150.png`) opens the sequence import dialog, where you can set the FPS. When disabled, the files are imported as ordinary images. A sequence appears as one playable asset in the viewer and can be dissolved back into individual frames.
 
 ## Browse and organize
 

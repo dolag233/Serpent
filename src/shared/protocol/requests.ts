@@ -318,6 +318,20 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('linked-folder.create-directory.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rename-directory.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    newName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.list.request'),
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
@@ -353,11 +367,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.import-files.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-folder.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-eagle.request'),
@@ -386,6 +402,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
         applyToRest: z.boolean().optional(),
       })
       .optional(),
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   // Created by preload after resolving native File handles. Paths never
   // originate from Renderer code; Main/Worker map them back to asset ids.
@@ -493,6 +510,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.assets.copy.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema.optional(),
     assetIds: z.array(identifierSchema).min(1).max(1_000).refine((ids) => new Set(ids).size === ids.length),
     conflictStrategy: nameConflictDecisionSchema,
   }),
@@ -1377,6 +1395,20 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('linked-folder.create-directory'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rename-directory'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    newName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.list'),
     libraryId: identifierSchema,
     folderId: folderScopeIdSchema.optional(),
@@ -1505,6 +1537,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.assets.copy'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema.optional(),
     assetIds: z.array(identifierSchema).min(1).max(1_000),
     conflictStrategy: nameConflictDecisionSchema,
   }),

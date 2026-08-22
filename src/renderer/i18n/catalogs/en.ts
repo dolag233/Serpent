@@ -377,6 +377,7 @@ export const en = {
     formatGroupVideo: "Video",
     formatGroupAudio: "Audio",
     formatGroupModel: "3D model",
+    formatGroupDocument: "Document",
     formatGroupOther: "Other",
     format3d: "3D MODEL",
     excludeFormats: "Exclude these formats",
@@ -886,6 +887,7 @@ export const en = {
       closeAria: "Close background jobs",
       loading: "Loading job status…",
       empty: "No media jobs right now.",
+      libraryScope: "Library-level task",
       readFailed: "Could not read job status. Close and try again.",
       summary: "Queued {queued} · Running {running} · Paused {paused} · Failed {failed} · Done {completed}",
       pluginSummary: "Queued {queued} · Running {running} · Paused {paused} · Failed {failed} · Interrupted {interrupted} · Done {completed}",
@@ -1086,13 +1088,13 @@ export const en = {
     title: "Settings",
     categoriesLabel: "Settings categories",
     categoryGeneral: "General",
+    categoryAssets: "Assets",
     categoryAppearance: "Appearance",
     categoryBrowse: "Browse",
     categoryAi: "AI",
     categoryMcp: "MCP",
     categoryPlugins: "Plugins",
     categoryPluginSettings: "Plugin settings",
-    categorySafety: "Safety & import",
     categorySync: "Sync",
     pluginsTitle: "Plugins",
     pluginsHint: "Install and manage extensions. Library plugins travel with the library, but this device must trust them before they run.",
@@ -1265,6 +1267,9 @@ export const en = {
     hoverVideoSound: "Video hover preview with sound",
     hoverVideoSoundHint: "Play sound during video hover preview (off by default to avoid noise).",
     languageHint: "Controls the interface language. Changes apply immediately.",
+    imageSequenceAutoDetect: "Detect image sequences during import",
+    imageSequenceAutoDetectHint:
+      "Automatically recognize consecutively numbered images with matching dimensions as a sequence.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:
       "Save web images and videos into the active library with the Chrome / Edge extension. Media is downloaded by the browser (with cookies and the page Referer) and uploaded to this machine, bypassing most hotlink protections. Keep Serpent running with a library open.",
@@ -1443,8 +1448,9 @@ export const en = {
     importConflictRemember: "Remembered import conflict choices",
     importConflictRememberHint:
       "If you chose “Remember my choice”, name and content-duplicate imports apply that decision without a dialog.",
-    importConflictRememberReset: "Clear remembered choices",
-    importConflictRememberActive: "A name or content-duplicate choice is remembered",
+    importConflictRememberName: "Name conflicts",
+    importConflictRememberDuplicate: "Content duplicates",
+    importConflictRememberClear: "Clear this choice",
     importConflictRememberEmpty: "No import conflict choices remembered"
   },
   preview: {

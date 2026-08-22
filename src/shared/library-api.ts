@@ -35,6 +35,7 @@ import type {
   FilterClause,
   FolderBrowseEntry,
   IgnoredPath,
+  LinkedFolderDirectoryMutation,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -230,6 +231,20 @@ export interface SerpentLibraryApi {
     folderId: string;
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
+  /** Create a physical directory inside a linked-folder root or virtual child. */
+  createLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    name: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>>;
+  /** Rename a physical linked-folder root or virtual child directory. */
+  renameLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    newName: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>>;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
   copyFolder(input: {
     libraryId: string;
@@ -346,10 +361,12 @@ export interface SerpentLibraryApi {
   importFiles(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   importEagleLibrary(input: {
     libraryId: string;
@@ -364,6 +381,7 @@ export interface SerpentLibraryApi {
     files: File[];
     html?: string;
     uriList?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   /** Resolve native dropped File handles to managed asset ids without exposing paths. */
   resolveManagedAssetDrop(input: {
@@ -413,7 +431,7 @@ export interface SerpentLibraryApi {
   getGitignore(input: { libraryId: string }): Promise<LibraryApiResult<{ content: string }>>;
   setGitignore(input: { libraryId: string; content: string }): Promise<LibraryApiResult<{ content: string }>>;
   setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder' | 'extension'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
-  copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
+  copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; relativePath?: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
