@@ -530,6 +530,8 @@ function scheduleThumbnailQueue(
     retryFailed?: boolean;
     /** Serpent-x9xu light scenes skip stale-artifact invalidation sweeps. */
     skipStaleRepair?: boolean;
+    /** Serpent-4bdd26: cap in-flight decodes for this scene (startup backfill). */
+    processMaxJobs?: number;
   } = {},
 ): number {
   let enqueued: number;
@@ -586,9 +588,12 @@ function scheduleThumbnailQueue(
       // call; the service still caps actual decoder concurrency, but this
       // avoids inserting a timer/query boundary between visible thumbnails.
       const thumbnailWaveSize = workerMediaDecodeWaveSize();
-      const processWaveSize = options.skipStaleRepair && options.assetIds
-        ? Math.min(100, Math.max(thumbnailWaveSize, options.assetIds.length))
-        : thumbnailWaveSize;
+      const processWaveSize = Math.min(
+        options.processMaxJobs ?? Number.POSITIVE_INFINITY,
+        options.skipStaleRepair && options.assetIds
+          ? Math.min(100, Math.max(thumbnailWaveSize, options.assetIds.length))
+          : thumbnailWaveSize,
+      );
       const processed = await libraryService.processThumbnailQueue(libraryId, {
         maxJobs: processWaveSize,
         jobKinds: ['generate_thumbnail', 'generate_video_poster'],
@@ -763,8 +768,12 @@ function scheduleThumbnailScene(
   maxIdsOverride?: number,
   options: { light?: boolean } = {},
 ): void {
-  const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number }> = {
-    startup: { limit: 50, priority: 100 },
+  const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number; processMaxJobs?: number }> = {
+    // Serpent-4bdd26 收编 codex/large-library-performance@d5f58088：startup 回填
+    // 限制为单任务在飞。Sharp/OIIO 无法在每个新视口到达的瞬间中止所有原生子操作；
+    // 双任务 startup 波会让 visible 波先等两个过期的解码才能夺回解码器。
+    // 后台吞吐让位于交互尾延迟。
+    startup: { limit: 50, priority: 100, processMaxJobs: 1 },
     refresh: { limit: 50, priority: 150 },
     // Serpent-azf6: the CURRENT VIEW must outrank the import flood — browsing
     // a freshly imported library otherwise waits behind hundreds of priority-300
@@ -792,6 +801,7 @@ function scheduleThumbnailScene(
       ...(assetIds ? { assetIds: assetIds.slice(0, maxIds) } : {}),
       ...(config.limit === undefined ? {} : { limit: config.limit }),
       priority: config.priority,
+      ...(config.processMaxJobs === undefined ? {} : { processMaxJobs: config.processMaxJobs }),
       repairFailed: !options.light,
       // Serpent-5xbg: every browse/refresh wave re-opens retryable failed
       // artifacts (throttled) — generation failures are healed in the
@@ -1745,13 +1755,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'asset.list':
       {
         const assets = libraryService.listAssets(request.command);
-        scheduleThumbnailScene(
-          request.command.libraryId,
-          'visible',
-          assets.flatMap((asset) =>
-            asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-          ),
-        );
+        // Serpent-4bdd26 收编 codex/large-library-performance@d5f58088：渲染端
+        // 布局完成后会上报真实视口。在这里先开一页规模的解码波会与该上报竞争，
+        // 让首个可见窗口反而等待折叠线以下的任务；visible-window 处理器是
+        // 浏览优先级的唯一来源。startup/import/mutation 场景仍为非渲染端调用方
+        // 填充队列。
         return {
         ok: true,
         type: 'asset.list',
@@ -2002,13 +2010,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'collection.assets.list': {
       const assets = libraryService.listCollectionAssets(request.command);
-      scheduleThumbnailScene(
-        request.command.libraryId,
-        'visible',
-        assets.flatMap((asset) =>
-          asset.sequence?.frames.map((frame) => frame.assetId) ?? [asset.assetId],
-        ),
-      );
+      // Serpent-4bdd26 收编 codex/large-library-performance@d5f58088：同
+      // asset.list——视口上报（asset.thumbnail.visible-window）才是可见波的唯一触发源。
       return { ok: true, type: 'collection.assets.list', assets };
     }
     case 'collection.assets.memberships': {
