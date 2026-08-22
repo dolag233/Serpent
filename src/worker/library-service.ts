@@ -274,6 +274,15 @@ const SHARP_THUMBNAIL_GENERATOR = `sharp@${SHARP_VERSION}-gifstill1`;
 export const THUMBNAIL_VISIBLE_PAGE_SIZE = 100;
 const OIIO_VERSION = '3.1.12.0';
 const FFMPEG_VERSION = '8.1';
+/**
+ * Serpent-308675: media jobs run under full-decoder CPU saturation, where the
+ * single Worker thread can stall well past a 15s lease between heartbeat
+ * ticks. Media-job leases use their own longer window (heartbeat = 1/3 of it)
+ * so transient stalls don't fail-and-requeue live work. Scoped to media jobs
+ * on purpose: the writer lease keeps its short window for fast crash
+ * reclaim.
+ */
+const MEDIA_JOB_LEASE_DURATION_MS = 60_000;
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
@@ -465,6 +474,7 @@ import {
 } from '../shared/audio-media';
 import {
   IMAGE_EXTENSIONS,
+  VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
   directImageMimeForExtension,
@@ -477,6 +487,7 @@ import {
   modelMimeForExtension,
   videoMimeForExtension,
 } from '../shared/media-formats';
+import { mediaTypeSupportsAutoPalette } from '../shared/palette-visibility';
 import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
   MODEL_THUMBNAIL_MAX_PNG_BYTES,
@@ -18787,6 +18798,9 @@ export class LibraryService {
     revisionId: string,
     priority: number,
   ): boolean {
+    if (!this.isPaletteEligibleAsset(openLibrary, assetId, revisionId)) {
+      return false;
+    }
     const source = openLibrary.connection.prepare(
       `SELECT artifact_id FROM revision_artifacts
         WHERE revision_id = ?
@@ -18817,6 +18831,31 @@ export class LibraryService {
     return result.changes > 0;
   }
 
+  /**
+   * Palette extraction is only meaningful for assets with a visual surface.
+   * Audio waveform covers are deliberately excluded even though they use the
+   * `video_poster` artifact kind for viewer compatibility.
+   */
+  private isPaletteEligibleAsset(
+    openLibrary: OpenLibrary,
+    assetId: string,
+    revisionId: string,
+  ): boolean {
+    const asset = openLibrary.connection.prepare(
+      `SELECT relative_file_path, current_revision_id
+         FROM assets
+        WHERE asset_id = ?`,
+    ).get(assetId) as {
+      relative_file_path: string;
+      current_revision_id: string | null;
+    } | undefined;
+    return Boolean(
+      asset
+      && asset.current_revision_id === revisionId
+      && mediaTypeSupportsAutoPalette(LibraryService.detectMediaType(asset.relative_file_path)),
+    );
+  }
+
   private async generateQueuedPaletteArtifact(
     libraryId: string,
     assetId: string,
@@ -18829,6 +18868,7 @@ export class LibraryService {
     ).get(assetId) as { current_revision_id: string | null } | undefined;
     if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (asset.current_revision_id !== queuedRevisionId) return false;
+    if (!this.isPaletteEligibleAsset(openLibrary, assetId, queuedRevisionId)) return false;
 
     const source = openLibrary.connection.prepare(
       `SELECT artifact_id FROM revision_artifacts
@@ -21186,6 +21226,12 @@ export class LibraryService {
       ? 500
       : Math.max(0, Math.min(500, Math.trunc(options.limit)));
     if (limit === 0) return 0;
+    const paletteExtensions = [
+      ...IMAGE_EXTENSIONS,
+      ...VIDEO_EXTENSIONS,
+      ...MODEL_EXTENSIONS,
+      ...DOCUMENT_EXTENSIONS,
+    ];
     const rows = openLibrary.connection.prepare(
       `SELECT a.asset_id, a.current_revision_id
          FROM assets a
@@ -21193,6 +21239,7 @@ export class LibraryService {
           AND a.availability = 'available'
           AND a.current_revision_id IS NOT NULL
           ${selectedSql}
+          AND (${paletteExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
           AND EXISTS (
             SELECT 1 FROM revision_artifacts source
              WHERE source.revision_id = a.current_revision_id
@@ -21216,7 +21263,11 @@ export class LibraryService {
           )
         ORDER BY a.relative_file_path
         LIMIT ?`,
-    ).all(...selectedIds, limit) as Array<{
+    ).all(
+      ...selectedIds,
+      ...paletteExtensions.map((extension) => `%.${extension.slice(1)}`),
+      limit,
+    ) as Array<{
       asset_id: string;
       current_revision_id: string;
     }>;
@@ -22061,8 +22112,13 @@ export class LibraryService {
 
       let jobLease: LibraryJobLease;
       try {
+        // Serpent-308675: media jobs run under full-decoder CPU saturation.
+        // A 15s lease expired whenever the event loop stalled, producing
+        // lease-lost failures + repair retries that added MORE load. 60s
+        // tolerates ~3 missed 20s heartbeats before anyone steals the job.
         jobLease = await this.acquireJobLease(libraryId, job.job_id, {
           timeoutMs: 0,
+          leaseDurationMs: MEDIA_JOB_LEASE_DURATION_MS,
         });
       } catch (error) {
         if (!(error instanceof LibraryWriteCoordinatorError)) throw error;
@@ -22072,7 +22128,9 @@ export class LibraryService {
         budget += 1;
         continue;
       }
-      const jobHeartbeat = jobLease.startHeartbeat();
+      const jobHeartbeat = jobLease.startHeartbeat({
+        leaseDurationMs: MEDIA_JOB_LEASE_DURATION_MS,
+      });
       const controller = new AbortController();
       const previousArtifacts = this.mediaArtifactSnapshot(openLibrary, job.revision_id);
       const providerAssetRow = openLibrary.connection
@@ -22175,6 +22233,13 @@ export class LibraryService {
           // Serpent-140fe2: contact sheets are generated on demand by AI video
           // analysis (ensureVideoContactSheet), not chained off metadata.
         } else if (job.kind === 'extract_palette') {
+          if (!this.isPaletteEligibleAsset(openLibrary, job.asset_id, job.revision_id)) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'PALETTE_NOT_APPLICABLE', updated_at = ? WHERE job_id = ?",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
           const current = await this.generateQueuedPaletteArtifact(
             libraryId,
             job.asset_id,

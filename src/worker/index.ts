@@ -116,7 +116,6 @@ const analysisControls = new Map<string, {
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
 const deferredStartupThumbnailQueues = new Map<string, ReturnType<typeof setTimeout>>();
-const primaryThumbnailIdleUntil = new Map<string, number>();
 const latestAssetSearchRequests = new LatestSearchRequestCoordinator();
 const pendingPluginMediaProviderRequests = new Map<string, {
   resolve: (result: PluginMediaProviderResult) => void;
@@ -678,17 +677,14 @@ function deferStartupThumbnailScene(libraryId: string): void {
   const previous = deferredStartupThumbnailQueues.get(libraryId);
   if (previous !== undefined) clearTimeout(previous);
 
+  // Serpent-140fe2 direction (user, 2026-08-22): thumbnails must be queued
+  // for the WHOLE library right after open, not lazily per viewport. The
+  // queue itself provides ordering — visible-window waves boost the current
+  // viewport above the low-priority backfill — so interactive activity no
+  // longer postpones the enqueue (it only ever postponed it forever during
+  // continuous browsing).
   const attempt = () => {
     deferredStartupThumbnailQueues.delete(libraryId);
-    const waitMs = Math.max(
-      0,
-      (primaryThumbnailIdleUntil.get(libraryId) ?? 0) - Date.now(),
-    );
-    if (waitMs > 0) {
-      const timer = setTimeout(attempt, waitMs);
-      deferredStartupThumbnailQueues.set(libraryId, timer);
-      return;
-    }
     scheduleThumbnailScene(libraryId, 'startup');
   };
 
@@ -702,7 +698,6 @@ function cancelDeferredStartupThumbnailScene(libraryId: string): void {
   const timer = deferredStartupThumbnailQueues.get(libraryId);
   if (timer !== undefined) clearTimeout(timer);
   deferredStartupThumbnailQueues.delete(libraryId);
-  primaryThumbnailIdleUntil.delete(libraryId);
 }
 
 const SECONDARY_MEDIA_JOB_KINDS = [
@@ -718,7 +713,6 @@ const secondaryMediaIdleUntil = new Map<string, number>();
 function noteInteractiveMediaRequest(libraryId: string): void {
   const idleUntil = Date.now() + 1_000;
   secondaryMediaIdleUntil.set(libraryId, idleUntil);
-  primaryThumbnailIdleUntil.set(libraryId, idleUntil);
   libraryService.noteInteractiveActivity(libraryId);
 }
 
