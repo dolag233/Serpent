@@ -195,7 +195,7 @@ function assertDb(
 // ── Tests ──────────────────────────────────────────────────────────
 
 describe('video (ffprobe + ffmpeg)', () => {
-  it('queues video metadata ahead of poster work so AI contact-sheet preparation is independent', async () => {
+  it('keeps AI contact-sheet preparation independent from poster work (Serpent-140fe2)', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     const service = new LibraryService({
@@ -220,9 +220,17 @@ describe('video (ffprobe + ffmpeg)', () => {
     expect(service.getCurrentArtifact(created.libraryId, assetId, 'extracted_metadata'))
       .toMatchObject({ status: 'ready' });
     expect(service.getCurrentArtifact(created.libraryId, assetId, 'video_poster')).toBeNull();
-    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(expect.arrayContaining([
-      expect.objectContaining({ assetId, kind: 'generate_contact_sheet', status: 'queued' }),
-    ]));
+    // Serpent-140fe2: nothing schedules a contact sheet proactively any more.
+    expect(service.listMediaJobs(created.libraryId).jobs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'generate_contact_sheet' }),
+      ]),
+    );
+    // AI video analysis materializes it lazily at analysis time.
+    const ensured = await service.ensureVideoContactSheet(created.libraryId, assetId);
+    expect(ensured).toBe(true);
+    expect(service.getCurrentArtifact(created.libraryId, assetId, 'contact_sheet'))
+      .toMatchObject({ status: 'ready' });
 
     service.closeAll();
   });
@@ -439,9 +447,14 @@ describe('video (ffprobe + ffmpeg)', () => {
     const sourcePath = path.join(root, 'video.mp4');
     writeFileSync(sourcePath, Buffer.alloc(4096, 0));
     importNoConflict(service, created.libraryId, sourcePath);
+    const assetId = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId;
 
     service.enqueueThumbnailJobs(created.libraryId);
     await service.processThumbnailQueue(created.libraryId);
+
+    // Serpent-140fe2: sheets materialize at analysis time via lazy ensure.
+    const ensured = await service.ensureVideoContactSheet(created.libraryId, assetId);
+    expect(ensured).toBe(true);
 
     // Verify contact_sheet artifact exists
     const db = assertDb(created.libraryPath);

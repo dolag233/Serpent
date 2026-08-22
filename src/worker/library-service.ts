@@ -18945,6 +18945,44 @@ export class LibraryService {
     }
   }
 
+  /**
+   * Serpent-140fe2: AI contact sheets are generated lazily, only when video
+   * analysis actually needs them. Proactive scheduling flooded converted
+   * libraries with doomed FFmpeg batches on every open. Returns false when
+   * the asset's revision changed mid-flight (caller cancels).
+   */
+  async ensureVideoContactSheet(
+    libraryId: string,
+    assetId: string,
+    execution: MediaExecutionContext = { signal: undefined },
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const assetRow = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string | null } | undefined;
+    const revisionId = assetRow?.current_revision_id ?? null;
+    if (!revisionId) return false;
+    const existing = openLibrary.connection
+      .prepare(
+        "SELECT status FROM revision_artifacts WHERE revision_id = ? AND kind = 'contact_sheet' AND invalidated_at IS NULL LIMIT 1",
+      )
+      .get(revisionId) as { status?: string } | undefined;
+    if (existing?.status === 'ready') return true;
+    if (existing) {
+      // Explicit retry: clear the previous terminal row so either outcome —
+      // a fresh ready sheet or a renewed failed marker — can register without
+      // tripping UNIQUE(revision_id, kind).
+      openLibrary.connection
+        .prepare(
+          "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'contact_sheet' AND invalidated_at IS NULL",
+        )
+        .run(revisionId);
+    }
+    return this.generateQueuedVideoArtifact(
+      libraryId, assetId, revisionId, 'generate_contact_sheet', execution,
+    );
+  }
+
   private async generateQueuedVideoArtifact(
     libraryId: string,
     assetId: string,
@@ -18968,38 +19006,85 @@ export class LibraryService {
       await this.generateVideoProxy({ libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution);
       return true;
     }
-    const metadata = this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata');
-    if (metadata?.status !== 'ready') {
-      throw new LibraryServiceError('INTERNAL_ERROR', { reason: 'MEDIA_PROCESSING_FAILED' });
-    }
-    let durationSec: number;
-    let dimensions: { width: number; height: number };
+    // Serpent-140fe2: Eagle/Billfish conversions can register videos with
+    // width/height-only metadata (no ffprobe ever ran), so duration is
+    // unknown and contact sheets used to fail forever while every open
+    // re-enqueued the whole doomed batch. Self-heal instead: probe on demand
+    // and surface the real ffprobe failure.
     try {
-      const parsed = JSON.parse(
-        readFileSync(path.join(artifactsDir, metadata.filePath), 'utf-8'),
-      ) as { durationMs?: number; width?: number; height?: number };
-      durationSec = (parsed.durationMs ?? 0) / 1000;
-      const width = Number.isFinite(parsed.width) && (parsed.width ?? 0) > 0
-        ? parsed.width!
+      let metadata = this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata');
+      const readParsedMetadata = (): { durationMs?: number; width?: number; height?: number } | null => {
+        if (metadata?.status !== 'ready') return null;
+        try {
+          return JSON.parse(
+            readFileSync(path.join(artifactsDir, metadata.filePath), 'utf-8'),
+          ) as { durationMs?: number; width?: number; height?: number };
+        } catch {
+          return null;
+        }
+      };
+      let parsed = readParsedMetadata();
+      if (!parsed || !Number.isFinite(parsed.durationMs) || (parsed.durationMs ?? 0) <= 0) {
+        // revision_artifacts enforces UNIQUE(revision_id, kind): the superseded
+        // conversion-era row (ready or failed) must go before ffprobe can
+        // register real metadata. On probe failure probeVideoAsset writes a
+        // failed artifact into the freed slot, so the invariant holds either way.
+        this.deleteSupersededExtractedMetadata(openLibrary, revisionId);
+        const probed = await this.generateQueuedVideoMetadata(
+          libraryId, assetId, revisionId, execution,
+        );
+        if (!probed) return false; // stale revision; caller cancels the job
+        metadata = this.getCurrentArtifact(libraryId, assetId, 'extracted_metadata');
+        parsed = readParsedMetadata();
+      }
+      const durationSec = (parsed?.durationMs ?? 0) / 1000;
+      const width = Number.isFinite(parsed?.width) && (parsed?.width ?? 0) > 0
+        ? parsed!.width!
         : 640;
-      const height = Number.isFinite(parsed.height) && (parsed.height ?? 0) > 0
-        ? parsed.height!
+      const height = Number.isFinite(parsed?.height) && (parsed?.height ?? 0) > 0
+        ? parsed!.height!
         : 360;
-      dimensions = { width, height };
+      const dimensions = { width, height };
+      if (!(durationSec > 0)) {
+        throw new LibraryServiceError('INTERNAL_ERROR', {
+          reason: 'MEDIA_PROCESSING_FAILED',
+          cause: new Error(`Video has no measurable duration after ffprobe: ${assetPath}`),
+        });
+      }
+      await this.generateContactSheet(
+        { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
+        Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
+      );
     } catch (error) {
-      throw new LibraryServiceError('INTERNAL_ERROR', {
-        reason: 'MEDIA_PROCESSING_FAILED',
-        cause: error,
-      });
+      // Serpent-140fe2: persist the terminal failure so
+      // enqueueVideoDerivativeJob's artifact guard stops re-queueing this
+      // video on every open. The next revision change resets it naturally.
+      this.writeFailedArtifact(
+        openLibrary, randomUUID(), revisionId, 'contact_sheet', 'image/jpeg',
+        `${randomUUID()}.txt`, `ffmpeg@${FFMPEG_VERSION}`, error,
+      );
+      throw error;
     }
-    if (durationSec <= 0) {
-      throw new LibraryServiceError('INTERNAL_ERROR', { reason: 'MEDIA_PROCESSING_FAILED' });
-    }
-    await this.generateContactSheet(
-      { libraryId, assetId }, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir,
-      Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
-    );
     return true;
+  }
+
+  /**
+   * Serpent-140fe2: revision_artifacts enforces UNIQUE(revision_id, kind), so
+   * re-probing a video whose metadata was registered by an external
+   * conversion requires dropping the width/height-only row first. Derived
+   * data only — the probe immediately writes the full replacement.
+   */
+  private deleteSupersededExtractedMetadata(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+  ): void {
+    openLibrary.connection
+      .prepare(
+        `DELETE FROM revision_artifacts
+          WHERE revision_id = ? AND kind = 'extracted_metadata'
+            AND status IN ('ready', 'failed')`,
+      )
+      .run(revisionId);
   }
 
   private async generateQueuedVideoMetadata(
@@ -21918,66 +22003,10 @@ export class LibraryService {
       );
     }
 
-    // A video can already have metadata while its AI contact sheet is missing
-    // or was generated by an older build and failed. Keep this repair path
-    // independent from video_poster: poster generation serves browsing only.
-    const videoExtensionSql = videoExtensions
-      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
-      .join(' OR ');
-    const contactSheetRows = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, a.current_revision_id
-           FROM assets a
-          WHERE a.deleted_at IS NULL
-            AND a.current_revision_id IS NOT NULL
-            AND a.availability = 'available'
-            ${selectedSql}
-            AND (${videoExtensionSql})
-            AND EXISTS (
-              SELECT 1 FROM revision_artifacts metadata
-               WHERE metadata.revision_id = a.current_revision_id
-                 AND metadata.kind = 'extracted_metadata'
-                 AND metadata.status = 'ready'
-                 AND metadata.invalidated_at IS NULL
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM revision_artifacts sheet
-               WHERE sheet.revision_id = a.current_revision_id
-                 AND sheet.kind = 'contact_sheet'
-                 AND sheet.status IN ('ready', 'failed')
-                 AND sheet.invalidated_at IS NULL
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM jobs j
-               WHERE j.asset_id = a.asset_id
-                 AND j.revision_id = a.current_revision_id
-                 AND j.kind = 'generate_contact_sheet'
-                 AND j.status IN ('queued', 'running', 'paused')
-            )
-          ORDER BY a.created_at DESC, a.relative_file_path
-          ${queryLimit}`,
-      )
-      .all(
-        ...selectedIds,
-        ...videoExtensions.map((extension) => `%.${extension}`),
-        ...(limit === undefined ? [] : [limit]),
-      ) as Array<{ asset_id: string; current_revision_id: string }>;
-    if (selectedIds.length > 0) {
-      const order = new Map(selectedIds.map((id, index) => [id, index]));
-      contactSheetRows.sort(
-        (left, right) =>
-          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
-      );
-    }
-    for (const row of contactSheetRows) {
-      this.enqueueVideoDerivativeJob(
-        openLibrary,
-        row.asset_id,
-        row.current_revision_id,
-        'generate_contact_sheet',
-        (options.priority ?? 0) + 40,
-      );
-    }
+    // Serpent-140fe2: AI contact sheets are no longer proactively scheduled.
+    // Their only consumer is on-demand AI video analysis, which now generates
+    // the sheet lazily (ensureVideoContactSheet). Proactively generating them
+    // flooded converted libraries with doomed FFmpeg batches on every open.
 
     // Existing ready thumbnails/posters (for example after reopening a library
     // created by an older build) receive their missing local palettes too.
@@ -22226,13 +22255,8 @@ export class LibraryService {
             processed += 1;
             continue;
           }
-          this.enqueueVideoDerivativeJob(
-            openLibrary,
-            job.asset_id,
-            job.revision_id,
-            'generate_contact_sheet',
-            job.priority - 10,
-          );
+          // Serpent-140fe2: contact sheets are generated on demand by AI video
+          // analysis (ensureVideoContactSheet), not chained off metadata.
         } else if (job.kind === 'extract_palette') {
           const current = await this.generateQueuedPaletteArtifact(
             libraryId,

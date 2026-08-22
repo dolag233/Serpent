@@ -2554,6 +2554,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       let requestMime: string;
 
       if (isVideo) {
+        // Serpent-140fe2: contact sheets are generated lazily at analysis time
+        // (never proactively scheduled), so materialize it for this video now.
+        try {
+          await libraryService.ensureVideoContactSheet(libraryId, assetId);
+        } catch (error) {
+          libraryService.reportDiagnostic('ai.contact-sheet.ensure', error, {
+            libraryId,
+            assetId,
+          });
+        }
         try {
           const input = await loadVideoAiInput({
             libraryId,
