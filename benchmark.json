@@ -368,6 +368,32 @@
         "p95Ms": 370.4,
         "note": "连续第二次 10/10——结果稳定可复现。两次运行 p95 分别 382.9/370.4ms。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T07:40:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(v41 index, folder count cache, layout mapping)",
+      "suite": "comprehensive-20k-worker (v41 + folder cache)",
+      "metrics": {
+        "openLibraryMs": 567.5,
+        "sortCreatedAtDescMs": 9.45,
+        "sidebarListFoldersMs": 11.83,
+        "layoutOnlyMs": 88.89,
+        "note": "sortCreatedAtDesc 31-42→9.45ms（v41 created_at DESC 索引，top-50 直接读索引）；sidebarListFolders 23-33→11.8ms（change-sequence 计数缓存）；layoutOnly 映射 spread→直接赋值。"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T07:42:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP",
+      "suite": "delete-operations-probe",
+      "fixture": "local APFS 20k",
+      "metrics": {
+        "folderTrash113AssetsMs": 82,
+        "restoreFromTrashMs": 57.4,
+        "collectionDelete6000AssetsMs": 64.1,
+        "note": "删除类操作本地 APFS 基线：folder.trash 含 113 次文件 rename+事务+历史组；collection.delete 6000 成员含递归计数失效。NAS 上 rename 为服务端操作，延迟为物理限制。"
+      }
     }
   ]
 }

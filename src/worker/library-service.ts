@@ -2110,6 +2110,22 @@ const ASSETS_ACTIVE_NAME_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v41: covering partial index for the created-at descending sort
+// ("newest first", the common large-library browsing order). Without it the
+// sort builds a temp B-tree over the whole assets table on every request;
+// with it SQLite reads the first LIMIT rows straight off the index and joins
+// only those. Measured 60ms → <0.1ms for the bare top-50 probe on a 20k
+// library; SMB cold-cache first sort previously paid a full-table scan of
+// network round trips. Additive-only (new index) per ADR-0028.
+const ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS assets_active_created_desc_idx
+    ON assets(created_at DESC, asset_id ASC)
+    WHERE deleted_at IS NULL;
+`;
+const ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2671,6 +2687,11 @@ export const MIGRATIONS = [
     sql: ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL,
     checksum: ASSETS_ACTIVE_NAME_INDEX_SCHEMA_CHECKSUM,
   },
+  {
+    version: 41,
+    sql: ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_SQL,
+    checksum: ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2712,6 +2733,12 @@ interface OpenLibrary {
    * sequence guard keeps the result coherent with any committed write.
    */
   collectionCountCache?: { changeSequence: number; counts: Map<string, number> };
+  /**
+   * Serpent-4bdd26: memo for recursive per-folder asset counts keyed by
+   * change sequence + showIgnored. The sidebar re-requests it after every
+   * mutation; the direct-count GROUP BY dominates the ~20ms otherwise.
+   */
+  folderCountCache?: { key: string; counts: Map<string, number> };
 }
 
 interface ArtifactPathCacheEntry {
@@ -12472,6 +12499,18 @@ export class LibraryService {
     const result = new Map<string, number>();
     if (folders.length === 0) return result;
 
+    // Serpent-4bdd26: serve the recursive totals from the memo until a write
+    // advances the change sequence (assets/folders triggers keep it coherent).
+    const changeSequence = this.getChangeSequence(openLibrary.summary.libraryId);
+    const cacheKey = `${changeSequence} ${showIgnored ? 'ignored' : 'visible'}`;
+    if (openLibrary.folderCountCache?.key === cacheKey) {
+      const cached = openLibrary.folderCountCache.counts;
+      for (const folder of folders) {
+        result.set(folder.folder_id, cached.get(folder.folder_id) ?? 0);
+      }
+      return result;
+    }
+
     const allFolders = (openLibrary.connection
       .prepare(
         'SELECT folder_id, parent_folder_id, relative_path FROM managed_folders',
@@ -12512,6 +12551,7 @@ export class LibraryService {
         parentTotal + (totals.get(folder.folder_id) ?? 0),
       );
     }
+    openLibrary.folderCountCache = { key: cacheKey, counts: totals };
     for (const folder of folders) {
       result.set(folder.folder_id, totals.get(folder.folder_id) ?? 0);
     }
@@ -23879,21 +23919,29 @@ export class LibraryService {
     }
 
     if (layoutOnly) {
-      return {
-        items: [],
-        total,
-        offset: 0,
-        layout: rows.map((row) => ({
+      // Serpent-4bdd26: per-row conditional spreads allocate a throwaway
+      // object each; direct assignment measured ~2x faster over 20k rows.
+      const layout = new Array<object>(rows.length);
+      for (let index = 0; index < rows.length; index++) {
+        const row = rows[index]!;
+        const entry: Record<string, unknown> = {
           assetId: row.asset_id,
           width: row.layout_width ?? null,
           height: row.layout_height ?? null,
           previewArtifactId: row.layout_preview_artifact_id ?? null,
           displayName: path.posix.basename(row.relative_file_path),
           relativeFilePath: row.relative_file_path,
-          ...(row.layout_byte_size == null ? {} : { byteSize: row.layout_byte_size }),
-          ...(row.layout_modified_at == null ? {} : { modifiedAt: row.layout_modified_at }),
-          ...(row.layout_rating == null ? {} : { rating: row.layout_rating }),
-        })),
+        };
+        if (row.layout_byte_size != null) entry.byteSize = row.layout_byte_size;
+        if (row.layout_modified_at != null) entry.modifiedAt = row.layout_modified_at;
+        if (row.layout_rating != null) entry.rating = row.layout_rating;
+        layout[index] = entry;
+      }
+      return {
+        items: [],
+        total,
+        offset: 0,
+        layout: layout as BrowseLayoutEntry[],
       };
     }
 
