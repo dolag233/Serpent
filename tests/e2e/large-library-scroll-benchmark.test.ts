@@ -143,6 +143,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     }),
   });
 
+  let bodyError: unknown = undefined;
   try {
     const window = await application.firstWindow();
     await window.setViewportSize({ width: 1440, height: 1000 });
@@ -163,10 +164,13 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     await expect(sizeControl).toHaveValue("3");
     await window.getByRole("button", { name: "瀑布流视图" }).click();
     await expect(window.locator(".asset-grid")).toHaveClass(/is-masonry/);
+    // Smaller real libraries (post-ignore visible sets) have proportionally
+    // shorter canvases; the sa65 10k-asset default stays the operator default.
+    const minScrollHeight = Number(process.env.SERPENT_LARGE_LIBRARY_E2E_MIN_SCROLL_HEIGHT ?? 100_000);
     await expect.poll(
       () => canvas.evaluate((element) => element.scrollHeight),
       { timeout: 30_000 },
-    ).toBeGreaterThan(100_000);
+    ).toBeGreaterThan(minScrollHeight);
     await expect.poll(
       () => window.evaluate(() => {
         const canvasElement = document.querySelector<HTMLElement>(".workspace-canvas");
@@ -260,6 +264,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       decodedImages: number;
       placeholders: number;
       defaultIcons: number;
+      imgCardsAllDecodedAt: number | null;
       visibleAssetIds: string[];
       visibleLayoutAssetIds: string[];
       visibleLayoutRanks: number[];
@@ -326,6 +331,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
           };
           eventRoot.__serpentBrowsePages = [];
           const startedAt = performance.now();
+          let imgCardsAllDecodedAt: number | null = null;
           const doneTimeline: Array<{
             relMs: number;
             visibleCards: number;
@@ -350,6 +356,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             decodedImages: number;
             placeholders: number;
             defaultIcons: number;
+            imgCardsAllDecodedAt: number | null;
             visibleAssetIds: string[];
             visibleLayoutAssetIds: string[];
             visibleLayoutRanks: number[];
@@ -490,6 +497,24 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   transferSize: entry.transferSize,
                 }));
               const loadedIds = new Set(visibleAssetIds);
+              // Serpent-140fe2 diagnostics: libraries that legitimately contain
+              // non-media files (code, unknown binaries) always have icon-only
+              // cards, so `defaultIcons === 0` can never turn done. Track the
+              // media-readiness moment separately: the instant every visible
+              // card that carries an <img> has it decoded.
+              const imgCards = visible.filter((card) =>
+                Boolean(card.querySelector("img")));
+              const imgDecoded = imgCards.filter((card) => {
+                const image = card.querySelector<HTMLImageElement>("img");
+                return image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
+              }).length;
+              if (
+                imgCardsAllDecodedAt === null
+                && imgCards.length > 4
+                && imgDecoded === imgCards.length
+              ) {
+                imgCardsAllDecodedAt = Math.round(elapsedMs * 10) / 10;
+              }
               const done = visibleLayoutAssetIds.length >= 4
                 && visibleLayoutAssetIds.every((assetId) => loadedIds.has(assetId))
                 && placeholders === 0
@@ -515,6 +540,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   decodedImages,
                   placeholders,
                   defaultIcons,
+                  imgCardsAllDecodedAt,
                   visibleAssetIds,
                   visibleLayoutAssetIds,
                   visibleLayoutRanks,
@@ -591,8 +617,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     }
 
     expect(result.passed, JSON.stringify(result, null, 2)).toBe(samples.length);
+  } catch (error) {
+    bodyError = error;
+    throw error;
   } finally {
     await application.close();
-    rmSync(temporaryRoot, { force: true, recursive: true });
+    try {
+      rmSync(temporaryRoot, { force: true, recursive: true });
+    } catch (cleanupError) {
+      // Windows can hold brief locks immediately after Electron exits; block
+      // shortly and retry once. If cleanup still fails AND the body had its
+      // own failure, surface the body error instead of teardown noise.
+      const buffer = new SharedArrayBuffer(4);
+      Atomics.wait(new Int32Array(buffer), 0, 0, 400);
+      try {
+        rmSync(temporaryRoot, { force: true, recursive: true });
+        if (bodyError !== undefined) throw bodyError;
+      } catch {
+        if (bodyError !== undefined) throw bodyError;
+        throw cleanupError;
+      }
+    }
   }
 });

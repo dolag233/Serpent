@@ -1,8 +1,9 @@
-import { closeSync, constants, createReadStream, fstatSync, openSync } from 'node:fs';
+import { constants, type ReadStream } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 
 function responseBody(
-  stream: ReturnType<typeof createReadStream>,
+  stream: ReadStream,
   onStreamError?: (error: Error) => void,
   signal?: AbortSignal | null,
 ): BodyInit {
@@ -80,26 +81,22 @@ export interface CreateArtifactResponseOptions {
   signal?: AbortSignal | null;
 }
 
-/** Build a seekable protocol response while reading only the requested video byte range. */
-export function createArtifactResponse(
-  absolutePath: string,
-  mimeType: string,
-  rangeHeader?: string | null,
-  onStreamError?: (error: Error) => void,
-  signal?: AbortSignal | null,
-): Response;
-export function createArtifactResponse(
-  absolutePath: string,
-  mimeType: string,
-  options?: CreateArtifactResponseOptions,
-): Response;
-export function createArtifactResponse(
+/**
+ * Build a seekable protocol response while reading only the requested video byte range.
+ *
+ * Serpent-140fe2 follow-up: opened asynchronously on the libuv threadpool.
+ * The previous synchronous openSync/fstatSync ran on the Main thread and
+ * serialized entire thumbnail bursts behind cold metadata reads — visible as
+ * multi-second asset.search resolution delays during fast scrolling on large
+ * libraries.
+ */
+export async function createArtifactResponse(
   absolutePath: string,
   mimeType: string,
   rangeHeaderOrOptions?: string | null | CreateArtifactResponseOptions,
   onStreamError?: (error: Error) => void,
   signal?: AbortSignal | null,
-): Response {
+): Promise<Response> {
   const options: CreateArtifactResponseOptions =
     rangeHeaderOrOptions && typeof rangeHeaderOrOptions === 'object'
       ? rangeHeaderOrOptions
@@ -115,50 +112,55 @@ export function createArtifactResponse(
   const flags = process.platform === 'win32'
     ? constants.O_RDONLY
     : constants.O_RDONLY | constants.O_NOFOLLOW;
-  const descriptor = openSync(absolutePath, flags);
-  const fileStat = fstatSync(descriptor);
-  if (!fileStat.isFile()) {
-    closeSync(descriptor);
-    throw new Error('Artifact is not a regular file.');
-  }
-  const size = fileStat.size;
-  const commonHeaders = {
-    'Accept-Ranges': 'bytes',
-    'Cache-Control': 'public, max-age=31536000, immutable',
-    'Content-Type': mimeType,
-  };
+  const handle = await open(absolutePath, flags);
+  try {
+    const fileStat = await handle.stat();
+    if (!fileStat.isFile()) {
+      await handle.close();
+      throw new Error('Artifact is not a regular file.');
+    }
+    const size = fileStat.size;
+    const commonHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Content-Type': mimeType,
+    };
 
-  if (!rangeHeader) {
-    return new Response(responseBody(createReadStream(absolutePath, {
-      fd: descriptor,
-      autoClose: true,
+    if (!rangeHeader) {
+      // FileHandle.createReadStream closes the HANDLE itself on close — never
+      // build a raw-fd stream from an open FileHandle, or the handle's GC
+      // finalizer later re-closes the descriptor and crashes Main with EBADF.
+      return new Response(responseBody(handle.createReadStream(), streamError, abortSignal), {
+        status: 200,
+        headers: { ...commonHeaders, 'Content-Length': String(size) },
+      });
+    }
+
+    const range = parseByteRange(rangeHeader, size);
+    if (!range) {
+      await handle.close();
+      return new Response(null, {
+        status: 416,
+        headers: { ...commonHeaders, 'Content-Range': `bytes */${size}` },
+      });
+    }
+
+    const length = range.end - range.start + 1;
+    return new Response(responseBody(handle.createReadStream({
+      start: range.start,
+      end: range.end,
     }), streamError, abortSignal), {
-      status: 200,
-      headers: { ...commonHeaders, 'Content-Length': String(size) },
+      status: 206,
+      headers: {
+        ...commonHeaders,
+        'Content-Length': String(length),
+        'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+      },
     });
+  } catch (error) {
+    // Failure before the stream owns the handle: release it. Once handed off,
+    // handle.createReadStream auto-closes it and this path is unreachable.
+    await handle.close().catch(() => undefined);
+    throw error;
   }
-
-  const range = parseByteRange(rangeHeader, size);
-  if (!range) {
-    closeSync(descriptor);
-    return new Response(null, {
-      status: 416,
-      headers: { ...commonHeaders, 'Content-Range': `bytes */${size}` },
-    });
-  }
-
-  const length = range.end - range.start + 1;
-  return new Response(responseBody(createReadStream(absolutePath, {
-    fd: descriptor,
-    autoClose: true,
-    start: range.start,
-    end: range.end,
-  }), streamError, abortSignal), {
-    status: 206,
-    headers: {
-      ...commonHeaders,
-      'Content-Length': String(length),
-      'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
-    },
-  });
 }

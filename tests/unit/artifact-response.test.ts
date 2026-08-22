@@ -31,7 +31,7 @@ describe('artifact protocol byte ranges', () => {
     const filePath = path.join(root, 'proxy.webm');
     writeFileSync(filePath, Buffer.from('0123456789'));
 
-    const response = createArtifactResponse(filePath, 'video/webm', 'bytes=3-6');
+    const response = await createArtifactResponse(filePath, 'video/webm', 'bytes=3-6');
 
     expect(response.status).toBe(206);
     expect(response.headers.get('accept-ranges')).toBe('bytes');
@@ -40,18 +40,18 @@ describe('artifact protocol byte ranges', () => {
     expect(JSON.stringify([...response.headers])).not.toContain(filePath);
   });
 
-  it('returns 416 for an unsatisfiable range', () => {
+  it('returns 416 for an unsatisfiable range', async () => {
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-artifact-response-'));
     roots.push(root);
     const filePath = path.join(root, 'proxy.webm');
     writeFileSync(filePath, Buffer.from('0123456789'));
 
-    const response = createArtifactResponse(filePath, 'video/webm', 'bytes=99-');
+    const response = await createArtifactResponse(filePath, 'video/webm', 'bytes=99-');
     expect(response.status).toBe(416);
     expect(response.headers.get('content-range')).toBe('bytes */10');
   });
 
-  it('refuses to open a symbolic-link artifact at the final read boundary', () => {
+  it('refuses to open a symbolic-link artifact at the final read boundary', async () => {
     if (process.platform === 'win32') return;
     const root = mkdtempSync(path.join(tmpdir(), 'serpent-artifact-response-'));
     roots.push(root);
@@ -60,7 +60,7 @@ describe('artifact protocol byte ranges', () => {
     writeFileSync(outsidePath, 'secret');
     symlinkSync(outsidePath, linkPath);
 
-    expect(() => createArtifactResponse(linkPath, 'video/webm')).toThrow();
+    await expect(createArtifactResponse(linkPath, 'video/webm')).rejects.toThrow();
   });
 
   it('accepts an AbortSignal without treating cancel as a stream fault', async () => {
@@ -71,7 +71,7 @@ describe('artifact protocol byte ranges', () => {
 
     const controller = new AbortController();
     const streamErrors: Error[] = [];
-    const response = createArtifactResponse(filePath, 'video/webm', {
+    const response = await createArtifactResponse(filePath, 'video/webm', {
       rangeHeader: 'bytes=0-65535',
       signal: controller.signal,
       onStreamError: (error) => {

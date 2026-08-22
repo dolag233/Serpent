@@ -2226,6 +2226,22 @@ async function commandFor(
         relativePath: request.relativePath,
         deleteFromDisk: request.deleteFromDisk,
       };
+    case "linked-folder.create-directory.request":
+      return {
+        type: "linked-folder.create-directory",
+        libraryId: request.libraryId,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        name: request.name,
+      };
+    case "linked-folder.rename-directory.request":
+      return {
+        type: "linked-folder.rename-directory",
+        libraryId: request.libraryId,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        newName: request.newName,
+      };
     case "folder.open-in-file-manager.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return {
@@ -2457,6 +2473,7 @@ async function commandFor(
         type: "linked-folder.assets.copy",
         libraryId: request.libraryId,
         folderId: request.folderId,
+        relativePath: request.relativePath,
         assetIds: request.assetIds,
         conflictStrategy: request.conflictStrategy,
       };
@@ -6885,7 +6902,7 @@ async function startApplication(): Promise<void> {
             if (isLibraryMediaReadBlocked(libraryId)) {
               return new Response("Library unavailable", { status: 410 });
             }
-            return createArtifactResponse(
+            return await createArtifactResponse(
               authorizedSource.absolutePath,
               authorizedSource.mimeType,
               {
@@ -6927,7 +6944,7 @@ async function startApplication(): Promise<void> {
           return new Response("Library unavailable", { status: 410 });
         }
         try {
-          return createArtifactResponse(
+          return await createArtifactResponse(
             sourceResult.absolutePath,
             sourceResult.mimeType,
             {
@@ -6988,7 +7005,7 @@ async function startApplication(): Promise<void> {
         : null;
       if (cachedMirror) {
         try {
-          return createArtifactResponse(
+          return await createArtifactResponse(
             cachedMirror,
             mimeType,
             {
@@ -7008,7 +7025,7 @@ async function startApplication(): Promise<void> {
       }
 
       try {
-        const response = createArtifactResponse(
+        const response = await createArtifactResponse(
           absoluteArtifactPath,
           mimeType,
           {
