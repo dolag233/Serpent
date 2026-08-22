@@ -305,6 +305,30 @@
         "importPrepareFiveFilesMs": 41.06
       },
       "note": "收编视口抢占机制后的全量基准。collectionReorderAll 84→3.2ms（语句缓存稳态）。"
+    },
+    {
+      "timestamp": "2026-08-23T06:45:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+d58c2972",
+      "suite": "large-library-electron-scroll-e2e (viewport preemption)",
+      "fixture": "local APFS 20k v3 mixed, prewarmed",
+      "metrics": {
+        "jumpsPassedOf10": 9,
+        "jumpElapsedMsSamples": [
+          462.3,
+          159.1,
+          175,
+          232.1,
+          5010.8,
+          96.2,
+          362.1,
+          193.8,
+          240.6,
+          678.3
+        ],
+        "p50Ms": 240.6,
+        "note": "视口抢占收编后历史最佳：9/10 跳全解码（此前最好 4/10 或间歇 9/10）。唯一失败仍是 fraction=0.22（visibleCards=26 的密集区，decoded 21/26）——问题从系统性挂起缩小到特定区域个别资产，立案 Serpent-7714df 继续追。竞争者同 fixture v4 最新 firstDecoded p50=530ms。"
+      }
     }
   ]
 }
