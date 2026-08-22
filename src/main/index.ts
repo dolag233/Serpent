@@ -7050,7 +7050,7 @@ async function startApplication(): Promise<void> {
         return new Response("Artifact file missing", { status: 404 });
       }
     } catch (error) {
-      logger?.error("serpent-protocol", error);
+      logger?.error("serpent-protocol", error, { url: request.url });
       return new Response("Internal error", { status: 500 });
     }
   });
