@@ -1,0 +1,143 @@
+{
+  "$schema": "./docs/internal/schemas/benchmark-format.json",
+  "_comment": "资源库性能实测数据（/goal 2026-08-23）。所有 worktree 共用此文件，写入前必须读取合并，禁止覆盖他人数据。时间单位 ms。",
+  "environment": {
+    "host": "macOS arm64 (Apple Silicon)",
+    "node": "24.15.0",
+    "note": "Worker 查询基线 = LibraryService 直连本地 APFS；NAS 基线 = sqlite3 CLI 经 SMB (千兆)"
+  },
+  "runs": [
+    {
+      "timestamp": "2026-08-23T02:05:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "8dc4aab1",
+      "suite": "large-library-20k-worker",
+      "fixture": "local APFS 20k v3 mixed",
+      "command": "npm run test:perf:large-library -- <local-20k>",
+      "metrics": {
+        "startupMs": 484.3,
+        "allBrowseMs": 17.6,
+        "folderSwitchMs": 0.6,
+        "collectionSwitchMs": 3.6,
+        "collectionRecursiveSwitchMs": 25.3,
+        "collectionRecursiveLayoutMs": 48.3,
+        "searchMs": 15.9,
+        "layoutMs": 69.3,
+        "inspectorMs": 0.1
+      }
+    },
+    {
+      "timestamp": "2026-08-23T02:10:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "8dc4aab1",
+      "suite": "nas-sqlite-cli-probe",
+      "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets, 21801 artifacts)",
+      "metrics": {
+        "countAssetsColdNewConnectionMs": 916,
+        "firstPageOrderByUpdatedAtColdMs": 2741,
+        "firstPageOrderByUpdatedAtWarmMs": 5,
+        "deepOffsetPageWarmMs": 5,
+        "thumbnailJoinCountMs": 2829,
+        "queryPlanNote": "ORDER BY updated_at 无 covering index → TEMP B-TREE 全表排序；冷查询每行回表都是网络往返"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T02:20:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "8dc4aab1",
+      "suite": "comprehensive-20k-worker",
+      "fixture": "local APFS 20k v3 mixed",
+      "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
+      "metrics": {
+        "openLibraryMs": 503.2,
+        "allBrowseFirstPageMs": 17.54,
+        "folderSwitchMs": 0.72,
+        "folderSwitchRecursiveMs": 0.87,
+        "collectionSwitchMs": 3.03,
+        "collectionRecursiveSwitchMs": 24.91,
+        "deepOffsetPageMs": 33.04,
+        "layoutOnlyMs": 71,
+        "searchFixedTokenMs": 45.98,
+        "sortNameAscMs": 16.96,
+        "sortCreatedAtDescMs": 16.75,
+        "sortModifiedDescMs": 18.82,
+        "sortByteSizeDescMs": 19.03,
+        "sortRatingDescMs": 18.72,
+        "filterRatingMs": 25.59,
+        "inspectorMetadataMs": 0.11,
+        "sidebarListFoldersMs": 22.58,
+        "sidebarListCollectionsMs": 70.09,
+        "trashFiveAssetsMs": 7.5,
+        "trashTwoAssetsMs": 3.5,
+        "restoreSevenAssetsMs": 8.8,
+        "deletePermanentSevenAssetsMs": 17.8,
+        "setRatingFiveAssetsMs": 0.4
+      }
+    },
+    {
+      "timestamp": "2026-08-23T03:05:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(Serpent-4bdd26: v40 index, readdir sweep, refresh stat dedupe, collection count cache, sqlite cache_size 64MB)",
+      "suite": "comprehensive-20k-worker",
+      "fixture": "local APFS 20k v3 mixed (UUID ids)",
+      "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
+      "note": "安静环境单次。sidebarListCollections 从基线 70-116ms → 0.21ms（change-sequence 缓存）；allBrowseFirstPage 17.5→8.5ms（v40 covering partial index）",
+      "metrics": {
+        "openLibraryMs": 523.5,
+        "allBrowseFirstPageMs": 8.47,
+        "folderSwitchMs": 0.75,
+        "folderSwitchRecursiveMs": 0.91,
+        "collectionSwitchMs": 3.9,
+        "collectionRecursiveSwitchMs": 42.08,
+        "deepOffsetPageMs": 19.98,
+        "layoutOnlyMs": 94.79,
+        "searchFixedTokenMs": 57.63,
+        "sortNameAscMs": 8.22,
+        "sortCreatedAtDescMs": 30.6,
+        "sortModifiedDescMs": 35.62,
+        "sortByteSizeDescMs": 37.85,
+        "sortRatingDescMs": 37.69,
+        "filterRatingMs": 22.53,
+        "inspectorMetadataMs": 0.11,
+        "sidebarListFoldersMs": 28.39,
+        "sidebarListCollectionsMs": 0.21,
+        "trashFiveAssetsMs": 18,
+        "trashTwoAssetsMs": 5.1,
+        "restoreSevenAssetsMs": 8.8,
+        "deletePermanentSevenAssetsMs": 15.9,
+        "setRatingFiveAssetsMs": 0.3
+      }
+    },
+    {
+      "timestamp": "2026-08-23T03:15:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(Serpent-4bdd26)",
+      "suite": "palette-pipeline-probe",
+      "fixture": "local APFS 20k",
+      "metrics": {
+        "paletteExtractionMedianMs": 3.6,
+        "paletteExtractionMinMs": 3.1,
+        "paletteExtractionMaxMs": 22,
+        "mixedQueueThroughputMsPerJob": 28.5,
+        "note": "纯色卡提取(64x64 sharp decode + JS kmeans)仅 ~3.6ms/资产；队列模式混合吞吐 28.5ms/job，差额为 claim/lease/heartbeat/SQL 调度开销。批量 claim 列为后续优化候选。"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T03:20:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(Serpent-4bdd26)",
+      "suite": "nas-smb-latency-probe",
+      "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets)",
+      "metrics": {
+        "readdirArtifacts21kEntriesMs": 21209,
+        "lstatPerFileOnSmbMs": 12.2,
+        "lstatRealpathPerArtifactMs": 10.3,
+        "estimatedOldArtifactSweepMs": 224553,
+        "estimatedNewArtifactSweepReaddirOnlyMs": 21209,
+        "sqliteCountColdDefaultCacheMs": 916,
+        "sqliteCountCold64MBCacheMs": 82,
+        "note": "readdir 优化把 21801-artifact 对账从 ~225s 网络往返降到 ~21s 单次枚举；cache_size=64MB 把 COUNT 冷查询 916ms→82ms"
+      }
+    }
+  ]
+}

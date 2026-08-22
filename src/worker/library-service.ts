@@ -2087,6 +2087,22 @@ const SYNC_SESSIONS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(SYNC_SESSIONS_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v40: covering partial index for the default browse sort. Every
+// non-trash browse/search COUNT and first page filters `deleted_at IS NULL`
+// and orders by `relative_file_path, asset_id`; without this index SQLite
+// scans the whole assets table into a temp B-tree on every request. On
+// SMB/NAS libraries each cold page read is a network round trip, which made
+// the first browse after open take seconds. Additive-only (new index), so it
+// satisfies the data-compatibility discipline (ADR-0028).
+const ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS assets_active_name_idx
+    ON assets(relative_file_path, asset_id)
+    WHERE deleted_at IS NULL;
+`;
+const ASSETS_ACTIVE_NAME_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2643,6 +2659,11 @@ export const MIGRATIONS = [
   },
   { version: 38, sql: SYNC_SCHEMA_SQL, checksum: SYNC_SCHEMA_CHECKSUM },
   { version: 39, sql: SYNC_SESSIONS_SCHEMA_SQL, checksum: SYNC_SESSIONS_SCHEMA_CHECKSUM },
+  {
+    version: 40,
+    sql: ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL,
+    checksum: ASSETS_ACTIVE_NAME_INDEX_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2677,6 +2698,13 @@ interface OpenLibrary {
   preservedRelinkPathIdentities: Set<string>;
   /** Last .serpentignore contents materialized into gitignore_ignored_paths. */
   gitignoreText: string;
+  /**
+   * Serpent-4bdd26: memo for the recursive per-collection asset counts keyed
+   * by the library change sequence. The recursive CTE costs ~25-100ms on a
+   * 20k library and the sidebar re-requests it after every mutation; the
+   * sequence guard keeps the result coherent with any committed write.
+   */
+  collectionCountCache?: { changeSequence: number; counts: Map<string, number> };
 }
 
 interface ArtifactPathCacheEntry {
@@ -4163,6 +4191,13 @@ export function openConfiguredDatabase(
       { simple: true },
     );
     connection.pragma('synchronous = FULL');
+    // Serpent-4bdd26: a 20k-asset library database is ~60MB; the SQLite
+    // default page cache (~2MB) cannot hold its hot indexes, so every cold
+    // browse re-reads index pages over the network (measured ~0.9s per COUNT
+    // on gigabit SMB vs <10ms warm). A 64MB cache is read-only working set —
+    // it does not change durability semantics, and local libraries benefit
+    // the same way once their databases outgrow the default.
+    connection.pragma('cache_size = -65536');
     if (
       journalMode !== expectedJournalMode ||
       connection.pragma('foreign_keys', { simple: true }) !== 1 ||
@@ -14476,6 +14511,13 @@ export class LibraryService {
     ) {
       return new Map();
     }
+    // Serpent-4bdd26: the sidebar re-requests collection summaries after
+    // every mutation; serve the recursive counts from the memo until a write
+    // advances the change sequence.
+    const changeSequence = this.getChangeSequence(openLibrary.summary.libraryId);
+    if (openLibrary.collectionCountCache?.changeSequence === changeSequence) {
+      return openLibrary.collectionCountCache.counts;
+    }
     const rows = openLibrary.connection
       .prepare(
         `WITH RECURSIVE collection_tree(root_collection_id, collection_id) AS (
@@ -14500,7 +14542,9 @@ export class LibraryService {
       collection_id: string;
       asset_count: number;
     }>;
-    return new Map(rows.map((row) => [row.collection_id, row.asset_count]));
+    const counts = new Map(rows.map((row) => [row.collection_id, row.asset_count]));
+    openLibrary.collectionCountCache = { changeSequence, counts };
+    return counts;
   }
 
   updateCollection(input: {
@@ -21753,13 +21797,24 @@ export class LibraryService {
     if (rows.length === 0) return 0;
 
     const now = new Date().toISOString();
-    const invalidate = openLibrary.connection.prepare(
-      `UPDATE revision_artifacts
-          SET invalidated_at = ?
-        WHERE artifact_id = ?
-          AND invalidated_at IS NULL`,
-    );
 
+    // The artifacts directory is flat (artifact_id + extension written by the
+    // generators), so one directory listing replaces per-file lstat+realpath.
+    // On SMB/NAS each lstat is a network round trip (~10ms measured), which
+    // made this sweep cost minutes of pure latency on a 20k-artifact store;
+    // a single readdir costs one directory enumeration regardless of how the
+    // entries are checked afterwards. A symlinked or subdirectory entry is
+    // never treated as present, matching the old containment rules.
+    let presentArtifactPaths: Set<string>;
+    try {
+      presentArtifactPaths = new Set(
+        readdirSync(artifactsRoot, { withFileTypes: true })
+          .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
+          .map((entry) => entry.name),
+      );
+    } catch {
+      return 0;
+    }
     const artifactFilePresent = (filePath: string): boolean => {
       // Same containment rules as getArtifactAbsolutePath — escape / symlink → treat missing.
       const targetPath = path.resolve(artifactsRoot, ...filePath.split('/'));
@@ -21771,37 +21826,32 @@ export class LibraryService {
       ) {
         return false;
       }
-      try {
-        const targetEntry = lstatSync(targetPath);
-        if (!targetEntry.isFile() || targetEntry.isSymbolicLink()) return false;
-        const realTarget = realpathSync(targetPath);
-        const realRelation = path.relative(artifactsRoot, realTarget);
-        if (
-          realRelation === '' ||
-          realRelation.startsWith(`..${path.sep}`) ||
-          path.isAbsolute(realRelation)
-        ) {
-          return false;
-        }
-        return true;
-      } catch {
-        return false;
-      }
+      return presentArtifactPaths.has(targetPath.slice(artifactsRoot.length + path.sep.length));
     };
 
     // Serpent-tumv: sweep in batches and yield between batches so a large
     // artifact store does not stall the Worker event loop for seconds.
+    // Serpent-4bdd26: each batch is one multi-row UPDATE instead of a
+    // per-row transaction. Network libraries run under a rollback journal,
+    // where any open write blocks concurrent reads — collapsing 400
+    // statements into one keeps that write window (and the user-visible
+    // stall it can cause on SMB) as short as possible.
     const batchSize = 400;
     let invalidated = 0;
     for (let offset = 0; offset < rows.length; offset += batchSize) {
-      const batch = rows.slice(offset, offset + batchSize);
-      openLibrary.connection.transaction(() => {
-        for (const row of batch) {
-          if (artifactFilePresent(row.file_path)) continue;
-          invalidate.run(now, row.artifact_id);
-          invalidated += 1;
-        }
-      })();
+      const missingIds = rows
+        .slice(offset, offset + batchSize)
+        .filter((row) => !artifactFilePresent(row.file_path))
+        .map((row) => row.artifact_id);
+      if (missingIds.length > 0) {
+        openLibrary.connection.prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE artifact_id IN (${missingIds.map(() => '?').join(',')})
+              AND invalidated_at IS NULL`,
+        ).run(now, ...missingIds);
+        invalidated += missingIds.length;
+      }
       if (yieldTurn && offset + batchSize < rows.length) {
         await yieldTurn();
       }
@@ -32902,6 +32952,13 @@ export class LibraryService {
     let changedCount = 0;
     let missingCount = 0;
     const discoveredAssetIds: string[] = [];
+    // Serpent-4bdd26: per-file stats gathered once by the enumerations below
+    // and consumed by the comparison loop, so a full refresh costs one lstat
+    // per file instead of two (measured ~10ms per round trip on SMB).
+    const linkedSnapshot = new Map<
+      string,
+      { relativePath: string; byteSize: number; modifiedAt: string; originalFilename: string }
+    >();
 
     openLibrary.connection.transaction(() => {
       this.reconcileLinkedFolderStatuses(openLibrary);
@@ -32948,6 +33005,13 @@ export class LibraryService {
             pathKind,
           ),
         )) {
+          // Serpent-4bdd26: the enumeration already lstat'ed every file; keep
+          // its size/mtime so the comparison loop below reuses one stat per
+          // file instead of issuing a second network round trip per asset.
+          linkedSnapshot.set(
+            `${folder.folder_id} ${portablePathIdentity(entry.relativePath)}`,
+            entry,
+          );
           const pathIdentity = portablePathIdentity(entry.relativePath);
           if (existingIdentities.has(pathIdentity)) continue;
           const assetId = randomUUID();
@@ -32997,6 +33061,14 @@ export class LibraryService {
           relativePath,
           pathKind,
         ),
+      );
+      // Serpent-4bdd26: reuse the enumeration stats for the comparison loop —
+      // one lstat per file instead of two on the whole-library refresh.
+      const managedSnapshot = new Map(
+        managedEntries.map((entry) => [
+          portablePathIdentity(entry.relativePath),
+          entry,
+        ]),
       );
       const directoriesNeeded = new Set<string>();
       for (const entry of managedEntries) {
@@ -33106,11 +33178,31 @@ export class LibraryService {
         ) {
           continue;
         }
+        // Serpent-4bdd26: the enumerations above already lstat'ed every
+        // source file; consult that snapshot first and only fall back to a
+        // direct lstat for rows it cannot cover (e.g. an offline linked root
+        // skipped by its enumeration, or ignore-rule edge cases).
+        const snapshotKey = asset.location_kind === 'linked'
+          ? `${asset.linked_folder_id ?? ''} ${portablePathIdentity(asset.relative_file_path)}`
+          : portablePathIdentity(asset.relative_file_path);
+        const snapshotEntry = (asset.location_kind === 'linked'
+          ? linkedSnapshot.get(snapshotKey)
+          : managedSnapshot.get(snapshotKey)) as
+            | { byteSize: number; modifiedAt: string }
+            | undefined;
+        let snapshotByteSize: number | null = null;
+        let snapshotModifiedAt: string | null = null;
         const assetPath =
           asset.location_kind === 'linked'
             ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
             : this.folderPath(openLibrary, asset.relative_file_path);
         let fileStat: BigIntStats | Stats | undefined;
+        if (snapshotEntry) {
+          snapshotByteSize = Number.isSafeInteger(snapshotEntry.byteSize)
+            ? snapshotEntry.byteSize
+            : null;
+          snapshotModifiedAt = snapshotEntry.modifiedAt;
+        } else {
         try {
           fileStat = this.options.assetLstat
             ? this.options.assetLstat(assetPath)
@@ -33122,7 +33214,11 @@ export class LibraryService {
             throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
           }
         }
-        if (!fileStat?.isFile() || fileStat.isSymbolicLink()) {
+        }
+        const statIsFile = snapshotEntry
+          ? true
+          : Boolean(fileStat?.isFile() && !fileStat.isSymbolicLink());
+        if (!snapshotEntry && (!fileStat || !statIsFile)) {
           if (asset.availability === 'available') {
             openLibrary.connection
               .prepare("UPDATE assets SET availability = 'missing', updated_at = ? WHERE asset_id = ?")
@@ -33133,7 +33229,9 @@ export class LibraryService {
           continue;
         }
 
-        const byteSize = Number(fileStat.size);
+        const byteSize = snapshotEntry
+          ? snapshotByteSize!
+          : Number(fileStat!.size);
         if (!Number.isSafeInteger(byteSize)) {
           throw new LibraryServiceError('IMPORT_APPLY_FAILED', {
             reason: 'UNSUPPORTED_FILE_ENTRY',
@@ -33142,7 +33240,8 @@ export class LibraryService {
         // BigIntStats exposes integer mtimeMs while Stats may retain a fractional
         // value whose prebuilt Date rounds differently. Normalize both to the
         // filesystem millisecond used when linked/import revisions are created.
-        const modifiedAt = new Date(Number(fileStat.mtimeMs)).toISOString();
+        const modifiedAt = snapshotModifiedAt
+          ?? new Date(Number(fileStat!.mtimeMs)).toISOString();
         if (!asset.revision_row_id) {
           // A dangling current_revision_id (or a NULL revision after a partial
           // write) must stay visible until this source-backed repair completes.
