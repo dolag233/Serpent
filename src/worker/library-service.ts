@@ -3633,6 +3633,20 @@ export interface AssetRefreshResult {
   missingCount: number;
 }
 
+/**
+ * Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：开库对账的
+ * 渐进批次选项。assetIds 限定 stat 范围（空列表 = 仅发现新文件）；
+ * discoverSources=false 跳过文件系统枚举。
+ */
+export interface RefreshManagedAssetsOptions {
+  /** Restrict the stat/revision pass; an empty list means discovery only. */
+  assetIds?: readonly string[];
+  /** Skip filesystem discovery when processing an existing-asset batch. */
+  discoverSources?: boolean;
+  /** Avoid materializing all AssetSummary objects for background maintenance. */
+  includeAssets?: boolean;
+}
+
 export interface AssetObserver {
   close(): void;
 }
@@ -5372,16 +5386,58 @@ export class LibraryService {
     return this.watchNotifyNow() >= this.suppressWatcherNotifyUntilMs;
   }
 
-  /** Reconcile disk changes that happened while the app was closed. */
-  private refreshManagedAssetsOnOpen(libraryId: string): void {
+  /**
+   * Reconcile disk changes that happened while the app was closed. Existing
+   * assets are processed in small transactions so a large NAS/library scan
+   * cannot monopolize the Worker event loop. Discovery of new files remains a
+   * final pass, preserving normal refresh semantics without holding the
+   * connection in one long transaction.
+   * Serpent-4bdd26 收编 codex/large-library-performance@15f3325c。
+   */
+  private async refreshManagedAssetsOnOpen(libraryId: string): Promise<void> {
     try {
-      const refresh = this.refreshManagedAssets(libraryId);
-      if (refresh.changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
+      const openLibrary = this.openById.get(libraryId);
+      if (!openLibrary || openLibrary.readOnly) return;
+      const existingAssetIds = (openLibrary.connection
+        .prepare(
+          `SELECT asset_id
+             FROM assets
+            WHERE deleted_at IS NULL
+            ORDER BY relative_file_path`,
+        )
+        .all() as Array<{ asset_id: string }>).map((row) => row.asset_id);
+      let changedCount = 0;
+      let missingCount = 0;
+      // Keep each synchronous lstat/write slice below the interaction budget.
+      // A 128-file slice was reasonable on APFS but can monopolize the single
+      // Worker for hundreds of milliseconds when the library lives on SMB/NAS.
+      // More, smaller slices extend the background scan slightly, while every
+      // browse/search request gets a chance to run between slices.
+      const batchSize = 16;
+      for (let offset = 0; offset < existingAssetIds.length; offset += batchSize) {
+        if (!this.openById.has(libraryId)) return;
+        const refresh = this.refreshManagedAssets(libraryId, {
+          assetIds: existingAssetIds.slice(offset, offset + batchSize),
+          discoverSources: false,
+        });
+        changedCount += refresh.changedCount;
+        missingCount += refresh.missingCount;
+        await this.yieldForInteractiveIdle(libraryId);
+      }
+
+      // The empty filter makes this a discovery-only pass: new managed/linked
+      // files are still imported and indexed, while already checked files are
+      // not stat'ed a second time.
+      if (!this.openById.has(libraryId)) return;
+      const discovered = this.refreshManagedAssets(libraryId, { assetIds: [] });
+      changedCount += discovered.changedCount;
+      missingCount += discovered.missingCount;
+      if (changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
         this.options.onAssetsChanged?.({
           type: 'asset.changed',
           libraryId,
-          changedCount: refresh.changedCount,
-          missingCount: refresh.missingCount,
+          changedCount,
+          missingCount,
           source: 'watcher',
         });
       }
@@ -17181,6 +17237,53 @@ export class LibraryService {
   }
 
   /**
+   * Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：新视口使正在为
+   * 旧视口或 startup 回填解码的任务过时。把视口外的 running 预览任务重新排队
+   * （abort 让 visible 波立即抢到解码器），取消视口外的 queued 任务防止活动泵
+   * 在新视口之前认领它们。后台回填会把 cancelled 行视为可调度并重建——不删除
+   * 源文件也不删除 ready artifact。
+   */
+  interruptThumbnailJobsOutsideViewport(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): { interruptedCount: number } {
+    const selectedIds = [...new Set(assetIds)].slice(0, 300);
+    if (selectedIds.length === 0) return { interruptedCount: 0 };
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const placeholders = selectedIds.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT job_id, status
+           FROM jobs
+          WHERE library_id = ?
+            AND kind IN ('generate_thumbnail', 'generate_video_poster')
+            AND status IN ('queued', 'running')
+            AND asset_id NOT IN (${placeholders})`,
+      )
+      .all(libraryId, ...selectedIds) as Array<{ job_id: string; status: 'queued' | 'running' }>;
+    if (rows.length === 0) return { interruptedCount: 0 };
+
+    const now = new Date().toISOString();
+    const requeue = openLibrary.connection.prepare(
+      "UPDATE jobs SET status = 'queued', updated_at = ? WHERE job_id = ? AND status = 'running'",
+    );
+    const cancel = openLibrary.connection.prepare(
+      "UPDATE jobs SET status = 'cancelled', error_code = 'SUPERSEDED_BY_VIEWPORT', updated_at = ? WHERE job_id = ? AND status = 'queued'",
+    );
+    let count = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        (row.status === 'running' ? requeue : cancel).run(now, row.job_id);
+        count += 1;
+      }
+    })();
+    // Running jobs were requeued; abort their controllers so the decoders stop
+    // immediately and the visible wave can claim the freed capacity.
+    this.abortActiveMediaJobs(libraryId, rows.filter((row) => row.status === 'running').map((row) => row.job_id));
+    return { interruptedCount: count };
+  }
+
+  /**
    * Stop thumbnail/proxy work that may still hold a managed source file open.
    * The queue is concurrent, so aborting the controller alone is not enough:
    * wait for each active job's finally block to run before deleting on disk.
@@ -21930,7 +22033,7 @@ export class LibraryService {
         this.diagnose('trash.purge-on-open', error, { libraryId });
       }
       await yieldTurn();
-      this.refreshManagedAssetsOnOpen(libraryId);
+      await this.refreshManagedAssetsOnOpen(libraryId);
       const current = this.openById.get(libraryId);
       if (current) {
         await yieldTurn();
@@ -22542,6 +22645,10 @@ export class LibraryService {
       maxJobs?: number;
       /** Restrict a pump to one media lane; omitted preserves full-queue behavior. */
       jobKinds?: readonly MediaJobKind[];
+      /** Serpent-4bdd26 收编：Restrict a visible-window pump to the latest viewport asset ids. */
+      assetIds?: readonly string[];
+      /** Serpent-4bdd26 收编：Stop claiming more jobs when a newer queue scene supersedes this pump. */
+      signal?: AbortSignal;
       onResult?: (result: {
         assetId: string;
         artifactId?: string;
@@ -22576,12 +22683,21 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const jobKinds = options.jobKinds ?? MEDIA_JOB_KINDS;
     if (jobKinds.length === 0) return 0;
+    const pumpAssetIds = options.assetIds === undefined
+      ? undefined
+      : [...new Set(options.assetIds)].slice(0, 100);
+    const assetClause = pumpAssetIds === undefined
+      ? ''
+      : pumpAssetIds.length === 0
+        ? 'AND 1 = 0'
+        : `AND asset_id IN (${pumpAssetIds.map(() => '?').join(',')})`;
     const nextJob = openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count
          FROM jobs
         WHERE library_id = ?
           AND kind IN (${jobKinds.map(() => '?').join(',')})
           AND status = 'queued'
+          ${assetClause}
         ORDER BY priority DESC, created_at
         LIMIT 1`,
     );
@@ -22626,8 +22742,13 @@ export class LibraryService {
       };
       try {
       while (budget > 0) {
+      if (options.signal?.aborted) return;
       budget -= 1;
-      const job = nextJob.get(libraryId, ...jobKinds) as {
+      const job = nextJob.get(
+        libraryId,
+        ...jobKinds,
+        ...(pumpAssetIds ?? []),
+      ) as {
         job_id: string;
         asset_id: string;
         revision_id: string;
@@ -33015,13 +33136,24 @@ export class LibraryService {
     return hash.digest('hex');
   }
 
-  refreshManagedAssets(libraryId: string, options: { includeAssets: true }): AssetRefreshResult & { assets: AssetSummary[] };
-  refreshManagedAssets(libraryId: string, options?: { includeAssets?: boolean }): AssetRefreshResult;
+  refreshManagedAssets(libraryId: string, options: { includeAssets: true } & RefreshManagedAssetsOptions): AssetRefreshResult & { assets: AssetSummary[] };
+  refreshManagedAssets(libraryId: string, options?: RefreshManagedAssetsOptions): AssetRefreshResult;
   refreshManagedAssets(
     libraryId: string,
-    options?: { includeAssets?: boolean },
+    options?: RefreshManagedAssetsOptions,
   ): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：
+    // assetIds 限定 stat/revision 对账范围；空列表 = 只发现新文件（已核对文件
+    // 不再二次 stat）。discoverSources=false 跳过文件系统枚举（批次路径由
+    // fallback lstat 覆盖）。
+    const assetIds = options?.assetIds;
+    const assetFilter = assetIds === undefined
+      ? ''
+      : assetIds.length === 0
+        ? ' AND 1 = 0'
+        : ` AND a.asset_id IN (${assetIds.map(() => '?').join(',')})`;
+    const discoverSources = options?.discoverSources ?? true;
     // Serpent-onch 风格分阶段计时：SERPENT_REFRESH_STAGE_LOG=1 时输出各阶段耗时，
     // 用于大库全量对账的归因（Serpent-4bdd26）。生产默认关闭。
     const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
@@ -33046,10 +33178,10 @@ export class LibraryService {
                 r.content_fingerprint
           FROM assets a
            LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
-          WHERE a.deleted_at IS NULL
+          WHERE a.deleted_at IS NULL${assetFilter}
           ORDER BY a.relative_file_path`,
       )
-      .all() as Array<{
+      .all(...(assetIds ?? [])) as Array<{
         asset_id: string;
         location_kind: 'managed' | 'linked';
         linked_folder_id: string | null;
@@ -33076,13 +33208,20 @@ export class LibraryService {
     openLibrary.connection.transaction(() => {
       this.reconcileLinkedFolderStatuses(openLibrary);
       const folderNow = new Date().toISOString();
-      for (const folder of openLibrary.connection
-        .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
-        .all() as Array<{
-          folder_id: string;
-          absolute_root_path: string;
-          status: 'available' | 'offline';
-        }>) {
+      // Serpent-4bdd26: discovery passes (linked enumeration + managed
+      // enumeration) are skipped for existing-asset batches — the batch's
+      // fallback lstat covers those rows, and skipping keeps each 16-asset
+      // slice inside its interaction budget.
+      const linkedFolderRows = discoverSources
+        ? (openLibrary.connection
+          .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
+          .all() as Array<{
+            folder_id: string;
+            absolute_root_path: string;
+            status: 'available' | 'offline';
+          }>)
+        : [];
+      for (const folder of linkedFolderRows) {
         if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
 
         const existingIdentities = new Set(
@@ -33165,16 +33304,18 @@ export class LibraryService {
           .all() as Array<{ path_identity: string }>)
           .map((row) => row.path_identity),
       );
-      const managedEntries = this.enumerateManagedSources(
-        this.assetsPath(openLibrary),
-        (relativePath, pathKind) => this.isExplicitlyIgnored(
-          openLibrary,
-          'managed',
-          null,
-          relativePath,
-          pathKind,
-        ),
-      );
+      const managedEntries = discoverSources
+        ? this.enumerateManagedSources(
+          this.assetsPath(openLibrary),
+          (relativePath, pathKind) => this.isExplicitlyIgnored(
+            openLibrary,
+            'managed',
+            null,
+            relativePath,
+            pathKind,
+          ),
+        )
+        : [];
       markStage('enumerate-managed');
       // Serpent-4bdd26: reuse the enumeration stats for the comparison loop —
       // one lstat per file instead of two on the whole-library refresh.

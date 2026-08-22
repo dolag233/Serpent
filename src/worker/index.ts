@@ -115,7 +115,26 @@ const analysisControls = new Map<string, {
 }>();
 const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
+// Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：视口抢占机制。
+const activeThumbnailQueueControllers = new Map<string, AbortController>();
+/**
+ * A visible-window request can arrive while a low-priority startup wave is
+ * decoding. Priority promotion alone is not enough in that case: the next
+ * batch would still inherit the startup lane's intentionally small wave
+ * size. Remember the largest current viewport until the active queue reaches
+ * its next batch boundary, then let that viewport claim one full wave.
+ */
+const pendingVisibleThumbnailWaves = new Map<string, {
+  assetIds: string[];
+  waveSize: number;
+}>();
 const deferredStartupThumbnailQueues = new Map<string, ReturnType<typeof setTimeout>>();
+// Keep the startup backfill off the primary decoder lane until the renderer
+// has reported its first real viewport. A fixed delay is not sufficient on a
+// large library: opening the shell can take longer than the timer, so the
+// old backfill could claim the decoder just before the first visible-window
+// request arrived.
+const startupThumbnailVisibleWindows = new Set<string>();
 const latestAssetSearchRequests = new LatestSearchRequestCoordinator();
 const pendingPluginMediaProviderRequests = new Map<string, {
   resolve: (result: PluginMediaProviderResult) => void;
@@ -543,6 +562,31 @@ function scheduleThumbnailQueue(
   }
 
   if (activeThumbnailQueues.has(libraryId)) {
+    if (
+      options.skipStaleRepair
+      && options.assetIds
+      && options.priority !== undefined
+      && options.priority >= 350
+    ) {
+      pendingVisibleThumbnailWaves.set(
+        libraryId,
+        {
+          // A new viewport supersedes the previous viewport. Keeping the
+          // latest ids here is stronger than priority promotion: when the
+          // active queue reaches its next claim boundary it cannot spend the
+          // batch on stale startup assets first.
+          assetIds: [...new Set(options.assetIds)].slice(0, 100),
+          waveSize: Math.max(
+            pendingVisibleThumbnailWaves.get(libraryId)?.waveSize ?? 0,
+            options.assetIds.length,
+          ),
+        },
+      );
+      // The current pump may have claimed a large startup/initial-page wave.
+      // Stop it before it can claim another stale job after the viewport
+      // request; running media jobs are aborted by the service below.
+      activeThumbnailQueueControllers.get(libraryId)?.abort();
+    }
     rescheduledThumbnailQueues.add(libraryId);
     return enqueued;
   }
@@ -550,6 +594,8 @@ function scheduleThumbnailQueue(
 
   const runBatch = async (): Promise<void> => {
     let continueImmediately = false;
+    const queueController = new AbortController();
+    activeThumbnailQueueControllers.set(libraryId, queueController);
     try {
       const onResult = (result: {
         assetId: string;
@@ -588,15 +634,26 @@ function scheduleThumbnailQueue(
       // call; the service still caps actual decoder concurrency, but this
       // avoids inserting a timer/query boundary between visible thumbnails.
       const thumbnailWaveSize = workerMediaDecodeWaveSize();
-      const processWaveSize = Math.min(
-        options.processMaxJobs ?? Number.POSITIVE_INFINITY,
-        options.skipStaleRepair && options.assetIds
-          ? Math.min(100, Math.max(thumbnailWaveSize, options.assetIds.length))
-          : thumbnailWaveSize,
-      );
+      const pendingVisibleWave = pendingVisibleThumbnailWaves.get(libraryId);
+      if (pendingVisibleWave !== undefined) {
+        pendingVisibleThumbnailWaves.delete(libraryId);
+      }
+      const visibleAssetIds = pendingVisibleWave?.assetIds
+        ?? (options.skipStaleRepair && options.assetIds
+          ? [...new Set(options.assetIds)].slice(0, 100)
+          : undefined);
+      const processWaveSize = pendingVisibleWave !== undefined
+        ? Math.max(1, Math.min(100, Math.trunc(pendingVisibleWave.waveSize)))
+        : options.processMaxJobs !== undefined
+          ? Math.max(1, Math.min(100, Math.trunc(options.processMaxJobs)))
+          : options.skipStaleRepair && options.assetIds
+            ? Math.min(100, Math.max(thumbnailWaveSize, options.assetIds.length))
+            : thumbnailWaveSize;
       const processed = await libraryService.processThumbnailQueue(libraryId, {
         maxJobs: processWaveSize,
         jobKinds: ['generate_thumbnail', 'generate_video_poster'],
+        ...(visibleAssetIds === undefined ? {} : { assetIds: visibleAssetIds }),
+        signal: queueController.signal,
         onResult,
         onAiInputReady: (event) => {
           parentPort?.postMessage({
@@ -621,8 +678,9 @@ function scheduleThumbnailQueue(
         modelThumbnailRenderer: (input) => renderModelThumbnailViaMain(input),
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
       });
-      continueImmediately = processed === processWaveSize;
-      if (!continueImmediately) {
+      const queueWasAborted = queueController.signal.aborted;
+      continueImmediately = !queueWasAborted && processed === processWaveSize;
+      if (!queueWasAborted && !continueImmediately) {
         const filled = libraryService.enqueueThumbnailJobs(libraryId, {
           limit: 500,
           priority: 50,
@@ -630,7 +688,7 @@ function scheduleThumbnailQueue(
         });
         continueImmediately = filled > 0;
       }
-      if (!continueImmediately) {
+      if (!continueImmediately && !queueWasAborted) {
         try {
           const dimensions = libraryService.backfillMissingImageDimensions(libraryId, 48);
           for (const item of dimensions) {
@@ -656,6 +714,9 @@ function scheduleThumbnailQueue(
       setTimeout(() => void runBatch(), 0);
       return;
     }
+    if (activeThumbnailQueueControllers.get(libraryId) === queueController) {
+      activeThumbnailQueueControllers.delete(libraryId);
+    }
     activeThumbnailQueues.delete(libraryId);
     scheduleSecondaryMediaQueue(libraryId);
     if (rescheduledThumbnailQueues.delete(libraryId)) {
@@ -669,6 +730,9 @@ function scheduleThumbnailQueue(
 }
 
 const STARTUP_THUMBNAIL_DELAY_MS = 1_000;
+// Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：等待首个真实视口。
+const STARTUP_THUMBNAIL_VISIBLE_WAIT_MS = 250;
+const STARTUP_THUMBNAIL_MAX_VISIBLE_WAIT_MS = 8_000;
 
 // Serpent-onch/9e1d8d: per-command timing log, off by default.
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
@@ -681,6 +745,7 @@ const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
 function deferStartupThumbnailScene(libraryId: string): void {
   const previous = deferredStartupThumbnailQueues.get(libraryId);
   if (previous !== undefined) clearTimeout(previous);
+  startupThumbnailVisibleWindows.delete(libraryId);
 
   // Serpent-140fe2 direction (user, 2026-08-22): thumbnails must be queued
   // for the WHOLE library right after open, not lazily per viewport. The
@@ -688,8 +753,22 @@ function deferStartupThumbnailScene(libraryId: string): void {
   // viewport above the low-priority backfill — so interactive activity no
   // longer postpones the enqueue (it only ever postponed it forever during
   // continuous browsing).
+  // Serpent-4bdd26 收编：大库上开壳可能比固定延迟更久，旧回填会在首个
+  // visible-window 到达前抢占解码器。每 250ms 轮询视口标记（最多 8s），
+  // 看到视口后再启动 startup 场景。
+  const waitDeadline = Date.now() + STARTUP_THUMBNAIL_MAX_VISIBLE_WAIT_MS;
   const attempt = () => {
     deferredStartupThumbnailQueues.delete(libraryId);
+    if (
+      !startupThumbnailVisibleWindows.has(libraryId)
+      && Date.now() < waitDeadline
+    ) {
+      deferredStartupThumbnailQueues.set(
+        libraryId,
+        setTimeout(attempt, STARTUP_THUMBNAIL_VISIBLE_WAIT_MS),
+      );
+      return;
+    }
     scheduleThumbnailScene(libraryId, 'startup');
   };
 
@@ -703,6 +782,8 @@ function cancelDeferredStartupThumbnailScene(libraryId: string): void {
   const timer = deferredStartupThumbnailQueues.get(libraryId);
   if (timer !== undefined) clearTimeout(timer);
   deferredStartupThumbnailQueues.delete(libraryId);
+  startupThumbnailVisibleWindows.delete(libraryId);
+  pendingVisibleThumbnailWaves.delete(libraryId);
 }
 
 const SECONDARY_MEDIA_JOB_KINDS = [
@@ -716,9 +797,13 @@ const activeSecondaryMediaQueues = new Set<string>();
 const secondaryMediaIdleUntil = new Map<string, number>();
 
 function noteInteractiveMediaRequest(libraryId: string): void {
-  const idleUntil = Date.now() + 1_000;
+  // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：冷可见波包含
+  // 解码 + artifact 发布 + 渲染协议投递。1 秒的空闲窗允许开库对账在该波仍在
+  // 填充视口时恢复（NAS 上尤其明显）。磁盘维护让出接下来 2 秒的交互；
+  // 另一次 search/viewport 请求会继续延长窗口。
+  const idleUntil = Date.now() + 2_000;
   secondaryMediaIdleUntil.set(libraryId, idleUntil);
-  libraryService.noteInteractiveActivity(libraryId);
+  libraryService.noteInteractiveActivity(libraryId, 2_000);
 }
 
 /**
@@ -3063,17 +3148,30 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // Serpent-visible-window: the renderer reports what the user is actually
       // looking at after scrolling. Two effects, both cheap:
       // 1) queue-jump — the visible wave (350, light) boosts these assets'
-      //    queued jobs above every other tier, so the current viewport always
+      //    and restricts the next queue claim to them, so the current viewport
       //    finishes first no matter how the queue was filled;
       // 2) placeholder sizing — header-probe dimensions land immediately so
       //    masonry placeholders stop reflowing when thumbnails finish later.
       const { libraryId, assetIds } = request.command;
+      startupThumbnailVisibleWindows.add(libraryId);
       // Serpent-4bc4ac: ignored assets are not indexed or operated on —
       // drop them before dimension probes and thumbnail scheduling.
       const visibleAssetIds = libraryService.filterIgnoredAssetIds(
         libraryId,
         assetIds,
       );
+      // Serpent-4bdd26 收编：先中断视口外的解码并调度可见波（让新视口尽快
+      // 抢占），再做尺寸探测。
+      libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
+      if (visibleAssetIds.length > 0) {
+        scheduleThumbnailScene(
+          libraryId,
+          'visible',
+          visibleAssetIds,
+          visibleAssetIds.length,
+          { light: true },
+        );
+      }
       const dimensions =
         libraryService.persistVisibleWindowImageDimensions(libraryId, visibleAssetIds);
       for (const item of dimensions) {
@@ -3085,13 +3183,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           height: item.height,
         });
       }
-      scheduleThumbnailScene(
-        libraryId,
-        'visible',
-        visibleAssetIds,
-        visibleAssetIds.length,
-        { light: true },
-      );
       return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
     }
     case 'media.resolve-asset-paths': {

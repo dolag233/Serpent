@@ -276,6 +276,35 @@
         "collectionReorderAllMs": 84.24,
         "importPrepareFiveFilesMs": 41.05
       }
+    },
+    {
+      "timestamp": "2026-08-23T06:25:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+59e26b1c+WIP(视口抢占收编)",
+      "suite": "comprehensive-20k-worker (viewport preemption adopted)",
+      "metrics": {
+        "openLibraryMs": 506.7,
+        "allBrowseFirstPageMs": 8.63,
+        "folderSwitchMs": 0.69,
+        "collectionSwitchMs": 0.85,
+        "collectionRecursiveSwitchMs": 38.4,
+        "deepOffsetPageMs": 19.15,
+        "layoutOnlyMs": 89.56,
+        "searchFixedTokenMs": 57.19,
+        "sortNameAscMs": 8.73,
+        "sortCreatedAtDescMs": 31.09,
+        "sortModifiedDescMs": 35.57,
+        "filterRatingMs": 21.53,
+        "inspectorMetadataMs": 0.18,
+        "sidebarListFoldersMs": 23.05,
+        "sidebarListCollectionsMs": 0.18,
+        "trashFiveAssetsMs": 7.5,
+        "restoreSevenAssetsMs": 8.3,
+        "deletePermanentSevenAssetsMs": 18,
+        "collectionReorderAllMs": 3.23,
+        "importPrepareFiveFilesMs": 41.06
+      },
+      "note": "收编视口抢占机制后的全量基准。collectionReorderAll 84→3.2ms（语句缓存稳态）。"
     }
   ]
 }
