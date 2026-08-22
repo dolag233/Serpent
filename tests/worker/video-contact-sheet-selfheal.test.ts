@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -178,5 +178,50 @@ describe('contact sheet self-heal for conversion-registered videos', () => {
       ).get(asset.currentRevisionId) as { n: number };
       expect(failedRows.n).toBe(1);
     });
+  });
+
+  it('enqueues AI analysis for sheet-less videos and lazily self-heals duration (hermetic)', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-cs-hermetic-'));
+    roots.push(root);
+    const cannedProbe = JSON.stringify({
+      streams: [{ codec_type: 'video', codec_name: 'h264', width: 1920, height: 1080 }],
+      format: { duration: '30.05', format_name: 'mov,mp4,m4a,3gp,3g2,mj2' },
+    });
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        const outPath = args[args.length - 1];
+        if (typeof outPath === 'string' && (outPath.endsWith('.jpg') || outPath.endsWith('.json'))) {
+          mkdirSync(path.dirname(outPath), { recursive: true });
+          writeFileSync(outPath, Buffer.from('mock-output'));
+        }
+        return { stdout: Buffer.from(cannedProbe, 'utf-8'), stderr: '', exitCode: 0 };
+      },
+    });
+    services.push(service);
+    const created = service.createLibrary({ displayName: 'CS Hermetic', selectedParentPath: root });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    service.prepareOrExecuteImport({ libraryId: created.libraryId, sourceKind: 'files', sourcePaths: [sourcePath] });
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .find((entry) => entry.assetId)!;
+
+    // Serpent-140fe2 blocker fix: analysis enqueue must NOT gate on a
+    // pre-existing contact sheet — the lane materializes it at execution.
+    const analysis = service.enqueueAiAnalysisJobs({
+      libraryId: created.libraryId,
+      assetIds: [asset.assetId],
+    });
+    expect(analysis.enqueued).toBe(1);
+
+    const ensured = await service.ensureVideoContactSheet(created.libraryId, asset.assetId);
+    expect(ensured).toBe(true);
+    const healedRow = openLibraryDb(created.libraryPath, (db) =>
+      db.prepare(
+        "SELECT duration_ms FROM revision_artifacts WHERE kind='extracted_metadata' AND status='ready' AND invalidated_at IS NULL AND revision_id = ?",
+      ).get(asset.currentRevisionId) as { duration_ms?: number });
+    expect(healedRow.duration_ms ?? 0).toBeGreaterThan(0);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'contact_sheet'))
+      .toMatchObject({ status: 'ready' });
   });
 });

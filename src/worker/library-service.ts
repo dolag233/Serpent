@@ -5178,6 +5178,8 @@ export class LibraryService {
   >();
   /** Eagle imports keep their media previews but never enter auto-AI later. */
   private readonly autoAnalysisSuppressedAssetIds = new Map<string, Set<string>>();
+  /** Serpent-140fe2 review fix: coalesce overlapping lazy contact-sheet generations. */
+  private readonly videoContactSheetInFlight = new Map<string, Promise<boolean>>();
   /** Avoid synchronously probing missing tools on every visible-range request. */
   private readonly autoRepairProbeFailedAtByLibrary = new Map<
     string,
@@ -15794,15 +15796,6 @@ export class LibraryService {
       '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.m4v',
     ]);
     const modelExts = new Set<string>(MODEL_EXTENSIONS);
-    const videoContactSheetReady = conn.prepare(
-      `SELECT COUNT(*) AS ready_count
-         FROM assets a
-         JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
-        WHERE a.asset_id = ?
-          AND ra.kind = 'contact_sheet'
-          AND ra.status = 'ready'
-          AND ra.invalidated_at IS NULL`,
-    );
 
     let enqueued = 0;
     const jobIds: string[] = [];
@@ -15832,13 +15825,10 @@ export class LibraryService {
           skippedAssetIds.push(assetId);
           continue;
         }
-        if (isVideo) {
-          const artifacts = videoContactSheetReady.get(assetId) as { ready_count: number };
-          if (artifacts.ready_count !== 1) {
-            skippedAssetIds.push(assetId);
-            continue;
-          }
-        }
+        // Serpent-140fe2: videos no longer require a pre-existing contact
+        // sheet here. The analysis lane materializes it lazily via
+        // ensureVideoContactSheet when the job executes, so converted
+        // libraries whose sheets never existed can finally be analysed.
 
         // Check if there's already a pending/running AI job for this asset.
         const existingJob = conn
@@ -16003,6 +15993,25 @@ export class LibraryService {
                AND library_job_leases.expires_at_ms > ?
           )`,
     ).run(new Date().toISOString(), openLibrary.summary.libraryId, nowMs);
+  }
+
+  /**
+   * Serpent-43d32f: cancel queued/paused WebM-proxy jobs for GIF assets that
+   * older builds scheduled proactively (Serpent-azf6). Nothing consumes GIF
+   * proxies anymore, so draining them after an upgrade would only burn one
+   * doomed FFmpeg transcode per GIF. Runs after
+   * {@link recoverInterruptedThumbnailJobs} so recovered rows are covered too;
+   * jobs still running under a live lease finish on their own.
+   */
+  private retireLegacyGifProxyJobs(openLibrary: OpenLibrary): void {
+    openLibrary.connection.prepare(
+      `UPDATE jobs SET status = 'cancelled', error_code = 'GIF_PROXY_RETIRED', updated_at = ?
+        WHERE library_id = ? AND kind = 'generate_webm_proxy'
+          AND status IN ('queued', 'paused')
+          AND asset_id IN (
+            SELECT asset_id FROM assets WHERE lower(relative_file_path) LIKE '%.gif'
+          )`,
+    ).run(new Date().toISOString(), openLibrary.summary.libraryId);
   }
 
   // ── AI Job Queue Management ──────────────────────────────────────
@@ -18734,33 +18743,6 @@ export class LibraryService {
     return { artifactId: posterArtifactId };
   }
 
-  private enqueueVideoDerivativeJob(
-    openLibrary: OpenLibrary,
-    assetId: string,
-    revisionId: string,
-    kind: 'generate_contact_sheet' | 'generate_webm_proxy',
-    priority: number,
-  ): void {
-    const artifactKind = kind === 'generate_contact_sheet' ? 'contact_sheet' : 'webm_proxy';
-    const terminalArtifact = openLibrary.connection.prepare(
-      `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = ?
-        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
-    ).get(revisionId, artifactKind);
-    if (terminalArtifact) return;
-    const now = new Date().toISOString();
-    const active = openLibrary.connection.prepare(
-      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ? AND kind = ?
-        AND status IN ('queued', 'running', 'paused') LIMIT 1`,
-    ).get(assetId, revisionId, kind);
-    if (active) return;
-    openLibrary.connection.prepare(
-      `INSERT INTO jobs
-         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
-          attempt_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'queued', ?, 0.0, 0, ?, ?)`,
-    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, kind, priority, now, now);
-  }
-
   private enqueueVideoMetadataJob(
     openLibrary: OpenLibrary,
     assetId: string,
@@ -18968,6 +18950,12 @@ export class LibraryService {
       )
       .get(revisionId) as { status?: string } | undefined;
     if (existing?.status === 'ready') return true;
+    // Serpent-140fe2 review fix: overlapping analysis requests for the same
+    // video must share one generation, or the losers hit
+    // UNIQUE(revision_id, kind) and mask the real outcome.
+    const inFlightKey = `${libraryId} ${revisionId}`;
+    const inFlight = this.videoContactSheetInFlight.get(inFlightKey);
+    if (inFlight) return inFlight;
     if (existing) {
       // Explicit retry: clear the previous terminal row so either outcome —
       // a fresh ready sheet or a renewed failed marker — can register without
@@ -18978,9 +18966,17 @@ export class LibraryService {
         )
         .run(revisionId);
     }
-    return this.generateQueuedVideoArtifact(
-      libraryId, assetId, revisionId, 'generate_contact_sheet', execution,
-    );
+    const generation = (async () => {
+      try {
+        return await this.generateQueuedVideoArtifact(
+          libraryId, assetId, revisionId, 'generate_contact_sheet', execution,
+        );
+      } finally {
+        this.videoContactSheetInFlight.delete(inFlightKey);
+      }
+    })();
+    this.videoContactSheetInFlight.set(inFlightKey, generation);
+    return generation;
   }
 
   private async generateQueuedVideoArtifact(
@@ -19025,11 +19021,9 @@ export class LibraryService {
       };
       let parsed = readParsedMetadata();
       if (!parsed || !Number.isFinite(parsed.durationMs) || (parsed.durationMs ?? 0) <= 0) {
-        // revision_artifacts enforces UNIQUE(revision_id, kind): the superseded
-        // conversion-era row (ready or failed) must go before ffprobe can
-        // register real metadata. On probe failure probeVideoAsset writes a
-        // failed artifact into the freed slot, so the invariant holds either way.
-        this.deleteSupersededExtractedMetadata(openLibrary, revisionId);
+        // Serpent-140fe2: probeVideoAsset now replaces any prior
+        // extracted_metadata row transactionally AFTER a successful ffprobe,
+        // so a failed probe never destroys conversion-recorded dimensions.
         const probed = await this.generateQueuedVideoMetadata(
           libraryId, assetId, revisionId, execution,
         );
@@ -19056,9 +19050,9 @@ export class LibraryService {
         Math.max(durationSec, 0.1), dimensions, ffprobePath, execution,
       );
     } catch (error) {
-      // Serpent-140fe2: persist the terminal failure so
-      // enqueueVideoDerivativeJob's artifact guard stops re-queueing this
-      // video on every open. The next revision change resets it naturally.
+      // Serpent-140fe2: persist the terminal failure so the terminal-artifact
+      // guard in ensureVideoContactSheet stops regenerating this sheet. The
+      // next revision change resets it naturally.
       this.writeFailedArtifact(
         openLibrary, randomUUID(), revisionId, 'contact_sheet', 'image/jpeg',
         `${randomUUID()}.txt`, `ffmpeg@${FFMPEG_VERSION}`, error,
@@ -19066,25 +19060,6 @@ export class LibraryService {
       throw error;
     }
     return true;
-  }
-
-  /**
-   * Serpent-140fe2: revision_artifacts enforces UNIQUE(revision_id, kind), so
-   * re-probing a video whose metadata was registered by an external
-   * conversion requires dropping the width/height-only row first. Derived
-   * data only — the probe immediately writes the full replacement.
-   */
-  private deleteSupersededExtractedMetadata(
-    openLibrary: OpenLibrary,
-    revisionId: string,
-  ): void {
-    openLibrary.connection
-      .prepare(
-        `DELETE FROM revision_artifacts
-          WHERE revision_id = ? AND kind = 'extracted_metadata'
-            AND status IN ('ready', 'failed')`,
-      )
-      .run(revisionId);
   }
 
   private async generateQueuedVideoMetadata(
@@ -19211,19 +19186,33 @@ export class LibraryService {
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
 
-      openLibrary.connection
-        .prepare(
-        `INSERT INTO revision_artifacts
-           (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-              width, height, duration_ms, generator_version, status, generated_at)
-           VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
-        )
-        .run(
-          artifactId, revisionId, outputStat.size, artifactRelPath,
-          width, height, metadata.durationMs,
-          `ffprobe@${FFMPEG_VERSION}`,
-          new Date().toISOString(),
-        );
+      // Serpent-140fe2: replace any prior extracted_metadata row (e.g. a
+      // width/height-only row written by an external conversion) in the same
+      // transaction as the fresh insert. Probing first and only then
+      // touching the old row means a failed ffprobe never destroys the
+      // dimensions a conversion already recorded.
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `DELETE FROM revision_artifacts
+              WHERE revision_id = ? AND kind = 'extracted_metadata'
+                AND status IN ('ready', 'failed')`,
+          )
+          .run(revisionId);
+        openLibrary.connection
+          .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                width, height, duration_ms, generator_version, status, generated_at)
+             VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId, revisionId, outputStat.size, artifactRelPath,
+            width, height, metadata.durationMs,
+            `ffprobe@${FFMPEG_VERSION}`,
+            new Date().toISOString(),
+          );
+      })();
 
       return { durationSec, width, height };
     } catch (error) {
@@ -20446,54 +20435,11 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
-    // Serpent-azf6: animated GIFs play through their WebM proxy like videos —
-    // the proxy is a far lighter decode than the original multi-megabyte GIF.
-    // The fast still thumbnail stays the grid preview; the viewer/hover uses
-    // the proxy once ready, and a missing proxy is enqueued on demand here.
-    // (Static GIFs fall through to the plain image path.)
-    // Contrast with REQ-VIEW-002: videos keep the ORIGINAL source in the
-    // viewer when the container is natively playable (the WebM proxy was
-    // stealing playback from perfectly fine MP4s); GIFs are proxy-first on
-    // purpose — a raw GIF is an oversized animated container whose proxy
-    // decode is strictly cheaper, and the renderer renders it as <video>.
-    if (extension === '.gif') {
-      const extracted = this.getExtractedMetadata({ libraryId, assetId });
-      const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
-        && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
-        ? (extracted.metadata as { frameCount: number }).frameCount
-        : undefined;
-      if (frameCount !== undefined && frameCount > 1) {
-        const proxy = this.getCurrentArtifact(libraryId, assetId, 'webm_proxy');
-        if (proxy?.status === 'ready') {
-          return {
-            mediaType,
-            status: 'ready',
-            kind: 'webm_proxy',
-            artifactId: proxy.artifactId,
-            mimeType: proxy.mimeType,
-            playbackMode: 'proxy',
-          };
-        }
-        const activeProxyJob = openLibrary.connection
-          .prepare(
-            `SELECT job_id FROM jobs
-              WHERE asset_id = ?
-                AND kind = 'generate_webm_proxy'
-                AND status IN ('queued', 'running', 'paused')
-              LIMIT 1`,
-          )
-          .get(assetId) as { job_id: string } | undefined;
-        if (!activeProxyJob && asset.current_revision_id) {
-          this.enqueueVideoDerivativeJob(
-            openLibrary,
-            assetId,
-            asset.current_revision_id,
-            'generate_webm_proxy',
-            300,
-          );
-        }
-      }
-    }
+    // Serpent-43d32f: animated GIFs intentionally stay on the native image
+    // path (no WebM proxy). Chromium renders animated GIFs inside <img>, so
+    // hover/viewer play the source directly; the azf6 proactive per-GIF FFmpeg
+    // transcode was a long-standing Windows failure point, and on-demand
+    // semantics have no trigger because <img> GIF decoding never fails.
     if (mediaType === 'video' || mediaType === 'audio') {
       // Serpent-cljb: source playback is the only viewer starting point for
       // every video container. A container/MIME hint is not proof that
@@ -22215,20 +22161,8 @@ export class LibraryService {
           if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'audio') {
             this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
           }
-          // Serpent-azf6: animated GIFs are treated like videos — the fast
-          // still thumbnail IS the preview, the heavy WebM proxy drains
-          // behind it at low priority. frameCount comes from the GIF metadata
-          // the thumbnail job itself just persisted.
-          if (asset && asset.relative_file_path.toLowerCase().endsWith('.gif')) {
-            const extracted = this.getExtractedMetadata({ libraryId, assetId: job.asset_id });
-            const frameCount = extracted?.status === 'ready' && extracted.metadata !== null
-              && typeof (extracted.metadata as { frameCount?: unknown }).frameCount === 'number'
-              ? (extracted.metadata as { frameCount: number }).frameCount
-              : undefined;
-            if (frameCount !== undefined && frameCount > 1) {
-              this.enqueueVideoDerivativeJob(openLibrary, job.asset_id, job.revision_id, 'generate_webm_proxy', 100);
-            }
-          }
+          // Serpent-43d32f: animated GIFs no longer chain a WebM proxy off the
+          // still thumbnail; they stay on the native image path everywhere.
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
           // generated stays null when the offscreen renderer failed with a
           // benign outcome (the failed artifact was already written and the
@@ -33366,6 +33300,7 @@ export class LibraryService {
     this.recoverOperationHistoryTransitions(openLibrary);
     this.recoverInterruptedAiJobs(openLibrary);
     this.recoverInterruptedThumbnailJobs(openLibrary);
+    this.retireLegacyGifProxyJobs(openLibrary);
     interruptUnfinishedPluginJobs(
       openLibrary.connection,
       openLibrary.summary.libraryId,
