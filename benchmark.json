@@ -138,6 +138,38 @@
         "sqliteCountCold64MBCacheMs": 82,
         "note": "readdir 优化把 21801-artifact 对账从 ~225s 网络往返降到 ~21s 单次枚举；cache_size=64MB 把 COUNT 冷查询 916ms→82ms"
       }
+    },
+    {
+      "timestamp": "2026-08-23T03:45:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(round2: lazy refresh assets, stmt cache, lazy path resolve)",
+      "suite": "refresh-fullscan-optimization",
+      "fixture": "local APFS 20k",
+      "command": "SERPENT_REFRESH_STAGE_LOG=1 ... zz-round2-probe.test.ts",
+      "stageBreakdown": {
+        "before": {
+          "enumerateManagedMs": 590,
+          "compareLoopMs": 289,
+          "fullScanP50Ms": 1121.6
+        },
+        "afterStmtCache": {
+          "enumerateManagedMs": 189,
+          "compareLoopMs": 295,
+          "fullScanP50Ms": 530.5
+        },
+        "afterLazyPathResolve": {
+          "enumerateManagedMs": 182,
+          "compareLoopMs": 82,
+          "fullScanP50Ms": 313.1
+        }
+      },
+      "metrics": {
+        "assetRefreshFullScanP50BeforeMs": 1121.6,
+        "assetRefreshFullScanP50AfterMs": 313.1,
+        "improvementFactor": 3.58,
+        "libraryReopenAfterMutationsMs": 557,
+        "note": "三处根因：(1) isExplicitlyIgnored 每文件 prepare() 重编译 SQL（410ms/20k 文件）→ prepareCached 实例级语句缓存；(2) refresh 收尾无条件 listAssets(recursive) 全量查询 ~200ms → includeAssets 可选参数；(3) compare 循环每资产 folderPath() 逐组件 lstat 防逃逸 ~290ms → 枚举已验证的路径走快照、fingerprint 按需解析。"
+      }
     }
   ]
 }

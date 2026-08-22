@@ -3615,7 +3615,13 @@ export interface ImportExpiryClock {
 }
 
 export interface AssetRefreshResult {
-  assets: AssetSummary[];
+  /**
+   * Serpent-4bdd26: the full recursive asset list is opt-in. Every internal
+   * caller (open reconciliation, watcher refresh) only reads the counters,
+   * and the eager `listAssets(recursive: true)` re-scan cost ~400ms per
+   * refresh on a 20k library — pure waste when nobody consumes the rows.
+   */
+  assets?: AssetSummary[];
   changedCount: number;
   missingCount: number;
 }
@@ -5193,6 +5199,13 @@ export class LibraryService {
   private readonly applicationSessionId = randomUUID();
   private readonly openById = new Map<string, OpenLibrary>();
   private readonly openIdByPath = new Map<string, string>();
+  /**
+   * Serpent-4bdd26: prepared-statement cache keyed by `libraryId\0sql`.
+   * better-sqlite3 re-compiles on every `.prepare()` call; hot per-row paths
+   * (isExplicitlyIgnored runs once per enumerated file) measured 410ms of
+   * pure compile time per 20k rows vs 54ms with a cached statement.
+   */
+  private readonly preparedStatementCache = new Map<string, unknown>();
   /**
    * 进行中的同步会话（libraryId → sessionId）。内存级互斥：自动同步与
    * 手动同步不能同时在跑；进程退出自动释放，崩溃残留不会误锁。
@@ -7014,6 +7027,29 @@ export class LibraryService {
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
     this.syncGitignore(openLibrary);
     return openLibrary;
+  }
+
+  /**
+   * Serpent-4bdd26: prepared statement memoized per (library, SQL text).
+   * Statements live as long as the connection; the cache entry is dropped
+   * when the library closes. Use only for hot per-row queries — one-off
+   * DDL/DML stays on plain `.prepare()`.
+   */
+  private prepareCached<T>(openLibrary: OpenLibrary, sql: string): T {
+    const key = `${openLibrary.summary.libraryId} ${sql}`;
+    let statement = this.preparedStatementCache.get(key);
+    if (statement === undefined) {
+      statement = openLibrary.connection.prepare(sql);
+      this.preparedStatementCache.set(key, statement);
+    }
+    return statement as T;
+  }
+
+  private dropPreparedStatementCache(libraryId: string): void {
+    const prefix = `${libraryId} `;
+    for (const key of this.preparedStatementCache.keys()) {
+      if (key.startsWith(prefix)) this.preparedStatementCache.delete(key);
+    }
   }
 
   /**
@@ -29663,12 +29699,12 @@ export class LibraryService {
       }).length;
 
     if (restoredCount > 0) {
-      const refreshed = this.refreshManagedAssets(input.libraryId);
+      const refreshed = this.refreshManagedAssets(input.libraryId, { includeAssets: true });
       const restoredIds = new Set(
         rows.filter((row) => matches.has(row.asset_id)).map((row) => row.asset_id),
       );
       restoredAssets.length = 0;
-      for (const asset of refreshed.assets) {
+      for (const asset of refreshed.assets ?? []) {
         if (restoredIds.has(asset.assetId)) {
           restoredAssets.push(asset);
         }
@@ -29794,7 +29830,11 @@ export class LibraryService {
       relativePath,
       false,
     );
-    const row = openLibrary.connection.prepare(
+    // Serpent-4bdd26: this runs once per enumerated file on every refresh;
+    // a per-call .prepare() recompiled the 4-way UNION each time (measured
+    // ~410ms of pure compile time per 20k files vs 54ms cached).
+    const row = this.prepareCached<{ get(...parameters: unknown[]): unknown }>(
+      openLibrary,
       `SELECT 1 FROM explicit_ignored_paths
         WHERE location_kind = ?
           AND linked_folder_id = ?
@@ -30124,9 +30164,14 @@ export class LibraryService {
         }
         if (!child.isFile()) continue;
         const childPath = path.join(directoryPath, child.name);
-        let stat: BigIntStats;
+        let stat: BigIntStats | Stats;
         try {
-          stat = lstatSync(childPath, { bigint: true });
+          // Serpent-4bdd26: honor the assetLstat test seam so injected stat
+          // failures surface during enumeration, before the comparison loop
+          // can shortcut via the snapshot.
+          stat = this.options.assetLstat
+            ? this.options.assetLstat(childPath)
+            : lstatSync(childPath, { bigint: true });
         } catch (error) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { cause: error });
         }
@@ -30213,10 +30258,20 @@ export class LibraryService {
         }
         if (!child.isFile()) continue;
         const childPath = path.join(directoryPath, child.name);
-        let stat: BigIntStats;
+        let stat: BigIntStats | Stats;
         try {
-          stat = lstatSync(childPath, { bigint: true });
+          // Serpent-4bdd26: honor the assetLstat test seam so injected stat
+          // failures surface during enumeration, before the comparison loop
+          // can shortcut via the snapshot.
+          stat = this.options.assetLstat
+            ? this.options.assetLstat(childPath)
+            : lstatSync(childPath, { bigint: true });
         } catch (error) {
+          // ENOENT/ENOTDIR mean the entry vanished between readdir and stat;
+          // skip it here so the comparison loop records it as missing instead
+          // of aborting the whole refresh (same classification as the loop's
+          // own fallback stat). EACCES/EIO and friends still propagate.
+          if (isUnreadablePathError(error)) continue;
           throw new LibraryServiceError('IMPORT_APPLY_FAILED', { cause: error });
         }
         if (stat.isSymbolicLink()) {
@@ -32924,8 +32979,29 @@ export class LibraryService {
     return hash.digest('hex');
   }
 
-  refreshManagedAssets(libraryId: string): AssetRefreshResult {
+  refreshManagedAssets(libraryId: string, options: { includeAssets: true }): AssetRefreshResult & { assets: AssetSummary[] };
+  refreshManagedAssets(libraryId: string, options?: { includeAssets?: boolean }): AssetRefreshResult;
+  refreshManagedAssets(
+    libraryId: string,
+    options?: { includeAssets?: boolean },
+  ): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
+    // Serpent-onch 风格分阶段计时：SERPENT_REFRESH_STAGE_LOG=1 时输出各阶段耗时，
+    // 用于大库全量对账的归因（Serpent-4bdd26）。生产默认关闭。
+    const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
+    const stageStartedAt = stageLog ? performance.now() : 0;
+    let stageMark = stageStartedAt;
+    const markStage = (label: string): void => {
+      if (!stageLog) return;
+      const now = performance.now();
+      console.error(JSON.stringify({
+        scope: 'refresh.managed-assets.stage',
+        libraryId,
+        stage: label,
+        durationMs: Math.round((now - stageMark) * 100) / 100,
+      }));
+      stageMark = now;
+    };
     const before = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
@@ -32949,6 +33025,7 @@ export class LibraryService {
         modified_at: string | null;
         content_fingerprint: string | null;
       }>;
+    markStage('before-query');
     let changedCount = 0;
     let missingCount = 0;
     const discoveredAssetIds: string[] = [];
@@ -33062,6 +33139,7 @@ export class LibraryService {
           pathKind,
         ),
       );
+      markStage('enumerate-managed');
       // Serpent-4bdd26: reuse the enumeration stats for the comparison loop —
       // one lstat per file instead of two on the whole-library refresh.
       const managedSnapshot = new Map(
@@ -33070,6 +33148,7 @@ export class LibraryService {
           entry,
         ]),
       );
+      markStage('managed-snapshot');
       const directoriesNeeded = new Set<string>();
       for (const entry of managedEntries) {
         let directory = path.posix.dirname(entry.relativePath);
@@ -33192,7 +33271,12 @@ export class LibraryService {
             | undefined;
         let snapshotByteSize: number | null = null;
         let snapshotModifiedAt: string | null = null;
-        const assetPath =
+        // Serpent-4bdd26: only the fallback path needs a fully validated
+        // absolute path. folderPath()/linkedAssetPath() lstat every path
+        // component (symlink-escape guard) — ~290ms per 20k rows — which is
+        // pure waste when the enumeration just walked that exact tree with
+        // its own symlink checks. Content fingerprints resolve lazily below.
+        const resolveAssetPath = (): string =>
           asset.location_kind === 'linked'
             ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
             : this.folderPath(openLibrary, asset.relative_file_path);
@@ -33205,8 +33289,8 @@ export class LibraryService {
         } else {
         try {
           fileStat = this.options.assetLstat
-            ? this.options.assetLstat(assetPath)
-            : lstatSync(assetPath, { bigint: true });
+            ? this.options.assetLstat(resolveAssetPath())
+            : lstatSync(resolveAssetPath(), { bigint: true });
         } catch (error) {
           if (isUnreadablePathError(error)) {
             fileStat = undefined;
@@ -33263,7 +33347,7 @@ export class LibraryService {
               modifiedAt,
               path.posix.basename(asset.relative_file_path),
               now,
-              this.computeContentFingerprint(assetPath),
+              this.computeContentFingerprint(resolveAssetPath()),
             );
           openLibrary.connection
             .prepare(
@@ -33312,7 +33396,7 @@ export class LibraryService {
         let statChanged = byteChanged || mtimeChanged;
         let fingerprint: string | null = null;
         if (statChanged) {
-          fingerprint = this.computeContentFingerprint(assetPath);
+          fingerprint = this.computeContentFingerprint(resolveAssetPath());
           if (!byteChanged && mtimeChanged) {
             const stored = asset.content_fingerprint;
             if (stored === null) {
@@ -33388,16 +33472,23 @@ export class LibraryService {
           this.syncAssetSearchContent(openLibrary.connection, asset.asset_id);
         }
       }
+      markStage('compare-loop');
     })();
+    markStage('transaction');
     this.persistSourceImageDimensionsForAssets(openLibrary, discoveredAssetIds);
     this.createDetectedImageSequences(openLibrary, discoveredAssetIds);
     this.reconcileLinkedWatchers(openLibrary);
+    markStage('post-phases');
 
-    return {
+    const result = {
       changedCount,
       missingCount,
-      assets: this.listAssets({ libraryId, recursive: true }),
+      ...(options?.includeAssets
+        ? { assets: this.listAssets({ libraryId, recursive: true }) }
+        : {}),
     };
+    markStage(options?.includeAssets ? 'list-assets' : 'return');
+    return result;
   }
 
   createLibrary(input: {
@@ -35889,6 +35980,7 @@ export class LibraryService {
       this.openById.delete(libraryId);
       this.openIdByPath.delete(openLibrary.summary.libraryPath);
       this.invalidateArtifactPathCache(libraryId);
+      this.dropPreparedStatementCache(libraryId);
       this.autoRepairAttemptedByLibrary.delete(libraryId);
       this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
       this.autoAnalysisSuppressedAssetIds.delete(libraryId);
@@ -35915,6 +36007,7 @@ export class LibraryService {
     this.openById.delete(libraryId);
     this.openIdByPath.delete(openLibrary.summary.libraryPath);
     this.invalidateArtifactPathCache(libraryId);
+    this.dropPreparedStatementCache(libraryId);
     for (const [key] of this.openOperationHistoryGroups) {
       if (key.startsWith(`${libraryId}\u0000`)) this.openOperationHistoryGroups.delete(key);
     }

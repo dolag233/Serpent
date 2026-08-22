@@ -1852,9 +1852,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         importId: libraryService.abandonImport(request.command.importId),
       };
     case 'asset.refresh': {
-      const refresh = libraryService.refreshManagedAssets(request.command.libraryId);
+      const refresh = libraryService.refreshManagedAssets(request.command.libraryId, {
+        includeAssets: true,
+      });
       scheduleThumbnailScene(request.command.libraryId, 'refresh');
-      return { ok: true, type: 'asset.refreshed', ...refresh };
+      return {
+        ok: true,
+        type: 'asset.refreshed',
+        changedCount: refresh.changedCount,
+        missingCount: refresh.missingCount,
+        assets: refresh.assets ?? [],
+      };
     }
     case 'asset.import-linked': {
       const linkedFolder = libraryService.importFolderAsLinked(request.command);
