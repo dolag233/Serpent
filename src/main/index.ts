@@ -6716,18 +6716,18 @@ async function startApplication(): Promise<void> {
       if (request.type === 'rename-credential') {
         return response({ ok: true, snapshot: server.renameCredential(request.credentialId, request.label) });
       }
-      if (request.type === 'duplicate-credential') {
-        const duplicated = await server.duplicateCredential(request.credentialId, request.format);
-        clipboard.writeText(duplicated.configText);
+      if (request.type === 'copy-agent-connection') {
+        const copied = await server.copyAgentConnection(request.credentialId, request.format);
+        clipboard.writeText(copied.connectionText);
         return response({
           ok: true,
           copied: true,
-          credentialId: duplicated.credentialId,
-          snapshot: duplicated.snapshot,
+          credentialId: copied.credentialId,
+          snapshot: copied.snapshot,
         });
       }
       const config = await server.createClientConfig(request.input.format, request.input.label);
-      clipboard.writeText(config.configText);
+      clipboard.writeText(config.connectionText);
       return response({ ok: true, copied: true, credentialId: config.credentialId, snapshot: config.snapshot });
     } catch (error) {
       const code = error instanceof EmbeddedMcpServerError ? error.code : 'MCP_SERVER_START_FAILED';

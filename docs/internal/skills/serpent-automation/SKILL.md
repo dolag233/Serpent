@@ -49,7 +49,7 @@
 
 ## MCP 连接
 
-- MCP 由 Desktop Main 内嵌的 loopback Streamable HTTP 服务提供。用户在“设置 → MCP”中选择启用/停止/自动启动、端口，并使用“复制 MCP 配置”生成客户端配置；默认关闭。
+- MCP 由 Desktop Main 内嵌的 loopback Streamable HTTP 服务提供。用户在“设置 → MCP”中选择启用/停止/自动启动、端口，并使用“复制给 Agent”生成包含 Bearer 授权和使用提示的连接信息；复制已有凭据会重新输出同一客户端的固定 token，不会轮换授权；默认关闭。
 - 服务只绑定 `127.0.0.1`，端点形如 `http://127.0.0.1:<port>/mcp`。客户端不能假设固定端口，也不能启动 npm、Node、第二个 Desktop 或独立 MCP Host。
 - 每个 HTTP session 由 Main 绑定一个 Automation Execution。默认只读；写能力必须经过 Serpent 本机确认。资源库通过 `serpent_library_list_open`、`serpent_library_open`、`serpent_library_use` 显式选择。
 - 工具列表来自 Registry，并随能力和活动资源库动态变化。客户端应监听 `notifications/tools/list_changed` 与资源库 `notifications/message`，不要硬编码旧工具列表。

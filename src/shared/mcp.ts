@@ -121,7 +121,7 @@ export const mcpSettingsRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('enable'), enabled: z.boolean() }),
   z.strictObject({ type: z.literal('create-client-config'), input: mcpCreateClientConfigInputSchema }),
   z.strictObject({
-    type: z.literal('duplicate-credential'),
+    type: z.literal('copy-agent-connection'),
     credentialId: z.string().uuid(),
     format: mcpConfigFormatSchema,
   }),

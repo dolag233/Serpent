@@ -115,14 +115,14 @@ stopped ──Start──> starting ──listen success──> running
 - “启动服务”/“停止服务”按钮；
 - “启动 Serpent 时自动启动 MCP 服务”开关；
 - 当前 endpoint 与端口；
-- “复制 MCP 配置”主按钮；
+- “复制给 Agent”主按钮；
 - 配置格式菜单：已支持客户端格式、通用 JSON、仅复制 endpoint 和 credential；
 - 当前连接数、活动 session 数；
 - 已签发客户端 credential 列表及逐项撤销；
 - 按客户端管理普通权限的入口、权限矩阵和“开启所有权限”操作；具体作用域与 critical 例外见 ADR-0030；
 - 打开诊断日志入口。
 
-“复制 MCP 配置”仅在服务已启用且端口配置有效时可用。每次选择“创建新客户端配置”都生成新的 credential；不会旋转或复用其他客户端的 credential。复制内容含秘密，UI 必须明确提示不要分享。Server 只保存 token hash，明文只在生成和复制时出现一次；需要再次配置时新建 credential，而不是恢复旧 token。
+“复制给 Agent”仅在服务已启用且端口配置有效时可用。创建新客户端配置会生成新的 credential；对已有 credential 执行复制会重新输出同一 credential 的固定 token，不新增副本，也不会让已经连接的 Agent 失效。复制内容含秘密，UI 必须明确提示不要分享。Server 使用 token hash 做认证，并在当前用户保护的凭据文件中加密保存 token，以便用户再次复制；明文只在 Main 进程生成连接文本并写入剪贴板时出现。
 
 ## 4. Transport 与网络边界
 
@@ -170,6 +170,7 @@ stopped ──Start──> starting ──listen success──> running
 type McpClientCredentialRecord = {
   credentialId: string;
   tokenHash: string;
+  tokenCiphertext: string;
   label: string;
   createdAt: string;
   lastUsedAt: string | null;
@@ -178,7 +179,7 @@ type McpClientCredentialRecord = {
 ```
 
 - token 至少 256 bit，使用 CSPRNG；通过 `Authorization: Bearer <token>` 发送。
-- 磁盘只保存带应用级 pepper 的安全 hash；不保存可恢复明文。
+- 磁盘保存带应用级 pepper 的安全 hash，并保存用同一受保护 pepper 加密的 token，以便用户重复复制固定客户端授权；不保存可直接读取的明文。
 - `initialize.clientInfo` 用于显示和审计，不能代替 credential 身份。
 - 撤销 credential 后立即拒绝新请求，并关闭该 credential 的现有 session。
 - credential 不携带资源库路径、libraryId 或永久写权限。
@@ -226,7 +227,7 @@ src/main/mcp/
 ├─ mcp-service-manager.ts       # start/stop/auto-start/state machine
 ├─ mcp-http-server.ts           # HTTP routing, limits, Origin/Host/auth
 ├─ mcp-session-manager.ts       # transport/session/Execution lifecycle
-├─ mcp-client-credentials.ts    # issue/hash/list/revoke credentials
+├─ mcp-client-credentials.ts    # issue/hash/encrypt/list/revoke credentials
 ├─ mcp-settings-store.ts        # device-level validated preferences
 └─ mcp-settings-ipc.ts          # narrow Renderer contract
 
@@ -335,14 +336,14 @@ Gateway 稳定错误必须提升到 MCP structured content，不能全部折叠�
 
 ### Phase D：设置 UI
 
-- 新增“自动化”设置页及运行状态、启停、自动启动、端口和复制配置；
+- 新增“自动化”设置页及运行状态、启停、自动启动、端口和 Agent 连接信息复制；
 - 新增 credential 列表与撤销；
 - 本机批准对话框显示 credential label、MCP clientInfo、目标库和 capability。
 
 ### Phase E：删除、文档与验收
 
 - 删除所有旧 transport 文件、脚本、环境分支、手册和测试 fixture；
-- 更新 MCP 用户手册为“安装 Serpent → 设置中启动 → 复制配置 → 粘贴连接”；
+- 更新 MCP 用户手册为“安装 Serpent → 设置中启动 → 复制 Agent 连接信息 → 粘贴连接”；
 - 跑完整门禁、真实 packaged 应用和独立代码审查。
 
 ## 12. 验收矩阵
@@ -352,7 +353,7 @@ Gateway 稳定错误必须提升到 MCP structured content，不能全部折叠�
 | 默认不监听 | 新 userData 启动后端口不可连接 | macOS/Windows packaged 设置页显示已停止 |
 | 手动启停 | start 后 SDK Client 可 initialize；stop 后连接关闭且端口释放 | 设置状态和按钮无卡死、错误可恢复 |
 | 自动启动 | 开启后完整退出并重启，Server 在 Main 就绪后监听 | packaged 重启验证，不复用旧进程 |
-| 复制配置 | Main 生成独立 credential，输出无 command/cwd/npm；SDK Client 使用配置连接 | 粘贴到至少一个真实支持 HTTP 的 MCP 客户端 |
+| 复制 Agent 连接信息 | Main 生成或复用固定 credential，输出无 command/cwd/npm 且包含 Bearer 授权与使用提示；SDK Client 使用配置连接 | 粘贴到至少一个真实支持 HTTP 的 MCP 客户端，并重复复制确认原 token 仍有效 |
 | credential 隔离 | A/B token 独立；撤销 A 不影响 B；错误 token 在解析 body 前 401 | 已授权客户端列表与连接数正确 |
 | loopback 安全 | 只监听 127.0.0.1；恶意 Host/Origin、超大 body、过量 session 被拒绝 | Windows 无需开放公网防火墙规则 |
 | 无库连接 | initialize 成功，只列上下文无关工具 | 可见 Desktop 无资源库时可连接 |
@@ -362,7 +363,7 @@ Gateway 稳定错误必须提升到 MCP structured content，不能全部折叠�
 | 协议完整性 | initialize、list、call、cancel、progress、logging、GET、DELETE | 真实第三方 MCP 客户端连接 |
 | 平台 | Node 单元/集成 + Electron E2E | 当前 HEAD macOS packaged；Windows packaged/installer 实机或 runner，未跑不得写通过 |
 
-最终端到端旅程：安装并启动 Serpent，在设置中手动启动 MCP，复制配置到标准 HTTP MCP 客户端；保持同一连接创建“meme资源库”，继续创建目录、导入资产、管理合集，然后停止服务并确认连接和端口释放。只有完整旅程通过才能关闭 `Serpent-a0yk`。
+最终端到端旅程：安装并启动 Serpent，在设置中手动启动 MCP，复制 Agent 连接信息到标准 HTTP MCP 客户端；保持同一连接创建“meme资源库”，继续创建目录、导入资产、管理合集，然后停止服务并确认连接和端口释放。只有完整旅程通过才能关闭 `Serpent-a0yk`。
 
 ## 13. 明确不做
 

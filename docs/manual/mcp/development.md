@@ -7,7 +7,7 @@ Serpent MCP 由 Desktop Main 进程内嵌提供，仅监听 `127.0.0.1` 的 Stre
 1. 在“设置 → MCP”打开“启用 MCP 服务”。
 2. 可选打开“自动启动”。
 3. 点击“启动 MCP 服务”。
-4. 点击“复制 MCP 配置”，粘贴到目标客户端。
+4. 点击客户端凭据行的“复制给 Agent”，把包含 endpoint、Bearer 授权和使用说明的连接信息发送给目标 Agent。
 5. 新 credential 默认 Auto；可切到 Full Access（普通和可恢复操作直接执行，启用时有红色警告）。
 
 不需要编辑 JSON、启动 npm、选择工作目录或重复批准普通操作。

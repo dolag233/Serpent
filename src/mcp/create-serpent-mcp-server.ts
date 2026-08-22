@@ -42,6 +42,17 @@ export type SerpentMcpServerOptions = {
   }) => void;
 };
 
+/**
+ * MCP clients receive this during initialize, so an Agent does not have to
+ * infer Serpent's targeting and confirmation rules from tool names alone.
+ */
+export const SERPENT_MCP_INSTRUCTIONS = [
+  'After initialize, call tools/list to discover the available Serpent tools.',
+  'Call serpent_library_list_open or serpent_library_list_recent to obtain a libraryId.',
+  'Every library-scoped tool call must include that explicit libraryId; desktop focus is never an implicit target.',
+  'Critical operations first return an exact challenge and require a second confirmation call.',
+].join(' ');
+
 function toolResultText(payload: unknown): {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
@@ -65,7 +76,10 @@ export function createSerpentMcpServer(options: SerpentMcpServerOptions): Server
       name: options.serverName ?? 'serpent',
       version: options.serverVersion ?? String(AUTOMATION_API_VERSION),
     },
-    { capabilities: { tools: { listChanged: true }, logging: {} } },
+    {
+      capabilities: { tools: { listChanged: true }, logging: {} },
+      instructions: SERPENT_MCP_INSTRUCTIONS,
+    },
   );
 
   const currentExposure = (): SerpentMcpToolExposure => backend.getToolExposure();

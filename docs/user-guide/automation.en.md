@@ -17,12 +17,17 @@ Scripts modify a library only through the operations Serpent provides; they do n
 
 MCP lets an external AI tool read and organize Serpent assets. It works on this computer and does not publish your library to the internet automatically.
 
+### The simplest way to use it
+
 1. Open **Settings → MCP**.
 2. Enable the MCP service, and enable **Auto-start** if you want it to start with Serpent.
 3. Click **Add client** and choose the format for your client.
-4. Paste the configuration copied by Serpent into the AI tool.
+4. Click the copy action on the client row (**Copy for Agent**).
+5. Paste the **entire clipboard text** directly into your Agent. Do not split out the address or authorization details by hand: the text contains what the Agent needs to connect to and control Serpent, along with short usage notes.
 
-The default address is `http://127.0.0.1:47342/mcp`. The Token is shown only when it is created, so keep it like a password. Revoke a Token from MCP settings when you no longer use that client.
+The default address is `http://127.0.0.1:47342/mcp`. Each client connection has its own authorization. Keep the copied connection information private, and revoke the client from MCP settings when you no longer trust it.
+
+After connecting, the Agent receives the basic usage rules in the MCP server instructions and `tools/list`. It should then call `serpent_library_list_open` or `serpent_library_list_recent` to obtain a `libraryId`; if it asks which library to use, let it list the libraries first and choose by ID. Every library-scoped call must include that explicit `libraryId`; critical operations also require the Agent's second-step confirmation.
 
 ![MCP settings and client configuration](../assets/ui/MCP-settings.png)
 

@@ -6752,10 +6752,43 @@ select.ai-config-input.ai-config-languages {
   line-height: 1.5;
 }
 
-/* MCP credential rows: compact label + mode select + icon actions on one line. */
+/* MCP credentials use the shared settings-card header and helper text. */
+.mcp-credentials-card .ui-settings-card__header {
+  align-items: center;
+}
+
+.mcp-add-client-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.mcp-credential-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mcp-credential-empty {
+  margin: 0;
+  padding: 5px 0 2px;
+  color: var(--tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-permission-client {
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--divider) 88%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--raised) 55%, var(--pane));
+}
+
+.mcp-permission-client .app-settings-card-divider {
+  display: none;
+}
+
 .mcp-permission-client .app-settings-row-copy {
   flex: 1 1 auto;
-  max-width: 42%;
+  max-width: none;
 }
 
 .mcp-client-name {
@@ -6785,6 +6818,7 @@ select.ai-config-input.ai-config-languages {
   flex: 0 0 auto;
   flex-wrap: nowrap;
   align-items: center;
+  gap: 6px;
   margin-top: 0;
 }
 
@@ -6819,6 +6853,27 @@ select.ai-config-input.ai-config-languages {
 .mcp-client-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+@media (max-width: 560px) {
+  .mcp-credentials-card .ui-settings-card__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mcp-credentials-card .ui-settings-card__header .primary-button {
+    align-self: stretch;
+  }
+
+  .mcp-permission-client .app-settings-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .mcp-permission-client .app-settings-option-group {
+    align-self: stretch;
+    justify-content: flex-end;
+  }
 }
 
 

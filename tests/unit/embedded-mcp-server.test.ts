@@ -100,6 +100,7 @@ async function createServerHarness(options: {
   const port = await freePort();
   const settings = new McpSettingsStore(userDataPath);
   settings.setPreferences({ enabled: true, port });
+  const credentialStore = new McpClientCredentialStore(userDataPath);
   const journal = new AutomationExecutionJournal({
     store: createJsonFileAutomationExecutionStore(path.join(userDataPath, 'executions.json')),
     logger,
@@ -111,7 +112,7 @@ async function createServerHarness(options: {
   const server = new EmbeddedMcpServer({
     userDataPath,
     settingsStore: settings,
-    credentialStore: new McpClientCredentialStore(userDataPath),
+    credentialStore,
     journal,
     gateway: options.gateway ?? createGateway(),
     workerClient,
@@ -129,6 +130,7 @@ async function createServerHarness(options: {
     server,
     endpoint: clientConfig.url,
     token: clientConfig.headers.Authorization.replace(/^Bearer /u, ''),
+    credentialStore,
     journal,
     workerClient,
   };
@@ -139,6 +141,22 @@ afterEach(() => {
 });
 
 describe('Embedded MCP Streamable HTTP server', () => {
+    it('copies an Agent bundle without changing the existing credential token', async () => {
+    const harness = await createServerHarness();
+    const credential = harness.server.snapshot().credentials[0];
+    expect(credential).toBeDefined();
+
+    const copied = await harness.server.copyAgentConnection(credential!.credentialId, 'generic-json');
+    const nextToken = copied.connectionText.match(/^Authorization: Bearer ([^\r\n]+)$/mu)?.[1];
+
+    expect(copied.credentialId).toBe(credential!.credentialId);
+    expect(harness.server.snapshot().credentials).toHaveLength(1);
+      expect(nextToken).toBe(harness.token);
+      expect(harness.credentialStore.authenticationState(harness.token)).toBe('valid');
+    expect(copied.connectionText).toContain('explicit libraryId');
+    await harness.server.close();
+  });
+
   it('starts on loopback, authenticates before parsing, and supports the SDK client', async () => {
     const harness = await createServerHarness();
     const unauthorized = await sendHttp(harness.endpoint, {
@@ -159,6 +177,7 @@ describe('Embedded MCP Streamable HTTP server', () => {
       },
     });
     await client.connect(transport);
+    expect(client.getInstructions()).toContain('explicit libraryId');
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toContain('serpent_library_list_open');
     expect(harness.journal.list()[0]).toMatchObject({

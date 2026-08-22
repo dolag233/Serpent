@@ -100,7 +100,11 @@ export function McpSettingsPage({
         setPortDraft(String(response.snapshot.preferences.port));
       }
       if (!response.ok) setError(response.message);
-      else if (response.copied) setNotice(t("settings.mcpConfigCopied"));
+      else if (response.copied) {
+        setNotice(input.type === "copy-agent-connection"
+          ? t("settings.mcpAgentConnectionCopied")
+          : t("settings.mcpConfigCopied"));
+      }
     } catch {
       setError(t("settings.mcpOperationFailed"));
     } finally {
@@ -247,23 +251,31 @@ export function McpSettingsPage({
         ) : null}
       </SettingsCard>
 
-      <SettingsCard>
-        <div className="app-settings-action-row">
-          <div className="app-settings-row-copy">
-            <strong>{t("settings.mcpCredentialsTitle")}</strong>
+      <SettingsCard
+        className="mcp-credentials-card"
+        description={(
+          <>
             <span>{t("settings.mcpCredentialsHint")}</span>
-          </div>
+            <br />
+            <span>{t("settings.mcpAgentHandoffHint")}</span>
+          </>
+        )}
+        title={t("settings.mcpCredentialsTitle")}
+        actions={(
           <button
-            className="primary-button"
+            className="primary-button mcp-add-client-button"
             disabled={busy || !enabled}
             onClick={() => void request({ type: "create-client-config", input: { format } })}
             type="button"
           >
+            <Icon name="plus" size={14} />
             {t("settings.mcpAddClient")}
           </button>
-        </div>
+        )}
+      >
         {snapshot?.credentials.filter((credential) => credential.revokedAt === null).length ? (
-          snapshot!.credentials.filter((credential) => credential.revokedAt === null).map((credential) => {
+          <div className="mcp-credential-list">
+            {snapshot.credentials.filter((credential) => credential.revokedAt === null).map((credential) => {
             const permissionState = snapshot!.credentialPermissions.find(
               (candidate) => candidate.credentialId === credential.credentialId,
             );
@@ -301,7 +313,7 @@ export function McpSettingsPage({
                       aria-label={t("settings.mcpCopyCredential")}
                       className="mcp-client-action"
                       disabled={busy}
-                      onClick={() => void request({ type: "duplicate-credential", credentialId: credential.credentialId, format })}
+                      onClick={() => void request({ type: "copy-agent-connection", credentialId: credential.credentialId, format })}
                       title={t("settings.mcpCopyCredential")}
                       type="button"
                     >
@@ -321,9 +333,10 @@ export function McpSettingsPage({
                 </div>
               </div>
             );
-          })
+            })}
+          </div>
         ) : (
-          <p className="app-settings-help-note">{t("settings.mcpNoCredentials")}</p>
+          <p className="mcp-credential-empty">{t("settings.mcpNoCredentials")}</p>
         )}
       </SettingsCard>
     </>

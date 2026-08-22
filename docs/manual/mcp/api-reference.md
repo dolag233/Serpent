@@ -9,7 +9,9 @@ POST http://127.0.0.1:<port>/mcp
 Authorization: Bearer <token>
 ```
 
-在“设置 → MCP”开启服务后，点击“复制 MCP 配置”，把完整配置粘贴到 Cursor、Claude、Codex 或其他 MCP 客户端。客户端不需要安装 Node/npm，也不需要手工填写端口、命令或 token。
+在“设置 → MCP”开启服务后，点击客户端凭据行的“复制给 Agent”，把剪贴板中的连接信息发送给 Cursor、Claude、Codex 或其他 MCP Agent。连接信息包含 endpoint、`Authorization: Bearer ...`、对应客户端配置和最短使用步骤；客户端不需要安装 Node/npm，也不需要手工填写端口、命令或 token。
+
+面向普通用户时，推荐直接复制剪贴板中的**全部文本**并粘贴到 Agent 对话或连接说明中，不要只复制 endpoint 或 token，也不要手动改写配置。Agent 会读取其中的连接信息和使用提示；连接后先调用 `serpent_library_list_open` 或 `serpent_library_list_recent` 获取 `libraryId`，再把它带入每个资源库相关请求。
 
 服务只绑定 `127.0.0.1`，并校验 Host/Origin。它不是公网或局域网网关。
 
@@ -18,6 +20,8 @@ MCP transport 仍可能有协议层 `Mcp-Session-Id`，但它只用于请求关�
 ## 初始化与工具目录
 
 客户端使用 MCP SDK 标准 `initialize`，并提供有限长度的 `clientInfo.name`。服务器提供 `tools` 和 `logging` 能力。
+
+初始化响应会带上简短的服务器使用说明；Agent 不需要猜测调用顺序。推荐先读取这段说明和 `tools/list`，再调用 `serpent_library_list_open` 或 `serpent_library_list_recent` 获得目标 `libraryId`。
 
 核心 Registry 工具目录对所有已认证客户端保持静态，不会因 Desktop 当前显示哪个资源库、重连或工具刷新而变化。插件工具可以随插件贡献变化发送 `tools/list_changed`。
 
@@ -75,7 +79,7 @@ Windows 路径必须按 Windows 语义传递：盘符、反斜杠、UNC、长路
 
 ## 权限模式
 
-权限绑定 MCP credential，跨 transport 重连、Serpent 重启和多个客户端连接保持一致。设置页里每个凭据有：复制配置、权限档选择、删除按钮；主界面可以添加新客户端。两种权限档：
+权限绑定 MCP credential，跨 transport 重连、Serpent 重启和多个客户端连接保持一致。设置页里每个凭据有：复制 Agent 连接信息、权限档选择、删除按钮；主界面可以添加新客户端。两种权限档：
 
 - **自动（Auto）**：普通读取、写标签、创建文件夹/合集、导入、可恢复整理等日常操作直接执行，不弹出人类权限窗口；危险操作仍需 Agent 二阶段确认。默认档。
 - **完全（Full Access）**：受信任客户端可直接执行所有普通和可恢复操作；开启时设置页会弹出红色危险提示，用户确认后生效。危险操作仍需 Agent 二阶段确认，Serpent 始终保留路径、目标、版本和 Worker 安全校验。
@@ -128,6 +132,6 @@ Desktop 是 Agent 工作的非阻塞投影。需要向用户解释阶段、目�
 
 ## 配置、停止与撤销
 
-配置流程只有：开启服务 → 可选开启自动启动 → 复制完整配置 → 在客户端粘贴一次。设置页可以停止/启动服务、修改端口、切换 Auto / Full Access 和撤销 credential。
+配置流程只有：开启服务 → 可选开启自动启动 → 复制 Agent 连接信息 → 在客户端粘贴一次。设置页可以停止/启动服务、修改端口、切换 Auto / Full Access 和撤销 credential。
 
 当前没有 stdio MCP、`npm run mcp`、独立 headless Host、Desktop attached proxy、公网监听或通用 Shell/Node/SQL/文件系统执行器。
