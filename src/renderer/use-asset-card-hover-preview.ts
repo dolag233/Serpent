@@ -6,7 +6,10 @@ import type {
 } from "../shared/library-api";
 import { resolveActivePreviewAssetId } from "./asset-card-hover-preview";
 
-const DEFAULT_DEBOUNCE_MS = 200;
+// Serpent hover-play anti-mistouch: fast scrolling across cards must not
+// trigger preview loading. 500ms of sustained hover before any resource
+// request goes out (user-reported 2026-08-22).
+const DEFAULT_DEBOUNCE_MS = 500;
 
 function resolutionKey(libraryId: string, assetId: string): string {
   return `${libraryId}\u0000${assetId}`;
@@ -107,9 +110,9 @@ export function useAssetCardHoverPreview(input: {
             libraryId,
             assetId: targetAssetId,
             mode: "client",
-            // Hover previews must stay lightweight: play the WebM proxy when
-            // one exists, never the original source (REQ-VIEW-002 only
-            // applies to the double-click viewer).
+            // Hover previews reuse a ready video proxy when one exists, while
+            // native audio stays on the original source. Neither path creates
+            // a proxy just because a card was hovered.
             intent: "hover",
           });
           if (sequence !== requestSeqRef.current) return;
