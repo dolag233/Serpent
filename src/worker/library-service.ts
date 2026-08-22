@@ -2087,14 +2087,21 @@ const SYNC_SESSIONS_SCHEMA_CHECKSUM = createHash('sha256')
   .update(SYNC_SESSIONS_SCHEMA_SQL)
   .digest('hex');
 
-// Migration v40: covering partial index for the default browse sort. Every
-// non-trash browse/search COUNT and first page filters `deleted_at IS NULL`
-// and orders by `relative_file_path, asset_id`; without this index SQLite
-// scans the whole assets table into a temp B-tree on every request. On
+// Migration v40: covering partial indexes for the default name-sorted browse
+// page (all assets / folder recursive CTE) so COUNT + first-page queries do
+// not scan the whole assets table into a temp B-tree on every request. On
 // SMB/NAS libraries each cold page read is a network round trip, which made
-// the first browse after open take seconds. Additive-only (new index), so it
-// satisfies the data-compatibility discipline (ADR-0028).
+// the first browse after open take seconds.
+//
+// Serpent-4bdd26 版本收编：dev_performance_1 worktree 已用相同版本号发布过
+// v40（BROWSE_HOT_PATH_INDEX_SCHEMA_SQL，checksum c6bb1f26…）且真实用户库
+// （NAS 绘画资源库）已按该定义迁移。此处必须原样保留那份 SQL 文本——改动一个
+// 字节都会改变 checksum，让两个分支互相把对方的库判成 LIBRARY_CORRUPT 触发
+// 数据抢救。Additive-only，符合数据兼容纪律（ADR-0028 / Serpent-dw9a v37/v38 先例）。
 const ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS assets_active_folder_name_idx
+    ON assets(managed_folder_id, relative_file_path, asset_id)
+    WHERE deleted_at IS NULL;
   CREATE INDEX IF NOT EXISTS assets_active_name_idx
     ON assets(relative_file_path, asset_id)
     WHERE deleted_at IS NULL;
