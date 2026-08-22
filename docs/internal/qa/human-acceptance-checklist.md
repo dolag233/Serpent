@@ -47,6 +47,12 @@
 
 > 2026-07-16 产品反馈校准：Label/资产显示别名已被产品负责人撤销，左侧标签列表也不再是目标交互；相关旧条目已撤回。2026-07-19 澄清 #8 修订：侧栏提供「标签管理」入口、中间全页 CRUD（`Serpent-mqp`），TAG-001–003 重新进入待验收。部分壳层清理、菜单分组和已实现快捷键已进入 A0 验收队列；其余新增 UI/UX 与文件管理需求仍记录在 `../implementation/mvp-ui-ux-requirements-backlog.md` 和本文件“暂不可验收”区。
 
+### 2026-08-22 GIF 原生播放
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| GIF-PLAY-001 / `Serpent-43d32f` | 动画 GIF 原生播放（webm_proxy 生成移除） | 待人类验收 | 悬停一个动画 GIF 卡片，在 Inspector 查看，再双击进入查看器；打开一个含较多 GIF 的库并查看「后台任务」面板 | 卡片仍为静帧缩略图；hover/Inspector/查看器直接播放原始 GIF 动画（`<img>` 原生渲染），无代理提示；导入/开库不再产生 `generate_webm_proxy` 任务；旧库遗留的 queued GIF proxy 任务开库后显示为已取消（GIF_PROXY_RETIRED） | [开发日志](../development/2026-08-22-gif-webm-proxy-retirement-development-log.md) / `tests/worker/thumbnails.test.ts`『animated GIF native playback』 / `tests/unit/asset-card-hover-preview.test.ts` | Worker/unit 定向通过；`test:library-availability` 完整通过；全量与 media E2E 失败均属既有坏点；真实 Electron GIF 视觉验收、Computer Use、packaged 未执行 |
+
 ### 2026-08-15 大型资源库增量
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

@@ -1,7 +1,9 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-20
+> 更新时间：2026-08-22
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-22 `Serpent-43d32f` GIF 原生播放**：移除动画 GIF 的 webm_proxy 主动生成（azf6 考古确认动机为预览流畅度取舍；该路径 Windows 长期失败，每 GIF 白跑一次 FFmpeg；`<img>` 原生渲染无失败信号，按需语义不适配）。hover/Inspector/查看器回归既有 image 分支原生播放，网格静帧不变；开库取消遗留 GIF proxy 任务（GIF_PROXY_RETIRED）。thumbnails 长期失败用例清零；library-availability 完整通过。真实 Electron 视觉验收待人类（GIF-PLAY-001）。见[开发日志](development/2026-08-22-gif-webm-proxy-retirement-development-log.md)。另修复两处源文件控制字节损坏（`8ae08db` 的 library-service.ts NUL、`39ec904` 起 useAssetSelection.ts），恢复 LF 文本属性。
 
 - **2026-08-20 PDF 后续页缩放锚点**：Ctrl+滚轮在第一页看起来像以指针为中心，滚到后续页后偏差很大。根因是页列用常数 `gap`/`padding`，且缩放时未先把视口外页盒改到新尺寸，却按「从内容原点整体乘比例」恢复滚动。已改为页内局部锚点。见 [开发日志](development/2026-08-20-pdf-pointer-zoom-anchor-development-log.md)。
 
