@@ -71,15 +71,18 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
+// Serpent-4bdd26 收编：Inspector 每次渲染格式化多个日期，缓存 formatter。
+const inspectorDateFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 function formatDateFull(value: string, unknownLabel: string) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
     ? unknownLabel
-    : new Intl.DateTimeFormat("zh-CN", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-      }).format(date);
+    : inspectorDateFormatter.format(date);
 }
 
 // --- Types ---
