@@ -3027,8 +3027,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // 2) placeholder sizing — header-probe dimensions land immediately so
       //    masonry placeholders stop reflowing when thumbnails finish later.
       const { libraryId, assetIds } = request.command;
+      // Serpent-4bc4ac: ignored assets are not indexed or operated on —
+      // drop them before dimension probes and thumbnail scheduling.
+      const visibleAssetIds = libraryService.filterIgnoredAssetIds(
+        libraryId,
+        assetIds,
+      );
       const dimensions =
-        libraryService.persistVisibleWindowImageDimensions(libraryId, assetIds);
+        libraryService.persistVisibleWindowImageDimensions(libraryId, visibleAssetIds);
       for (const item of dimensions) {
         parentPort?.postMessage({
           type: 'asset.dimensions.ready',
@@ -3041,8 +3047,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       scheduleThumbnailScene(
         libraryId,
         'visible',
-        assetIds,
-        assetIds.length,
+        visibleAssetIds,
+        visibleAssetIds.length,
         { light: true },
       );
       return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };

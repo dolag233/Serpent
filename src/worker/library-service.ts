@@ -466,11 +466,13 @@ import {
 import {
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
   directImageMimeForExtension,
   imageDecoderForExtension,
   imageMimeForExtension,
   isSupportedImageExtension,
   isSupportedModelExtension,
+  isSupportedDocumentExtension,
   isSupportedVideoExtension,
   modelMimeForExtension,
   videoMimeForExtension,
@@ -16114,6 +16116,7 @@ export class LibraryService {
     jobs: Array<{
       jobId: string;
       assetId: string;
+      assetName: string | null;
       kind: 'ai.image.analysis' | 'ai.video.analysis';
       status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
       errorCode: string | null;
@@ -16128,6 +16131,7 @@ export class LibraryService {
     type AiJobRow = {
       job_id: string;
       asset_id: string;
+      asset_name: string | null;
       kind: 'ai.image.analysis' | 'ai.video.analysis';
       status: 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
       error_code: string | null;
@@ -16146,11 +16150,13 @@ export class LibraryService {
         const chunk = requestedJobIds.slice(index, index + 900);
         rows.push(...conn
           .prepare(
-            `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
-               FROM jobs
-              WHERE library_id = ?
-                AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-                AND job_id IN (${chunk.map(() => '?').join(',')})`,
+            `SELECT j.job_id, j.asset_id, a.relative_file_path AS asset_name, j.kind, j.status,
+                    j.error_code, j.error_detail, j.updated_at
+               FROM jobs j
+               LEFT JOIN assets a ON a.asset_id = j.asset_id
+              WHERE j.library_id = ?
+                AND j.kind IN ('ai.image.analysis', 'ai.video.analysis')
+                AND j.job_id IN (${chunk.map(() => '?').join(',')})`,
           )
           .all(libId, ...chunk) as AiJobRow[]);
       }
@@ -16169,11 +16175,13 @@ export class LibraryService {
       for (const count of counts) statusMap[count.status] = count.cnt;
       jobs = conn
         .prepare(
-          `SELECT job_id, asset_id, kind, status, error_code, error_detail, updated_at
-             FROM jobs
-            WHERE library_id = ?
-              AND kind IN ('ai.image.analysis', 'ai.video.analysis')
-            ORDER BY created_at DESC
+          `SELECT j.job_id, j.asset_id, a.relative_file_path AS asset_name, j.kind, j.status,
+                  j.error_code, j.error_detail, j.updated_at
+             FROM jobs j
+             LEFT JOIN assets a ON a.asset_id = j.asset_id
+            WHERE j.library_id = ?
+              AND j.kind IN ('ai.image.analysis', 'ai.video.analysis')
+            ORDER BY j.created_at DESC
             LIMIT 200`,
         )
         .all(libId) as AiJobRow[];
@@ -16189,6 +16197,7 @@ export class LibraryService {
       jobs: jobs.map((j) => ({
         jobId: j.job_id,
         assetId: j.asset_id,
+        assetName: j.asset_name ? buildFileName(j.asset_name) : null,
         kind: j.kind,
         status: j.status,
         errorCode: j.error_code,
@@ -16494,6 +16503,7 @@ export class LibraryService {
     jobs: Array<{
       jobId: string;
       assetId: string;
+      assetName: string | null;
       revisionId: string | null;
       kind: MediaJobKind;
       status: MediaJobStatus;
@@ -16516,15 +16526,17 @@ export class LibraryService {
       count: number;
     }>;
     const rows = openLibrary.connection.prepare(
-      `SELECT job_id, asset_id, revision_id, kind, status, progress,
-              attempt_count, error_code, error_detail, created_at, updated_at
-         FROM jobs
-        WHERE library_id = ? AND kind IN (${kindPlaceholders})
-        ORDER BY created_at DESC, job_id DESC
-        LIMIT 500`,
-    ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+      `SELECT j.job_id, j.asset_id, a.relative_file_path AS asset_name, j.revision_id, j.kind, j.status, j.progress,
+               j.attempt_count, j.error_code, j.error_detail, j.created_at, j.updated_at
+          FROM jobs j
+          LEFT JOIN assets a ON a.asset_id = j.asset_id
+         WHERE j.library_id = ? AND j.kind IN (${kindPlaceholders})
+         ORDER BY j.created_at DESC, j.job_id DESC
+         LIMIT 500`,
+      ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
       job_id: string;
       asset_id: string;
+      asset_name: string | null;
       revision_id: string | null;
       kind: MediaJobKind;
       status: MediaJobStatus;
@@ -16546,6 +16558,7 @@ export class LibraryService {
       jobs: rows.map((row) => ({
         jobId: row.job_id,
         assetId: row.asset_id,
+        assetName: row.asset_name ? buildFileName(row.asset_name) : null,
         revisionId: row.revision_id,
         kind: row.kind,
         status: row.status,
@@ -16937,9 +16950,9 @@ export class LibraryService {
       return 'audio';
     }
     // Serpent-8ca259: PDF and HTML are documents previewed in a browser-like
-    // renderer, not plain text. Check before the text whitelist (HTML is
-    // currently listed there) so they classify as `document`.
-    if (lower.endsWith('.pdf') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+    // renderer, not plain text. Check before the text whitelist so they
+    // classify as `document`.
+    if (isSupportedDocumentExtension(lower)) {
       return 'document';
     }
     if (isTextFileName(lower)) {
@@ -18768,31 +18781,6 @@ export class LibraryService {
     ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
   }
 
-  private enqueueAudioProxyJob(
-    openLibrary: OpenLibrary,
-    assetId: string,
-    revisionId: string,
-    priority: number,
-  ): void {
-    const terminalArtifact = openLibrary.connection.prepare(
-      `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = 'audio_proxy'
-        AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
-    ).get(revisionId);
-    if (terminalArtifact) return;
-    const active = openLibrary.connection.prepare(
-      `SELECT job_id FROM jobs WHERE asset_id = ? AND revision_id = ?
-        AND kind = 'generate_audio_proxy' AND status IN ('queued', 'running', 'paused') LIMIT 1`,
-    ).get(assetId, revisionId);
-    if (active) return;
-    const now = new Date().toISOString();
-    openLibrary.connection.prepare(
-      `INSERT INTO jobs
-         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
-          attempt_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'generate_audio_proxy', 'queued', ?, 0.0, 0, ?, ?)`,
-    ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
-  }
-
   private enqueuePaletteJob(
     openLibrary: OpenLibrary,
     assetId: string,
@@ -18925,6 +18913,38 @@ export class LibraryService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Serpent-4bc4ac: drop asset ids the user explicitly ignored so scheduling
+   * and visible-window reporting never touch them (v6m3: ignored = not
+   * indexed, not operated on).
+   */
+  filterIgnoredAssetIds(libraryId: string, assetIds: readonly string[]): string[] {
+    if (assetIds.length === 0) return [];
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const stmt = openLibrary.connection
+      .prepare(
+        'SELECT location_kind, linked_folder_id, relative_file_path FROM assets WHERE asset_id = ?',
+      );
+    const out: string[] = [];
+    for (const assetId of assetIds) {
+      const row = stmt.get(assetId) as {
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+      } | undefined;
+      if (!row) continue;
+      if (this.isExplicitlyIgnored(
+        openLibrary,
+        row.location_kind,
+        row.linked_folder_id,
+        row.relative_file_path,
+        'asset',
+      )) continue;
+      out.push(assetId);
+    }
+    return out;
   }
 
   /**
@@ -20492,11 +20512,10 @@ export class LibraryService {
           ...(sourceContainer && sourceCodecs ? { sourceCodecs } : {}),
         };
       }
-      // Audio keeps its existing source-first behavior for formats with a
-      // browser MIME route; unsupported audio continues to use its explicit
-      // proxy path. Hover remains proxy-first when a proxy already exists, but
-      // never creates one just because a card was hovered.
-      if (mediaType === 'audio' && intent === 'viewer' && nativeMimeType && asset.current_revision_id) {
+      // Audio follows the same source-first policy as video for both the
+      // viewer and hover card. A ready proxy is only selected after the
+      // renderer reports a real source decode failure (`proxy-fallback`).
+      if (mediaType === 'audio' && intent !== 'proxy-fallback' && nativeMimeType && asset.current_revision_id) {
         return {
           mediaType,
           status: 'ready',
@@ -20531,26 +20550,9 @@ export class LibraryService {
           ...(posterArtifactId ? { posterArtifactId } : {}),
         };
       }
-      const activeProxyJob = openLibrary.connection
-        .prepare(
-          `SELECT job_id FROM jobs
-            WHERE asset_id = ?
-              AND kind IN ('generate_thumbnail', 'generate_webm_proxy', 'generate_audio_proxy')
-              AND status IN ('queued', 'running', 'paused')
-            ORDER BY updated_at DESC LIMIT 1`,
-        )
-        .get(assetId) as { job_id: string } | undefined;
-      if (!activeProxyJob && mediaType === 'audio' && asset.current_revision_id) {
-        // Audio remains proxy-backed for formats without a browser source
-        // route. Video deliberately does not enter this branch: its proxy is
-        // requested only by the renderer after a real source-playback error.
-        this.enqueueAudioProxyJob(
-          openLibrary,
-          assetId,
-          asset.current_revision_id,
-          300,
-        );
-      }
+      // Do not enqueue an audio proxy merely because a preview was requested.
+      // `retryArtifact(audio_proxy)` is the explicit source-decode failure
+      // path, and keeps native formats from producing background conversions.
       return {
         mediaType,
         status: 'pending',
@@ -21630,7 +21632,7 @@ export class LibraryService {
       'mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v',
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
-      'pdf', 'html', 'htm',
+      ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v'];
     const nowInvalidate = new Date().toISOString();
@@ -21828,6 +21830,11 @@ export class LibraryService {
     }
 
     const now = new Date().toISOString();
+    // Serpent-4bc4ac: ignored assets never enter the thumbnail queue.
+    const schedulableIds = new Set(this.filterIgnoredAssetIds(
+      libraryId,
+      rows.map((row) => row.asset_id),
+    ));
     const insert = openLibrary.connection.prepare(
       `INSERT OR IGNORE INTO jobs
          (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
@@ -21836,6 +21843,7 @@ export class LibraryService {
     );
 
     for (const row of rows) {
+      if (!schedulableIds.has(row.asset_id)) continue;
       const inserted = insert.run(
         randomUUID(), libraryId, row.asset_id, row.current_revision_id,
         options.priority ?? 0, now, now,
@@ -21853,8 +21861,8 @@ export class LibraryService {
 
     // Video AI consumes the timestamped contact sheet, not the browsing
     // poster. Probe metadata is therefore its own durable, higher-priority
-    // job: it can enqueue a contact sheet immediately while poster and WebM
-    // work continue independently.
+    // job (Serpent-140fe2: the contact sheet itself is generated lazily at
+    // analysis time) while poster and WebM work continue independently.
     const videoMetadataRows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.current_revision_id
@@ -21888,66 +21896,10 @@ export class LibraryService {
       );
     }
 
-    // Audio still receives its owned Ogg route for formats without a reliable
-    // browser source. Videos intentionally do not have a corresponding
-    // startup/visible-window wave: a WebM proxy is created only by the
-    // viewer's real source-playback failure path (Serpent-cljb).
-    const audioPlaybackExtensionSql = AUDIO_EXTENSION_NAMES
-      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
-      .join(' OR ');
-    const audioPlaybackRows = openLibrary.connection
-      .prepare(
-        `SELECT a.asset_id, a.current_revision_id
-           FROM assets a
-          WHERE a.deleted_at IS NULL
-            AND a.current_revision_id IS NOT NULL
-            AND a.availability = 'available'
-            ${selectedSql}
-            AND (${audioPlaybackExtensionSql})
-            AND EXISTS (
-              SELECT 1 FROM revision_artifacts primary_artifact
-               WHERE primary_artifact.revision_id = a.current_revision_id
-                 AND primary_artifact.kind IN ('thumbnail', 'video_poster')
-                 AND primary_artifact.status = 'ready'
-                 AND primary_artifact.invalidated_at IS NULL
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM revision_artifacts ra
-               WHERE ra.revision_id = a.current_revision_id
-                 AND ra.kind = 'audio_proxy'
-                 AND ra.status IN ('ready', 'failed')
-                 AND ra.invalidated_at IS NULL
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM jobs j
-               WHERE j.asset_id = a.asset_id
-                 AND j.revision_id = a.current_revision_id
-                 AND j.kind = 'generate_audio_proxy'
-                 AND j.status IN ('queued', 'running', 'paused')
-            )
-          ORDER BY a.created_at DESC, a.relative_file_path
-          ${queryLimit}`,
-      )
-      .all(
-        ...selectedIds,
-        ...AUDIO_EXTENSION_NAMES.map((extension) => `%.${extension}`),
-        ...(limit === undefined ? [] : [limit]),
-      ) as Array<{ asset_id: string; current_revision_id: string }>;
-    if (selectedIds.length > 0) {
-      const order = new Map(selectedIds.map((id, index) => [id, index]));
-      audioPlaybackRows.sort(
-        (left, right) =>
-          (order.get(left.asset_id) ?? 0) - (order.get(right.asset_id) ?? 0),
-      );
-    }
-    for (const row of audioPlaybackRows) {
-      this.enqueueAudioProxyJob(
-        openLibrary,
-        row.asset_id,
-        row.current_revision_id,
-        options.priority ?? 0,
-      );
-    }
+    // Native audio is source-first just like native video. Its waveform cover
+    // and viewer strip are still generated above, but an Ogg playback proxy is
+    // not useful until the browser actually reports a source decode failure.
+    // The viewer requests `audio_proxy` explicitly on that failure path.
 
     // Serpent-140fe2: AI contact sheets are no longer proactively scheduled.
     // Their only consumer is on-demand AI video analysis, which now generates
@@ -22073,6 +22025,40 @@ export class LibraryService {
         .run(job.attempt_count + 1, now, job.job_id);
       if (claimed.changes === 0) continue;
 
+      // Serpent-4bc4ac: explicitly ignored assets must never run media work.
+      // resolveAssetPath throws ASSET_NOT_FOUND for them, which previously
+      // looped failed→repair-requeue forever (28k+ rows on a converted
+      // library). Cancel instead; un-ignoring lets normal sweeps re-enqueue.
+      {
+        const ignoreRow = openLibrary.connection
+          .prepare(
+            'SELECT location_kind, linked_folder_id, relative_file_path FROM assets WHERE asset_id = ?',
+          )
+          .get(job.asset_id) as {
+            location_kind: 'managed' | 'linked';
+            linked_folder_id: string | null;
+            relative_file_path: string;
+          } | undefined;
+        if (
+          ignoreRow
+          && this.isExplicitlyIgnored(
+            openLibrary,
+            ignoreRow.location_kind,
+            ignoreRow.linked_folder_id,
+            ignoreRow.relative_file_path,
+            'asset',
+          )
+        ) {
+          openLibrary.connection
+            .prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'ASSET_IGNORED', updated_at = ? WHERE job_id = ? AND status = 'running'",
+            )
+            .run(new Date().toISOString(), job.job_id);
+          processed += 1;
+          continue;
+        }
+      }
+
       let jobLease: LibraryJobLease;
       try {
         jobLease = await this.acquireJobLease(libraryId, job.job_id, {
@@ -22155,12 +22141,9 @@ export class LibraryService {
             processed += 1;
             continue;
           }
-          const asset = openLibrary.connection.prepare(
-            'SELECT relative_file_path FROM assets WHERE asset_id = ?',
-          ).get(job.asset_id) as { relative_file_path: string } | undefined;
-          if (asset && LibraryService.detectMediaType(asset.relative_file_path) === 'audio') {
-            this.enqueueAudioProxyJob(openLibrary, job.asset_id, job.revision_id, 100);
-          }
+          // Native audio stays source-first after its waveform cover is ready.
+          // Playback proxies are requested only by the renderer's explicit
+          // source-decode failure path (`retryArtifact(audio_proxy)`).
           // Serpent-43d32f: animated GIFs no longer chain a WebM proxy off the
           // still thumbnail; they stay on the native image path everywhere.
           this.enqueuePaletteJob(openLibrary, job.asset_id, job.revision_id, -10);
