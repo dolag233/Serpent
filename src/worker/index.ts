@@ -2973,11 +2973,18 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // Opening a preview is also an idempotent, high-priority generation hint.
       // A provided plugin artifact already satisfies the request, so avoid
       // enqueueing a native job that could overwrite it.
+      // Serpent-tz35: the viewer must PREEMPT background work. The old
+      // 'mutation' scene ran the full non-light repair sweep inline
+      // (hundreds of ms of Worker stall) at priority 300; the light visible
+      // wave gives this asset's preview job the highest interactive tier
+      // (350, above every background flood) and schedules zero scans.
       if (!pluginArtifact) {
         scheduleThumbnailScene(
           request.command.libraryId,
-          'mutation',
+          'visible',
           [request.command.assetId],
+          1,
+          { light: true },
         );
       }
       const preview = await libraryService.resolvePreviewArtifact(
