@@ -1373,6 +1373,7 @@ const assetOperationSuccessSchemas = [
       label: nonBlankString,
     })).optional(),
     selectedExrPlane: z.number().int().nonnegative().optional(),
+    colorSpacePending: z.boolean().optional(),
     colorSpace: z.strictObject({
       id: nonBlankString,
       label: nonBlankString,
@@ -1713,6 +1714,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
       label: nonBlankString,
     })).optional(),
     selectedExrPlane: z.number().int().nonnegative().optional(),
+    colorSpacePending: z.boolean().optional(),
     colorSpace: z.strictObject({
       id: nonBlankString,
       label: nonBlankString,

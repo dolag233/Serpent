@@ -24,6 +24,7 @@ export type PreviewPollSnapshot = {
   readonly errorCode?: string;
   readonly mediaType?: string;
   readonly sourceCodecs?: readonly string[];
+  readonly colorSpacePending?: boolean;
 };
 
 export function needsDirectPlaybackGate(
@@ -72,6 +73,7 @@ export function shouldContinuePreviewPolling(
   directApproved: boolean,
 ): boolean {
   if (!resolution) return true;
+  if (resolution.colorSpacePending) return true;
   if (resolution.status === 'pending') return true;
   if (resolution.status !== 'ready') return false;
   if (!resolution.url) return true;

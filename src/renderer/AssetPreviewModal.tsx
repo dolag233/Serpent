@@ -282,7 +282,15 @@ export const AssetPreviewModal = forwardRef<
               };
             }
             if (previous && samePreviewPlayback(previous, result.value)) {
-              return previous;
+              return {
+                ...previous,
+                ...(result.value.colorSpace
+                  ? { colorSpace: result.value.colorSpace }
+                  : {}),
+                ...(result.value.colorSpacePending === undefined
+                  ? {}
+                  : { colorSpacePending: result.value.colorSpacePending }),
+              };
             }
             return result.value;
           });

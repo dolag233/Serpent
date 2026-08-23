@@ -40,6 +40,7 @@ interface IgnoreFixture {
   linkedFolderId: string;
   rootAssetId: string;
   nestedAssetId: string;
+  nestedVideoAssetId: string;
 }
 
 function buildLinkedFixture(name: string): IgnoreFixture {
@@ -50,6 +51,9 @@ function buildLinkedFixture(name: string): IgnoreFixture {
   mkdirSync(nestedDir, { recursive: true });
   writeFileSync(path.join(sourceDir, 'root.png'), VALID_PNG);
   writeFileSync(path.join(nestedDir, 'nested.png'), VALID_PNG);
+  // The bytes do not need to decode for queue admission; the extension is
+  // enough to exercise the video metadata scheduling path.
+  writeFileSync(path.join(nestedDir, 'nested.mp4'), Buffer.from('test-video'));
 
   const service = new LibraryService();
   services.push(service);
@@ -65,12 +69,14 @@ function buildLinkedFixture(name: string): IgnoreFixture {
   });
   const rootAsset = assets.find((a) => !a.relativeFilePath.replace(/\\/g, '/').includes('sub/'))!;
   const nestedAsset = assets.find((a) => a.relativeFilePath.replace(/\\/g, '/').includes('sub/'))!;
+  const nestedVideoAsset = assets.find((a) => a.relativeFilePath.replace(/\\/g, '/') === 'sub/nested.mp4')!;
   return {
     service,
     created,
     linkedFolderId: linked.folderId,
     rootAssetId: rootAsset.assetId,
     nestedAssetId: nestedAsset.assetId,
+    nestedVideoAssetId: nestedVideoAsset.assetId,
   };
 }
 
@@ -152,6 +158,29 @@ describe('media scheduling respects ignore rules', () => {
       fixture.nestedAssetId,
     ]);
     expect(kept).toEqual([fixture.rootAssetId]);
+  });
+
+  it('does not enqueue secondary video or AI work for ignored assets', () => {
+    const fixture = buildLinkedFixture('secondary');
+    setFolderIgnored(fixture, true);
+
+    fixture.service.enqueueThumbnailJobs(fixture.created.libraryId, {
+      assetIds: [fixture.nestedVideoAssetId],
+    });
+    fixture.service.enqueueAiAnalysisJobs({
+      libraryId: fixture.created.libraryId,
+      assetIds: [fixture.nestedVideoAssetId],
+    });
+
+    openLibraryDb(fixture.created.libraryPath, (db) => {
+      const rows = db.prepare(
+        `SELECT kind, status FROM jobs
+           WHERE asset_id = ?
+             AND kind IN ('generate_thumbnail', 'extract_metadata', 'extract_palette',
+                          'ai.image.analysis', 'ai.video.analysis')`,
+      ).all(fixture.nestedVideoAssetId) as Array<{ kind: string; status: string }>;
+      expect(rows).toEqual([]);
+    });
   });
 
   it('does not stat existing assets inside an ignored folder during open reconciliation', async () => {

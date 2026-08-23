@@ -146,6 +146,8 @@ export interface PreviewResolution {
   exrPlanes?: Array<{ index: number; label: string }>;
   selectedExrPlane?: number;
   colorSpace?: PreviewColorSpace;
+  /** The first source response used an inferred color; a later poll may replace it with embedded metadata. */
+  colorSpacePending?: boolean;
 }
 
 export interface PreviewColorSpace {

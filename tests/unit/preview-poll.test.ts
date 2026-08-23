@@ -53,6 +53,15 @@ describe('preview poll policy (BUG-VIEWER-001)', () => {
     ).toBe(false);
   });
 
+  it('keeps polling while source color metadata is being warmed', () => {
+    expect(
+      shouldContinuePreviewPolling(
+        { ...directReady, mediaType: 'image', colorSpacePending: true },
+        true,
+      ),
+    ).toBe(true);
+  });
+
   it('does not revoke directApproved on identical playback identity', () => {
     const first = nextDirectApprovedState({
       resolution: directReady,

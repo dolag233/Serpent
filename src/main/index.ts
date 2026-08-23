@@ -4715,6 +4715,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         ...(workerResult.selectedExrPlane === undefined
           ? {}
           : { selectedExrPlane: workerResult.selectedExrPlane }),
+        ...(workerResult.colorSpacePending === undefined
+          ? {}
+          : { colorSpacePending: workerResult.colorSpacePending }),
         ...(workerResult.colorSpace ? { colorSpace: workerResult.colorSpace } : {}),
       } satisfies RendererResult;
     }

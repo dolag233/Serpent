@@ -1942,6 +1942,7 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.playbackToken ? { playbackToken: result.playbackToken } : {}),
         ...(result.exrPlanes ? { exrPlanes: result.exrPlanes } : {}),
         ...(result.selectedExrPlane === undefined ? {} : { selectedExrPlane: result.selectedExrPlane }),
+        ...(result.colorSpacePending === undefined ? {} : { colorSpacePending: result.colorSpacePending }),
         ...(result.colorSpace ? { colorSpace: result.colorSpace } : {}),
       },
     };

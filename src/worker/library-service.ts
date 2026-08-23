@@ -16624,14 +16624,29 @@ export class LibraryService {
       for (const assetId of targetAssetIds) {
         const row = conn
           .prepare(
-            `SELECT relative_file_path, location_kind FROM assets
+            `SELECT relative_file_path, location_kind, linked_folder_id FROM assets
              WHERE asset_id = ?`,
           )
           .get(assetId) as {
             relative_file_path: string;
             location_kind: string;
+            linked_folder_id: string | null;
           } | undefined;
         if (!row) {
+          skippedAssetIds.push(assetId);
+          continue;
+        }
+
+        // Ignored assets must never appear in the task queue. Keep this gate
+        // before format/dedup checks so explicit AI requests cannot briefly
+        // expose a queued row that is only cancelled after claim.
+        if (this.isExplicitlyIgnored(
+          openLibrary,
+          row.location_kind as 'managed' | 'linked',
+          row.linked_folder_id,
+          row.relative_file_path,
+          'asset',
+        )) {
           skippedAssetIds.push(assetId);
           continue;
         }
@@ -19628,6 +19643,24 @@ export class LibraryService {
     revisionId: string,
     priority: number,
   ): void {
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT location_kind, linked_folder_id, relative_file_path
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(assetId) as {
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+      } | undefined;
+    if (!asset || this.isExplicitlyIgnored(
+      openLibrary,
+      asset.location_kind,
+      asset.linked_folder_id,
+      asset.relative_file_path,
+      'asset',
+    )) return;
     const terminalArtifact = openLibrary.connection.prepare(
       `SELECT artifact_id FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'
         AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1`,
@@ -19653,6 +19686,24 @@ export class LibraryService {
     revisionId: string,
     priority: number,
   ): boolean {
+    const asset = openLibrary.connection
+      .prepare(
+        `SELECT location_kind, linked_folder_id, relative_file_path
+           FROM assets
+          WHERE asset_id = ? AND deleted_at IS NULL`,
+      )
+      .get(assetId) as {
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+      } | undefined;
+    if (!asset || this.isExplicitlyIgnored(
+      openLibrary,
+      asset.location_kind,
+      asset.linked_folder_id,
+      asset.relative_file_path,
+      'asset',
+    )) return false;
     if (!this.isPaletteEligibleAsset(openLibrary, assetId, revisionId)) {
       return false;
     }
@@ -21217,6 +21268,7 @@ export class LibraryService {
     exrPlanes?: ExrPlaneDescriptor[];
     selectedExrPlane?: number;
     colorSpace?: ImageColorSpaceInfo & { options: ImageColorSpaceOption[] };
+    colorSpacePending?: boolean;
   }> {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const asset = openLibrary.connection
@@ -21262,12 +21314,39 @@ export class LibraryService {
         asset.current_revision_id,
       );
     }
-    const detectedColorSpace = await this.getImageColorSpace(
-      asset.current_revision_id,
-      this.resolveAssetPath(libraryId, assetId),
-      decoder,
-    );
     const storedOverride = this.getColorSpaceOverride(openLibrary.connection, assetId);
+    const assetPath = this.resolveAssetPath(libraryId, assetId);
+    const cachedColorSpace = this.imageColorSpaceByRevision.get(asset.current_revision_id);
+    let colorSpacePending = false;
+    let detectedColorSpace: ImageColorSpaceInfo;
+    // Native source images can be mounted immediately. The metadata probe is
+    // useful for the Inspector and color-space selector, but it must not hold
+    // the first source response hostage (Sharp metadata and network-mounted
+    // files can take hundreds of milliseconds or more). Start it in the
+    // background and let the viewer's normal poll merge the detected result.
+    const canWarmColorSpaceInBackground =
+      basePreview.playbackMode === 'source'
+      && decoder === 'sharp'
+      && !isRawAsset
+      && requestedColorSpace === undefined
+      && storedOverride === null;
+    if (cachedColorSpace) {
+      detectedColorSpace = cachedColorSpace;
+    } else if (canWarmColorSpaceInBackground) {
+      detectedColorSpace = defaultImageColorSpace(extension);
+      colorSpacePending = true;
+      void this.getImageColorSpace(
+        asset.current_revision_id,
+        assetPath,
+        decoder,
+      ).catch(() => undefined);
+    } else {
+      detectedColorSpace = await this.getImageColorSpace(
+        asset.current_revision_id,
+        assetPath,
+        decoder,
+      );
+    }
     const selectedColorSpace = colorSpaceInfoFromName(
       requestedColorSpace ?? storedOverride ?? undefined,
       'metadata',
@@ -21343,6 +21422,7 @@ export class LibraryService {
     return {
       ...this.getPreviewArtifact(libraryId, assetId, intent),
       ...(planes ? { exrPlanes: planes, selectedExrPlane: selected } : {}),
+      ...(colorSpacePending ? { colorSpacePending: true } : {}),
       colorSpace,
     };
   }
@@ -21738,16 +21818,26 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const asset = openLibrary.connection
       .prepare(
-        `SELECT relative_file_path, current_revision_id, availability
+        `SELECT relative_file_path, location_kind, linked_folder_id,
+                current_revision_id, availability
            FROM assets
           WHERE asset_id = ? AND deleted_at IS NULL`,
       )
       .get(input.assetId) as {
         relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
         current_revision_id: string | null;
         availability: 'available' | 'missing';
       } | undefined;
     if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset && this.isExplicitlyIgnored(
+      openLibrary,
+      asset.location_kind,
+      asset.linked_folder_id,
+      asset.relative_file_path,
+      'asset',
+    )) throw new LibraryServiceError('ASSET_NOT_FOUND');
     if (asset.availability !== 'available') {
       throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
     }
@@ -22243,6 +22333,7 @@ export class LibraryService {
         WHERE a.deleted_at IS NULL
           AND a.availability = 'available'
           AND a.current_revision_id IS NOT NULL
+          AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
           ${selectedSql}
           AND (${paletteExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
           AND EXISTS (
@@ -22597,10 +22688,11 @@ export class LibraryService {
         `SELECT a.asset_id, a.current_revision_id, ra.kind AS artifact_kind
            FROM assets a
            JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
-          WHERE a.deleted_at IS NULL
-            AND a.availability = 'available'
-            AND a.current_revision_id IS NOT NULL
-            AND ra.kind IN ('thumbnail', 'video_poster', 'audio_proxy')
+           WHERE a.deleted_at IS NULL
+             AND a.availability = 'available'
+             AND a.current_revision_id IS NOT NULL
+             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+             AND ra.kind IN ('thumbnail', 'video_poster', 'audio_proxy')
             AND ra.status = 'failed'
             AND ra.invalidated_at IS NULL
             AND (${failureConditions.join(' OR ')})
@@ -23062,6 +23154,7 @@ export class LibraryService {
             ${selectedSql}
             ${notOfflineLinkedFolderSql}
             AND (${videoExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
           ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
       )
