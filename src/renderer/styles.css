@@ -10022,6 +10022,29 @@ select.ai-config-input.ai-config-languages {
   /* Keep filename/meta above any preview overflow on tall portraits. */
   background: transparent;
 }
+.asset-caption-align-left {
+  text-align: left;
+}
+.asset-caption-align-center {
+  text-align: center;
+}
+.asset-caption-align-right {
+  text-align: right;
+}
+.asset-caption-align-center .asset-caption-filename,
+.asset-caption-align-right .asset-caption-filename {
+  justify-content: center;
+}
+.asset-caption-align-right .asset-caption-filename {
+  justify-content: flex-end;
+}
+.asset-caption-align-center .asset-inline-rename,
+.asset-caption-align-right .asset-inline-rename {
+  align-items: center;
+}
+.asset-caption-align-right .asset-inline-rename {
+  align-items: flex-end;
+}
 .asset-caption strong {
   overflow: hidden;
   color: var(--text);

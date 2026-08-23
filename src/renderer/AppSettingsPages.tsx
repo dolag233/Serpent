@@ -3,10 +3,11 @@ import { useState, type ReactNode } from "react";
 import {
   APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS,
   APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS,
+  APP_SETTINGS_CAPTION_ALIGN_OPTIONS,
   APP_SETTINGS_LOCALE_OPTIONS,
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
-import type { CanvasPreferences } from "./canvas-preferences";
+import type { CanvasCaptionAlign, CanvasPreferences } from "./canvas-preferences";
 import { useElevation } from "./ElevationProvider";
 import { useInspectorCardFeel } from "./InspectorCardFeelProvider";
 import {
@@ -387,6 +388,7 @@ export function AppearanceSettingsPage(): ReactNode {
 export type BrowseSettingsPageProps = {
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
+  onSetCaptionAlign: (align: CanvasCaptionAlign) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   onToggleHoverAudioPlay: () => void;
   onToggleHoverVideoSound: () => void;
@@ -395,6 +397,7 @@ export type BrowseSettingsPageProps = {
 export function BrowseSettingsPage({
   canvasPrefs,
   onSetViewMode,
+  onSetCaptionAlign,
   onToggleField,
   onToggleHoverAudioPlay,
   onToggleHoverVideoSound,
@@ -448,6 +451,31 @@ export function BrowseSettingsPage({
             <span>{t(option.labelKey)}</span>
           </label>
         ))}
+      </div>
+      <div className="app-settings-card-divider" />
+      <div className="app-settings-row app-settings-row-stack">
+        <div className="app-settings-row-copy">
+          <strong>{t("settings.cardCaptionAlign")}</strong>
+          <span>{t("settings.cardCaptionAlignHint")}</span>
+        </div>
+        <div
+          aria-label={t("settings.cardCaptionAlign")}
+          className="app-settings-option-group"
+          role="radiogroup"
+        >
+          {APP_SETTINGS_CAPTION_ALIGN_OPTIONS.map((option) => (
+            <button
+              aria-checked={canvasPrefs.captionAlign === option.value}
+              className="app-settings-option"
+              key={option.value}
+              onClick={() => onSetCaptionAlign(option.value)}
+              role="radio"
+              type="button"
+            >
+              {t(option.labelKey)}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="app-settings-card-divider" />
       <div className="app-settings-row-copy">

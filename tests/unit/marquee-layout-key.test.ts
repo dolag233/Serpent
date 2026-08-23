@@ -13,6 +13,7 @@ const baseInput: MarqueeLayoutKeyInput = {
     name: true,
     size: true,
     date: true,
+    dimensions: true,
     badgeType: true,
     badgeDuration: true,
     badgeSource: true,

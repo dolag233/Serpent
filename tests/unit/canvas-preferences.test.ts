@@ -71,6 +71,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -134,6 +135,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 240,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -185,6 +187,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'masonry',
         cardSize: 200,
+        captionAlign: 'left',
         fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
         hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
         hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -233,6 +236,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'grid',
         cardSize: 160,
+        captionAlign: 'left',
         fields: {
           ...DEFAULT_CANVAS_PREFERENCES.fields,
           date: false,
@@ -273,6 +277,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 250,
+      captionAlign: 'left',
       fields: {
         ...DEFAULT_CANVAS_PREFERENCES.fields,
         name: false,
@@ -306,6 +311,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'grid',
       cardSize: 50,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: true,
       hoverVideoSound: false,
@@ -323,6 +329,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
+      captionAlign: 'left',
       fields: {
         ...DEFAULT_CANVAS_PREFERENCES.fields,
         name: false,
@@ -357,6 +364,7 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       name: true,
       size: true,
       date: false,
+      dimensions: true,
       badgeType: true,
       badgeDuration: true,
       badgeSource: true,
@@ -369,10 +377,37 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       version: 1,
       viewMode: 'grid',
       cardSize: 160,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
     });
+  });
+
+  it('defaults captionAlign to left when loading older v1 prefs', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 1,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      }),
+    });
+
+    expect(loadCanvasPreferences(storage).captionAlign).toBe('left');
+  });
+
+  it('defaults dimensions to true when loading older v1 prefs without the field', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 1,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { name: true, size: true, date: true },
+      }),
+    });
+
+    expect(loadCanvasPreferences(storage).fields.dimensions).toBe(true);
   });
 });
 

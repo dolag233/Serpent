@@ -1,4 +1,4 @@
-import type { CanvasPreferences } from "./canvas-preferences";
+import type { CanvasPreferences, CanvasCaptionAlign } from "./canvas-preferences";
 import type { IconName } from "./Icons";
 import type { LocalePreference } from "./i18n";
 import type { ThemePreference } from "./theme";
@@ -25,6 +25,7 @@ export type AppSettingsCanvasFieldOption = {
     | "toolbar.showFileName"
     | "toolbar.showFileSize"
     | "toolbar.showModifiedDate"
+    | "toolbar.showDimensions"
     | "toolbar.showBadgeType"
     | "toolbar.showBadgeDuration"
     | "toolbar.showBadgeSource"
@@ -128,11 +129,27 @@ export const APP_SETTINGS_LOCALE_OPTIONS: readonly AppSettingsLocaleOption[] = [
   { value: "en", labelKey: "shell.languageEn" },
 ];
 
+export type AppSettingsCaptionAlignOption = {
+  readonly value: CanvasCaptionAlign;
+  readonly labelKey:
+    | "settings.cardCaptionAlignLeft"
+    | "settings.cardCaptionAlignCenter"
+    | "settings.cardCaptionAlignRight";
+};
+
+export const APP_SETTINGS_CAPTION_ALIGN_OPTIONS: readonly AppSettingsCaptionAlignOption[] =
+  [
+    { value: "left", labelKey: "settings.cardCaptionAlignLeft" },
+    { value: "center", labelKey: "settings.cardCaptionAlignCenter" },
+    { value: "right", labelKey: "settings.cardCaptionAlignRight" },
+  ];
+
 export const APP_SETTINGS_CANVAS_CAPTION_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =
   [
     { field: "name", labelKey: "toolbar.showFileName" },
     { field: "size", labelKey: "toolbar.showFileSize" },
     { field: "date", labelKey: "toolbar.showModifiedDate" },
+    { field: "dimensions", labelKey: "toolbar.showDimensions" },
   ];
 
 export const APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS: readonly AppSettingsCanvasFieldOption[] =

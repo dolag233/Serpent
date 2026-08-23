@@ -178,4 +178,40 @@ describe("BrowseLayoutPreview caption (Serpent-l2at / Serpent-qc7v)", () => {
     expect(children[1]?.textContent).toBe("tile.png");
     expect(children[2]?.textContent).toMatch(/2\.0 KB/);
   });
+
+  it("hides grid dimensions when the dimensions field toggle is off", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(BrowseLayoutPreview, {
+            entry: {
+              assetId: "asset-5",
+              width: 1920,
+              height: 1080,
+              displayName: "tile.png",
+              byteSize: 2048,
+              modifiedAt: "2026-08-17T00:00:00.000Z",
+            },
+            libraryId: "lib-1",
+            viewMode: "grid",
+            fields: {
+              name: true,
+              size: true,
+              date: true,
+              dimensions: false,
+            },
+          }),
+        ),
+      );
+    });
+    expect(container.querySelector(".asset-dimensions")).toBeNull();
+    expect(container.querySelector(".asset-caption-filename")?.textContent).toBe(
+      "tile.png",
+    );
+  });
 });

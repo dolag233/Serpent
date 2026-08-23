@@ -53,6 +53,7 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "name",
       "size",
       "date",
+      "dimensions",
     ]);
     expect(APP_SETTINGS_CANVAS_BADGE_FIELD_OPTIONS.map((o) => o.field)).toEqual([
       "badgeDuration",
@@ -64,6 +65,7 @@ describe("app-settings-sections (Serpent-97l / Serpent-9es / Serpent-i07)", () =
       "name",
       "size",
       "date",
+      "dimensions",
       "badgeDuration",
       "badgeExtension",
       "badgeType",

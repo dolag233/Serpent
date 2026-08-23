@@ -371,10 +371,12 @@ import {
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { InspectorPanel } from "./InspectorPanel";
 import {
+  assetCaptionAlignClass,
   CARD_SIZE_MAX,
   CARD_SIZE_MIN,
   loadCanvasPreferences,
   saveCanvasPreferences,
+  shouldShowGridDimensions,
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
@@ -10432,13 +10434,21 @@ function AppInner() {
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
                         snippetCaption != null ||
-                        (assetViewMode === "grid" &&
-                          asset.width != null &&
-                          asset.height != null)) && (
-                        <div className="asset-caption">
-                          {assetViewMode === "grid" &&
-                            asset.width != null &&
-                            asset.height != null &&
+                        shouldShowGridDimensions(
+                          canvasPrefs.fields,
+                          assetViewMode,
+                          asset.width,
+                          asset.height,
+                        )) && (
+                        <div
+                          className={`asset-caption ${assetCaptionAlignClass(canvasPrefs.captionAlign)}`}
+                        >
+                          {shouldShowGridDimensions(
+                            canvasPrefs.fields,
+                            assetViewMode,
+                            asset.width,
+                            asset.height,
+                          ) &&
                             !renamingThisAsset && (
                               <span className="asset-dimensions">
                                 {asset.width} × {asset.height}
@@ -10929,6 +10939,9 @@ function AppInner() {
         }}
         onSetViewMode={(mode) => {
           setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+        }}
+        onSetCaptionAlign={(align) => {
+          setCanvasPrefs((p) => ({ ...p, captionAlign: align }));
         }}
         onToggleField={(field) => {
           setCanvasPrefs((p) => ({

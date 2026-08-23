@@ -20,7 +20,7 @@ import {
   type AppSettingsCategoryId,
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
-import type { CanvasPreferences } from "./canvas-preferences";
+import type { CanvasPreferences, CanvasCaptionAlign } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -35,6 +35,7 @@ export interface AppSettingsDialogProps {
   onActiveCategoryChange: (category: AppSettingsCategoryId) => void;
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
+  onSetCaptionAlign: (align: CanvasCaptionAlign) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   onToggleHoverAudioPlay: () => void;
   onToggleHoverVideoSound: () => void;
@@ -64,6 +65,7 @@ export function AppSettingsDialog({
   onActiveCategoryChange,
   canvasPrefs,
   onSetViewMode,
+  onSetCaptionAlign,
   onToggleField,
   onToggleHoverAudioPlay,
   onToggleHoverVideoSound,
@@ -189,6 +191,7 @@ export function AppSettingsDialog({
             {!showingPluginSettings && activeCategory === "browse" ? (
               <BrowseSettingsPage
                 canvasPrefs={canvasPrefs}
+                onSetCaptionAlign={onSetCaptionAlign}
                 onSetViewMode={onSetViewMode}
                 onToggleField={onToggleField}
                 onToggleHoverAudioPlay={onToggleHoverAudioPlay}

@@ -47,6 +47,7 @@ export const TOOLBAR_CANVAS_COMMAND_IDS = [
   'canvas.field.name',
   'canvas.field.size',
   'canvas.field.date',
+  'canvas.field.dimensions',
 ] as const;
 
 /** 工作区工具栏直出按钮。 */
@@ -110,6 +111,12 @@ export const toolbarCommandDefinitions: readonly ToolbarCommandDefinition[] = [
     title: (ctx) => t(ctx, 'toolbar.showModifiedDate'),
     group: 'metadata',
     run: (ctx) => ctx.actions.toggleField('date'),
+  },
+  {
+    id: 'canvas.field.dimensions',
+    title: (ctx) => t(ctx, 'toolbar.showDimensions'),
+    group: 'metadata',
+    run: (ctx) => ctx.actions.toggleField('dimensions'),
   },
   {
     id: 'workspace.ai-settings',
