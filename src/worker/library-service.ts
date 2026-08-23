@@ -5167,17 +5167,22 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
   invalidateColumnProbe(connection);
 }
 
-function readLibraryIdentity(connection: DatabaseConnection): LibraryRow {
-  const check = connection.pragma('quick_check(1)');
-  if (
-    !Array.isArray(check) ||
-    check.length !== 1 ||
-    typeof check[0] !== 'object' ||
-    check[0] === null ||
-    !('quick_check' in check[0]) ||
-    check[0].quick_check !== 'ok'
-  ) {
-    throw new LibraryServiceError('LIBRARY_CORRUPT');
+function readLibraryIdentity(
+  connection: DatabaseConnection,
+  options: { skipQuickCheck?: boolean } = {},
+): LibraryRow {
+  if (!options.skipQuickCheck) {
+    const check = connection.pragma('quick_check(1)');
+    if (
+      !Array.isArray(check) ||
+      check.length !== 1 ||
+      typeof check[0] !== 'object' ||
+      check[0] === null ||
+      !('quick_check' in check[0]) ||
+      check[0].quick_check !== 'ok'
+    ) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
   }
 
   const libraryRows = connection
@@ -5198,7 +5203,10 @@ function readLibraryIdentity(connection: DatabaseConnection): LibraryRow {
   return library;
 }
 
-function verifyDatabase(connection: DatabaseConnection): LibraryRow {
+function verifyDatabase(
+  connection: DatabaseConnection,
+  options: { skipQuickCheck?: boolean } = {},
+): LibraryRow {
   const version = schemaVersion(connection);
   if (version > SUPPORTED_SCHEMA_VERSION) {
     throw new LibraryServiceError('LIBRARY_VERSION_TOO_NEW');
@@ -5207,9 +5215,14 @@ function verifyDatabase(connection: DatabaseConnection): LibraryRow {
     throw new LibraryServiceError('LIBRARY_CORRUPT');
   }
   verifyMigrationHistory(connection, version);
-  return readLibraryIdentity(connection);
+  // Serpent-4bdd26: quick_check scans every B-tree (~270ms on a 60MB/20k
+  // library) and dominated the synchronous open. The open hot path defers it
+  // to the background reconciliation; create/recovery paths keep the full
+  // check because their inputs are untrusted by construction.
+  return readLibraryIdentity(connection, options);
 }
 
+/** PRAGMA quick_check gate shared by the deferred verification path. */
 /**
  * Open a library that we cannot (or should not) migrate right now, but that
  * is still physically usable. Newer-than-supported schemas keep the canonical
@@ -22062,6 +22075,12 @@ export class LibraryService {
       // cleanup or any other background write can run. A second call below is
       // throttled to the same 24-hour slot when the rescan changes metadata.
       await yieldTurn();
+      // Serpent-4bdd26: the synchronous open defers PRAGMA quick_check here —
+      // it scans every B-tree (~270ms on a 60MB library) and used to dominate
+      // library.open. Corruption discovered at this point still routes through
+      // the recovery ladder via the thrown LibraryServiceError.
+      readLibraryIdentity(openLibrary.connection);
+      await yieldTurn();
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
       await yieldTurn();
       await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
@@ -34216,9 +34235,22 @@ export class LibraryService {
     this.openById.set(summary.libraryId, openLibrary);
     this.openIdByPath.set(input.canonicalPath, summary.libraryId);
     if (!input.startServices) return summary;
+    const adoptStageLog = process.env.SERPENT_OPEN_STAGE_LOG === '1';
+    let adoptMark = adoptStageLog ? performance.now() : 0;
+    const markAdoptStage = (label: string): void => {
+      if (!adoptStageLog) return;
+      const now = performance.now();
+      console.error(JSON.stringify({
+        scope: 'open.stage',
+        stage: label,
+        durationMs: Math.round((now - adoptMark) * 100) / 100,
+      }));
+      adoptMark = now;
+    };
 
     this.armDatabaseBackupTimer(openLibrary);
     this.reconcileLinkedFolderStatuses(openLibrary);
+    markAdoptStage('linked-statuses');
     this.recoverFileOperations(openLibrary);
     this.recoverOperationHistoryTransitions(openLibrary);
     this.recoverInterruptedAiJobs(openLibrary);
@@ -34229,26 +34261,38 @@ export class LibraryService {
       openLibrary.summary.libraryId,
       this.applicationSessionId,
     );
+    markAdoptStage('recovery');
     this.reconcileDefaultIgnoredAssets(openLibrary);
     this.startAssetWatcher(openLibrary);
     this.reconcileLinkedWatchers(openLibrary);
+    markAdoptStage('watchers');
     // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
     // steps moved out of the synchronous open path and run in the background
     // (runOpenBackgroundReconciliation). Opening a large library used to
     // block on a full artifact-file lstat sweep + expired-trash purge + a
     // whole Assets-directory rescan before the first frame rendered.
-    this.enqueueThumbnailJobs(summary.libraryId, {
-      limit: 50,
-      priority: 100,
-      repairFailed: true,
-      // Serpent-5xbg: failed artifacts from a previous session (transient
-      // decode errors, killed processes) are retried on the next open.
-      retryFailed: true,
-    });
+    // Serpent-4bdd26：startup 缩略图入队（limit:50 + repairFailed + retryFailed，
+    // 实测 ~230ms 全库扫描）已由 Worker 的 deferStartupThumbnailScene 在
+    // 首个真实视口后以相同参数调度——同步路径重复执行只拖慢 library.open 响应，
+    // 不改变最终队列状态。
     return summary;
   }
 
   private openLibraryPrimary(selectedLibraryPath: string): InternalLibrarySummary {
+    // Serpent-4bdd26：开库阶段计时（SERPENT_OPEN_STAGE_LOG=1），用于大库打开
+    // 的归因。生产默认关闭。
+    const openStageLog = process.env.SERPENT_OPEN_STAGE_LOG === '1';
+    let stageMark = openStageLog ? performance.now() : 0;
+    const markStage = (label: string): void => {
+      if (!openStageLog) return;
+      const now = performance.now();
+      console.error(JSON.stringify({
+        scope: 'open.stage',
+        stage: label,
+        durationMs: Math.round((now - stageMark) * 100) / 100,
+      }));
+      stageMark = now;
+    };
     let selectedPath: string;
     try {
       selectedPath = normalizeAbsolutePath(selectedLibraryPath);
@@ -34265,6 +34309,7 @@ export class LibraryService {
     } catch (error) {
       throw serviceError(error, 'LIBRARY_NOT_FOUND');
     }
+    markStage('path-resolution');
     const alreadyOpenId = this.openIdByPath.get(canonicalPath);
     if (alreadyOpenId) return this.openById.get(alreadyOpenId)!.summary;
 
@@ -34279,6 +34324,7 @@ export class LibraryService {
     }
     const storageKind = classifyLibraryStorage(canonicalPath);
     const networkStorage = storageKind === 'network';
+    markStage('storage-classification');
 
     let connection: DatabaseConnection | undefined;
     let migrationAttempted = false;
@@ -34343,12 +34389,18 @@ export class LibraryService {
       );
       migrationAttempted = true;
       migrateDatabase(connection, false, this.options);
+      markStage('migrate');
       // A successful migration clears the failure record so the retry
       // counter never leaks into later sessions.
       clearMigrationFailure(canonicalPath);
+      markStage('clear-failure');
       backfillTrashedFromTombstoneIds(connection);
-      const library = verifyDatabase(connection);
-      return this.adoptWritableOpenLibrary({
+      markStage('tombstone-backfill');
+      // Serpent-4bdd26: the full quick_check moved to the background
+      // reconciliation — it scans every B-tree and dominated this path.
+      const library = verifyDatabase(connection, { skipQuickCheck: true });
+      markStage('verify');
+      const summary = this.adoptWritableOpenLibrary({
         connection,
         library,
         canonicalPath,
@@ -34356,6 +34408,8 @@ export class LibraryService {
         networkStorage,
         startServices: true,
       });
+      markStage('adopt-services');
+      return summary;
     } catch (error) {
       // A rolled-back migration failure is recorded so the next open retries
       // (up to MAX_MIGRATION_ATTEMPTS) and then opens writable at the last

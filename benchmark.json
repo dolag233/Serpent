@@ -394,6 +394,19 @@
         "collectionDelete6000AssetsMs": 64.1,
         "note": "删除类操作本地 APFS 基线：folder.trash 含 113 次文件 rename+事务+历史组；collection.delete 6000 成员含递归计数失效。NAS 上 rename 为服务端操作，延迟为物理限制。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T08:00:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(quick_check 延迟+startup 入队移除)",
+      "suite": "comprehensive-20k-worker (deferred quick_check)",
+      "metrics": {
+        "openLibraryMs": 44.3,
+        "sortCreatedAtDescMs": 8.77,
+        "sidebarListFoldersMs": 10.68,
+        "layoutOnlyMs": 90.04,
+        "note": "开库同步路径两项根治：(1) quick_check(~270ms 全 B-tree 扫描)延迟到后台对账首个 yield 后——损坏仍走恢复梯子；(2) 移除 adopt 内重复的 startup 缩略图入队(~230ms，Worker 的 deferStartupThumbnailScene 以相同参数在首视口后调度)。openLibrary 552→44.3ms（12倍）。"
+      }
     }
   ]
 }
