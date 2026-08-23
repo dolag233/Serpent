@@ -2126,6 +2126,22 @@ const ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v42: partial index for the tombstone backfill that runs on every
+// library open. The backfill's UPDATE only touches rows with
+// deleted_at IS NOT NULL AND trashed_from_tombstone_id IS NULL — with this
+// index an empty-trash library proves "no candidates" without reading the
+// table at all (measured 161ms full-scan on SMB → <0.1ms), and a non-empty
+// trash locates its rows directly. Additive-only per ADR-0028.
+const TOMBSTONE_BACKFILL_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS assets_tombstone_backfill_idx
+    ON assets(trashed_from_folder_id)
+    WHERE deleted_at IS NOT NULL
+      AND trashed_from_tombstone_id IS NULL;
+`;
+const TOMBSTONE_BACKFILL_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(TOMBSTONE_BACKFILL_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2691,6 +2707,11 @@ export const MIGRATIONS = [
     version: 41,
     sql: ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_SQL,
     checksum: ASSETS_ACTIVE_CREATED_DESC_INDEX_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 42,
+    sql: TOMBSTONE_BACKFILL_INDEX_SCHEMA_SQL,
+    checksum: TOMBSTONE_BACKFILL_INDEX_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -4558,6 +4579,19 @@ function backfillTrashedFromTombstoneIds(
   ) {
     return;
   }
+  // Serpent-4bdd26: count candidates through the v42 partial index first —
+  // a pure read. On SMB every UPDATE pays ~200ms of journal-file round trips
+  // even when zero rows match, and the common case is an empty trash.
+  const candidateCount = connection
+    .prepare(
+      `SELECT COUNT(*) AS count FROM assets
+        WHERE deleted_at IS NOT NULL
+          AND trashed_from_tombstone_id IS NULL
+          AND trashed_from_folder_id IS NOT NULL`,
+    )
+    .get() as { count: number };
+  if (candidateCount.count === 0) return;
+
   connection
     .prepare(
       `UPDATE assets
@@ -22085,6 +22119,11 @@ export class LibraryService {
       // synchronous open (~2.8s full active scan on SMB via the covering index).
       this.reconcileDefaultIgnoredAssets(openLibrary);
       await yieldTurn();
+      // Serpent-4bdd26: legacy GIF proxy retirement deferred too — its GIF
+      // LIKE subquery scans all assets (~180ms on SMB) and only cancels doomed
+      // legacy transcodes.
+      this.retireLegacyGifProxyJobs(openLibrary);
+      await yieldTurn();
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
       await yieldTurn();
       await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
@@ -34276,16 +34315,21 @@ export class LibraryService {
     this.reconcileLinkedFolderStatuses(openLibrary);
     markAdoptStage('linked-statuses');
     this.recoverFileOperations(openLibrary);
+    markAdoptStage('recover-file-ops');
     this.recoverOperationHistoryTransitions(openLibrary);
+    markAdoptStage('recover-history');
     this.recoverInterruptedAiJobs(openLibrary);
+    markAdoptStage('recover-ai');
     this.recoverInterruptedThumbnailJobs(openLibrary);
-    this.retireLegacyGifProxyJobs(openLibrary);
+    // Serpent-4bdd26: retireLegacyGifProxyJobs moved to the background
+    // reconciliation — its GIF LIKE subquery scans all assets (~180ms on SMB)
+    // and only cancels doomed legacy transcodes, which can wait seconds.
     interruptUnfinishedPluginJobs(
       openLibrary.connection,
       openLibrary.summary.libraryId,
       this.applicationSessionId,
     );
-    markAdoptStage('recovery');
+    markAdoptStage('recovery-jobs');
     // Serpent-4bdd26: reconcileDefaultIgnoredAssets moved to the background
     // reconciliation — its full active-asset scan costs ~2.8s on SMB even
     // through the covering index (one round trip per index page), and the

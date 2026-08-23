@@ -466,6 +466,23 @@
         "p95Ms": 479.3,
         "note": "SMB 优化提交后第四次 10/10——本地路径零回归确认。今日滚动基准四次运行：283/241/294/269ms p50，全部达标。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T09:30:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(v42 + count-gated backfill)",
+      "suite": "nas-smb-open-probe (round 2)",
+      "metrics": {
+        "openMs": 981,
+        "tombstoneBackfillBeforeMs": 161,
+        "tombstoneBackfillAfterMs": 113,
+        "stages": {
+          "migrateMs": 300,
+          "recoveryJobsMs": 110,
+          "verifyMs": 110
+        },
+        "note": "迁移 v42 部分索引（tombstone backfill 候选定位）+ COUNT 先行走纯读路径：SMB 上 UPDATE 的 journal 往返底价 ~200ms 被空回收站场景完全消除。SMB open 破千至 981ms。剩余：migrate checksum 校验 ~300ms（41 条迁移页读取，冷缓存固有）。"
+      }
     }
   ]
 }
