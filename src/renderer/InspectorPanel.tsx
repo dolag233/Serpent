@@ -680,7 +680,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
     ? editFavorite
     : Boolean(selectedAsset?.favorite);
   const displaySourceUrl = metadataReady ? editSourceUrl : "";
-  const displayAuthor = metadataReady ? editAuthor : "";
 
   // Tag input state
   const [tagInputValue, setTagInputValue] = useState("");
@@ -797,6 +796,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
       : null;
+
+  // RAW camera metadata is a fallback for the existing author field. Keep it
+  // out of the technical strip so the author remains editable in the same
+  // place as every other asset.
+  const displayAuthor = metadataReady
+    ? editAuthor || rawImageMetadata?.author || ""
+    : "";
 
   // Single-asset: that asset's tags. Multi-select: intersection only (REQ-SELECT-004).
   const displayedTags = useMemo(() => {
@@ -998,6 +1004,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
     selectionCount,
   ]);
 
+  const rawTechnicalMetadataRows = useMemo(
+    () => rawMetadataRows.filter((row) =>
+      row.field !== "type"
+      && row.field !== "size"
+      && row.field !== "location"
+      && row.field !== "modifiedAt"
+      && row.field !== "author",
+    ),
+    [rawMetadataRows],
+  );
+
   const inspectorSelectedAssetIds = useMemo(() => {
     if (selectedAssets.length > 0) {
       return selectedAssets.map((asset) => asset.assetId);
@@ -1075,22 +1092,6 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </button>
               ) : null}
             </div>
-          )}
-
-          {rawMetadataRows.length > 0 && (
-            <section
-              aria-label={t("inspector.rawDetails")}
-              className="inspector-section inspector-raw-metadata"
-            >
-              <dl className="metadata-list">
-                {rawMetadataRows.map((row) => (
-                  <div data-field={row.field} key={row.field}>
-                    <dt>{t(RAW_METADATA_LABEL_KEYS[row.field])}</dt>
-                    <dd data-hover-tip={row.value}>{row.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
           )}
 
           {/* Tag chips (REQ-TAG-003) */}
@@ -1577,7 +1578,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </div>
           )}
 
-          {technicalInfoParts.length > 0 && (
+          {(technicalInfoParts.length > 0 || rawTechnicalMetadataRows.length > 0) && (
             <div
               aria-label={t("inspector.technicalMetadata")}
               className="inspector-tech-bar"
@@ -1585,6 +1586,16 @@ export function InspectorPanel(props: InspectorPanelProps) {
               {technicalInfoParts.map((part) => (
                 <span className="inspector-tech-part" key={part}>
                   {part}
+                </span>
+              ))}
+              {rawTechnicalMetadataRows.map((row) => (
+                <span
+                  className="inspector-tech-part"
+                  data-field={row.field}
+                  data-hover-tip={`${t(RAW_METADATA_LABEL_KEYS[row.field])}: ${row.value}`}
+                  key={row.field}
+                >
+                  {t(RAW_METADATA_LABEL_KEYS[row.field])}: {row.value}
                 </span>
               ))}
             </div>

@@ -76,11 +76,12 @@ test("imports a real RAW file, renders its metadata, and opens its preview", asy
       .toBe(true);
 
     await assetCard.click();
-    const details = window.getByLabel("详细信息");
+    const details = window.getByLabel("技术元数据");
     await expect(details).toBeVisible({ timeout: 30_000 });
     await expect(details).toContainText("ILCE-7RM3");
     await expect(details).toContainText("SONY");
     await expect(details).toContainText("ISO-800");
+    await expect(window.getByRole("textbox", { name: "作者" })).not.toHaveValue("");
 
     await window.keyboard.press("Space");
     const viewer = window.getByRole("region", {

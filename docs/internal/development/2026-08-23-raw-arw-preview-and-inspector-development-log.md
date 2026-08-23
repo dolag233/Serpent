@@ -34,8 +34,9 @@
   重建缩略图，日志中反复出现 `OIIO_GENERATION_FAILED` 和
   `UNIQUE constraint failed: revision_artifacts.revision_id, revision_artifacts.kind`。
   现在 RAW 的默认 sRGB 解码与可选颜色空间重渲染路径明确分离。
-- RAW Inspector 详情行改用普通资产元数据使用的 `.metadata-list`，不再使用独有的
-  右对齐布局。
+- RAW 元数据放在描述、作者、来源链接之后，与视频/音频技术信息共用现有的
+  `.inspector-tech-bar` 小号弱化样式；作者字段优先显示已有人工作者，否则直接回填
+  RAW 提取到的作者，不再额外占用一块醒目的详情卡片。
 
 ## 关键实现决定
 
@@ -58,7 +59,7 @@
   RAW 调用不含 OCIO 参数、PNG artifact ready、相机元数据 artifact ready 及读取、
   无 EXIF 仍成功和旧失败重排队。
 - `npm run typecheck`：通过（主 tsconfig 与 extension tsconfig 均退出 0）。
-- `npm run test:library-availability`：通过，9 个文件、196 项通过、1 项跳过；原生
+- `npm run test:library-availability`：通过，9 个文件、198 项通过、1 项跳过；原生
   模块 ABI 与 FTS5 probe 均通过。
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts
   tests/worker/video-exr.test.ts tests/unit/raw-image-metadata.test.ts
@@ -68,11 +69,30 @@
 - `npm run lint`：未全绿；报告 `session-log.ts` 1 个既有错误、`library-service.ts`
   4 个既有错误和 `App.tsx` 1 个既有 warning；本次修改文件（排除该既有大文件）
   定向 ESLint 通过。
+- `video-exr.test.ts` 当前为 47/51；4 个失败都属于 RAW 之外的媒体组件自动修复/探测
+  节流用例。它们直接调用 `LibraryService.openLibrary` 并期待同步重排队，但实际修复波
+  已由 Worker 的首个可见窗口调度，故这些测试没有触发探测。该差异已记录到
+  `Serpent-a6f74d`，不作为 RAW 回归，但保留“Worker 在首个可见波前退出时，失败任务
+  会延后到下一次可见/刷新波”的恢复风险。
 - 真实 RAW Electron E2E：
   `$env:SERPENT_REAL_RAW_TEST_FILE='E:\\Media\\Images\\Photos\\2026\\2026-02-09\\ZKH09734.ARW';
   node scripts/run-e2e-isolated.mjs tests/e2e/raw-image-preview.test.ts` 通过（1 项）。
-  覆盖真实导入、缩略图解码、Inspector 相机元信息和查看器图像解码。
+  覆盖真实导入、缩略图解码、Inspector 相机元信息、作者字段回填和查看器图像解码。
 - 当前提交 packaged、Windows 和人工视觉验收仍待执行，不能以自动化结果代替。
+
+## 打包影响
+
+RAW 不需要额外的 Electron 打包格式或 Renderer 资源。它依赖随应用分发的
+OpenImageIO `oiiotool` 必须包含 LibRaw：当前 Windows vcpkg manifest 已启用
+`openimageio[libraw,opencolorio,tools]`，本机二进制的 `oiiotool --help` 已报告
+`LibRaw 0.22.1`，所以开发态 RAW 能力来自正确的媒体组件，而不是 Node 端额外依赖。
+
+发布时仍需按媒体资源流程重新构建或重新获取与 manifest/sha256 匹配的 Windows、macOS
+媒体 bundle，再执行 `npm run media:verify`、`npm run package` 和 `npm run verify:package`。
+本工作树当前使用的是本地新构建的 OIIO 二进制（SHA-256 与已晋升 bundle 不同），因此
+`npm run media:verify` 有意失败并提示 `oiiotool.exe` hash mismatch；不能直接用这个
+未晋升的本地二进制发布。应先将包含 LibRaw 的新 bundle 按发布流程晋升，或重新获取现有
+已签名 bundle。
 
 ## 重要文件
 
