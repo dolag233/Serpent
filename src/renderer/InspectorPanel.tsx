@@ -1589,14 +1589,17 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </span>
               ))}
               {rawTechnicalMetadataRows.map((row) => (
-                <span
-                  className="inspector-tech-part inspector-raw-tech-part"
+                <div
+                  className="inspector-tech-part inspector-raw-tech-row"
                   data-field={row.field}
                   data-hover-tip={`${t(RAW_METADATA_LABEL_KEYS[row.field])}: ${row.value}`}
                   key={row.field}
                 >
-                  {t(RAW_METADATA_LABEL_KEYS[row.field])}: {row.value}
-                </span>
+                  <span className="inspector-raw-tech-label">
+                    {t(RAW_METADATA_LABEL_KEYS[row.field])}
+                  </span>
+                  <span className="inspector-raw-tech-value">{row.value}</span>
+                </div>
               ))}
             </div>
           )}

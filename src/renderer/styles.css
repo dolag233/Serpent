@@ -10595,11 +10595,31 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
-.inspector-raw-tech-part {
+.inspector-raw-tech-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  align-items: baseline;
   flex: 0 0 100%;
+  gap: 12px;
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  width: 100%;
+}
+
+.inspector-raw-tech-label,
+.inspector-raw-tech-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-raw-tech-label {
+  color: var(--secondary);
+}
+
+.inspector-raw-tech-value {
+  color: var(--tertiary);
+  text-align: right;
 }
 
 .inspector-hero-compact.is-multi .inspector-hero-title {
