@@ -10595,6 +10595,13 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
+.inspector-raw-tech-part {
+  flex: 0 0 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .inspector-hero-compact.is-multi .inspector-hero-title {
   position: relative;
   z-index: 1;
