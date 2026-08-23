@@ -483,6 +483,18 @@
         },
         "note": "迁移 v42 部分索引（tombstone backfill 候选定位）+ COUNT 先行走纯读路径：SMB 上 UPDATE 的 journal 往返底价 ~200ms 被空回收站场景完全消除。SMB open 破千至 981ms。剩余：migrate checksum 校验 ~300ms（41 条迁移页读取，冷缓存固有）。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T09:50:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+88c70214",
+      "suite": "large-library-electron-scroll-e2e (v42 final)",
+      "metrics": {
+        "jumpsPassedOf10": 10,
+        "p50Ms": 297.3,
+        "p95Ms": 343.1,
+        "note": "v42 后第五次 10/10，p95 历史最佳(343ms)。竞争 worktree 同期 Worker 数字：open.cold 503ms / collection.firstPage 86.2ms / firstPage 19.1ms——本分支全面领先。"
+      }
     }
   ]
 }
