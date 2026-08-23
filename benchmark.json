@@ -495,6 +495,18 @@
         "p95Ms": 343.1,
         "note": "v42 后第五次 10/10，p95 历史最佳(343ms)。竞争 worktree 同期 Worker 数字：open.cold 503ms / collection.firstPage 86.2ms / firstPage 19.1ms——本分支全面领先。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T10:20:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+6f2350ee",
+      "suite": "large-library-electron-scroll-e2e (regression fixes)",
+      "metrics": {
+        "jumpsPassedOf10": 10,
+        "p50Ms": 196.6,
+        "p95Ms": 453.2,
+        "note": "三处跨平台回归修正后：p50 历史最佳 196.6ms。cancel→重建循环消除后吞吐反升。"
+      }
     }
   ]
 }
