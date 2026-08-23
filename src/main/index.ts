@@ -4523,6 +4523,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           logger?.error("recent-library.remove", error);
         },
       );
+      // Serpent-140fe2 review: deleted libraries must not leave phantom
+      // preview mirrors consuming the LRU budget.
+      if ("libraryId" in request) {
+        void previewCache?.purgeLibrary(request.libraryId);
+      }
     }
 
     // Serpent-xffq: 同步成功即记录绑定与上次同步时间，供“已同步”状态展示。

@@ -19828,10 +19828,21 @@ export class LibraryService {
       // Serpent-140fe2: persist the terminal failure so the terminal-artifact
       // guard in ensureVideoContactSheet stops regenerating this sheet. The
       // next revision change resets it naturally.
-      this.writeFailedArtifact(
-        openLibrary, randomUUID(), revisionId, 'contact_sheet', 'image/jpeg',
-        `${randomUUID()}.txt`, `ffmpeg@${FFMPEG_VERSION}`, error,
-      );
+      // Adversarial-review fix: generateContactSheet's own catch already
+      // wrote a failed contact_sheet row; a second INSERT would violate the
+      // partial UNIQUE(revision_id, kind) index and mask the real ffmpeg
+      // error. Only write when no terminal row exists yet.
+      const existingTerminal = openLibrary.connection
+        .prepare(
+          "SELECT 1 FROM revision_artifacts WHERE revision_id = ? AND kind = 'contact_sheet' AND status IN ('ready', 'failed') AND invalidated_at IS NULL LIMIT 1",
+        )
+        .get(revisionId);
+      if (!existingTerminal) {
+        this.writeFailedArtifact(
+          openLibrary, randomUUID(), revisionId, 'contact_sheet', 'image/jpeg',
+          `${randomUUID()}.txt`, `ffmpeg@${FFMPEG_VERSION}`, error,
+        );
+      }
       throw error;
     }
     return true;
@@ -22645,12 +22656,19 @@ export class LibraryService {
                  AND (
                    (ip.path_kind = 'folder'
                      AND (ip.relative_path = ''
+                          OR a.relative_file_path = ip.relative_path
                           OR LOWER(a.relative_file_path) LIKE LOWER(ip.relative_path) || '/%'))
                    OR (ip.path_kind = 'asset'
                        AND ip.relative_path = a.relative_file_path)
                    OR (ip.path_kind = 'extension'
                        AND LOWER(a.relative_file_path) LIKE '%.' || LOWER(ip.relative_path))
                  )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM gitignore_ignored_paths gi
+               WHERE a.location_kind = 'managed'
+                 AND gi.path_kind = 'asset'
+                 AND gi.relative_path = a.relative_file_path
             )
           ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,
@@ -22876,6 +22894,7 @@ export class LibraryService {
         attempt_count: number;
       } | undefined;
       if (!job) return;
+      let consecutiveLeaseBusy = 0;
       const now = new Date().toISOString();
       const claimed = openLibrary.connection
         .prepare(
@@ -22934,8 +22953,19 @@ export class LibraryService {
           "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_BUSY', updated_at = ? WHERE job_id = ? AND status = 'running'",
         ).run(new Date().toISOString(), job.job_id);
         budget += 1;
+        // Serpent-308675 adversarial-review fix: timeoutMs:0 makes claimJob
+        // throw immediately, and the reset-to-queued above means the same
+        // top-priority job is re-selected on the next iteration — a hot
+        // microtask spin that starves every other Worker command for as long
+        // as a foreign lease lives. Yield briefly and cap consecutive spins.
+        consecutiveLeaseBusy += 1;
+        if (consecutiveLeaseBusy >= 4) {
+          await new Promise((resolveResolveTick) => setTimeout(resolveResolveTick, 250));
+          consecutiveLeaseBusy = 0;
+        }
         continue;
       }
+      consecutiveLeaseBusy = 0;
       const jobHeartbeat = jobLease.startHeartbeat({
         leaseDurationMs: MEDIA_JOB_LEASE_DURATION_MS,
       });
