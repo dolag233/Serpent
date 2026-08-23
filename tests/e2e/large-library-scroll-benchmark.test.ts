@@ -109,7 +109,11 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
   mkdirSync(cloneRoot, { recursive: true });
   const temporaryRoot = mkdtempSync(path.join(cloneRoot, "serpent-large-scroll-benchmark-"));
   const libraryPath = reuseLibraryPath || path.join(temporaryRoot, "benchmark-library");
-  const userDataPath = path.join(temporaryRoot, "user-data");
+  // Diagnostics can persist the isolated app log outside the disposable
+  // benchmark root. The default remains per-run isolation and is always
+  // cleaned with the rest of the temporary root.
+  const userDataPath = process.env.SERPENT_LARGE_LIBRARY_E2E_USER_DATA_PATH
+    || path.join(temporaryRoot, "user-data");
   if (!reuseLibraryPath) {
     if (process.platform === "win32") {
       // Robocopy exit codes are bit flags: 0-7 mean success, 8+ are failures.
@@ -155,7 +159,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     await openLibrary.click();
     const canvas = window.locator(".workspace-canvas");
     await expect(canvas).toBeVisible({ timeout: 120_000 });
-    await expect(window.locator(".asset-card").first()).toBeVisible({ timeout: 120_000 });
+    await expect(window.locator(".asset-card:not(.is-layout-preview)").first()).toBeVisible({ timeout: 120_000 });
 
     const sizeControl = window.getByLabel("资产缩略图大小");
     const maxSizeIndex = Number(await sizeControl.getAttribute("max"));
@@ -185,7 +189,11 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             && rect.right > canvasRect.left
             && rect.left < canvasRect.right;
         }).map((slot) => slot.dataset.layoutAssetId ?? "");
-        const cards = [...document.querySelectorAll<HTMLElement>(".asset-card")]
+        // Layout previews carry the compact index's ready thumbnail and are
+        // intentionally present before the summary page arrives. They are not
+        // evidence that the target page was fetched, so this gate only accepts
+        // real AssetSummary cards.
+        const cards = [...document.querySelectorAll<HTMLElement>(".asset-card:not(.is-layout-preview)")]
           .filter((card) => {
             const rect = card.getBoundingClientRect();
             return rect.bottom > canvasRect.top && rect.top < canvasRect.bottom;
@@ -399,7 +407,10 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
           }>((resolve) => {
             const inspect = () => {
               const canvasRect = canvasElement.getBoundingClientRect();
-              const visible = [...document.querySelectorAll<HTMLElement>(".asset-card")]
+              // Never count an aria-hidden layout preview as a decoded real
+              // card. Its thumbnail can be ready while the summary page for
+              // this scrollbar destination is still in flight.
+              const visible = [...document.querySelectorAll<HTMLElement>(".asset-card:not(.is-layout-preview)")]
                 .filter((card) => {
                   const rect = card.getBoundingClientRect();
                   return rect.bottom > canvasRect.top

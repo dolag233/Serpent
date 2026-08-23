@@ -4,6 +4,7 @@ import {
   openSync,
   readSync,
 } from "node:fs";
+import { open as openAsync } from "node:fs/promises";
 
 export interface ImageDimensions {
   width: number;
@@ -114,25 +115,7 @@ export function readImageDimensionsSync(filePath: string): ImageDimensions | nul
     if (size <= 0) return null;
     const buffer = Buffer.allocUnsafe(size);
     const bytesRead = readSync(fd, buffer, 0, size, 0);
-    const header = buffer.subarray(0, bytesRead);
-
-    if (header.length >= 24 && header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-      return dimensions(u32(header, 16, false), u32(header, 20, false));
-    }
-    if (header.toString("ascii", 0, 6) === "GIF87a" || header.toString("ascii", 0, 6) === "GIF89a") {
-      return dimensions(u16(header, 6, true), u16(header, 8, true));
-    }
-    if (header.toString("ascii", 0, 2) === "BM") {
-      return dimensions(u32(header, 18, true), u32(header, 22, true));
-    }
-    if (header.toString("ascii", 0, 4) === "8BPS") {
-      return dimensions(u32(header, 14, false), u32(header, 18, false));
-    }
-    if (header.toString("ascii", 0, 4) === "RIFF") return parseWebp(header);
-    if (header.toString("ascii", 0, 2) === "II" || header.toString("ascii", 0, 2) === "MM") {
-      return parseTiff(header);
-    }
-    return parseJpeg(header);
+    return parseImageDimensions(buffer.subarray(0, bytesRead));
   } catch {
     return null;
   } finally {
@@ -140,3 +123,45 @@ export function readImageDimensionsSync(filePath: string): ImageDimensions | nul
   }
 }
 
+function parseImageDimensions(header: Buffer): ImageDimensions | null {
+  if (header.length >= 24 && header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    return dimensions(u32(header, 16, false), u32(header, 20, false));
+  }
+  if (header.toString("ascii", 0, 6) === "GIF87a" || header.toString("ascii", 0, 6) === "GIF89a") {
+    return dimensions(u16(header, 6, true), u16(header, 8, true));
+  }
+  if (header.toString("ascii", 0, 2) === "BM") {
+    return dimensions(u32(header, 18, true), u32(header, 22, true));
+  }
+  if (header.toString("ascii", 0, 4) === "8BPS") {
+    return dimensions(u32(header, 14, false), u32(header, 18, false));
+  }
+  if (header.toString("ascii", 0, 4) === "RIFF") return parseWebp(header);
+  if (header.toString("ascii", 0, 2) === "II" || header.toString("ascii", 0, 2) === "MM") {
+    return parseTiff(header);
+  }
+  return parseJpeg(header);
+}
+
+/**
+ * Async counterpart used by interactive Worker paths. The synchronous probe
+ * remains for import/sequence code that already runs inside a bounded write,
+ * but visible-window reporting must not block the Worker while opening and
+ * reading source headers on a cold or remote volume.
+ */
+export async function readImageDimensions(filePath: string): Promise<ImageDimensions | null> {
+  let handle: Awaited<ReturnType<typeof openAsync>> | undefined;
+  try {
+    handle = await openAsync(filePath, "r");
+    const { size: fileSize } = await handle.stat();
+    const size = Math.min(HEADER_BYTES, Number(fileSize));
+    if (size <= 0) return null;
+    const buffer = Buffer.allocUnsafe(size);
+    const { bytesRead } = await handle.read(buffer, 0, size, 0);
+    return parseImageDimensions(buffer.subarray(0, bytesRead));
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}

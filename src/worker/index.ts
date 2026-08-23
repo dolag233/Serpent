@@ -128,7 +128,20 @@ const pendingVisibleThumbnailWaves = new Map<string, {
   assetIds: string[];
   waveSize: number;
 }>();
+/** Stable viewport sets are idempotent until the library changes. */
+const lastVisibleWindowKeyByLibrary = new Map<string, string>();
 const deferredStartupThumbnailQueues = new Map<string, ReturnType<typeof setTimeout>>();
+type VisibleDimensionProbeState = {
+  assetIds: Set<string>;
+  controller: AbortController;
+  running: boolean;
+};
+/**
+ * Header probes are useful for correcting masonry geometry, but they are not
+ * part of the visible-window ACK. Keep them cancellable and drain them in
+ * small async batches so a cold source volume cannot queue behind a scroll.
+ */
+const visibleDimensionProbeStates = new Map<string, VisibleDimensionProbeState>();
 // Keep the startup backfill off the primary decoder lane until the renderer
 // has reported its first real viewport. A fixed delay is not sufficient on a
 // large library: opening the shell can take longer than the timer, so the
@@ -156,8 +169,14 @@ if (!parentPort) {
 Object.defineProperty(process, 'type', { value: undefined, configurable: true });
 
 const libraryService = new LibraryService({
-  onAssetsChanged: (event) => parentPort.postMessage(event),
-  onLibraryChanged: (event) => parentPort.postMessage(event),
+  onAssetsChanged: (event) => {
+    lastVisibleWindowKeyByLibrary.delete(event.libraryId);
+    parentPort.postMessage(event);
+  },
+  onLibraryChanged: (event) => {
+    lastVisibleWindowKeyByLibrary.delete(event.libraryId);
+    parentPort.postMessage(event);
+  },
   onProgress: (event) => parentPort.postMessage(event),
   // Serpent-8ca259: HTML document thumbnails capture offscreen in Main.
   documentThumbnailRenderer: (input) => renderDocumentThumbnailViaMain(input),
@@ -867,6 +886,84 @@ function cancelDeferredStartupThumbnailScene(libraryId: string): void {
   pendingVisibleThumbnailWaves.delete(libraryId);
 }
 
+function enqueueVisibleWindowDimensionProbes(
+  libraryId: string,
+  assetIds: readonly string[],
+): void {
+  let state = visibleDimensionProbeStates.get(libraryId);
+  if (!state) {
+    state = {
+      assetIds: new Set(),
+      controller: new AbortController(),
+      running: false,
+    };
+    visibleDimensionProbeStates.set(libraryId, state);
+  }
+  for (const assetId of assetIds) state.assetIds.add(assetId);
+  if (state.running) return;
+  state.running = true;
+  void drainVisibleWindowDimensionProbes(libraryId, state);
+}
+
+async function drainVisibleWindowDimensionProbes(
+  libraryId: string,
+  state: VisibleDimensionProbeState,
+): Promise<void> {
+  try {
+    while (state.assetIds.size > 0 && !state.controller.signal.aborted) {
+      const batch: string[] = [];
+      for (const assetId of state.assetIds) {
+        state.assetIds.delete(assetId);
+        batch.push(assetId);
+        if (batch.length >= 16) break;
+      }
+      try {
+        const dimensions = await libraryService.persistVisibleWindowImageDimensionsAsync(
+          libraryId,
+          batch,
+          state.controller.signal,
+        );
+        if (state.controller.signal.aborted) return;
+        for (const item of dimensions) {
+          if (state.controller.signal.aborted) return;
+          parentPort?.postMessage({
+            type: 'asset.dimensions.ready',
+            libraryId,
+            assetId: item.assetId,
+            width: item.width,
+            height: item.height,
+          });
+        }
+      } catch (error) {
+        if (!state.controller.signal.aborted) {
+          libraryService.reportDiagnostic('visible-window.dimensions', error, { libraryId });
+        }
+        return;
+      }
+      // Let queued search/preview requests run before the next source batch.
+      // The first browse after open is different: it must claim the Worker
+      // before the sidebar/count burst can run. `startupBrowseServed` remains
+      // false until that response is posted, so the first page is serviced
+      // synchronously while later searches retain the coalescing yield.
+      if (startupBrowseServed) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+  } finally {
+    if (visibleDimensionProbeStates.get(libraryId) === state) {
+      visibleDimensionProbeStates.delete(libraryId);
+    }
+  }
+}
+
+function cancelVisibleWindowDimensionProbes(libraryId: string): void {
+  const state = visibleDimensionProbeStates.get(libraryId);
+  if (!state) return;
+  state.assetIds.clear();
+  state.controller.abort();
+  visibleDimensionProbeStates.delete(libraryId);
+}
+
 const SECONDARY_MEDIA_JOB_KINDS = [
   'extract_metadata',
   'generate_contact_sheet',
@@ -1567,6 +1664,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'library.close':
       cancelDeferredStartupThumbnailScene(request.command.libraryId);
+      cancelVisibleWindowDimensionProbes(request.command.libraryId);
+      lastVisibleWindowKeyByLibrary.delete(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
@@ -1578,6 +1677,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'library.delete-from-disk': {
       cancelDeferredStartupThumbnailScene(request.command.libraryId);
+      cancelVisibleWindowDimensionProbes(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
       aiJobAbortRegistry.abort(request.command.libraryId);
@@ -2215,7 +2315,13 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // Search is synchronous inside LibraryService. Yield once before
       // entering SQLite so a burst of keystrokes can mark this request stale
       // and discard it while it is still queued in the Worker event loop.
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      // The first browse after open is the exception: App posts it before
+      // sidebar/count hydration, and yielding here would let that burst enter
+      // SQLite ahead of the primary page. Later searches keep the coalescing
+      // yield so stale keystrokes are discarded before a synchronous query.
+      if (startupBrowseServed) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       const laneKey = searchRequestLaneKey(request.command);
       if (!latestAssetSearchRequests.isLatest(request.command.libraryId, laneKey, request.requestId)) {
         return {
@@ -3245,7 +3351,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const visibleAssetIds = libraryService.filterIgnoredAssetIds(
         libraryId,
         assetIds,
-      );
+      ).toSorted();
+      const visibleWindowKey = visibleAssetIds.join('\u0000');
+      if (visibleWindowKey === lastVisibleWindowKeyByLibrary.get(libraryId)) {
+        return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
+      }
+      lastVisibleWindowKeyByLibrary.set(libraryId, visibleWindowKey);
       // Serpent-4bdd26 收编：先中断视口外的解码并调度可见波（让新视口尽快
       // 抢占），再做尺寸探测。
       libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
@@ -3258,17 +3369,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           { light: true },
         );
       }
-      const dimensions =
-        libraryService.persistVisibleWindowImageDimensions(libraryId, visibleAssetIds);
-      for (const item of dimensions) {
-        parentPort?.postMessage({
-          type: 'asset.dimensions.ready',
-          libraryId,
-          assetId: item.assetId,
-          width: item.width,
-          height: item.height,
-        });
-      }
+      // Header probes used to run synchronously here, before the ACK. On a
+      // cold/remote volume that made a scroll report monopolize the Worker
+      // behind dozens of open/read/close calls and delayed the next page
+      // query. Keep the geometry correction, but drain it asynchronously after
+      // this command has returned and let it be cancelled on library close.
+      enqueueVisibleWindowDimensionProbes(libraryId, visibleAssetIds);
       return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
     }
     case 'media.resolve-asset-paths': {
@@ -3846,6 +3952,7 @@ function requestIdFrom(input: unknown): string | undefined {
 
 parentPort.on('message', async (event) => {
   const input: unknown = event.data;
+  const callbackAt = WORKER_CMD_LOG ? Date.now() : 0;
 
   try {
     const providerResponse = parsePluginMediaProviderResponse(input);
@@ -3893,6 +4000,9 @@ parentPort.on('message', async (event) => {
     if (control.type === 'worker.shutdown') {
       aiJobAbortRegistry.abortAll();
       aiProgressThrottler.clearAll();
+      for (const libraryId of [...visibleDimensionProbeStates.keys()]) {
+        cancelVisibleWindowDimensionProbes(libraryId);
+      }
       // Kill real encoder children first so a stuck media promise cannot hold
       // shutdown hostage. Abort/close then runs as a bounded second pass, and
       // the final cleanup catches children that raced the first termination.
@@ -3966,7 +4076,13 @@ parentPort.on('message', async (event) => {
         console.error(JSON.stringify({
           timestamp: new Date().toISOString(),
           scope: 'worker.cmd',
+          requestId: request.requestId,
           type: request.command.type,
+          callbackAt,
+          sentAt: request.sentAt,
+          queueMs: request.sentAt === undefined
+            ? undefined
+            : Math.max(0, callbackAt - request.sentAt),
           waitMs: Math.round((dispatchStartedAt - cmdLogReceivedAt) * 100) / 100,
           runMs: Math.round((performance.now() - dispatchStartedAt) * 100) / 100,
         }));

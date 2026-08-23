@@ -1822,6 +1822,21 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
       "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
     ).run(revision.current_revision_id);
 
+    const asyncDimensions = await service.persistVisibleWindowImageDimensionsAsync(
+      created.libraryId,
+      [
+        jpegAsset.assetId,
+        textAsset.assetId,
+        'missing-asset',
+      ],
+    );
+    expect(asyncDimensions).toEqual([{ assetId: jpegAsset.assetId, width: 32, height: 24 }]);
+
+    // The synchronous helper remains covered for direct maintenance callers,
+    // but the Worker visible-window path uses the async variant above.
+    db.prepare(
+      "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
+    ).run(revision.current_revision_id);
     const dimensions = service.persistVisibleWindowImageDimensions(created.libraryId, [
       jpegAsset.assetId,
       textAsset.assetId,

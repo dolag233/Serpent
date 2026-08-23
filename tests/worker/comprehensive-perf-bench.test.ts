@@ -9,6 +9,10 @@ import {
 } from './large-library-fixture';
 
 const fixturePath = process.env.SERPENT_PERF_BENCH_PATH;
+// This benchmark historically deleted seven assets from the fixture while
+// measuring mutation latency. Keep performance fixtures read-only by default;
+// mutation metrics require an explicit disposable-clone opt-in.
+const allowFixtureMutation = process.env.SERPENT_PERF_BENCH_ALLOW_MUTATION === '1';
 let manifest: LargeLibraryFixtureManifest;
 let service: LibraryService;
 
@@ -127,6 +131,7 @@ describe.skipIf(!fixturePath)('comprehensive perf benchmark', () => {
     results.sidebarListCollectionsMs = Number(bench(() =>
       service.listCollections(manifest.libraryId)).toFixed(2));
 
+    if (allowFixtureMutation) {
     // ── 10. 删除路径（trash 5 个 → trash 2 个新的 → 恢复全部 → 永久删除）──
     // 每次 trash 使用互不重叠的资产，避免二次删除已删资产触发 INVALID_IMPORT_DECISION
     const deleteBatchA = firstPage.items.slice(10, 15).map((i) => i.assetId); // 5 个
@@ -191,6 +196,9 @@ describe.skipIf(!fixturePath)('comprehensive perf benchmark', () => {
             orderedAssetIds: reordered,
           })).toFixed(2));
       }
+    }
+    } else {
+      results.mutationMetrics = 'skipped (set SERPENT_PERF_BENCH_ALLOW_MUTATION=1 on a disposable clone)';
     }
 
     // ── 13. 导入准备+放弃（goal 指标：添加文件；不落盘，保持 fixture 干净）──

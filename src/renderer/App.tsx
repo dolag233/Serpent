@@ -42,6 +42,10 @@ import {
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import {
+  normalizeVisibleWindowAssetIds,
+  visibleWindowReportKey,
+} from "./visible-window";
+import {
   assetSupportsThumbnail,
   isBenignThumbnailErrorCode,
 } from "../shared/thumbnail-support";
@@ -1817,7 +1821,12 @@ function AppInner() {
     if (!api || !library) return;
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
+    // A new browse layout can follow an asset mutation while the visible IDs
+    // stay identical. Reset the renderer-side guard so it can re-arm the
+    // Worker after the Worker invalidates its corresponding key.
+    reportedVisibleWindowKeyRef.current = "";
     let frame: number | undefined;
+    let debounceTimer: number | undefined;
     const report = () => {
       frame = undefined;
       const canvasRect = canvas.getBoundingClientRect();
@@ -1842,25 +1851,31 @@ function AppInner() {
         }
       }
       if (ids.length === 0) return;
-      const key = `${library.libraryId}:${ids.join(",")}`;
+      const stableIds = normalizeVisibleWindowAssetIds(ids);
+      const key = visibleWindowReportKey(library.libraryId, stableIds);
       if (key === reportedVisibleWindowKeyRef.current) return;
       reportedVisibleWindowKeyRef.current = key;
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
-        assetIds: ids.slice(0, 300),
+        assetIds: stableIds,
       });
     };
     const schedule = () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(report);
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = undefined;
+        frame = window.requestAnimationFrame(report);
+      }, 50);
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     };
-  }, [api, library, assetViewMode, browseLayout, assets, trashedAssets]);
+  }, [api, library, assetViewMode, browseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -2936,6 +2951,50 @@ function AppInner() {
           : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
+      const includeLibraryCounts =
+        refreshSidebar || trashMode || scope === "all" || scope === "root";
+      // Post the primary browse request before sidebar/count hydration. The
+      // Worker is a single synchronous SQLite owner; constructing the sidebar
+      // Promise first used to put folders/tags/collections ahead of the page
+      // the user is actually waiting to see (several hundred ms on 20k
+      // libraries, and materially worse on network-backed libraries).
+      const primaryAssetPromise = api.searchAssets({
+        ...libId,
+        query: opts?.discovery?.search ?? null,
+        filters: opts?.discovery?.filters,
+        scope: browseScope,
+        sort: opts?.discovery?.sort,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
+        showIgnored: includeIgnored,
+      });
+      const allAssetsPromise = includeLibraryCounts && (trashMode || scope !== "all")
+        ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
+        : Promise.resolve(undefined);
+      const rootCountPromise = includeLibraryCounts && (trashMode || scope !== "root")
+        ? api.searchAssets({
+            ...libId,
+            query: null,
+            limit: 1,
+            offset: 0,
+            scope: { kind: "folder", folderId: null, recursive: false },
+            showIgnored: includeIgnored,
+          })
+        : Promise.resolve(undefined);
+      const trashCountPromise = includeLibraryCounts
+        ? api.searchAssets({
+            ...libId,
+            query: null,
+            limit: 1,
+            offset: 0,
+            scope: { kind: "trash" },
+            showIgnored: includeIgnored,
+          })
+        : Promise.resolve(undefined);
+      // Sidebar hydration is intentionally started after the primary browse
+      // and its count requests have entered the Worker queue. This keeps the
+      // startup ordering deterministic without making sidebar state stale.
       const sidebarPromise = refreshSidebar
         ? Promise.all([
             api.listFolders({ ...libId, showIgnored: includeIgnored }),
@@ -2948,43 +3007,11 @@ function AppInner() {
               : Promise.resolve(null),
           ])
         : Promise.resolve(null);
-      const includeLibraryCounts =
-        refreshSidebar || trashMode || scope === "all" || scope === "root";
       const results = await Promise.all([
-        api.searchAssets({
-          ...libId,
-          query: opts?.discovery?.search ?? null,
-          filters: opts?.discovery?.filters,
-          scope: browseScope,
-          sort: opts?.discovery?.sort,
-          // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
-          limit: BROWSE_PAGE_SIZE,
-          offset: 0,
-          showIgnored: includeIgnored,
-        }),
-        includeLibraryCounts && (trashMode || scope !== "all")
-          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
-          : Promise.resolve(undefined),
-        includeLibraryCounts && (trashMode || scope !== "root")
-          ? api.searchAssets({
-              ...libId,
-              query: null,
-              limit: 1,
-              offset: 0,
-              scope: { kind: "folder", folderId: null, recursive: false },
-              showIgnored: includeIgnored,
-            })
-          : Promise.resolve(undefined),
-        includeLibraryCounts
-          ? api.searchAssets({
-              ...libId,
-              query: null,
-              limit: 1,
-              offset: 0,
-              scope: { kind: "trash" },
-              showIgnored: includeIgnored,
-            })
-          : Promise.resolve(undefined),
+        primaryAssetPromise,
+        allAssetsPromise,
+        rootCountPromise,
+        trashCountPromise,
         sidebarPromise,
       ]).catch((caught: unknown) => {
         if (generation !== contentLoadGenerationRef.current) return null;
@@ -7857,14 +7884,15 @@ function AppInner() {
   }, [library?.libraryId]);
 
   // 打开库后拉取同步绑定状态（库切换器 link/link-off 图标）。
+  const activeLibraryId = library?.libraryId;
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      if (!api || !library) {
+      if (!api || !activeLibraryId) {
         if (!cancelled) setSyncBindingStatus("none");
         return;
       }
-      const result = await api.syncGetBinding({ libraryId: library.libraryId });
+      const result = await api.syncGetBinding({ libraryId: activeLibraryId });
       if (cancelled) return;
       if (result.ok && result.value) {
         setSyncBindingStatus(result.value.enabled ? "enabled" : "disabled");
@@ -7875,7 +7903,7 @@ function AppInner() {
     return () => {
       cancelled = true;
     };
-  }, [api, library?.libraryId]);
+  }, [api, activeLibraryId]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {

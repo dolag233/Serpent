@@ -406,12 +406,67 @@ type ArtifactPathBatchWaiter = {
   reject: (error: Error) => void;
 };
 const artifactPathBatches = new Map<string, ArtifactPathBatchWaiter[]>();
+const artifactPathCache = new Map<string, string>();
+const artifactPathCacheEpochByLibrary = new Map<string, number>();
+const ARTIFACT_PATH_CACHE_LIMIT = 4_096;
+
+function artifactPathCacheKey(libraryId: string, artifactId: string, usage: string): string {
+  return `${libraryId}\u0000${usage}\u0000${artifactId}`;
+}
+
+function clearArtifactPathCache(libraryId?: string): void {
+  if (libraryId === undefined) {
+    artifactPathCache.clear();
+    artifactPathCacheEpochByLibrary.clear();
+    return;
+  }
+  artifactPathCacheEpochByLibrary.set(
+    libraryId,
+    (artifactPathCacheEpochByLibrary.get(libraryId) ?? 0) + 1,
+  );
+  const prefix = `${libraryId}\u0000`;
+  for (const key of artifactPathCache.keys()) {
+    if (key.startsWith(prefix)) artifactPathCache.delete(key);
+  }
+}
+
+function artifactPathCacheEpoch(libraryId: string): number {
+  return artifactPathCacheEpochByLibrary.get(libraryId) ?? 0;
+}
+
+function cancelArtifactPathBatches(libraryId: string): void {
+  const prefix = `${libraryId}\u0000`;
+  const error = new Error('Library closed before artifact path resolution completed.');
+  for (const [key, waiters] of artifactPathBatches) {
+    if (!key.startsWith(prefix)) continue;
+    artifactPathBatches.delete(key);
+    for (const waiter of waiters) waiter.reject(error);
+  }
+}
+
+function rememberArtifactPath(libraryId: string, artifactId: string, usage: string, absolutePath: string): void {
+  const key = artifactPathCacheKey(libraryId, artifactId, usage);
+  artifactPathCache.delete(key);
+  artifactPathCache.set(key, absolutePath);
+  while (artifactPathCache.size > ARTIFACT_PATH_CACHE_LIMIT) {
+    const oldest = artifactPathCache.keys().next().value;
+    if (oldest === undefined) break;
+    artifactPathCache.delete(oldest);
+  }
+}
 
 function resolveArtifactPathBatched(
   libraryId: string,
   artifactId: string,
   usage: "preview" | "proxy",
 ): Promise<string> {
+  const cached = artifactPathCache.get(artifactPathCacheKey(libraryId, artifactId, usage));
+  if (cached !== undefined) {
+    // A lookup hit is also a use: keep hot viewport artifacts at the MRU end
+    // of the bounded cache instead of evicting them after unrelated pages.
+    rememberArtifactPath(libraryId, artifactId, usage, cached);
+    return Promise.resolve(cached);
+  }
   const key = `${libraryId}\u0000${usage}`;
   return new Promise<string>((resolve, reject) => {
     const batch = artifactPathBatches.get(key) ?? [];
@@ -430,6 +485,7 @@ function resolveArtifactPathBatched(
       void (async () => {
         for (let index = 0; index < pending.length; index += 500) {
           const chunk = pending.slice(index, index + 500);
+          const requestEpoch = artifactPathCacheEpoch(libraryId);
           try {
             const result = await client.request({
               type: "media.get-artifact-paths",
@@ -445,8 +501,15 @@ function resolveArtifactPathBatched(
             );
             for (const waiter of chunk) {
               const absolutePath = paths.get(waiter.artifactId);
-              if (absolutePath) waiter.resolve(absolutePath);
-              else waiter.reject(new Error("Artifact was absent from path batch."));
+              if (absolutePath) {
+                if (artifactPathCacheEpoch(libraryId) === requestEpoch) {
+                  rememberArtifactPath(libraryId, waiter.artifactId, usage, absolutePath);
+                }
+                waiter.resolve(absolutePath);
+              } else {
+                artifactPathCache.delete(artifactPathCacheKey(libraryId, waiter.artifactId, usage));
+                waiter.reject(new Error("Artifact was absent from path batch."));
+              }
             }
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
@@ -1588,6 +1651,7 @@ function publishAssetChange(event: AssetChangeEvent): void {
   // or replacement). Artifact-only library changes use the separate
   // library.changed channel and do not evict the viewer's hot path.
   sourcePathCache.clearLibrary(parsed.libraryId);
+  clearArtifactPathCache(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'asset.changed',
     libraryId: parsed.libraryId,
@@ -1606,6 +1670,7 @@ function publishAssetChange(event: AssetChangeEvent): void {
 
 function publishLibraryChanged(event: LibraryChangedEvent): void {
   const parsed = parseLibraryChangedEvent(event);
+  clearArtifactPathCache(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'library.changed',
     libraryId: parsed.libraryId,
@@ -4604,10 +4669,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         pendingImportLibraries.delete(importId);
         pendingImportCollections.delete(importId);
       }
+      clearArtifactPathCache(request.libraryId);
+      cancelArtifactPathBatches(request.libraryId);
     }
     if (workerResult.ok && request.type === "library.delete-from-disk.request") {
       pendingRelinkPreviews.clearLibrary(request.libraryId);
       sourcePathCache.clearLibrary(request.libraryId);
+      clearArtifactPathCache(request.libraryId);
+      cancelArtifactPathBatches(request.libraryId);
       for (const [importId, libraryId] of pendingImportLibraries) {
         if (libraryId !== request.libraryId) continue;
         pendingImportLibraries.delete(importId);
@@ -4646,6 +4715,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (workerResult.ok && workerResult.type === "library.closed") {
       sourcePathCache.clearLibrary(workerResult.libraryId);
+      clearArtifactPathCache(workerResult.libraryId);
+      cancelArtifactPathBatches(workerResult.libraryId);
       pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
       for (const [executionId, context] of pluginAutomationContexts) {
         if (context.libraryId === workerResult.libraryId) {
@@ -7136,6 +7207,11 @@ async function startApplication(): Promise<void> {
           libraryId,
           artifactId,
         });
+        // A watcher/library-change event may have invalidated the path after
+        // the batch returned. Do not keep serving a stale artifact location
+        // after the first failed read; the next request will ask the Worker
+        // for the current path.
+        artifactPathCache.delete(artifactPathCacheKey(libraryId, artifactId, url.hostname));
         return new Response("Artifact file missing", { status: 404 });
       }
     } catch (error) {

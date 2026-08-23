@@ -2454,6 +2454,8 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /** Main-side wall-clock send time used only for cross-process diagnostics. */
+  sentAt: z.number().int().nonnegative().optional(),
   /** Origin metadata is non-secret and only affects the history projection. */
   historyContext: z.strictObject({
     source: z.enum(['desktop', 'script', 'mcp', 'plugin']),

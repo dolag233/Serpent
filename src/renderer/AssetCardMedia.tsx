@@ -95,6 +95,8 @@ export function AssetCardMedia({
             <img
               alt={alt}
               className="asset-thumbnail"
+              decoding="async"
+              fetchPriority="high"
               loading="lazy"
               onError={() => setErrored(true)}
               src={sequenceUrl}
@@ -134,6 +136,8 @@ export function AssetCardMedia({
         <img
           alt={alt}
           className="asset-thumbnail"
+          decoding="async"
+          fetchPriority="high"
           loading="lazy"
           onError={() => setErrored(true)}
           src={coverUrl}

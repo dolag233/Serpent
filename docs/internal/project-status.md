@@ -1,7 +1,15 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-23
+> 更新时间：2026-08-24
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
+
+- **2026-08-24 `Serpent-29125f` 资源库/查看器性能优化**：按基线研究完成开库对账异步
+ 发现与 generation 取消、关闭顺序、真实 idle-window 避让、visible-window 幂等与异步
+  header probe、Main artifact path LRU、查看器单 full-image 解码及可见卡片请求优先级；
+  新增 1,200 文件 event-loop starvation 基准和严格真实 20k Electron 解码基准。当前本地
+  APFS 夹具连续七轮独立 10/10（P50 110.5/100.0/95.7/109.0/103.1/111.1/90.4ms，P95/Max 350.0/463.5/316.7/420.2/222.6/224.6/395.8ms），
+  Worker 对账并发 viewer P95 1.3ms（event-loop lag P95 2.1ms / max 83.0ms）；真实 SMB/NAS、Windows、packaged、Computer Use 与人类验收仍未执行。详见
+  [开发日志](development/2026-08-24-resource-library-viewer-performance.md)。
 
 - **2026-08-23 `Serpent-a6f74d` RAW/ARW 预览与 Inspector 元信息**：已实现 RAW
   OIIO 默认 sRGB 路由、`.raw` 注册、受控 EXIF/IPTC/XMP artifact 提取和 Inspector

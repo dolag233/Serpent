@@ -65,7 +65,6 @@ export function chooseUniqueSessionLogPath(
 export function pruneSessionLogs(
   logsDir: string,
   maxFiles = MAX_SESSION_LOGS,
-  now = Date.now(),
 ): string[] {
   let entries: string[];
   try {

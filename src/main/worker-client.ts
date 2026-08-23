@@ -45,8 +45,10 @@ import {
 } from '../shared/document-thumbnail-protocol';
 
 interface PendingRequest {
+  commandType: string;
   resolve(result: WorkerResult): void;
   reject(error: Error): void;
+  sentAt: number | undefined;
   timer: ReturnType<typeof setTimeout> | undefined;
 }
 
@@ -63,6 +65,7 @@ const OPEN_STARTUP_GRACE_TIMEOUT_MS = 120_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
+const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
 
 /**
  * Disk-bound library transfer commands. A slow machine or a large Eagle
@@ -325,10 +328,18 @@ export class LibraryWorkerClient {
           reject(new WorkerRequestTimeoutError(requestId, command.type));
         }, timeout);
 
-      this.#pending.set(requestId, { resolve, reject, timer });
+      const sentAt = WORKER_CMD_LOG ? Date.now() : undefined;
+      this.#pending.set(requestId, {
+        commandType: command.type,
+        resolve,
+        reject,
+        sentAt,
+        timer,
+      });
       child.postMessage({
         requestId,
         command,
+        ...(sentAt === undefined ? {} : { sentAt }),
         ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
         ...(options.historyContext === undefined ? {} : { historyContext: options.historyContext }),
       });
@@ -726,6 +737,17 @@ export class LibraryWorkerClient {
 
     clearTimeout(pending.timer);
     this.#pending.delete(response.requestId);
+    if (WORKER_CMD_LOG && pending.sentAt !== undefined) {
+      this.logger.info(
+        'worker.cmd.roundtrip',
+        'Library Worker command roundtrip completed.',
+        {
+          requestId: response.requestId,
+          commandType: pending.commandType,
+          totalMs: Math.max(0, Date.now() - pending.sentAt),
+        },
+      );
+    }
     pending.resolve(response.result);
   };
 

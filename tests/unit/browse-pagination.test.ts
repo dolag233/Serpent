@@ -8,8 +8,10 @@ import {
   fetchBrowseLayout,
   isDiscardedBrowseWindowPage,
   isIgnorableBrowseWindowFailure,
+  isBrowseRootNearTail,
   registerBrowseSearchPage,
   registerBrowseSmartCollectionPage,
+  shouldRunBrowseSentinel,
   type BrowsePageDefinition,
 } from "../../src/renderer/use-browse-pagination";
 
@@ -137,6 +139,32 @@ describe("fetchBrowseLayout (Serpent-sa65 compact geometry index)", () => {
     } as unknown as SerpentLibraryApi;
 
     expect(await fetchBrowseLayout({ api, definition: searchDefinition })).toBeNull();
+  });
+});
+
+describe("browse tail sentinel (Serpent-performance)", () => {
+  it("waits for compact layout hydration before starting a tail query", () => {
+    expect(
+      shouldRunBrowseSentinel({ layoutHydrationComplete: false, total: 20_000 }),
+    ).toBe(false);
+    expect(
+      shouldRunBrowseSentinel({ layoutHydrationComplete: true, total: 20_000 }),
+    ).toBe(true);
+  });
+
+  it("does not observe an empty scope even after hydration", () => {
+    expect(
+      shouldRunBrowseSentinel({ layoutHydrationComplete: true, total: 0 }),
+    ).toBe(false);
+  });
+
+  it("requires the scrollport to be near its actual tail", () => {
+    expect(
+      isBrowseRootNearTail({ scrollTop: 0, clientHeight: 1_000, scrollHeight: 20_000 }),
+    ).toBe(false);
+    expect(
+      isBrowseRootNearTail({ scrollTop: 18_200, clientHeight: 1_000, scrollHeight: 20_000 }),
+    ).toBe(true);
   });
 });
 

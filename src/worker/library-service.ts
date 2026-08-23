@@ -24,10 +24,16 @@ import {
   watch,
   writeFileSync,
   writeSync,
+  type Dirent,
   type BigIntStats,
   type Stats,
 } from 'node:fs';
-import { opendir as opendirAsync, rm as rmAsync } from 'node:fs/promises';
+import {
+  lstat as lstatAsync,
+  opendir as opendirAsync,
+  realpath as realpathAsync,
+  rm as rmAsync,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { removeLibraryRootWithRetry, removePathWithSyncRetry, renamePathWithRetry } from './windows-fs-retry';
 import {
@@ -61,7 +67,10 @@ import {
   listedH264ProxyEncoders,
   parseFfmpegEncoderTokens,
 } from './video-proxy-encoder';
-import { readImageDimensionsSync } from './image-dimensions';
+import {
+  readImageDimensions,
+  readImageDimensionsSync,
+} from './image-dimensions';
 import {
   collectLinkedDirectoryPrefixes,
   directChildLinkedDirectories,
@@ -2835,6 +2844,35 @@ interface OpenLibrary {
    * mutation; the direct-count GROUP BY dominates the ~20ms otherwise.
    */
   folderCountCache?: { key: string; counts: Map<string, number> };
+  /**
+   * Ordered visible asset ids learned by the compact layout query. The
+   * renderer already paid for this full-scope order to build the scrollbar;
+   * reusing it turns a later deep page request into bounded primary-key reads
+   * instead of another cold ORDER BY/OFFSET walk over the whole library.
+   */
+  browseIndexCache?: { changeSequence: number; assetIds: string[] };
+}
+
+type DiscoveredSourceEntry = {
+  assetId?: string;
+  relativePath: string;
+  byteSize: number;
+  modifiedAt: string;
+  originalFilename: string;
+};
+
+interface RefreshManagedAssetsDiscovery {
+  linkedEntriesByFolder: Map<string, DiscoveredSourceEntry[]>;
+  managedEntries: DiscoveredSourceEntry[];
+  existingLinkedAssetIdsByFolder?: Map<string, Map<string, string>>;
+  existingManagedAssetIdsByIdentity?: Map<string, string>;
+}
+
+interface OpenReconciliationTask {
+  controller: AbortController;
+  generation: number;
+  libraryId: string;
+  promise: Promise<void>;
 }
 
 interface ArtifactPathCacheEntry {
@@ -3768,6 +3806,8 @@ export interface RefreshManagedAssetsOptions {
   assetIds?: readonly string[];
   /** Skip filesystem discovery when processing an existing-asset batch. */
   discoverSources?: boolean;
+  /** Pre-scanned source entries; used by the cancellable background scanner. */
+  discovery?: RefreshManagedAssetsDiscovery;
   /** Avoid materializing all AssetSummary objects for background maintenance. */
   includeAssets?: boolean;
 }
@@ -5441,6 +5481,9 @@ export class LibraryService {
   private readonly artifactPathCache = new Map<string, ArtifactPathCacheEntry>();
   /** Disk-heavy open maintenance yields while the user is actively browsing. */
   private readonly interactiveIdleUntilByLibrary = new Map<string, number>();
+  /** One cancellable reconciliation owner per open library generation. */
+  private readonly reconciliationByLibrary = new Map<string, OpenReconciliationTask>();
+  private readonly reconciliationGenerationByLibrary = new Map<string, number>();
   /**
    * Open automation groups are keyed by their Main-owned execution source.
    * The value is an in-memory reservation until the first real step is
@@ -5468,15 +5511,6 @@ export class LibraryService {
         Date.now() + idleMs,
       ),
     );
-  }
-
-  private async yieldForInteractiveIdle(libraryId: string): Promise<void> {
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    while (this.openById.has(libraryId)) {
-      const waitMs = (this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0) - Date.now();
-      if (waitMs <= 0) return;
-      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(waitMs, 1_000)));
-    }
   }
 
   /**
@@ -5553,47 +5587,79 @@ export class LibraryService {
    * connection in one long transaction.
    * Serpent-4bdd26 收编 codex/large-library-performance@15f3325c。
    */
-  private async refreshManagedAssetsOnOpen(libraryId: string): Promise<void> {
+  private async refreshManagedAssetsOnOpen(
+    libraryId: string,
+    task: OpenReconciliationTask,
+  ): Promise<void> {
     try {
+      this.assertReconciliationActive(task);
       const openLibrary = this.openById.get(libraryId);
       if (!openLibrary || openLibrary.readOnly) return;
-      const existingAssetIds = (openLibrary.connection
+      const existingAssets = (openLibrary.connection
         .prepare(
-          `SELECT asset_id
+          `SELECT asset_id, location_kind, linked_folder_id, relative_file_path
              FROM assets a
             WHERE a.deleted_at IS NULL
               AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
             ORDER BY a.relative_file_path`,
         )
-        .all() as Array<{ asset_id: string }>).map((row) => row.asset_id);
+        .all() as Array<{
+          asset_id: string;
+          location_kind: 'managed' | 'linked';
+          linked_folder_id: string | null;
+          relative_file_path: string;
+        }>);
+
+      // One async filesystem walk supplies both the existing-asset snapshot
+      // and the new-file discovery set. The old implementation first lstat'ed
+      // every existing row, then walked the same tree again to find new files;
+      // on a 20k library that doubled NAS metadata traffic and forced hundreds
+      // of synchronous DB batches.
+      this.assertReconciliationActive(task);
+      const discovery = await this.collectManagedAssetDiscoveryAsync(task);
+      const discoveredManagedPaths = new Set(
+        discovery.managedEntries.map((entry) => portablePathIdentity(entry.relativePath)),
+      );
+      const discoveredLinkedPaths = new Map(
+        [...discovery.linkedEntriesByFolder].map(([folderId, entries]) => [
+          folderId,
+          new Set(entries.map((entry) => portablePathIdentity(entry.relativePath))),
+        ]),
+      );
+      const staleExistingAssetIds = existingAssets
+        .filter((asset) => {
+          if (asset.location_kind === 'managed') {
+            return !discoveredManagedPaths.has(portablePathIdentity(asset.relative_file_path));
+          }
+          const linkedPaths = discoveredLinkedPaths.get(asset.linked_folder_id ?? '');
+          // An offline linked root is not scanned and must not be converted to
+          // missing merely because the NAS is temporarily unavailable.
+          return linkedPaths !== undefined
+            && !linkedPaths.has(portablePathIdentity(asset.relative_file_path));
+        })
+        .map((asset) => asset.asset_id);
       let changedCount = 0;
       let missingCount = 0;
-      // Keep each synchronous lstat/write slice below the interaction budget.
-      // A 128-file slice was reasonable on APFS but can monopolize the single
-      // Worker for hundreds of milliseconds when the library lives on SMB/NAS.
-      //
-      // Serpent-4bdd26 回归修正（用户报告 Windows 打开巨卡、缩略图生成巨慢）：
-      // 每批一个 BEGIN IMMEDIATE 事务 = 每批 journal fsync。Windows 上 fsync
-      // 可达 10-50ms（Defender 挂钩更糟），16 资产/批把一次开库对账变成
-      // 数百次 fsync，反复抢写锁饿死缩略图任务。本地盘恢复大批次；
-      // 仅网络存储保持细批次（那里的代价是网络往返而非 fsync）。
-      const batchSize = openLibrary.summary.networkStorage ? 16 : 128;
-      for (let offset = 0; offset < existingAssetIds.length; offset += batchSize) {
-        if (!this.openById.has(libraryId)) return;
+      // Missing rows are the only remaining fallback-lstat path. It is usually
+      // a tiny set; keep it small on network libraries because a missing NAS
+      // entry can still spend a full timeout in the OS path resolver.
+      const missingBatchSize = openLibrary.summary.networkStorage ? 1 : 32;
+      for (let offset = 0; offset < staleExistingAssetIds.length; offset += missingBatchSize) {
+        this.assertReconciliationActive(task);
         const refresh = this.refreshManagedAssets(libraryId, {
-          assetIds: existingAssetIds.slice(offset, offset + batchSize),
+          assetIds: staleExistingAssetIds.slice(offset, offset + missingBatchSize),
           discoverSources: false,
         });
         changedCount += refresh.changedCount;
         missingCount += refresh.missingCount;
-        await this.yieldForInteractiveIdle(libraryId);
+        await this.yieldReconciliation(task);
       }
 
-      // The empty filter makes this a discovery-only pass: new managed/linked
-      // files are still imported and indexed, while already checked files are
-      // not stat'ed a second time.
-      if (!this.openById.has(libraryId)) return;
-      const discovered = this.refreshManagedAssets(libraryId, { assetIds: [] });
+      // Discovery is separate from SQLite writes. The async scanner yielded as
+      // it walked the tree; now commit its entries in short transactions while
+      // reusing the same existing-identity maps for every batch.
+      this.assertReconciliationActive(task);
+      const discovered = await this.applyDiscoveredAssetsInBatches(task, discovery);
       changedCount += discovered.changedCount;
       missingCount += discovered.missingCount;
       if (changedCount > 0 && this.shouldEmitWatcherAssetChange()) {
@@ -5606,6 +5672,7 @@ export class LibraryService {
         });
       }
     } catch (error) {
+      if (task.controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
       this.diagnose('open.refresh-managed-assets', error, { libraryId });
     }
   }
@@ -7268,7 +7335,7 @@ export class LibraryService {
    * DDL/DML stays on plain `.prepare()`.
    */
   private prepareCached<T>(openLibrary: OpenLibrary, sql: string): T {
-    const key = `${openLibrary.summary.libraryId} ${sql}`;
+    const key = `${openLibrary.summary.libraryId}\u0000${sql}`;
     let statement = this.preparedStatementCache.get(key);
     if (statement === undefined) {
       statement = openLibrary.connection.prepare(sql);
@@ -7278,7 +7345,7 @@ export class LibraryService {
   }
 
   private dropPreparedStatementCache(libraryId: string): void {
-    const prefix = `${libraryId} `;
+    const prefix = `${libraryId}\u0000`;
     for (const key of this.preparedStatementCache.keys()) {
       if (key.startsWith(prefix)) this.preparedStatementCache.delete(key);
     }
@@ -9777,6 +9844,78 @@ export class LibraryService {
       cursor = path.join(cursor, component);
       try {
         if (lstatSync(cursor).isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+        }
+      } catch (error) {
+        if (error instanceof LibraryServiceError) throw error;
+        if (isUnreadablePathError(error)) break;
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
+      }
+    }
+    return targetPath;
+  }
+
+  private async folderPathAsync(
+    openLibrary: OpenLibrary,
+    relativePath: string,
+  ): Promise<string> {
+    const assetsPath = path.join(openLibrary.summary.libraryPath, 'Assets');
+    const assetsStat = await lstatAsync(assetsPath);
+    if (!assetsStat.isDirectory() || assetsStat.isSymbolicLink()) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    const targetPath = path.resolve(assetsPath, ...relativePath.split('/'));
+    const relation = path.relative(assetsPath, targetPath);
+    if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    let cursor = assetsPath;
+    for (const component of relation.split(path.sep)) {
+      cursor = path.join(cursor, component);
+      try {
+        if ((await lstatAsync(cursor)).isSymbolicLink()) {
+          throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+        }
+      } catch (error) {
+        if (error instanceof LibraryServiceError) throw error;
+        if (isUnreadablePathError(error)) break;
+        throw new LibraryServiceError('INVALID_LIBRARY_PATH', { cause: error });
+      }
+    }
+    return targetPath;
+  }
+
+  private async linkedAssetPathAsync(
+    openLibrary: OpenLibrary,
+    linkedFolderId: string | null,
+    relativeFilePath: string,
+  ): Promise<string> {
+    if (!linkedFolderId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    const folder = openLibrary.connection
+      .prepare('SELECT absolute_root_path FROM linked_folders WHERE folder_id = ?')
+      .get(linkedFolderId) as { absolute_root_path: string } | undefined;
+    if (!folder) throw new LibraryServiceError('LIBRARY_CORRUPT');
+
+    let rootPath: string;
+    try {
+      const rootEntry = await lstatAsync(folder.absolute_root_path);
+      if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+        return path.join(folder.absolute_root_path, ...relativeFilePath.split('/'));
+      }
+      rootPath = await realpathAsync(folder.absolute_root_path);
+    } catch {
+      return path.join(folder.absolute_root_path, ...relativeFilePath.split('/'));
+    }
+    const targetPath = path.resolve(rootPath, ...relativeFilePath.split('/'));
+    const relation = path.relative(rootPath, targetPath);
+    if (relation === '' || relation.startsWith(`..${path.sep}`) || path.isAbsolute(relation)) {
+      throw new LibraryServiceError('INVALID_LIBRARY_PATH');
+    }
+    let cursor = rootPath;
+    for (const component of relation.split(path.sep)) {
+      cursor = path.join(cursor, component);
+      try {
+        if ((await lstatAsync(cursor)).isSymbolicLink()) {
           throw new LibraryServiceError('INVALID_LIBRARY_PATH');
         }
       } catch (error) {
@@ -12644,7 +12783,7 @@ export class LibraryService {
     // Serpent-4bdd26: serve the recursive totals from the memo until a write
     // advances the change sequence (assets/folders triggers keep it coherent).
     const changeSequence = this.getChangeSequence(openLibrary.summary.libraryId);
-    const cacheKey = `${changeSequence} ${showIgnored ? 'ignored' : 'visible'}`;
+    const cacheKey = `${changeSequence}\u0000${showIgnored ? 'ignored' : 'visible'}`;
     if (openLibrary.folderCountCache?.key === cacheKey) {
       const cached = openLibrary.folderCountCache.counts;
       for (const folder of folders) {
@@ -13560,6 +13699,20 @@ export class LibraryService {
       ? this.linkedAssetPath(openLibrary, asset.linked_folder_id, asset.relative_file_path)
       : this.folderPath(openLibrary, asset.relative_file_path);
     return readImageDimensionsSync(filePath);
+  }
+
+  private async imageDimensionsForAssetAsync(
+    openLibrary: OpenLibrary,
+    asset: {
+      relative_file_path: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+    },
+  ): Promise<{ width: number; height: number } | null> {
+    const filePath = asset.location_kind === 'linked'
+      ? await this.linkedAssetPathAsync(openLibrary, asset.linked_folder_id, asset.relative_file_path)
+      : await this.folderPathAsync(openLibrary, asset.relative_file_path);
+    return readImageDimensions(filePath);
   }
 
   private withImageSequenceSummaries(
@@ -18324,7 +18477,9 @@ export class LibraryService {
       // pdfjs instantiates it with `new CanvasFactory({ ownerDocument,
       // enableHWA })`.
       class NapiCanvasFactory {
-        constructor(_options: { ownerDocument?: unknown; enableHWA?: boolean } = {}) {}
+        constructor(options: { ownerDocument?: unknown; enableHWA?: boolean } = {}) {
+          void options;
+        }
         create(width: number, height: number) {
           const canvas = createCanvas(width, height);
           return { canvas, context: canvas.getContext('2d') };
@@ -18337,8 +18492,9 @@ export class LibraryService {
           canvasAndContext.canvas.width = width;
           canvasAndContext.canvas.height = height;
         }
-        destroy(_canvasAndContext: { canvas: { width: number; height: number }; context: unknown }) {
+        destroy(canvasAndContext: { canvas: { width: number; height: number }; context: unknown }) {
           // @napi-rs/canvas canvases are garbage-collected; no explicit disposal.
+          void canvasAndContext;
         }
       }
       const loadingTask = pdfjs.getDocument({
@@ -18958,6 +19114,62 @@ export class LibraryService {
       if (size) {
         out.push({ assetId: row.asset_id, width: size.width, height: size.height });
       }
+    }
+    return out;
+  }
+
+  /**
+   * Async counterpart for the renderer's visible-window hint. The synchronous
+   * method above remains available to bounded worker/import code and tests,
+   * but a scroll report must not hold the single Worker event loop while it
+   * opens source files on a cold disk or a network-backed linked folder.
+   *
+   * The query and metadata writes remain owned by this service; only source
+   * header I/O is moved to fs/promises. Awaiting each probe lets pending
+   * search/preview messages run between files.
+   */
+  async persistVisibleWindowImageDimensionsAsync(
+    libraryId: string,
+    assetIds: string[],
+    signal?: AbortSignal,
+  ): Promise<Array<{ assetId: string; width: number; height: number }>> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (assetIds.length === 0) return [];
+    const capped = assetIds.slice(0, 64);
+    const placeholders = capped.map(() => '?').join(',');
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path, location_kind, linked_folder_id, current_revision_id
+           FROM assets
+          WHERE asset_id IN (${placeholders})
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts ra
+               WHERE ra.revision_id = assets.current_revision_id
+                 AND ra.kind = 'extracted_metadata'
+                 AND ra.invalidated_at IS NULL
+                 AND ra.width IS NOT NULL
+            )`,
+      )
+      .all(...capped) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        current_revision_id: string | null;
+      }>;
+    const out: Array<{ assetId: string; width: number; height: number }> = [];
+    for (const row of rows) {
+      if (signal?.aborted) {
+        throw new DOMException('Visible-window probe aborted.', 'AbortError');
+      }
+      if (!row.current_revision_id) continue;
+      const size = await this.imageDimensionsForAssetAsync(openLibrary, row);
+      if (signal?.aborted) {
+        throw new DOMException('Visible-window probe aborted.', 'AbortError');
+      }
+      if (!size) continue;
+      this.persistExtractedImageDimensions(openLibrary, row.current_revision_id, size);
+      out.push({ assetId: row.asset_id, width: size.width, height: size.height });
     }
     return out;
   }
@@ -22563,56 +22775,119 @@ export class LibraryService {
   async runOpenBackgroundReconciliation(libraryId: string): Promise<void> {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary.readOnly) return;
-    const yieldTurn = () => this.yieldForInteractiveIdle(libraryId);
-    try {
-      // Establish the pre-reconciliation safety point before expired-trash
-      // cleanup or any other background write can run. A second call below is
-      // throttled to the same 24-hour slot when the rescan changes metadata.
-      await yieldTurn();
-      // Serpent-4bdd26: the synchronous open defers PRAGMA quick_check here —
-      // it scans every B-tree (~270ms on a 60MB library) and used to dominate
-      // library.open. Corruption discovered at this point still routes through
-      // the recovery ladder via the thrown LibraryServiceError.
-      readLibraryIdentity(openLibrary.connection);
-      await yieldTurn();
-      // Serpent-4bdd26: always-ignored junk cleanup also deferred from the
-      // synchronous open (~2.8s full active scan on SMB via the covering index).
-      this.reconcileDefaultIgnoredAssets(openLibrary);
-      await yieldTurn();
-      // Serpent-4bdd26: legacy GIF proxy retirement deferred too — its GIF
-      // LIKE subquery scans all assets (~180ms on SMB) and only cancels doomed
-      // legacy transcodes.
-      this.retireLegacyGifProxyJobs(openLibrary);
-      await yieldTurn();
-      await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
-      await yieldTurn();
-      // Purge expired trash on open (best-effort, single busy file does not abort)
+    const previous = this.reconciliationByLibrary.get(libraryId);
+    previous?.controller.abort();
+    const generation = (this.reconciliationGenerationByLibrary.get(libraryId) ?? 0) + 1;
+    this.reconciliationGenerationByLibrary.set(libraryId, generation);
+    const task: OpenReconciliationTask = {
+      controller: new AbortController(),
+      generation,
+      libraryId,
+      promise: Promise.resolve(),
+    };
+    this.reconciliationByLibrary.set(libraryId, task);
+    const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
+    const startedAt = performance.now();
+    let stageMark = startedAt;
+    const markStage = (stage: string): void => {
+      if (!stageLog) return;
+      const now = performance.now();
+      console.error(JSON.stringify({
+        scope: 'open.reconciliation.stage',
+        libraryId,
+        generation,
+        stage,
+        durationMs: Math.round((now - stageMark) * 100) / 100,
+        totalMs: Math.round((now - startedAt) * 100) / 100,
+      }));
+      stageMark = now;
+    };
+
+    task.promise = (async () => {
       try {
-        this.purgeExpiredTrash(libraryId);
+        // Establish the pre-reconciliation safety point before any background
+        // write. Every subsequent stage is owned by this open generation.
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        // Schema/identity validation already ran in the synchronous open.
+        // Keep this cheap guard here; the full quick_check is deliberately
+        // deferred until the end so a 20k-library integrity scan cannot sit in
+        // front of the first viewer request.
+        readLibraryIdentity(openLibrary.connection, { skipQuickCheck: true });
+        markStage('identity');
+        await this.yieldReconciliation(task);
+
+        // The first pass is source reconciliation: it repairs the browse
+        // surface before optional maintenance touches old rows. This keeps a
+        // large ignored subtree or a stale trash sweep from delaying the first
+        // usable browse/viewer response.
+        await this.refreshManagedAssetsOnOpen(libraryId, task);
+        markStage('asset-reconciliation');
+        await this.yieldReconciliation(task);
+
+        this.assertReconciliationActive(task);
+        await this.reconcileDefaultIgnoredAssets(openLibrary, task);
+        markStage('default-ignore-cleanup');
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        this.retireLegacyGifProxyJobs(openLibrary);
+        markStage('legacy-proxy-cleanup');
+        await this.yieldReconciliation(task);
+        await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
+        markStage('backup');
+        await this.yieldReconciliation(task);
+
+        try {
+          this.assertReconciliationActive(task);
+          this.purgeExpiredTrash(libraryId);
+          markStage('trash-purge');
+        } catch (error) {
+          if (task.controller.signal.aborted) throw error;
+          this.diagnose('trash.purge-on-open', error, { libraryId });
+        }
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        const current = this.openById.get(libraryId);
+        if (current) {
+          await this.yieldReconciliation(task);
+          await this.createDatabaseBackupForOpenLibrary(current, 'open');
+          markStage('post-reconciliation-backup');
+        }
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        await this.warmBrowseIndexCache(openLibrary, task);
+        markStage('index-warm');
+        // Artifact-file reconciliation remains last and yields between every
+        // directory batch. It repairs derived-file drift without competing
+        // with the first browse/viewer requests.
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        await this.reconcileMissingArtifactFiles(openLibrary, () => this.yieldReconciliation(task));
+        markStage('artifact-reconciliation');
+        await this.yieldReconciliation(task);
+        this.assertReconciliationActive(task);
+        // quick_check(1) is a single synchronous SQLite operation and cannot be
+        // time-sliced. Run it only after all useful work and only when the
+        // interaction idle window is clear; an active viewer will get the
+        // integrity pass on a later open instead of paying a 0.5–1s stall now.
+        if ((this.interactiveIdleUntilByLibrary.get(libraryId) ?? 0) <= Date.now()) {
+          readLibraryIdentity(openLibrary.connection);
+          markStage('integrity-check');
+        } else {
+          markStage('integrity-check-deferred');
+        }
       } catch (error) {
-        this.diagnose('trash.purge-on-open', error, { libraryId });
+        if (task.controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+        this.diagnose('open.background-reconciliation', error, { libraryId, generation });
       }
-      await yieldTurn();
-      await this.refreshManagedAssetsOnOpen(libraryId);
-      const current = this.openById.get(libraryId);
-      if (current) {
-        await yieldTurn();
-        // The first successful open creates the initial slot; later opens are
-        // throttled by the verified slot mtime to one backup per 24 hours.
-        await this.createDatabaseBackupForOpenLibrary(current, 'open');
+    })();
+
+    try {
+      await task.promise;
+    } finally {
+      if (this.reconciliationByLibrary.get(libraryId) === task) {
+        this.reconciliationByLibrary.delete(libraryId);
       }
-      await yieldTurn();
-      this.warmBrowseIndexCache(openLibrary);
-      // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：artifact 文件扫描
-      // 是对账链里对首屏最无用、对 SMB 最昂贵的一步——21,508 条目的目录枚举
-      // 实测 ~16.5s（目录元数据是海量小网络往返，与带宽无关），而它只修复
-      // 「文件在应用外消失」这类罕见派生状态漂移。移到链尾：首屏浏览、计数
-      // 与索引预热全部落地之后才轮到它，且枚举循环内部按块让步（见
-      // reconcileMissingArtifactFiles），任何交互请求到达时事件循环都是空的。
-      await yieldTurn();
-      await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
-    } catch (error) {
-      this.diagnose('open.background-reconciliation', error, { libraryId });
     }
   }
 
@@ -22623,7 +22898,10 @@ export class LibraryService {
    * seconds of latency that a background scan can absorb invisibly.
    * Read-only and yielded between passes; correctness-neutral.
    */
-  private warmBrowseIndexCache(openLibrary: OpenLibrary): void {
+  private async warmBrowseIndexCache(
+    openLibrary: OpenLibrary,
+    task: OpenReconciliationTask,
+  ): Promise<void> {
     // Ignored linked folders are intentionally outside the browse surface and
     // can contain most of a library. Warming their index pages after open only
     // competes with the first viewer/source requests, especially on SMB.
@@ -22632,18 +22910,26 @@ export class LibraryService {
       `SELECT r.modified_at FROM assets a
          JOIN revisions r ON r.revision_id = a.current_revision_id
         WHERE a.deleted_at IS NULL
-          AND ${visibleAssetSql}`,
+          AND ${visibleAssetSql}
+        ORDER BY r.modified_at DESC
+        LIMIT 512`,
       `SELECT ra.artifact_id FROM assets a
          JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
         WHERE a.deleted_at IS NULL
-          AND ${visibleAssetSql}`,
+          AND ${visibleAssetSql}
+        ORDER BY ra.artifact_id
+        LIMIT 512`,
     ];
     for (const sql of queries) {
       try {
+        this.assertReconciliationActive(task);
         // Single narrow column: materializing it is cheap, and reading every
-        // row is exactly what pulls the index pages into the cache.
+        // hot page is enough to make the first sort/view query predictable;
+        // scanning every row here was itself a startup regression on NAS.
         openLibrary.connection.prepare(sql).all();
-      } catch {
+        await this.yieldReconciliation(task);
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error;
         // Warm-up is best-effort; any failure just skips the pass.
       }
     }
@@ -23893,6 +24179,29 @@ export class LibraryService {
 
   // ── Search ──────────────────────────────────────────────────────────
 
+  /**
+   * The compact layout query and the ordinary all-assets browse share the
+   * same stable order. Keep this narrow: filters, folders, collections and
+   * explicit sorts each have their own semantics and must use the SQL path.
+   */
+  private isDefaultBrowseIndexRequest(input: {
+    query?: { clauses: SearchClause[]; groups?: SearchGroup[] } | null;
+    filters?: FilterClause[] | null;
+    scope?: SearchScope | null;
+    sort?: { field: string; order: 'asc' | 'desc' } | null;
+    scopeMode?: boolean | null;
+    idsOnly?: boolean | null;
+    showIgnored?: boolean;
+  }): boolean {
+    return input.query == null
+      && (input.filters?.length ?? 0) === 0
+      && input.scope == null
+      && input.sort == null
+      && input.scopeMode !== true
+      && input.idsOnly !== true
+      && input.showIgnored !== true;
+  }
+
   private buildFilterWhere(
     filters: FilterClause[],
   ): { sql: string; params: unknown[] } {
@@ -24090,6 +24399,20 @@ export class LibraryService {
     const scopeMode = input.scopeMode === true;
     const idsOnly = input.idsOnly === true;
     const layoutOnly = input.layoutOnly === true;
+    const defaultBrowseIndexRequest = this.isDefaultBrowseIndexRequest(input);
+    const browseIndexSequenceBefore = defaultBrowseIndexRequest
+      ? this.getChangeSequence(input.libraryId)
+      : undefined;
+    const browseIndexCache = openLibrary.browseIndexCache;
+    let cachedBrowseAssetIds: string[] | undefined;
+    if (
+      !layoutOnly
+      && defaultBrowseIndexRequest
+      && browseIndexCache !== undefined
+      && browseIndexCache.changeSequence === browseIndexSequenceBefore
+    ) {
+      cachedBrowseAssetIds = browseIndexCache.assetIds;
+    }
     const limit = scopeMode || idsOnly || layoutOnly
       ? BROWSE_SCOPE_MAX_ASSETS
       : (input.limit ?? 50);
@@ -24517,13 +24840,17 @@ export class LibraryService {
     ].join(',\n');
 
     // Total count query.
-    const countSql = `${collectionScope?.queryPrefix ?? ''}SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
-    const countRow = connection
-      .prepare(countSql)
-      .get(...(collectionScope?.params ?? []), ...allParams) as {
-      total: number;
-    };
-    const total = countRow.total;
+    const total = cachedBrowseAssetIds !== undefined
+      ? cachedBrowseAssetIds.length
+      : (() => {
+          const countSql = `${collectionScope?.queryPrefix ?? ''}SELECT COUNT(*) AS total ${countFrom} ${whereClause}`;
+          const countRow = connection
+            .prepare(countSql)
+            .get(...(collectionScope?.params ?? []), ...allParams) as {
+            total: number;
+          };
+          return countRow.total;
+        })();
 
     // Data query. ids-only mode (Serpent-ws4k) fetches just the stable id
     // column so select-all/invert can cover the whole scope without shipping
@@ -24543,12 +24870,29 @@ export class LibraryService {
       : layoutOnly
         ? layoutColumns
         : dataColumns;
-    const dataSql = `${collectionScope?.queryPrefix ?? ''}SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
-    const rows = connection
-      .prepare(dataSql)
-      .all(...(collectionScope?.params ?? []), ...allParams, ...orderParams, limit, offset) as Array<{
-        asset_id: string;
-        location_kind: 'managed' | 'linked';
+    const cachedPageAssetIds = cachedBrowseAssetIds?.slice(offset, offset + limit);
+    const cachedPageWhereClause = cachedPageAssetIds === undefined
+      ? whereClause
+      : cachedPageAssetIds.length === 0
+        ? ''
+        : `${whereClause}${whereClause.length > 0 ? ' AND ' : 'WHERE '}a.asset_id IN (${cachedPageAssetIds.map(() => '?').join(',')})`;
+    const dataSql = cachedPageAssetIds === undefined
+      ? `${collectionScope?.queryPrefix ?? ''}SELECT ${dataColumnsForFetch} ${dataFrom} ${whereClause} ORDER BY ${orderBy} LIMIT ? OFFSET ?`
+      : cachedPageAssetIds.length === 0
+        ? ''
+        : `${collectionScope?.queryPrefix ?? ''}SELECT ${dataColumnsForFetch} ${dataFrom} ${cachedPageWhereClause}`;
+    let rows = dataSql === ''
+      ? []
+      : connection
+        .prepare(dataSql)
+        .all(
+          ...(collectionScope?.params ?? []),
+          ...allParams,
+          ...(cachedPageAssetIds ?? []),
+          ...(cachedPageAssetIds === undefined ? [...orderParams, limit, offset] : []),
+        ) as Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
         managed_folder_id: string | null;
         relative_file_path: string;
         current_revision_id: string;
@@ -24565,9 +24909,17 @@ export class LibraryService {
         layout_height?: number | null;
         layout_preview_artifact_id?: string | null;
         layout_byte_size?: number | null;
-        layout_modified_at?: string | null;
-        layout_rating?: number | null;
+      layout_modified_at?: string | null;
+      layout_rating?: number | null;
       }>;
+
+    if (cachedPageAssetIds !== undefined && rows.length > 1) {
+      const rowById = new Map(rows.map((row) => [row.asset_id, row] as const));
+      rows = cachedPageAssetIds.flatMap((assetId) => {
+        const row = rowById.get(assetId);
+        return row === undefined ? [] : [row];
+      });
+    }
 
     if (idsOnly) {
       return {
@@ -24596,6 +24948,23 @@ export class LibraryService {
         if (row.layout_modified_at != null) entry.modifiedAt = row.layout_modified_at;
         if (row.layout_rating != null) entry.rating = row.layout_rating;
         layout[index] = entry;
+      }
+      if (defaultBrowseIndexRequest) {
+        const browseIndexSequenceAfter = this.getChangeSequence(input.libraryId);
+        // layoutOnly is capped at BROWSE_SCOPE_MAX_ASSETS. Only memoize it as
+        // a reusable ordered index when it covers the complete visible scope;
+        // otherwise a library above the cap would report the truncated length
+        // as its total and deep pages beyond the cap would disappear.
+        if (browseIndexSequenceAfter === browseIndexSequenceBefore && rows.length === total) {
+          openLibrary.browseIndexCache = {
+            changeSequence: browseIndexSequenceAfter,
+            assetIds: rows.map((row) => row.asset_id),
+          };
+        } else {
+          // A concurrent writer changed the scope while the full layout was
+          // being read. Do not turn a mixed snapshot into a reusable index.
+          openLibrary.browseIndexCache = undefined;
+        }
       }
       return {
         items: [],
@@ -32542,7 +32911,6 @@ export class LibraryService {
         const batchBytesBefore = bytesProcessed;
         let batchBytesCopied = 0;
         if (batch.length > 0) {
-          const batchStarted = performance.now();
           let plan;
           try {
             plan = this.prepareImport({
@@ -32568,8 +32936,6 @@ export class LibraryService {
           } catch (error) {
             throw this.wrapEagleImportStageError(error, 'IMPORT_COPY_FAILED');
           }
-          const copyMs = performance.now() - batchStarted;
-          const applyStarted = performance.now();
           let completion;
           try {
             completion = this.resolveImport({
@@ -33856,6 +34222,339 @@ export class LibraryService {
     return hash.digest('hex');
   }
 
+  private collectManagedAssetDiscovery(openLibrary: OpenLibrary): RefreshManagedAssetsDiscovery {
+    this.reconcileLinkedFolderStatuses(openLibrary);
+    const libraryId = openLibrary.summary.libraryId;
+    const linkedEntriesByFolder = new Map<string, DiscoveredSourceEntry[]>();
+    const linkedFolderRows = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE library_id = ?`,
+      )
+      .all(libraryId) as Array<{
+        folder_id: string;
+        absolute_root_path: string;
+        status: 'available' | 'offline';
+      }>;
+
+    for (const folder of linkedFolderRows) {
+      if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
+      const rules = this.getLinkedFolderRules({
+        libraryId,
+        folderId: folder.folder_id,
+      });
+      linkedEntriesByFolder.set(
+        folder.folder_id,
+        this.enumerateLinkedSources(
+          folder.absolute_root_path,
+          folder.folder_id,
+          rules,
+          (relativePath, pathKind) => this.isExplicitlyIgnored(
+            openLibrary,
+            'linked',
+            folder.folder_id,
+            relativePath,
+            pathKind,
+          ),
+        ),
+      );
+    }
+
+    return {
+      linkedEntriesByFolder,
+      managedEntries: this.enumerateManagedSources(
+        this.assetsPath(openLibrary),
+        (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'managed',
+          null,
+          relativePath,
+          pathKind,
+        ),
+      ),
+    };
+  }
+
+  private reconciliationAbortError(): Error {
+    const error = new Error('Open-library reconciliation was cancelled.');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  private assertReconciliationActive(task: OpenReconciliationTask): void {
+    if (
+      task.controller.signal.aborted
+      || this.reconciliationByLibrary.get(task.libraryId) !== task
+      || !this.openById.has(task.libraryId)
+    ) {
+      throw this.reconciliationAbortError();
+    }
+  }
+
+  private async yieldReconciliation(task: OpenReconciliationTask): Promise<void> {
+    this.assertReconciliationActive(task);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    this.assertReconciliationActive(task);
+    // A single 100ms sleep is not an idle window: it merely delays the next
+    // synchronous stage while the user is still interacting. The old code
+    // then entered identity/source reconciliation with up to ~2s of active
+    // viewer/browse traffic remaining, which reproduced as a 300–500ms page
+    // queue on the first scrollbar jump. Stay parked in bounded timer slices
+    // until the latest interaction deadline really expires.
+    while (true) {
+      const remainingMs = (this.interactiveIdleUntilByLibrary.get(task.libraryId) ?? 0) - Date.now();
+      if (remainingMs <= 0) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(remainingMs, 100)));
+      this.assertReconciliationActive(task);
+    }
+  }
+
+  private async enumerateSourcesAsync(input: {
+    errorCode: 'IMPORT_APPLY_FAILED' | 'INVALID_IMPORT_SOURCE';
+    explicitlyIgnored: (relativePath: string, pathKind: 'asset' | 'folder') => boolean;
+    isDirectoryIgnored?: (relativePath: string) => boolean;
+    libraryId: string;
+    locationKind: 'managed' | 'linked';
+    rootPath: string;
+    task: OpenReconciliationTask;
+  }): Promise<DiscoveredSourceEntry[]> {
+    const entries: DiscoveredSourceEntry[] = [];
+    const pendingDirectories: Array<{ absolutePath: string; relativePath: string }> = [
+      { absolutePath: input.rootPath, relativePath: '' },
+    ];
+    let sliceStartedAt = performance.now();
+
+    while (pendingDirectories.length > 0) {
+      this.assertReconciliationActive(input.task);
+      const directory = pendingDirectories.pop()!;
+      let handle;
+      try {
+        handle = await opendirAsync(directory.absolutePath);
+      } catch (error) {
+        throw new LibraryServiceError(input.errorCode, { cause: error });
+      }
+
+      const children: Dirent[] = [];
+      try {
+        for (;;) {
+          const child = await handle.read();
+          if (child === null) break;
+          children.push(child);
+        }
+      } finally {
+        await handle.close();
+      }
+      children.sort((left, right) => left.name.localeCompare(right.name));
+
+      for (const child of children) {
+        this.assertReconciliationActive(input.task);
+        const relativePath = directory.relativePath === ''
+          ? child.name
+          : path.posix.join(directory.relativePath, child.name);
+        const absolutePath = path.join(directory.absolutePath, child.name);
+        if (child.isSymbolicLink()) {
+          this.diagnose(
+            input.locationKind === 'managed'
+              ? 'managed-asset.symlink-skipped'
+              : 'linked-folder.symlink-skipped',
+            new LibraryServiceError('INVALID_IMPORT_SOURCE', {
+              reason: 'SYMBOLIC_LINK_NOT_ALLOWED',
+            }),
+            { libraryId: input.libraryId, relativePath },
+          );
+          continue;
+        }
+        if (child.isDirectory()) {
+          if (
+            (input.locationKind === 'managed' && isDefaultIgnoredAssetEntry(child.name, 'directory'))
+            || input.isDirectoryIgnored?.(relativePath)
+            || input.explicitlyIgnored(relativePath, 'folder')
+          ) continue;
+          pendingDirectories.push({ absolutePath, relativePath });
+          continue;
+        }
+        if (!child.isFile()) continue;
+
+        let stat: Awaited<ReturnType<typeof lstatAsync>>;
+        try {
+          // Keep the existing synchronous stat seam for deterministic tests;
+          // production uses the promise API so a slow volume cannot block the
+          // Worker event loop during open reconciliation.
+          stat = this.options.assetLstat
+            ? this.options.assetLstat(absolutePath)
+            : await lstatAsync(absolutePath);
+        } catch (error) {
+          if (isUnreadablePathError(error)) continue;
+          throw new LibraryServiceError(input.errorCode, { cause: error });
+        }
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+
+        let normalized: string;
+        try {
+          normalized = normalizeRelativeAssetPath(relativePath);
+        } catch (error) {
+          throw new LibraryServiceError(input.errorCode, { cause: error });
+        }
+        if (
+          input.locationKind === 'managed'
+          && isDefaultIgnoredAssetEntry(child.name, 'file')
+        ) continue;
+        if (input.explicitlyIgnored(normalized, 'asset')) continue;
+        const byteSize = stat.size;
+        if (!Number.isSafeInteger(byteSize)) {
+          throw new LibraryServiceError(input.errorCode, {
+            reason: 'UNSUPPORTED_FILE_ENTRY',
+          });
+        }
+        entries.push({
+          relativePath: normalized,
+          byteSize,
+          modifiedAt: stat.mtime.toISOString(),
+          originalFilename: child.name,
+        });
+
+        if (performance.now() - sliceStartedAt >= 6) {
+          await this.yieldReconciliation(input.task);
+          sliceStartedAt = performance.now();
+        }
+      }
+    }
+    return entries;
+  }
+
+  private async collectManagedAssetDiscoveryAsync(
+    task: OpenReconciliationTask,
+  ): Promise<RefreshManagedAssetsDiscovery> {
+    const openLibrary = this.openById.get(task.libraryId);
+    if (!openLibrary) throw this.reconciliationAbortError();
+    this.assertReconciliationActive(task);
+    this.reconcileLinkedFolderStatuses(openLibrary);
+    const linkedEntriesByFolder = new Map<string, DiscoveredSourceEntry[]>();
+    const existingLinkedAssetIdsByFolder = new Map<string, Map<string, string>>();
+    const existingManagedAssetIdsByIdentity = new Map<string, string>();
+    for (const row of openLibrary.connection
+      .prepare("SELECT asset_id, path_identity FROM assets WHERE location_kind = 'managed'")
+      .all() as Array<{ asset_id: string; path_identity: string }>) {
+      existingManagedAssetIdsByIdentity.set(row.path_identity, row.asset_id);
+    }
+    const linkedFolderRows = openLibrary.connection
+      .prepare(
+        `SELECT folder_id, absolute_root_path, status
+           FROM linked_folders
+          WHERE library_id = ?`,
+      )
+      .all(task.libraryId) as Array<{
+        folder_id: string;
+        absolute_root_path: string;
+        status: 'available' | 'offline';
+      }>;
+
+    for (const folder of linkedFolderRows) {
+      this.assertReconciliationActive(task);
+      if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
+      const rules = this.getLinkedFolderRules({
+        libraryId: task.libraryId,
+        folderId: folder.folder_id,
+      });
+      const existingAssetIdsByIdentity = new Map<string, string>();
+      for (const row of openLibrary.connection
+        .prepare('SELECT asset_id, path_identity FROM assets WHERE linked_folder_id = ?')
+        .all(folder.folder_id) as Array<{ asset_id: string; path_identity: string }>) {
+        existingAssetIdsByIdentity.set(row.path_identity, row.asset_id);
+      }
+      existingLinkedAssetIdsByFolder.set(folder.folder_id, existingAssetIdsByIdentity);
+      const entries = await this.enumerateSourcesAsync({
+        errorCode: 'INVALID_IMPORT_SOURCE',
+        explicitlyIgnored: (relativePath, pathKind) => this.isExplicitlyIgnored(
+          openLibrary,
+          'linked',
+          folder.folder_id,
+          relativePath,
+          pathKind,
+        ) || (
+          pathKind === 'asset'
+          && this.linkedPathIsIgnored(relativePath, rules)
+        ),
+        isDirectoryIgnored: (relativePath) => (
+          !rules.some((rule) => rule.enabled && rule.action === 'include')
+          && this.linkedPathIsIgnored(
+            path.posix.join(relativePath, '__serpent_probe__'),
+            rules,
+          )
+        ),
+        libraryId: task.libraryId,
+        locationKind: 'linked',
+        rootPath: folder.absolute_root_path,
+        task,
+      });
+      for (const entry of entries) {
+        entry.assetId = existingAssetIdsByIdentity.get(portablePathIdentity(entry.relativePath));
+      }
+      linkedEntriesByFolder.set(folder.folder_id, entries);
+      await this.yieldReconciliation(task);
+    }
+
+    const managedEntries = await this.enumerateSourcesAsync({
+      errorCode: 'IMPORT_APPLY_FAILED',
+      explicitlyIgnored: (relativePath, pathKind) => this.isExplicitlyIgnored(
+        openLibrary,
+        'managed',
+        null,
+        relativePath,
+        pathKind,
+      ),
+      libraryId: task.libraryId,
+      locationKind: 'managed',
+      rootPath: this.assetsPath(openLibrary),
+      task,
+    });
+    for (const entry of managedEntries) {
+      entry.assetId = existingManagedAssetIdsByIdentity.get(portablePathIdentity(entry.relativePath));
+    }
+    return {
+      linkedEntriesByFolder,
+      managedEntries,
+      existingLinkedAssetIdsByFolder,
+      existingManagedAssetIdsByIdentity,
+    };
+  }
+
+  private async applyDiscoveredAssetsInBatches(
+    task: OpenReconciliationTask,
+    discovery: RefreshManagedAssetsDiscovery,
+  ): Promise<AssetRefreshResult> {
+    const batchSize = this.openById.get(task.libraryId)?.summary.networkStorage ? 16 : 64;
+    let changedCount = 0;
+    let missingCount = 0;
+    const apply = async (entries: DiscoveredSourceEntry[], linkedFolderId?: string): Promise<void> => {
+      for (let offset = 0; offset < entries.length; offset += batchSize) {
+        this.assertReconciliationActive(task);
+        const batch = entries.slice(offset, offset + batchSize);
+        const batchDiscovery: RefreshManagedAssetsDiscovery = {
+          linkedEntriesByFolder: linkedFolderId === undefined
+            ? new Map()
+            : new Map([[linkedFolderId, batch]]),
+          managedEntries: linkedFolderId === undefined ? batch : [],
+          existingLinkedAssetIdsByFolder: discovery.existingLinkedAssetIdsByFolder,
+          existingManagedAssetIdsByIdentity: discovery.existingManagedAssetIdsByIdentity,
+        };
+        const result = this.refreshManagedAssets(task.libraryId, {
+          assetIds: batch.flatMap((entry) => entry.assetId ?? []),
+          discovery: batchDiscovery,
+        });
+        changedCount += result.changedCount;
+        missingCount += result.missingCount;
+        await this.yieldReconciliation(task);
+      }
+    };
+    for (const [folderId, entries] of discovery.linkedEntriesByFolder) {
+      await apply(entries, folderId);
+    }
+    await apply(discovery.managedEntries);
+    return { changedCount, missingCount };
+  }
+
   refreshManagedAssets(libraryId: string, options: { includeAssets: true } & RefreshManagedAssetsOptions): AssetRefreshResult & { assets: AssetSummary[] };
   refreshManagedAssets(libraryId: string, options?: RefreshManagedAssetsOptions): AssetRefreshResult;
   refreshManagedAssets(
@@ -33864,9 +34563,10 @@ export class LibraryService {
   ): AssetRefreshResult {
     const openLibrary = this.requireOpenLibrary(libraryId);
     // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：
-    // assetIds 限定 stat/revision 对账范围；空列表 = 只发现新文件（已核对文件
-    // 不再二次 stat）。discoverSources=false 跳过文件系统枚举（批次路径由
-    // fallback lstat 覆盖）。
+    // assetIds 限定已有资产的 stat/revision 对账范围；空列表仍表示“只发现
+    // 新文件”，而带 discovery 的非空列表还可以复用同一批异步文件快照来
+    // 对账已有资产。discoverSources=false 跳过文件系统枚举（仅缺失资产
+    // 批次走 fallback lstat）。
     const assetIds = options?.assetIds;
     const assetFilter = assetIds === undefined
       ? ''
@@ -33874,6 +34574,9 @@ export class LibraryService {
         ? ' AND 1 = 0'
         : ` AND a.asset_id IN (${assetIds.map(() => '?').join(',')})`;
     const discoverSources = options?.discoverSources ?? true;
+    const discovery = discoverSources
+      ? options?.discovery ?? this.collectManagedAssetDiscovery(openLibrary)
+      : undefined;
     // Serpent-onch 风格分阶段计时：SERPENT_REFRESH_STAGE_LOG=1 时输出各阶段耗时，
     // 用于大库全量对账的归因（Serpent-4bdd26）。生产默认关闭。
     const stageLog = process.env.SERPENT_REFRESH_STAGE_LOG === '1';
@@ -33926,30 +34629,37 @@ export class LibraryService {
     >();
 
     openLibrary.connection.transaction(() => {
-      this.reconcileLinkedFolderStatuses(openLibrary);
+      if (!discovery) this.reconcileLinkedFolderStatuses(openLibrary);
       const folderNow = new Date().toISOString();
-      // Serpent-4bdd26: discovery passes (linked enumeration + managed
-      // enumeration) are skipped for existing-asset batches — the batch's
-      // fallback lstat covers those rows, and skipping keeps each 16-asset
-      // slice inside its interaction budget.
-      const linkedFolderRows = discoverSources
-        ? (openLibrary.connection
-          .prepare('SELECT folder_id, absolute_root_path, status FROM linked_folders')
-          .all() as Array<{
+      // Each discovery batch carries one bounded filesystem snapshot. Reuse
+      // the caller's identity maps so this loop does not rescan all 20k asset
+      // identities for every 64-file transaction.
+      const linkedFolderIds = discovery === undefined
+        ? []
+        : [...discovery.linkedEntriesByFolder.keys()];
+      const linkedFolderRows = linkedFolderIds.length === 0
+        ? []
+        : (openLibrary.connection
+          .prepare(
+            `SELECT folder_id, absolute_root_path, status
+               FROM linked_folders
+              WHERE folder_id IN (${linkedFolderIds.map(() => '?').join(',')})`,
+          )
+          .all(...linkedFolderIds) as Array<{
             folder_id: string;
             absolute_root_path: string;
             status: 'available' | 'offline';
-          }>)
-        : [];
+          }>);
       for (const folder of linkedFolderRows) {
         if (this.linkedRootIsGone(folder.absolute_root_path)) continue;
 
-        const existingIdentities = new Set(
-          (openLibrary.connection
-            .prepare('SELECT path_identity FROM assets WHERE linked_folder_id = ?')
-            .all(folder.folder_id) as Array<{ path_identity: string }> )
-            .map((row) => row.path_identity),
-        );
+        const existingIdentities = discovery?.existingLinkedAssetIdsByFolder?.get(folder.folder_id)
+          ?? new Map(
+            (openLibrary.connection
+              .prepare('SELECT asset_id, path_identity FROM assets WHERE linked_folder_id = ?')
+              .all(folder.folder_id) as Array<{ asset_id: string; path_identity: string }>)
+              .map((row) => [row.path_identity, row.asset_id] as const),
+          );
         const insertAsset = openLibrary.connection.prepare(
           `INSERT INTO assets
              (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
@@ -33965,23 +34675,12 @@ export class LibraryService {
         const setCurrentRevision = openLibrary.connection.prepare(
           'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
         );
-        for (const entry of this.enumerateLinkedSources(
-          folder.absolute_root_path,
-          folder.folder_id,
-          undefined,
-          (relativePath, pathKind) => this.isExplicitlyIgnored(
-            openLibrary,
-            'linked',
-            folder.folder_id,
-            relativePath,
-            pathKind,
-          ),
-        )) {
+        for (const entry of discovery?.linkedEntriesByFolder.get(folder.folder_id) ?? []) {
           // Serpent-4bdd26: the enumeration already lstat'ed every file; keep
           // its size/mtime so the comparison loop below reuses one stat per
           // file instead of issuing a second network round trip per asset.
           linkedSnapshot.set(
-            `${folder.folder_id} ${portablePathIdentity(entry.relativePath)}`,
+            `${folder.folder_id}\u0000${portablePathIdentity(entry.relativePath)}`,
             entry,
           );
           const pathIdentity = portablePathIdentity(entry.relativePath);
@@ -34005,7 +34704,7 @@ export class LibraryService {
             folderNow,
           );
           setCurrentRevision.run(revisionId, folderNow, assetId);
-          existingIdentities.add(pathIdentity);
+          existingIdentities.set(pathIdentity, assetId);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
           discoveredAssetIds.push(assetId);
           changedCount += 1;
@@ -34018,24 +34717,14 @@ export class LibraryService {
         )
         .all() as ManagedFolderRow[];
       const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
-      const existingManagedIdentities = new Set(
-        (openLibrary.connection
-          .prepare("SELECT path_identity FROM assets WHERE location_kind = 'managed'")
-          .all() as Array<{ path_identity: string }>)
-          .map((row) => row.path_identity),
-      );
-      const managedEntries = discoverSources
-        ? this.enumerateManagedSources(
-          this.assetsPath(openLibrary),
-          (relativePath, pathKind) => this.isExplicitlyIgnored(
-            openLibrary,
-            'managed',
-            null,
-            relativePath,
-            pathKind,
-          ),
-        )
-        : [];
+      const existingManagedIdentities = discovery?.existingManagedAssetIdsByIdentity
+        ?? new Map(
+          (openLibrary.connection
+            .prepare("SELECT asset_id, path_identity FROM assets WHERE location_kind = 'managed'")
+            .all() as Array<{ asset_id: string; path_identity: string }>)
+            .map((row) => [row.path_identity, row.asset_id] as const),
+        );
+      const managedEntries = discovery?.managedEntries ?? [];
       markStage('enumerate-managed');
       // Serpent-4bdd26: reuse the enumeration stats for the comparison loop —
       // one lstat per file instead of two on the whole-library refresh.
@@ -34129,7 +34818,7 @@ export class LibraryService {
           folderNow,
         );
         setManagedCurrentRevision.run(revisionId, folderNow, assetId);
-        existingManagedIdentities.add(pathIdentity);
+        existingManagedIdentities.set(pathIdentity, assetId);
         this.syncAssetSearchContent(openLibrary.connection, assetId);
         discoveredAssetIds.push(assetId);
         if (LibraryService.supportsThumbnail(entry.relativePath)) {
@@ -34159,7 +34848,7 @@ export class LibraryService {
         // direct lstat for rows it cannot cover (e.g. an offline linked root
         // skipped by its enumeration, or ignore-rule edge cases).
         const snapshotKey = asset.location_kind === 'linked'
-          ? `${asset.linked_folder_id ?? ''} ${portablePathIdentity(asset.relative_file_path)}`
+          ? `${asset.linked_folder_id ?? ''}\u0000${portablePathIdentity(asset.relative_file_path)}`
           : portablePathIdentity(asset.relative_file_path);
         const snapshotEntry = (asset.location_kind === 'linked'
           ? linkedSnapshot.get(snapshotKey)
@@ -34476,21 +35165,49 @@ export class LibraryService {
     }
   }
 
-  private reconcileDefaultIgnoredAssets(openLibrary: OpenLibrary): void {
-    const rows = openLibrary.connection.prepare(
-      `SELECT a.asset_id, a.relative_file_path
-         FROM assets a
-        WHERE a.deleted_at IS NULL
-          AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}`,
-    ).all() as Array<{ asset_id: string; relative_file_path: string }>;
-    const ignoredIds = rows
-      .filter((row) => isAlwaysIgnoredAssetPath(row.relative_file_path))
-      .map((row) => row.asset_id);
-    if (ignoredIds.length === 0) return;
-    openLibrary.connection.transaction(() => {
-      const remove = openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?');
-      for (const assetId of ignoredIds) remove.run(assetId);
-    })();
+  private async reconcileDefaultIgnoredAssets(
+    openLibrary: OpenLibrary,
+    task: OpenReconciliationTask,
+  ): Promise<void> {
+    // Keep this cleanup bounded twice: the SQL predicate narrows the scan to
+    // the exact default-junk filename shapes, and the cursor limits each
+    // result/transaction to a short page. The previous implementation loaded
+    // every visible asset before filtering in JS, which made a harmless
+    // `.DS_Store` cleanup compete with viewer requests on NAS libraries.
+    const defaultIgnoredSql = `(
+      LOWER(a.relative_file_path) LIKE '%.ds_store'
+      OR LOWER(a.relative_file_path) IN ('desktop.ini', 'thumbs.db')
+      OR LOWER(a.relative_file_path) LIKE '%/desktop.ini'
+      OR LOWER(a.relative_file_path) LIKE '%/thumbs.db'
+      OR LOWER(a.relative_file_path) LIKE '._%'
+      OR LOWER(a.relative_file_path) LIKE '%/._%'
+    )`;
+    let lastAssetId = '';
+    for (;;) {
+      this.assertReconciliationActive(task);
+      const rows = openLibrary.connection.prepare(
+        `SELECT a.asset_id, a.relative_file_path
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.asset_id > ?
+            AND ${defaultIgnoredSql}
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+          ORDER BY a.asset_id
+          LIMIT 128`,
+      ).all(lastAssetId) as Array<{ asset_id: string; relative_file_path: string }>;
+      if (rows.length === 0) return;
+      lastAssetId = rows.at(-1)!.asset_id;
+      const ignoredIds = rows
+        .filter((row) => isAlwaysIgnoredAssetPath(row.relative_file_path))
+        .map((row) => row.asset_id);
+      if (ignoredIds.length > 0) {
+        openLibrary.connection.transaction(() => {
+          const remove = openLibrary.connection.prepare('DELETE FROM assets WHERE asset_id = ?');
+          for (const assetId of ignoredIds) remove.run(assetId);
+        })();
+      }
+      await this.yieldReconciliation(task);
+    }
   }
 
   /**
@@ -34890,6 +35607,8 @@ export class LibraryService {
         .subscribeToChangeSequence({
           onChange: (changeSequence) => {
             this.invalidateArtifactPathCache(summary.libraryId);
+            const changedOpenLibrary = this.openById.get(summary.libraryId);
+            if (changedOpenLibrary) changedOpenLibrary.browseIndexCache = undefined;
             this.options.onLibraryChanged?.({
               type: 'library.changed',
               libraryId: summary.libraryId,
@@ -36918,6 +37637,9 @@ export class LibraryService {
   async closeLibraryAsync(libraryId: string): Promise<void> {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    const reconciliation = this.reconciliationByLibrary.get(libraryId);
+    reconciliation?.controller.abort();
+    if (reconciliation) await reconciliation.promise;
     if (!openLibrary.readOnly) {
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'close');
     }
@@ -36927,6 +37649,7 @@ export class LibraryService {
   closeLibrary(libraryId: string): void {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
+    this.reconciliationByLibrary.get(libraryId)?.controller.abort();
 
     const backupTimer = this.databaseBackupTimers.get(libraryId);
     if (backupTimer) {
@@ -36947,6 +37670,7 @@ export class LibraryService {
       this.autoRepairAttemptedByLibrary.delete(libraryId);
       this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
       this.autoAnalysisSuppressedAssetIds.delete(libraryId);
+      this.interactiveIdleUntilByLibrary.delete(libraryId);
       return;
     }
 
@@ -36977,6 +37701,7 @@ export class LibraryService {
     this.autoRepairAttemptedByLibrary.delete(libraryId);
     this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
     this.autoAnalysisSuppressedAssetIds.delete(libraryId);
+    this.interactiveIdleUntilByLibrary.delete(libraryId);
   }
 
   private checkpointAndCloseConnection(openLibrary: OpenLibrary, libraryId: string): void {

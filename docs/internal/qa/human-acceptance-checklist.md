@@ -53,6 +53,13 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | GIF-PLAY-001 / `Serpent-43d32f` | 动画 GIF 原生播放（webm_proxy 生成移除） | 待人类验收 | 悬停一个动画 GIF 卡片，在 Inspector 查看，再双击进入查看器；打开一个含较多 GIF 的库并查看「后台任务」面板 | 卡片仍为静帧缩略图；hover/Inspector/查看器直接播放原始 GIF 动画（`<img>` 原生渲染），无代理提示；导入/开库不再产生 `generate_webm_proxy` 任务；旧库遗留的 queued GIF proxy 任务开库后显示为已取消（GIF_PROXY_RETIRED） | [开发日志](../development/2026-08-22-gif-webm-proxy-retirement-development-log.md) / `tests/worker/thumbnails.test.ts`『animated GIF native playback』 / `tests/unit/asset-card-hover-preview.test.ts` | Worker/unit 定向通过；`test:library-availability` 完整通过；全量与 media E2E 失败均属既有坏点；真实 Electron GIF 视觉验收、Computer Use、packaged 未执行 |
 
+### 2026-08-24 资源库与查看器性能
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LIB-PERF-004 / `Serpent-29125f` | 开库对账、可见窗口调度与关闭取消 | 待人类验收 | 在 2w+ 本地库和 SMB/NAS 库分别打开；打开后立即滚动、搜索、切文件夹，再关闭并重新打开 | 首屏先可交互；对账不阻塞搜索/查看器；同一可见窗口不重复触发后台波；关闭后无旧库错误，重开仍可写 | [本轮开发日志](../development/2026-08-24-resource-library-viewer-performance.md) / `tests/worker/reconciliation-performance.test.ts` / `tests/worker/large-library-performance.test.ts` / `tests/e2e/large-library-scroll-benchmark.test.ts` | 本地 macOS Electron：1,200 文件事件循环 P95 13.2ms、max 24.0ms，并验证 idle window；当前 HEAD 20k 真实滚动连续七轮 10/10。SMB/NAS、Windows、packaged、Computer Use 未执行 |
+| VIEWER-PERF-002 / `Serpent-29125f` | 查看器单源解码与冷视口卡片加载 | 待人类验收 | 打开有就绪缩略图的多张大图并快速切换；在第四档随机跳转 10 次；观察占位、默认图标和原图清晰升级 | 不重复读取/解码同一 full source；placeholder 可解码且不闪黑；可见图片 500ms 内真实解码；非图像资产仍显示 themed icon；缩放/平移状态保持 | [本轮开发日志](../development/2026-08-24-resource-library-viewer-performance.md) / `src/renderer/zoomable-preview-image.tsx` / `tests/unit/zoomable-preview-image-fallback.test.ts` / `tests/e2e/large-library-scroll-benchmark.test.ts` | 本地 macOS Electron 20k：当前 HEAD 连续七轮 10/10，P50 110.5/100.0/95.7/109.0/103.1/111.1/90.4ms，P95/Max 350.0/463.5/316.7/420.2/222.6/224.6/395.8ms，long task 0、占位 0；media-preview E2E 本次两次在“自动色卡预览”既有路径超时，未冒充查看器旅程全绿；真实大图 NAS 首次/二次打开、人工视觉、Windows、packaged 未执行 |
+
 ### 2026-08-15 大型资源库增量
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

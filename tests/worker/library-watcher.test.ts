@@ -202,6 +202,9 @@ describe('managed asset watcher', () => {
     });
     services.push(service);
     const library = service.createLibrary({ displayName: 'Errors', selectedParentPath: root });
+    // Ensure the open discovery path reaches the injected refresh override;
+    // an empty library legitimately has no refresh transaction to fail.
+    writeFileSync(path.join(library.libraryPath, 'Assets', 'refresh-target.txt'), 'refresh');
     // Serpent-tumv: the on-open refresh moved to the background reconciliation
     // step; drive it explicitly so the injected failure lands on the same
     // diagnostic scope.

@@ -4865,15 +4865,6 @@ body.serpent-modal-open .app-shell {
 .preview-image-placeholder.is-hidden {
   visibility: hidden;
 }
-.preview-image-middle {
-  visibility: hidden;
-}
-.preview-image-middle.is-visible {
-  visibility: visible;
-}
-.preview-image-middle.is-hidden {
-  visibility: hidden;
-}
 .preview-chrome-fade {
   opacity: 1;
   transition: opacity 280ms ease;

@@ -37,8 +37,7 @@ export class SourcePathCache {
     const existing = this.#inFlight.get(key);
     if (existing !== undefined) return existing;
 
-    let pending: Promise<SourcePathResolution>;
-    pending = resolve().then((resolved) => {
+    const pending = resolve().then((resolved) => {
       // A library close/change can invalidate this request while the Worker
       // is still resolving it. Do not repopulate a cache for that old handle.
       if (this.#inFlight.get(key) === pending) this.#resolved.set(key, resolved);
