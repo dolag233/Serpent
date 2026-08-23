@@ -454,6 +454,18 @@
         "improvementFactor": 3.2,
         "note": "reconcileDefaultIgnoredAssets（全活跃资产扫描，SMB 上经覆盖索引仍 ~2.8s——每索引页一次往返）从同步 open 延迟到后台对账。对照：优化前推算 SMB 全开要数分钟（对账 225s + 双重 lstat）。剩余候选：recovery 389ms、migrate checksum 校验 278ms、tombstone-backfill 177ms。探针库已清理。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T09:05:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+d0e53f45",
+      "suite": "large-library-electron-scroll-e2e (final regression)",
+      "metrics": {
+        "jumpsPassedOf10": 10,
+        "p50Ms": 269.2,
+        "p95Ms": 479.3,
+        "note": "SMB 优化提交后第四次 10/10——本地路径零回归确认。今日滚动基准四次运行：283/241/294/269ms p50，全部达标。"
+      }
     }
   ]
 }
