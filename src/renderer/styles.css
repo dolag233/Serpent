@@ -10581,7 +10581,7 @@ select.ai-config-input.ai-config-languages {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-  margin-top: auto;
+  margin-top: 12px;
   padding: 10px 12px;
   border-top: 1px solid var(--divider-soft);
   color: var(--secondary);
