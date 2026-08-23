@@ -410,6 +410,11 @@ import type {
 import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import { extractAuthorFromExif } from './author-from-exif';
 import {
+  extractRawImageMetadata,
+  type RawImageMetadata,
+  type RawImageMetadataParser,
+} from './raw-image-metadata';
+import {
   queryModelCompanionAssets,
   resolveModelPreviewResolution,
 } from './model-resolution';
@@ -474,6 +479,7 @@ import {
 } from '../shared/audio-media';
 import {
   IMAGE_EXTENSIONS,
+  RAW_IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
@@ -485,6 +491,7 @@ import {
   isSupportedDocumentExtension,
   isSupportedVideoExtension,
   modelMimeForExtension,
+  isRawImageExtension,
   videoMimeForExtension,
 } from '../shared/media-formats';
 import { mediaTypeSupportsAutoPalette } from '../shared/palette-visibility';
@@ -2142,6 +2149,69 @@ const TOMBSTONE_BACKFILL_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(TOMBSTONE_BACKFILL_INDEX_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v43: RAW viewers need a full-size decoded image, while the
+// 512px thumbnail remains the card/browse derivative. Keep that viewer image
+// separate so opening an ARW never makes the grid load a camera-sized PNG.
+const RAW_VIEWER_ARTIFACT_SCHEMA_SQL = `
+  CREATE TABLE revision_artifacts_v43 (
+    artifact_id TEXT PRIMARY KEY,
+    revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('thumbnail', 'viewer_image', 'video_poster', 'contact_sheet',
+               'webm_proxy', 'audio_proxy', 'extracted_metadata',
+               'extracted_palette', 'model_glb')
+    ),
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    file_path TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    generator_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+      status IN ('pending', 'generating', 'ready', 'failed')
+    ),
+    error_code TEXT,
+    generated_at TEXT,
+    invalidated_at TEXT,
+    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    dominant_hue REAL CHECK (dominant_hue IS NULL OR (dominant_hue >= 0 AND dominant_hue < 360)),
+    dominant_lightness REAL CHECK (dominant_lightness IS NULL OR (dominant_lightness >= 0 AND dominant_lightness <= 1))
+  );
+  INSERT INTO revision_artifacts_v43
+    (artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+     generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+     dominant_hue, dominant_lightness)
+    SELECT artifact_id, revision_id, kind, mime_type, byte_size, file_path, width, height,
+           generator_version, status, error_code, generated_at, invalidated_at, duration_ms,
+           dominant_hue, dominant_lightness
+      FROM revision_artifacts;
+  DROP TABLE revision_artifacts;
+  ALTER TABLE revision_artifacts_v43 RENAME TO revision_artifacts;
+  CREATE UNIQUE INDEX revision_artifacts_current
+    ON revision_artifacts(revision_id, kind)
+    WHERE invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_duration_idx
+    ON revision_artifacts(duration_ms)
+    WHERE kind = 'extracted_metadata' AND status = 'ready' AND invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_palette_sort_idx
+    ON revision_artifacts(dominant_hue, dominant_lightness)
+    WHERE kind = 'extracted_palette' AND status = 'ready' AND invalidated_at IS NULL;
+  CREATE INDEX revision_artifacts_revision_kind_status
+    ON revision_artifacts(revision_id, kind, status, invalidated_at);
+  CREATE TRIGGER library_change_on_revision_artifacts_insert AFTER INSERT ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_update AFTER UPDATE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+  CREATE TRIGGER library_change_on_revision_artifacts_delete AFTER DELETE ON revision_artifacts BEGIN
+    UPDATE library_change_sequence SET sequence = sequence + 1;
+  END;
+`;
+const RAW_VIEWER_ARTIFACT_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(RAW_VIEWER_ARTIFACT_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -2713,6 +2783,11 @@ export const MIGRATIONS = [
     sql: TOMBSTONE_BACKFILL_INDEX_SCHEMA_SQL,
     checksum: TOMBSTONE_BACKFILL_INDEX_SCHEMA_CHECKSUM,
   },
+  {
+    version: 43,
+    sql: RAW_VIEWER_ARTIFACT_SCHEMA_SQL,
+    checksum: RAW_VIEWER_ARTIFACT_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -2724,7 +2799,7 @@ export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
  * must be added to both places.
  */
 export const TABLE_REBUILD_MIGRATION_VERSIONS: ReadonlySet<number> = new Set([
-  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33,
+  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33, 43,
 ]);
 
 interface LibraryRow {
@@ -3594,6 +3669,8 @@ export interface LibraryServiceOptions {
   sharpFn?: SharpModule;
   /** Injectable raw-pixel decoder used only by local palette extraction. */
   paletteSharpFn?: PaletteSharpModule;
+  /** Injectable EXIF/IPTC/XMP parser for RAW Inspector metadata tests. */
+  rawImageMetadataParser?: RawImageMetadataParser;
   /**
    * Injectable media capability probe. Production probes ffmpeg+ffprobe or
    * oiiotool before automatically re-queuing component-missing artifacts.
@@ -4417,6 +4494,12 @@ function migrateLegacyPluginMigrationHistory(connection: DatabaseConnection): vo
     .get() as { sql?: string } | undefined;
   if (!revisionArtifactsSql?.sql?.includes("'model_glb'")) {
     connection.exec(MODEL_ARTIFACT_KIND_SCHEMA_SQL);
+  }
+  const currentRevisionArtifactsSql = connection
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_artifacts'")
+    .get() as { sql?: string } | undefined;
+  if (!currentRevisionArtifactsSql?.sql?.includes("'viewer_image'")) {
+    connection.exec(RAW_VIEWER_ARTIFACT_SCHEMA_SQL);
   }
   ensureContentFingerprintColumn(connection);
   const historyObjects = [
@@ -5345,6 +5428,8 @@ export class LibraryService {
   private readonly exrPlanesByRevision = new Map<string, ExrPlaneDescriptor[]>();
   /** Color metadata probes are immutable for a revision. */
   private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
+  /** Coalesce concurrent RAW viewer decodes and remember a failed attempt per revision. */
+  private readonly rawViewerImageInFlight = new Map<string, Promise<void>>();
   /** Cache the first H.264 encoder that actually encodes a 1-frame probe. */
   private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
   /**
@@ -20465,7 +20550,12 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     assetPath: string,
     revisionId: string,
-    options: { exposureStops?: number; inputColorSpace?: string; subimage?: number } = {},
+    options: {
+      exposureStops?: number;
+      inputColorSpace?: string;
+      subimage?: number;
+      artifactKind?: 'thumbnail' | 'viewer_image';
+    } = {},
     execution: MediaExecutionContext = {},
   ): Promise<{ artifactId: string }> {
     const oiiotoolPath = resolveOiiotoolPath();
@@ -20474,6 +20564,8 @@ export class LibraryService {
     mkdirSync(artifactsDir, { recursive: true });
     const artifactRelPath = `${artifactId}.png`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const artifactKind = options.artifactKind ?? 'thumbnail';
+    const isViewerImage = artifactKind === 'viewer_image';
     const subimage = Number.isSafeInteger(options.subimage) && (options.subimage ?? 0) >= 0
       ? options.subimage ?? 0
       : 0;
@@ -20490,28 +20582,37 @@ export class LibraryService {
         exposureMultiplier,
         1,
       ].join(',');
+      const isRawAsset = isRawImageExtension(assetPath);
+      const resizeArgs = isViewerImage ? [] : ['--resize', '0x512'];
 
-      // OpenImageIO 3.1's ociodisplay action accepts OCIO built-in config URIs,
-      // explicit input roles, and "default" display/view selectors. EXR and
-      // TGA retain the established scene-linear route; PSD/BMP/ICO/RAW preserve
-      // the decoder's color-space metadata/default instead of being mislabelled
-      // as HDR input. Keep exposure deterministic for a future preview control.
-      const args: string[] = [
-        '--colorconfig', SERPENT_OCIO_CONFIG,
-        '--subimage', String(subimage),
-        assetPath,
-        ...(inputColorSpace ? ['--iscolorspace', inputColorSpace] : []),
-        // Preserve alpha while applying exposure to RGB color channels.
-        '--mulc', exposureValues,
-        // Empty display/view select the OCIO config defaults. Literal "default"
-        // would instead request names that the selected config may not define.
-        inputColorSpace
-          ? `--ociodisplay:from=${inputColorSpace}:unpremult=1`
-          : '--ociodisplay:unpremult=1',
-        '', '',
-        '--resize', '0x512',
-        '-o', artifactAbsPath,
-      ];
+      // LibRaw already converts camera RAW data to its display-ready default
+      // output. Running that result through the studio OCIO display transform
+      // makes some ARW/RAW files fail with OIIO_COLOR_TRANSFORM_FAILED, so RAW
+      // stays on the decoder's default sRGB path. EXR/TGA and other OIIO
+      // formats retain the established explicit OCIO route.
+      const args: string[] = isRawAsset
+        ? [
+            '--subimage', String(subimage),
+            assetPath,
+            ...resizeArgs,
+            '-o', artifactAbsPath,
+          ]
+        : [
+            '--colorconfig', SERPENT_OCIO_CONFIG,
+            '--subimage', String(subimage),
+            assetPath,
+            ...(inputColorSpace ? ['--iscolorspace', inputColorSpace] : []),
+            // Preserve alpha while applying exposure to RGB color channels.
+            '--mulc', exposureValues,
+            // Empty display/view select the OCIO config defaults. Literal "default"
+            // would instead request names that the selected config may not define.
+            inputColorSpace
+              ? `--ociodisplay:from=${inputColorSpace}:unpremult=1`
+              : '--ociodisplay:unpremult=1',
+            '', '',
+            ...resizeArgs,
+            '-o', artifactAbsPath,
+          ];
 
       const result = await this.runOiio(oiiotoolPath, args, {
         timeoutMs: 60_000,
@@ -20520,22 +20621,33 @@ export class LibraryService {
 
       if (result.exitCode !== 0) {
         throw new OiioInvocationError(
-          'OIIO_COLOR_TRANSFORM_FAILED',
-          `oiiotool OCIO display transform exited with code ${result.exitCode}: ${result.stderr.slice(-8192)}`,
+          isRawAsset ? 'OIIO_GENERATION_FAILED' : 'OIIO_COLOR_TRANSFORM_FAILED',
+          `oiiotool ${isRawAsset ? 'RAW decode' : 'OCIO display transform'} exited with code ${result.exitCode}: ${result.stderr.slice(-8192)}`,
         );
       }
 
       const outputStat = statSync(artifactAbsPath);
+      const rawMetadata = isRawAsset && !isViewerImage
+        ? await extractRawImageMetadata(
+          assetPath,
+          this.options.rawImageMetadataParser,
+        )
+        : null;
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
              (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
               generator_version, status, generated_at)
-           VALUES (?, ?, 'thumbnail', 'image/png', ?, ?, ?, 'ready', ?)`,
+           VALUES (?, ?, ?, 'image/png', ?, ?, ?, 'ready', ?)`,
         )
-        .run(artifactId, revisionId, outputStat.size, artifactRelPath,
-          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
+        .run(artifactId, revisionId, artifactKind, outputStat.size, artifactRelPath,
+          isRawAsset
+            ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
+            : `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
+      if (rawMetadata) {
+        this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
+      }
 
       return { artifactId };
     } catch (error) {
@@ -20558,17 +20670,77 @@ export class LibraryService {
           `INSERT INTO revision_artifacts
              (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
               generator_version, status, error_code, generated_at)
-           VALUES (?, ?, 'thumbnail', 'image/png', 0, ?, ?, 'failed', ?, ?)`,
+           VALUES (?, ?, ?, 'image/png', 0, ?, ?, 'failed', ?, ?)`,
         )
         .run(
-          artifactId, revisionId, artifactRelPath,
-          `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;subimage=${subimage}`, errorCode,
+          artifactId, revisionId, artifactKind, artifactRelPath,
+          isRawImageExtension(assetPath)
+            ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
+            : `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;subimage=${subimage}`,
+          errorCode,
           new Date().toISOString(),
         );
 
       throw new LibraryServiceError('INTERNAL_ERROR', {
         cause: error,
         reason: errorCode === 'OIIO_REQUIRED' ? 'OIIO_REQUIRED' : 'MEDIA_PROCESSING_FAILED',
+      });
+    }
+  }
+
+  /**
+   * Store the small, allow-listed EXIF/IPTC/XMP projection used by the RAW
+   * Inspector. Metadata extraction is deliberately best-effort: a camera file
+   * with no readable EXIF must still keep its successful thumbnail.
+   */
+  private persistRawImageMetadata(
+    openLibrary: OpenLibrary,
+    revisionId: string,
+    assetPath: string,
+    metadata: RawImageMetadata,
+  ): void {
+    const artifactId = randomUUID();
+    const artifactsDir = this.artifactsDir(openLibrary);
+    const artifactRelPath = `${artifactId}.json`;
+    const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    try {
+      writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
+      const outputStat = statSync(artifactAbsPath);
+      const headerSize = readImageDimensionsSync(assetPath);
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET invalidated_at = ?
+              WHERE revision_id = ?
+                AND kind = 'extracted_metadata'
+                AND invalidated_at IS NULL`,
+          )
+          .run(now, revisionId);
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO revision_artifacts
+               (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+                width, height, generator_version, status, generated_at)
+             VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, 'ready', ?)`,
+          )
+          .run(
+            artifactId,
+            revisionId,
+            outputStat.size,
+            artifactRelPath,
+            metadata.width ?? headerSize?.width ?? null,
+            metadata.height ?? headerSize?.height ?? null,
+            'exifr@7.1.3;raw-image-metadata-v1',
+            now,
+          );
+      })();
+    } catch (error) {
+      rmSync(artifactAbsPath, { force: true });
+      this.diagnose('image.raw-metadata', error, {
+        revisionId,
+        extension: path.extname(assetPath).toLowerCase(),
       });
     }
   }
@@ -20884,6 +21056,41 @@ export class LibraryService {
     };
   }
 
+  /**
+   * RAW cards use a small thumbnail, but the viewer needs a decoded image at
+   * the camera's native dimensions. Keep this derivative separate and make
+   * the request single-flight; a viewer opening twice must not race two OIIO
+   * writers against the same revision_artifacts unique index.
+   */
+  private async ensureRawViewerImage(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<void> {
+    const key = `${input.libraryId}:${input.assetId}:${revisionId}`;
+    const existing = this.getCurrentArtifact(input.libraryId, input.assetId, 'viewer_image');
+    if (existing) return;
+    const running = this.rawViewerImageInFlight.get(key);
+    if (running) {
+      await running;
+      return;
+    }
+    const task = this.generateOiiOThumbnail(
+      input,
+      openLibrary,
+      assetPath,
+      revisionId,
+      { artifactKind: 'viewer_image' },
+    ).then(() => undefined).catch(() => undefined);
+    this.rawViewerImageInFlight.set(key, task);
+    try {
+      await task;
+    } finally {
+      this.rawViewerImageInFlight.delete(key);
+    }
+  }
+
   private async getImageColorSpace(
     revisionId: string,
     assetPath: string,
@@ -20981,6 +21188,7 @@ export class LibraryService {
     const basePreview = this.getPreviewArtifact(libraryId, assetId, intent);
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const decoder = imageDecoderForExtension(extension);
+    const isRawAsset = isRawImageExtension(extension);
     if (basePreview.mediaType === 'video' && asset.current_revision_id) {
       const override = this.getColorSpaceOverride(openLibrary.connection, assetId);
       const selected = colorSpaceInfoFromName(requestedColorSpace ?? override ?? undefined, 'metadata')
@@ -20995,6 +21203,14 @@ export class LibraryService {
     }
     if (basePreview.mediaType !== 'image' || !asset.current_revision_id || !decoder) {
       return basePreview;
+    }
+    if (isRawAsset && intent === 'viewer') {
+      await this.ensureRawViewerImage(
+        { libraryId, assetId },
+        openLibrary,
+        this.resolveAssetPath(libraryId, assetId),
+        asset.current_revision_id,
+      );
     }
     const detectedColorSpace = await this.getImageColorSpace(
       asset.current_revision_id,
@@ -21032,6 +21248,7 @@ export class LibraryService {
     // also repairs older PSD/EXR thumbnails created before color metadata was
     // wired into the generator version.
     const shouldRegenerateWithOiiO =
+      !isRawAsset &&
       basePreview.status === 'ready' &&
       (decoder === 'oiio' || requestedColorSpace !== undefined || storedOverride !== null) &&
       canOverrideImageColorSpace(extension);
@@ -21074,7 +21291,7 @@ export class LibraryService {
     }
 
     return {
-      ...this.getPreviewArtifact(libraryId, assetId),
+      ...this.getPreviewArtifact(libraryId, assetId, intent),
       ...(planes ? { exrPlanes: planes, selectedExrPlane: selected } : {}),
       colorSpace,
     };
@@ -21122,7 +21339,15 @@ export class LibraryService {
       : mediaType === 'audio'
         ? 'audio_proxy'
         : 'thumbnail';
-    const artifact = this.getCurrentArtifact(libraryId, assetId, kind);
+    const extension = path.extname(asset.relative_file_path).toLowerCase();
+    const rawViewerArtifact = mediaType === 'image'
+      && intent === 'viewer'
+      && isRawImageExtension(extension)
+      ? this.getCurrentArtifact(libraryId, assetId, 'viewer_image')
+      : null;
+    const artifact = rawViewerArtifact?.status === 'ready'
+      ? rawViewerArtifact
+      : this.getCurrentArtifact(libraryId, assetId, kind);
     const mimeType = mediaType === 'video'
       ? artifact?.mimeType ?? 'video/mp4'
       : mediaType === 'audio'
@@ -21200,7 +21425,6 @@ export class LibraryService {
       return modelPreview;
     }
 
-    const extension = path.extname(asset.relative_file_path).toLowerCase();
     const nativeMimeTypes: Record<string, string> = {
       '.mp4': 'video/mp4',
       '.mov': 'video/quicktime',
@@ -21643,7 +21867,7 @@ export class LibraryService {
     if (!usage) return;
     const allowedKinds = usage === 'proxy'
       ? new Set(['webm_proxy', 'audio_proxy'])
-      : new Set(['thumbnail', 'video_poster', 'model_glb']);
+      : new Set(['thumbnail', 'viewer_image', 'video_poster', 'model_glb']);
     if (!allowedKinds.has(kind)) throw new LibraryServiceError('ASSET_NOT_FOUND');
   }
 
@@ -22483,7 +22707,17 @@ export class LibraryService {
       for (const component of repairComponents) attempted.add(component);
       this.autoRepairAttemptedByLibrary.set(libraryId, attempted);
     }
-    let enqueued = repairEnqueued;
+    // A previous RAW run could have persisted the generic OCIO failure before
+    // the RAW-specific default-sRGB route existed. Re-open that exact legacy
+    // failure immediately; the normal retry backoff is still used for all
+    // other transient decode failures.
+    const legacyRawRepairEnqueued = options.retryFailed
+      ? this.requeueLegacyRawColorTransformFailures(openLibrary, {
+        assetIds: selectedIds,
+        limit,
+      })
+      : 0;
+    let enqueued = repairEnqueued + legacyRawRepairEnqueued;
     // Model extensions join the queue (slice E, Serpent-hnmg): the offscreen
     // GPU renderer in Main produces model thumbnails, stored as the standard
     // `thumbnail` artifact. The dedupe below (terminal artifact / active job)
@@ -22810,6 +23044,68 @@ export class LibraryService {
     this.enqueueReadyPaletteJobs(openLibrary, options);
 
     return enqueued;
+  }
+
+  private requeueLegacyRawColorTransformFailures(
+    openLibrary: OpenLibrary,
+    options: { assetIds: string[]; limit?: number },
+  ): number {
+    const selectedIds = options.assetIds;
+    const selectedSql = selectedIds.length > 0
+      ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const rawExtensionSql = RAW_IMAGE_EXTENSIONS
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    const limitSql = options.limit === undefined ? '' : 'LIMIT ?';
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT ra.artifact_id, a.relative_file_path
+           FROM revision_artifacts ra
+           JOIN assets a ON a.current_revision_id = ra.revision_id
+          WHERE a.deleted_at IS NULL
+            AND a.availability = 'available'
+            AND ra.kind = 'thumbnail'
+            AND ra.status = 'failed'
+            AND ra.invalidated_at IS NULL
+            AND ra.error_code = 'OIIO_COLOR_TRANSFORM_FAILED'
+            AND COALESCE(ra.generator_version, '') NOT LIKE '%raw-default-srgb%'
+            ${selectedSql}
+            AND (${rawExtensionSql})
+            AND NOT EXISTS (
+              SELECT 1
+                FROM jobs active
+               WHERE active.asset_id = a.asset_id
+                 AND active.revision_id = a.current_revision_id
+                 AND active.kind = 'generate_thumbnail'
+                 AND active.status IN ('queued', 'running', 'paused')
+            )
+          ORDER BY a.relative_file_path
+          ${limitSql}`,
+      )
+      .all(
+        ...selectedIds,
+        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        ...(options.limit === undefined ? [] : [options.limit]),
+      ) as Array<{ artifact_id: string; relative_file_path: string }>;
+    const rawRows = rows.filter((row) => isRawImageExtension(row.relative_file_path));
+    if (rawRows.length === 0) return 0;
+
+    const now = new Date().toISOString();
+    const invalidate = openLibrary.connection.prepare(
+      `UPDATE revision_artifacts
+          SET invalidated_at = ?
+        WHERE artifact_id = ?
+          AND status = 'failed'
+          AND invalidated_at IS NULL`,
+    );
+    let repaired = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of rawRows) {
+        repaired += invalidate.run(now, row.artifact_id).changes;
+      }
+    })();
+    return repaired;
   }
 
   /**

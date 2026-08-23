@@ -3512,6 +3512,10 @@ input[type="range"] {
   color: var(--text);
 }
 
+.inspector-raw-metadata {
+  min-width: 0;
+}
+
 .inspector-section {
   margin-top: 16px;
 }

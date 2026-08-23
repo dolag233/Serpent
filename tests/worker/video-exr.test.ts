@@ -1609,7 +1609,7 @@ describe('EXR/TGA (oiiotool)', () => {
     });
     const created = service.createLibrary({ displayName: 'OiioFormatMatrix', selectedParentPath: root });
     const extensions = [
-      'bmp', 'ico', 'psd', 'exr', 'tga', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2',
+      'bmp', 'ico', 'psd', 'exr', 'tga', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2', 'raw',
     ];
     for (const extension of extensions) {
       const sourcePath = path.join(root, `sample.${extension}`);
@@ -1629,7 +1629,13 @@ describe('EXR/TGA (oiiotool)', () => {
         .toMatchObject({ status: 'ready', mimeType: 'image/png' });
     }
     expect(invocations.filter((args) => args.includes('--colorconfig')))
-      .toHaveLength(extensions.length);
+      .toHaveLength(5);
+    const rawInvocation = invocations.find((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw')),
+    );
+    expect(rawInvocation).toBeDefined();
+    expect(rawInvocation).not.toContain('--colorconfig');
+    expect(rawInvocation).not.toContain('--ociodisplay:from=scene_linear:unpremult=1');
     service.closeAll();
   });
 
@@ -1670,6 +1676,268 @@ describe('EXR/TGA (oiiotool)', () => {
       '1,1,1,1',
     ]));
     service.closeAll();
+  });
+
+  it('uses the RAW default sRGB route and persists normalized camera metadata', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async (_input, options) => {
+          expect(options).toMatchObject({ tiff: true, exif: true, iptc: true, xmp: true });
+          return {
+            Make: 'Sony',
+            Model: 'ILCE-7RM3',
+            Artist: 'kanghong zhao',
+            ExifImageWidth: 5184,
+            ExifImageHeight: 3464,
+            ISO: 800,
+            FNumber: 3.5,
+            ExposureTime: 0.01,
+            ExposureProgram: 3,
+            MeteringMode: 5,
+            Flash: 0,
+            FocalLength: 56,
+          };
+        },
+      },
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawMetadata', selectedParentPath: root });
+    const sourcePath = path.join(root, 'photo.ARW');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+
+    expect(result?.artifactId).toBeTruthy();
+    const rawInvocation = invocations.find((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw')),
+    );
+    expect(rawInvocation).toBeDefined();
+    expect(rawInvocation).not.toContain('--colorconfig');
+    expect(rawInvocation).not.toContain('--ociodisplay:from=scene_linear:unpremult=1');
+
+    const db = assertDb(created.libraryPath);
+    const metadataRow = db.prepare(
+      `SELECT file_path, width, height, generator_version
+         FROM revision_artifacts
+        WHERE kind = 'extracted_metadata'
+          AND status = 'ready'
+          AND invalidated_at IS NULL`,
+    ).get() as {
+      file_path: string;
+      width: number;
+      height: number;
+      generator_version: string;
+    } | undefined;
+    expect(metadataRow).toMatchObject({
+      width: 5184,
+      height: 3464,
+      generator_version: 'exifr@7.1.3;raw-image-metadata-v1',
+    });
+    const metadataPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      metadataRow!.file_path,
+    );
+    expect(JSON.parse(require('node:fs').readFileSync(metadataPath, 'utf-8'))).toMatchObject({
+      cameraMake: 'Sony',
+      cameraModel: 'ILCE-7RM3',
+      author: 'kanghong zhao',
+      iso: 800,
+      exposureTime: 0.01,
+    });
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'ready',
+      metadata: {
+        width: 5184,
+        height: 3464,
+        cameraMake: 'Sony',
+        cameraModel: 'ILCE-7RM3',
+        iso: 800,
+      },
+    });
+    db.close();
+    service.closeAll();
+  });
+
+  it('keeps a RAW thumbnail successful when EXIF metadata is unavailable', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({}),
+      },
+      spawnFn: async (_command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawNoMetadata', selectedParentPath: root });
+    const sourcePath = path.join(root, 'without-exif.ARW');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).resolves.toMatchObject({ artifactId: expect.any(String) });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'missing',
+      metadata: null,
+    });
+    service.closeAll();
+  });
+
+  it('uses one full-size viewer image for concurrent RAW opens', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      rawImageMetadataParser: { parse: async () => ({}) },
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawViewer', selectedParentPath: root });
+    const sourcePath = path.join(root, 'viewer.ARW');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+    const [first, second] = await Promise.all([
+      service.resolvePreviewArtifact(created.libraryId, asset.assetId),
+      service.resolvePreviewArtifact(created.libraryId, asset.assetId),
+    ]);
+
+    expect(first).toMatchObject({ mediaType: 'image', status: 'ready' });
+    expect(second).toMatchObject({ mediaType: 'image', status: 'ready' });
+    expect(first.artifactId).toBe(second.artifactId);
+    const viewerDecodes = invocations.filter((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw'))
+      && !args.includes('--info'),
+    );
+    expect(viewerDecodes).toHaveLength(2);
+    expect(viewerDecodes[0]).toContain('--resize');
+    expect(viewerDecodes[1]).not.toContain('--resize');
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image'))
+      .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+    service.closeAll();
+  });
+
+  it('requeues legacy RAW OCIO failures on the next retryable browse wave', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const failingService = new LibraryService({
+      spawnFn: async () => ({
+        stdout: Buffer.alloc(0),
+        stderr: 'legacy RAW OCIO transform failure',
+        exitCode: 7,
+      }),
+    });
+    const created = failingService.createLibrary({
+      displayName: 'RawLegacyRepair',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'legacy.ARW');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(failingService, created.libraryId, sourcePath);
+    const asset = failingService.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(failingService.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
+    failingService.closeAll();
+
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `UPDATE revision_artifacts
+          SET error_code = 'OIIO_COLOR_TRANSFORM_FAILED',
+              generator_version = 'oiio@3.1.12;ocio=studio-v4-aces2'
+        WHERE revision_id = (
+          SELECT current_revision_id FROM assets WHERE asset_id = ?
+        )
+          AND kind = 'thumbnail'
+          AND status = 'failed'
+          AND invalidated_at IS NULL`,
+    ).run(asset.assetId);
+    db.close();
+
+    const invocations: string[][] = [];
+    const repairedService = new LibraryService({
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    repairedService.openLibrary(created.libraryPath);
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [asset.assetId],
+      limit: 1,
+      retryFailed: true,
+    })).toBeGreaterThan(0);
+    expect(repairedService.listMediaJobs(created.libraryId).jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          kind: 'generate_thumbnail',
+          status: 'queued',
+        }),
+      ]),
+    );
+    await repairedService.processThumbnailQueue(created.libraryId);
+    expect(repairedService.getCurrentArtifact(
+      created.libraryId,
+      asset.assetId,
+      'thumbnail',
+    )).toMatchObject({ status: 'ready', mimeType: 'image/png' });
+    const rawInvocation = invocations.find((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw')),
+    );
+    expect(rawInvocation).toBeDefined();
+    expect(rawInvocation).not.toContain('--colorconfig');
+    repairedService.closeAll();
   });
 
   it('falls back from sharp to OIIO for a TIFF that sharp cannot decode', async () => {

@@ -29,9 +29,10 @@ import {
   moveTagSuggestionIndex,
   type TagSuggestion,
 } from "./tag-suggestions";
-import { useT } from "./i18n";
+import { useLocale } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
+import { isRawImageExtension } from "../shared/media-formats";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { PluginContributionContext } from "../plugins/plugin-context";
@@ -53,6 +54,10 @@ import { createPluginMenuContributionContext } from "./plugin-contribution-conte
 import { splitFilenameForDisplay } from "./filename-display";
 import { PaneSurface } from "./ui/surfaces";
 import { isCorruptAsset } from "./availability-affordance";
+import {
+  buildRawImageMetadataRows,
+  type RawMetadataField,
+} from "./raw-image-metadata-format";
 
 // --- Local utility helpers (extracted from App.tsx) ---
 
@@ -84,6 +89,27 @@ function formatDateFull(value: string, unknownLabel: string) {
     ? unknownLabel
     : inspectorDateFormatter.format(date);
 }
+
+const RAW_METADATA_LABEL_KEYS: Record<RawMetadataField, string> = {
+  type: "inspector.rawType",
+  size: "inspector.rawSize",
+  location: "inspector.rawLocation",
+  modifiedAt: "inspector.rawModifiedAt",
+  captureDate: "inspector.rawCaptureDate",
+  resolution: "inspector.rawResolution",
+  author: "inspector.rawAuthor",
+  cameraMake: "inspector.rawCameraMake",
+  cameraModel: "inspector.rawCameraModel",
+  lensModel: "inspector.rawLensModel",
+  iso: "inspector.rawIso",
+  fNumber: "inspector.rawFNumber",
+  exposureTime: "inspector.rawExposureTime",
+  exposureCompensation: "inspector.rawExposureCompensation",
+  exposureProgram: "inspector.rawExposureProgram",
+  meteringMode: "inspector.rawMeteringMode",
+  flash: "inspector.rawFlash",
+  focalLength: "inspector.rawFocalLength",
+};
 
 // --- Types ---
 
@@ -392,7 +418,7 @@ function InspectorHero({
   api?: SerpentLibraryApi | null;
   cardFeelEnabled?: boolean;
 }) {
-  const t = useT();
+  const { t } = useLocale();
   const isMulti = selectionCount >= 2;
   const sequenceAssets = useMemo(() => {
     const frames = asset.sequence?.frames;
@@ -558,7 +584,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     pluginContributionRefreshKey = null,
   } = props;
 
-  const t = useT();
+  const { locale, t } = useLocale();
   const { enabled: inspectorCardFeelEnabled } = useInspectorCardFeel();
   const [recoveryProbeState, setRecoveryProbeState] = useState<{
     assetId: string;
@@ -674,8 +700,8 @@ export function InspectorPanel(props: InspectorPanelProps) {
   }, [showTagInput]);
 
   // REQ-VIEW-003 / CU-D8 / Serpent-i07: fetch extracted metadata for video /
-  // audio tech lines and GIF frames. Display is derived from cache identity
-  // so selection changes do not sync-setState.
+  // audio tech lines, GIF frames, and RAW camera details. Display is derived
+  // from cache identity so selection changes do not sync-setState.
   useEffect(() => {
     const assetId = selectedAsset?.assetId ?? null;
     const libraryId = library?.libraryId ?? null;
@@ -683,12 +709,15 @@ export function InspectorPanel(props: InspectorPanelProps) {
     const isAudio = selectedAsset?.mediaType === "audio";
     const isGif =
       selectedAsset != null && isGifDisplayName(selectedAsset.displayName);
+    const isRawImage =
+      selectedAsset?.mediaType === "image"
+      && isRawImageExtension(selectedAsset.relativeFilePath);
     const shouldFetch =
       Boolean(
         api &&
           libraryId &&
           assetId &&
-          (isVideo || isAudio || isGif) &&
+          (isVideo || isAudio || isGif || isRawImage) &&
           selectionCount < 2,
       );
 
@@ -756,6 +785,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const gifExtractedMetadata =
     selectedAsset != null
     && isGifDisplayName(selectedAsset.displayName)
+    && selectionCount < 2
+    && videoTechCache?.assetId === selectedAsset.assetId
+      ? videoTechCache.metadata
+      : null;
+
+  const rawImageMetadata =
+    selectedAsset?.mediaType === "image"
+    && isRawImageExtension(selectedAsset.relativeFilePath)
     && selectionCount < 2
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
@@ -939,6 +976,28 @@ export function InspectorPanel(props: InspectorPanelProps) {
     gifExtractedMetadata,
   ]);
 
+  const rawMetadataRows = useMemo(() => {
+    if (
+      !selectedAsset
+      || selectionCount >= 2
+      || !isRawImageExtension(selectedAsset.relativeFilePath)
+    ) {
+      return [];
+    }
+    return buildRawImageMetadataRows(
+      selectedAsset,
+      rawImageMetadata,
+      displayMetadata?.author || rawImageMetadata?.author,
+      locale,
+    );
+  }, [
+    displayMetadata?.author,
+    locale,
+    rawImageMetadata,
+    selectedAsset,
+    selectionCount,
+  ]);
+
   const inspectorSelectedAssetIds = useMemo(() => {
     if (selectedAssets.length > 0) {
       return selectedAssets.map((asset) => asset.assetId);
@@ -1016,6 +1075,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 </button>
               ) : null}
             </div>
+          )}
+
+          {rawMetadataRows.length > 0 && (
+            <section
+              aria-label={t("inspector.rawDetails")}
+              className="inspector-section inspector-raw-metadata"
+            >
+              <dl className="metadata-list">
+                {rawMetadataRows.map((row) => (
+                  <div data-field={row.field} key={row.field}>
+                    <dt>{t(RAW_METADATA_LABEL_KEYS[row.field])}</dt>
+                    <dd data-hover-tip={row.value}>{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
           )}
 
           {/* Tag chips (REQ-TAG-003) */}

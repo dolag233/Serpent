@@ -50,13 +50,14 @@ $env:VCPKG_DISABLE_METRICS = '1'
 $env:VCPKG_FEATURE_FLAGS = 'manifests,versions'
 $env:VCPKG_BINARY_SOURCES = 'clear'
 
-Write-Host 'Installing openimageio (oiiotool only; ffmpeg comes from BtbN LGPL builds)...'
+Write-Host 'Installing openimageio with LibRaw/OCIO/tools (oiiotool only; ffmpeg comes from BtbN LGPL builds)...'
 # vcpkg 工具可用本机安装（D:\vcpkg\vcpkg.exe）或 $VcpkgRoot 内自备；
 # triplet 定义在主仓 resources/media-binaries/vcpkg/triplets/
-& $VcpkgToolPath install 'openimageio' `
+& $VcpkgToolPath install 'openimageio[libraw,opencolorio,tools]' `
   "--x-install-root=$InstalledRoot" `
   "--triplet=$Triplet" `
   "--overlay-ports=$OverlayRoot" `
+  '--recurse' `
   "--overlay-triplets=$(Join-Path $Root 'resources/media-binaries/vcpkg/triplets')"
 if ($LASTEXITCODE -ne 0) { throw 'vcpkg openimageio install failed.' }
 

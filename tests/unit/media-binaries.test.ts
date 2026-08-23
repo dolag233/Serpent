@@ -335,6 +335,11 @@ it('uses one LibRaw- and zlib-enabled media manifest for macOS and Windows build
   expect(windowsScript).toContain("$ManifestRoot = Join-Path $Root 'resources/media-binaries/vcpkg'");
   expect(macScript).toContain('export VCPKG_ROOT');
   expect(windowsScript).toContain('$env:VCPKG_ROOT = $VcpkgRoot');
+  const windowsOiioScript = readFileSync(
+    path.join(projectRoot, 'scripts/media-build/build-oiiotool-win32.ps1'),
+    'utf8',
+  );
+  expect(windowsOiioScript).toContain("'openimageio[libraw,opencolorio,tools]'");
   // 工作目录不得与 Squirrel/Inno 安装目录 %LOCALAPPDATA%\Serpent 撞名
   expect(windowsScript).toContain("Join-Path $env:LOCALAPPDATA 'SerpentMediaBuild\\win32-x64'");
 });

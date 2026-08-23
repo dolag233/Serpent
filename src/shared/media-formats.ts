@@ -17,7 +17,7 @@ export const OIIO_IMAGE_EXTENSIONS = [
 
 /** Camera RAW formats decoded by OIIO's LibRaw plugin. */
 export const RAW_IMAGE_EXTENSIONS = [
-  '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2',
+  '.raw', '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2',
 ] as const;
 
 export const IMAGE_EXTENSIONS = [
@@ -47,6 +47,7 @@ export const DOCUMENT_EXTENSIONS = [
 export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
+const rawImageExtensions = new Set<string>(RAW_IMAGE_EXTENSIONS);
 const oiioExtensions = new Set<string>([
   ...OIIO_IMAGE_EXTENSIONS,
   ...RAW_IMAGE_EXTENSIONS,
@@ -60,6 +61,10 @@ function normalizedExtension(extensionOrFilename: string): string {
   const lower = extensionOrFilename.toLowerCase();
   const lastDot = lower.lastIndexOf('.');
   return lastDot >= 0 ? lower.slice(lastDot) : lower;
+}
+
+export function isRawImageExtension(extensionOrFilename: string): boolean {
+  return rawImageExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
 export function isSupportedImageExtension(extensionOrFilename: string): boolean {
@@ -120,6 +125,7 @@ export function imageMimeForExtension(extensionOrFilename: string): string | nul
     case '.exr': return 'image/x-exr';
     case '.tga': return 'image/x-tga';
     case '.dng': return 'image/x-adobe-dng';
+    case '.raw': return 'image/x-camera-raw';
     case '.cr2': return 'image/x-canon-cr2';
     case '.cr3': return 'image/x-canon-cr3';
     case '.nef': return 'image/x-nikon-nef';
