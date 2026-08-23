@@ -407,6 +407,18 @@
         "layoutOnlyMs": 90.04,
         "note": "开库同步路径两项根治：(1) quick_check(~270ms 全 B-tree 扫描)延迟到后台对账首个 yield 后——损坏仍走恢复梯子；(2) 移除 adopt 内重复的 startup 缩略图入队(~230ms，Worker 的 deferStartupThumbnailScene 以相同参数在首视口后调度)。openLibrary 552→44.3ms（12倍）。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T08:15:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+923244e1",
+      "suite": "large-library-electron-scroll-e2e (post quick_check deferral)",
+      "metrics": {
+        "jumpsPassedOf10": 10,
+        "p50Ms": 294.5,
+        "p95Ms": 445.8,
+        "note": "开库路径优化（openLibrary 44.3ms）后第三次 10/10——滚动基准在全部六轮优化后保持稳定达标。"
+      }
     }
   ]
 }
