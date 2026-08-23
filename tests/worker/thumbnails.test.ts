@@ -897,7 +897,7 @@ describe('enqueueThumbnailJobs', () => {
     service.closeAll();
   });
 
-  it('queues a missing startup thumbnail when a library is reopened', () => {
+  it('defers the startup thumbnail enqueue out of library.open but requeues on demand', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'ReopenQueue', selectedParentPath: root });
@@ -906,12 +906,29 @@ describe('enqueueThumbnailJobs', () => {
     importNoConflict(service, created.libraryId, source);
     service.closeAll();
 
+    // Serpent-4bdd26: the synchronous open no longer enqueues the startup
+    // wave (~230ms of full-table scans on a 20k library). The Worker's
+    // deferStartupThumbnailScene schedules the same parameters after the
+    // renderer reports its first viewport; an explicit caller (automation,
+    // CLI) triggers it directly.
     const reopened = service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
-    const queued = db.prepare(
+    const queuedBefore = db.prepare(
       "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
     ).get() as { count: number };
-    expect(queued.count).toBe(1);
+    expect(queuedBefore.count).toBe(0);
+
+    const enqueued = service.enqueueThumbnailJobs(reopened.libraryId, {
+      limit: 50,
+      priority: 100,
+      repairFailed: true,
+      retryFailed: true,
+    });
+    expect(enqueued).toBe(1);
+    const queuedAfter = db.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get() as { count: number };
+    expect(queuedAfter.count).toBe(1);
     db.close();
     service.closeAll();
   });
