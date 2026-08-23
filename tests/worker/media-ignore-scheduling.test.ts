@@ -189,6 +189,27 @@ describe('media scheduling respects ignore rules', () => {
     });
   });
 
+  it('hides stale ignored AI rows from the task panel but keeps batch status addressable', () => {
+    const fixture = buildLinkedFixture('ai-list');
+    const queued = fixture.service.enqueueAiAnalysisJobs({
+      libraryId: fixture.created.libraryId,
+      assetIds: [fixture.nestedVideoAssetId],
+    });
+    expect(queued.jobIds).toHaveLength(1);
+
+    setFolderIgnored(fixture, true);
+    const panel = fixture.service.getAiJobStatus(fixture.created.libraryId);
+    expect(panel.jobs.some((job) => job.assetId === fixture.nestedVideoAssetId)).toBe(false);
+    expect(panel.queued).toBe(0);
+
+    const batch = fixture.service.getAiJobStatus(
+      fixture.created.libraryId,
+      queued.jobIds,
+    );
+    expect(batch.jobs).toHaveLength(1);
+    expect(batch.jobs[0]?.assetId).toBe(fixture.nestedVideoAssetId);
+  });
+
   it('does not stat existing assets inside an ignored folder during open reconciliation', async () => {
     const fixture = buildLinkedFixture('open-skip');
     setFolderIgnored(fixture, true);

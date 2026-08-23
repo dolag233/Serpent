@@ -16998,9 +16998,12 @@ export class LibraryService {
       const counts = conn
         .prepare(
           `SELECT status, COUNT(*) as cnt
-             FROM jobs
-            WHERE library_id = ?
-              AND kind IN ('ai.image.analysis', 'ai.video.analysis')
+             FROM jobs j
+             LEFT JOIN assets a ON a.asset_id = j.asset_id
+            WHERE j.library_id = ?
+              AND j.kind IN ('ai.image.analysis', 'ai.video.analysis')
+              AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+              AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(conn, 'a')})
             GROUP BY status`,
         )
         .all(libId) as Array<{ status: string; cnt: number }>;
@@ -17013,6 +17016,8 @@ export class LibraryService {
              LEFT JOIN assets a ON a.asset_id = j.asset_id
             WHERE j.library_id = ?
               AND j.kind IN ('ai.image.analysis', 'ai.video.analysis')
+              AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+              AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(conn, 'a')})
             ORDER BY j.created_at DESC
             LIMIT 200`,
         )
