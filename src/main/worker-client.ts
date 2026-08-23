@@ -56,6 +56,10 @@ interface PendingRequest {
 const READY_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SEARCH_REQUEST_TIMEOUT_MS = 60_000;
+// Serpent-2cc492：开库宽限窗口——SMB 冷缓存首读单条查询实测 20-35s，窗口内
+// 的请求放宽到 120s（仍远小于「无限等待」），窗口 120s 后恢复稳态超时。
+const OPEN_STARTUP_GRACE_WINDOW_MS = 120_000;
+const OPEN_STARTUP_GRACE_TIMEOUT_MS = 120_000;
 const FILE_OPERATION_TIMEOUT_MS = 5 * 60_000;
 const AI_QUEUE_TIMEOUT_MS = 10 * 60_000;
 const SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -159,6 +163,12 @@ export class LibraryWorkerClient {
   #ready = false;
   #pending = new Map<string, PendingRequest>();
   #expiredRequestIds = new Set<string>();
+  // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：开库后的第一批元数据
+  // 查询在 SMB 冷缓存下实测单条 20-35s（assets 表每页一次网络往返），远超
+  // 15s 默认超时；响应迟到即被丢弃、UI 呈现「空资源库」且无法自愈。开库
+  // 成功后开启一个有界宽限窗口：窗口内的请求按宽限超时计时（取两者较大值），
+  // 稳态超时语义不变。窗口本身有硬上限，不会无限拖延失败检测。
+  #openGraceUntil = 0;
   #shutdownAck: (() => void) | undefined;
   #shuttingDown = false;
   #assetChangeListeners = new Set<(event: AssetChangeEvent) => void>();
@@ -287,8 +297,21 @@ export class LibraryWorkerClient {
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
 
     const requestId = randomUUID();
+    if (
+      command.type === 'library.open'
+      || command.type === 'library.open-eagle'
+      || command.type === 'library.open-billfish'
+    ) {
+      this.#openGraceUntil = Date.now() + OPEN_STARTUP_GRACE_WINDOW_MS;
+    }
     return new Promise<WorkerResult>((resolve, reject) => {
-      const timeout = requestTimeoutForCommand(command);
+      const baseTimeout = requestTimeoutForCommand(command);
+      const inOpenGrace = Date.now() < this.#openGraceUntil;
+      const timeout = baseTimeout == null
+        ? null
+        : inOpenGrace && command.type !== 'library.open'
+          ? Math.max(baseTimeout, OPEN_STARTUP_GRACE_TIMEOUT_MS)
+          : baseTimeout;
       const timer = timeout == null
         ? undefined
         : setTimeout(() => {

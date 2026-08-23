@@ -737,6 +737,70 @@ const STARTUP_THUMBNAIL_MAX_VISIBLE_WAIT_MS = 8_000;
 // Serpent-onch/9e1d8d: per-command timing log, off by default.
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
 
+// Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：开库后台对账若与渲染端
+// startup 请求风暴同时运行，SMB 上 21,508 条目的 artifact 枚举实测 ~16.5s，
+// 加上各同步 SQL 步骤，startup 突发全部撞上主进程 15s 超时且 late 响应被
+// 丢弃（一次 E2E 记录到 462 条）——画布永远等不到第一页数据。因此对账必须
+// 等首个浏览查询真正服务完毕、且在飞命令清零后才启动；15s 硬上限防止
+// 「永远推迟」（Serpent-4bdd26 教训：无限等待同样是缺陷）。
+const OPEN_RECONCILIATION_MAX_STARTUP_WAIT_MS = 15_000;
+let inFlightWorkerCommandCount = 0;
+let startupBrowseServed = false;
+const startupBurstDrainResolvers = new Set<() => void>();
+
+function settleStartupBurstGate(commandType: string): void {
+  if (
+    !startupBrowseServed
+    && (commandType === 'asset.search'
+      || commandType === 'folder.browse-entries')
+  ) {
+    startupBrowseServed = true;
+  }
+  if (inFlightWorkerCommandCount > 0 || !startupBrowseServed) return;
+  const resolvers = [...startupBurstDrainResolvers];
+  startupBurstDrainResolvers.clear();
+  for (const resolve of resolvers) resolve();
+}
+
+/**
+ * Resolve once the renderer's first post-open browse response has been posted
+ * and no command is in flight (or after the hard cap). The open background
+ * reconciliation chain must never start inside this window: its SMB I/O and
+ * synchronous SQL steps are exactly what starved the startup burst into the
+ * 15s request timeout on the real NAS library.
+ */
+function waitForStartupBurstDrain(): Promise<void> {
+  if (inFlightWorkerCommandCount === 0 && startupBrowseServed) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    startupBurstDrainResolvers.add(resolve);
+    setTimeout(
+      () => {
+        if (startupBurstDrainResolvers.delete(resolve)) resolve();
+      },
+      OPEN_RECONCILIATION_MAX_STARTUP_WAIT_MS,
+    );
+  });
+}
+
+/** Run the open reconciliation only after the startup burst has drained. */
+function scheduleOpenBackgroundReconciliation(libraryId: string): void {
+  // Per-open-event gate: this runs synchronously inside the library.open
+  // handler, before any post-open command can settle, so resetting here is
+  // race-free with respect to THIS open's burst.
+  startupBrowseServed = false;
+  void waitForStartupBurstDrain().then(() => {
+    if (libraryService.hasOpenLibrary(libraryId)) {
+      return libraryService.runOpenBackgroundReconciliation(libraryId);
+    }
+    return undefined;
+  }).catch(() => {
+    // runOpenBackgroundReconciliation diagnoses internally; a gate failure
+    // must never surface as an unhandled rejection.
+  });
+}
+
 /**
  * Do not let the library-open backfill claim the primary decoder before the
  * renderer has had a chance to report its first visible window. Re-arm the
@@ -769,7 +833,19 @@ function deferStartupThumbnailScene(libraryId: string): void {
       );
       return;
     }
-    scheduleThumbnailScene(libraryId, 'startup');
+    // Serpent-2cc492（真实 NAS 生产库事故第二轮归因，2026-08-23）：startup
+    // 全量入队与处理本身就是一个持续数十秒的 Worker 风暴源（大库上 stale
+    // repair 扫描 + 每个失败任务一次 journal 写事务），与开库对账同样会饿死
+    // 渲染端首屏请求。因此 startup 场景与后台对账共用同一个 startup-burst
+    // 门闩：首屏浏览响应投递且在飞清零之前不入队不处理；15s 上限兜底。
+    void waitForStartupBurstDrain().then(() => {
+      if (libraryService.hasOpenLibrary(libraryId)) {
+        scheduleThumbnailScene(libraryId, 'startup');
+      }
+      return undefined;
+    }).catch(() => {
+      // Never let automatic media work surface as an unhandled rejection.
+    });
   };
 
   deferredStartupThumbnailQueues.set(
@@ -1437,7 +1513,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         // disk-heavy reconciliation (artifact sweep, trash purge, Assets rescan)
         // in the background so large libraries become interactive without
         // waiting for a full disk walk.
-        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+        scheduleOpenBackgroundReconciliation(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
     }
@@ -1461,7 +1537,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const library = await libraryService.openEagleLibrary(request.command);
       if (!library.readOnly) {
         deferStartupThumbnailScene(library.libraryId);
-        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+        scheduleOpenBackgroundReconciliation(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
     }
@@ -1480,7 +1556,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const library = await libraryService.openBillfishLibrary(request.command);
       if (!library.readOnly) {
         deferStartupThumbnailScene(library.libraryId);
-        void libraryService.runOpenBackgroundReconciliation(library.libraryId);
+        scheduleOpenBackgroundReconciliation(library.libraryId);
       }
       return { ok: true, type: 'library.opened', library };
     }
@@ -3833,6 +3909,14 @@ parentPort.on('message', async (event) => {
   const cmdLogReceivedAt = WORKER_CMD_LOG ? performance.now() : 0;
 
   let response: WorkerResponse;
+  // Serpent-2cc492: track in-flight commands so the open-reconciliation gate
+  // can tell "startup burst drained" apart from "gap between burst waves".
+  const responseCommandType =
+    typeof input === 'object' && input !== null && 'command' in input &&
+    typeof input.command === 'object' && input.command !== null && 'type' in input.command
+      ? String(input.command.type)
+      : '';
+  inFlightWorkerCommandCount += 1;
   try {
     const request = parseWorkerRequest(input);
     if (request.command.type === 'asset.search') {
@@ -3884,6 +3968,10 @@ parentPort.on('message', async (event) => {
   }
 
   parentPort.postMessage(response);
+  // Serpent-2cc492: settle the open-reconciliation startup gate only after the
+  // response has actually been posted to Main — "served" must mean delivered.
+  inFlightWorkerCommandCount -= 1;
+  settleStartupBurstGate(responseCommandType);
 });
 
 // CI 诊断：UtilityProcess fork 后若模块加载失败/被系统杀，main 只见握手
