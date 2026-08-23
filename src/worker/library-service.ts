@@ -17349,9 +17349,19 @@ export class LibraryService {
   } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const kindPlaceholders = MEDIA_JOB_KINDS.map(() => '?').join(',');
+    // Ignored assets are outside the user's working set.  Do not surface
+    // stale rows that were queued before an ignore rule was added (or that
+    // were cancelled by the claim-time guard) in the task panel.  The rows
+    // stay in SQLite for diagnostics, but they are not actionable media work.
+    const visibleJobFilter = `
+          AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+          AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})`;
     const counts = openLibrary.connection.prepare(
       `SELECT status, COUNT(*) AS count FROM jobs
-        WHERE library_id = ? AND kind IN (${kindPlaceholders})
+        LEFT JOIN assets a ON a.asset_id = jobs.asset_id
+        WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
+          AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
+          AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
         GROUP BY status`,
     ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
       status: string;
@@ -17363,6 +17373,7 @@ export class LibraryService {
           FROM jobs j
           LEFT JOIN assets a ON a.asset_id = j.asset_id
          WHERE j.library_id = ? AND j.kind IN (${kindPlaceholders})
+           ${visibleJobFilter}
          ORDER BY j.created_at DESC, j.job_id DESC
          LIMIT 500`,
       ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
@@ -19146,7 +19157,16 @@ export class LibraryService {
           WHERE revision_id = ? AND invalidated_at IS NULL`,
       )
       .run(now, existing.current_revision_id);
-    if (LibraryService.supportsThumbnail(existing.relative_file_path)) {
+    if (
+      LibraryService.supportsThumbnail(existing.relative_file_path)
+      && !this.isExplicitlyIgnored(
+        openLibrary,
+        existing.location_kind,
+        existing.linked_folder_id,
+        existing.relative_file_path,
+        'asset',
+      )
+    ) {
       openLibrary.connection
         .prepare(
           `INSERT OR IGNORE INTO jobs
@@ -21315,31 +21335,52 @@ export class LibraryService {
       );
     }
     const storedOverride = this.getColorSpaceOverride(openLibrary.connection, assetId);
-    const assetPath = this.resolveAssetPath(libraryId, assetId);
     const cachedColorSpace = this.imageColorSpaceByRevision.get(asset.current_revision_id);
-    let colorSpacePending = false;
-    let detectedColorSpace: ImageColorSpaceInfo;
-    // Native source images can be mounted immediately. The metadata probe is
-    // useful for the Inspector and color-space selector, but it must not hold
-    // the first source response hostage (Sharp metadata and network-mounted
-    // files can take hundreds of milliseconds or more). Start it in the
-    // background and let the viewer's normal poll merge the detected result.
     const canWarmColorSpaceInBackground =
       basePreview.playbackMode === 'source'
       && decoder === 'sharp'
       && !isRawAsset
       && requestedColorSpace === undefined
       && storedOverride === null;
+
+    // Native images already have a browser-readable source URL. Do not make
+    // the viewer wait for a filesystem probe or Sharp metadata just to decide
+    // which label to show beside the image. Return the source with a safe
+    // default immediately, then resolve the path and warm the colour-space
+    // cache on a detached turn; the next normal preview poll merges the exact
+    // embedded profile without replacing the decoded image.
+    if (canWarmColorSpaceInBackground) {
+      const detectedColorSpace = cachedColorSpace ?? defaultImageColorSpace(extension);
+      if (!cachedColorSpace) {
+        void Promise.resolve()
+          .then(() => this.resolveAssetPath(libraryId, assetId))
+          .then((assetPath) => this.getImageColorSpace(
+            asset.current_revision_id!,
+            assetPath,
+            decoder,
+          ))
+          .catch(() => undefined);
+      }
+      return {
+        ...basePreview,
+        colorSpace: {
+          ...detectedColorSpace,
+          options: canOverrideImageColorSpace(extension)
+            ? [...COMMON_IMAGE_COLOR_SPACE_OPTIONS]
+            : [{
+              id: detectedColorSpace.id,
+              label: detectedColorSpace.label,
+              isLinear: detectedColorSpace.isLinear,
+            }],
+        },
+        ...(cachedColorSpace ? {} : { colorSpacePending: true }),
+      };
+    }
+
+    const assetPath = this.resolveAssetPath(libraryId, assetId);
+    let detectedColorSpace: ImageColorSpaceInfo;
     if (cachedColorSpace) {
       detectedColorSpace = cachedColorSpace;
-    } else if (canWarmColorSpaceInBackground) {
-      detectedColorSpace = defaultImageColorSpace(extension);
-      colorSpacePending = true;
-      void this.getImageColorSpace(
-        asset.current_revision_id,
-        assetPath,
-        decoder,
-      ).catch(() => undefined);
     } else {
       detectedColorSpace = await this.getImageColorSpace(
         asset.current_revision_id,
@@ -21422,7 +21463,6 @@ export class LibraryService {
     return {
       ...this.getPreviewArtifact(libraryId, assetId, intent),
       ...(planes ? { exrPlanes: planes, selectedExrPlane: selected } : {}),
-      ...(colorSpacePending ? { colorSpacePending: true } : {}),
       colorSpace,
     };
   }
@@ -30060,7 +30100,13 @@ export class LibraryService {
             )
             .run(now, assetRow.current_revision_id);
         }
-        openLibrary.connection
+        if (!this.isExplicitlyIgnored(
+          openLibrary,
+          assetRow.location_kind,
+          assetRow.linked_folder_id,
+          resolvedRelativePath,
+          'asset',
+        )) openLibrary.connection
           .prepare(
             `INSERT OR IGNORE INTO jobs
                (job_id, library_id, asset_id, revision_id, kind, status, priority,
@@ -30420,7 +30466,13 @@ export class LibraryService {
               )
               .run(now, asset.current_revision_id);
           }
-          openLibrary.connection
+          if (!this.isExplicitlyIgnored(
+            openLibrary,
+            asset.location_kind,
+            asset.linked_folder_id,
+            resolvedRelativePath,
+            'asset',
+          )) openLibrary.connection
             .prepare(
               `INSERT OR IGNORE INTO jobs
                  (job_id, library_id, asset_id, revision_id, kind, status, priority,
@@ -34196,7 +34248,16 @@ export class LibraryService {
                 WHERE asset_id = ?`,
             )
             .run(revisionId, now, asset.asset_id);
-          if (LibraryService.supportsThumbnail(asset.relative_file_path)) {
+          if (
+            LibraryService.supportsThumbnail(asset.relative_file_path)
+            && !this.isExplicitlyIgnored(
+              openLibrary,
+              asset.location_kind,
+              asset.linked_folder_id,
+              asset.relative_file_path,
+              'asset',
+            )
+          ) {
             openLibrary.connection
               .prepare(
                 `INSERT OR IGNORE INTO jobs
@@ -34292,7 +34353,16 @@ export class LibraryService {
             .run(now, asset.current_revision_id);
           // Enqueue only decodable media; unsupported assets keep their normal
           // file icon and never churn through a permanently failing queue.
-          if (LibraryService.supportsThumbnail(asset.relative_file_path)) {
+          if (
+            LibraryService.supportsThumbnail(asset.relative_file_path)
+            && !this.isExplicitlyIgnored(
+              openLibrary,
+              asset.location_kind,
+              asset.linked_folder_id,
+              asset.relative_file_path,
+              'asset',
+            )
+          ) {
             openLibrary.connection
               .prepare(
                 `INSERT OR IGNORE INTO jobs

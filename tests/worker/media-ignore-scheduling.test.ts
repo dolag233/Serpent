@@ -139,6 +139,9 @@ describe('media scheduling respects ignore rules', () => {
     expect(queuedCountFor(fixture, fixture.nestedAssetId)).toBe(1);
 
     setFolderIgnored(fixture, true);
+    const hiddenJobs = fixture.service.listMediaJobs(fixture.created.libraryId);
+    expect(hiddenJobs.jobs.some((job) => job.assetId === fixture.nestedAssetId)).toBe(false);
+    expect(hiddenJobs.cancelled).toBe(0);
     await fixture.service.processThumbnailQueue(fixture.created.libraryId, { maxJobs: 5 });
 
     openLibraryDb(fixture.created.libraryPath, (db) => {
@@ -148,6 +151,9 @@ describe('media scheduling respects ignore rules', () => {
       expect(job.status).toBe('cancelled');
       expect(job.error_code).toBe('ASSET_IGNORED');
     });
+    const afterClaim = fixture.service.listMediaJobs(fixture.created.libraryId);
+    expect(afterClaim.jobs.some((job) => job.assetId === fixture.nestedAssetId)).toBe(false);
+    expect(afterClaim.cancelled).toBe(0);
   });
 
   it('filters ignored ids for visible-window reporting', () => {

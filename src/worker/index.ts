@@ -3147,23 +3147,6 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         assetId: request.command.assetId,
         kind: 'preview',
       });
-      // Opening a preview is also an idempotent, high-priority generation hint.
-      // A provided plugin artifact already satisfies the request, so avoid
-      // enqueueing a native job that could overwrite it.
-      // Serpent-tz35: the viewer must PREEMPT background work. The old
-      // 'mutation' scene ran the full non-light repair sweep inline
-      // (hundreds of ms of Worker stall) at priority 300; the light visible
-      // wave gives this asset's preview job the highest interactive tier
-      // (350, above every background flood) and schedules zero scans.
-      if (!pluginArtifact) {
-        scheduleThumbnailScene(
-          request.command.libraryId,
-          'visible',
-          [request.command.assetId],
-          1,
-          { light: true },
-        );
-      }
       const preview = await libraryService.resolvePreviewArtifact(
         request.command.libraryId,
         request.command.assetId,
@@ -3171,6 +3154,28 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.colorSpace,
         request.command.intent,
       );
+      // Opening a preview is also an idempotent, high-priority generation hint.
+      // Do not enqueue it before resolving the source: enqueueThumbnailJobs is
+      // synchronous and can contend with a large-library metadata sweep. The
+      // viewer must receive a native image URL (or the current placeholder)
+      // first; the light visible wave can start on the next turn without
+      // delaying that response. A provided plugin artifact already satisfies
+      // the request, so avoid enqueueing a native job that could overwrite it.
+      // Serpent-tz35: the viewer wave stays at priority 350 and skips repair
+      // scans, but it is deliberately detached from the first-paint request.
+      if (!pluginArtifact) {
+        const previewLibraryId = request.command.libraryId;
+        const previewAssetId = request.command.assetId;
+        setTimeout(() => {
+          scheduleThumbnailScene(
+            previewLibraryId,
+            'visible',
+            [previewAssetId],
+            1,
+            { light: true },
+          );
+        }, 0);
+      }
       return {
         ok: true,
         type: 'media.preview-artifact',
