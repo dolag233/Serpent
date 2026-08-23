@@ -31,6 +31,7 @@ import {
   setApplicationMenuCommandLabel,
 } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
+import { SourcePathCache, type SourcePathResolution } from "./source-path-cache";
 import {
   NativeAssetDragCache,
   startNativeAssetDrag,
@@ -488,6 +489,7 @@ let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
+const VIEWER_TIMING_LOG = process.env.SERPENT_VIEWER_TIMING_LOG === "1";
 let appLogPath: string | undefined;
 let appUpdateService: AppUpdateService | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
@@ -588,6 +590,7 @@ let lastExtensionTargetWindowId: number | undefined;
 
 // Keeps selected roots in Main. Renderer receives only an opaque, one-shot token.
 const pendingRelinkPreviews = new RelinkPreviewStore();
+const sourcePathCache = new SourcePathCache();
 
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
@@ -1581,6 +1584,10 @@ async function reopenLibrariesAfterFailedReplacement(
 
 function publishAssetChange(event: AssetChangeEvent): void {
   const parsed = parseAssetChangeEvent(event);
+  // Asset changes can invalidate a cached source path (delete, relink, move,
+  // or replacement). Artifact-only library changes use the separate
+  // library.changed channel and do not evict the viewer's hot path.
+  sourcePathCache.clearLibrary(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'asset.changed',
     libraryId: parsed.libraryId,
@@ -4406,9 +4413,22 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
+    const viewerRequest = command.type === "media.get-preview-artifact" ? command : undefined;
+    const viewerWorkerStartedAt = VIEWER_TIMING_LOG && viewerRequest !== undefined
+      ? performance.now()
+      : 0;
     const workerResult = command.type === "sync.probe"
       ? await runSyncProbeWithRetry(command)
       : await workerClient.request(command);
+    if (viewerWorkerStartedAt > 0) {
+      logger?.info("viewer.preview-worker-timing", "Preview request resolved.", {
+        libraryId: viewerRequest?.libraryId,
+        assetId: viewerRequest?.assetId,
+        workerMs: Math.round(performance.now() - viewerWorkerStartedAt),
+        resultType: workerResult.ok ? workerResult.type : undefined,
+        errorCode: workerResult.ok ? undefined : workerResult.error.code,
+      });
+    }
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
@@ -4587,6 +4607,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
     }
     if (workerResult.ok && request.type === "library.delete-from-disk.request") {
       pendingRelinkPreviews.clearLibrary(request.libraryId);
+      sourcePathCache.clearLibrary(request.libraryId);
       for (const [importId, libraryId] of pendingImportLibraries) {
         if (libraryId !== request.libraryId) continue;
         pendingImportLibraries.delete(importId);
@@ -4624,6 +4645,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       });
     }
     if (workerResult.ok && workerResult.type === "library.closed") {
+      sourcePathCache.clearLibrary(workerResult.libraryId);
       pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
       for (const [executionId, context] of pluginAutomationContexts) {
         if (context.libraryId === workerResult.libraryId) {
@@ -6895,6 +6917,10 @@ async function startApplication(): Promise<void> {
       }
 
       if (url.hostname === "source") {
+        const sourceWorkerClient = workerClient;
+        if (!sourceWorkerClient) {
+          return new Response("Worker unavailable", { status: 503 });
+        }
         logger?.info(
           "serpent-protocol.source-request",
           "Resolving a source asset request.",
@@ -6939,28 +6965,59 @@ async function startApplication(): Promise<void> {
             return new Response("Source file missing", { status: 404 });
           }
         }
-        const sourceResult = await workerClient.request({
-          type: "media.get-source-path",
+        const sourceStartedAt = performance.now();
+        const sourceKey: SourcePathResolution = {
           libraryId,
           assetId: artifactId,
           revisionId,
-        });
-        if (!sourceResult.ok || sourceResult.type !== "media.source-path") {
+          absolutePath: "",
+          mimeType: "",
+        };
+        const sourceCacheHit = sourcePathCache.has(libraryId, artifactId, revisionId);
+        let sourceResult: SourcePathResolution;
+        try {
+          sourceResult = await sourcePathCache.getOrResolve(sourceKey, async () => {
+            const result = await sourceWorkerClient.request({
+              type: "media.get-source-path",
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+            });
+            if (!result.ok || result.type !== "media.source-path") {
+              throw new Error("Source not found");
+            }
+            return {
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+              absolutePath: result.absolutePath,
+              mimeType: result.mimeType,
+            };
+          });
+        } catch (error) {
+          sourcePathCache.delete(libraryId, artifactId, revisionId);
           logger?.info(
             "serpent-protocol.source-stale",
             "Rejected missing or stale source token.",
-            {
+            { libraryId, assetId: artifactId },
+          );
+          if (VIEWER_TIMING_LOG) {
+            logger?.info("viewer.source-timing", "Source lookup failed.", {
               libraryId,
               assetId: artifactId,
-            },
-          );
+              revisionId,
+              cacheHit: sourceCacheHit,
+              workerMs: Math.round(performance.now() - sourceStartedAt),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
           return new Response("Source not found", { status: 404 });
         }
         if (isLibraryMediaReadBlocked(libraryId)) {
           return new Response("Library unavailable", { status: 410 });
         }
         try {
-          return await createArtifactResponse(
+          const response = await createArtifactResponse(
             sourceResult.absolutePath,
             sourceResult.mimeType,
             {
@@ -6973,7 +7030,20 @@ async function startApplication(): Promise<void> {
                 }),
             },
           );
+          if (VIEWER_TIMING_LOG) {
+            logger?.info("viewer.source-timing", "Source response ready.", {
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+              cacheHit: sourceCacheHit,
+              workerMs: Math.round(performance.now() - sourceStartedAt),
+              status: response.status,
+              range: request.headers.get("range") ?? undefined,
+            });
+          }
+          return response;
         } catch (error) {
+          sourcePathCache.delete(libraryId, artifactId, revisionId);
           logger?.error("serpent-protocol.source-read", error, {
             libraryId,
             assetId: artifactId,

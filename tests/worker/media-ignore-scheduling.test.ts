@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -152,5 +152,25 @@ describe('media scheduling respects ignore rules', () => {
       fixture.nestedAssetId,
     ]);
     expect(kept).toEqual([fixture.rootAssetId]);
+  });
+
+  it('does not stat existing assets inside an ignored folder during open reconciliation', async () => {
+    const fixture = buildLinkedFixture('open-skip');
+    setFolderIgnored(fixture, true);
+    fixture.service.closeAll();
+
+    const statPaths: string[] = [];
+    const reopenedService = new LibraryService({
+      assetLstat: (assetPath) => {
+        statPaths.push(assetPath);
+        return lstatSync(assetPath);
+      },
+    });
+    services.push(reopenedService);
+    const reopened = reopenedService.openLibrary(fixture.created.libraryPath);
+    await reopenedService.runOpenBackgroundReconciliation(reopened.libraryId);
+
+    expect(statPaths.some((assetPath) => assetPath.endsWith('root.png'))).toBe(true);
+    expect(statPaths.some((assetPath) => assetPath.endsWith('nested.png'))).toBe(false);
   });
 });

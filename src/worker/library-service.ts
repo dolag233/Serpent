@@ -5560,9 +5560,10 @@ export class LibraryService {
       const existingAssetIds = (openLibrary.connection
         .prepare(
           `SELECT asset_id
-             FROM assets
-            WHERE deleted_at IS NULL
-            ORDER BY relative_file_path`,
+             FROM assets a
+            WHERE a.deleted_at IS NULL
+              AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+            ORDER BY a.relative_file_path`,
         )
         .all() as Array<{ asset_id: string }>).map((row) => row.asset_id);
       let changedCount = 0;
@@ -16142,6 +16143,55 @@ export class LibraryService {
   }
 
   /**
+   * Return the small, path-free asset descriptor consumed by a plugin media
+   * provider. This is intentionally a point lookup: viewer opens must not
+   * materialize the recursive asset list merely to decide whether an opt-in
+   * provider can handle one asset.
+   */
+  getPluginMediaProviderAsset(
+    libraryId: string,
+    assetId: string,
+  ): Pick<AssetSummary, 'assetId' | 'displayName' | 'relativeFilePath' | 'currentRevisionId'> | undefined {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, location_kind, linked_folder_id, relative_file_path,
+                current_revision_id
+           FROM assets
+          WHERE asset_id = ?
+            AND deleted_at IS NULL
+            AND current_revision_id IS NOT NULL`,
+      )
+      .get(assetId) as {
+        asset_id: string;
+        location_kind: 'managed' | 'linked';
+        linked_folder_id: string | null;
+        relative_file_path: string;
+        current_revision_id: string;
+      } | undefined;
+    const linkedIgnored = row && row.location_kind === 'linked'
+      && hasTable(openLibrary.connection, 'linked_ignored_assets')
+      && openLibrary.connection
+        .prepare('SELECT 1 FROM linked_ignored_assets WHERE asset_id = ?')
+        .get(row.asset_id) !== undefined;
+    if (!row || linkedIgnored || this.isExplicitlyIgnored(
+      openLibrary,
+      row.location_kind,
+      row.linked_folder_id,
+      row.relative_file_path,
+      'asset',
+    )) {
+      return undefined;
+    }
+    return {
+      assetId: row.asset_id,
+      displayName: buildFileName(row.relative_file_path),
+      relativeFilePath: row.relative_file_path,
+      currentRevisionId: row.current_revision_id,
+    };
+  }
+
+  /**
    * Atomically write AI-generated content for an asset.
    * For tags: find-or-create by NOCASE name, then INSERT OR IGNORE into ai_asset_tags.
    * For description/rating: DELETE old row(s) + INSERT new row in ai_content
@@ -22270,7 +22320,8 @@ export class LibraryService {
            JOIN assets a ON a.current_revision_id = ra.revision_id
           WHERE ra.status = 'ready'
             AND ra.invalidated_at IS NULL
-            AND a.deleted_at IS NULL`,
+            AND a.deleted_at IS NULL
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}`,
       )
       .all() as Array<{ artifact_id: string; file_path: string }>;
     if (rows.length === 0) return 0;
@@ -22437,13 +22488,19 @@ export class LibraryService {
    * Read-only and yielded between passes; correctness-neutral.
    */
   private warmBrowseIndexCache(openLibrary: OpenLibrary): void {
+    // Ignored linked folders are intentionally outside the browse surface and
+    // can contain most of a library. Warming their index pages after open only
+    // competes with the first viewer/source requests, especially on SMB.
+    const visibleAssetSql = this.explicitIgnoreSql(openLibrary.connection, 'a');
     const queries = [
       `SELECT r.modified_at FROM assets a
          JOIN revisions r ON r.revision_id = a.current_revision_id
-        WHERE a.deleted_at IS NULL`,
+        WHERE a.deleted_at IS NULL
+          AND ${visibleAssetSql}`,
       `SELECT ra.artifact_id FROM assets a
          JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
-        WHERE a.deleted_at IS NULL`,
+        WHERE a.deleted_at IS NULL
+          AND ${visibleAssetSql}`,
     ];
     for (const sql of queries) {
       try {
@@ -34253,7 +34310,10 @@ export class LibraryService {
 
   private reconcileDefaultIgnoredAssets(openLibrary: OpenLibrary): void {
     const rows = openLibrary.connection.prepare(
-      'SELECT asset_id, relative_file_path FROM assets WHERE deleted_at IS NULL',
+      `SELECT a.asset_id, a.relative_file_path
+         FROM assets a
+        WHERE a.deleted_at IS NULL
+          AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}`,
     ).all() as Array<{ asset_id: string; relative_file_path: string }>;
     const ignoredIds = rows
       .filter((row) => isAlwaysIgnoredAssetPath(row.relative_file_path))

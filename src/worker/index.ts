@@ -517,7 +517,12 @@ async function writePluginMediaArtifact(input: {
   kind: 'preview' | 'thumbnail';
   asset?: PluginMediaProviderRequest['asset'];
 }): Promise<{ artifactId: string } | null> {
-  const result = await requestPluginMediaProvider(input);
+  const providerAsset = input.asset
+    ?? libraryService.getPluginMediaProviderAsset(input.libraryId, input.assetId);
+  const result = await requestPluginMediaProvider({
+    ...input,
+    ...(providerAsset === undefined ? {} : { asset: providerAsset }),
+  });
   if (result.status !== 'provided' || result.assetId !== input.assetId || !result.media) {
     return null;
   }
@@ -3919,6 +3924,22 @@ parentPort.on('message', async (event) => {
   inFlightWorkerCommandCount += 1;
   try {
     const request = parseWorkerRequest(input);
+    if (
+      request.command.type === 'media.get-preview-artifact'
+      || request.command.type === 'asset.text.read'
+      || request.command.type === 'media.get-source-path'
+    ) {
+      // Viewer requests must reach the Worker while background media work is
+      // active. The idle window pauses the next secondary job; a preview also
+      // aborts stale visual jobs so a double-click can claim the decoder.
+      noteInteractiveMediaRequest(request.command.libraryId);
+      if (request.command.type === 'media.get-preview-artifact') {
+        libraryService.interruptThumbnailJobsOutsideViewport(
+          request.command.libraryId,
+          [request.command.assetId],
+        );
+      }
+    }
     if (request.command.type === 'asset.search') {
       noteInteractiveMediaRequest(request.command.libraryId);
       latestAssetSearchRequests.mark(
