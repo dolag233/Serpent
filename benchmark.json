@@ -419,6 +419,41 @@
         "p95Ms": 445.8,
         "note": "开库路径优化（openLibrary 44.3ms）后第三次 10/10——滚动基准在全部六轮优化后保持稳定达标。"
       }
+    },
+    {
+      "timestamp": "2026-08-23T08:30:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(collection leaf fast path)",
+      "suite": "comprehensive-20k-worker + leaf fast path",
+      "metrics": {
+        "openLibraryMs": 44.1,
+        "collectionRecursiveSwitchLeafMs": 3.98,
+        "collectionRecursiveSwitchWithChildrenMs": 36.72,
+        "note": "叶子合集的 recursive scope 走非递归形状（1 次索引子探测选路）：37→3.98ms（9倍）。含子合集的真递归保持 CTE 形状。"
+      }
+    },
+    {
+      "timestamp": "2026-08-23T08:50:00+08:00",
+      "worktree": "/Users/dolag/Development/Serpent",
+      "gitHead": "dev+WIP(SMB 打开优化)",
+      "suite": "nas-smb-open-probe (真实千兆 SMB)",
+      "library": "perf-nas-probe（绘画库 DB 副本 29MB，7164 资产，DELETE journal）",
+      "command": "SERPENT_SMB_PROBE=1 SERPENT_OPEN_STAGE_LOG=1 ... zz-smb-open.test.ts",
+      "metrics": {
+        "openBeforeMs": 3641,
+        "openAfterMs": 1140,
+        "firstPageColdMs": 4346,
+        "stagesAfter": {
+          "storageClassificationMs": 22,
+          "migrateMs": 269,
+          "tombstoneBackfillMs": 159,
+          "verifyMs": 105,
+          "recoveryMs": 386,
+          "watchersMs": 30
+        },
+        "improvementFactor": 3.2,
+        "note": "reconcileDefaultIgnoredAssets（全活跃资产扫描，SMB 上经覆盖索引仍 ~2.8s——每索引页一次往返）从同步 open 延迟到后台对账。对照：优化前推算 SMB 全开要数分钟（对账 225s + 双重 lstat）。剩余候选：recovery 389ms、migrate checksum 校验 278ms、tombstone-backfill 177ms。探针库已清理。"
+      }
     }
   ]
 }

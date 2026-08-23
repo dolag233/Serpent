@@ -22081,6 +22081,10 @@ export class LibraryService {
       // the recovery ladder via the thrown LibraryServiceError.
       readLibraryIdentity(openLibrary.connection);
       await yieldTurn();
+      // Serpent-4bdd26: always-ignored junk cleanup also deferred from the
+      // synchronous open (~2.8s full active scan on SMB via the covering index).
+      this.reconcileDefaultIgnoredAssets(openLibrary);
+      await yieldTurn();
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
       await yieldTurn();
       await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
@@ -23505,6 +23509,26 @@ export class LibraryService {
             .get(input.scope.collectionId, openLibrary.summary.libraryId);
           if (!collection) throw new LibraryServiceError('FOLDER_NOT_FOUND');
           if (input.scope.recursive) {
+            // Serpent-4bdd26: a leaf collection's recursive scope is exactly
+            // its own membership — the recursive CTE + GROUP BY shape forces a
+            // full collection_assets scan (~37ms on 20k) for the same rows.
+            // One indexed child probe picks the cheap shape.
+            const hasChildren = connection
+              .prepare(
+                'SELECT 1 FROM collections WHERE parent_id = ? AND library_id = ? LIMIT 1',
+              )
+              .get(input.scope.collectionId, openLibrary.summary.libraryId);
+            if (!hasChildren) {
+              return {
+                queryPrefix: `WITH collection_scope AS (
+                  SELECT asset_id, position AS collection_position
+                    FROM collection_assets
+                   WHERE collection_id = ?
+                ) `,
+                join: 'JOIN collection_scope ON collection_scope.asset_id = a.asset_id',
+                params: [input.scope.collectionId],
+              };
+            }
             return {
               queryPrefix: `WITH RECURSIVE collection_descendants(collection_id) AS (
                 SELECT collection_id FROM collections WHERE collection_id = ? AND library_id = ?
@@ -34262,8 +34286,13 @@ export class LibraryService {
       this.applicationSessionId,
     );
     markAdoptStage('recovery');
-    this.reconcileDefaultIgnoredAssets(openLibrary);
+    // Serpent-4bdd26: reconcileDefaultIgnoredAssets moved to the background
+    // reconciliation — its full active-asset scan costs ~2.8s on SMB even
+    // through the covering index (one round trip per index page), and the
+    // rows it removes are always-ignored junk files whose delayed cleanup is
+    // invisible to the user.
     this.startAssetWatcher(openLibrary);
+    markAdoptStage('asset-watcher');
     this.reconcileLinkedWatchers(openLibrary);
     markAdoptStage('watchers');
     // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
