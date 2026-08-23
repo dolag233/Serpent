@@ -769,7 +769,9 @@ function deferStartupThumbnailScene(libraryId: string): void {
       );
       return;
     }
-    scheduleThumbnailScene(libraryId, 'startup');
+    // Serpent-308675: light mode skips whole-table stale-repair scans that
+    // block the single Worker thread for hundreds of ms on large libraries.
+    scheduleThumbnailScene(libraryId, 'startup', undefined, undefined, { light: true });
   };
 
   deferredStartupThumbnailQueues.set(
