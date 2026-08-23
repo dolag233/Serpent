@@ -7163,6 +7163,11 @@ export class LibraryService {
     }
   }
 
+  /** Serpent-2cc492: open-state probe for the worker-runtime startup gate. */
+  hasOpenLibrary(libraryId: string): boolean {
+    return this.openById.has(libraryId);
+  }
+
   private requireOpenLibrary(libraryId: string): OpenLibrary {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary) throw new LibraryServiceError('LIBRARY_NOT_OPEN');
@@ -22058,16 +22063,32 @@ export class LibraryService {
     // Serpent-4bdd26 现场教训（用户 NAS 库打开 5 分钟）：21k 条目的 readdirSync
     // 是一次 ~21 秒的同步调用，期间 Worker 事件循环完全停摆——所有并发请求
     // 撞上 15s 超时。改为 opendir 异步流式构建集合，让事件循环持续可响应。
+    // Serpent-2cc492 补充实测（真实 NAS 生产库）：即便纯异步，21,508 条目的
+    // 目录枚举本身也要 ~16.5s——SMB 目录元数据是海量小往返。因此：
+    // ① names-only readdir（Dirent 类型判定在本目录全是常规文件的扁平结构里
+    //    没有额外价值；路径逃逸防护仍由 artifactFilePresent 的 containment
+    //    检查承担；同名符号链接/子目录被当作存在的代价只是少触发一次重建，
+    //    可接受）；
+    // ② 枚举循环每 4k 条让步一次事件循环——配合链尾调度 + startup gate，
+    //    交互请求到达时永远不需要等待整个枚举完成。
     let presentArtifactPaths: Set<string>;
     try {
       presentArtifactPaths = new Set();
       const dir = await opendirAsync(artifactsRoot);
       try {
+        let sinceYield = 0;
         for (;;) {
           const entry = await dir.read();
           if (entry === null) break;
-          if (entry.isFile() && !entry.isSymbolicLink()) {
-            presentArtifactPaths.add(entry.name);
+          if (entry.name.startsWith('.')) continue;
+          presentArtifactPaths.add(entry.name);
+          if (++sinceYield >= 4_096 && yieldTurn) {
+            sinceYield = 0;
+            await yieldTurn();
+            if (!this.openById.has(openLibrary.summary.libraryId)) {
+              // finally closes the dir; outer contract treats this as "nothing swept".
+              return 0;
+            }
           }
         }
       } finally {
@@ -22154,8 +22175,6 @@ export class LibraryService {
       await yieldTurn();
       await this.createDatabaseBackupForOpenLibrary(openLibrary, 'open');
       await yieldTurn();
-      await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
-      await yieldTurn();
       // Purge expired trash on open (best-effort, single busy file does not abort)
       try {
         this.purgeExpiredTrash(libraryId);
@@ -22173,6 +22192,14 @@ export class LibraryService {
       }
       await yieldTurn();
       this.warmBrowseIndexCache(openLibrary);
+      // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：artifact 文件扫描
+      // 是对账链里对首屏最无用、对 SMB 最昂贵的一步——21,508 条目的目录枚举
+      // 实测 ~16.5s（目录元数据是海量小网络往返，与带宽无关），而它只修复
+      // 「文件在应用外消失」这类罕见派生状态漂移。移到链尾：首屏浏览、计数
+      // 与索引预热全部落地之后才轮到它，且枚举循环内部按块让步（见
+      // reconcileMissingArtifactFiles），任何交互请求到达时事件循环都是空的。
+      await yieldTurn();
+      await this.reconcileMissingArtifactFiles(openLibrary, yieldTurn);
     } catch (error) {
       this.diagnose('open.background-reconciliation', error, { libraryId });
     }
@@ -22613,6 +22640,17 @@ export class LibraryService {
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
+    // Serpent-2cc492（真实 NAS 生产库事故第二轮归因，2026-08-23）：offline
+    // linked 文件夹的源不可达，其资产的缩略图任务必然以 SOURCE_NOT_FOUND
+    // 失败——在 SMB 上每个失败还是一次 journal 写事务。7,164 个这样的任务
+    // 就是持续数分钟的 Worker 风暴（实测把 startup 突发拖过 15s 超时）。
+    // 入队阶段直接跳过；根恢复（offline→available）后下一个场景自动补上。
+    const notOfflineLinkedFolderSql = `
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_folders loff
+               WHERE loff.folder_id = a.linked_folder_id
+                 AND loff.status = 'offline'
+            )`;
     const extensionSql = supportedExtensions
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -22635,6 +22673,7 @@ export class LibraryService {
             AND a.current_revision_id IS NOT NULL
             AND a.availability = 'available'
             ${selectedSql}
+            ${notOfflineLinkedFolderSql}
             AND (${extensionSql})
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
@@ -22730,6 +22769,7 @@ export class LibraryService {
             AND a.current_revision_id IS NOT NULL
             AND a.availability = 'available'
             ${selectedSql}
+            ${notOfflineLinkedFolderSql}
             AND (${videoExtensions.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
           ORDER BY a.created_at DESC, a.relative_file_path
           ${queryLimit}`,

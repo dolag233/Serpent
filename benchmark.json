@@ -1,512 +1,534 @@
 {
-  "$schema": "./docs/internal/schemas/benchmark-format.json",
-  "_comment": "资源库性能实测数据（/goal 2026-08-23）。所有 worktree 共用此文件，写入前必须读取合并，禁止覆盖他人数据。时间单位 ms。",
-  "environment": {
-    "host": "macOS arm64 (Apple Silicon)",
-    "node": "24.15.0",
-    "note": "Worker 查询基线 = LibraryService 直连本地 APFS；NAS 基线 = sqlite3 CLI 经 SMB (千兆)"
+ "$schema": "./docs/internal/schemas/benchmark-format.json",
+ "_comment": "资源库性能实测数据（/goal 2026-08-23）。所有 worktree 共用此文件，写入前必须读取合并，禁止覆盖他人数据。时间单位 ms。",
+ "environment": {
+  "host": "macOS arm64 (Apple Silicon)",
+  "node": "24.15.0",
+  "note": "Worker 查询基线 = LibraryService 直连本地 APFS；NAS 基线 = sqlite3 CLI 经 SMB (千兆)"
+ },
+ "runs": [
+  {
+   "timestamp": "2026-08-23T02:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "8dc4aab1",
+   "suite": "large-library-20k-worker",
+   "fixture": "local APFS 20k v3 mixed",
+   "command": "npm run test:perf:large-library -- <local-20k>",
+   "metrics": {
+    "startupMs": 484.3,
+    "allBrowseMs": 17.6,
+    "folderSwitchMs": 0.6,
+    "collectionSwitchMs": 3.6,
+    "collectionRecursiveSwitchMs": 25.3,
+    "collectionRecursiveLayoutMs": 48.3,
+    "searchMs": 15.9,
+    "layoutMs": 69.3,
+    "inspectorMs": 0.1
+   }
   },
-  "runs": [
-    {
-      "timestamp": "2026-08-23T02:05:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "8dc4aab1",
-      "suite": "large-library-20k-worker",
-      "fixture": "local APFS 20k v3 mixed",
-      "command": "npm run test:perf:large-library -- <local-20k>",
-      "metrics": {
-        "startupMs": 484.3,
-        "allBrowseMs": 17.6,
-        "folderSwitchMs": 0.6,
-        "collectionSwitchMs": 3.6,
-        "collectionRecursiveSwitchMs": 25.3,
-        "collectionRecursiveLayoutMs": 48.3,
-        "searchMs": 15.9,
-        "layoutMs": 69.3,
-        "inspectorMs": 0.1
-      }
+  {
+   "timestamp": "2026-08-23T02:10:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "8dc4aab1",
+   "suite": "nas-sqlite-cli-probe",
+   "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets, 21801 artifacts)",
+   "metrics": {
+    "countAssetsColdNewConnectionMs": 916,
+    "firstPageOrderByUpdatedAtColdMs": 2741,
+    "firstPageOrderByUpdatedAtWarmMs": 5,
+    "deepOffsetPageWarmMs": 5,
+    "thumbnailJoinCountMs": 2829,
+    "queryPlanNote": "ORDER BY updated_at 无 covering index → TEMP B-TREE 全表排序；冷查询每行回表都是网络往返"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T02:20:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "8dc4aab1",
+   "suite": "comprehensive-20k-worker",
+   "fixture": "local APFS 20k v3 mixed",
+   "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
+   "metrics": {
+    "openLibraryMs": 503.2,
+    "allBrowseFirstPageMs": 17.54,
+    "folderSwitchMs": 0.72,
+    "folderSwitchRecursiveMs": 0.87,
+    "collectionSwitchMs": 3.03,
+    "collectionRecursiveSwitchMs": 24.91,
+    "deepOffsetPageMs": 33.04,
+    "layoutOnlyMs": 71,
+    "searchFixedTokenMs": 45.98,
+    "sortNameAscMs": 16.96,
+    "sortCreatedAtDescMs": 16.75,
+    "sortModifiedDescMs": 18.82,
+    "sortByteSizeDescMs": 19.03,
+    "sortRatingDescMs": 18.72,
+    "filterRatingMs": 25.59,
+    "inspectorMetadataMs": 0.11,
+    "sidebarListFoldersMs": 22.58,
+    "sidebarListCollectionsMs": 70.09,
+    "trashFiveAssetsMs": 7.5,
+    "trashTwoAssetsMs": 3.5,
+    "restoreSevenAssetsMs": 8.8,
+    "deletePermanentSevenAssetsMs": 17.8,
+    "setRatingFiveAssetsMs": 0.4
+   }
+  },
+  {
+   "timestamp": "2026-08-23T03:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(Serpent-4bdd26: v40 index, readdir sweep, refresh stat dedupe, collection count cache, sqlite cache_size 64MB)",
+   "suite": "comprehensive-20k-worker",
+   "fixture": "local APFS 20k v3 mixed (UUID ids)",
+   "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
+   "note": "安静环境单次。sidebarListCollections 从基线 70-116ms → 0.21ms（change-sequence 缓存）；allBrowseFirstPage 17.5→8.5ms（v40 covering partial index）",
+   "metrics": {
+    "openLibraryMs": 523.5,
+    "allBrowseFirstPageMs": 8.47,
+    "folderSwitchMs": 0.75,
+    "folderSwitchRecursiveMs": 0.91,
+    "collectionSwitchMs": 3.9,
+    "collectionRecursiveSwitchMs": 42.08,
+    "deepOffsetPageMs": 19.98,
+    "layoutOnlyMs": 94.79,
+    "searchFixedTokenMs": 57.63,
+    "sortNameAscMs": 8.22,
+    "sortCreatedAtDescMs": 30.6,
+    "sortModifiedDescMs": 35.62,
+    "sortByteSizeDescMs": 37.85,
+    "sortRatingDescMs": 37.69,
+    "filterRatingMs": 22.53,
+    "inspectorMetadataMs": 0.11,
+    "sidebarListFoldersMs": 28.39,
+    "sidebarListCollectionsMs": 0.21,
+    "trashFiveAssetsMs": 18,
+    "trashTwoAssetsMs": 5.1,
+    "restoreSevenAssetsMs": 8.8,
+    "deletePermanentSevenAssetsMs": 15.9,
+    "setRatingFiveAssetsMs": 0.3
+   }
+  },
+  {
+   "timestamp": "2026-08-23T03:15:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(Serpent-4bdd26)",
+   "suite": "palette-pipeline-probe",
+   "fixture": "local APFS 20k",
+   "metrics": {
+    "paletteExtractionMedianMs": 3.6,
+    "paletteExtractionMinMs": 3.1,
+    "paletteExtractionMaxMs": 22,
+    "mixedQueueThroughputMsPerJob": 28.5,
+    "note": "纯色卡提取(64x64 sharp decode + JS kmeans)仅 ~3.6ms/资产；队列模式混合吞吐 28.5ms/job，差额为 claim/lease/heartbeat/SQL 调度开销。批量 claim 列为后续优化候选。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T03:20:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(Serpent-4bdd26)",
+   "suite": "nas-smb-latency-probe",
+   "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets)",
+   "metrics": {
+    "readdirArtifacts21kEntriesMs": 21209,
+    "lstatPerFileOnSmbMs": 12.2,
+    "lstatRealpathPerArtifactMs": 10.3,
+    "estimatedOldArtifactSweepMs": 224553,
+    "estimatedNewArtifactSweepReaddirOnlyMs": 21209,
+    "sqliteCountColdDefaultCacheMs": 916,
+    "sqliteCountCold64MBCacheMs": 82,
+    "note": "readdir 优化把 21801-artifact 对账从 ~225s 网络往返降到 ~21s 单次枚举；cache_size=64MB 把 COUNT 冷查询 916ms→82ms"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T03:45:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(round2: lazy refresh assets, stmt cache, lazy path resolve)",
+   "suite": "refresh-fullscan-optimization",
+   "fixture": "local APFS 20k",
+   "command": "SERPENT_REFRESH_STAGE_LOG=1 ... zz-round2-probe.test.ts",
+   "stageBreakdown": {
+    "before": {
+     "enumerateManagedMs": 590,
+     "compareLoopMs": 289,
+     "fullScanP50Ms": 1121.6
     },
-    {
-      "timestamp": "2026-08-23T02:10:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "8dc4aab1",
-      "suite": "nas-sqlite-cli-probe",
-      "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets, 21801 artifacts)",
-      "metrics": {
-        "countAssetsColdNewConnectionMs": 916,
-        "firstPageOrderByUpdatedAtColdMs": 2741,
-        "firstPageOrderByUpdatedAtWarmMs": 5,
-        "deepOffsetPageWarmMs": 5,
-        "thumbnailJoinCountMs": 2829,
-        "queryPlanNote": "ORDER BY updated_at 无 covering index → TEMP B-TREE 全表排序；冷查询每行回表都是网络往返"
-      }
+    "afterStmtCache": {
+     "enumerateManagedMs": 189,
+     "compareLoopMs": 295,
+     "fullScanP50Ms": 530.5
     },
-    {
-      "timestamp": "2026-08-23T02:20:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "8dc4aab1",
-      "suite": "comprehensive-20k-worker",
-      "fixture": "local APFS 20k v3 mixed",
-      "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
-      "metrics": {
-        "openLibraryMs": 503.2,
-        "allBrowseFirstPageMs": 17.54,
-        "folderSwitchMs": 0.72,
-        "folderSwitchRecursiveMs": 0.87,
-        "collectionSwitchMs": 3.03,
-        "collectionRecursiveSwitchMs": 24.91,
-        "deepOffsetPageMs": 33.04,
-        "layoutOnlyMs": 71,
-        "searchFixedTokenMs": 45.98,
-        "sortNameAscMs": 16.96,
-        "sortCreatedAtDescMs": 16.75,
-        "sortModifiedDescMs": 18.82,
-        "sortByteSizeDescMs": 19.03,
-        "sortRatingDescMs": 18.72,
-        "filterRatingMs": 25.59,
-        "inspectorMetadataMs": 0.11,
-        "sidebarListFoldersMs": 22.58,
-        "sidebarListCollectionsMs": 70.09,
-        "trashFiveAssetsMs": 7.5,
-        "trashTwoAssetsMs": 3.5,
-        "restoreSevenAssetsMs": 8.8,
-        "deletePermanentSevenAssetsMs": 17.8,
-        "setRatingFiveAssetsMs": 0.4
-      }
-    },
-    {
-      "timestamp": "2026-08-23T03:05:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(Serpent-4bdd26: v40 index, readdir sweep, refresh stat dedupe, collection count cache, sqlite cache_size 64MB)",
-      "suite": "comprehensive-20k-worker",
-      "fixture": "local APFS 20k v3 mixed (UUID ids)",
-      "command": "SERPENT_PERF_BENCH_PATH=<20k> node scripts/run-vitest-with-electron.mjs run tests/worker/comprehensive-perf-bench.test.ts",
-      "note": "安静环境单次。sidebarListCollections 从基线 70-116ms → 0.21ms（change-sequence 缓存）；allBrowseFirstPage 17.5→8.5ms（v40 covering partial index）",
-      "metrics": {
-        "openLibraryMs": 523.5,
-        "allBrowseFirstPageMs": 8.47,
-        "folderSwitchMs": 0.75,
-        "folderSwitchRecursiveMs": 0.91,
-        "collectionSwitchMs": 3.9,
-        "collectionRecursiveSwitchMs": 42.08,
-        "deepOffsetPageMs": 19.98,
-        "layoutOnlyMs": 94.79,
-        "searchFixedTokenMs": 57.63,
-        "sortNameAscMs": 8.22,
-        "sortCreatedAtDescMs": 30.6,
-        "sortModifiedDescMs": 35.62,
-        "sortByteSizeDescMs": 37.85,
-        "sortRatingDescMs": 37.69,
-        "filterRatingMs": 22.53,
-        "inspectorMetadataMs": 0.11,
-        "sidebarListFoldersMs": 28.39,
-        "sidebarListCollectionsMs": 0.21,
-        "trashFiveAssetsMs": 18,
-        "trashTwoAssetsMs": 5.1,
-        "restoreSevenAssetsMs": 8.8,
-        "deletePermanentSevenAssetsMs": 15.9,
-        "setRatingFiveAssetsMs": 0.3
-      }
-    },
-    {
-      "timestamp": "2026-08-23T03:15:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(Serpent-4bdd26)",
-      "suite": "palette-pipeline-probe",
-      "fixture": "local APFS 20k",
-      "metrics": {
-        "paletteExtractionMedianMs": 3.6,
-        "paletteExtractionMinMs": 3.1,
-        "paletteExtractionMaxMs": 22,
-        "mixedQueueThroughputMsPerJob": 28.5,
-        "note": "纯色卡提取(64x64 sharp decode + JS kmeans)仅 ~3.6ms/资产；队列模式混合吞吐 28.5ms/job，差额为 claim/lease/heartbeat/SQL 调度开销。批量 claim 列为后续优化候选。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T03:20:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(Serpent-4bdd26)",
-      "suite": "nas-smb-latency-probe",
-      "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets)",
-      "metrics": {
-        "readdirArtifacts21kEntriesMs": 21209,
-        "lstatPerFileOnSmbMs": 12.2,
-        "lstatRealpathPerArtifactMs": 10.3,
-        "estimatedOldArtifactSweepMs": 224553,
-        "estimatedNewArtifactSweepReaddirOnlyMs": 21209,
-        "sqliteCountColdDefaultCacheMs": 916,
-        "sqliteCountCold64MBCacheMs": 82,
-        "note": "readdir 优化把 21801-artifact 对账从 ~225s 网络往返降到 ~21s 单次枚举；cache_size=64MB 把 COUNT 冷查询 916ms→82ms"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T03:45:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(round2: lazy refresh assets, stmt cache, lazy path resolve)",
-      "suite": "refresh-fullscan-optimization",
-      "fixture": "local APFS 20k",
-      "command": "SERPENT_REFRESH_STAGE_LOG=1 ... zz-round2-probe.test.ts",
-      "stageBreakdown": {
-        "before": {
-          "enumerateManagedMs": 590,
-          "compareLoopMs": 289,
-          "fullScanP50Ms": 1121.6
-        },
-        "afterStmtCache": {
-          "enumerateManagedMs": 189,
-          "compareLoopMs": 295,
-          "fullScanP50Ms": 530.5
-        },
-        "afterLazyPathResolve": {
-          "enumerateManagedMs": 182,
-          "compareLoopMs": 82,
-          "fullScanP50Ms": 313.1
-        }
-      },
-      "metrics": {
-        "assetRefreshFullScanP50BeforeMs": 1121.6,
-        "assetRefreshFullScanP50AfterMs": 313.1,
-        "improvementFactor": 3.58,
-        "libraryReopenAfterMutationsMs": 557,
-        "note": "三处根因：(1) isExplicitlyIgnored 每文件 prepare() 重编译 SQL（410ms/20k 文件）→ prepareCached 实例级语句缓存；(2) refresh 收尾无条件 listAssets(recursive) 全量查询 ~200ms → includeAssets 可选参数；(3) compare 循环每资产 folderPath() 逐组件 lstat 防逃逸 ~290ms → 枚举已验证的路径走快照、fingerprint 按需解析。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T04:15:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+ef29f7d4",
-      "suite": "media-generation-cost-probe",
-      "fixture": "local APFS 20k",
-      "metrics": {
-        "paletteQueueThroughputMsPerJob": 4.77,
-        "paletteBareExtractionMedianMs": 3.6,
-        "queueSchedulingOverheadMsPerJob": 1.2,
-        "thumbnailRegenMedianByFormat": {
-          "jpg": 88.8,
-          "png": 33.8,
-          "webp50MP": 353,
-          "tiff": 29.5,
-          "gif": 13.7
-        },
-        "webpDecodeOnly50MPMs": 752,
-        "note": "纯 palette 队列吞吐 4.77ms/job（调度开销仅 ~1.2ms）→ 批量 claim 无收益空间，关闭该优化线。webp 慢是 50MP 无 shrink-on-load 的解码固有成本，不影响浏览路径。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T04:55:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+b2fd7cfc",
-      "suite": "large-library-electron-scroll-e2e",
-      "fixture": "local APFS 20k v3 mixed (fresh regenerate, prewarmed)",
-      "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
-      "metrics": {
-        "jumpsPassedOf10": 4,
-        "firstFourJumpsMs": [
-          261.8,
-          339.2,
-          157.5,
-          131
-        ],
-        "jump5PlusDecoded": 0,
-        "observationTimeoutMs": 5000,
-        "note": "前 4 跳达标(131-394ms 全解码)；第 5 跳起 serpent://preview fetch 从未开始(Main 协议层挂起)。Renderer/Worker 存活。已立案 Serpent-7714df 深挖。竞争 worktree 同类基准 10/10 与 7/10 通过(fixture v4)，需对照其 E2E 改动与 fixture 差异。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T05:05:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent (borrowed competitor script)",
-      "gitHead": "dev+b2fd7cfc",
-      "suite": "nas-readonly-benchmark (绘画资源库, warm cache)",
-      "source": "scripts/run-nas-readonly-benchmark.mjs from worktree codex/large-library-performance@15f3325c",
-      "metrics": {
-        "browseRootFirstPageP50Ms": 29.2,
-        "browseSortModifiedP50Ms": 34.9,
-        "searchFilenameTokenP50Ms": 30.7,
-        "listFoldersP50Ms": 30.6,
-        "listCollectionsP50Ms": 28.5,
-        "inspectorSummaryP50Ms": 28.2,
-        "note": "热缓存下 NAS 库只读操作 p50 全部 28-35ms（SMB 往返底噪 ~28ms/查询）。冷缓存首屏的秒级开销是真正痛点，已由 v40 索引+cache_size 缓解。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T05:20:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+7f94fd5d",
-      "suite": "nas-clone-open-probe",
-      "library": "绘画资源库 DB-only 克隆（linked 源离线模拟）",
-      "metrics": {
-        "openLibraryMs": 222.2,
-        "backgroundReconciliationTotalMs": 14,
-        "firstPageColdMs": 0.2,
-        "firstPageWarmMs": 0.2,
-        "listFoldersWarmMs": 0.2,
-        "listCollectionsWarmMs": 0.2,
-        "reopenAfterV40MigrationMs": 7.6,
-        "note": "DB 在本地盘时的全链路数字。真实 SMB 场景的额外成本 = SQLite 页读取网络往返（cache_size=64MB 缓解）+ linked 源 stat（离线时跳过）。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T05:50:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+d7e8d389+WIP(warmBrowseIndexCache)",
-      "suite": "comprehensive-20k-worker (extended)",
-      "fixture": "local APFS 20k v3 mixed",
-      "metrics": {
-        "openLibraryMs": 577.3,
-        "allBrowseFirstPageMs": 10.33,
-        "folderSwitchMs": 1.03,
-        "collectionSwitchMs": 4.58,
-        "collectionRecursiveSwitchMs": 54.83,
-        "deepOffsetPageMs": 21.64,
-        "layoutOnlyMs": 110.88,
-        "searchFixedTokenMs": 69.58,
-        "sortNameAscMs": 10.79,
-        "sortCreatedAtDescMs": 42.23,
-        "sortModifiedDescMs": 41.74,
-        "sortByteSizeDescMs": 40.44,
-        "sortRatingDescMs": 42.81,
-        "filterRatingMs": 26.47,
-        "inspectorMetadataMs": 0.19,
-        "sidebarListFoldersMs": 32.88,
-        "sidebarListCollectionsMs": 0.22,
-        "trashFiveAssetsMs": 8.4,
-        "restoreSevenAssetsMs": 10.4,
-        "deletePermanentSevenAssetsMs": 21.3,
-        "setRatingFiveAssetsMs": 0.4,
-        "collectionReorderAllMs": 84.24,
-        "importPrepareFiveFilesMs": 41.05
-      }
-    },
-    {
-      "timestamp": "2026-08-23T06:25:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+59e26b1c+WIP(视口抢占收编)",
-      "suite": "comprehensive-20k-worker (viewport preemption adopted)",
-      "metrics": {
-        "openLibraryMs": 506.7,
-        "allBrowseFirstPageMs": 8.63,
-        "folderSwitchMs": 0.69,
-        "collectionSwitchMs": 0.85,
-        "collectionRecursiveSwitchMs": 38.4,
-        "deepOffsetPageMs": 19.15,
-        "layoutOnlyMs": 89.56,
-        "searchFixedTokenMs": 57.19,
-        "sortNameAscMs": 8.73,
-        "sortCreatedAtDescMs": 31.09,
-        "sortModifiedDescMs": 35.57,
-        "filterRatingMs": 21.53,
-        "inspectorMetadataMs": 0.18,
-        "sidebarListFoldersMs": 23.05,
-        "sidebarListCollectionsMs": 0.18,
-        "trashFiveAssetsMs": 7.5,
-        "restoreSevenAssetsMs": 8.3,
-        "deletePermanentSevenAssetsMs": 18,
-        "collectionReorderAllMs": 3.23,
-        "importPrepareFiveFilesMs": 41.06
-      },
-      "note": "收编视口抢占机制后的全量基准。collectionReorderAll 84→3.2ms（语句缓存稳态）。"
-    },
-    {
-      "timestamp": "2026-08-23T06:45:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+d58c2972",
-      "suite": "large-library-electron-scroll-e2e (viewport preemption)",
-      "fixture": "local APFS 20k v3 mixed, prewarmed",
-      "metrics": {
-        "jumpsPassedOf10": 9,
-        "jumpElapsedMsSamples": [
-          462.3,
-          159.1,
-          175,
-          232.1,
-          5010.8,
-          96.2,
-          362.1,
-          193.8,
-          240.6,
-          678.3
-        ],
-        "p50Ms": 240.6,
-        "note": "视口抢占收编后历史最佳：9/10 跳全解码（此前最好 4/10 或间歇 9/10）。唯一失败仍是 fraction=0.22（visibleCards=26 的密集区，decoded 21/26）——问题从系统性挂起缩小到特定区域个别资产，立案 Serpent-7714df 继续追。竞争者同 fixture v4 最新 firstDecoded p50=530ms。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T07:05:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+d58c2972+E2E判定修复",
-      "suite": "large-library-electron-scroll-e2e (FINAL: 10/10 PASS)",
-      "fixture": "local APFS 20k v3 mixed, prewarmed, cardSizeIndex=3",
-      "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "jumpElapsedMs": [
-          246.3,
-          382.9,
-          169.4,
-          293.5,
-          288.9,
-          194,
-          346.4,
-          109,
-          283,
-          243.1
-        ],
-        "p50Ms": 283,
-        "p95Ms": 382.9,
-        "targetMs": 500,
-        "note": "两项修复叠加达成 sa65 目标：(1) 视口抢占机制（b79a1e30）把解码资源让给当前视口；(2) E2E done 判定修正——旧判定把非图片卡（无img的图标卡）算进分母导致含非图片资产的视口永远超时（Serpent-7714df）。20k mixed 库全部 10 跳真实图片解码 109-383ms，p95 382.9ms 低于 500ms 预算。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T07:15:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+acdc4f3e",
-      "suite": "large-library-electron-scroll-e2e (reproducibility)",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "p50Ms": 241.1,
-        "p95Ms": 370.4,
-        "note": "连续第二次 10/10——结果稳定可复现。两次运行 p95 分别 382.9/370.4ms。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T07:40:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(v41 index, folder count cache, layout mapping)",
-      "suite": "comprehensive-20k-worker (v41 + folder cache)",
-      "metrics": {
-        "openLibraryMs": 567.5,
-        "sortCreatedAtDescMs": 9.45,
-        "sidebarListFoldersMs": 11.83,
-        "layoutOnlyMs": 88.89,
-        "note": "sortCreatedAtDesc 31-42→9.45ms（v41 created_at DESC 索引，top-50 直接读索引）；sidebarListFolders 23-33→11.8ms（change-sequence 计数缓存）；layoutOnly 映射 spread→直接赋值。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T07:42:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP",
-      "suite": "delete-operations-probe",
-      "fixture": "local APFS 20k",
-      "metrics": {
-        "folderTrash113AssetsMs": 82,
-        "restoreFromTrashMs": 57.4,
-        "collectionDelete6000AssetsMs": 64.1,
-        "note": "删除类操作本地 APFS 基线：folder.trash 含 113 次文件 rename+事务+历史组；collection.delete 6000 成员含递归计数失效。NAS 上 rename 为服务端操作，延迟为物理限制。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T08:00:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(quick_check 延迟+startup 入队移除)",
-      "suite": "comprehensive-20k-worker (deferred quick_check)",
-      "metrics": {
-        "openLibraryMs": 44.3,
-        "sortCreatedAtDescMs": 8.77,
-        "sidebarListFoldersMs": 10.68,
-        "layoutOnlyMs": 90.04,
-        "note": "开库同步路径两项根治：(1) quick_check(~270ms 全 B-tree 扫描)延迟到后台对账首个 yield 后——损坏仍走恢复梯子；(2) 移除 adopt 内重复的 startup 缩略图入队(~230ms，Worker 的 deferStartupThumbnailScene 以相同参数在首视口后调度)。openLibrary 552→44.3ms（12倍）。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T08:15:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+923244e1",
-      "suite": "large-library-electron-scroll-e2e (post quick_check deferral)",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "p50Ms": 294.5,
-        "p95Ms": 445.8,
-        "note": "开库路径优化（openLibrary 44.3ms）后第三次 10/10——滚动基准在全部六轮优化后保持稳定达标。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T08:30:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(collection leaf fast path)",
-      "suite": "comprehensive-20k-worker + leaf fast path",
-      "metrics": {
-        "openLibraryMs": 44.1,
-        "collectionRecursiveSwitchLeafMs": 3.98,
-        "collectionRecursiveSwitchWithChildrenMs": 36.72,
-        "note": "叶子合集的 recursive scope 走非递归形状（1 次索引子探测选路）：37→3.98ms（9倍）。含子合集的真递归保持 CTE 形状。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T08:50:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(SMB 打开优化)",
-      "suite": "nas-smb-open-probe (真实千兆 SMB)",
-      "library": "perf-nas-probe（绘画库 DB 副本 29MB，7164 资产，DELETE journal）",
-      "command": "SERPENT_SMB_PROBE=1 SERPENT_OPEN_STAGE_LOG=1 ... zz-smb-open.test.ts",
-      "metrics": {
-        "openBeforeMs": 3641,
-        "openAfterMs": 1140,
-        "firstPageColdMs": 4346,
-        "stagesAfter": {
-          "storageClassificationMs": 22,
-          "migrateMs": 269,
-          "tombstoneBackfillMs": 159,
-          "verifyMs": 105,
-          "recoveryMs": 386,
-          "watchersMs": 30
-        },
-        "improvementFactor": 3.2,
-        "note": "reconcileDefaultIgnoredAssets（全活跃资产扫描，SMB 上经覆盖索引仍 ~2.8s——每索引页一次往返）从同步 open 延迟到后台对账。对照：优化前推算 SMB 全开要数分钟（对账 225s + 双重 lstat）。剩余候选：recovery 389ms、migrate checksum 校验 278ms、tombstone-backfill 177ms。探针库已清理。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T09:05:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+d0e53f45",
-      "suite": "large-library-electron-scroll-e2e (final regression)",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "p50Ms": 269.2,
-        "p95Ms": 479.3,
-        "note": "SMB 优化提交后第四次 10/10——本地路径零回归确认。今日滚动基准四次运行：283/241/294/269ms p50，全部达标。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T09:30:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+WIP(v42 + count-gated backfill)",
-      "suite": "nas-smb-open-probe (round 2)",
-      "metrics": {
-        "openMs": 981,
-        "tombstoneBackfillBeforeMs": 161,
-        "tombstoneBackfillAfterMs": 113,
-        "stages": {
-          "migrateMs": 300,
-          "recoveryJobsMs": 110,
-          "verifyMs": 110
-        },
-        "note": "迁移 v42 部分索引（tombstone backfill 候选定位）+ COUNT 先行走纯读路径：SMB 上 UPDATE 的 journal 往返底价 ~200ms 被空回收站场景完全消除。SMB open 破千至 981ms。剩余：migrate checksum 校验 ~300ms（41 条迁移页读取，冷缓存固有）。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T09:50:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+88c70214",
-      "suite": "large-library-electron-scroll-e2e (v42 final)",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "p50Ms": 297.3,
-        "p95Ms": 343.1,
-        "note": "v42 后第五次 10/10，p95 历史最佳(343ms)。竞争 worktree 同期 Worker 数字：open.cold 503ms / collection.firstPage 86.2ms / firstPage 19.1ms——本分支全面领先。"
-      }
-    },
-    {
-      "timestamp": "2026-08-23T10:20:00+08:00",
-      "worktree": "/Users/dolag/Development/Serpent",
-      "gitHead": "dev+6f2350ee",
-      "suite": "large-library-electron-scroll-e2e (regression fixes)",
-      "metrics": {
-        "jumpsPassedOf10": 10,
-        "p50Ms": 196.6,
-        "p95Ms": 453.2,
-        "note": "三处跨平台回归修正后：p50 历史最佳 196.6ms。cancel→重建循环消除后吞吐反升。"
-      }
+    "afterLazyPathResolve": {
+     "enumerateManagedMs": 182,
+     "compareLoopMs": 82,
+     "fullScanP50Ms": 313.1
     }
-  ]
+   },
+   "metrics": {
+    "assetRefreshFullScanP50BeforeMs": 1121.6,
+    "assetRefreshFullScanP50AfterMs": 313.1,
+    "improvementFactor": 3.58,
+    "libraryReopenAfterMutationsMs": 557,
+    "note": "三处根因：(1) isExplicitlyIgnored 每文件 prepare() 重编译 SQL（410ms/20k 文件）→ prepareCached 实例级语句缓存；(2) refresh 收尾无条件 listAssets(recursive) 全量查询 ~200ms → includeAssets 可选参数；(3) compare 循环每资产 folderPath() 逐组件 lstat 防逃逸 ~290ms → 枚举已验证的路径走快照、fingerprint 按需解析。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T04:15:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+ef29f7d4",
+   "suite": "media-generation-cost-probe",
+   "fixture": "local APFS 20k",
+   "metrics": {
+    "paletteQueueThroughputMsPerJob": 4.77,
+    "paletteBareExtractionMedianMs": 3.6,
+    "queueSchedulingOverheadMsPerJob": 1.2,
+    "thumbnailRegenMedianByFormat": {
+     "jpg": 88.8,
+     "png": 33.8,
+     "webp50MP": 353,
+     "tiff": 29.5,
+     "gif": 13.7
+    },
+    "webpDecodeOnly50MPMs": 752,
+    "note": "纯 palette 队列吞吐 4.77ms/job（调度开销仅 ~1.2ms）→ 批量 claim 无收益空间，关闭该优化线。webp 慢是 50MP 无 shrink-on-load 的解码固有成本，不影响浏览路径。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T04:55:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+b2fd7cfc",
+   "suite": "large-library-electron-scroll-e2e",
+   "fixture": "local APFS 20k v3 mixed (fresh regenerate, prewarmed)",
+   "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
+   "metrics": {
+    "jumpsPassedOf10": 4,
+    "firstFourJumpsMs": [
+     261.8,
+     339.2,
+     157.5,
+     131
+    ],
+    "jump5PlusDecoded": 0,
+    "observationTimeoutMs": 5000,
+    "note": "前 4 跳达标(131-394ms 全解码)；第 5 跳起 serpent://preview fetch 从未开始(Main 协议层挂起)。Renderer/Worker 存活。已立案 Serpent-7714df 深挖。竞争 worktree 同类基准 10/10 与 7/10 通过(fixture v4)，需对照其 E2E 改动与 fixture 差异。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T05:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent (borrowed competitor script)",
+   "gitHead": "dev+b2fd7cfc",
+   "suite": "nas-readonly-benchmark (绘画资源库, warm cache)",
+   "source": "scripts/run-nas-readonly-benchmark.mjs from worktree codex/large-library-performance@15f3325c",
+   "metrics": {
+    "browseRootFirstPageP50Ms": 29.2,
+    "browseSortModifiedP50Ms": 34.9,
+    "searchFilenameTokenP50Ms": 30.7,
+    "listFoldersP50Ms": 30.6,
+    "listCollectionsP50Ms": 28.5,
+    "inspectorSummaryP50Ms": 28.2,
+    "note": "热缓存下 NAS 库只读操作 p50 全部 28-35ms（SMB 往返底噪 ~28ms/查询）。冷缓存首屏的秒级开销是真正痛点，已由 v40 索引+cache_size 缓解。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T05:20:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+7f94fd5d",
+   "suite": "nas-clone-open-probe",
+   "library": "绘画资源库 DB-only 克隆（linked 源离线模拟）",
+   "metrics": {
+    "openLibraryMs": 222.2,
+    "backgroundReconciliationTotalMs": 14,
+    "firstPageColdMs": 0.2,
+    "firstPageWarmMs": 0.2,
+    "listFoldersWarmMs": 0.2,
+    "listCollectionsWarmMs": 0.2,
+    "reopenAfterV40MigrationMs": 7.6,
+    "note": "DB 在本地盘时的全链路数字。真实 SMB 场景的额外成本 = SQLite 页读取网络往返（cache_size=64MB 缓解）+ linked 源 stat（离线时跳过）。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T05:50:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+d7e8d389+WIP(warmBrowseIndexCache)",
+   "suite": "comprehensive-20k-worker (extended)",
+   "fixture": "local APFS 20k v3 mixed",
+   "metrics": {
+    "openLibraryMs": 577.3,
+    "allBrowseFirstPageMs": 10.33,
+    "folderSwitchMs": 1.03,
+    "collectionSwitchMs": 4.58,
+    "collectionRecursiveSwitchMs": 54.83,
+    "deepOffsetPageMs": 21.64,
+    "layoutOnlyMs": 110.88,
+    "searchFixedTokenMs": 69.58,
+    "sortNameAscMs": 10.79,
+    "sortCreatedAtDescMs": 42.23,
+    "sortModifiedDescMs": 41.74,
+    "sortByteSizeDescMs": 40.44,
+    "sortRatingDescMs": 42.81,
+    "filterRatingMs": 26.47,
+    "inspectorMetadataMs": 0.19,
+    "sidebarListFoldersMs": 32.88,
+    "sidebarListCollectionsMs": 0.22,
+    "trashFiveAssetsMs": 8.4,
+    "restoreSevenAssetsMs": 10.4,
+    "deletePermanentSevenAssetsMs": 21.3,
+    "setRatingFiveAssetsMs": 0.4,
+    "collectionReorderAllMs": 84.24,
+    "importPrepareFiveFilesMs": 41.05
+   }
+  },
+  {
+   "timestamp": "2026-08-23T06:25:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+59e26b1c+WIP(视口抢占收编)",
+   "suite": "comprehensive-20k-worker (viewport preemption adopted)",
+   "metrics": {
+    "openLibraryMs": 506.7,
+    "allBrowseFirstPageMs": 8.63,
+    "folderSwitchMs": 0.69,
+    "collectionSwitchMs": 0.85,
+    "collectionRecursiveSwitchMs": 38.4,
+    "deepOffsetPageMs": 19.15,
+    "layoutOnlyMs": 89.56,
+    "searchFixedTokenMs": 57.19,
+    "sortNameAscMs": 8.73,
+    "sortCreatedAtDescMs": 31.09,
+    "sortModifiedDescMs": 35.57,
+    "filterRatingMs": 21.53,
+    "inspectorMetadataMs": 0.18,
+    "sidebarListFoldersMs": 23.05,
+    "sidebarListCollectionsMs": 0.18,
+    "trashFiveAssetsMs": 7.5,
+    "restoreSevenAssetsMs": 8.3,
+    "deletePermanentSevenAssetsMs": 18,
+    "collectionReorderAllMs": 3.23,
+    "importPrepareFiveFilesMs": 41.06
+   },
+   "note": "收编视口抢占机制后的全量基准。collectionReorderAll 84→3.2ms（语句缓存稳态）。"
+  },
+  {
+   "timestamp": "2026-08-23T06:45:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+d58c2972",
+   "suite": "large-library-electron-scroll-e2e (viewport preemption)",
+   "fixture": "local APFS 20k v3 mixed, prewarmed",
+   "metrics": {
+    "jumpsPassedOf10": 9,
+    "jumpElapsedMsSamples": [
+     462.3,
+     159.1,
+     175,
+     232.1,
+     5010.8,
+     96.2,
+     362.1,
+     193.8,
+     240.6,
+     678.3
+    ],
+    "p50Ms": 240.6,
+    "note": "视口抢占收编后历史最佳：9/10 跳全解码（此前最好 4/10 或间歇 9/10）。唯一失败仍是 fraction=0.22（visibleCards=26 的密集区，decoded 21/26）——问题从系统性挂起缩小到特定区域个别资产，立案 Serpent-7714df 继续追。竞争者同 fixture v4 最新 firstDecoded p50=530ms。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T07:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+d58c2972+E2E判定修复",
+   "suite": "large-library-electron-scroll-e2e (FINAL: 10/10 PASS)",
+   "fixture": "local APFS 20k v3 mixed, prewarmed, cardSizeIndex=3",
+   "command": "SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS=5000 npm run test:e2e:large-library-benchmark -- <20k>",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "jumpElapsedMs": [
+     246.3,
+     382.9,
+     169.4,
+     293.5,
+     288.9,
+     194,
+     346.4,
+     109,
+     283,
+     243.1
+    ],
+    "p50Ms": 283,
+    "p95Ms": 382.9,
+    "targetMs": 500,
+    "note": "两项修复叠加达成 sa65 目标：(1) 视口抢占机制（b79a1e30）把解码资源让给当前视口；(2) E2E done 判定修正——旧判定把非图片卡（无img的图标卡）算进分母导致含非图片资产的视口永远超时（Serpent-7714df）。20k mixed 库全部 10 跳真实图片解码 109-383ms，p95 382.9ms 低于 500ms 预算。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T07:15:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+acdc4f3e",
+   "suite": "large-library-electron-scroll-e2e (reproducibility)",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "p50Ms": 241.1,
+    "p95Ms": 370.4,
+    "note": "连续第二次 10/10——结果稳定可复现。两次运行 p95 分别 382.9/370.4ms。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T07:40:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(v41 index, folder count cache, layout mapping)",
+   "suite": "comprehensive-20k-worker (v41 + folder cache)",
+   "metrics": {
+    "openLibraryMs": 567.5,
+    "sortCreatedAtDescMs": 9.45,
+    "sidebarListFoldersMs": 11.83,
+    "layoutOnlyMs": 88.89,
+    "note": "sortCreatedAtDesc 31-42→9.45ms（v41 created_at DESC 索引，top-50 直接读索引）；sidebarListFolders 23-33→11.8ms（change-sequence 计数缓存）；layoutOnly 映射 spread→直接赋值。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T07:42:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP",
+   "suite": "delete-operations-probe",
+   "fixture": "local APFS 20k",
+   "metrics": {
+    "folderTrash113AssetsMs": 82,
+    "restoreFromTrashMs": 57.4,
+    "collectionDelete6000AssetsMs": 64.1,
+    "note": "删除类操作本地 APFS 基线：folder.trash 含 113 次文件 rename+事务+历史组；collection.delete 6000 成员含递归计数失效。NAS 上 rename 为服务端操作，延迟为物理限制。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T08:00:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(quick_check 延迟+startup 入队移除)",
+   "suite": "comprehensive-20k-worker (deferred quick_check)",
+   "metrics": {
+    "openLibraryMs": 44.3,
+    "sortCreatedAtDescMs": 8.77,
+    "sidebarListFoldersMs": 10.68,
+    "layoutOnlyMs": 90.04,
+    "note": "开库同步路径两项根治：(1) quick_check(~270ms 全 B-tree 扫描)延迟到后台对账首个 yield 后——损坏仍走恢复梯子；(2) 移除 adopt 内重复的 startup 缩略图入队(~230ms，Worker 的 deferStartupThumbnailScene 以相同参数在首视口后调度)。openLibrary 552→44.3ms（12倍）。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T08:15:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+923244e1",
+   "suite": "large-library-electron-scroll-e2e (post quick_check deferral)",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "p50Ms": 294.5,
+    "p95Ms": 445.8,
+    "note": "开库路径优化（openLibrary 44.3ms）后第三次 10/10——滚动基准在全部六轮优化后保持稳定达标。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T08:30:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(collection leaf fast path)",
+   "suite": "comprehensive-20k-worker + leaf fast path",
+   "metrics": {
+    "openLibraryMs": 44.1,
+    "collectionRecursiveSwitchLeafMs": 3.98,
+    "collectionRecursiveSwitchWithChildrenMs": 36.72,
+    "note": "叶子合集的 recursive scope 走非递归形状（1 次索引子探测选路）：37→3.98ms（9倍）。含子合集的真递归保持 CTE 形状。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T08:50:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(SMB 打开优化)",
+   "suite": "nas-smb-open-probe (真实千兆 SMB)",
+   "library": "perf-nas-probe（绘画库 DB 副本 29MB，7164 资产，DELETE journal）",
+   "command": "SERPENT_SMB_PROBE=1 SERPENT_OPEN_STAGE_LOG=1 ... zz-smb-open.test.ts",
+   "metrics": {
+    "openBeforeMs": 3641,
+    "openAfterMs": 1140,
+    "firstPageColdMs": 4346,
+    "stagesAfter": {
+     "storageClassificationMs": 22,
+     "migrateMs": 269,
+     "tombstoneBackfillMs": 159,
+     "verifyMs": 105,
+     "recoveryMs": 386,
+     "watchersMs": 30
+    },
+    "improvementFactor": 3.2,
+    "note": "reconcileDefaultIgnoredAssets（全活跃资产扫描，SMB 上经覆盖索引仍 ~2.8s——每索引页一次往返）从同步 open 延迟到后台对账。对照：优化前推算 SMB 全开要数分钟（对账 225s + 双重 lstat）。剩余候选：recovery 389ms、migrate checksum 校验 278ms、tombstone-backfill 177ms。探针库已清理。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T09:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+d0e53f45",
+   "suite": "large-library-electron-scroll-e2e (final regression)",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "p50Ms": 269.2,
+    "p95Ms": 479.3,
+    "note": "SMB 优化提交后第四次 10/10——本地路径零回归确认。今日滚动基准四次运行：283/241/294/269ms p50，全部达标。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T09:30:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+WIP(v42 + count-gated backfill)",
+   "suite": "nas-smb-open-probe (round 2)",
+   "metrics": {
+    "openMs": 981,
+    "tombstoneBackfillBeforeMs": 161,
+    "tombstoneBackfillAfterMs": 113,
+    "stages": {
+     "migrateMs": 300,
+     "recoveryJobsMs": 110,
+     "verifyMs": 110
+    },
+    "note": "迁移 v42 部分索引（tombstone backfill 候选定位）+ COUNT 先行走纯读路径：SMB 上 UPDATE 的 journal 往返底价 ~200ms 被空回收站场景完全消除。SMB open 破千至 981ms。剩余：migrate checksum 校验 ~300ms（41 条迁移页读取，冷缓存固有）。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T09:50:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+88c70214",
+   "suite": "large-library-electron-scroll-e2e (v42 final)",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "p50Ms": 297.3,
+    "p95Ms": 343.1,
+    "note": "v42 后第五次 10/10，p95 历史最佳(343ms)。竞争 worktree 同期 Worker 数字：open.cold 503ms / collection.firstPage 86.2ms / firstPage 19.1ms——本分支全面领先。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T10:20:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+6f2350ee",
+   "suite": "large-library-electron-scroll-e2e (regression fixes)",
+   "metrics": {
+    "jumpsPassedOf10": 10,
+    "p50Ms": 196.6,
+    "p95Ms": 453.2,
+    "note": "三处跨平台回归修正后：p50 历史最佳 196.6ms。cancel→重建循环消除后吞吐反升。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T13:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+working-tree (Serpent-2cc492 startup gate)",
+   "suite": "real-NAS open attribution (production library probe, Serpent-2cc492)",
+   "metrics": {
+    "smbOpenLibraryMs": 1138.3,
+    "note": "真实 NAS 生产库（绘画资源库，7164 linked 资产 + 21,508 artifact 文件）E2E 日志归因：library.open 本身仅 1.1s；阻塞主因是开库后台对账——artifact 目录枚举实测 16.5s（纯异步 opendir 流式、无 lstat：SMB 目录元数据是海量小往返，与带宽无关），叠加链内同步 SQL 步骤把渲染端 startup 突发全部拖过主进程 15s 超时且 late 响应被丢弃（单次 E2E 记录 462 条 late），画布永远等不到首屏数据。修复：startup 门闩（首个 asset.search 响应投递 + 在飞清零才启动对账，15s 硬上限）+ artifact 扫描移对账链尾 + 枚举每 4096 条让步。"
+   }
+  },
+  {
+   "timestamp": "2026-08-23T15:05:00+08:00",
+   "worktree": "/Users/dolag/Development/Serpent",
+   "gitHead": "dev+working-tree (Serpent-2cc492 startup gate round 2)",
+   "suite": "real-NAS open e2e (probe copy, PASS)",
+   "metrics": {
+    "firstCardMs": 139056,
+    "cardsRendered": 100,
+    "result": "passed",
+    "note": "修复后真实 NAS 库端到端打开渲染成功（此前三轮全部 600s 无卡片）。冷缓存首开 139s 的构成：linked-folder.list 冷读 37.6s + asset.search 冷读 49.3s 等串行全表首读（每页一次 SMB 往返的物理成本），宽限窗口使其不再被 15s 超时丢弃。后续优化候选：renderer 启动查询并行化/asset.search 先行、linked 路径前缀缓存避免全表读。"
+   }
+  }
+ ]
 }
