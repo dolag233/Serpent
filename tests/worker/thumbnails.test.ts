@@ -1572,7 +1572,10 @@ describe('animated GIF native playback (Serpent-43d32f)', () => {
     service.closeAll();
 
     const reopened = new LibraryService();
-    reopened.openLibrary(created.libraryPath);
+    const reopenedLibrary = reopened.openLibrary(created.libraryPath);
+    // Serpent-4bdd26: the retirement moved into the background reconciliation
+    // (its GIF scan costs ~180ms on SMB); drive it explicitly.
+    await reopened.runOpenBackgroundReconciliation(reopenedLibrary.libraryId);
     const verifyDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     const legacyJob = verifyDb.prepare(
       "SELECT status, error_code FROM jobs WHERE job_id = 'legacy-gif-proxy'",

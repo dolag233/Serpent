@@ -854,11 +854,11 @@ function scheduleThumbnailScene(
   options: { light?: boolean } = {},
 ): void {
   const configs: Record<ThumbnailScheduleScene, { limit?: number; priority: number; maxIds?: number; processMaxJobs?: number }> = {
-    // Serpent-4bdd26 收编 codex/large-library-performance@d5f58088：startup 回填
-    // 限制为单任务在飞。Sharp/OIIO 无法在每个新视口到达的瞬间中止所有原生子操作；
-    // 双任务 startup 波会让 visible 波先等两个过期的解码才能夺回解码器。
-    // 后台吞吐让位于交互尾延迟。
-    startup: { limit: 50, priority: 100, processMaxJobs: 1 },
+    // Serpent-4bdd26 回归修正：processMaxJobs 1→2。用户报告 Windows 上缩略图
+    // 生成巨慢——单任务在飞让 startup 波在慢盘/杀毒环境下串行拖到数十秒。
+    // 可见波抢占的主要手段是 interruptThumbnailJobsOutsideViewport（只中断
+    // running），双任务在飞的可浪费上限是可接受的。
+    startup: { limit: 50, priority: 100, processMaxJobs: 2 },
     refresh: { limit: 50, priority: 150 },
     // Serpent-azf6: the CURRENT VIEW must outrank the import flood — browsing
     // a freshly imported library otherwise waits behind hundreds of priority-300

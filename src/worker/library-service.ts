@@ -27,7 +27,7 @@ import {
   type BigIntStats,
   type Stats,
 } from 'node:fs';
-import { rm as rmAsync } from 'node:fs/promises';
+import { opendir as opendirAsync, rm as rmAsync } from 'node:fs/promises';
 import path from 'node:path';
 import { removeLibraryRootWithRetry, removePathWithSyncRetry, renamePathWithRetry } from './windows-fs-retry';
 import {
@@ -5485,9 +5485,13 @@ export class LibraryService {
       // Keep each synchronous lstat/write slice below the interaction budget.
       // A 128-file slice was reasonable on APFS but can monopolize the single
       // Worker for hundreds of milliseconds when the library lives on SMB/NAS.
-      // More, smaller slices extend the background scan slightly, while every
-      // browse/search request gets a chance to run between slices.
-      const batchSize = 16;
+      //
+      // Serpent-4bdd26 回归修正（用户报告 Windows 打开巨卡、缩略图生成巨慢）：
+      // 每批一个 BEGIN IMMEDIATE 事务 = 每批 journal fsync。Windows 上 fsync
+      // 可达 10-50ms（Defender 挂钩更糟），16 资产/批把一次开库对账变成
+      // 数百次 fsync，反复抢写锁饿死缩略图任务。本地盘恢复大批次；
+      // 仅网络存储保持细批次（那里的代价是网络往返而非 fsync）。
+      const batchSize = openLibrary.summary.networkStorage ? 16 : 128;
       for (let offset = 0; offset < existingAssetIds.length; offset += batchSize) {
         if (!this.openById.has(libraryId)) return;
         const refresh = this.refreshManagedAssets(libraryId, {
@@ -17338,35 +17342,37 @@ export class LibraryService {
     if (selectedIds.length === 0) return { interruptedCount: 0 };
     const openLibrary = this.requireOpenLibrary(libraryId);
     const placeholders = selectedIds.map(() => '?').join(',');
+    // Serpent-4bdd26 回归修正（用户报告缩略图生成巨慢）：只中断正在解码的
+    // running 任务——这是抢占的全部收益。旧版还 cancel 视口外的 queued 任务，
+    // 但后台回填会立刻把它们重建（priority 50），滚动期间形成 cancel→重建→
+    // 再 cancel 的写循环，Windows 上每次取消都是一次 journal fsync，吞吐暴跌。
+    // queued 任务本就被可见波(350)的优先级压住，无需取消。
     const rows = openLibrary.connection
       .prepare(
         `SELECT job_id, status
            FROM jobs
           WHERE library_id = ?
             AND kind IN ('generate_thumbnail', 'generate_video_poster')
-            AND status IN ('queued', 'running')
+            AND status = 'running'
             AND asset_id NOT IN (${placeholders})`,
       )
-      .all(libraryId, ...selectedIds) as Array<{ job_id: string; status: 'queued' | 'running' }>;
+      .all(libraryId, ...selectedIds) as Array<{ job_id: string; status: 'running' }>;
     if (rows.length === 0) return { interruptedCount: 0 };
 
     const now = new Date().toISOString();
     const requeue = openLibrary.connection.prepare(
       "UPDATE jobs SET status = 'queued', updated_at = ? WHERE job_id = ? AND status = 'running'",
     );
-    const cancel = openLibrary.connection.prepare(
-      "UPDATE jobs SET status = 'cancelled', error_code = 'SUPERSEDED_BY_VIEWPORT', updated_at = ? WHERE job_id = ? AND status = 'queued'",
-    );
     let count = 0;
     openLibrary.connection.transaction(() => {
       for (const row of rows) {
-        (row.status === 'running' ? requeue : cancel).run(now, row.job_id);
+        requeue.run(now, row.job_id);
         count += 1;
       }
     })();
     // Running jobs were requeued; abort their controllers so the decoders stop
     // immediately and the visible wave can claim the freed capacity.
-    this.abortActiveMediaJobs(libraryId, rows.filter((row) => row.status === 'running').map((row) => row.job_id));
+    this.abortActiveMediaJobs(libraryId, rows.map((row) => row.job_id));
     return { interruptedCount: count };
   }
 
@@ -22038,13 +22044,24 @@ export class LibraryService {
     // a single readdir costs one directory enumeration regardless of how the
     // entries are checked afterwards. A symlinked or subdirectory entry is
     // never treated as present, matching the old containment rules.
+    // Serpent-4bdd26 现场教训（用户 NAS 库打开 5 分钟）：21k 条目的 readdirSync
+    // 是一次 ~21 秒的同步调用，期间 Worker 事件循环完全停摆——所有并发请求
+    // 撞上 15s 超时。改为 opendir 异步流式构建集合，让事件循环持续可响应。
     let presentArtifactPaths: Set<string>;
     try {
-      presentArtifactPaths = new Set(
-        readdirSync(artifactsRoot, { withFileTypes: true })
-          .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
-          .map((entry) => entry.name),
-      );
+      presentArtifactPaths = new Set();
+      const dir = await opendirAsync(artifactsRoot);
+      try {
+        for (;;) {
+          const entry = await dir.read();
+          if (entry === null) break;
+          if (entry.isFile() && !entry.isSymbolicLink()) {
+            presentArtifactPaths.add(entry.name);
+          }
+        }
+      } finally {
+        await dir.close();
+      }
     } catch {
       return 0;
     }
