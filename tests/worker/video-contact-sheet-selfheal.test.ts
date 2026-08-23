@@ -10,6 +10,7 @@ import { LibraryService } from '../../src/worker/library-service';
 const roots: string[] = [];
 const services: LibraryService[] = [];
 afterEach(() => {
+  delete process.env['SERPENT_FFMPEG_PATH'];
   for (const s of services.splice(0)) s.closeAll();
   for (const r of roots.splice(0)) {
     try {
