@@ -49,7 +49,9 @@ const config: ForgeConfig = {
       // 一致）。
       process.env.VcpkgEnabled = 'false';
       const mediaPlatform = nativeMediaPlatform(platform, arch);
-      runNodeGate('scripts/media-binaries.mjs', ['verify', '--platform', mediaPlatform]);
+      // Recover ignored media executables from the pinned Serpent-Build
+      // release when a clean checkout or a local replacement fails the gate.
+      runNodeGate('scripts/media-binaries.mjs', ['ensure', '--platform', mediaPlatform]);
       // The browser extension is not shipped to a store yet; it ships inside
       // the app bundle (Contents/Resources/extension) for manual loading.
       // Rebuild it so the package always carries the current sources.
@@ -68,7 +70,7 @@ const config: ForgeConfig = {
     // maker without passing the package gate.
     preMake: async () => {
       const mediaPlatform = nativeMediaPlatform(process.platform, process.arch);
-      runNodeGate('scripts/media-binaries.mjs', ['verify', '--platform', mediaPlatform]);
+      runNodeGate('scripts/media-binaries.mjs', ['ensure', '--platform', mediaPlatform]);
       runNodeGate('scripts/verify-package.mjs', [], {
         SERPENT_PACKAGE_ROOT: path.join(projectRoot, 'out', `Serpent-${mediaPlatform}`),
       });

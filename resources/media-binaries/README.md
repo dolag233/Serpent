@@ -47,11 +47,13 @@ resources/
 6. Acquisition writes a receipt bound to those two promoted hashes. Both the
    source manifest and receipt must still match `bundle-lock.json`; regenerating
    a local manifest cannot turn locally substituted binaries into a release bundle.
-7. Forge's own `prePackage` hook fails when the promoted bundle or receipt is
-   absent or invalid, including direct `electron-forge` invocations. Forge copies
-   `resources/` outside ASAR. Its `postPackage` hook repeats hash, provenance,
-   executable, version, license and FFmpeg configuration checks against every
-   packaged output.
+7. Forge's own `prePackage` hook runs the equivalent of `media:ensure`: when the
+   promoted bundle or receipt is absent or invalid, it reacquires the pinned
+   Serpent-Build release and verifies it before packaging. Set
+   `SERPENT_MEDIA_AUTO_ACQUIRE=0` to keep an offline build fail-closed. Forge
+   copies `resources/` outside ASAR. Its `postPackage` hook repeats hash,
+   provenance, executable, version, license and FFmpeg configuration checks
+   against every packaged output.
 
 `bundle-lock.json` deliberately remains `build-required` until such artifacts
 exist. This is a release blocker, not an invitation to substitute Homebrew,

@@ -8,13 +8,22 @@ npm run make             # 生成安装包 → out/make/（macOS dmg / Windows z
 npm run verify:package   # 校验打包产物（ASAR、native 模块、媒体组件）
 ```
 
-`package`/`make` 的 prepackage/premake 钩子强制校验：
+`package`/`make` 的 prepackage/premake 钩子会先确保媒体依赖可用：
 
-- 媒体二进制（`media-binaries verify`，来源与哈希）
+- 媒体二进制（`media-binaries ensure`，必要时从锁定 release 恢复后校验来源与哈希）
 - ufbx WASM 产物（`verify-ufbx-wasm`，哈希锁 `scripts/ufbx-wasm-lock.json`）
 - 打包产物完整性（`verify:package`：ASAR、better_sqlite3.node、Host utilities）
 
 `package`/`make` 会更新 dev 的 Electron binary，跑完执行 `npm run rebuild:native` 恢复。
+
+如果媒体可执行文件缺失，或本地文件与已晋升的 manifest 不一致，钩子会自动从
+锁定的 `Serpent-Build` release 下载并重新校验。也可以手动执行同一流程：
+
+```bash
+npm run media:ensure
+```
+
+离线环境可设置 `SERPENT_MEDIA_AUTO_ACQUIRE=0`，此时校验失败会直接报错，不会联网下载。
 
 ## 发布流水线（release:local）
 
@@ -93,8 +102,8 @@ Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款�
 ## 媒体二进制晋升（Serpent-Build）
 
 媒体 bundle（FFmpeg/OpenImageIO）经 [Serpent-Build](https://github.com/dolag233/Serpent-Build)
-仓库的 GitHub Release（不可变 URL + SHA-256）分发，主仓 `release:media`
-下载并强制校验：
+仓库的 GitHub Release（不可变 URL + SHA-256）分发，主仓 `media:ensure`
+会自动下载并强制校验：
 
 1. **构建一次**（非 CI）：
    - `ffmpeg/ffprobe`：BtbN LGPL builds（`registry.npmmirror.com/-/binary/ffmpeg-builds/`

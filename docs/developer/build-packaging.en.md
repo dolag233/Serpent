@@ -8,13 +8,24 @@ npm run make             # build installers → out/make/ (macOS dmg / Windows z
 npm run verify:package   # verify the packaged output (ASAR, native modules, media)
 ```
 
-`package`/`make` run mandatory pre-hooks:
+`package`/`make` run pre-hooks that ensure the media dependencies are available:
 
-- Media binaries (`media-binaries verify` — provenance and hashes)
+- Media binaries (`media-binaries ensure` — recover from the pinned release when needed, then verify provenance and hashes)
 - ufbx WASM (`verify-ufbx-wasm` — hash-locked via `scripts/ufbx-wasm-lock.json`)
 - Packaged output (`verify:package`: ASAR, better_sqlite3.node, Host utilities)
 
 `package`/`make` update the dev Electron binary — run `npm run rebuild:native` afterwards.
+
+If the media executables are missing or do not match the promoted manifest, the
+hook automatically downloads and verifies the pinned `Serpent-Build` release.
+Run the same recovery explicitly with:
+
+```bash
+npm run media:ensure
+```
+
+Set `SERPENT_MEDIA_AUTO_ACQUIRE=0` in an offline environment to make a failed
+verification stop immediately instead of downloading.
 
 ## Release pipeline (release:local)
 

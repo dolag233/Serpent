@@ -174,10 +174,31 @@ async function acquire({ platform, root, lockPath }) {
   }
 }
 
+async function ensure({ platform, root, lockPath }) {
+  try {
+    const { manifestPath } = verifyBundle({ root, platform });
+    verifyReleaseProvenance({ root, platform, lockPath });
+    console.log(`Verified media bundle: ${manifestPath}`);
+    return;
+  } catch (error) {
+    if (process.env.SERPENT_MEDIA_AUTO_ACQUIRE === '0') {
+      throw error;
+    }
+    console.warn(
+      `[media-binaries] Local ${platform} bundle is missing or invalid; ` +
+      'acquiring the pinned Serpent-Build release before packaging.\n' +
+      `  ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  await acquire({ platform, root, lockPath });
+  console.log(`Acquired and verified media bundle for ${platform} into ${root}`);
+}
+
 async function main() {
   const [command, ...rawOptions] = process.argv.slice(2);
-  if (!['acquire', 'manifest', 'verify'].includes(command)) {
-    throw new Error('Usage: media-binaries.mjs <acquire|manifest|verify> [--platform key] [--root path]');
+  if (!['acquire', 'manifest', 'verify', 'ensure'].includes(command)) {
+    throw new Error('Usage: media-binaries.mjs <acquire|manifest|verify|ensure> [--platform key] [--root path]');
   }
   const options = argumentsMap(rawOptions);
   const platform = option(options, 'platform', currentPlatformKey());
@@ -203,6 +224,11 @@ async function main() {
       verifyReleaseProvenance({ root, platform, lockPath });
     }
     console.log(`Verified media bundle: ${manifestPath}`);
+    return;
+  }
+
+  if (command === 'ensure') {
+    await ensure({ platform, root, lockPath });
     return;
   }
 
