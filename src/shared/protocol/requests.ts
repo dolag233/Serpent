@@ -46,6 +46,16 @@ const assetFileBaseNameSchema = nonBlankString.max(255)
   .refine((value) => value.trim() !== '.' && value.trim() !== '..', {
     message: "File base name must not be '.' or '..'.",
   });
+const assetRenameFileFieldsSchema = z.object({
+  newBaseName: assetFileBaseNameSchema.optional(),
+  newFileName: assetFileBaseNameSchema.optional(),
+}).refine(
+  (value) => value.newBaseName !== undefined || value.newFileName !== undefined,
+  { message: 'A new file name is required.' },
+).refine(
+  (value) => !(value.newBaseName !== undefined && value.newFileName !== undefined),
+  { message: 'Choose either a base name or a complete file name.' },
+);
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
 const optionalClearableDescriptionSchema = z.string().max(10000).optional();
@@ -775,13 +785,25 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
-  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id and
-  // extension-less base name only; no filesystem path may cross this boundary.
+  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id. The
+  // desktop editor may send a complete file name so an explicit extension
+  // change can be confirmed in the UI; no filesystem path crosses this boundary.
   z.strictObject({
     type: z.literal('asset.rename-file.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    newBaseName: assetFileBaseNameSchema,
+    ...assetRenameFileFieldsSchema.shape,
+  }).superRefine((value, context) => {
+    const result = assetRenameFileFieldsSchema.safeParse(value);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({
+          code: 'custom',
+          path: issue.path,
+          message: issue.message,
+        });
+      }
+    }
   }),
   z.strictObject({
     type: z.literal('asset.text.read.request'),
@@ -1865,8 +1887,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.rename-file'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    newBaseName: assetFileBaseNameSchema,
+    ...assetRenameFileFieldsSchema.shape,
     automationPlan: automationFilePlanProofSchema.optional(),
+  }).superRefine((value, context) => {
+    const result = assetRenameFileFieldsSchema.safeParse(value);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({
+          code: 'custom',
+          path: issue.path,
+          message: issue.message,
+        });
+      }
+    }
   }),
   z.strictObject({
     type: z.literal('asset.rename-files'),

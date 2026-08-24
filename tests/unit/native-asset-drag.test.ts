@@ -6,10 +6,14 @@ import {
   type NativeDragImage,
 } from '../../src/main/native-asset-drag';
 
-function image(label: string): NativeDragImage & { readonly label: string } {
+function image(
+  label: string,
+  size: { width: number; height: number } = { width: 96, height: 72 },
+): NativeDragImage & { readonly label: string } {
   const result = {
     label,
     isEmpty: () => false,
+    getSize: () => size,
     resize: vi.fn(),
   };
   result.resize.mockReturnValue(result);
@@ -75,6 +79,7 @@ describe('native asset drag', () => {
     }]);
     const emptyThumbnail: NativeDragImage = {
       isEmpty: () => true,
+      getSize: () => ({ width: 1, height: 1 }),
       resize: vi.fn(),
     };
     const fallback = image('fallback');
@@ -110,7 +115,11 @@ describe('native asset drag', () => {
       absolutePath: '/library/assets/asset-1.avif',
       thumbnailAbsolutePath: '/library/.serpent/artifacts/asset-1.webp',
     }]);
-    const empty: NativeDragImage = { isEmpty: () => true, resize: vi.fn() };
+    const empty: NativeDragImage = {
+      isEmpty: () => true,
+      getSize: () => ({ width: 1, height: 1 }),
+      resize: vi.fn(),
+    };
     const fallback = image('fallback');
     const startDrag = vi.fn();
 
@@ -125,5 +134,27 @@ describe('native asset drag', () => {
 
     expect(fallback.resize).toHaveBeenCalledWith({ width: 96, height: 72 });
     expect(startDrag).toHaveBeenCalledWith(expect.objectContaining({ icon: fallback }));
+  });
+
+  it('fits a square icon inside the native drag bounds without stretching it', () => {
+    const cache = new NativeAssetDragCache();
+    cache.replace('library-1', [{
+      assetId: 'asset-1',
+      absolutePath: '/library/assets/MetaHorizonLink.ico',
+      thumbnailAbsolutePath: '/library/.serpent/artifacts/meta.webp',
+    }]);
+    const square = image('square', { width: 256, height: 256 });
+    const startDrag = vi.fn();
+
+    expect(startNativeAssetDrag({
+      cache,
+      libraryId: 'library-1',
+      assetIds: ['asset-1'],
+      imageFactory: { createFromPath: vi.fn(() => square) },
+      fallbackIcon: () => undefined,
+      startDrag,
+    })).toBe(true);
+
+    expect(square.resize).toHaveBeenCalledWith({ width: 72, height: 72 });
   });
 });

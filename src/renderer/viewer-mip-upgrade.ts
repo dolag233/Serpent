@@ -11,11 +11,21 @@ import type { AssetSummary } from "../shared/asset-types";
 export function resolveViewerPlaceholderUrl(
   asset: Pick<
     AssetSummary,
-    "mediaType" | "thumbnailStatus" | "thumbnailArtifactId"
+    "displayName" | "mediaType" | "thumbnailStatus" | "thumbnailArtifactId"
   >,
   libraryId: string,
 ): string | null {
-  if (asset.mediaType !== "image") return null;
+  // Documents use the same ready thumbnail artifact as images. Keeping the
+  // policy here lets the PDF surface paint an existing page thumbnail while
+  // pdf.js is still importing and reading the source document.
+  if (asset.mediaType === "document") {
+    // The document media type also covers HTML, whose thumbnail must stay on
+    // the HTML viewer path. The extension is the only document discriminator
+    // available before requestPreview resolves its MIME type.
+    if (!asset.displayName.toLowerCase().endsWith(".pdf")) return null;
+  } else if (asset.mediaType !== "image") {
+    return null;
+  }
   if (asset.thumbnailStatus !== "ready" || !asset.thumbnailArtifactId) {
     return null;
   }
@@ -75,7 +85,7 @@ export function isDecodedImage(image: {
  * full `requestPreview` round-trip returns (image + ready thumbnail).
  */
 export function canPresentViewerPlaceholder(
-  asset: Pick<AssetSummary, "mediaType" | "thumbnailStatus" | "thumbnailArtifactId">,
+  asset: Pick<AssetSummary, "displayName" | "mediaType" | "thumbnailStatus" | "thumbnailArtifactId">,
   libraryId: string,
 ): boolean {
   return resolveViewerPlaceholderUrl(asset, libraryId) !== null;

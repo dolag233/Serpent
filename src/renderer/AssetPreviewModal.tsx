@@ -169,6 +169,7 @@ export const AssetPreviewModal = forwardRef<
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
+  const initialPreviewAssetRef = useRef<string | null>(null);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
   const chromeContrast = useViewerChromeContrast(
     modalRef,
@@ -433,9 +434,18 @@ export const AssetPreviewModal = forwardRef<
   );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void resolvePreview(), 0);
+    const viewerIdentity = `${libraryId}:${asset.assetId}`;
+    const timer = window.setTimeout(() => {
+      // React StrictMode mounts effects twice in development. The first
+      // effect may be cleaned up before its zero-delay timer runs; guard in
+      // the timer (rather than the effect body) so exactly one real request
+      // survives that remount while asset navigation still gets a new one.
+      if (initialPreviewAssetRef.current === viewerIdentity) return;
+      initialPreviewAssetRef.current = viewerIdentity;
+      void resolvePreview();
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [resolvePreview]);
+  }, [asset.assetId, libraryId, resolvePreview]);
 
   useEffect(
     () =>
@@ -965,6 +975,7 @@ export const AssetPreviewModal = forwardRef<
                 isFullscreen={isFullscreen}
                 key={`${libraryId}:${asset.assetId}`}
                 libraryId={libraryId}
+                placeholderUrl={placeholderUrl}
                 sourceUrl={resolution.url}
               />
             ) : (
@@ -974,6 +985,16 @@ export const AssetPreviewModal = forwardRef<
                 sourceUrl={resolution.url}
               />
             )
+          ) : asset.mediaType === "document" && placeholderUrl ? (
+            <PdfViewerSurface
+              api={api}
+              assetId={asset.assetId}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              placeholderUrl={placeholderUrl}
+              sourceUrl={null}
+            />
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
               key={`${libraryId}:${asset.assetId}`}

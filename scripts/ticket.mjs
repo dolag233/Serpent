@@ -361,6 +361,23 @@ function commandStatus(issues, positionals, options) {
   return issue;
 }
 
+function commandPriority(issues, positionals) {
+  requirePositionals(positionals, 2, 'ticket priority <id> <0..4>');
+  const issue = resolveIssue(issues, positionals[0]);
+  const priority = Number(positionals[1]);
+  if (!Number.isInteger(priority) || priority < 0 || priority > 4) {
+    throw new TicketError('priority 必须是 0–4');
+  }
+  issue.priority = priority;
+  if (Array.isArray(issue.labels)) {
+    issue.labels = issue.labels.map((label) => (
+      /^p[0-4]$/i.test(String(label)) ? `p${priority}` : label
+    ));
+  }
+  issue.updated_at = now();
+  return issue;
+}
+
 function commandClaim(issues, positionals, options) {
   requirePositionals(positionals, 1, 'ticket claim <id> [--assignee <名称>]');
   const issue = resolveIssue(issues, positionals[0]);
@@ -487,6 +504,7 @@ function usage() {
   ticket desc <id> --body <文本> | --file <文件> | --stdin
   ticket comment <id> --text <文本>
   ticket status <id> <open|in_progress|closed|deferred> [--reason <原因>]
+  ticket priority <id> <0..4>
   ticket claim <id> [--assignee <名称>]
   ticket dep add|remove <id> <阻塞工单>
   ticket delete <id> [--force]
@@ -532,6 +550,13 @@ export function main(argv = process.argv.slice(2)) {
       const issues = readIssues(filePath);
       const statusArgs = command === 'close' ? [positionals[0], 'closed'] : positionals;
       const issue = commandStatus(issues, statusArgs, options);
+      writeIssues(filePath, issues);
+      return issue;
+    });
+  } else if (command === 'priority') {
+    result = withWriteLock(filePath, () => {
+      const issues = readIssues(filePath);
+      const issue = commandPriority(issues, positionals);
       writeIssues(filePath, issues);
       return issue;
     });

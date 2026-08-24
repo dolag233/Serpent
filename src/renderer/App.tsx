@@ -5555,7 +5555,12 @@ function AppInner() {
       linkedFolders.some((folder) => folder.folderId === folderId),
     onRenameSuccess: async (newFolderId, previousFolderId) => {
       if (assetScope !== previousFolderId) return false;
-      await chooseFolder(newFolderId);
+      // Renaming the folder currently being browsed navigates to the same
+      // scope with the same id.  Folder navigation normally skips the sidebar
+      // query for performance, but here that would immediately put the old
+      // name back after the success notice.  Refresh the folder tree as part
+      // of this mutation so the sidebar settles in the same render cycle.
+      await chooseFolder(newFolderId, { refreshSidebar: true });
       return true;
     },
   });
@@ -10516,11 +10521,6 @@ function AppInner() {
                                     onMouseDown={(event) => event.stopPropagation()}
                                     value={assetRenameDialog.value}
                                   />
-                                  {assetRenameDialog.extension ? (
-                                    <span className="asset-inline-rename-ext">
-                                      {assetRenameDialog.extension}
-                                    </span>
-                                  ) : null}
                                   {assetRenameDialog.error ? (
                                     <span className="asset-inline-rename-error">
                                       {assetRenameDialog.error}

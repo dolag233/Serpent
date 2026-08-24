@@ -15,6 +15,7 @@
 - `show` / `list`：查看和筛选工单
 - `desc`：通过 `--body`、`--file` 或 `--stdin` 修改描述
 - `status` / `close`：修改状态并记录关闭原因
+- `priority`：调整工单优先级（P0–P4）并更新时间
 - `comment`：追加验收、失败原因和澄清记录
 - `status`：关闭工单重开为 `open` / `in_progress` 时强制 `--reason`，并保留重开评论
 - `claim`：排他认领并进入 `in_progress`

@@ -1704,7 +1704,8 @@ export const en = {
   },
   assetRename: {
     failed: "Failed to rename file.",
-    success: "File renamed to \"{name}\"."
+    success: "File renamed to \"{name}\".",
+    extensionWarning: "Changing the file extension may make this asset impossible to open. Continue?",
   },
   toast: {
     bridgeUnavailable: "Cannot connect to the Serpent desktop service. Please restart the app.",
@@ -1807,7 +1808,7 @@ export const en = {
     folderMoveIntoSelf: "Cannot move a folder into itself.",
     folderMoveIntoDescendant: "Cannot move a folder into one of its subfolders.",
     alreadyInFolder: "Asset is already in this folder; no move needed.",
-    noMovableAssets: "No movable assets (linked, missing, or Trash assets are excluded).",
+    noMovableAssets: "No assets can be placed in this folder.",
     noCollectionDropAssets: "No assets can be added to the collection (trashed assets are skipped).",
     addedToCollectionCount: "Added {count} assets to the collection",
     movedCount: "Moved {count} assets",

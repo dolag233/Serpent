@@ -1351,8 +1351,14 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
-  async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
-    const result = await request({ type: 'asset.rename-file.request', libraryId, assetId, newBaseName });
+  async renameAssetFile({ libraryId, assetId, newBaseName, newFileName }: { libraryId: string; assetId: string; newBaseName?: string; newFileName?: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
+    const result = await request({
+      type: 'asset.rename-file.request',
+      libraryId,
+      assetId,
+      ...(newBaseName === undefined ? {} : { newBaseName }),
+      ...(newFileName === undefined ? {} : { newFileName }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.file-renamed') throw new Error('Unexpected rename-asset-file response.');
     return {

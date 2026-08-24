@@ -8,13 +8,20 @@ import {
 } from "../../src/renderer/viewer-mip-upgrade";
 
 const readyImage = {
+  displayName: "image.png",
   mediaType: "image" as const,
   thumbnailStatus: "ready" as const,
   thumbnailArtifactId: "art-1",
 };
+const readyDocument = {
+  displayName: "document.pdf",
+  mediaType: "document" as const,
+  thumbnailStatus: "ready" as const,
+  thumbnailArtifactId: "pdf-art-1",
+};
 
 describe("viewer mip upgrade (Serpent-eh07)", () => {
-  it("builds preview URLs only for ready image thumbnails", () => {
+  it("builds preview URLs for ready image and document thumbnails", () => {
     expect(resolveViewerPlaceholderUrl(readyImage, "lib-1")).toBe(
       "serpent://preview/lib-1/art-1",
     );
@@ -31,6 +38,15 @@ describe("viewer mip upgrade (Serpent-eh07)", () => {
       ),
     ).toBeNull();
     expect(canPresentViewerPlaceholder(readyImage, "lib-1")).toBe(true);
+    expect(resolveViewerPlaceholderUrl(readyDocument, "lib-1")).toBe(
+      "serpent://preview/lib-1/pdf-art-1",
+    );
+    expect(
+      resolveViewerPlaceholderUrl(
+        { ...readyDocument, displayName: "page.html" },
+        "lib-1",
+      ),
+    ).toBeNull();
   });
 
   it("keeps placeholder visible until full image has decoded", () => {

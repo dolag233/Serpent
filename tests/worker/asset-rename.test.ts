@@ -178,6 +178,27 @@ describe('asset file rename (REQ-MENU-002)', () => {
     service.closeAll();
   });
 
+  it('accepts a complete file name when the user intentionally changes the extension', () => {
+    const temp = root();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'RenameExtension', selectedParentPath: temp });
+    const source = path.join(temp, 'source.png');
+    writeFileSync(source, 'not-an-image');
+    const asset = importFile(service, library.libraryId, source).assets[0]!;
+
+    const renamed = service.renameAssetFile({
+      libraryId: library.libraryId,
+      assetId: asset.assetId,
+      newFileName: 'renamed.jpg',
+    });
+
+    expect(renamed.asset.displayName).toBe('renamed.jpg');
+    expect(renamed.asset.relativeFilePath).toBe('renamed.jpg');
+    expect(existsSync(path.join(library.libraryPath, 'Assets', 'source.png'))).toBe(false);
+    expect(readFileSync(path.join(library.libraryPath, 'Assets', 'renamed.jpg'), 'utf8')).toBe('not-an-image');
+    service.closeAll();
+  });
+
   it('batch-renames independent assets and reports local naming conflicts without rolling back prior successes', () => {
     const temp = root();
     const service = newService();

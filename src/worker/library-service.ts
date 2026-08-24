@@ -5449,6 +5449,26 @@ export class LibraryService {
    */
   private readonly preparedStatementCache = new Map<string, unknown>();
   /**
+   * Serpent-29125f: text cards only need a small UTF-8 prefix. Keep the
+   * decoded result by revision so remounting cards (or opening the Inspector
+   * for the same asset) does not reopen the linked source file in the Worker.
+   * The cache is deliberately bounded and includes maxBytes because the text
+   * editor requests a larger cap than browse cards.
+   */
+  private readonly textAssetPreviewCache = new Map<string, {
+    value: {
+      assetId: string;
+      revisionId: string;
+      content: string;
+      truncated: boolean;
+      byteSize: number;
+      lineCount: number;
+      editable: boolean;
+      mimeType: string;
+    };
+  }>();
+  private static readonly TEXT_ASSET_PREVIEW_CACHE_LIMIT = 256;
+  /**
    * 进行中的同步会话（libraryId → sessionId）。内存级互斥：自动同步与
    * 手动同步不能同时在跑；进程退出自动释放，崩溃残留不会误锁。
    */
@@ -9073,23 +9093,43 @@ export class LibraryService {
           }
           return { affectedCount: renamedCount };
         }
-        if (typeof payload.assetId !== 'string' || typeof payload.newBaseName !== 'string') {
+        if (typeof payload.assetId !== 'string'
+          || (typeof payload.newBaseName !== 'string'
+            && typeof payload.newFileName !== 'string')) {
           throw new LibraryServiceError('LIBRARY_CORRUPT');
         }
         const assetId = payload.assetId;
-        const newBaseName = payload.newBaseName;
-        if (typeof payload.expectedBaseName === 'string'
-          && this.getAssetFileBaseName({
-            libraryId: openLibrary.summary.libraryId,
-            assetId,
-          }) !== payload.expectedBaseName) {
-          throw new LibraryServiceError('VERSION_CONFLICT');
-        }
-        const result = this.withHistoryReplay(() => this.renameAssetFile({
-          libraryId: openLibrary.summary.libraryId,
-          assetId,
-          newBaseName,
-        }));
+        const result = typeof payload.newFileName === 'string'
+          ? (() => {
+            const newFileName = payload.newFileName as string;
+            if (typeof payload.expectedFileName === 'string'
+              && this.getAssetFileName({
+                libraryId: openLibrary.summary.libraryId,
+                assetId,
+              }) !== payload.expectedFileName) {
+              throw new LibraryServiceError('VERSION_CONFLICT');
+            }
+            return this.withHistoryReplay(() => this.renameAssetFile({
+              libraryId: openLibrary.summary.libraryId,
+              assetId,
+              newFileName,
+            }));
+          })()
+          : (() => {
+            const newBaseName = payload.newBaseName as string;
+            if (typeof payload.expectedBaseName === 'string'
+              && this.getAssetFileBaseName({
+                libraryId: openLibrary.summary.libraryId,
+                assetId,
+              }) !== payload.expectedBaseName) {
+              throw new LibraryServiceError('VERSION_CONFLICT');
+            }
+            return this.withHistoryReplay(() => this.renameAssetFile({
+              libraryId: openLibrary.summary.libraryId,
+              assetId,
+              newBaseName,
+            }));
+          })();
         return { affectedCount: result.asset ? 1 : 0 };
       }
       case 'asset-metadata-snapshot': {
@@ -13347,11 +13387,16 @@ export class LibraryService {
       input.relativePath ?? '',
     );
     const rows = openLibrary.connection.prepare(
-      `SELECT a.asset_id, a.relative_file_path
+      `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path
          FROM assets a
         WHERE a.asset_id IN (${input.assetIds.map(() => '?').join(',')})
-          AND a.location_kind = 'managed' AND a.deleted_at IS NULL AND a.availability = 'available'`,
-    ).all(...input.assetIds) as Array<{ asset_id: string; relative_file_path: string }>;
+          AND a.deleted_at IS NULL AND a.availability = 'available'`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+      linked_folder_id: string | null;
+      relative_file_path: string;
+    }>;
     if (rows.length !== input.assetIds.length) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const copiedPaths: string[] = [];
     const backups: Array<{ destination: string; backup: string }> = [];
@@ -13363,7 +13408,13 @@ export class LibraryService {
       mkdirSync(backupPath, { recursive: true });
       const occupied = new Set<string>();
       for (const [index, row] of rows.entries()) {
-        const sourcePath = this.folderPath(openLibrary, row.relative_file_path);
+        const sourcePath = row.location_kind === 'managed'
+          ? this.folderPath(openLibrary, row.relative_file_path)
+          : this.linkedAssetPath(
+            openLibrary,
+            row.linked_folder_id,
+            row.relative_file_path,
+          );
         const sourceEntry = lstatSync(sourcePath);
         if (!sourceEntry.isFile() || sourceEntry.isSymbolicLink()) {
           throw new LibraryServiceError('INVALID_IMPORT_SOURCE', { reason: 'UNSUPPORTED_FILE_ENTRY' });
@@ -13424,6 +13475,76 @@ export class LibraryService {
     const assets = this.listAssets({ libraryId: input.libraryId, folderId: input.folderId, recursive: true })
       .filter((asset) => copiedIdentities.has(portablePathIdentity(asset.relativeFilePath)));
     return { copiedCount: copiedPaths.length, skippedCount, assets };
+  }
+
+  /**
+   * Copy assets that live in an external linked folder into the managed
+   * library. Linked sources are intentionally copied (never removed from the
+   * user's external directory); this is the symmetric counterpart to
+   * copyAssetsToLinkedFolder and lets linked assets participate in ordinary
+   * folder drag-and-drop.
+   */
+  copyLinkedAssetsToManagedFolder(input: {
+    libraryId: string;
+    assetIds: string[];
+    targetFolderId: string | null;
+  }): { copiedCount: number; skippedCount: number; assets: AssetSummary[] } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    this.assertAssetsNotExplicitlyIgnored(openLibrary, input.assetIds);
+    if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
+      throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+    }
+    const rows = openLibrary.connection.prepare(
+      `SELECT asset_id, linked_folder_id, relative_file_path, availability
+         FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+          AND location_kind = 'linked' AND deleted_at IS NULL`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      linked_folder_id: string | null;
+      relative_file_path: string;
+      availability: 'available' | 'missing';
+    }>;
+    if (rows.length !== input.assetIds.length) {
+      throw new LibraryServiceError('ASSET_NOT_FOUND');
+    }
+    const sourcePaths = rows.map((row) => {
+      if (row.availability !== 'available') {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      const sourcePath = this.linkedAssetPath(
+        openLibrary,
+        row.linked_folder_id,
+        row.relative_file_path,
+      );
+      if (!realFileExists(sourcePath)) {
+        throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_NOT_FOUND' });
+      }
+      return sourcePath;
+    });
+    // A linked asset is already indexed in this library. This operation is an
+    // explicit copy, so the source's content hash must not be treated as a
+    // library duplicate and silently skipped.
+    const prepared = this.prepareImport({
+      libraryId: input.libraryId,
+      targetFolderId: input.targetFolderId ?? undefined,
+      sourceKind: 'files',
+      sourcePaths,
+      skipLibraryDuplicateScan: true,
+    });
+    const completion = 'importId' in prepared
+      ? this.resolveImport({
+        importId: prepared.importId,
+        suspectedDuplicate: 'skip',
+        nameConflict: 'keep-both',
+      })
+      : prepared;
+    return {
+      copiedCount: completion.importedCount + completion.replacedCount,
+      skippedCount: completion.skippedCount,
+      assets: completion.assets,
+    };
   }
 
   convertLinkedFolderToManaged(input: {
@@ -26713,6 +26834,33 @@ export class LibraryService {
     if (input.assetIds.length === 0 || new Set(input.assetIds).size !== input.assetIds.length) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION');
     }
+    const locationRows = openLibrary.connection.prepare(
+      `SELECT asset_id, location_kind
+         FROM assets
+        WHERE asset_id IN (${input.assetIds.map(() => '?').join(',')})
+          AND deleted_at IS NULL`,
+    ).all(...input.assetIds) as Array<{
+      asset_id: string;
+      location_kind: 'managed' | 'linked';
+    }>;
+    if (locationRows.some((row) => row.location_kind === 'linked')) {
+      if (
+        locationRows.length !== input.assetIds.length ||
+        locationRows.some((row) => row.location_kind !== 'linked')
+      ) {
+        throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+      }
+      const linkedCopy = this.copyLinkedAssetsToManagedFolder({
+        libraryId: input.libraryId,
+        assetIds: input.assetIds,
+        targetFolderId: input.targetFolderId,
+      });
+      return {
+        ...linkedCopy,
+        operationId: null,
+        outputAssetIdsBySource: [],
+      };
+    }
     const targetFolder = input.targetFolderId === null
       ? undefined
       : this.targetFolder(openLibrary, input.targetFolderId);
@@ -27133,6 +27281,78 @@ export class LibraryService {
    * Read UTF-8 text for a text-classified asset with a hard byte cap (Serpent-sh7).
    * Linked assets are readable; only managed assets are editable via saveTextAsset.
    */
+  private textAssetPreviewCacheKey(
+    libraryId: string,
+    assetId: string,
+    revisionId: string,
+    maxBytes: number,
+  ): string {
+    return `${libraryId}\0${assetId}\0${revisionId}\0${maxBytes}`;
+  }
+
+  private readCachedTextAssetPreview(
+    key: string,
+  ): {
+    assetId: string;
+    revisionId: string;
+    content: string;
+    truncated: boolean;
+    byteSize: number;
+    lineCount: number;
+    editable: boolean;
+    mimeType: string;
+  } | undefined {
+    const entry = this.textAssetPreviewCache.get(key);
+    if (!entry) return undefined;
+    // Map insertion order is used as a tiny LRU. Reinsert on a hit so a
+    // frequently visible text card does not evict itself during a scroll.
+    this.textAssetPreviewCache.delete(key);
+    this.textAssetPreviewCache.set(key, entry);
+    return entry.value;
+  }
+
+  private cacheTextAssetPreview(
+    key: string,
+    value: {
+      assetId: string;
+      revisionId: string;
+      content: string;
+      truncated: boolean;
+      byteSize: number;
+      lineCount: number;
+      editable: boolean;
+      mimeType: string;
+    },
+  ): void {
+    this.textAssetPreviewCache.delete(key);
+    this.textAssetPreviewCache.set(key, { value });
+    while (
+      this.textAssetPreviewCache.size
+      > LibraryService.TEXT_ASSET_PREVIEW_CACHE_LIMIT
+    ) {
+      const oldest = this.textAssetPreviewCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.textAssetPreviewCache.delete(oldest);
+    }
+  }
+
+  private invalidateTextAssetPreviewCache(
+    libraryId: string,
+    assetId: string,
+  ): void {
+    const prefix = `${libraryId}\0${assetId}\0`;
+    for (const key of this.textAssetPreviewCache.keys()) {
+      if (key.startsWith(prefix)) this.textAssetPreviewCache.delete(key);
+    }
+  }
+
+  private clearTextAssetPreviewCache(libraryId: string): void {
+    const prefix = `${libraryId}\0`;
+    for (const key of this.textAssetPreviewCache.keys()) {
+      if (key.startsWith(prefix)) this.textAssetPreviewCache.delete(key);
+    }
+  }
+
   readTextAsset(input: {
     libraryId: string;
     assetId: string;
@@ -27187,6 +27407,14 @@ export class LibraryService {
       Math.max(1, input.maxBytes ?? TEXT_VIEWER_MAX_BYTES),
       TEXT_VIEWER_MAX_BYTES,
     );
+    const cacheKey = this.textAssetPreviewCacheKey(
+      input.libraryId,
+      input.assetId,
+      row.current_revision_id,
+      maxBytes,
+    );
+    const cached = this.readCachedTextAssetPreview(cacheKey);
+    if (cached) return cached;
     let buffer: Buffer;
     try {
       const fd = openSync(absolutePath, 'r');
@@ -27214,7 +27442,7 @@ export class LibraryService {
     const slice = truncated ? buffer.subarray(0, maxBytes) : buffer;
     const content = slice.toString('utf8');
     const extension = path.extname(row.relative_file_path).toLowerCase();
-    return {
+    const value = {
       assetId: row.asset_id,
       revisionId: row.current_revision_id,
       content,
@@ -27224,6 +27452,8 @@ export class LibraryService {
       editable: row.location_kind === 'managed' && !isTrashed,
       mimeType: textMimeForExtension(extension) ?? 'text/plain',
     };
+    this.cacheTextAssetPreview(cacheKey, value);
+    return value;
   }
 
   /**
@@ -27377,6 +27607,7 @@ export class LibraryService {
 
     const [asset] = this.managedMoveSummaries(openLibrary, [input.assetId]);
     if (!asset) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    this.invalidateTextAssetPreviewCache(input.libraryId, input.assetId);
     this.options.onAssetsChanged?.({
       type: 'asset.changed',
       libraryId: input.libraryId,
@@ -28148,10 +28379,11 @@ export class LibraryService {
 
   /**
    * REQ-MENU-002 / REQ-LABEL-002: renaming an asset's display name IS renaming
-   * its real file, so this goes through file-operation semantics. The
-   * extension always stays as-is (Eagle behavior: a rename must never
-   * reclassify the asset type). Only the base name changes, inside the same
-   * directory, for both managed and online linked assets.
+   * its real file, so this goes through file-operation semantics. The normal
+   * automation path still accepts a base name, while the desktop inline editor
+   * may provide the complete file name and intentionally change the extension.
+   * A changed extension invalidates the old derived media artifacts so the
+   * asset is reclassified from its new name.
    *
    * Crash-safety convention follows trashAssets for single-scope file moves:
    * rename on disk first, then one DB transaction (path + FTS sync); on DB
@@ -28161,14 +28393,25 @@ export class LibraryService {
   renameAssetFile(input: {
     libraryId: string;
     assetId: string;
-    newBaseName: string;
+    newBaseName?: string;
+    newFileName?: string;
   }): { asset: AssetSummary } {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     this.assertAssetsNotExplicitlyIgnored(openLibrary, [input.assetId]);
-    let baseName: string;
+    if (
+      (input.newBaseName === undefined && input.newFileName === undefined) ||
+      (input.newBaseName !== undefined && input.newFileName !== undefined)
+    ) {
+      throw new LibraryServiceError('INVALID_ASSET_FILE_NAME', {
+        reason: 'NAME_NOT_SUPPORTED',
+      });
+    }
+    let requestedName: string;
     try {
-      baseName = normalizeAssetFileBaseName(input.newBaseName);
+      requestedName = normalizeAssetFileBaseName(
+        input.newFileName ?? input.newBaseName!,
+      );
     } catch (error) {
       throw new LibraryServiceError('INVALID_ASSET_FILE_NAME', {
         reason: 'NAME_NOT_SUPPORTED',
@@ -28179,7 +28422,7 @@ export class LibraryService {
     const row = openLibrary.connection
       .prepare(
         `SELECT asset_id, location_kind, linked_folder_id, relative_file_path,
-                availability, deleted_at
+                current_revision_id, availability, deleted_at
            FROM assets
           WHERE asset_id = ?`,
       )
@@ -28188,6 +28431,7 @@ export class LibraryService {
         location_kind: 'managed' | 'linked';
         linked_folder_id: string | null;
         relative_file_path: string;
+        current_revision_id: string;
         availability: 'available' | 'missing';
         deleted_at: string | null;
       } | undefined;
@@ -28215,7 +28459,9 @@ export class LibraryService {
 
     const currentFileName = path.posix.basename(row.relative_file_path);
     const extension = path.posix.extname(currentFileName);
-    const newFileName = `${baseName}${extension}`;
+    const newFileName = input.newFileName === undefined
+      ? `${requestedName}${extension}`
+      : requestedName;
     // The filesystem limit applies to the whole component, not just the base.
     if (Buffer.byteLength(newFileName, 'utf8') > 255) {
       throw new LibraryServiceError('INVALID_ASSET_FILE_NAME', {
@@ -28301,6 +28547,15 @@ export class LibraryService {
           throw new LibraryServiceError('ASSET_NOT_FOUND', { reason: 'SOURCE_CHANGED' });
         }
         this.syncAssetSearchContent(openLibrary.connection, row.asset_id);
+        if (path.extname(currentFileName).toLowerCase() !== path.extname(newFileName).toLowerCase()) {
+          openLibrary.connection
+            .prepare(
+              `UPDATE revision_artifacts
+                  SET invalidated_at = ?
+                WHERE revision_id = ? AND invalidated_at IS NULL`,
+            )
+            .run(now, row.current_revision_id);
+        }
       })();
     } catch (error) {
       if (renamed) {
@@ -28337,6 +28592,16 @@ export class LibraryService {
     const fileName = path.posix.basename(row.relative_file_path);
     const extension = path.posix.extname(fileName);
     return extension.length === 0 ? fileName : fileName.slice(0, -extension.length);
+  }
+
+  /** Worker-only precondition value for complete-file-name rename history. */
+  getAssetFileName(input: { libraryId: string; assetId: string }): string {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    const row = openLibrary.connection.prepare(
+      'SELECT relative_file_path FROM assets WHERE asset_id = ?',
+    ).get(input.assetId) as { relative_file_path: string } | undefined;
+    if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    return path.posix.basename(row.relative_file_path);
   }
 
   /**
@@ -37885,6 +38150,7 @@ export class LibraryService {
       this.openIdByPath.delete(openLibrary.summary.libraryPath);
       this.invalidateArtifactPathCache(libraryId);
       this.dropPreparedStatementCache(libraryId);
+      this.clearTextAssetPreviewCache(libraryId);
       this.autoRepairAttemptedByLibrary.delete(libraryId);
       this.autoRepairProbeFailedAtByLibrary.delete(libraryId);
       this.autoAnalysisSuppressedAssetIds.delete(libraryId);
@@ -37913,6 +38179,7 @@ export class LibraryService {
     this.openIdByPath.delete(openLibrary.summary.libraryPath);
     this.invalidateArtifactPathCache(libraryId);
     this.dropPreparedStatementCache(libraryId);
+    this.clearTextAssetPreviewCache(libraryId);
     for (const [key] of this.openOperationHistoryGroups) {
       if (key.startsWith(`${libraryId}\u0000`)) this.openOperationHistoryGroups.delete(key);
     }

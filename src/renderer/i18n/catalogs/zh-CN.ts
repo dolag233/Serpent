@@ -1690,7 +1690,8 @@ export const zhCN = {
   },
   assetRename: {
     failed: "重命名文件失败。",
-    success: "文件已重命名为\"{name}\"。"
+    success: "文件已重命名为\"{name}\"。",
+    extensionWarning: "更改文件扩展名可能导致资产无法打开。确定继续吗？",
   },
   toast: {
     bridgeUnavailable: "无法连接到 Serpent 桌面服务。请重新启动应用。",
@@ -1792,7 +1793,7 @@ export const zhCN = {
     folderMoveIntoSelf: "不能将文件夹移动到自身。",
     folderMoveIntoDescendant: "不能将文件夹移动到其子文件夹。",
     alreadyInFolder: "资产已在当前文件夹，无需移动。",
-    noMovableAssets: "没有可移动的资产（链接、丢失或回收站资产不参与移动）。",
+    noMovableAssets: "没有可放入当前文件夹的资产。",
     noCollectionDropAssets: "没有可加入合集的资产（回收站中的资产已跳过）。",
     addedToCollectionCount: "已将 {count} 项资产加入合集",
     movedCount: "已移动 {count} 项资产",

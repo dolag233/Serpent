@@ -150,6 +150,19 @@ describe('text ticket CLI', () => {
     expect(full[0]).toHaveProperty('dependencies');
   });
 
+  it('updates a ticket priority through the text CLI', () => {
+    const root = createRoot();
+    const ticket = add(root, '需要降级处理', '-p', '1', '-l', 'p1,rename');
+
+    const updated = run(root, 'priority', ticket.id, '2', '--json');
+    expect(updated.status).toBe(0);
+    expect(JSON.parse(updated.stdout)).toMatchObject({
+      id: ticket.id,
+      priority: 2,
+      labels: ['p2', 'rename'],
+    });
+  });
+
   it('refuses to overwrite a non-empty JSONL with an empty issue list', () => {
     const root = createRoot();
     add(root, '不得被空写覆盖');

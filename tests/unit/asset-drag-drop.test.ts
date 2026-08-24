@@ -89,7 +89,7 @@ describe('resolveFolderDrop (REQ-DND-001)', () => {
     ).toEqual({ kind: 'reject', reason: 'same-folder', skippedCount: 0 });
   });
 
-  it('moves eligible managed assets and skips the rest with a count', () => {
+  it('accepts available linked assets and skips only unavailable/trashed entries', () => {
     const assets: DragAssetFact[] = [
       managed('a'),
       { assetId: 'b', locationKind: 'linked', availability: 'available', deletedAt: null },
@@ -98,12 +98,12 @@ describe('resolveFolderDrop (REQ-DND-001)', () => {
     ];
     expect(
       resolveFolderDrop({ targetFolderId: 'f2', currentFolderId: 'f1', assets }),
-    ).toEqual({ kind: 'move', assetIds: ['a'], skippedCount: 3 });
+    ).toEqual({ kind: 'move', assetIds: ['a', 'b'], skippedCount: 2 });
   });
 
-  it('rejects when nothing is eligible', () => {
+  it('rejects when nothing is available for a folder drop', () => {
     const assets: DragAssetFact[] = [
-      { assetId: 'b', locationKind: 'linked', availability: 'available', deletedAt: null },
+      { assetId: 'b', locationKind: 'linked', availability: 'missing', deletedAt: null },
     ];
     expect(
       resolveFolderDrop({ targetFolderId: 'f2', currentFolderId: 'f1', assets }),

@@ -1349,9 +1349,36 @@ function recordPermanentDeleteBarrier(
 
 function recordDesktopAssetRenameHistory(
   command: Extract<WorkerCommand, { type: 'asset.rename-file' }>,
-  beforeBaseName: string,
+  beforeFileName: string,
   historyContext?: WorkerRequest['historyContext'],
 ): string {
+  const usesCompleteFileName = command.newFileName !== undefined;
+  const beforeExtension = path.extname(beforeFileName);
+  const beforeBaseName = beforeExtension.length > 0
+    ? beforeFileName.slice(0, -beforeExtension.length)
+    : beforeFileName;
+  const forwardPayload = usesCompleteFileName
+    ? {
+      assetId: command.assetId,
+      expectedFileName: beforeFileName,
+      newFileName: command.newFileName!,
+    }
+    : {
+      assetId: command.assetId,
+      expectedBaseName: beforeBaseName,
+      newBaseName: command.newBaseName!,
+    };
+  const inversePayload = usesCompleteFileName
+    ? {
+      assetId: command.assetId,
+      expectedFileName: command.newFileName!,
+      newFileName: beforeFileName,
+    }
+    : {
+      assetId: command.assetId,
+      expectedBaseName: command.newBaseName!,
+      newBaseName: beforeBaseName,
+    };
   return libraryService.recordOperationHistory({
     libraryId: command.libraryId,
     source: historyContext?.source ?? 'desktop',
@@ -1364,20 +1391,12 @@ function recordDesktopAssetRenameHistory(
     forwardRecipe: {
       kind: 'asset-rename',
       version: 1,
-      payload: {
-        assetId: command.assetId,
-        expectedBaseName: beforeBaseName,
-        newBaseName: command.newBaseName,
-      },
+      payload: forwardPayload,
     },
     inverseRecipe: {
       kind: 'asset-rename',
       version: 1,
-      payload: {
-        assetId: command.assetId,
-        expectedBaseName: command.newBaseName,
-        newBaseName: beforeBaseName,
-      },
+      payload: inversePayload,
     },
   }).historyEntryId;
 }
@@ -2553,6 +2572,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'asset.rename-file': {
       if (request.command.automationPlan) {
+        if (request.command.newBaseName === undefined) {
+          throw new LibraryServiceError('INVALID_IMPORT_DECISION');
+        }
         libraryService.validateAutomationFileOperationPlan({
           libraryId: request.command.libraryId,
           operation: 'rename-file',
@@ -2563,11 +2585,17 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
           assetStates: request.command.automationPlan.assetStates,
         });
       }
-      const beforeBaseName = libraryService.getAssetFileBaseName(request.command);
+      const beforeFileName = libraryService.getAssetFileName(request.command);
       const { asset } = libraryService.renameAssetFile(request.command);
-      const historyEntryId = beforeBaseName === request.command.newBaseName
+      const requestedFileName = request.command.newFileName
+        ?? `${request.command.newBaseName}${path.extname(beforeFileName)}`;
+      const historyEntryId = beforeFileName === requestedFileName
         ? undefined
-        : recordDesktopAssetRenameHistory(request.command, beforeBaseName, request.historyContext);
+        : recordDesktopAssetRenameHistory(request.command, beforeFileName, request.historyContext);
+      if (request.command.newFileName !== undefined
+        && path.extname(beforeFileName).toLowerCase() !== path.extname(request.command.newFileName).toLowerCase()) {
+        scheduleThumbnailScene(request.command.libraryId, 'mutation', [request.command.assetId]);
+      }
       return { ok: true, type: 'asset.file-renamed', asset, ...(historyEntryId ? { historyEntryId } : {}) };
     }
     case 'asset.rename-files': {

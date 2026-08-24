@@ -107,6 +107,7 @@ npm run ticket -- desc <id> --file description.md
 npm run ticket -- comment <id> --text "验收记录或澄清说明"
 npm run ticket -- status <id> closed --reason "完成原因"
 npm run ticket -- status <id> open --reason "用户报告回归，需要重新验证"
+npm run ticket -- priority <id> 0..4
 npm run ticket -- dep add <被阻塞工单> <阻塞工单>
 npm run ticket -- dep remove <被阻塞工单> <阻塞工单>
 npm run ticket -- delete <id>
@@ -160,6 +161,7 @@ JSONL 流程操作，禁止重新启用旧数据库同步。
 - **Node**：`>=24 <25`，`.nvmrc` 锁定 24.15.0。
 - **打包后 `.app` 不能从 SMB 运行**：必须先复制到本地 APFS（macOS QA 用）。
 - **Agent 共享知识必须进仓库**：产品决定、事故复盘、质量门禁和切片状态不得只留在聊天、个人 memory 或本机忽略文件中。
+- **隐私与本地环境信息（强制）**：任何提交文件（源码、测试、开发日志、文档、工单和截图 fixture 等）都不得包含开发机器的本地绝对路径、个人目录或资源库名称、隐私数据、访问令牌、API Key、密码、Cookie 或其他环境凭据。测试和示例必须使用临时目录、占位符或脱敏 fixture；提交前检查路径、密钥和个人信息，避免隐私泄露。
 - **性能目标（产品质量门）**：大型资源库性能是产品目标，所有性能回归使用 `tests/worker/large-library-performance.test.ts` 的 20,000 资产基线（约 90% 可解码图片：jpg/png/webp/gif/tiff，多种横竖比例；图片长边按游戏美术口径 1% 8K / 3% 4K / 30% 2K / 余量 1K；5% 短视频：mp4/webm/mov；各 1% 的 3D/文本/音频/不支持格式），并在开发日志记录当次命令和结果。打开库主窗口壳 **1 秒内可交互**；切换文件夹/合集首屏目标 **500 ms** 内并渐进补齐；固定 token 搜索首屏目标 **1 秒** 内且只服务最新请求；Inspector 由 `AssetSummary` 先渲染文件名/尺寸/评分，首屏目标 **500 ms** 内，标签/合集/AI/技术元数据渐进加载；删除/恢复后的选择和可见卡片目标 **200 ms** 内局部更新，后台完成持久化收敛。预算是产品目标，不是把共享 CI 单次波动写成硬性通过条件；缺少真实 Electron、独立进程或 Windows 证据只能写“未验证”。
 - **功能变更必须同步测试**：任何新增功能、行为变更或用户可见交互调整，都必须在同一变更中检查并同步更新受影响的单元、Worker、集成或 Electron E2E 测试。若测试因产品规格有意变化而失效，必须更新 fixture、断言和测试说明，并在开发日志中记录旧行为与新行为；不能把“测试落后于产品变化”当作完成状态，也不能通过删除测试来消除失败。
 - **TypeScript pinned 6.0.3**：typescript-eslint@8.63.0 不支持 TS 7.x，等生态适配后再升。

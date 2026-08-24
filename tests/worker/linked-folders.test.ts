@@ -529,6 +529,50 @@ describe('Linked folder import', () => {
     service.closeAll();
   });
 
+  it('copies a linked asset into a managed folder without treating its source as a duplicate', () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    writeFileSync(path.join(linkedRoot, 'reference.png'), 'reference bytes');
+
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'LinkedToManaged', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const sourceAsset = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    })[0]!;
+    const managedFolder = service.createManagedFolder({
+      libraryId: library.libraryId,
+      name: 'References',
+    });
+
+    const result = service.copyAssets({
+      libraryId: library.libraryId,
+      assetIds: [sourceAsset.assetId],
+      targetFolderId: managedFolder.folderId,
+      conflictStrategy: 'keep-both',
+    });
+
+    expect(result.copiedCount).toBe(1);
+    expect(result.skippedCount).toBe(0);
+    expect(result.operationId).toBeNull();
+    expect(result.assets[0]?.locationKind).toBe('managed');
+    expect(readFileSync(path.join(linkedRoot, 'reference.png'), 'utf8')).toBe('reference bytes');
+    expect(
+      readFileSync(
+        path.join(library.libraryPath, 'Assets', 'References', 'reference.png'),
+        'utf8',
+      ),
+    ).toBe('reference bytes');
+
+    service.closeAll();
+  });
+
   it('converts a linked folder to managed while preserving identity, metadata and the external source', () => {
     const root = temporaryRoot();
     const linkedRoot = path.join(root, 'source');

@@ -39,9 +39,23 @@ function run(command, args, options = {}) {
 
 // Construct an in-memory database instead of merely requiring the package:
 // better-sqlite3 loads its native addon lazily when Database is instantiated.
+//
+// FTS5 is part of Serpent's database contract, not an optional extension. A
+// native module linked against a system SQLite can still open a database while
+// silently omitting FTS5 (notably after a vcpkg/MSBuild hijack on Windows), so
+// checking only `new Database()` is insufficient. The probe must exercise the
+// same virtual-table capability used by the library search index.
 const electronReady = await run(
   electronPath,
-  ['-e', "const Database = require('better-sqlite3'); new Database(':memory:').close()"],
+  [
+    '-e',
+    [
+      "const Database = require('better-sqlite3');",
+      "const db = new Database(':memory:');",
+      "db.exec('CREATE VIRTUAL TABLE serpent_native_probe USING fts5(value)');",
+      'db.close();',
+    ].join(''),
+  ],
   {
     // A mismatch is expected on the first invocation after a host-Node
     // install/rebuild; keep Electron's native stack trace out of normal logs.
@@ -51,11 +65,11 @@ const electronReady = await run(
 );
 
 if (electronReady) {
-  console.log('[ensure-native] better-sqlite3 matches the Electron ABI.');
+  console.log('[ensure-native] better-sqlite3 matches the Electron ABI and FTS5 is available.');
   process.exit(0);
 }
 
-console.log('[ensure-native] Rebuilding better-sqlite3 for Electron...');
+console.log('[ensure-native] Electron ABI or FTS5 probe failed; rebuilding better-sqlite3 for Electron...');
 const rebuilt = await run(process.execPath, [path.join(repoRoot, 'scripts', 'rebuild-native.mjs')]);
 if (!rebuilt) {
   process.exitCode = 1;

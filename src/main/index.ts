@@ -521,6 +521,25 @@ function resolveArtifactPathBatched(
   });
 }
 const nativeAssetDragCache = new NativeAssetDragCache();
+type NativeAssetDragPrimeQueue = {
+  pending: Set<string>;
+  generation: number;
+  running: boolean;
+};
+const nativeAssetDragPrimeQueues = new Map<string, NativeAssetDragPrimeQueue>();
+
+function cancelNativeAssetDragPrime(libraryId: string): void {
+  const queue = nativeAssetDragPrimeQueues.get(libraryId);
+  if (!queue) return;
+  queue.generation += 1;
+  queue.pending.clear();
+  if (!queue.running) nativeAssetDragPrimeQueues.delete(libraryId);
+}
+
+function clearNativeAssetDragCache(libraryId: string): void {
+  nativeAssetDragCache.clear(libraryId);
+  cancelNativeAssetDragPrime(libraryId);
+}
 /**
  * Serpent-1e3d4f: Chromium never persists custom-protocol responses on disk,
  * so every session re-reads preview bytes from (possibly remote) origin.
@@ -1597,7 +1616,7 @@ async function closeOpenLibrariesBeforeReplacement(): Promise<string[]> {
           libraryId: library.libraryId,
         });
         if (!closed.ok || closed.type !== "library.closed") continue;
-        nativeAssetDragCache.clear(library.libraryId);
+        clearNativeAssetDragCache(library.libraryId);
         clearActiveRecentLibrary(recentLibraryPath(), (error) => {
           logger?.error("recent-library.clear", error);
         });
@@ -1974,30 +1993,69 @@ async function primeNativeAssetDragCache(
 }
 
 /**
- * Serpent-v4jf: how many sorted-list-head assets to prime synchronously before
- * a card-bearing response reaches the renderer. The head of the sorted list is
- * exactly the first screen the user sees; priming more than a screenful before
- * forwarding only delays the browse result.
+ * Serpent-v4jf/Serpent-29125f: how many sorted-list-head assets to prime
+ * synchronously before a card-bearing response reaches the renderer. Native
+ * drag can only use entries that are ready when dragstart enters Electron's
+ * nested OS loop, but priming hundreds of cards here serializes every browse
+ * response behind Worker work. The renderer's overscan window is normally a
+ * few dozen cards, so keep this bounded to a small first-screen cushion.
  */
-const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 500;
+const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 64;
 
 /**
  * Fire-and-forget primer for the rest of a large browse result. Chunked so a
  * 50k result does not post one giant worker request and does not hold the
  * worker for a single long burst; each chunk is a normal upsert.
  */
-async function primeNativeAssetDragCacheInBackground(
+async function drainNativeAssetDragPrimeQueue(
+  libraryId: string,
+  queue: NativeAssetDragPrimeQueue,
+): Promise<void> {
+  const generation = queue.generation;
+  try {
+    // Keep each background request below the Worker-side 500-id resolution
+    // batch. A 5,000-id request was technically fire-and-forget but still held
+    // the Worker callback queue for a long burst in text-heavy libraries.
+    const chunkSize = 500;
+    while (queue.generation === generation && queue.pending.size > 0) {
+      const chunk = [...queue.pending].slice(0, chunkSize);
+      for (const assetId of chunk) queue.pending.delete(assetId);
+      await primeNativeAssetDragCache(libraryId, chunk, "upsert");
+      // Leave a small scheduling gap between chunks. This is deliberately
+      // longer than a microtask: viewer, search and thumbnail requests must be
+      // able to enter the Worker queue between background drag hydration waves.
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    queue.running = false;
+    if (nativeAssetDragPrimeQueues.get(libraryId) === queue) {
+      if (queue.pending.size === 0) {
+        nativeAssetDragPrimeQueues.delete(libraryId);
+      } else {
+        // A new request arrived while the queue was being cancelled/replaced;
+        // continue with the current generation instead of dropping its entries.
+        queue.running = true;
+        void drainNativeAssetDragPrimeQueue(libraryId, queue);
+      }
+    }
+  }
+}
+
+function primeNativeAssetDragCacheInBackground(
   libraryId: string,
   assetIds: readonly string[],
-): Promise<void> {
-  const chunkSize = 5_000;
-  for (let i = 0; i < assetIds.length; i += chunkSize) {
-    const chunk = assetIds.slice(i, i + chunkSize);
-    await primeNativeAssetDragCache(libraryId, chunk, "upsert");
-    // Yield between chunks so unrelated worker traffic (thumbnail events,
-    // progress pushes) is not starved behind a long prime.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+): void {
+  if (assetIds.length === 0) return;
+  const queue = nativeAssetDragPrimeQueues.get(libraryId) ?? {
+    pending: new Set<string>(),
+    generation: 0,
+    running: false,
+  } satisfies NativeAssetDragPrimeQueue;
+  nativeAssetDragPrimeQueues.set(libraryId, queue);
+  for (const assetId of assetIds) queue.pending.add(assetId);
+  if (queue.running) return;
+  queue.running = true;
+  void drainNativeAssetDragPrimeQueue(libraryId, queue);
 }
 
 function createNativeDialogHost(): NativeDialogHost {
@@ -2860,7 +2918,8 @@ async function commandFor(
         type: "asset.rename-file",
         libraryId: request.libraryId,
         assetId: request.assetId,
-        newBaseName: request.newBaseName,
+        ...(request.newBaseName === undefined ? {} : { newBaseName: request.newBaseName }),
+        ...(request.newFileName === undefined ? {} : { newFileName: request.newFileName }),
       };
     case "asset.text.read.request":
       return {
@@ -3466,7 +3525,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       // Drop serpent:// file handles before the Worker tries to rm the root.
       deleteFromDiskLibraryId = request.libraryId;
       blockLibraryMediaReads(request.libraryId);
-      nativeAssetDragCache.clear(request.libraryId);
+      clearNativeAssetDragCache(request.libraryId);
     }
 
     if (request.type === "asset.import-drop-invalid.report") {
@@ -5320,13 +5379,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         },
       });
     } else if (result.type === "library.closed") {
-      nativeAssetDragCache.clear(result.libraryId);
+      clearNativeAssetDragCache(result.libraryId);
       clearActiveRecentLibrary(recentLibraryPath(), (error) => {
         logger?.error("recent-library.clear", error);
       });
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     } else if (result.type === "library.deleted") {
-      nativeAssetDragCache.clear(result.libraryId);
+      clearNativeAssetDragCache(result.libraryId);
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
     return result;

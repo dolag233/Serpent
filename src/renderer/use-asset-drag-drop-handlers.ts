@@ -84,53 +84,75 @@ export function useAssetDragDropHandlers({
       void (async () => {
         setUiState("loading");
         try {
-          if (resolution.kind === "copy") {
+          const factsById = new Map(
+            dragAssetFacts(resolution.assetIds).map((fact) => [fact.assetId, fact]),
+          );
+          const managedIds = resolution.assetIds.filter(
+            (assetId) => factsById.get(assetId)?.locationKind === "managed",
+          );
+          const linkedIds = resolution.assetIds.filter(
+            (assetId) => factsById.get(assetId)?.locationKind === "linked",
+          );
+          let movedCount = 0;
+          let copiedCount = 0;
+          let skippedCount = 0;
+          let historyEntryId: string | undefined;
+
+          if (managedIds.length > 0) {
+            if (resolution.kind === "copy") {
+              const result = await api.copyAssets({
+                libraryId: library.libraryId,
+                assetIds: managedIds,
+                targetFolderId,
+                conflictStrategy: "keep-both",
+              });
+              if (!result.ok) throw new LibraryOperationError(result.error);
+              copiedCount += result.value.copiedCount;
+              skippedCount += result.value.skippedCount;
+              historyEntryId ??= result.value.historyEntryId;
+            } else {
+              const result = await api.moveAssets({
+                libraryId: library.libraryId,
+                assetIds: managedIds,
+                targetFolderId,
+                conflictStrategy: "keep-both",
+              });
+              if (!result.ok) throw new LibraryOperationError(result.error);
+              movedCount += result.value.movedCount;
+              skippedCount += result.value.skippedCount;
+              historyEntryId ??= result.value.historyEntryId;
+            }
+          }
+          if (linkedIds.length > 0) {
             const result = await api.copyAssets({
               libraryId: library.libraryId,
-              assetIds: resolution.assetIds,
+              assetIds: linkedIds,
               targetFolderId,
               conflictStrategy: "keep-both",
             });
             if (!result.ok) throw new LibraryOperationError(result.error);
-            setNotice(
-              t("toast.copiedCount", { count: result.value.copiedCount }) +
-                (result.value.skippedCount
-                  ? t("toast.conflictSkippedSuffix", {
-                      count: result.value.skippedCount,
-                    })
-                  : "") +
-                (resolution.skippedCount
-                  ? t("toast.unavailableSkippedSuffix", {
-                      count: resolution.skippedCount,
-                    })
-                  : "") +
-                t("common.sentenceEnd"),
-              result.value.historyEntryId,
-            );
-          } else {
-            const result = await api.moveAssets({
-              libraryId: library.libraryId,
-              assetIds: resolution.assetIds,
-              targetFolderId,
-              conflictStrategy: "keep-both",
-            });
-            if (!result.ok) throw new LibraryOperationError(result.error);
-            setNotice(
-              t("toast.movedCount", { count: result.value.movedCount }) +
-                (result.value.skippedCount
-                  ? t("toast.conflictSkippedSuffix", {
-                      count: result.value.skippedCount,
-                    })
-                  : "") +
-                (resolution.skippedCount
-                  ? t("toast.unavailableSkippedSuffix", {
-                      count: resolution.skippedCount,
-                    })
-                  : "") +
-                t("common.sentenceEnd"),
-              result.value.historyEntryId,
-            );
+            copiedCount += result.value.copiedCount;
+            skippedCount += result.value.skippedCount;
+            historyEntryId ??= result.value.historyEntryId;
           }
+
+          const affectedCount = movedCount + copiedCount;
+          const message = resolution.kind === "copy" || linkedIds.length > 0
+            ? t("toast.copiedCount", { count: affectedCount })
+            : t("toast.movedCount", { count: affectedCount });
+          setNotice(
+            message +
+              (skippedCount
+                ? t("toast.conflictSkippedSuffix", { count: skippedCount })
+                : "") +
+              (resolution.skippedCount
+                ? t("toast.unavailableSkippedSuffix", {
+                    count: resolution.skippedCount,
+                  })
+                : "") +
+              t("common.sentenceEnd"),
+            historyEntryId,
+          );
           clearAssetSelection();
           await reloadCurrentContentRef.current();
         } catch (caught) {
