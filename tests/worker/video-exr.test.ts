@@ -1940,7 +1940,7 @@ describe('EXR/TGA (oiiotool)', () => {
     repairedService.closeAll();
   });
 
-  it('falls back from sharp to OIIO for a TIFF that sharp cannot decode', async () => {
+  it('routes TIFF thumbnails directly through OIIO', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
     const invocations: Array<{ command: string; args: string[] }> = [];
@@ -1972,7 +1972,7 @@ describe('EXR/TGA (oiiotool)', () => {
     }))!;
 
     expect(invocations.some(({ command }) => command === '/fake/oiiotool')).toBe(true);
-    expect(diagnostics.some(({ scope }) => scope === 'thumbnail.tiff-sharp-fallback')).toBe(true);
+    expect(diagnostics.some(({ scope }) => scope === 'thumbnail.tiff-sharp-fallback')).toBe(false);
     const db = assertDb(created.libraryPath);
     const row = db.prepare(
       'SELECT status, mime_type, generator_version, error_code FROM revision_artifacts WHERE artifact_id = ?',
@@ -1988,6 +1988,39 @@ describe('EXR/TGA (oiiotool)', () => {
       "SELECT COUNT(*) AS count FROM revision_artifacts WHERE status = 'failed'",
     ).get()).toMatchObject({ count: 0 });
     db.close();
+    service.closeAll();
+  });
+
+  it('uses a full-resolution OIIO viewer artifact for non-native images', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'OiiOViewer', selectedParentPath: root });
+    for (const extension of ['tiff', 'tga', 'psd']) {
+      const sourcePath = path.join(root, `source-${extension}.${extension}`);
+      writeFileSync(sourcePath, Buffer.from(`fake-${extension}`));
+      importNoConflict(service, created.libraryId, sourcePath);
+    }
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    for (const asset of assets) {
+      await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+      const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+      expect(preview).toMatchObject({ mediaType: 'image', status: 'ready' });
+      const viewer = service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image');
+      expect(viewer).toMatchObject({ status: 'ready', mimeType: 'image/png' });
+      expect(viewer!.generatorVersion).toContain('viewer-full');
+      expect(preview.artifactId).toBe(viewer!.artifactId);
+    }
     service.closeAll();
   });
 

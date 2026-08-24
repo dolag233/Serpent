@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   directImageMimeForExtension,
   imageDecoderForExtension,
+  imageViewerDecoderForExtension,
   imageMimeForExtension,
   isRawImageExtension,
   isSupportedImageExtension,
@@ -23,6 +24,10 @@ describe('media format registry', () => {
     expect(directImageMimeForExtension('.png')).toBe('image/png');
     expect(directImageMimeForExtension('.tiff')).toBeNull();
     expect(directImageMimeForExtension('.psd')).toBeNull();
+    expect(imageViewerDecoderForExtension('.tiff')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.tga')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.arw')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.png')).toBe('sharp');
   });
 
   it('declares the MVP RAW set as OIIO-derived images', () => {

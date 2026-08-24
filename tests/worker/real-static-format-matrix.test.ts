@@ -84,10 +84,10 @@ describe.runIf(canRun)('real OIIO static-format matrix', () => {
 
       for (const asset of service.listAssets({ libraryId: library.libraryId, recursive: true })) {
         const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail');
-        // SVG and TIFF use the existing Sharp thumbnail route, which emits
-        // WebP. OIIO-backed BMP/ICO/EXR/TGA emit a lossless PNG for the
-        // cross-platform viewer fallback.
-        const expectedMimeType = /\.(?:bmp|ico|exr|tga)$/u.test(asset.displayName)
+        // SVG stays on the Sharp thumbnail route and emits WebP. TIFF now
+        // joins the OIIO-backed BMP/ICO/EXR/TGA path so large private tags do
+        // not trip Sharp's libvips allocation limit.
+        const expectedMimeType = /\.(?:bmp|ico|exr|tga|tiff)$/u.test(asset.displayName)
           ? 'image/png'
           : 'image/webp';
         expect(artifact, asset.displayName).toMatchObject({ status: 'ready', mimeType: expectedMimeType });
@@ -112,6 +112,19 @@ describe.runIf(canRun)('real OIIO static-format matrix', () => {
             expect.objectContaining({ id: 'srgb_texture' }),
           ]),
         });
+        if (!asset.displayName.endsWith('.svg')) {
+          const viewerArtifact = service.getCurrentArtifact(
+            library.libraryId,
+            asset.assetId,
+            'viewer_image',
+          );
+          expect(viewerArtifact, asset.displayName).toMatchObject({
+            status: 'ready',
+            mimeType: 'image/png',
+          });
+          expect(viewerArtifact!.generatorVersion, asset.displayName).toMatch(/viewer-full|ico-largest|raw-viewer/u);
+          expect(preview.artifactId, asset.displayName).toBe(viewerArtifact!.artifactId);
+        }
       }
 
       const svgAsset = service.listAssets({ libraryId: library.libraryId, recursive: true })

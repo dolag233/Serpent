@@ -401,6 +401,24 @@ export function parseExrPlaneDescriptors(output: string): ExrPlaneDescriptor[] {
     : [{ index: 0, label: 'Part 0' }];
 }
 
+function readIcoPageSizesFromPath(assetPath: string): IcoPageSize[] {
+  const handle = openSync(assetPath, 'r');
+  try {
+    const header = Buffer.alloc(6);
+    if (readSync(handle, header, 0, header.length, 0) !== header.length) return [];
+    const count = header.readUInt16LE(4);
+    // An ICO directory is tiny. Guard the allocation if a malformed file
+    // contains an unreasonable entry count.
+    if (count === 0 || count > 1024) return [];
+    const directory = Buffer.alloc(6 + count * 16);
+    header.copy(directory, 0);
+    if (readSync(handle, directory, 6, count * 16, 6) !== count * 16) return [];
+    return parseIcoPageSizes(directory);
+  } finally {
+    closeSync(handle);
+  }
+}
+
 class OiioInvocationError extends Error {
   constructor(
     readonly artifactErrorCode: OiioArtifactErrorCode,
@@ -475,6 +493,11 @@ import {
 } from './gif-thumbnail-page';
 import { buildGifExtractedMetadata, type GifExtractedMetadata } from './gif-metadata';
 import {
+  parseIcoPageSizes,
+  pickLargestIcoPage,
+  type IcoPageSize,
+} from './ico-page';
+import {
   AUDIO_EXTENSION_NAMES,
   AUDIO_WAVEFORM_COVER_BACKGROUND,
   AUDIO_WAVEFORM_COVER_GENERATOR_TAG,
@@ -494,6 +517,7 @@ import {
   DOCUMENT_EXTENSIONS,
   directImageMimeForExtension,
   imageDecoderForExtension,
+  imageViewerDecoderForExtension,
   imageMimeForExtension,
   isSupportedImageExtension,
   isSupportedModelExtension,
@@ -5470,6 +5494,10 @@ export class LibraryService {
   private readonly imageColorSpaceByRevision = new Map<string, ImageColorSpaceInfo>();
   /** Coalesce concurrent RAW viewer decodes and remember a failed attempt per revision. */
   private readonly rawViewerImageInFlight = new Map<string, Promise<void>>();
+  /** ICO files can contain several sizes; coalesce the largest-page viewer decode. */
+  private readonly icoViewerImageInFlight = new Map<string, Promise<void>>();
+  /** Coalesce full-resolution OIIO viewer decodes for TIFF/PSD/EXR/TGA/BMP. */
+  private readonly oiioViewerImageInFlight = new Map<string, Promise<void>>();
   /** Cache the first H.264 encoder that actually encodes a 1-frame probe. */
   private readonly videoProxyEncoderByFfmpegPath = new Map<string, string | null>();
   /**
@@ -18067,6 +18095,7 @@ export class LibraryService {
     const revisionId = assetRow.current_revision_id;
     const ext = path.extname(assetPath).toLowerCase();
     const imageDecoder = imageDecoderForExtension(ext);
+    const viewerDecoder = imageViewerDecoderForExtension(ext);
     if (mediaType === 'other' || (mediaType === 'image' && !imageDecoder)) {
       throw new LibraryServiceError('INVALID_IMPORT_DECISION', {
         reason: 'UNSUPPORTED_FORMAT',
@@ -18132,12 +18161,18 @@ export class LibraryService {
     if (
       mediaType === 'image' &&
       imageDecoder === 'sharp' &&
+      viewerDecoder === 'sharp' &&
       (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
     ) {
       return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, execution);
     }
 
-    if (mediaType === 'image' && imageDecoder === 'oiio') {
+    // TIFF is intentionally decoded by OIIO even when Sharp can handle an
+    // ordinary file. libvips applies a 50 MiB cumulative allocation limit to
+    // custom TIFF tags; camera/scanner TIFFs with large private metadata then
+    // fail before the pixels are ever read. OIIO ignores that metadata for
+    // the raster conversion and keeps the Worker responsive.
+    if (mediaType === 'image' && viewerDecoder === 'oiio') {
       const colorSpace = await this.getImageColorSpace(revisionId, assetPath, 'oiio');
       return this.generateOiiOThumbnail(
         input,
@@ -20904,9 +20939,21 @@ export class LibraryService {
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
     const artifactKind = options.artifactKind ?? 'thumbnail';
     const isViewerImage = artifactKind === 'viewer_image';
-    const subimage = Number.isSafeInteger(options.subimage) && (options.subimage ?? 0) >= 0
+    let subimage = Number.isSafeInteger(options.subimage) && (options.subimage ?? 0) >= 0
       ? options.subimage ?? 0
       : 0;
+    const isIcoAsset = path.extname(assetPath).toLowerCase() === '.ico';
+    if (isIcoAsset && options.subimage === undefined) {
+      // OIIO exposes ICO entries as subimages in directory order.  The first
+      // entry is commonly 16px, so explicitly select the largest directory
+      // entry instead of letting the decoder upscale a tiny icon.
+      try {
+        const icoPageSizes = readIcoPageSizesFromPath(assetPath);
+        subimage = pickLargestIcoPage(icoPageSizes);
+      } catch (error) {
+        this.diagnose('oiio.ico-page-directory', error, { assetPath });
+      }
+    }
 
     try {
       const exposureStops = Number.isFinite(options.exposureStops)
@@ -20981,7 +21028,9 @@ export class LibraryService {
         .run(artifactId, revisionId, artifactKind, outputStat.size, artifactRelPath,
           isRawAsset
             ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
-            : `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
+            : isIcoAsset
+              ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage}`
+              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
       if (rawMetadata) {
         this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
@@ -21014,7 +21063,9 @@ export class LibraryService {
           artifactId, revisionId, artifactKind, artifactRelPath,
           isRawImageExtension(assetPath)
             ? `oiio@${OIIO_VERSION};raw-${isViewerImage ? 'viewer-full' : 'default'}-srgb;subimage=${subimage}`
-            : `oiio@${OIIO_VERSION};ocio=studio-v4-aces2;subimage=${subimage}`,
+            : isIcoAsset
+              ? `oiio@${OIIO_VERSION};ico-largest-v1;subimage=${subimage}`
+              : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;subimage=${subimage}`,
           errorCode,
           new Date().toISOString(),
         );
@@ -21395,11 +21446,66 @@ export class LibraryService {
   }
 
   /**
-   * RAW cards use a small thumbnail, but the viewer needs a decoded image at
-   * the camera's native dimensions. Keep this derivative separate and make
+   * OIIO-backed cards use a small thumbnail, but the viewer needs a decoded
+   * image at the source dimensions. Keep this derivative separate and make
    * the request single-flight; a viewer opening twice must not race two OIIO
    * writers against the same revision_artifacts unique index.
    */
+  private async ensureOiiOViewerImage(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    options: { inputColorSpace?: string; subimage?: number } = {},
+  ): Promise<void> {
+    const subimage = Number.isSafeInteger(options.subimage) && (options.subimage ?? 0) >= 0
+      ? options.subimage ?? 0
+      : 0;
+    const colorSpace = options.inputColorSpace?.trim() || 'auto';
+    const key = `${input.libraryId}:${input.assetId}:${revisionId}:${colorSpace}:${subimage}`;
+    const expected = `oiio@${OIIO_VERSION};viewer-full;`;
+    const existing = this.getCurrentArtifact(input.libraryId, input.assetId, 'viewer_image');
+    if (
+      existing?.status === 'ready'
+      && existing.generatorVersion.includes(expected)
+      && existing.generatorVersion.includes(`colorspace=${colorSpace}`)
+      && existing.generatorVersion.includes(`subimage=${subimage}`)
+    ) {
+      return;
+    }
+    if (existing) {
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE artifact_id = ? AND invalidated_at IS NULL`,
+        )
+        .run(new Date().toISOString(), existing.artifactId);
+    }
+    const running = this.oiioViewerImageInFlight.get(key);
+    if (running) {
+      await running;
+      return;
+    }
+    const task = this.generateOiiOThumbnail(
+      input,
+      openLibrary,
+      assetPath,
+      revisionId,
+      {
+        artifactKind: 'viewer_image',
+        inputColorSpace: options.inputColorSpace,
+        subimage,
+      },
+    ).then(() => undefined).catch(() => undefined);
+    this.oiioViewerImageInFlight.set(key, task);
+    try {
+      await task;
+    } finally {
+      this.oiioViewerImageInFlight.delete(key);
+    }
+  }
+
   private async ensureRawViewerImage(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -21426,6 +21532,68 @@ export class LibraryService {
       await task;
     } finally {
       this.rawViewerImageInFlight.delete(key);
+    }
+  }
+
+  /**
+   * ICO files are multi-page containers rather than one fixed raster. Chromium
+   * may choose the first/smallest page when the source URL is used directly,
+   * so the viewer receives a dedicated PNG generated from the largest page.
+   * The implementation shares the OIIO selection path with card thumbnails
+   * and is single-flight per revision, just like the RAW viewer artifact.
+   */
+  private async generateIcoViewerImage(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<{ artifactId: string }> {
+    // ICO is owned by the bundled OIIO decoder. Reusing the same path as the
+    // card thumbnail keeps viewer and grid selection identical and avoids
+    // Sharp's platform-dependent/unsupported ICO handling.
+    return this.generateOiiOThumbnail(
+      input,
+      openLibrary,
+      assetPath,
+      revisionId,
+      { artifactKind: 'viewer_image' },
+    );
+  }
+
+  private async ensureIcoViewerImage(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+  ): Promise<void> {
+    const key = `${input.libraryId}:${input.assetId}:${revisionId}`;
+    const existing = this.getCurrentArtifact(input.libraryId, input.assetId, 'viewer_image');
+    if (existing?.status === 'ready' && existing.generatorVersion.includes('ico-largest-v1')) return;
+    if (existing) {
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE artifact_id = ? AND invalidated_at IS NULL`,
+        )
+        .run(new Date().toISOString(), existing.artifactId);
+    }
+    const running = this.icoViewerImageInFlight.get(key);
+    if (running) {
+      await running;
+      return;
+    }
+    const task = this.generateIcoViewerImage(
+      input,
+      openLibrary,
+      assetPath,
+      revisionId,
+    ).then(() => undefined).catch(() => undefined);
+    this.icoViewerImageInFlight.set(key, task);
+    try {
+      await task;
+    } finally {
+      this.icoViewerImageInFlight.delete(key);
     }
   }
 
@@ -21527,7 +21695,9 @@ export class LibraryService {
     const basePreview = this.getPreviewArtifact(libraryId, assetId, intent);
     const extension = path.extname(asset.relative_file_path).toLowerCase();
     const decoder = imageDecoderForExtension(extension);
+    const viewerDecoder = imageViewerDecoderForExtension(extension);
     const isRawAsset = isRawImageExtension(extension);
+    const isIcoAsset = extension === '.ico';
     if (basePreview.mediaType === 'video' && asset.current_revision_id) {
       const override = this.getColorSpaceOverride(openLibrary.connection, assetId);
       const selected = colorSpaceInfoFromName(requestedColorSpace ?? override ?? undefined, 'metadata')
@@ -21540,11 +21710,14 @@ export class LibraryService {
         },
       };
     }
-    if (basePreview.mediaType !== 'image' || !asset.current_revision_id || !decoder) {
+    if (basePreview.mediaType !== 'image' || !asset.current_revision_id || !decoder || !viewerDecoder) {
       return basePreview;
     }
-    if (isRawAsset && intent === 'viewer') {
-      await this.ensureRawViewerImage(
+    if ((isRawAsset || isIcoAsset) && intent === 'viewer') {
+      const ensureViewerImage = isRawAsset
+        ? this.ensureRawViewerImage.bind(this)
+        : this.ensureIcoViewerImage.bind(this);
+      await ensureViewerImage(
         { libraryId, assetId },
         openLibrary,
         this.resolveAssetPath(libraryId, assetId),
@@ -21556,6 +21729,7 @@ export class LibraryService {
     const canWarmColorSpaceInBackground =
       basePreview.playbackMode === 'source'
       && decoder === 'sharp'
+      && viewerDecoder === 'sharp'
       && !isRawAsset
       && requestedColorSpace === undefined
       && storedOverride === null;
@@ -21571,10 +21745,10 @@ export class LibraryService {
       if (!cachedColorSpace) {
         void Promise.resolve()
           .then(() => this.resolveAssetPath(libraryId, assetId))
-          .then((assetPath) => this.getImageColorSpace(
+        .then((assetPath) => this.getImageColorSpace(
             asset.current_revision_id!,
             assetPath,
-            decoder,
+            viewerDecoder,
           ))
           .catch(() => undefined);
       }
@@ -21602,7 +21776,7 @@ export class LibraryService {
       detectedColorSpace = await this.getImageColorSpace(
         asset.current_revision_id,
         assetPath,
-        decoder,
+        viewerDecoder,
       );
     }
     const selectedColorSpace = colorSpaceInfoFromName(
@@ -21611,7 +21785,7 @@ export class LibraryService {
     ) ?? detectedColorSpace;
     const colorSpace = {
       ...selectedColorSpace,
-      options: decoder === 'oiio' || canOverrideImageColorSpace(extension)
+      options: viewerDecoder === 'oiio' || canOverrideImageColorSpace(extension)
         ? [...COMMON_IMAGE_COLOR_SPACE_OPTIONS]
         : [{ id: detectedColorSpace.id, label: detectedColorSpace.label, isLinear: detectedColorSpace.isLinear }],
     };
@@ -21630,14 +21804,38 @@ export class LibraryService {
         : 0;
     }
 
+    // Chromium cannot render the remaining supported image containers (TIFF,
+    // BMP, TGA, PSD and EXR) from their source URL.  Give the viewer a
+    // source-resolution OIIO decode instead of reusing the 512px card
+    // thumbnail.  The selected colour space and EXR plane are part of the
+    // artifact identity so changing either option cannot show stale pixels.
+    if (
+      intent === 'viewer'
+      && viewerDecoder === 'oiio'
+      && !isRawAsset
+      && !isIcoAsset
+    ) {
+      await this.ensureOiiOViewerImage(
+        { libraryId, assetId },
+        openLibrary,
+        assetPath,
+        asset.current_revision_id,
+        {
+          inputColorSpace: selectedColorSpace.id,
+          ...(extension === '.exr' ? { subimage: selected } : {}),
+        },
+      );
+    }
+
     // OIIO derivatives must be regenerated when the source profile or the
     // viewer override differs from the artifact that is currently cached. This
     // also repairs older PSD/EXR thumbnails created before color metadata was
     // wired into the generator version.
     const shouldRegenerateWithOiiO =
       !isRawAsset &&
+      !isIcoAsset &&
       basePreview.status === 'ready' &&
-      (decoder === 'oiio' || requestedColorSpace !== undefined || storedOverride !== null) &&
+      (viewerDecoder === 'oiio' || requestedColorSpace !== undefined || storedOverride !== null) &&
       canOverrideImageColorSpace(extension);
     if (shouldRegenerateWithOiiO) {
       const current = openLibrary.connection.prepare(
@@ -21727,13 +21925,14 @@ export class LibraryService {
         ? 'audio_proxy'
         : 'thumbnail';
     const extension = path.extname(asset.relative_file_path).toLowerCase();
-    const rawViewerArtifact = mediaType === 'image'
+    const viewerImageArtifact = mediaType === 'image'
       && intent === 'viewer'
-      && isRawImageExtension(extension)
+      && directImageMimeForExtension(extension) === null
+      && imageViewerDecoderForExtension(extension) === 'oiio'
       ? this.getCurrentArtifact(libraryId, assetId, 'viewer_image')
       : null;
-    const artifact = rawViewerArtifact?.status === 'ready'
-      ? rawViewerArtifact
+    const artifact = viewerImageArtifact?.status === 'ready'
+      ? viewerImageArtifact
       : this.getCurrentArtifact(libraryId, assetId, kind);
     const mimeType = mediaType === 'video'
       ? artifact?.mimeType ?? 'video/mp4'
@@ -23232,6 +23431,25 @@ export class LibraryService {
                WHERE deleted_at IS NULL
                  AND current_revision_id IS NOT NULL
                  AND LOWER(relative_file_path) LIKE '%.gif'
+            )`,
+      )
+      .run(nowInvalidate);
+    // Serpent-4dee67: ICO cards created before largest-page selection used
+    // the first directory entry (often a 16px icon). Invalidate those rows so
+    // the next queue wave regenerates them from the largest ICO page.
+    openLibrary.connection
+      .prepare(
+        `UPDATE revision_artifacts
+            SET invalidated_at = ?
+          WHERE kind = 'thumbnail'
+            AND status = 'ready'
+            AND invalidated_at IS NULL
+            AND generator_version NOT LIKE '%ico-largest-v1%'
+            AND revision_id IN (
+              SELECT current_revision_id FROM assets
+               WHERE deleted_at IS NULL
+                 AND current_revision_id IS NOT NULL
+                 AND LOWER(relative_file_path) LIKE '%.ico'
             )`,
       )
       .run(nowInvalidate);
