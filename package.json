@@ -38,6 +38,7 @@
     "test:library-availability": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/library-availability.test.ts tests/worker/library-schema-readonly.test.ts tests/worker/database-recovery.test.ts tests/worker/schema-failure.test.ts tests/worker/schema-compatibility.test.ts tests/worker/schema-downgrade-chain.test.ts tests/worker/schema-lenient-read.test.ts tests/worker/migration-discipline.test.ts tests/worker/library-service.test.ts",
     "pretest:library-availability": "node scripts/ensure-native.mjs",
     "test:perf:search": "node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/search-performance.test.ts",
+    "test:perf:media-tasks": "node scripts/run-media-task-performance.mjs",
     "large-library:generate": "node scripts/generate-large-library.mjs",
     "test:perf:large-library": "node scripts/run-large-library-performance.mjs",
     "test:e2e:large-library-benchmark": "node scripts/run-large-library-e2e-benchmark.mjs",

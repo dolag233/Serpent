@@ -86,6 +86,7 @@ import { DEFAULT_AI_ANALYSIS_CONCURRENCY } from '../shared/ai-concurrency';
 import { DEFAULT_AI_RELIABILITY_SETTINGS } from '../shared/ai-reliability';
 import { dispatchAutomationReadOnlyRequest } from './automation-readonly-dispatch';
 import { workerMediaDecodeWaveSize } from './media-concurrency';
+import { mediaResourceGuard } from './media-resource-guard';
 import {
   boundedWriteLibraryId,
   executeBoundedWriteWorkerCommand,
@@ -117,6 +118,7 @@ const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
 // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：视口抢占机制。
 const activeThumbnailQueueControllers = new Map<string, AbortController>();
+const deferredMediaResourceRetries = new Map<string, ReturnType<typeof setTimeout>>();
 /**
  * A visible-window request can arrive while a low-priority startup wave is
  * decoding. Priority promotion alone is not enough in that case: the next
@@ -563,6 +565,62 @@ async function writePluginMediaArtifact(input: {
   }
 }
 
+/**
+ * Import planning/copying still has synchronous filesystem sections inside
+ * the Worker. Keep native decoder lanes from claiming another job while that
+ * critical path owns the event loop; existing bounded jobs may finish and
+ * their durable state remains untouched.
+ */
+async function withMediaSchedulingSuspended<T>(
+  libraryId: string | undefined,
+  operation: () => T | PromiseLike<T>,
+): Promise<T> {
+  mediaResourceGuard.enterExternalHold();
+  try {
+    return await operation();
+  } finally {
+    mediaResourceGuard.exitExternalHold();
+    if (!mediaResourceGuard.isCoolingDown()) {
+      const libraryIds = libraryId
+        ? [libraryId]
+        : libraryService.listLibraries().map((library) => library.libraryId);
+      for (const scheduledLibraryId of libraryIds) {
+        if (!libraryService.hasOpenLibrary(scheduledLibraryId)) continue;
+        try {
+          scheduleThumbnailQueue(scheduledLibraryId);
+        } catch (error) {
+          libraryService.reportDiagnostic('thumbnail-schedule.after-import', error, {
+            libraryId: scheduledLibraryId,
+          });
+        }
+      }
+    }
+  }
+}
+
+function scheduleMediaResourceRetry(libraryId: string): void {
+  if (mediaResourceGuard.hasExternalHold() || !mediaResourceGuard.isCoolingDown()) return;
+  if (deferredMediaResourceRetries.has(libraryId)) return;
+  const delayMs = Math.max(1_000, mediaResourceGuard.remainingMs());
+  const timer = setTimeout(() => {
+    deferredMediaResourceRetries.delete(libraryId);
+    if (!libraryService.hasOpenLibrary(libraryId)) return;
+    try {
+      scheduleThumbnailQueue(libraryId);
+    } catch (error) {
+      libraryService.reportDiagnostic('thumbnail-schedule.resource-retry', error, { libraryId });
+    }
+  }, delayMs);
+  timer.unref?.();
+  deferredMediaResourceRetries.set(libraryId, timer);
+}
+
+function cancelMediaResourceRetry(libraryId: string): void {
+  const timer = deferredMediaResourceRetries.get(libraryId);
+  if (timer !== undefined) clearTimeout(timer);
+  deferredMediaResourceRetries.delete(libraryId);
+}
+
 function scheduleThumbnailQueue(
   libraryId: string,
   options: {
@@ -651,8 +709,8 @@ function scheduleThumbnailQueue(
           });
         }
       };
-      // Image thumbs share a CPU-derived Sharp semaphore. Video/OIIO stay
-      // separately bounded. Claim a wave of 2× concurrency so the pool stays
+      // Image thumbs share a small Sharp semaphore. Video/OIIO stay separately
+      // bounded. Claim a wave of 2× concurrency so the pool stays
       // full instead of draining and waiting for the next setTimeout. A light
       // visible-window request claims the whole reported window in one queue
       // call; the service still caps actual decoder concurrency, but this
@@ -703,6 +761,7 @@ function scheduleThumbnailQueue(
         modelAiViewsRenderer: (input) => renderModelAiViewsViaMain(input),
       });
       const queueWasAborted = queueController.signal.aborted;
+      if (mediaResourceGuard.isCoolingDown()) scheduleMediaResourceRetry(libraryId);
       continueImmediately = !queueWasAborted && processed === processWaveSize;
       if (!queueWasAborted && !continueImmediately) {
         const filled = libraryService.enqueueThumbnailJobs(libraryId, {
@@ -973,6 +1032,8 @@ const SECONDARY_MEDIA_JOB_KINDS = [
 ] as const;
 const activeSecondaryMediaQueues = new Set<string>();
 const secondaryMediaIdleUntil = new Map<string, number>();
+const urgentSecondaryMediaQueues = new Set<string>();
+const urgentSecondaryMediaAssetIds = new Map<string, Set<string>>();
 
 function noteInteractiveMediaRequest(libraryId: string): void {
   // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：冷可见波包含
@@ -989,20 +1050,61 @@ function noteInteractiveMediaRequest(libraryId: string): void {
  * after an interactive idle window. They used to share the CPU-3 preview
  * wave, allowing palette/proxy work to monopolize a large-library Worker.
  */
-function scheduleSecondaryMediaQueue(libraryId: string): void {
+function scheduleSecondaryMediaQueue(
+  libraryId: string,
+  options: { urgent?: boolean; assetId?: string } = {},
+): void {
+  if (options.urgent) {
+    // An explicit viewer fallback is a user-visible recovery path, not an
+    // automatic derivative. Let it bypass the idle window so a queued proxy
+    // cannot remain behind an import/startup wave while the viewer is already
+    // showing the source codec failure.
+    urgentSecondaryMediaQueues.add(libraryId);
+    if (options.assetId) {
+      const assetIds = urgentSecondaryMediaAssetIds.get(libraryId) ?? new Set<string>();
+      assetIds.add(options.assetId);
+      urgentSecondaryMediaAssetIds.set(libraryId, assetIds);
+    }
+    secondaryMediaIdleUntil.set(libraryId, Date.now());
+  }
   if (activeSecondaryMediaQueues.has(libraryId)) return;
   activeSecondaryMediaQueues.add(libraryId);
   const runOne = async (): Promise<void> => {
-    const waitMs = (secondaryMediaIdleUntil.get(libraryId) ?? 0) - Date.now();
+    if (mediaResourceGuard.isCoolingDown()) {
+      scheduleMediaResourceRetry(libraryId);
+      activeSecondaryMediaQueues.delete(libraryId);
+      return;
+    }
+    const urgent = urgentSecondaryMediaQueues.has(libraryId);
+    const waitMs = urgent
+      ? 0
+      : (secondaryMediaIdleUntil.get(libraryId) ?? 0) - Date.now();
     if (waitMs > 0) {
       setTimeout(() => void runOne(), waitMs);
       return;
     }
     try {
+      const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
       const processed = await libraryService.processThumbnailQueue(libraryId, {
         maxJobs: 1,
         jobKinds: SECONDARY_MEDIA_JOB_KINDS,
+        ...(urgentAssetIds && urgentAssetIds.size > 0
+          ? { assetIds: [...urgentAssetIds] }
+          : {}),
+        onDerivedReady: (event) => {
+          parentPort?.postMessage({
+            type: 'asset.derived.ready',
+            libraryId,
+            assetId: event.assetId,
+            kind: event.kind,
+          });
+        },
       });
+      if (mediaResourceGuard.isCoolingDown()) {
+        scheduleMediaResourceRetry(libraryId);
+        activeSecondaryMediaQueues.delete(libraryId);
+        return;
+      }
       if (processed > 0) {
         setTimeout(() => void runOne(), 50);
         return;
@@ -1011,8 +1113,10 @@ function scheduleSecondaryMediaQueue(libraryId: string): void {
       libraryService.reportDiagnostic('secondary-media-schedule.process', error, { libraryId });
     }
     activeSecondaryMediaQueues.delete(libraryId);
+    urgentSecondaryMediaQueues.delete(libraryId);
+    urgentSecondaryMediaAssetIds.delete(libraryId);
   };
-  setTimeout(() => void runOne(), 1_000);
+  setTimeout(() => void runOne(), options.urgent ? 0 : 1_000);
 }
 
 type ThumbnailScheduleScene = 'startup' | 'refresh' | 'visible' | 'linked' | 'restore' | 'mutation' | 'cover';
@@ -1080,6 +1184,7 @@ function scheduleThumbnailScene(
 
 function thumbnailFailureReason(errorCode: string): string {
   switch (errorCode) {
+    case 'MEDIA_RESOURCE_EXHAUSTED': return '系统内存压力过高，缩略图任务已延迟重试；请稍后再试。';
     case 'FFMPEG_REQUIRED': return '无法生成视频缩略图（媒体组件不可用）。请重新安装或修复 Serpent 后重试。';
     case 'OIIO_REQUIRED': return '缺少 OpenImageIO，无法解码此图片。请安装图像组件后重试。';
     case 'SHARP_UNAVAILABLE': return '图片解码组件不可用。请重新安装或更新 Serpent 后重试。';
@@ -1683,6 +1788,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'library.close':
       cancelDeferredStartupThumbnailScene(request.command.libraryId);
+      cancelMediaResourceRetry(request.command.libraryId);
       cancelVisibleWindowDimensionProbes(request.command.libraryId);
       lastVisibleWindowKeyByLibrary.delete(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
@@ -1696,6 +1802,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     }
     case 'library.delete-from-disk': {
       cancelDeferredStartupThumbnailScene(request.command.libraryId);
+      cancelMediaResourceRetry(request.command.libraryId);
       cancelVisibleWindowDimensionProbes(request.command.libraryId);
       libraryService.cancelJobs(request.command.libraryId);
       publishAiProgress(request.command.libraryId);
@@ -2092,7 +2199,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'asset.import.prepare': {
-      const prepared = libraryService.prepareOrExecuteImport(request.command);
+      const command = request.command;
+      const prepared = await withMediaSchedulingSuspended(request.command.libraryId, () =>
+        libraryService.prepareOrExecuteImport(command));
       if (!('importId' in prepared)) {
         scheduleThumbnailScene(
           request.command.libraryId,
@@ -2107,18 +2216,24 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         : { ok: true, type: 'asset.import.completed', completion: prepared };
     }
     case 'asset.import-eagle': {
+      const command = request.command;
       // Eagle entries bring their own still thumbnail. Do not enqueue a
       // whole-library video proxy wave here; visible-window/on-demand media
       // requests remain the only paths that may encode a source later.
-      const result = await libraryService.importEagleLibrary(request.command);
+      const result = await withMediaSchedulingSuspended(command.libraryId, () =>
+        libraryService.importEagleLibrary(command));
       return { ok: true, type: 'asset.import-eagle.completed', result };
     }
     case 'asset.import-billfish': {
-      const result = await libraryService.importBillfishLibrary(request.command);
+      const command = request.command;
+      const result = await withMediaSchedulingSuspended(command.libraryId, () =>
+        libraryService.importBillfishLibrary(command));
       return { ok: true, type: 'asset.import-billfish.completed', result };
     }
     case 'asset.import.resolve': {
-      const completion = libraryService.resolveImport(request.command);
+      const command = request.command;
+      const completion = await withMediaSchedulingSuspended(undefined, () =>
+        libraryService.resolveImport(command));
       if (completion.assets.length > 0) {
         // The matching library already owns these opaque asset ids; schedule
         // through each open library without exposing paths to Main/Renderer.
@@ -2158,7 +2273,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'asset.import-linked': {
-      const linkedFolder = libraryService.importFolderAsLinked(request.command);
+      const command = request.command;
+      const linkedFolder = await withMediaSchedulingSuspended(command.libraryId, () =>
+        libraryService.importFolderAsLinked(command));
       const assets = libraryService.listAssets({
         libraryId: request.command.libraryId,
         folderId: linkedFolder.folderId,
@@ -3210,7 +3327,14 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       libraryService.enqueueArtifactRetry({ libraryId, assetId, kind });
       // The idempotent queue scheduler owns all FFmpeg work; normal IPC returns
       // before poster/proxy generation and never starts a second drain.
-      scheduleThumbnailScene(libraryId, 'mutation', [assetId]);
+      if (kind === 'webm_proxy' || kind === 'audio_proxy') {
+        // Explicit source-playback fallback must not wait for the normal
+        // secondary idle window. A primary poster/import wave may remain
+        // active, but the proxy gets its own bounded FFmpeg lane immediately.
+        scheduleSecondaryMediaQueue(libraryId, { assetId, urgent: true });
+      } else {
+        scheduleThumbnailScene(libraryId, 'mutation', [assetId]);
+      }
       return {
         ok: true,
         type: 'media.retry-artifact.queued',
@@ -4028,6 +4152,9 @@ parentPort.on('message', async (event) => {
     if (control.type === 'worker.shutdown') {
       aiJobAbortRegistry.abortAll();
       aiProgressThrottler.clearAll();
+      for (const libraryId of [...deferredMediaResourceRetries.keys()]) {
+        cancelMediaResourceRetry(libraryId);
+      }
       for (const libraryId of [...visibleDimensionProbeStates.keys()]) {
         cancelVisibleWindowDimensionProbes(libraryId);
       }

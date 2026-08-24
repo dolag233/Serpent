@@ -16,7 +16,10 @@ import {
   SUPPORTED_SCHEMA_VERSION,
   THUMBNAIL_VISIBLE_PAGE_SIZE,
 } from '../../src/worker/library-service';
-import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
+import { MEDIA_QUEUE_CONCURRENCY } from '../../src/shared/media-concurrency';
+import {
+  workerMediaDecodeConcurrency,
+} from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -1120,7 +1123,7 @@ describe('processThumbnailQueue', () => {
     service.closeAll();
   });
 
-  it('caps Sharp work at the CPU-derived pool across assets (Serpent-azf6)', async () => {
+  it('caps Sharp work at the fixed memory-safe pool across assets', async () => {
     const root = temporaryRoot();
     let active = 0;
     let maximum = 0;
@@ -1164,18 +1167,25 @@ describe('processThumbnailQueue', () => {
         assetId: service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
       });
     }
+    let completed = 0;
     const operations = targets.map((target) => target.service.generateThumbnail({
       libraryId: target.libraryId,
       assetId: target.assetId,
+    }).finally(() => {
+      completed += 1;
+      changed();
     }));
 
+    expect(workerMediaDecodeConcurrency()).toBeLessThanOrEqual(MEDIA_QUEUE_CONCURRENCY);
     const expectedMaximum = Math.min(targets.length, workerMediaDecodeConcurrency());
     await waitFor(() => active === expectedMaximum);
     expect(maximum).toBe(expectedMaximum);
     releases.splice(0).forEach((release) => release());
-    // The held slots free up; any remaining operation acquires one of them.
-    if (expectedMaximum < targets.length) {
-      await waitFor(() => releases.length === targets.length - expectedMaximum);
+    // The held slots free up in waves. Do not assume the final wave size: a
+    // fixed two-job pool produces 2 + 2 + 1, while a single-core machine
+    // produces 1 + 1 + 1 + 1 + 1.
+    while (completed < targets.length) {
+      await waitFor(() => releases.length > 0 || completed === targets.length);
       releases.splice(0).forEach((release) => release());
     }
     await Promise.all(operations);

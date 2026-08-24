@@ -302,16 +302,26 @@ export const AssetPreviewModal = forwardRef<
           });
           directGateIdentityRef.current = gated.identity;
           setDirectApproved(gated.approved);
+          const resolutionError = result.value.errorCode
+            ? previewErrorDetail(result.value.errorCode, t) ??
+              t("preview.failedWithCode", { code: result.value.errorCode })
+            : undefined;
           // Quiet polls must not clear a source-playback error while proxy is
           // still generating; clear once we upgrade to a ready proxy URL.
           if (
+            resolutionError &&
+            !gated.approved &&
+            playbackErrorRef.current === null
+          ) {
+            setError(resolutionError);
+          } else if (
             !preserveError &&
             (!quiet ||
               (result.value.status === "ready" &&
                 result.value.playbackMode === "proxy" &&
                 result.value.url))
           ) {
-              setError(null);
+            setError(null);
           }
         }
         return result;
@@ -897,6 +907,9 @@ export const AssetPreviewModal = forwardRef<
               onReady={() => {
                 setDirectApproved(true);
                 setProxyFallbackState("idle");
+                if (playbackErrorRef.current === null) {
+                  setError(null);
+                }
                 if (
                   resolution?.mediaType === "video" &&
                   resolution.playbackMode === "proxy"

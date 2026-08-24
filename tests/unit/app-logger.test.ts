@@ -5,7 +5,10 @@ import path from 'node:path';
 import { expect, test } from 'vitest';
 
 import { AppLogger } from '../../src/main/app-logger';
-import { parseReadAppLogRequest } from '../../src/shared/app-log';
+import {
+  appLogFileNameSchema,
+  parseReadAppLogRequest,
+} from '../../src/shared/app-log';
 
 test('persists an error and its cause as structured JSON lines', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-log-test-'));
@@ -166,4 +169,11 @@ test('accepts only an opaque automation correlation identifier over the diagnost
   expect(parseReadAppLogRequest({ automationCorrelationId: '/Users/artist/private-library' })).toBeNull();
   expect(parseReadAppLogRequest({ automationCorrelationId: 'log id with spaces' })).toBeNull();
   expect(parseReadAppLogRequest({ automationCorrelationId: 'log-123', unsupported: true })).toBeNull();
+});
+
+test('accepts legacy and session-scoped application log basenames', () => {
+  expect(appLogFileNameSchema.safeParse('serpent.log').success).toBe(true);
+  expect(appLogFileNameSchema.safeParse('serpent-20260825T120000.log').success).toBe(true);
+  expect(appLogFileNameSchema.safeParse('/tmp/serpent.log').success).toBe(false);
+  expect(appLogFileNameSchema.safeParse('other.log').success).toBe(false);
 });

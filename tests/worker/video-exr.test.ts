@@ -8,14 +8,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   LibraryService,
+  constrainFfmpegDecoderArgs,
   defaultSpawnFn,
   escapeFfmpegFilterPath,
   type LibraryServiceDiagnostic,
   type SpawnFunction,
   type SpawnResult,
 } from '../../src/worker/library-service';
+import { mediaResourceGuard } from '../../src/worker/media-resource-guard';
 import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
-import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -54,6 +55,25 @@ it('escapes Windows paths embedded in FFmpeg filtergraphs', () => {
     .toBe("/tmp/Serpent\\'s font.ttf");
 });
 
+it('bounds FFmpeg decoder and both filter thread pools without changing ffprobe', () => {
+  expect(constrainFfmpegDecoderArgs('/fake/ffmpeg', ['-i', 'input.mp4', '-f', 'null', '-']))
+    .toEqual([
+      '-threads:v', '1',
+      '-filter_threads', '1',
+      '-filter_complex_threads', '1',
+      '-i', 'input.mp4', '-f', 'null', '-',
+    ]);
+  expect(constrainFfmpegDecoderArgs('/fake/ffmpeg', [
+    '-threads:v', '2', '-filter_threads', '2', '-filter_complex_threads', '2',
+    '-i', 'input.mp4',
+  ])).toEqual([
+    '-threads:v', '2', '-filter_threads', '2', '-filter_complex_threads', '2',
+    '-i', 'input.mp4',
+  ]);
+  expect(constrainFfmpegDecoderArgs('/fake/ffprobe', ['-i', 'input.mp4']))
+    .toEqual(['-i', 'input.mp4']);
+});
+
 function createTestImage(destPath: string): void {
   mkdirSync(path.dirname(destPath), { recursive: true });
   writeFileSync(destPath, VALID_1X1_PNG);
@@ -78,6 +98,7 @@ afterEach(() => {
   // Clean up process.env side effects
   delete process.env['SERPENT_FFMPEG_PATH'];
   delete process.env['SERPENT_OIIO_PATH'];
+  mediaResourceGuard.reset();
 });
 
 // ── Mock spawn factories ───────────────────────────────────────────
@@ -402,20 +423,75 @@ describe('video (ffprobe + ffmpeg)', () => {
     const posterCall = capturedSpawnArgs.find(
       (c) => c.command === '/fake/ffmpeg'
         && c.args.includes('-vf')
-        && String(c.args[c.args.indexOf('-vf') + 1]).includes('thumbnail=300'),
+        && String(c.args[c.args.indexOf('-vf') + 1]).includes('thumbnail=30'),
     );
     expect(posterCall).toBeDefined();
     // Check that the poster filter includes the thumbnail filter
     const vfIdx = posterCall!.args.indexOf('-vf');
     expect(vfIdx).not.toBe(-1);
     const vfValue = posterCall!.args[vfIdx + 1] as string;
-    expect(vfValue).toContain('thumbnail');
-    expect(vfValue).toContain('scale=640:-1');
+    expect(vfValue).toBe('scale=640:-2:force_original_aspect_ratio=decrease,thumbnail=30');
+    expect(vfValue.indexOf('scale=')).toBeLessThan(vfValue.indexOf('thumbnail='));
     expect(vfValue).not.toContain('fps=');
     expect(posterCall!.args).toContain('-frames:v');
     expect(posterCall!.args).toContain('1');
+    expect(posterCall!.args).toContain('-threads:v');
+    expect(posterCall!.args).toContain('1');
+    expect(posterCall!.args).toContain('-filter_threads');
+    expect(posterCall!.args).toContain('-filter_complex_threads');
+    expect(posterCall!.args).toEqual(expect.arrayContaining([
+      '-map', '0:v:0', '-an', '-sn', '-dn',
+    ]));
 
     db.close();
+    service.closeAll();
+  });
+
+  it('backs off and requeues a native FFmpeg memory failure without hot retry', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const root = temporaryRoot();
+    let posterAttempts = 0;
+    const diagnostics: LibraryServiceDiagnostic[] = [];
+    const service = new LibraryService({
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      spawnFn: async (command, args) => {
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(CANNED_FFPROBE_JSON), stderr: '', exitCode: 0 };
+        }
+        if (args.includes('-vf') && String(args[args.indexOf('-vf') + 1]).includes('thumbnail=30')) {
+          posterAttempts += 1;
+          return {
+            stdout: Buffer.alloc(0),
+            stderr: 'get_buffer() failed: Cannot allocate memory',
+            exitCode: 3221225725,
+          };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'VideoResourcePressure', selectedParentPath: root });
+    const sourcePath = path.join(root, 'video.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    service.enqueueThumbnailJobs(created.libraryId);
+
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    });
+
+    const job = service.listMediaJobs(created.libraryId).jobs
+      .find((candidate) => candidate.kind === 'generate_thumbnail')!;
+    expect(job.status).toBe('queued');
+    expect(job.errorCode).toBe('MEDIA_RESOURCE_EXHAUSTED');
+    expect(posterAttempts).toBe(1);
+    expect(diagnostics).toContainEqual(expect.objectContaining({ scope: 'media-job.resource-exhausted' }));
+
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    });
+    expect(posterAttempts).toBe(1);
     service.closeAll();
   });
 
@@ -1375,7 +1451,7 @@ describe('media execution cancellation and global decoder limits', () => {
     service.closeAll();
   });
 
-  it('limits FFmpeg and ffprobe to the CPU-derived pool across concurrent libraries', async () => {
+  it('limits FFmpeg and ffprobe to one native decoder across concurrent libraries', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();
     let active = 0;
@@ -1415,7 +1491,7 @@ describe('media execution cancellation and global decoder limits', () => {
       libraryId: target.libraryId,
       assetId: target.assetId,
     })));
-    expect(maximum).toBe(Math.min(targets.length, workerMediaDecodeConcurrency()));
+    expect(maximum).toBe(1);
     for (const target of targets) target.service.closeAll();
   });
 
@@ -2698,7 +2774,13 @@ describe('independent video derivative jobs', () => {
     });
 
     await ready;
-    expect(eventDimensions).toMatchObject({ width: 1920, height: 1080, durationMs: 30050 });
+    // The poster is deliberately published before the independent metadata
+    // probe finishes. The callback therefore proves the primary visual is
+    // ready, but must not require dimensions that belong to the secondary
+    // metadata job.
+    expect(eventDimensions).toBeDefined();
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'video_poster'))
+      .toMatchObject({ status: 'ready' });
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })[0])
       .toMatchObject({ thumbnailStatus: 'ready' });
     const db = assertDb(created.libraryPath);
@@ -2708,6 +2790,8 @@ describe('independent video derivative jobs', () => {
     db.close();
     finishProxy();
     await processing;
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready', width: 1920, height: 1080 });
     service.closeAll();
   });
 

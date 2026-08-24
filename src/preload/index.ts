@@ -133,6 +133,7 @@ import {
 } from '../shared/command-completed';
 import {
   appLogAutomationCorrelationIdSchema,
+  appLogFileNameSchema,
   parseAppLogEntry,
   type AppLogAutomationCorrelationId,
   type ReadAppLogResult,
@@ -2247,7 +2248,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void) {
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready' | 'asset.derived.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number; kind?: 'extract_metadata' | 'extract_palette' | 'generate_contact_sheet' | 'generate_webm_proxy' | 'generate_audio_proxy' }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseThumbnailEvent(input));
@@ -2328,12 +2329,16 @@ function parseRevealAppLogResult(input: unknown): RevealAppLogResult {
 function parseReadAppLogResult(input: unknown): ReadAppLogResult {
   if (typeof input === 'object' && input !== null && 'ok' in input && (input as { ok: unknown }).ok === true) {
     const value = input as { entries?: unknown; fileName?: unknown };
-    if (value.fileName === 'serpent.log' && Array.isArray(value.entries)) {
+    if (
+      typeof value.fileName === 'string' &&
+      appLogFileNameSchema.safeParse(value.fileName).success &&
+      Array.isArray(value.entries)
+    ) {
       const entries = value.entries.flatMap((entry) => {
         const parsed = parseAppLogEntry(entry);
         return parsed ? [parsed] : [];
       });
-      return { ok: true, entries, fileName: 'serpent.log' };
+      return { ok: true, entries, fileName: value.fileName };
     }
   }
   const code =

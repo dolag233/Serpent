@@ -60,6 +60,13 @@
 | LIB-PERF-004 / `Serpent-29125f` | 开库对账、可见窗口调度与关闭取消 | 待人类验收 | 在 2w+ 本地库和 SMB/NAS 库分别打开；打开后立即滚动、搜索、切文件夹，再关闭并重新打开 | 首屏先可交互；对账不阻塞搜索/查看器；同一可见窗口不重复触发后台波；关闭后无旧库错误，重开仍可写 | [本轮开发日志](../development/2026-08-24-resource-library-viewer-performance.md) / [混合库/PDF 性能分析](../research/2026-08-24-cyber-library-thumbnail-pdf-latest-log-analysis.md) / `tests/worker/reconciliation-performance.test.ts` / `tests/worker/large-library-performance.test.ts` / `tests/e2e/large-library-scroll-benchmark.test.ts` | 本轮自动化：资源库可用性 198 通过/1 跳过；真实 Windows/NAS、packaged、Computer Use 仍未执行。原有本地 macOS 基准见开发日志；不能替代目标库人工计时 |
 | VIEWER-PERF-002 / `Serpent-29125f` | 查看器单源解码、PDF 首屏与冷视口卡片加载 | 待人类验收 | 打开有就绪缩略图的多张大图并快速切换；在第四档随机跳转 10 次；分别打开多页 PDF 并滚动；观察占位、默认图标和原图清晰升级 | 不重复读取/解码同一 full source；placeholder 可解码且不闪黑；可见图片真实解码；PDF 先显示已有缩略图并优先绘制首页，滚动后各页正常渲染；非图像资产仍显示 themed icon；缩放/平移状态保持 | [本轮开发日志](../development/2026-08-24-resource-library-viewer-performance.md) / [混合库/PDF 性能分析](../research/2026-08-24-cyber-library-thumbnail-pdf-latest-log-analysis.md) / `src/renderer/PdfViewerSurface.tsx` / `src/renderer/zoomable-preview-image.tsx` / `tests/unit/viewer-mip-upgrade.test.ts` / `tests/e2e/document-preview.test.ts` | 本轮定向 unit 10/10、PDF/HTML Electron E2E 4/4；真实大图/PDF NAS 首次与二次打开、人工视觉、Windows、packaged 仍未执行 |
 
+### 2026-08-25 媒体任务资源安全与查看器回退
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MEDIA-RES-001 / `Serpent-235f69` | 全格式媒体解码资源上限、OOM 分类与缩略图优先 | 待人类验收 | 在包含高分辨率图片、长视频和不支持格式的隔离库中导入；观察主窗口、后台任务和失败提示；重复打开/关闭资源库 | 缩略图优先出现且主窗口可交互；原生解码并发有上限；内存压力延迟重试而非同时启动更多进程；不支持格式与资源压力显示不同原因；关闭/重开后无旧任务失控 | [开发日志](../development/2026-08-25-media-task-memory-safety-development-log.md) / [QA](2026-08-25-media-task-memory-safety-qa.md) / `tests/unit/media-concurrency.test.ts` / `tests/worker/video-exr.test.ts` / `tests/worker/media-task-performance.test.ts` | 当前 macOS 开发态自动化：Worker 118/118、资源库可用性 199/199、20k 混合基准 3 轮资源失败 0；真实用户素材、Windows、SMB/NAS、packaged、Computer Use 未执行 |
+| VIEWER-PERF-003 / `Serpent-9imk.1` | 查看器 source-first 与单资产按需视频代理 | 待人类验收 | 先打开可直接播放的 MP4，再打开当前播放器不能解码的视频；观察是否立即显示原始播放、失败后是否只为当前资产生成代理；检查代理提示、隐藏/恢复和重启后状态 | 可播放源不提前生成 proxy；真实播放错误后才进入单资产 proxy；代理成功后提示准确且可恢复；主窗口/卡片不会因次级任务重载；完整退出重启后任务状态收敛 | [开发日志](../development/2026-08-25-media-task-memory-safety-development-log.md) / `tests/e2e/media-preview.test.ts` / `tests/e2e/media-video-playback.test.ts` / `tests/worker/video-exr.test.ts` | 当前 macOS 隔离 Electron：媒体预览 2 passed/1 skipped，播放 1 passed；真实不支持编码素材、人工视觉、Windows、packaged 未执行 |
+
 ### 2026-08-15 大型资源库增量
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

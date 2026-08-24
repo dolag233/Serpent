@@ -111,6 +111,13 @@ import {
 
 import { columnsFor, degradedDefaults, hasTable, invalidateColumnProbe, missingColumns, qualify, selectColumns } from './lenient-columns';
 import {
+  asMediaResourceExhaustedError,
+  MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE,
+  MediaResourceExhaustedError,
+  mediaResourceGuard,
+  mediaResourceFailureFromSpawnResult,
+} from './media-resource-guard';
+import {
   clearMigrationFailure,
   MAX_MIGRATION_ATTEMPTS,
   readMigrationFailure,
@@ -182,7 +189,8 @@ export interface SharpModule {
     failOn?: 'warning' | 'error' | 'none';
     sequentialRead?: boolean;
   }): SharpInstance;
-  cache?(options: boolean | { files?: number }): unknown;
+  cache?(options: boolean | { files?: number; memory?: number; items?: number }): unknown;
+  concurrency?(threads?: number): number;
 }
 export interface SharpInstance {
   metadata(): Promise<{
@@ -257,8 +265,14 @@ function requireSharp(): SharpModule {
       // Windows an open handle blocks delete/rename, which breaks asset
       // trash/move/rename right after a thumbnail or palette was generated
       // (POSIX unlinks open files, so this never surfaced on macOS). Keep the
-      // decoded-operation cache but never hold source files open.
-      sharpModule.cache?.({ files: 0 });
+      // decoded-operation cache but never hold source files open. Keep the
+      // memory cache bounded as well: this Worker is the owner of all open
+      // libraries and must not let libvips retain a large batch after a wave.
+      sharpModule.cache?.({ files: 0, memory: 32, items: 128 });
+      // Two queue jobs are allowed, but each libvips operation gets one native
+      // worker. Without this, Sharp's default is roughly one thread per CPU
+      // core per image and queue-level bounds still oversubscribe the machine.
+      sharpModule.concurrency?.(1);
     } catch (error) {
       throw new LibraryServiceError('INTERNAL_ERROR', {
         reason: 'SHARP_UNAVAILABLE',
@@ -292,6 +306,7 @@ const FFMPEG_VERSION = '8.1';
  * reclaim.
  */
 const MEDIA_JOB_LEASE_DURATION_MS = 60_000;
+const MEDIA_RESOURCE_RETRY_DELAY_MS = 30_000;
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
@@ -323,6 +338,29 @@ export function escapeFfmpegFilterPath(filePath: string): string {
     .replaceAll("'", "\\'");
 }
 
+/**
+ * Keep decoder and filter threads bounded for every bundled FFmpeg invocation.
+ * Encoder-specific `-threads` settings remain untouched; this only adds the
+ * input decoder and filter limits before the first `-i`. ffprobe is excluded
+ * because it does not decode a video frame in these call sites.
+ */
+export function constrainFfmpegDecoderArgs(command: string, args: string[]): string[] {
+  const executable = path.basename(command).toLowerCase();
+  if (executable.includes('ffprobe')) return args;
+  const inputIndex = args.indexOf('-i');
+  if (inputIndex < 0) return args;
+  const hasDecoderThreads = args.some((arg, index) => arg === '-threads:v' && index + 1 < args.length);
+  const hasFilterThreads = args.some((arg, index) => arg === '-filter_threads' && index + 1 < args.length);
+  const hasComplexFilterThreads = args.some((arg, index) => arg === '-filter_complex_threads' && index + 1 < args.length);
+  const limits: string[] = [];
+  if (!hasDecoderThreads) limits.push('-threads:v', '1');
+  if (!hasFilterThreads) limits.push('-filter_threads', '1');
+  if (!hasComplexFilterThreads) limits.push('-filter_complex_threads', '1');
+  return limits.length === 0
+    ? args
+    : [...args.slice(0, inputIndex), ...limits, ...args.slice(inputIndex)];
+}
+
 const MEDIA_JOB_KINDS = [
   'generate_thumbnail',
   'generate_video_poster',
@@ -333,10 +371,13 @@ const MEDIA_JOB_KINDS = [
   'extract_palette',
 ] as const;
 type MediaJobKind = (typeof MEDIA_JOB_KINDS)[number];
+type SecondaryMediaJobKind = Exclude<MediaJobKind, 'generate_thumbnail' | 'generate_video_poster'>;
 type MediaJobStatus = 'queued' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
 
 function safeMediaJobErrorDetail(errorCode: string): string {
   switch (errorCode) {
+    case MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE:
+      return 'The system is under memory pressure. Media previews will retry after the load settles.';
     case 'FFMPEG_REQUIRED':
       return 'The media component needed for video thumbnails is unavailable. Reinstall or repair Serpent.';
     case 'OIIO_REQUIRED':
@@ -3650,12 +3691,14 @@ class AsyncSemaphore {
 // A Library Worker may own several open libraries. These module-level gates
 // therefore cap decoder pressure across all LibraryService instances and all
 // libraries in the process, not merely within one queue drain.
-// Image/video decode pool size is physical CPUs minus 3 (2 for the OS, 1 for
-// the current Serpent thread). OIIO stays at 1 because it handles very heavy
-// EXR/HDR sources — that is a memory bound, not a thread-count default.
+// Image decode gets a small hard-capped pool; physical CPU topology may only
+// reduce it on single-core machines, never expand native memory pressure.
+// FFmpeg and OIIO stay at one because their frame buffers are memory-bound.
 const MEDIA_DECODE_CONCURRENCY = workerMediaDecodeConcurrency();
 const sharpDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
-const ffmpegDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
+// FFmpeg's thumbnail filter can retain decoded frames; one native process at
+// a time is the intentional safety limit even on high-core machines.
+const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
 
 interface MediaExecutionContext {
@@ -5940,9 +5983,21 @@ export class LibraryService {
     args: string[],
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<SpawnResult> {
+    const boundedArgs = constrainFfmpegDecoderArgs(command, args);
     return ffmpegDecoderSemaphore.run(
       options.signal,
-      () => this.spawnFn(command, args, options),
+      async () => {
+        try {
+          const result = await this.spawnFn(command, boundedArgs, options);
+          if (mediaResourceFailureFromSpawnResult(result)) {
+            throw asMediaResourceExhaustedError(result, 'ffmpeg')
+              ?? new Error('FFmpeg reported native resource pressure.');
+          }
+          return result;
+        } catch (error) {
+          throw asMediaResourceExhaustedError(error, 'ffmpeg') ?? error;
+        }
+      },
     );
   }
 
@@ -5953,7 +6008,18 @@ export class LibraryService {
   ): Promise<SpawnResult> {
     return oiioDecoderSemaphore.run(
       options.signal,
-      () => this.spawnFn(command, args, options),
+      async () => {
+        try {
+          const result = await this.spawnFn(command, args, options);
+          if (mediaResourceFailureFromSpawnResult(result)) {
+            throw asMediaResourceExhaustedError(result, 'oiio')
+              ?? new Error('OpenImageIO reported native resource pressure.');
+          }
+          return result;
+        } catch (error) {
+          throw asMediaResourceExhaustedError(error, 'oiio') ?? error;
+        }
+      },
     );
   }
 
@@ -18203,6 +18269,12 @@ export class LibraryService {
     if (execution.signal?.aborted) {
       throw new DOMException('Media job cancelled before thumbnail generation.', 'AbortError');
     }
+    if (mediaResourceGuard.isCoolingDown()) {
+      throw new MediaResourceExhaustedError(
+        'Native media work is temporarily paused after operating-system resource pressure.',
+        'thumbnail',
+      );
+    }
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const assetPath = this.resolveAssetPath(input.libraryId, input.assetId);
 
@@ -19827,6 +19899,8 @@ export class LibraryService {
         input, openLibrary, assetPath, revisionId, ffprobePath, execution,
       );
     } catch (error) {
+      const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio');
+      if (resourceError) throw resourceError;
       this.diagnose('audio-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
@@ -19848,6 +19922,8 @@ export class LibraryService {
         },
       );
     } catch (error) {
+      const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio-waveform');
+      if (resourceError) throw resourceError;
       this.diagnose('audio-waveform', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
@@ -19870,6 +19946,8 @@ export class LibraryService {
         },
       );
     } catch (error) {
+      const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio-viewer-waveform');
+      if (resourceError) throw resourceError;
       this.diagnose('audio-waveform-viewer', error, {
         libraryId: input.libraryId,
         assetId: input.assetId,
@@ -20006,6 +20084,8 @@ export class LibraryService {
           input, openLibrary, assetPath, revisionId, ffprobePath, execution,
         );
       } catch (error) {
+        const resourceError = asMediaResourceExhaustedError(error, 'ffprobe');
+        if (resourceError) throw resourceError;
         this.diagnose('video-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
         // Continue with the poster even if probing fails.
       }
@@ -20017,6 +20097,8 @@ export class LibraryService {
         input, openLibrary, assetPath, revisionId, ffmpegPath, artifactsDir, execution,
       );
     } catch (error) {
+      const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-video-poster');
+      if (resourceError) throw resourceError;
       this.diagnose('video-poster', error, { libraryId: input.libraryId, assetId: input.assetId });
       // Continue with remaining artifacts
     }
@@ -20610,10 +20692,23 @@ export class LibraryService {
     try {
       const result = await this.runFfmpeg(ffmpegPath, [
         '-y',
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-threads:v', '1',
+        '-filter_threads', '1',
         '-i', assetPath,
-        // A low fps stage makes short clips yield no filtered frames while
-        // FFmpeg still exits 0. thumbnail+scale always emits the selected frame.
-        '-vf', 'thumbnail=300,scale=640:-1',
+        // Do not let FFmpeg auto-select audio, subtitles, or data streams for
+        // a one-frame image output. Those streams are irrelevant to a card
+        // poster but can allocate their own codec buffers on large sources.
+        '-map', '0:v:0',
+        '-an',
+        '-sn',
+        '-dn',
+        // Scale before thumbnail so FFmpeg retains small frames rather than
+        // hundreds of full-resolution decoded frames. A small batch is
+        // sufficient for a fast card poster; visual quality is intentionally
+        // secondary to keeping import and browsing responsive.
+        '-vf', 'scale=640:-2:force_original_aspect_ratio=decrease,thumbnail=30',
         '-frames:v', '1',
         '-q:v', '3',
         artifactAbsPath,
@@ -21159,7 +21254,10 @@ export class LibraryService {
 
       return { artifactId };
     } catch (error) {
-      const errorCode: OiioArtifactErrorCode = isMissingPathError(error)
+      const resourceError = asMediaResourceExhaustedError(error, 'oiio');
+      const errorCode: OiioArtifactErrorCode | typeof MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE = resourceError
+        ? MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE
+        : isMissingPathError(error)
         ? 'OIIO_REQUIRED'
         : error instanceof OiioInvocationError
           ? error.artifactErrorCode
@@ -21191,6 +21289,7 @@ export class LibraryService {
           new Date().toISOString(),
         );
 
+      if (resourceError) throw resourceError;
       throw new LibraryServiceError('INTERNAL_ERROR', {
         cause: error,
         reason: errorCode === 'OIIO_REQUIRED' ? 'OIIO_REQUIRED' : 'MEDIA_PROCESSING_FAILED',
@@ -22157,6 +22256,9 @@ export class LibraryService {
           ?? this.getCurrentArtifact(libraryId, assetId, 'thumbnail'))
       : null;
     const posterArtifactId = poster?.status === 'ready' ? poster.artifactId : undefined;
+    const posterErrorCode = poster?.status === 'failed'
+      ? poster.errorCode ?? 'MEDIA_PROCESSING_FAILED'
+      : undefined;
     // Serpent-43d32f: animated GIFs intentionally stay on the native image
     // path (no WebM proxy). Chromium renders animated GIFs inside <img>, so
     // hover/viewer play the source directly; the azf6 proactive per-GIF FFmpeg
@@ -22207,6 +22309,7 @@ export class LibraryService {
           kind,
           mimeType: nativeMimeType ?? 'application/octet-stream',
           ...(posterArtifactId ? { posterArtifactId } : {}),
+          ...(posterErrorCode ? { errorCode: posterErrorCode } : {}),
           playbackMode: 'source',
           sourceRevisionId: asset.current_revision_id,
           sourceMimeType: nativeMimeType ?? 'application/octet-stream',
@@ -23929,8 +24032,8 @@ export class LibraryService {
   }
 
   /**
-   * Process queued thumbnail jobs one at a time. Returns the number of jobs
-   * processed (success + failure + an in-flight pause/cancel).
+   * Process a bounded wave of media jobs. Returns the number of jobs processed
+   * (success + failure + an in-flight pause/cancel).
    */
   async processThumbnailQueue(
     libraryId: string,
@@ -23952,6 +24055,8 @@ export class LibraryService {
       }) => void;
       /** Fired once a durable visual input is ready for automatic AI. */
       onAiInputReady?: (event: { assetId: string; artifactId: string }) => void;
+      /** Notify the renderer when a secondary artifact changes Inspector data. */
+      onDerivedReady?: (event: { assetId: string; kind: SecondaryMediaJobKind }) => void;
       pluginMediaProvider?: (input: {
         assetId: string;
         signal: AbortSignal;
@@ -23984,6 +24089,51 @@ export class LibraryService {
       : pumpAssetIds.length === 0
         ? 'AND 1 = 0'
         : `AND asset_id IN (${pumpAssetIds.map(() => '?').join(',')})`;
+    // Primary previews must not be held behind a secondary FFmpeg derivative
+    // for the same revision. This matters even with a single FFmpeg decoder
+    // slot: a proxy claimed first can hold that slot while the poster waits
+    // forever for a user-visible result (the proxy may be waiting on an
+    // encoder or a slow source). Metadata probes are intentionally excluded;
+    // ffprobe is short-lived and the metadata lane must remain independent of
+    // poster generation. The claim-time guard also covers the second queue
+    // worker, which could otherwise see the primary as `running` and still
+    // claim the secondary job concurrently. A proxy-only pump keeps its
+    // explicit playback request independent of this browse-lane preference.
+    const primaryPreviewKinds = new Set<MediaJobKind>([
+      'generate_thumbnail',
+      'generate_video_poster',
+    ]);
+    const secondaryFfmpegKinds = [
+      'generate_contact_sheet',
+      'generate_webm_proxy',
+      'generate_audio_proxy',
+    ] as const;
+    const pendingSecondaryFfmpegJob = openLibrary.connection.prepare(
+      `SELECT 1
+         FROM jobs
+        WHERE library_id = ?
+          AND asset_id = ?
+          AND revision_id = ?
+          AND kind IN (${secondaryFfmpegKinds.map(() => '?').join(',')})
+          AND status IN ('queued', 'running', 'paused')
+        LIMIT 1`,
+    );
+    const primaryPreviewClaimGuard = jobKinds.some((kind) => primaryPreviewKinds.has(kind))
+      ? `
+          AND (
+            jobs.kind IN ('generate_thumbnail', 'generate_video_poster')
+            OR jobs.kind NOT IN (${secondaryFfmpegKinds.map((kind) => `'${kind}'`).join(', ')})
+            OR NOT EXISTS (
+              SELECT 1
+                FROM jobs primary_job
+               WHERE primary_job.library_id = jobs.library_id
+                 AND primary_job.asset_id = jobs.asset_id
+                 AND primary_job.revision_id = jobs.revision_id
+                 AND primary_job.kind IN ('generate_thumbnail', 'generate_video_poster')
+                 AND primary_job.status IN ('queued', 'running', 'paused')
+            )
+          )`
+      : '';
     const nextJob = openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count
          FROM jobs
@@ -23991,6 +24141,12 @@ export class LibraryService {
           AND kind IN (${jobKinds.map(() => '?').join(',')})
           AND status = 'queued'
           ${assetClause}
+          ${primaryPreviewClaimGuard}
+          AND (
+            error_code IS NULL
+            OR error_code NOT IN ('JOB_LEASE_LOST', '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}')
+            OR updated_at <= ?
+          )
         ORDER BY priority DESC, created_at
         LIMIT 1`,
     );
@@ -24001,10 +24157,9 @@ export class LibraryService {
       1,
       Math.min(100, options.maxJobs ?? workerMediaDecodeWaveSize()),
     );
-    // Serpent-1tio: media jobs no longer run strictly serially. Claim and run
-    // up to (physical CPUs - 3) in parallel per queue call — the bounded
-    // Sharp/FFmpeg/OIIO decoder semaphores and the process-wide model-render
-    // gate cap the real concurrency. The claim UPDATE is atomic
+    // Media jobs run with a small fixed queue worker count. The per-lane
+    // Sharp/FFmpeg/OIIO decoder semaphores cap native pressure independently;
+    // CPU topology must never expand the memory budget. The claim UPDATE is atomic
     // (WHERE status = 'queued'), so concurrent workers never double-execute a
     // job. `budget` is reserved synchronously at claim time (before any await),
     // so a wave starts at most maxJobs jobs exactly; a lease-busy retry
@@ -24020,6 +24175,7 @@ export class LibraryService {
       // lease-lost between the final check and the flush is left untouched —
       // identical semantics to the old per-job UPDATE, far fewer commits.
       const completedJobIds: string[] = [];
+      let consecutiveLeaseBusy = 0;
       const flushCompletedJobs = (): void => {
         if (completedJobIds.length === 0) return;
         const placeholders = completedJobIds.map(() => '?').join(',');
@@ -24036,11 +24192,13 @@ export class LibraryService {
       try {
       while (budget > 0) {
       if (options.signal?.aborted) return;
+      if (mediaResourceGuard.isCoolingDown()) return;
       budget -= 1;
       const job = nextJob.get(
         libraryId,
         ...jobKinds,
         ...(pumpAssetIds ?? []),
+        new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
       ) as {
         job_id: string;
         asset_id: string;
@@ -24050,7 +24208,6 @@ export class LibraryService {
         attempt_count: number;
       } | undefined;
       if (!job) return;
-      let consecutiveLeaseBusy = 0;
       const now = new Date().toISOString();
       const claimed = openLibrary.connection
         .prepare(
@@ -24148,6 +24305,22 @@ export class LibraryService {
 
       try {
         if (job.kind === 'generate_thumbnail' || job.kind === 'generate_video_poster') {
+          // A primary job can outlive the source revision that created it
+          // (for example, an external change can land while a proxy is
+          // waiting). Do not let the primary lane regenerate the *current*
+          // revision under a stale job row; cancel it before any decoder
+          // starts so secondary jobs can make the same stale-revision
+          // decision on this pump.
+          const currentRevision = openLibrary.connection
+            .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+            .get(job.asset_id) as { current_revision_id: string | null } | undefined;
+          if (!currentRevision?.current_revision_id || currentRevision.current_revision_id !== job.revision_id) {
+            openLibrary.connection.prepare(
+              "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ? AND status = 'running'",
+            ).run(new Date().toISOString(), job.job_id);
+            processed += 1;
+            continue;
+          }
           const pluginArtifactId = options.pluginMediaProvider
             ? await options.pluginMediaProvider({
               assetId: job.asset_id,
@@ -24281,10 +24454,32 @@ export class LibraryService {
           continue;
         }
           jobLease.assertCurrent();
+        mediaResourceGuard.recordHealthyCompletion();
+        if (!primaryPreviewKinds.has(job.kind)) {
+          options.onDerivedReady?.({
+            assetId: job.asset_id,
+            kind: job.kind as SecondaryMediaJobKind,
+          });
+        }
         // Serpent-xoaz: deferred to the worker's batched flush (see
         // flushCompletedJobs) — one multi-row UPDATE per worker instead of
         // one statement + WAL commit per job.
         completedJobIds.push(job.job_id);
+        // A directly requested proxy/contact sheet is allowed to run in a
+        // separate bounded lane, but its claim guard must see the poster's
+        // terminal state. Flush only for this same-asset dependency; ordinary
+        // image batches retain the one-flush-per-worker write behavior.
+        if (
+          primaryPreviewKinds.has(job.kind)
+          && pendingSecondaryFfmpegJob.get(
+            libraryId,
+            job.asset_id,
+            job.revision_id,
+            ...secondaryFfmpegKinds,
+          ) !== undefined
+        ) {
+          flushCompletedJobs();
+        }
         if (job.kind === 'generate_contact_sheet') {
           const contactSheet = this.getCurrentArtifact(libraryId, job.asset_id, 'contact_sheet');
           if (contactSheet?.status === 'ready' && this.shouldAutoAnalyzeAsset(libraryId, job.asset_id)) {
@@ -24312,6 +24507,34 @@ export class LibraryService {
           }
         }
       } catch (error) {
+        const resourceError = asMediaResourceExhaustedError(error, 'media-job');
+        if (resourceError) {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          const cooldownMs = mediaResourceGuard.recordFailure();
+          openLibrary.connection.prepare(
+            `UPDATE jobs
+                SET status = 'queued', error_code = '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}',
+                    error_detail = ?, updated_at = ?
+              WHERE job_id = ? AND status = 'running'`,
+          ).run(
+            safeMediaJobErrorDetail(MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE),
+            new Date().toISOString(),
+            job.job_id,
+          );
+          this.diagnose('media-job.resource-exhausted', resourceError, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+            cooldownMs,
+          });
+          processed += 1;
+          continue;
+        }
         if (jobHeartbeat.error !== undefined || error instanceof LibraryWriteCoordinatorError) {
           this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
             libraryId,

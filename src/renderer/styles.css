@@ -5454,6 +5454,7 @@ body.serpent-modal-open .app-shell {
    control remains available after the user hides it. */
 .preview-proxy-notice {
   position: absolute;
+  z-index: 3;
   top: 12px;
   left: 50%;
   display: inline-flex;
@@ -5486,6 +5487,7 @@ body.serpent-modal-open .app-shell {
 
 .preview-proxy-notice-restore {
   position: absolute;
+  z-index: 3;
   top: 12px;
   left: 12px;
 }

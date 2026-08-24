@@ -418,6 +418,10 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     await expect(proxyNotice).toContainText(
       "原视频无法播放，当前播放的是代理视频",
     );
+    // Proxy notices share the viewer chrome idle fade. Moving over the active
+    // viewer surface wakes the hidden chrome before the notice is clicked;
+    // targeting the faded notice itself would be intercepted by the viewport.
+    await proxyVideo.hover();
     await proxyNotice.getByRole("button", { name: "隐藏提示" }).click();
     await expect(proxyViewer.getByRole("button", { name: "显示代理提示" })).toBeVisible();
     await proxyViewer.getByRole("button", { name: "显示代理提示" }).click();

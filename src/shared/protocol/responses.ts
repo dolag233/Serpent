@@ -419,6 +419,18 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   }),
+  z.strictObject({
+    type: z.literal('asset.derived.ready'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    kind: z.enum([
+      'extract_metadata',
+      'extract_palette',
+      'generate_contact_sheet',
+      'generate_webm_proxy',
+      'generate_audio_proxy',
+    ]),
+  }),
 ]);
 
 export type ThumbnailEvent = z.infer<typeof thumbnailEventSchema>;

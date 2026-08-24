@@ -3413,6 +3413,30 @@ function AppInner() {
         });
         return;
       }
+      if (event.type === "asset.derived.ready") {
+        // Secondary media work is deliberately delayed so it cannot compete
+        // with the visible thumbnail wave. Refresh only the selected
+        // Inspector metadata when that work completes; a full canvas reload
+        // here would turn one palette into a library-wide render storm.
+        if (
+          (event.kind === "extract_metadata" || event.kind === "extract_palette") &&
+          selectedAssetIdRef.current === event.assetId &&
+          library
+        ) {
+          void api
+            .getAssetMetadata({
+              libraryId: library.libraryId,
+              assetId: event.assetId,
+            })
+            .then((result) => {
+              if (result.ok && selectedAssetIdRef.current === event.assetId) {
+                applyLoadedMetadata(event.assetId, result.value);
+              }
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
       if (event.type === "asset.thumbnail.failed") {
         queueLayoutArtifactPatch(event.assetId, null);
         const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
@@ -3476,7 +3500,7 @@ function AppInner() {
         window.cancelAnimationFrame(folderBrowseRefreshFrame);
       }
     };
-  }, [api, library?.libraryId, t]);
+  }, [api, applyLoadedMetadata, library, library?.libraryId, t]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
