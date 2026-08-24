@@ -224,7 +224,10 @@ import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
-import { readPublishedCanvasAssetLayout } from "./canvas-asset-layout";
+import {
+  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+  readPublishedCanvasAssetLayout,
+} from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -10590,6 +10593,11 @@ function AppInner() {
                               canvasPrefs.fields.size ||
                               canvasPrefs.fields.date ||
                               canvasPrefs.fields.dimensions
+                            }
+                            captionBandPx={
+                              canvasPrefs.fields.dimensions
+                                ? MASONRY_DIMENSIONS_CAPTION_BAND_PX
+                                : undefined
                             }
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)

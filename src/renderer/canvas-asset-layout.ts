@@ -36,6 +36,8 @@ export type CanvasAssetLayoutRect = {
 };
 
 export const MASONRY_CAPTION_BAND_PX = 42;
+/** Three caption rows: resolution, filename, and size/date. */
+export const MASONRY_DIMENSIONS_CAPTION_BAND_PX = 56;
 
 const publishedLayouts = new WeakMap<HTMLElement, readonly CanvasAssetLayoutRect[]>();
 
@@ -66,10 +68,11 @@ export function estimateMasonryCardBodyPx(
   asset: Pick<AssetSummary, "width" | "height">,
   columnWidthPx: number,
   showCaption: boolean,
+  captionBandPx: number = MASONRY_CAPTION_BAND_PX,
 ): number {
   return (
     estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidthPx) +
-    (showCaption ? MASONRY_CAPTION_BAND_PX : 0)
+    (showCaption ? Math.max(0, captionBandPx) : 0)
   );
 }
 
@@ -88,13 +91,14 @@ export function layoutMasonryAssetRects(
   availableWidth: number,
   cardSize: number,
   showCaption: boolean,
+  captionBandPx: number = MASONRY_CAPTION_BAND_PX,
 ): CanvasAssetLayoutRect[] {
   const columnCount = countFittingColumns(availableWidth, cardSize);
   const columnWidth = masonryColumnWidthPx(availableWidth, columnCount);
   if (columnWidth <= 0 || assets.length === 0) return [];
 
   const columns = distributeMasonryItems(assets, columnCount, (asset) =>
-    estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
+    estimateMasonryCardBodyPx(asset, columnWidth, showCaption, captionBandPx),
   );
 
   const rects: CanvasAssetLayoutRect[] = [];
@@ -102,7 +106,12 @@ export function layoutMasonryAssetRects(
     let y = 0;
     const x = columnIndex * (columnWidth + ASSET_GRID_GAP_PX);
     for (const asset of column.items) {
-      const height = estimateMasonryCardBodyPx(asset, columnWidth, showCaption);
+      const height = estimateMasonryCardBodyPx(
+        asset,
+        columnWidth,
+        showCaption,
+        captionBandPx,
+      );
       rects.push({
         id: asset.assetId,
         x,

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { AssetSummary } from "../../src/shared/asset-types";
 import {
+  estimateMasonryCardBodyPx,
   hitTestCanvasAssetLayout,
   layoutJustifiedAssetRects,
   layoutMasonryAssetRects,
+  MASONRY_CAPTION_BAND_PX,
+  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
   stackItemHeights,
 } from "../../src/renderer/canvas-asset-layout";
 
@@ -63,6 +66,20 @@ describe("canvas asset layout", () => {
     });
     expect(hits).toContain(last!.id);
     expect(hits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("reserves the third caption row when resolution is enabled", () => {
+    const base = estimateMasonryCardBodyPx(asset("caption", 100, 100), 160, true);
+    const withDimensions = estimateMasonryCardBodyPx(
+      asset("caption", 100, 100),
+      160,
+      true,
+      MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+    );
+    expect(base).toBeGreaterThan(0);
+    expect(withDimensions - base).toBe(
+      MASONRY_DIMENSIONS_CAPTION_BAND_PX - MASONRY_CAPTION_BAND_PX,
+    );
   });
 
   it("lays out justified rows with stable ids", () => {

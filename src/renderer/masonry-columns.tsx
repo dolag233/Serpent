@@ -14,6 +14,7 @@ import {
   distributeMasonryItems,
 } from "./asset-grid-layout";
 import {
+  MASONRY_CAPTION_BAND_PX,
   estimateMasonryCardBodyPx,
   layoutMasonryAssetRects,
   masonryColumnWidthPx,
@@ -44,6 +45,7 @@ export function MasonryColumns({
   layout,
   cardSize,
   showCaption,
+  captionBandPx,
   suspendScrollRestoration = false,
   renderCard,
   renderLayoutPreview,
@@ -52,10 +54,13 @@ export function MasonryColumns({
   layout: BrowseLayoutEntry[];
   cardSize: number;
   showCaption: boolean;
+  /** Extra caption line height when resolution is enabled. */
+  captionBandPx?: number;
   suspendScrollRestoration?: boolean;
   renderCard: (asset: AssetSummary) => ReactNode;
   renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
 }) {
+  const resolvedCaptionBandPx = captionBandPx ?? MASONRY_CAPTION_BAND_PX;
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const availableWidthRef = useRef(0);
@@ -199,9 +204,14 @@ export function MasonryColumns({
     () => distributeMasonryItems(
       layoutEntries,
       columnCount,
-      (asset) => estimateMasonryCardBodyPx(asset, columnWidth, showCaption),
+      (asset) => estimateMasonryCardBodyPx(
+        asset,
+        columnWidth,
+        showCaption,
+        resolvedCaptionBandPx,
+      ),
     ),
-    [columnCount, columnWidth, layoutEntries, showCaption],
+    [columnCount, columnWidth, layoutEntries, resolvedCaptionBandPx, showCaption],
   );
   const layoutRects = useMemo(
     () => layoutMasonryAssetRects(
@@ -209,17 +219,23 @@ export function MasonryColumns({
       availableWidth,
       cardSize,
       showCaption,
+      resolvedCaptionBandPx,
     ),
-    [availableWidth, cardSize, layoutEntries, showCaption],
+    [availableWidth, cardSize, layoutEntries, resolvedCaptionBandPx, showCaption],
   );
   const columnMetrics = useMemo(
     () => distributed.map((column) => ({
       bodies: column.items.map((asset) =>
-        estimateMasonryCardBodyPx(asset, columnWidth, showCaption)),
+        estimateMasonryCardBodyPx(
+          asset,
+          columnWidth,
+          showCaption,
+          resolvedCaptionBandPx,
+        )),
       previews: column.items.map((asset) =>
         estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidth)),
     })),
-    [columnWidth, distributed, showCaption],
+    [columnWidth, distributed, resolvedCaptionBandPx, showCaption],
   );
 
   useLayoutEffect(() => {
