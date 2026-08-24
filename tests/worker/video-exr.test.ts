@@ -1003,6 +1003,12 @@ describe('video (ffprobe + ffmpeg)', () => {
     });
     repairedService.openLibrary(created.libraryPath);
 
+    // Startup media repair is deferred until the first thumbnail scheduling
+    // wave so opening a large library remains responsive. Simulate that wave
+    // explicitly instead of assuming openLibrary performs it synchronously.
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBeGreaterThan(0);
     expect(repairedService.listMediaJobs(created.libraryId).jobs).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'generate_thumbnail',
@@ -1062,6 +1068,9 @@ describe('video (ffprobe + ffmpeg)', () => {
       spawnFn: createMockSpawn({}),
     });
     repairedService.openLibrary(created.libraryPath);
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBe(1);
     expect(repairedService.listMediaJobs(created.libraryId).jobs).toEqual([
       expect.objectContaining({
         status: 'queued',
@@ -1115,6 +1124,9 @@ describe('video (ffprobe + ffmpeg)', () => {
       spawnFn: createMockSpawn({}),
     });
     repairedService.openLibrary(created.libraryPath);
+    expect(repairedService.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBeGreaterThan(0);
     expect(repairedService.listMediaJobs(created.libraryId).jobs.find((job) =>
       job.assetId === asset.assetId && job.kind === 'generate_audio_proxy',
     )).toMatchObject({ status: 'queued', errorCode: null, attemptCount: 0 });
@@ -1160,6 +1172,12 @@ describe('video (ffprobe + ffmpeg)', () => {
       },
     });
     reopened.openLibrary(created.libraryPath);
+    // Component probing is part of the deferred repair wave, not the
+    // synchronous library.open path.
+    expect(probeCount).toBe(0);
+    expect(reopened.enqueueThumbnailJobs(created.libraryId, {
+      repairFailed: true,
+    })).toBe(0);
     expect(probeCount).toBe(1);
     expect(reopened.enqueueThumbnailJobs(created.libraryId, {
       repairFailed: true,
