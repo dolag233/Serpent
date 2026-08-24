@@ -70,6 +70,7 @@ export function BrowseLayoutPreview({
     viewMode,
     entry.width,
     entry.height,
+    { sourceName: entry.relativeFilePath ?? entry.displayName },
   );
   const showName = fields.name;
   const showMeta = fields.size || fields.date;

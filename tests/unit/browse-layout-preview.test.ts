@@ -43,7 +43,7 @@ describe("BrowseLayoutPreview caption (Serpent-l2at / Serpent-qc7v)", () => {
     expect(container.querySelector("img.asset-thumbnail")).toBeNull();
   });
 
-  it("matches the loaded masonry caption: filename then size and date, not resolution", async () => {
+  it("shows visual-media resolution before the filename in either layout", async () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -70,7 +70,7 @@ describe("BrowseLayoutPreview caption (Serpent-l2at / Serpent-qc7v)", () => {
     });
     const caption = container.querySelector(".asset-caption");
     expect(caption).not.toBeNull();
-    expect(caption?.querySelector(".asset-dimensions")).toBeNull();
+    expect(caption?.querySelector(".asset-dimensions")?.textContent).toBe("1920 × 1080");
     expect(caption?.querySelector(".asset-caption-filename")?.textContent).toBe("hero.png");
     expect(caption?.querySelector(".asset-filename-prefix")).not.toBeNull();
     expect(caption?.querySelector(".asset-filename-extension")?.textContent).toBe(".png");
@@ -81,6 +81,33 @@ describe("BrowseLayoutPreview caption (Serpent-l2at / Serpent-qc7v)", () => {
     expect(container.querySelector("img")?.getAttribute("src")).toBe(
       "serpent://preview/lib-1/thumb-1",
     );
+  });
+
+  it("does not show document dimensions even when page geometry is known", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          { children: null, initialPreference: "zh-CN" },
+          createElement(BrowseLayoutPreview, {
+            entry: {
+              assetId: "asset-pdf",
+              width: 1920,
+              height: 1080,
+              displayName: "guide.pdf",
+              byteSize: 2048,
+              modifiedAt: "2026-08-17T00:00:00.000Z",
+            },
+            libraryId: "lib-1",
+            viewMode: "masonry",
+          }),
+        ),
+      );
+    });
+    expect(container.querySelector(".asset-dimensions")).toBeNull();
   });
 
   it("keeps a meta skeleton under the filename when size and date are not yet known", async () => {

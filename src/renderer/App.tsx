@@ -10467,6 +10467,7 @@ function AppInner() {
                           assetViewMode,
                           asset.width,
                           asset.height,
+                          { mediaType: asset.mediaType },
                         )) && (
                         <div
                           className={`asset-caption ${assetCaptionAlignClass(canvasPrefs.captionAlign)}`}
@@ -10476,6 +10477,7 @@ function AppInner() {
                             assetViewMode,
                             asset.width,
                             asset.height,
+                            { mediaType: asset.mediaType },
                           ) &&
                             !renamingThisAsset && (
                               <span className="asset-dimensions">
@@ -10586,7 +10588,8 @@ function AppInner() {
                             showCaption={
                               canvasPrefs.fields.name ||
                               canvasPrefs.fields.size ||
-                              canvasPrefs.fields.date
+                              canvasPrefs.fields.date ||
+                              canvasPrefs.fields.dimensions
                             }
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)

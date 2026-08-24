@@ -9,6 +9,7 @@ import {
   loadCanvasPreferences,
   PREF_KEY,
   saveCanvasPreferences,
+  shouldShowGridDimensions,
   type CanvasPreferences,
 } from '../../src/renderer/canvas-preferences';
 
@@ -425,5 +426,25 @@ describe('CARD_SIZE_STEP / cardSizeSliderStepCount (legacy Serpent-akz helpers)'
   it('returns 0 for a non-positive step instead of dividing by zero', () => {
     expect(cardSizeSliderStepCount(96, 320, 0)).toBe(0);
     expect(cardSizeSliderStepCount(96, 320, -2)).toBe(0);
+  });
+});
+
+describe('canvas resolution caption visibility', () => {
+  const fields = { dimensions: true } as const;
+
+  it('follows the preference in both canvas layouts for visual media', () => {
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'image' })).toBe(true);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'video' })).toBe(true);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'model' })).toBe(true);
+  });
+
+  it('does not expose document dimensions as a resolution caption', () => {
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'document' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { sourceName: 'guide.pdf' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { sourceName: 'page.html' })).toBe(false);
+  });
+
+  it('honors the dimensions toggle', () => {
+    expect(shouldShowGridDimensions({ dimensions: false }, 'grid', 1920, 1080, { mediaType: 'image' })).toBe(false);
   });
 });

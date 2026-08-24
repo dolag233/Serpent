@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  isSupportedImageExtension,
+  isSupportedModelExtension,
+  isSupportedVideoExtension,
+} from '../shared/media-formats';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -270,14 +276,26 @@ export function assetCaptionAlignClass(align: CanvasCaptionAlign): string {
 
 export function shouldShowGridDimensions(
   fields: Pick<CanvasPreferences['fields'], 'dimensions'>,
-  viewMode: CanvasPreferences['viewMode'],
+  _viewMode: CanvasPreferences['viewMode'],
   width: number | null | undefined,
   height: number | null | undefined,
+  media: {
+    mediaType?: string | null;
+    sourceName?: string | null;
+  } = {},
 ): boolean {
-  return (
-    viewMode === 'grid' &&
-    fields.dimensions &&
-    width != null &&
-    height != null
+  if (!fields.dimensions || width == null || height == null) return false;
+
+  // Resolution is meaningful for visual media only. Keep this check next to
+  // the preference gate so loaded cards and layout placeholders cannot drift:
+  // PDF/HTML/text/audio metadata must never turn into a fake pixel caption.
+  if (media.mediaType != null) {
+    return ['image', 'video', 'model'].includes(media.mediaType);
+  }
+  const sourceName = media.sourceName?.trim();
+  return sourceName != null && (
+    isSupportedImageExtension(sourceName) ||
+    isSupportedVideoExtension(sourceName) ||
+    isSupportedModelExtension(sourceName)
   );
 }
