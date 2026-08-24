@@ -15,7 +15,7 @@
 
 - `library.opening` 对 Eagle 和 Billfish 都会拆掉当前库，但 Renderer 把 `libraryTransferKind` **写死**成 `open-billfish`。
 - 打开失败后 `submitEagleLibraryName` 的 `finally` 把 kind 打回 `import`，却不撤 `importProgress`，于是条带变成「导入资源库: 验证中…」并一直转。
-- Windows 文件夹选择器常带尾斜杠（`E:\设计\`）。`path.dirname(join(parent, name))` 与带尾斜杠的 parent 字符串不相等，`targetLibraryPath` 一律抛 `INVALID_LIBRARY_PATH`。父目录不存在时也是同一句「请选择有效的本地文件夹。」
+- Windows 文件夹选择器常带尾斜杠。`path.dirname(join(parent, name))` 与带尾斜杠的 parent 字符串不相等，`targetLibraryPath` 一律抛 `INVALID_LIBRARY_PATH`。父目录不存在时也是同一句「请选择有效的本地文件夹。」
 - 路径失败发生在 `library.opening` 已经发出、旧库已经关闭之后，UI 既没有库也没有可点的取消。
 - Eagle 转换走通用 `prepareImport`：每个文件缓冲复制 + `fsync` + 整文件 SHA-256/SHA-1，2 万项会被哈希拖死；Worker 超时后 Main 只映射成 `INTERNAL_ERROR`（「无法完成这项操作」）。
 - 布局占位卡在没有缩略图 artifact 时 `return null`，视口里只剩空槽，caption 要等 AssetSummary 分页才出现。
@@ -138,7 +138,7 @@ npm run test:library-availability
 
 用户认为名称面板里「下一步选择的是父文件夹…不能选磁盘根目录」没必要，并要求：给不出不能选根目录的理由就应支持。
 
-原先禁止磁盘根只是产品习惯（`Serpent-8b5b.3` / `sq4i`），不是技术限制。选 `E:\` 只会创建 `E:\<名称>`，不会把整盘收进资源库。真正危险的是把磁盘根当成**导入文件夹来源**（会递归扫整盘），`ROOT_NOT_ALLOWED` 仍保留。
+原先禁止磁盘根只是产品习惯（`Serpent-8b5b.3` / `sq4i`），不是技术限制。选磁盘根只会创建一个以名称命名的子目录，不会把整盘收进资源库。真正危险的是把磁盘根当成**导入文件夹来源**（会递归扫整盘），`ROOT_NOT_ALLOWED` 仍保留。
 
 改动：名称面板 help 留空（与 Billfish/新建资源库一致）；`targetLibraryPath` / `resolveWritableLibraryParent` 接受文件系统根；无写权限走 `PERMISSION_DENIED`。
 

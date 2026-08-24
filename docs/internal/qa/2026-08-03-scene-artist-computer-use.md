@@ -1,8 +1,8 @@
-# 场景原画参考库 Computer Use 测试记录
+# 场景资产测试库 Computer Use 测试记录
 
 日期：2026-08-03
 
-资源库：`/Users/dolag/Downloads/场景原画参考库`
+资源库：隔离的场景资产测试库
 
 ## 已完成
 

@@ -72,6 +72,27 @@
   - 移除重复的 `fetch(src)` + `createImageBitmap` + canvas PNG 中间层；placeholder 保持可见，
     单个 full `<img>` 完成真实解码后再切换，避免重复源读取、解码和额外 bitmap 内存。
 
+### 混合内容测试库与 PDF 后续收口（2026-08-24）
+
+最新 Windows 日志显示，混合内容测试库剩余长尾主要来自共享 Worker 队列被请求洪峰挤压，而不是
+`asset.metadata.get` 的 SQL 点查；PDF 还叠加了自定义协议未使用 Range、首屏渲染晚于全页占位和
+重复 source 请求。本轮按研究记录
+[`2026-08-24-cyber-library-thumbnail-pdf-latest-log-analysis.md`](../research/2026-08-24-cyber-library-thumbnail-pdf-latest-log-analysis.md)
+落地以下修复：
+
+- 原生拖拽同步预热由 500 条缩小为 64 条，其余资产进入每批 500 条、串行且带调度间隔的后台
+  队列；切库/关闭时取消队列，避免多个列表响应同时制造 Worker 请求洪峰。
+- 文本卡片只在接近视口时读取摘要，并合并相同资产的并发请求；Worker 按资源库、资产、revision
+  和字节上限缓存小段文本，保存文本或关闭资源库时失效。
+- PDF 在 source URL 尚未返回时先显示现成缩略图；对支持 Range 的 `serpent://source` 使用
+  `PDFDataRangeTransport` 按需取数，先启动首页绘制，再分批创建后续页占位并让出事件循环；
+  不支持 Range 时保留完整流回退。
+- 查看会话的 StrictMode 初始 effect 只允许一个 preview 请求，避免重复的首个 source 链路。
+
+这组改动解决了已确认的请求放大和 PDF 首屏结构问题，但没有把尚未定位 owner 的 Worker 连续
+7–8 秒黑洞误归因于数据库。真实 Windows/NAS 首次与二次打开、打包应用和人眼验收仍需在当前
+提交上复测。
+
 ## 基准设计
 
 基准分三层，分别回答 Worker 是否饿死、数据库/范围查询是否回归、真实 Electron 是否真的

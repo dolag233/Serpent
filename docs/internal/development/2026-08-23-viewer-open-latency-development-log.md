@@ -2,9 +2,9 @@
 
 ## 范围
 
-本次针对 `Serpent-29125f`，重点核对「赛博配料表」中的：
+本次针对 `Serpent-29125f`，重点核对“混合内容测试库”中的：
 
-- `GDC-2026-Slides-Summary.md`
+- `sample-document.md`
 - `Game Career Seminar Tracing the Roots Exploring the Skill System Design of Shooting Games.pdf`
 - `光线追踪vs光栅化.mp4`
 
@@ -34,4 +34,4 @@
 - `npx vitest run tests/worker/media-ignore-scheduling.test.ts`：4 tests 通过，确认忽略目录不会在开库对账中触发源文件 stat。
 - `npm run test:library-availability`：9 个文件，198 tests 通过，1 个跳过。
 
-尚未在用户的 Windows/NAS 环境完成双击三文件的人工计时，因此工单保持进行中；下一步应使用门控日志对比首次打开、第二次打开及后台任务运行时的各阶段耗时。
+尚未在隔离 Windows/NAS 测试环境完成双击三类文件的人工计时，因此工单保持进行中；下一步应使用门控日志对比首次打开、第二次打开及后台任务运行时的各阶段耗时。

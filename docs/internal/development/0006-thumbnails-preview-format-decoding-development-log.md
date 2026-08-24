@@ -58,7 +58,7 @@
 - Extension and media package build stages compile successfully; `git diff --check` passed.
 - Bundle evidence hashes: FFmpeg `8644635579ae81a7fd415e45f87a9a67a2071224311aa5e0df2f3ac6f4da3774`; ffprobe `745d4634a2ca0cb6eb75711bab2ac0a50ade3828b1495d9eb8db03439082d1fb`; oiiotool `8fd8eef3415be4f90e887813b67584792e3ee69df7d75bdfb352b5b1b776f0d7`; bundle ZIP `79e31c1360b4e8988e39b169c638a583ec45d017174d10caf81996e30da7fbe2`.
 - Palette-specific unit/Worker/protocol suite: **220/220 passed** across the new algorithm/artifact tests and affected media, organization, discovery and protocol suites. Full Electron-runner suite reached **738 passed, 1 skipped, 1 unrelated ZIP streaming timeout**; the ZIP file passed **27/27** immediately in isolation.
-- 2026-07-13 预览事故回归：修复前新的图片解码 E2E 稳定失败；修复后媒体 E2E **2/2 passed**。对 `/Users/dolag/Documents/Temp/我的资源库` 的临时副本抽查前 20 个缩略图均有非零尺寸，GIF 放大预览解码成功；失败的视频代理点击重试后生成成功并达到 `HAVE_METADATA`（720×900），原资源库未被修改。
+- 2026-07-13 预览事故回归：修复前新的图片解码 E2E 稳定失败；修复后媒体 E2E **2/2 passed**。对隔离测试库的临时副本抽查前 20 个缩略图均有非零尺寸，GIF 放大预览解码成功；失败的视频代理点击重试后生成成功并达到 `HAVE_METADATA`（720×900），原测试库未被修改。
 - 最终合并树 `npm run verify:mainline` 通过：lint、typecheck、扩展构建、774 个单元/Worker 测试（1 个平台跳过）、4 个 10 万资产性能测试和 16 个 Electron E2E 全部通过。
 - 2026-07-13 本轮最终合并树再次通过 `npm run verify:mainline`：lint、typecheck、扩展构建、777 个单元/Worker 测试（1 个平台跳过）、4 个 10 万资产性能测试和 16 个 Electron E2E 全部通过。新增覆盖无分页连续加载、瀑布流首尾可达、统一缩放/视觉锚点以及完整进程重启后的资源库和资产聚焦恢复。
 - 2026-07-14 定向媒体门禁：`video-exr.test.ts` + `real-media-bundle.test.ts` **30/30 passed**；成功视频 Electron E2E **1/1 passed**。Computer Use 在最终代码上完成创建资源库、导入真实 MP4/AVI、缩略图、source 播放、proxy 播放、前后切换和窄窗口检查；证据见 `docs/internal/qa/evidence/0006-video-playback/`。

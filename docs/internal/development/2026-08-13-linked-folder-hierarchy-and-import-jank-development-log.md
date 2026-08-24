@@ -34,9 +34,9 @@
   不再写死 8 路 / 每波 16。高峰仍跳过 EXIF 与宽高回填。
 - 导入同步 header 探测上限 64；其余由 `backfillMissingImageDimensions` 后台回填并发送 `asset.dimensions.ready`。
 
-## 2026-08-14 绘画资源库只读证据
+## 2026-08-14 图像测试库只读证据
 
-`E:\Resources\Serpent\绘画资源库\.serpent\library.db`：
+隔离图像测试库的 `.serpent\library.db`：
 
 - assets 7180（全部 linked；根层 4940，嵌套 2240）
 - thumbnail ready 190 / failed 5；extracted_metadata 带 width 5
@@ -143,7 +143,7 @@ npx vitest run tests/unit/asset-drag-preview.test.ts tests/unit/asset-drag-drop.
 
 | 需求条目 | 实现位置 | 自动化测试 | Computer Use / 平台证据 |
 | --- | --- | --- | --- |
-| 快速滚动时新进入视口的列不出现整片白区 | `src/renderer/viewport-window.ts` 的同步 scroll 发布与 `viewportOverscanPx` | `npx vitest run tests/unit/viewport-window.test.ts tests/unit/masonry-slot-style.test.ts --reporter=dot`：13 passed；`node scripts/run-e2e.mjs tests/e2e/thumbnail-scroll-regression.test.ts`：2 passed | macOS 开发态真实 Electron，`场景原画参考库` 477 项、瀑布流；Value:3 采集 55 帧并执行 10 次快速滚动，Value:2/1 各采集 50 帧并执行 10 次；ScreenCaptureKit 按 100ms 间隔采样，所有帧未见截断白区 |
+| 快速滚动时新进入视口的列不出现整片白区 | `src/renderer/viewport-window.ts` 的同步 scroll 发布与 `viewportOverscanPx` | `npx vitest run tests/unit/viewport-window.test.ts tests/unit/masonry-slot-style.test.ts --reporter=dot`：13 passed；`node scripts/run-e2e.mjs tests/e2e/thumbnail-scroll-regression.test.ts`：2 passed | macOS 开发态真实 Electron，隔离场景资产测试库 477 项、瀑布流；Value:3 采集 55 帧并执行 10 次快速滚动，Value:2/1 各采集 50 帧并执行 10 次；ScreenCaptureKit 按 100ms 间隔采样，所有帧未见截断白区 |
 
 `npm run typecheck` 和 `npm run lint` 均通过。2026-08-15 用户本人确认：至少 10 次快速滑动
 未出现截断式白区，CANVAS-037 人类验收通过。packaged 与 Windows 未执行。

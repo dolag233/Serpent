@@ -11,7 +11,7 @@
 3. 抢救在 SQLite 仍不可用时失败，却不把主库搬回去，留下「没有 `library.db`」。
 4. 随后可用的构建打开该库：`NOT_A_LIBRARY` 进入梯子；`validateDatabaseBackup` 用 `verifyDatabase`（要求恰好等于当前 schema），把 v40 备份判为 `LIBRARY_VERSION_TOO_NEW` 并跳过；Assets 抢救建成空库。
 
-`绘画资源库` 实测：隔离区与 backup-1 仍是 **7164** 资产、schema **v40**；被抢救的主库是 **0** 资产、新 `library_id`。当前源码最高 schema 仍是 v39，v40 来自更新构建留下的附加迁移；1–39 checksum 与现行 `MIGRATIONS` 一致，可按 ADR-0028 可写打开。
+图像测试库实测：隔离区与 backup-1 仍是 **7164** 资产、schema **v40**；被抢救的主库是 **0** 资产、新 `library_id`。当前源码最高 schema 仍是 v39，v40 来自更新构建留下的附加迁移；1–39 checksum 与现行 `MIGRATIONS` 一致，可按 ADR-0028 可写打开。
 
 ## 修复
 
@@ -23,10 +23,10 @@
 
 | 库 | 结论 |
 | --- | --- |
-| `E:\Resources\Serpent\绘画资源库` | 已从隔离区拷回 30MB 主库；空抢救文件改名为 `library.db.false-rescue-empty-*.db` 留底 |
-| `小型资源库` / `素材资源库` / `设计-Eagle` | 主库与备份资产数一致，可继续用 |
+| 隔离测试库 A | 已从隔离区拷回 30MB 主库；空抢救文件改名为 `library.db.false-rescue-empty-*.db` 留底 |
+| 隔离测试库 A / 隔离测试库 B / 外部导入样本库 | 主库与备份资产数一致，可继续用 |
 | `\\HYPER-DOLAG\smb\nas资源库` | 当前与隔离区同 `library_id`、10 资产；隔离区标签 18、当前 6。未覆盖今日主库 |
-| `E:\Resources\Serpent\参考资源库` | 只有 `Assets`，不是 Serpent 库 |
+| 隔离测试库 B | 只有 `Assets`，不是 Serpent 库 |
 
 ## 测试
 

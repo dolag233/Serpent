@@ -10,7 +10,7 @@
 - 修复：新增 `scripts/rebuild-native.mjs`（`npm run rebuild:native`），强制 `VcpkgEnabled=false`、探测残留 `sqlite3.dll`、并在 Electron ABI 下实测 FTS5。`objdump` 确认完全静态链接。提交 `25d5653`。
 
 ### 2. 跨盘符导出被误拒（用户实测反馈，bead Serpent-59f）
-- 现象：库在 E:、导出到 `C:\Users\...\Downloads` 报"请选择有效的本地文件夹"（`INVALID_LIBRARY_PATH`）。
+- 现象：库在 Windows 磁盘根目录、导出到用户下载目录时报"请选择有效的本地文件夹"（`INVALID_LIBRARY_PATH`）。
 - 根因：`exportLibraryToZip`/`exportLibraryToFolder` 用 `path.relative` 判断"目标是否在库内"，但**跨盘符时 `path.relative` 返回绝对路径**，被误判为"在库内"。
 - 修复：抽 `src/worker/path-utils.ts` 的 `pathIsWithin`（含 `path.isAbsolute` 守卫），两条导出路径共用；同步替换 `zip-import-stream.ts` 的私有实现。提交 `759dda9`。
 

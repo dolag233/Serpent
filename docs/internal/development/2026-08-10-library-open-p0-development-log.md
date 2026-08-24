@@ -35,13 +35,13 @@ malformed response，主动终止 Worker。Worker 一旦退出，所有后续资
 
 使用当前 `npm start` 实例和 Computer Use 操作 UI：
 
-1. 打开资源库切换器，选择 `参考资源库`，界面显示当前库为参考资源库、状态为已打开、61 项资产。
-2. 再选择 `meme资源库`，界面显示当前库为 meme资源库、状态为已打开、2731 项资产。
+1. 打开资源库切换器，选择 `示例资源库 A`，界面显示当前库为示例资源库 A、状态为已打开、61 项资产。
+2. 再选择 `示例资源库 B`，界面显示当前库为示例资源库 B、状态为已打开、2731 项资产。
 3. 2026-08-10 11:39 UTC 重启后的日志出现新的 `worker.spawn` / `worker.boot`，之后没有新的 `worker.protocol` 或 Worker 异常退出记录；此前的 `worker.model-thumbnail.invalid-request` 仅出现在修复前实例。
 
 随后为排除 E2E 产物覆盖开发构建，又完整重启 `npm start`。最终窗口 URL 为
-`http://localhost:5173/`；恢复 `meme资源库` 后显示 2731 项，切换到
-`参考资源库` 后显示 61 项，再切回 meme 库仍显示 2731 项。该次重启对应
+`http://localhost:5173/`；恢复示例资源库 B 后显示 2731 项，切换到
+示例资源库 A 后显示 61 项，再切回示例资源库 B 仍显示 2731 项。该次重启对应
 `worker.spawn`/`worker.boot` 为 11:50:16 UTC，之后未出现新的 `worker.protocol`
 或 `worker.exit` 记录。
 

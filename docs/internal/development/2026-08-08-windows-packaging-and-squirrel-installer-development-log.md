@@ -20,9 +20,9 @@ macOS arm64 打包已验证；Windows 打包此前从未在真实 Windows 上执
 - **修复**：新建 `.gitattributes`，`resources/ufbx/* -text`（整个目录禁止行尾转换）。
   所有平台 checkout 后字节与 lock 一致。
 
-### 2. verify-package.mjs 双盘符路径（`E:\E:\...`）
+### 2. verify-package.mjs 重复盘符路径
 
-- **现象**：postPackage 的 `verify-package.mjs` 报 ENOENT，路径为 `E:\E:\MyRepositories\...`。
+- **现象**：postPackage 的 `verify-package.mjs` 报 ENOENT，诊断输出出现重复盘符路径。
 - **根因**：`path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')` ——
   URL `.pathname` 在 Windows 上以盘符开头（`E:/...`），`path.resolve` 拼出双盘符；
   macOS 的 pathname 以 `/` 开头所以正常。
@@ -131,7 +131,7 @@ Update.exe 容错）。
   任务栏图标/分组/固定恢复正常。
 - **安装器替换为 WiX MSI**（问题 2/3，产品拍板）：`@electron-forge/maker-wix`。
   - `ui.chooseDirectory: true` → 向导含安装路径选择页（实测静默安装
-    `APPLICATIONROOTDIRECTORY=D:\SerpentTest` 成功）。
+    `APPLICATIONROOTDIRECTORY=<install-test-dir>` 成功）。
   - `defaultInstallMode: "perUser"` → 免管理员（perMachine 需 UAC，暂不需要）。
   - `upgradeCode` 固定 → 后续版本覆盖升级（实测重装 exit 0）。
   - 无 Squirrel loadingGif；MSI 用 Windows 标准进度/完成 UI。
@@ -151,7 +151,7 @@ electron-wix-msi 从 PATH 找 candle.exe/light.exe（WiX 3.x）。本机安装�
 | 场景 | 结果 |
 |---|---|
 | MSI 构建（candle/light 3.14.1.8722） | ✅ |
-| 静默安装自定义路径（D:\SerpentTest） | ✅ exit 0 |
+| 静默安装自定义路径（隔离安装测试目录） | ✅ exit 0 |
 | 快捷方式（开始菜单 + 桌面） | ✅ |
 | 注册表卸载项（InstallPath 正确） | ✅ |
 | 启动冒烟 | ✅ |
@@ -190,4 +190,4 @@ electron-wix-msi 从 PATH 找 candle.exe/light.exe（WiX 3.x）。本机安装�
 ### 其他待办
 
 - 发布阻断仍在：媒体 bundle 未 promote 到不可变 HTTPS + checksum pin。
-- Windows 单测 5 例失败为既有 POSIX 路径假设（/Users vs E:\），非本任务引入。
+- Windows 单测 5 例失败为既有 POSIX 路径假设，非本任务引入。

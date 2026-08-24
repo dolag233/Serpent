@@ -13,7 +13,7 @@
 | 平台解析 Vitest | 4/4 通过 |
 | Windows 字体隔离 Electron E2E | 1/1 通过：全局 YaHei UI；Inspector identity/全部 metadata bundled Noto actual font；暗/亮、12px、字距、徽标/caption ≥4.5:1、长名换行 |
 | `npm run lint` | 未通过：7 errors + 1 warning，均为当前主线既有 React hooks 问题，未触及本切片文件 |
-| `npm run test:unit` | 未通过：996 passed / 4 skipped / 2 failed；失败为 `/Users/dolag/...` 音频 fixture 硬编码和既有 raw hex token 检查 |
+| `npm run test:unit` | 未通过：996 passed / 4 skipped / 2 failed；失败为测试 fixture 路径假设和既有 raw hex token 检查 |
 | `npm run test:e2e:isolated` | 未通过：43 passed / 3 skipped / 18 failed；字体专项在该轮通过，其他失败涉及导入、资产/目录重命名、分页、恢复等同步后主线旅程 |
 | `npm run verify:mainline` | 已执行，在 lint 的 7 errors + 1 warning 处停止 |
 

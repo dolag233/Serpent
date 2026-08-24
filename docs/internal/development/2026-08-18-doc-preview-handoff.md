@@ -3,8 +3,8 @@
 > 交接时间：2026-08-18
 > 交接人：前一实现 agent（中途暂停，由后续 agent 接续）
 > 工单：`Serpent-8ca259`（P1, feature）— PDF 与 HTML 以浏览器方式预览并生成缩略图
-> 分支：`feat/doc-preview`（worktree：`E:\MyRepositories\Serpent-doc-preview`，基于 `dev` 7e605ed）
-> 主工作树：`E:\MyRepositories\Serpent`（dev，含未提交的工单数据 `.beads/issues.jsonl`）
+> 分支：`feat/doc-preview`（独立 worktree，基于 `dev` 7e605ed）
+> 主工作树：`dev` 分支（含未提交的工单数据 `.beads/issues.jsonl`）
 
 ## 一、任务目标（用户口径 2026-08-18）
 
@@ -77,6 +77,6 @@
 
 ## 五、注意
 
-- 主工作树 `E:\MyRepositories\Serpent`（dev）有未提交的 `.beads/issues.jsonl`（今日工单操作：Serpent-8ca259/61je.4 评论/多机共享/IME 等），交接前请确认是否需要一并提交推送
+- 主工作树 `dev` 有未提交的 `.beads/issues.jsonl`（今日工单操作：Serpent-8ca259/61je.4 评论/多机共享/IME 等），交接前请确认是否需要一并提交推送
 - worktree 分支 `feat/doc-preview` 尚未推送远端
 - 所有改动都在 worktree 内，主工作树 dev 的代码未动

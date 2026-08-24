@@ -20,7 +20,7 @@
 ## 证据
 
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/library-zip.test.ts`：29 tests passed；新增断言确认导入后资产 mtime 与 revision 记录一致。
-- 使用用户提供的 `C:\Users\Dolag\Downloads\参考资源库.zip` 做临时 Electron worker 导入检查：1 test passed；导入后读取到 24 项资产、至少 20 项保持 `thumbnailStatus=ready`，且没有触发 `open.refresh-managed-assets` 诊断（临时测试文件已删除）。
+- 使用隔离测试 ZIP 做临时 Electron worker 导入检查：1 test passed；导入后读取到 24 项资产、至少 20 项保持 `thumbnailStatus=ready`，且没有触发 `open.refresh-managed-assets` 诊断（临时测试文件已删除）。
 - `npx vitest run tests/unit/application-menu.test.ts tests/unit/main-menu-items.test.ts`：9 tests passed。
 - `npx vitest run tests/unit/library-export-name.test.ts tests/unit/protocol.test.ts`：78 tests passed；补充中文资源库名称的 `.zip` 默认名断言。
 - `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/video-exr.test.ts`：Vitest 文件报告 46 tests passed；命令最终返回 1，Windows Electron wrapper 收尾时额外报告 `PostQueuedCompletionStatus: (6) 句柄无效`，因此记为“断言通过、进程收尾异常”，不是完整绿灯。覆盖 Windows filter path 转义与视频 thumbnail 事件尺寸回传。
@@ -31,5 +31,5 @@
 ## 未验证
 
 - Windows/macOS 真机 UI 与 packaged app 尚未在本回合执行；macOS 原生菜单需在 macOS 上人工确认菜单显示、语言同步及各命令实际行为。
-- 用户提供的 `参考资源库.zip` 已确认包含相对 artifact 路径和 ready artifact 文件；已在当前 Electron worker 完整导入 581 MB 样本，但 Windows packaged 与 macOS 真机仍待人工验收。
+- 隔离测试 ZIP 已确认包含相对 artifact 路径和 ready artifact 文件；已在当前 Electron worker 完整导入 581 MB 样本，但 Windows packaged 与 macOS 真机仍待人工验收。
 - 竖视频卡片与 Windows 视频 AI 端到端人工复验尚未执行；当前修复需要在 Windows packaged/真实视频和已配置的 AI 端点上确认。

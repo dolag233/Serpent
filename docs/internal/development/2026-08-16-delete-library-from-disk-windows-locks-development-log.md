@@ -7,11 +7,11 @@
 `%AppData%\Roaming\Serpent\logs\serpent.log`（2026-08-16 13:50 UTC / 21:50 CST）：
 
 1. `serpent-external-library-L3PhxI`：`rmSync` → `EPERM` → `LIBRARY_NOT_WRITABLE` / `FILE_BUSY`
-2. `meme资源库`：`rmSync` → `ENOTEMPTY` → `LIBRARY_NOT_WRITABLE`（无 FILE_BUSY 原因）
+2. `示例资源库 B`：`rmSync` → `ENOTEMPTY` → `LIBRARY_NOT_WRITABLE`（无 FILE_BUSY 原因）
 3. 随后 Worker 已 `closeLibrary`，半删树 `openLibrary` 失败 `NOT_A_LIBRARY`
 4. 渲染进程仍挂着 `serpent://preview/...`，刷大量 `ASSET_NOT_FOUND`
 
-同一路径在 2026-08-15 的绘画/参考资源库上也出现过。
+同一路径在 2026-08-15 的两个隔离测试库上也出现过。
 
 ## 根因
 

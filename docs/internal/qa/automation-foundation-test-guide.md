@@ -31,7 +31,7 @@
 在本地 APFS/NTFS 工作副本根目录执行（不要从 SMB/NAS 运行 Electron）：
 
 ```bash
-cd /Users/dolag/Development/Serpent
+cd <serpent-repository>
 nvm use
 npm ci --registry=https://registry.npmjs.org
 ```

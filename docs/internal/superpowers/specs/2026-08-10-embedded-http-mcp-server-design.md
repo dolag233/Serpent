@@ -363,7 +363,7 @@ Gateway 稳定错误必须提升到 MCP structured content，不能全部折叠�
 | 协议完整性 | initialize、list、call、cancel、progress、logging、GET、DELETE | 真实第三方 MCP 客户端连接 |
 | 平台 | Node 单元/集成 + Electron E2E | 当前 HEAD macOS packaged；Windows packaged/installer 实机或 runner，未跑不得写通过 |
 
-最终端到端旅程：安装并启动 Serpent，在设置中手动启动 MCP，复制 Agent 连接信息到标准 HTTP MCP 客户端；保持同一连接创建“meme资源库”，继续创建目录、导入资产、管理合集，然后停止服务并确认连接和端口释放。只有完整旅程通过才能关闭 `Serpent-a0yk`。
+最终端到端旅程：安装并启动 Serpent，在设置中手动启动 MCP，复制 Agent 连接信息到标准 HTTP MCP 客户端；保持同一连接创建“示例资源库”，继续创建目录、导入资产、管理合集，然后停止服务并确认连接和端口释放。只有完整旅程通过才能关闭 `Serpent-a0yk`。
 
 ## 13. 明确不做
 

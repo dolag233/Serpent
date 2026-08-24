@@ -2111,7 +2111,7 @@ const SYNC_SESSIONS_SCHEMA_CHECKSUM = createHash('sha256')
 //
 // Serpent-4bdd26 版本收编：dev_performance_1 worktree 已用相同版本号发布过
 // v40（BROWSE_HOT_PATH_INDEX_SCHEMA_SQL，checksum c6bb1f26…）且真实用户库
-// （NAS 绘画资源库）已按该定义迁移。此处必须原样保留那份 SQL 文本——改动一个
+// （NAS 图像测试库）已按该定义迁移。此处必须原样保留那份 SQL 文本——改动一个
 // 字节都会改变 checksum，让两个分支互相把对方的库判成 LIBRARY_CORRUPT 触发
 // 数据抢救。Additive-only，符合数据兼容纪律（ADR-0028 / Serpent-dw9a v37/v38 先例）。
 const ASSETS_ACTIVE_NAME_INDEX_SCHEMA_SQL = `
@@ -4595,7 +4595,7 @@ function hasCanonicalMigrationHistoryThrough(
 /**
  * The WebDAV sync line registered SYNC_SCHEMA as v37 before the merge that
  * assigned AUTO_ANALYSIS_SUPPRESSION to v37 and SYNC to v38. Real libraries
- * opened on that fork (e.g. 绘画资源库) contain both physical schemas but
+ * opened on that fork (e.g. an image test library) contain both physical schemas but
  * carry swapped checksums. Recognize only that exact history so a healthy
  * database is not sent down the damage-recovery ladder as LIBRARY_CORRUPT.
  */

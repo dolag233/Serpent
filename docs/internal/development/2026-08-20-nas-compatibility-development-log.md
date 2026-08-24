@@ -44,7 +44,7 @@ node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/wo
 
 ## 真实 SMB 复验与 banner 文案修正
 
-用户在 `/Volumes/smb/nas资源库` 上复现了网络存储 banner 显示翻译键的问题。Computer Use 实际打开该资源库后确认：资源库可打开并读取 3 个资产，但 Renderer 显示 `library.networkStorageBanner`。
+用户在隔离 NAS 测试库上复现了网络存储 banner 显示翻译键的问题。Computer Use 实际打开该资源库后确认：资源库可打开并读取 3 个资产，但 Renderer 显示 `library.networkStorageBanner`。
 
 根因为调用路径写成了 `library.networkStorageBanner`，而中英文 catalog 都将该文案定义在 `shell.networkStorageBanner`。已修正 `src/renderer/App.tsx`，并在 `tests/unit/i18n-translate.test.ts` 增加中英文断言。修复后通过资源库选择器重新打开同一路径，实际显示中文网络共享提示；未将本次对用户已有库的读取测试记录为完整 NAS 写入/重启验收。
 
@@ -111,4 +111,4 @@ git diff --check
 
 ### 尚未验证
 
-需要在 `/Volumes/smb/nas资源库` 或专用临时 NAS 资源库上启动 A/B 两个独立 Serpent 实例，实测新增、删除、评分/标签等元数据变化是否自动收敛；还需验证断线重连、连续导入和完整退出恢复。当前代码和自动化测试不能替代该人工验收。
+需要在隔离 NAS 测试库或专用临时 NAS 资源库上启动 A/B 两个独立 Serpent 实例，实测新增、删除、评分/标签等元数据变化是否自动收敛；还需验证断线重连、连续导入和完整退出恢复。当前代码和自动化测试不能替代该人工验收。

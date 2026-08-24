@@ -3,7 +3,7 @@
 > 交接时间：2026-08-19
 > 交接人：前序实现 agent（缩略图已修复并获用户确认；查看器问题未解决，用户明确「问题仍旧」）
 > 工单：`Serpent-8ca259`（P1, feature, in_progress）— PDF 与 HTML 以浏览器方式预览并生成缩略图
-> 测试文件：用户提供 `E:\Resources\Serpent\小型资源库\Assets\ReSTIR DI.pdf`（50MB，17 页，ACM 论文）
+> 测试文件：隔离 PDF 样本（50MB，17 页，ACM 论文）
 > 分支：dev（所有改动未提交，见文末清单）
 
 ## 一、当前状态总览
@@ -45,7 +45,7 @@
 ## 三、未解决 ❌：查看器「百叶窗」
 
 ### 3.1 探针证据（关键矛盾）
-调试探针 `tests/e2e/pdf-repro-probe.test.ts`（**临时文件，引用了用户 PDF 路径，勿提交**）在 production build + 用户 PDF 下多次全绿：
+调试探针 `tests/e2e/pdf-repro-probe.test.ts`（**临时文件，引用了测试 PDF 路径，勿提交**）在 production build + 隔离 PDF 样本下多次全绿：
 - 17 个 wrap、**0 个占位符残留**、17/17 页渲染、meta「已加载 17/17 页」
 - 每页 canvas bitmap 1380×1786，CSS 显示 1396×1807（铺满 1428 视口）
 - 控制台 **0 错误**、0 page error（CSP 字体修复后）
@@ -76,14 +76,14 @@
 | `src/renderer/styles.css` | 移除 `.pdf-viewer-page-wrap`/placeholder 的 `max-width: 1200px` |
 | `tests/worker/thumbnails.test.ts` | 新增入队门禁回归测试 |
 | `tests/e2e/document-preview.test.ts` | 新增多页 PDF E2E（4 页 fixture：每页恰一个 wrap、占位符清零） |
-| `tests/e2e/pdf-repro-probe.test.ts` | **临时调试探针（勿提交，引用用户 PDF 路径）** |
+| `tests/e2e/pdf-repro-probe.test.ts` | **临时调试探针（勿提交，引用测试 PDF 路径）** |
 
 另有 8ca259 前序未提交改动（document 媒体类型全链路、PdfViewerSurface/HtmlViewerSurface、offscreen HTML 缩略图通道等，见 `docs/internal/development/2026-08-18-doc-preview-handoff.md`）。
 
 ## 五、测试状态
 
 - ✅ typecheck 绿（`npx tsc --noEmit`）
-- ✅ 探针（production build + 用户 PDF）：缩略图就绪 + 17/17 渲染 + 0 错误（多次，除一次页面关闭 flake）
+- ✅ 探针（production build + 隔离 PDF 样本）：缩略图就绪 + 17/17 渲染 + 0 错误（多次，除一次页面关闭 flake）
 - ⚠️ `tests/worker/thumbnails.test.ts` 在 Electron Node 下 exit 0 但**输出被过滤器吞掉，未确认实际断言数**（vitest 输出在管道下丢失；重跑时直接读输出文件）
 - ⚠️ 新多页 PDF E2E 未跑过
 - ⚠️ 完整 `test:worker` / `test:e2e` / `test:library-availability` 未跑（改动了 library-service，**必须完整跑 library-availability**）
@@ -93,7 +93,7 @@
 ## 六、建议下一步（接续者按序执行）
 
 1. **先验证假设 1（文字渲染）**：跑探针（不加管道过滤器），看 `PROBE INK RATIO` 输出。文字页 ink 应 3-10%；若 ≈0 → 渲染器字体链路问题，查 pdfjs 在 vite bundle 下的 FontFace 加载（可对比 Node 侧 pdfjs 渲染同一页的 ink）。
-2. 若文字正常 → 验证假设 2：改 `scale = min(宽度比例, 高度比例)` fit-inside，或问用户是否接受「页面完整可见优先」。**建议先给用户看一张渲染页的截图确认文字在不在**（探针已能存 `C:\Users\Dolag\AppData\Local\Temp\serpent-pdf-probe-shot.png`，但注意用户环境可能无法直接看图工具）。
+2. 若文字正常 → 验证假设 2：改 `scale = min(宽度比例, 高度比例)` fit-inside，或问用户是否接受「页面完整可见优先」。**建议先给用户看一张渲染页的截图确认文字在不在**（探针可将截图保存到测试临时目录）。
 3. 让用户重启 `npm start`（worker 改动必须重启才生效；渲染器改动 HMR 一般会生效）后复测——**DPR 占位符跳变修复（3.2 假设 3）用户尚未复测**。
 4. 确认后跑 `npm run test:library-availability` + `test:worker` + 多页 PDF E2E + 完整 `test:e2e`，然后 packaged 验证（`npm run package` + asar 内 pdfjs worker 解析）。
 5. 全部通过后：删除临时探针、按用户最初要求拆分提交（PDF 一个 / HTML 一个）、更新清单与工单。

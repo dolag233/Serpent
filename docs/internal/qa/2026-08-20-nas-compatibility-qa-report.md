@@ -15,10 +15,10 @@
 
 | 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
-| macOS/Linux/Windows 网络卷识别 | `src/worker/network-storage.ts:63-190` | `tests/unit/network-storage.test.ts:10-71`；5/5 通过 | macOS 当前挂载 `/Volumes/Working` 的只读检测返回 `network`；Windows 和真实 Linux/NFS 未在目标平台执行 |
+| macOS/Linux/Windows 网络卷识别 | `src/worker/network-storage.ts:63-190` | `tests/unit/network-storage.test.ts:10-71`；5/5 通过 | macOS 隔离网络挂载的只读检测返回 `network`；Windows 和真实 Linux/NFS 未在目标平台执行 |
 | 本地卷 WAL、网络/未知卷 rollback journal | `src/worker/library-service.ts:4088-4161` | `tests/worker/security-durability.test.ts:108-132`；9/9 Worker 测试通过 | 本地临时库自动化通过；真实 SMB 上 `.serpent/library.db` journal 尚未由人工确认 |
 | NAS 打开 I/O 与通用磁盘 I/O 分开分类 | `src/worker/library-service.ts:4156-4160`、`src/shared/protocol/errors.ts:248-275` | `tests/unit/protocol.test.ts:2080-2089`、`tests/worker/public-error.test.ts:106-115`；相关 100/21 测试通过 | 真实 NAS 失败复现和日志对照待产品测试 |
-| 打开结果显示实验性网络存储提示 | `src/shared/protocol/responses.ts:101-128`、`src/main/index.ts:1745-1785`、`src/renderer/App.tsx:9057-9061` | 协议覆盖包含在 `tests/unit/protocol.test.ts` 100/100 中；`tests/unit/i18n-translate.test.ts` 6/6 通过 | Computer Use 在 `/Volumes/smb/nas资源库` 复现并修复 banner 字面量键；修复后重新打开显示中文文案，读取 3 个资产；完整写入/退出恢复仍待 `LIB-NAS-001` |
+| 打开结果显示实验性网络存储提示 | `src/shared/protocol/responses.ts:101-128`、`src/main/index.ts:1745-1785`、`src/renderer/App.tsx:9057-9061` | 协议覆盖包含在 `tests/unit/protocol.test.ts` 100/100 中；`tests/unit/i18n-translate.test.ts` 6/6 通过 | Computer Use 在隔离 NAS 测试库复现并修复 banner 字面量键；修复后重新打开显示中文文案，读取 3 个资产；完整写入/退出恢复仍待 `LIB-NAS-001` |
 
 ## 自动化证据
 
@@ -37,7 +37,7 @@ Worker 全量的两个失败仍为环境相关的既有媒体能力问题：`tes
 
 ## 2026-08-20 真实 SMB 开发态复验
 
-使用 Computer Use 操作本地 Electron 开发态，打开用户指定的 `/Volumes/smb/nas资源库`：
+使用 Computer Use 操作本地 Electron 开发态，打开隔离 NAS 测试库：
 
 1. 修复前实际显示字面量 `library.networkStorageBanner`，与用户截图一致；资源库成功打开并读到 3 个资产。
 2. 根因为 Renderer 调用了 `library.networkStorageBanner`，而中英文 catalog 的实际路径是 `shell.networkStorageBanner`。
@@ -58,7 +58,7 @@ Worker 全量的两个失败仍为环境相关的既有媒体能力问题：`tes
 
 | 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
-| A 实例提交后，B 实例自动更新 NAS 资源库当前视图 | `src/renderer/App.tsx:7330-7440`、`src/renderer/library-change-refresh.ts` | `tests/unit/library-change-refresh.test.ts`：3/3 通过；Worker 已有独立连接 change-sequence 测试 | A/B 同库实测未执行；用户提供的 `/Volumes/smb/nas资源库` 目前只完成单实例打开/读取/banner 复验 |
+| A 实例提交后，B 实例自动更新 NAS 资源库当前视图 | `src/renderer/App.tsx:7330-7440`、`src/renderer/library-change-refresh.ts` | `tests/unit/library-change-refresh.test.ts`：3/3 通过；Worker 已有独立连接 change-sequence 测试 | A/B 同库实测未执行；隔离 NAS 测试库目前只完成单实例打开/读取/banner 复验 |
 | 连续跨实例变化被合并，local library 不触发全量刷新 | `src/renderer/App.tsx` | 定向 ESLint 0 errors；策略单测覆盖 NAS/local/importing 三种分支 | 真实连续导入、缩略图/job 并发和断线重连未执行 |
 | 重启/恢复后仍能识别 NAS | `src/main/index.ts:1800-1808` | Renderer library-list 协议 schema 接受 `networkStorage`；需补完整库门禁复跑 | packaged/完整退出恢复未执行 |
 

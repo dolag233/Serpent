@@ -5,7 +5,7 @@
 
 ## 事故证据链（真实 NAS 生产库 E2E + 用户日志）
 
-测试对象：`/Volumes/Share/Serpent/绘画资源库`（7164 个 linked 资产、
+测试对象：隔离的 NAS 测试库（7164 个 linked 资产、
 21,508 个 artifact 缩略图文件、30MB library.db，千兆 SMB）。
 
 修正 `SERPENT_E2E_OPEN_LIBRARY_PATH` 后的 E2E 三次运行全部失败：
@@ -75,7 +75,7 @@ late 响应丢弃策略让 UI 无法自愈。
 带门闩的重跑暴露了另外两层，逐层修复：
 
 1. **startup 缩略图风暴**：探针库空 artifacts 目录 + 全量失效 → 7164 个
-   generate_thumbnail 任务对不可达的 E:\ 源逐个失败；SMB 上每个失败是
+   generate_thumbnail 任务对不可达的源逐个失败；SMB 上每个失败是
    一次 journal 写事务，持续数十分钟占据 Worker。修复：
    - startup 场景与开库对账共用同一个 startup-burst 门闩；
    - 入队 SQL 排除 offline linked 文件夹的资产（`NOT EXISTS …

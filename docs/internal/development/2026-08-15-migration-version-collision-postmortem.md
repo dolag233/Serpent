@@ -4,7 +4,7 @@
 
 两条开发线（WebDAV 同步 `Serpent-xffq` 与 Eagle 导入/AI 抑制）并行开发，都基于"当前最新 schema 是 v36"各自把新迁移注册为 **v37**：
 
-- Eagle 线：`AUTO_ANALYSIS_SUPPRESSION` → v37（checksum `c164ffd3…`），并已用它打开了真实库（`素材资源库` 等），使这些库的 `schema_migrations` 固化了该 checksum。
+- Eagle 线：`AUTO_ANALYSIS_SUPPRESSION` → v37（checksum `c164ffd3…`），并已用它打开了隔离测试库，使这些库的 `schema_migrations` 固化了该 checksum。
 - 同步线：`SYNC_SCHEMA` → v37（checksum 不同），推到了 dev。
 
 用户打开旧库时报 `LIBRARY_CORRUPT`（UI 文案"所选文件夹不是有效的 Serpent 资源库"），根因是 `verifyMigrationHistory` 按当前 MIGRATIONS 数组校验 checksum，v37 语义分歧导致不匹配。
@@ -23,12 +23,12 @@
 
 ## 验证
 
-- `素材资源库`（user_version=37, AUTO checksum）用当前代码打开 ✓
+- 隔离测试库（user_version=37, AUTO checksum）用当前代码打开 ✓
 - 迁移守护三件套 + readonly 62/62 通过；typecheck / lint 干净。
 
-## 2026-08-16 后续：反向占用的真实库（绘画资源库）
+## 2026-08-16 后续：反向占用的真实测试库
 
-同步线先把 SYNC 写进 v37 后，再被当前代码补上 AUTO 作为 v38 的库（`绘画资源库`）会留下 **v37=SYNC、v38=AUTO** 的对调历史。物理表都在，但 `verifyMigrationHistory` 失败 → 损坏恢复梯度把它当成受损库只读打开。Worker `library.close` 仍对只读连接执行 `cancelJobs` 写入，切到 `meme资源库` 失败并回滚，用户被锁在只读库里。
+同步线先把 SYNC 写进 v37 后，再被当前代码补上 AUTO 作为 v38 的库（隔离图像测试库）会留下 **v37=SYNC、v38=AUTO** 的对调历史。物理表都在，但 `verifyMigrationHistory` 失败 → 损坏恢复梯度把它当成受损库只读打开。Worker `library.close` 仍对只读连接执行 `cancelJobs` 写入，切到另一个测试库失败并回滚，用户被锁在只读库里。
 
 处理：
 

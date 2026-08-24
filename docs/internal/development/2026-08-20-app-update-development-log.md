@@ -46,7 +46,7 @@
 当次命令结果：
 
 - `npm run package`（本轮 UI 收口后的当前 HEAD）：macOS arm64 打包通过；`npm run verify:package` 通过。
-- `SERPENT_E2E_PACKAGED_EXECUTABLE=/Users/dolag/Development/Serpent/out/Serpent-darwin-arm64/Serpent.app/Contents/MacOS/Serpent npm run test:e2e:packaged`：`2 passed / 1 skipped`；Windows 关闭按钮用例因平台跳过。
+- `SERPENT_E2E_PACKAGED_EXECUTABLE=<packaged-app-executable> npm run test:e2e:packaged`：`2 passed / 1 skipped`；Windows 关闭按钮用例因平台跳过。
 - `npm run rebuild:native`：better-sqlite3 重编译完成，FTS5 probe 通过。
 - `npx vitest run --config vitest.config.ts tests/unit/app-update-service.test.ts tests/unit/about-dialog.test.ts`：`2 files / 16 passed`，覆盖便携版保留、安装版成功清理、打开失败、Windows 无效安装包、取消清理以及解压后隐藏取消按钮。
 - `node scripts/run-e2e.mjs tests/e2e/shell-navigation.test.ts`：`1 passed`；覆盖 macOS 原生菜单进入 About、进入页面后的开发态自动检查、版本行刷新按钮及 `data-hover-tip="检查更新"`。

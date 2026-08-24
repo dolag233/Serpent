@@ -8,11 +8,11 @@
 
 - sa65 硬性门槛:≥1 万资产、第四档卡片(index 3)、滚动条随机跳转,**500ms 内可见预览全部真实解码**(`complete && naturalWidth>0`),禁止空占位。
 - 用户要求(2026-08-17 起):所有性能测试必须先插桩分阶段计时,禁止盲优化。
-- 测试库:`绘画资源库`(原生 Serpent 库,7,162 资产/360MB/自产缩略图)与 `设计-Eagle`(转换库副本,28,971 资产/25GB)。两者均以 robocopy 副本 + 隔离 userData 运行,不触碰原库。
+- 测试库:`图像测试库`(原生 Serpent 库,7,162 资产/360MB/自产缩略图)与 `外部导入样本库`(转换库副本,28,971 资产/25GB)。两者均以隔离副本 + 隔离 userData 运行,不触碰原库。
 
 ## 插桩基建(tests/e2e/large-library-scroll-benchmark.test.ts)
 
-- **真实库模式**:无 generator manifest 时经 `ELECTRON_RUN_AS_NODE` 只读数 `assets`(dev node_modules 为 Electron ABI,Playwright runner 不能直接 require better-sqlite3);`SERPENT_LARGE_LIBRARY_E2E_MIN_ASSETS` 允许 <1 万资产的真实库。
+- **真实库模式**:无 generator manifest 时经 `ELECTRON_RUN_AS_NODE` 只读数 `assets`(dev node_modules 为 Electron ABI,Playwright runner 不能直接 require better-sqlite3);`SERPENT_LARGE_LIBRARY_E2E_MIN_ASSETS` 允许小于基线数量的隔离测试库。
 - **Windows 支持**:win32 用 robocopy(退出码 0–7 视为成功),其余平台保留 APFS `cp -cR`。
 - **副本复用**:`SERPENT_LARGE_LIBRARY_E2E_REUSE_LIBRARY` 跳过每轮克隆并免删,保证优化前后同一暖状态可比。
 - **分阶段埋点**(零应用代码侵入):
@@ -36,8 +36,8 @@
 
 | 库 | 修复前 | 修复后 |
 |---|---|---|
-| 绘画资源库(原生) | p50=1411ms,p95=1701ms,**0/10** | **p50=239.4ms,p95=367.2ms,10/10** |
-| 设计-Eagle 副本(暖) | p50=531ms,0–4/10 | p50=469.3ms,p95=613.6ms,**7/10** |
+| 图像测试库(原生) | p50=1411ms,p95=1701ms,**0/10** | **p50=239.4ms,p95=367.2ms,10/10** |
+| 外部导入样本库副本(暖) | p50=531ms,0–4/10 | p50=469.3ms,p95=613.6ms,**7/10** |
 
 - Eagle 副本先行做了缩略图定尺寸实验(28,087 张重编码 512 webp,省 1.61GB):含大图跳转 705→536ms、616→580ms,证明大图是放大器;lazy 是结构性主修复。
 - Eagle 剩余差距在**翻页请求延迟**(resolve 112–373ms,数据就绪后仍晚发),记为下一优化点(sa65 继续跟进);解码尾巴已压至 100–250ms。
@@ -69,9 +69,9 @@
 
 用户全天以真实体感驱动排查,每个报告均先取证再动手。按发现顺序:
 
-## 赛博配料表(链接了整个工作目录的灾难现场)
+## 混合内容测试库(包含多种媒体类型的链接测试库)
 
-链接根 `E:\Working\Production\游戏画面科普节目`,8,843 资产中 ~5,500+ 是代码/文本、
+链接根为隔离的混合媒体测试目录，8,843 资产中约 5,500+ 是代码/文本、
 数百个 Chrome 配置文件二进制、node_modules 内容;真正媒体约 2,100。三层叠加:
 
 1. 非媒体文件被排缩略图 → 必然失败(932 资产 × ~31 次 = 28,887 行失败,全部当天产生);

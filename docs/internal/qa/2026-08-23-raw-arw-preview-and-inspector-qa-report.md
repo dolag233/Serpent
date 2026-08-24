@@ -29,7 +29,7 @@
 | `npm run lint` | 未全绿；既有 `src/main/session-log.ts` 1 项、`src/worker/library-service.ts` 4 项错误及 `App.tsx` 1 项既有 warning；本次修改文件（排除该既有大文件）定向 ESLint 通过 |
 | `node scripts/run-e2e-isolated.mjs tests/e2e/media-preview.test.ts` | 未通过；3 项中 2 项失败、1 项跳过：既有色卡预览等待超时、视频查看页关闭按钮被内容层拦截；未包含真实 RAW 样本，不作为 RAW 解码证据 |
 | `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/video-exr.test.ts tests/unit/raw-image-metadata.test.ts tests/unit/media-formats.test.ts` | 47/51 Worker 用例通过；4 个既有媒体组件自动修复/探测节流用例失败，RAW 用例（含并发查看器）通过 |
-| `$env:SERPENT_REAL_RAW_TEST_FILE='E:\\Media\\Images\\Photos\\2026\\2026-02-09\\ZKH09734.ARW'; node scripts/run-e2e-isolated.mjs tests/e2e/raw-image-preview.test.ts` | 通过；1 项真实 Electron E2E，包含导入、缩略图解码、Inspector 技术栏、作者回填和查看器图像解码 |
+| `$env:SERPENT_REAL_RAW_TEST_FILE='<path-to-sample.ARW>'; node scripts/run-e2e-isolated.mjs tests/e2e/raw-image-preview.test.ts` | 通过；1 项真实 Electron E2E，包含导入、缩略图解码、Inspector 技术栏、作者回填和查看器图像解码 |
 
 ## 未执行与风险
 

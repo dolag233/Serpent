@@ -2,14 +2,14 @@
 
 > 关联切片：0030（3D 模型支持）；分支：`codex/slice-002-asset-ingestion`
 > 工单：`Serpent-g05n`（FBX WASM）、`Serpent-pjx2`（模型缩略图）、`Serpent-1d4w`（格式过滤）、`Serpent-kmgw`（标题显示）、`Serpent-61je.3`（HDRI 预览）、`Serpent-91pn`（Info 通知布局）
-> 会话：主 agent（Windows，E:\MyRepositories\Serpent）
+> 会话：主 agent（Windows，本地工作副本）
 
 ## 用户反馈（2026-08-05）
 
 1. 打开模型提示「FBX 转换失败（转换组件不可用，请重新安装应用后重试），已使用兼容模式加载」
 2. 模型没有缩略图
 3. 格式过滤应支持更多格式（含 3D）
-4. 资产标题显示完全错误：短名 `ZKH09734.ARW` 显示为「ZKH09 左对齐 + 734.ARW 右对齐」；期望长名中间省略 `wertyuiasddf...dad.mp4`
+4. 资产标题显示完全错误：短名 `sample.ARW` 显示为「sample 左对齐 + 扩展名右对齐」；期望长名中间省略 `long-file-name...tail.mp4`
 
 ## 根因与修复
 
@@ -92,7 +92,7 @@
 
 ### 4. 资产标题显示完全错误（Serpent-kmgw，已提交）
 
-**根因**：`.asset-filename-prefix` 的 `flex: 1 1 auto`——`flex-grow: 1` 在短名时把前缀拉宽填满整行，尾段/扩展名被推至最右：`ZKH09734.ARW` → 「ZKH09（左）+ 大段空白 + 734.ARW（右）」。Inspector 侧（`.inspector-hero-compact .asset-filename-prefix`）早已用 `flex: 0 1 auto`（带注释），卡片侧漏同步。
+**根因**：`.asset-filename-prefix` 的 `flex: 1 1 auto`——`flex-grow: 1` 在短名时把前缀拉宽填满整行，尾段/扩展名被推至最右：`sample.ARW` → 「sample（左）+ 大段空白 + 扩展名（右）」。Inspector 侧（`.inspector-hero-compact .asset-filename-prefix`）早已用 `flex: 0 1 auto`（带注释），卡片侧漏同步。
 
 **修复**（提交 `7aaa139`）：`.asset-filename-prefix` 改 `flex: 0 1 auto`——名称放得下时三段紧排，溢出时前缀收缩 + 中间省略号（`wertyuiasddf...dad.mp4`）。
 

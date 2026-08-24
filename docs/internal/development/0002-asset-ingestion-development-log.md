@@ -29,7 +29,7 @@
 - Replaced the shell placeholder with a dense three-pane asset workspace: real folder tree, managed
   asset grid, import tools, conflict decision dialog, progress/result feedback, missing state, and
   selection inspector.
-- Fixed real-folder import for `/Users/dolag/Documents/Temp/参考`: four valid existing file names
+- Fixed real-folder import for an isolated fixture directory: four valid existing file names
   were 90–99 characters long and had been incorrectly rejected by the 80-character managed-folder
   display-name rule. Import paths no longer use that UI naming limit.
 - Added renderer-safe failure reasons and persistent structured logging for Worker/Main failures.
@@ -70,7 +70,7 @@
 - `npm run test:unit` — passed (42 tests after error-protocol and persistent-log coverage).
 - Electron-as-Node Worker suite — passed (53 tests after long existing-name regression coverage).
 - Electron E2E — passed (6 tests, including safe import reason plus persisted Worker diagnostic).
-- Manual real-folder import of `/Users/dolag/Documents/Temp/参考` — passed: 150/150 files copied and
+- Manual real-folder import of an isolated fixture directory — passed: 150/150 files copied and
   registered in a disposable local resource library; the disposable library was removed afterward.
 
 ## Failures and resolutions

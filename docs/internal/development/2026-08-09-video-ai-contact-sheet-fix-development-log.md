@@ -111,7 +111,7 @@ contact sheet 首个完成耗时 `0.971s`，整批最后一个在 `7.994s` 完�
 的 MIME，不再把 proxy 默认写死为 `video/webm`。contact sheet、AI 输入及其队列依赖没有改回
 等待 proxy。
 
-使用同一真实输入 `Downloads/12634407-hd_1920_1080_30fps.mp4`、同一 720px 缩放与 1Mbps
+使用同一隔离视频样本、同一 720px 缩放与 1Mbps
 目标码率，通过仓库 bundled FFmpeg 进行对比：
 
 | proxy | 编码耗时 | 解码耗时 | 文件大小 | 产物 |

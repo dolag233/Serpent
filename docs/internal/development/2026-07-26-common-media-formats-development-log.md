@@ -48,7 +48,7 @@ node scripts/media-binaries.mjs manifest --platform win32-x64
 | 可交付 Windows 媒体工具 | `scripts/media-build/win32-x64.ps1`、`scripts/media-build/prepare-vcpkg-overlay.mjs`、`scripts/media-binaries-lib.mjs` | 2026-07-26 重建成功（vcpkg 13 分钟）；stage 写入并校验 `resources/media-binaries/win32-x64/manifest.json`，生成 `artifacts/media-binaries/serpent-media-win32-x64.zip`；`media-binaries.test.ts` 8 passed/4 skipped | release bundle 尚未提升到不可变 HTTPS URL，故 release receipt verify 按设计拒绝 |
 | Renderer/Main/Worker 媒体失败与恢复 | `src/renderer/App.tsx`、`tests/e2e/media-preview.test.ts` | 2026-07-26 Windows 开发态 Electron E2E：3/3 通过；覆盖图片 `naturalWidth > 0`、查看器解码、缺 FFmpeg 的失败角标/重试/日志和后台任务，以及完整退出后以最终 Serpent FFmpeg 自动修复历史失败预览 | 打包应用与人工操作未执行 |
 
-生成 AV 测试夹具时使用 `D:\Tools\ffmpeg\ffmpeg.exe`，原因是产品 FFmpeg 有意 `--disable-avdevice`、不能使用 lavfi 输入；实际解码、缩略图和代理均使用最终的 Serpent bundle，而非该夹具生成器。
+生成 AV 测试夹具时使用独立的 FFmpeg 工具路径，原因是产品 FFmpeg 有意 `--disable-avdevice`、不能使用 lavfi 输入；实际解码、缩略图和代理均使用最终的 Serpent bundle，而非该夹具生成器。
 
 ## 尚未验证 / 后续
 

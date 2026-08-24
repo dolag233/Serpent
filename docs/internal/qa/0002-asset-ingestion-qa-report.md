@@ -49,7 +49,7 @@ Unknown, forged, abandoned and already-consumed import tokens must all fail thro
 - Windows remains unavailable in the current environment and must stay explicitly unverified.
 - Host Node and Electron use different native ABIs even though both embed Node 24. SQLite-backed
   Worker tests must run under Electron (`ELECTRON_RUN_AS_NODE=1`); pure unit tests remain on host Node.
-- Regression verification on `/Users/dolag/Documents/Temp/参考` passed with all 150 files imported.
+- Regression verification on an isolated fixture directory passed with all 150 files imported.
   The former failure was caused by an incorrect 80-character file-name check, not a platform path limit.
 - Persistent application diagnostics are written to `path.join(app.getPath('logs'), 'serpent.log')`;
   Renderer receives only stable reason codes and never absolute source paths.

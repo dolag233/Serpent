@@ -378,7 +378,7 @@ Automation API v1 可以保持不变，因为这是新增命令和放宽原本�
 | 生命周期 | 客户端取消、Desktop 退出、过期 endpoint、请求超时都释放 Execution 和 pending 请求 |
 | 平台/分发 | Windows named pipe、macOS Unix socket、开发态和当前 HEAD packaged 均跑真实 MCP SDK Client |
 
-最终端到端验收必须覆盖用户当前真实目标：在一个已附着且可见的 Serpent 实例中创建“meme资源库”，保持同一 MCP 连接继续创建目录、导入资产和管理合集。只有这条完整链路通过，`Serpent-a0yk` 才能关闭。
+最终端到端验收必须覆盖用户当前真实目标：在一个已附着且可见的 Serpent 实例中创建“示例资源库”，保持同一 MCP 连接继续创建目录、导入资产和管理合集。只有这条完整链路通过，`Serpent-a0yk` 才能关闭。
 
 ## 12. 明确不做
 

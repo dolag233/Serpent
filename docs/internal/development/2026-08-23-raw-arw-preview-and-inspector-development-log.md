@@ -75,7 +75,7 @@
   `Serpent-a6f74d`，不作为 RAW 回归，但保留“Worker 在首个可见波前退出时，失败任务
   会延后到下一次可见/刷新波”的恢复风险。
 - 真实 RAW Electron E2E：
-  `$env:SERPENT_REAL_RAW_TEST_FILE='E:\\Media\\Images\\Photos\\2026\\2026-02-09\\ZKH09734.ARW';
+  `$env:SERPENT_REAL_RAW_TEST_FILE='<path-to-sample.ARW>';
   node scripts/run-e2e-isolated.mjs tests/e2e/raw-image-preview.test.ts` 通过（1 项）。
   覆盖真实导入、缩略图解码、Inspector 相机元信息、作者字段回填和查看器图像解码。
 - 当前提交 packaged、Windows 和人工视觉验收仍待执行，不能以自动化结果代替。

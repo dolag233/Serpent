@@ -109,7 +109,7 @@ describe("plugin job display", () => {
         progress: 0,
         status: "running",
         phase: "spawn",
-        message: "/Users/dolag/Library/Application Support/Serpent/plugin.js",
+        message: "/Users/testuser/Library/Application Support/Serpent/plugin.js",
       }),
     ).toBe("spawn · <path>");
   });
@@ -117,7 +117,7 @@ describe("plugin job display", () => {
   it("redacts host paths and bounds plugin failure text", () => {
     expect(
       formatPluginJobError(
-        "Failed to read /Users/dolag/Library/Application Support/Serpent/cache/image.png",
+        "Failed to read /Users/testuser/Library/Application Support/Serpent/cache/image.png",
         "READ_FAILED",
       ),
     ).toBe("Failed to read <path>");

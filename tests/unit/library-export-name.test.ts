@@ -7,7 +7,7 @@ describe('libraryExportDefaultName', () => {
     expect(libraryExportDefaultName('My Library', 'folder')).toBe('My Library');
     expect(libraryExportDefaultName('My Library', 'zip')).toBe('My Library.zip');
     expect(libraryExportDefaultName('My Library.zip', 'zip')).toBe('My Library.zip');
-    expect(libraryExportDefaultName('参考资源库', 'zip')).toBe('参考资源库.zip');
+    expect(libraryExportDefaultName('测试资源库', 'zip')).toBe('测试资源库.zip');
   });
 
   it('sanitizes destination-invalid characters and trailing separators', () => {

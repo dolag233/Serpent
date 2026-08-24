@@ -8,11 +8,11 @@ import { McpClientCredentialStore, buildPepperFileAclArgs } from '../../src/main
 
 describe('MCP credential pepper ACL hardening (Serpent-8b5b.7)', () => {
   it('builds an inheritance-free, current-user-only icacls command shape', () => {
-    expect(buildPepperFileAclArgs('/Users/dolag/AppData/Roaming/Serpent/pepper', 'dolag')).toEqual([
-      '/Users/dolag/AppData/Roaming/Serpent/pepper',
+    expect(buildPepperFileAclArgs('/Users/testuser/AppData/Roaming/Serpent/pepper', 'testuser')).toEqual([
+      '/Users/testuser/AppData/Roaming/Serpent/pepper',
       '/inheritance:r',
       '/grant:r',
-      'dolag:F',
+      'testuser:F',
     ]);
   });
 

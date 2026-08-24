@@ -35,7 +35,7 @@ npx tsc --noEmit
 npm run test:library-availability
 ```
 
-9 files, 188 passed / 1 skipped（39.32s）。Electron 分页 E2E 与绘画资源库真机滚动待用户。
+9 files, 188 passed / 1 skipped（39.32s）。Electron 分页 E2E 与大型隔离测试库真机滚动待用户。
 
 ## 人类验收（2026-08-16）
 

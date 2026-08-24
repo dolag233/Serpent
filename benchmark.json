@@ -9,7 +9,7 @@
  "runs": [
   {
    "timestamp": "2026-08-23T02:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "8dc4aab1",
    "suite": "large-library-20k-worker",
    "fixture": "local APFS 20k v3 mixed",
@@ -28,10 +28,10 @@
   },
   {
    "timestamp": "2026-08-23T02:10:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "8dc4aab1",
    "suite": "nas-sqlite-cli-probe",
-   "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets, 21801 artifacts)",
+   "library": "<nas-test-library> (7164 linked assets, 21801 artifacts)",
    "metrics": {
     "countAssetsColdNewConnectionMs": 916,
     "firstPageOrderByUpdatedAtColdMs": 2741,
@@ -43,7 +43,7 @@
   },
   {
    "timestamp": "2026-08-23T02:20:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "8dc4aab1",
    "suite": "comprehensive-20k-worker",
    "fixture": "local APFS 20k v3 mixed",
@@ -76,7 +76,7 @@
   },
   {
    "timestamp": "2026-08-23T03:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(Serpent-4bdd26: v40 index, readdir sweep, refresh stat dedupe, collection count cache, sqlite cache_size 64MB)",
    "suite": "comprehensive-20k-worker",
    "fixture": "local APFS 20k v3 mixed (UUID ids)",
@@ -110,7 +110,7 @@
   },
   {
    "timestamp": "2026-08-23T03:15:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(Serpent-4bdd26)",
    "suite": "palette-pipeline-probe",
    "fixture": "local APFS 20k",
@@ -124,10 +124,10 @@
   },
   {
    "timestamp": "2026-08-23T03:20:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(Serpent-4bdd26)",
    "suite": "nas-smb-latency-probe",
-   "library": "/Volumes/Share/Serpent/绘画资源库 (7164 linked assets)",
+   "library": "<nas-test-library> (7164 linked assets)",
    "metrics": {
     "readdirArtifacts21kEntriesMs": 21209,
     "lstatPerFileOnSmbMs": 12.2,
@@ -141,7 +141,7 @@
   },
   {
    "timestamp": "2026-08-23T03:45:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(round2: lazy refresh assets, stmt cache, lazy path resolve)",
    "suite": "refresh-fullscan-optimization",
    "fixture": "local APFS 20k",
@@ -173,7 +173,7 @@
   },
   {
    "timestamp": "2026-08-23T04:15:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+ef29f7d4",
    "suite": "media-generation-cost-probe",
    "fixture": "local APFS 20k",
@@ -194,7 +194,7 @@
   },
   {
    "timestamp": "2026-08-23T04:55:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+b2fd7cfc",
    "suite": "large-library-electron-scroll-e2e",
    "fixture": "local APFS 20k v3 mixed (fresh regenerate, prewarmed)",
@@ -214,9 +214,9 @@
   },
   {
    "timestamp": "2026-08-23T05:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent (borrowed competitor script)",
+   "worktree": "<serpent-worktree> (borrowed competitor script)",
    "gitHead": "dev+b2fd7cfc",
-   "suite": "nas-readonly-benchmark (绘画资源库, warm cache)",
+   "suite": "nas-readonly-benchmark (图像测试库, warm cache)",
    "source": "scripts/run-nas-readonly-benchmark.mjs from worktree codex/large-library-performance@15f3325c",
    "metrics": {
     "browseRootFirstPageP50Ms": 29.2,
@@ -230,10 +230,10 @@
   },
   {
    "timestamp": "2026-08-23T05:20:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+7f94fd5d",
    "suite": "nas-clone-open-probe",
-   "library": "绘画资源库 DB-only 克隆（linked 源离线模拟）",
+   "library": "图像测试库 DB-only 克隆（linked 源离线模拟）",
    "metrics": {
     "openLibraryMs": 222.2,
     "backgroundReconciliationTotalMs": 14,
@@ -247,7 +247,7 @@
   },
   {
    "timestamp": "2026-08-23T05:50:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+d7e8d389+WIP(warmBrowseIndexCache)",
    "suite": "comprehensive-20k-worker (extended)",
    "fixture": "local APFS 20k v3 mixed",
@@ -279,7 +279,7 @@
   },
   {
    "timestamp": "2026-08-23T06:25:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+59e26b1c+WIP(视口抢占收编)",
    "suite": "comprehensive-20k-worker (viewport preemption adopted)",
    "metrics": {
@@ -308,7 +308,7 @@
   },
   {
    "timestamp": "2026-08-23T06:45:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+d58c2972",
    "suite": "large-library-electron-scroll-e2e (viewport preemption)",
    "fixture": "local APFS 20k v3 mixed, prewarmed",
@@ -332,7 +332,7 @@
   },
   {
    "timestamp": "2026-08-23T07:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+d58c2972+E2E判定修复",
    "suite": "large-library-electron-scroll-e2e (FINAL: 10/10 PASS)",
    "fixture": "local APFS 20k v3 mixed, prewarmed, cardSizeIndex=3",
@@ -359,7 +359,7 @@
   },
   {
    "timestamp": "2026-08-23T07:15:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+acdc4f3e",
    "suite": "large-library-electron-scroll-e2e (reproducibility)",
    "metrics": {
@@ -371,7 +371,7 @@
   },
   {
    "timestamp": "2026-08-23T07:40:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(v41 index, folder count cache, layout mapping)",
    "suite": "comprehensive-20k-worker (v41 + folder cache)",
    "metrics": {
@@ -384,7 +384,7 @@
   },
   {
    "timestamp": "2026-08-23T07:42:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP",
    "suite": "delete-operations-probe",
    "fixture": "local APFS 20k",
@@ -397,7 +397,7 @@
   },
   {
    "timestamp": "2026-08-23T08:00:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(quick_check 延迟+startup 入队移除)",
    "suite": "comprehensive-20k-worker (deferred quick_check)",
    "metrics": {
@@ -410,7 +410,7 @@
   },
   {
    "timestamp": "2026-08-23T08:15:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+923244e1",
    "suite": "large-library-electron-scroll-e2e (post quick_check deferral)",
    "metrics": {
@@ -422,7 +422,7 @@
   },
   {
    "timestamp": "2026-08-23T08:30:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(collection leaf fast path)",
    "suite": "comprehensive-20k-worker + leaf fast path",
    "metrics": {
@@ -434,7 +434,7 @@
   },
   {
    "timestamp": "2026-08-23T08:50:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(SMB 打开优化)",
    "suite": "nas-smb-open-probe (真实千兆 SMB)",
    "library": "perf-nas-probe（绘画库 DB 副本 29MB，7164 资产，DELETE journal）",
@@ -457,7 +457,7 @@
   },
   {
    "timestamp": "2026-08-23T09:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+d0e53f45",
    "suite": "large-library-electron-scroll-e2e (final regression)",
    "metrics": {
@@ -469,7 +469,7 @@
   },
   {
    "timestamp": "2026-08-23T09:30:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+WIP(v42 + count-gated backfill)",
    "suite": "nas-smb-open-probe (round 2)",
    "metrics": {
@@ -486,7 +486,7 @@
   },
   {
    "timestamp": "2026-08-23T09:50:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+88c70214",
    "suite": "large-library-electron-scroll-e2e (v42 final)",
    "metrics": {
@@ -498,7 +498,7 @@
   },
   {
    "timestamp": "2026-08-23T10:20:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+6f2350ee",
    "suite": "large-library-electron-scroll-e2e (regression fixes)",
    "metrics": {
@@ -510,17 +510,17 @@
   },
   {
    "timestamp": "2026-08-23T13:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+working-tree (Serpent-2cc492 startup gate)",
    "suite": "real-NAS open attribution (production library probe, Serpent-2cc492)",
    "metrics": {
     "smbOpenLibraryMs": 1138.3,
-    "note": "真实 NAS 生产库（绘画资源库，7164 linked 资产 + 21,508 artifact 文件）E2E 日志归因：library.open 本身仅 1.1s；阻塞主因是开库后台对账——artifact 目录枚举实测 16.5s（纯异步 opendir 流式、无 lstat：SMB 目录元数据是海量小往返，与带宽无关），叠加链内同步 SQL 步骤把渲染端 startup 突发全部拖过主进程 15s 超时且 late 响应被丢弃（单次 E2E 记录 462 条 late），画布永远等不到首屏数据。修复：startup 门闩（首个 asset.search 响应投递 + 在飞清零才启动对账，15s 硬上限）+ artifact 扫描移对账链尾 + 枚举每 4096 条让步。"
+    "note": "真实 NAS 生产库（图像测试库，7164 linked 资产 + 21,508 artifact 文件）E2E 日志归因：library.open 本身仅 1.1s；阻塞主因是开库后台对账——artifact 目录枚举实测 16.5s（纯异步 opendir 流式、无 lstat：SMB 目录元数据是海量小往返，与带宽无关），叠加链内同步 SQL 步骤把渲染端 startup 突发全部拖过主进程 15s 超时且 late 响应被丢弃（单次 E2E 记录 462 条 late），画布永远等不到首屏数据。修复：startup 门闩（首个 asset.search 响应投递 + 在飞清零才启动对账，15s 硬上限）+ artifact 扫描移对账链尾 + 枚举每 4096 条让步。"
    }
   },
   {
    "timestamp": "2026-08-23T15:05:00+08:00",
-   "worktree": "/Users/dolag/Development/Serpent",
+   "worktree": "<serpent-worktree>",
    "gitHead": "dev+working-tree (Serpent-2cc492 startup gate round 2)",
    "suite": "real-NAS open e2e (probe copy, PASS)",
    "metrics": {

@@ -59,7 +59,7 @@
 - `tests/unit/asset-browse-load-more.test.ts` 新增 `appendAssetPage` 去重合并用例。
 - `tests/unit/browser-session.test.ts` 补 `beginBrowsePage` dep。
 
-验证命令与结果（2026-08-15，worktree `E:\MyRepositories\serpent-wt-ws4k`，
+验证命令与结果（2026-08-15，独立 worktree，
 `VITEST_CACHE_DIR` 指向 worktree 内 `.vitest-cache`）：
 
 | 命令 | 结果 |

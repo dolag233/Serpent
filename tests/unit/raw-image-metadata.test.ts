@@ -25,7 +25,7 @@ describe("RAW image metadata", () => {
         MeteringMode: 5,
         Flash: 0,
         FocalLength: 56,
-        SecretPath: "E:\\private\\source.ARW",
+        SecretPath: "<test-fixtures>\\source.ARW",
       }),
     };
 

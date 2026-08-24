@@ -18,7 +18,7 @@
 | 主线门禁 | `npm run verify:mainline` | lint、typecheck、extension verify、Vitest、search performance 通过；Electron E2E **62 passed / 12 failed / 3 skipped**，命令以 1 退出 |
 | 当前构建打包 | `npm run package` | 通过；基于当前工作树重新生成 macOS arm64 `.app` |
 | 包产物校验 | `npm run verify:package` | 通过；ASAR、media bundle、Script/Plugin Host runtime 校验通过 |
-| packaged 启动 | `SERPENT_E2E_PACKAGED_EXECUTABLE=/Users/dolag/Development/Serpent/out/Serpent-darwin-arm64/Serpent.app/Contents/MacOS/Serpent npm run test:e2e:packaged` | **2 passed / 1 skipped**；跳过项是 Windows close 行为 |
+| packaged 启动 | `SERPENT_E2E_PACKAGED_EXECUTABLE=<packaged-app-executable> npm run test:e2e:packaged` | **2 passed / 1 skipped**；跳过项是 Windows close 行为 |
 | 稳定性复现 | `npx playwright test tests/e2e/asset-pagination.test.ts -g "ordinary browsing continuously appends every asset"` | **1 failed**；`asset-000.txt` 精确文本出现 2 个 |
 | 稳定性复现 | 失败 E2E 的 11 个目标用例单独 grep 重跑 | **11 failed / 1 passed**；偏好、右键菜单、重启焦点、视频诊断、组织流程、插件 Host 均再次失败 |
 | Native 恢复 | `npx @electron/rebuild -f -w better-sqlite3` | 通过；用于 packaged 后恢复开发测试 ABI |

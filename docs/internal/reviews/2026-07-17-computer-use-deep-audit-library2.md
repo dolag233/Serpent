@@ -2,7 +2,7 @@
 
 - 日期：2026-07-17
 - 执行：主 agent + kimi-cu Computer Use 插件（macOS），对真实运行的 dev 应用（`npm start`，electron-forge）做真实鼠标/键盘旅程
-- 资源库：`/Users/dolag/Documents/Temp/我的资源库`（用户真实库，142 资产 / 25 文件夹，93 jpg + 22 png + 15 mp4 + 10 webp + 2 gif，大量中文/日文/glitch 特殊字符长文件名，最深 5 级目录）
+- 资源库：隔离媒体测试库（142 资产 / 25 文件夹，93 jpg + 22 png + 15 mp4 + 10 webp + 2 gif，大量中文/日文/glitch 特殊字符长文件名，最深 5 级目录）
 - 约束：全程只读观察；未对用户库做删除/移动/重命名/写入标签等操作；多选批量写入未实际提交
 - 与第一批关系：第一批（`2026-07-17-computer-use-ux-audit.md`）用 8 资产审计库，发现 CU-B1~B7 / CU-M1~M6 / CU-U1~U6 已入 backlog；本批用真实大库验证核心旅程并发现新问题，新发现编号 CU-D1~D9 已录入 backlog 同一章节
 

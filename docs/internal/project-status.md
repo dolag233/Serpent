@@ -26,7 +26,7 @@
 
 - **2026-08-20 `Serpent-a3415e` 自动更新**：已核对公开 GitHub Release `v0.1.2` 的 macOS DMG/portable ZIP、Windows setup/portable ZIP 及 SHA-256 sidecar；当前 Forge ZIP + Inno Setup 不满足 Electron 原生 Squirrel/NSIS updater 协议。本次已实现 Main-owned GitHub Release 检查、资产校验、安装版打开安装器、便携版下载提示，以及「帮助 → 关于 Serpent」入口；本轮进一步将更新控件收紧到版本行（刷新/下载图标），并在进入关于页时自动检查。更新服务单测 6 passed；macOS 开发态关于入口 E2E 1 passed，当前 macOS arm64 packaged 启动 E2E 2 passed，Windows、真实更新/安装/退出重启旅程待人类验收。见 [研究记录](research/2026-08-20-electron-forge-github-release-auto-update.md) / [开发日志](development/2026-08-20-app-update-development-log.md)。
 
-- **2026-08-17 `Serpent-qn6k`**：Eagle 名称面板去掉「下一步选择的是父文件夹…不能选磁盘根」说明。创建/打开外部库允许把新库建在磁盘根下（如 `E:\名称`）；没有写权限才报权限不足。把整个磁盘当导入来源仍然禁止。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
+- **2026-08-17 `Serpent-qn6k`**：Eagle 名称面板去掉「下一步选择的是父文件夹…不能选磁盘根」说明。创建/打开外部库允许把新库建在磁盘根下；没有写权限才报权限不足。把整个磁盘当导入来源仍然禁止。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
 
 - **2026-08-17 `Serpent-j3ba`**：打开 Eagle/Billfish 进度条左侧主题色点改为垂直居中；复制进度 `xxGB/xxGB` 的分母改为全库源文件总量，不再随当前已读批次增长。见 [开发日志](development/2026-08-17-eagle-open-progress-and-performance-development-log.md)。
 
@@ -50,9 +50,9 @@
 
 - **2026-08-16 `Serpent-87pd` / PERF-002 人类验收不通过**：COUNT 占位卡与滑动/重排频繁触发使体验更差。已关单。后继 P1 `Serpent-sa65`：1 万资产库、第四档卡片大小、scroll bar 随机拖到新预览位置须在 **0.5 秒内**完成可见预览图解码；禁止空占位卡；须有真实 Electron 解码 benchmark。
 
-- **2026-08-16 `Serpent-e0dw`**：绘画资源库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
+- **2026-08-16 `Serpent-e0dw`**：图像测试库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
 
-- **2026-08-16 `Serpent-e0dw`**：绘画资源库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
+- **2026-08-16 `Serpent-e0dw`**：图像测试库对调的 v37/v38 checksum 曾被当成损坏只读。已改写 `schema_migrations`；Desktop 不再提供只读资源库。用户真机确认 COMPAT-001 通过。资源库可用性底线套件为 `npm run test:library-availability`，资源库相关改动必须完整跑完。
 
 - **2026-08-16 `Serpent-dw9a` / `Serpent-768x` / `Serpent-cljb` 收口中**：
   `dw9a` 已实现主库损坏恢复梯度（主库→两份轮换备份→Assets 抢救，无只读档）、

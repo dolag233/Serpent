@@ -7,7 +7,7 @@
 ## 1. 开工前
 
 1. 读本文件 + 上述人读文档 + `docs/internal/implementation/0024-script-plugin-platform.md`（需要时）。  
-2. 主仓：`/Users/dolag/Development/Serpent`（本地磁盘；禁止 NAS/SMB 跑 Electron）。  
+2. 主仓：本地磁盘上的 Serpent 工作副本（禁止 NAS/SMB 跑 Electron）。
 3. 插件源码：与 Serpent **同级 sibling**（如 `Serpent-Plugin-ImageUpscaler`），**不要**放进主仓目录。  
 4. Node：`.nvmrc`（24.x）；主仓依赖已 `npm ci`。  
 5. 工单：`bd ready` → `bd update <id> --claim`；插件平台相关见 `Serpent-upsn` / `Serpent-8csl` 等。

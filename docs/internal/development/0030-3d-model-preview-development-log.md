@@ -52,7 +52,7 @@
 
 ### 切片 B（Serpent-5ygi）— 完成（2026-08-05）
 
-**ufbx WASM**：无可复用预构建（ufbx releases 为空、npm 无包）→ 自建：ufbx v0.23.0（2026-06-21，tarball SHA `efaed6c5…` 锁定于 scripts/ufbx-wasm-lock.json）；Emscripten 6.0.5 装于 `C:\Users\huangqingsong\emsdk`；`scripts/build-ufbx-wasm.mjs` 按 media:acquire 模式（下载→源码 SHA 校验→emcc→产物 SHA 校验→acquisition.json 溯源收据），重跑幂等。产物 `resources/ufbx/`（gitignored）：ufbx.wasm 331KB + glue 9.4KB。编译参数：`-O2 -sMODULARIZE=1 -sENVIRONMENT=node -sEXPORTED_FUNCTIONS=_serpent_parse… -sFILESYSTEM=0 -g0` 等。
+**ufbx WASM**：无可复用预构建（ufbx releases 为空、npm 无包）→ 自建：ufbx v0.23.0（2026-06-21，tarball SHA `efaed6c5…` 锁定于 scripts/ufbx-wasm-lock.json）；Emscripten 6.0.5 安装在由 `<emsdk-dir>` 指定的位置；`scripts/build-ufbx-wasm.mjs` 按 media:acquire 模式（下载→源码 SHA 校验→emcc→产物 SHA 校验→acquisition.json 溯源收据），重跑幂等。产物 `resources/ufbx/`（gitignored）：ufbx.wasm 331KB + glue 9.4KB。编译参数：`-O2 -sMODULARIZE=1 -sENVIRONMENT=node -sEXPORTED_FUNCTIONS=_serpent_parse… -sFILESYSTEM=0 -g0` 等。
 
 **转换器**（src/worker/fbx/）：C 桥 `scripts/ufbx-bridge.c`（`target_axes=RH_Y_UP`、`target_unit_meters=1.0`、`UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY`、`use_blender_pbr_material`、索引 CLAMP）输出 `[u32 JSON 长度][JSON][blobs]`；`glb-builder.ts` 手写 glTF 2.0 JSON + BIN（每源 mesh 一个 glTF mesh、实例 matrix 列主序、PNG/JPEG 内嵌、POSITION min/max、4 字节对齐）。材质：base_color（回退 diffuse）、metalness/roughness 合并 metallicRoughnessTexture、normal/emissive/occlusion、doubleSided、opacity→BLEND；Ambient/Specular/Shininess 不进 glTF（已知局限）。轴/单位 Z-up cm 已验证（×0.01 烘焙 + 矩阵 +Z→+Y 断言）。外部贴图：同目录/子目录相对路径（拒绝绝对/..//盘符）、≤64MB、PNG/JPEG 魔数；缺失降级 + missingTextures。**已知 wasm32 坑**：ufbx_triangulate_face 输出损坏 → 手写确定性 fan triangulation（桥注释记录）。
 
