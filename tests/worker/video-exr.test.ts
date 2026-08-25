@@ -1954,7 +1954,58 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
-  it('requeues legacy RAW OCIO failures on the next retryable browse wave', async () => {
+  it('retries a stale failed RAW viewer artifact after the decoder is repaired', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args.at(-1);
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawViewerRepair', selectedParentPath: root });
+    const sourcePath = path.join(root, 'repair.ARW');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    await service.generateThumbnail({ libraryId: created.libraryId, assetId: asset.assetId });
+
+    const db = assertDb(created.libraryPath);
+    const revisionId = db.prepare(
+      'SELECT current_revision_id FROM assets WHERE asset_id = ?',
+    ).get(asset.assetId) as { current_revision_id: string };
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'viewer_image', 'image/png', 0, ?, ?, 'failed', ?, ?)`,
+    ).run(
+      randomUUID(),
+      revisionId.current_revision_id,
+      'stale-failed-viewer.png',
+      'oiio@3.1.12.0;raw-viewer-full;subimage=0',
+      'OIIO_GENERATION_FAILED',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+    expect(preview).toMatchObject({ mediaType: 'image', status: 'ready' });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'viewer_image'))
+      .toMatchObject({ status: 'ready', mimeType: 'image/png' });
+    expect(invocations.some((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw')) && !args.includes('--resize'),
+    )).toBe(true);
+    service.closeAll();
+  });
+
+  it('requeues stale RAW OIIO failures on the next retryable browse wave', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
     const failingService = new LibraryService({
@@ -1982,8 +2033,8 @@ describe('EXR/TGA (oiiotool)', () => {
     const db = assertDb(created.libraryPath);
     db.prepare(
       `UPDATE revision_artifacts
-          SET error_code = 'OIIO_COLOR_TRANSFORM_FAILED',
-              generator_version = 'oiio@3.1.12;ocio=studio-v4-aces2'
+          SET error_code = 'OIIO_GENERATION_FAILED',
+              generator_version = 'oiio@3.1.12.0;raw-default-srgb'
         WHERE revision_id = (
           SELECT current_revision_id FROM assets WHERE asset_id = ?
         )

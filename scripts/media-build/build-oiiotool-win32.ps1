@@ -67,3 +67,10 @@ $TargetDir = Join-Path $Root 'resources/oiio/win32-x64'
 New-Item -ItemType Directory -Force $TargetDir | Out-Null
 Copy-Item -LiteralPath $Tool.FullName -Destination (Join-Path $TargetDir 'oiiotool.exe') -Force
 Write-Host "oiiotool copied to $TargetDir\oiiotool.exe"
+$Formats = & (Join-Path $TargetDir 'oiiotool.exe') --list-formats 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0 -or $Formats -notmatch '(?im)(?:^|\r?\n)\s*raw\s*:') {
+  throw 'The staged oiiotool is missing the LibRaw RAW reader; refusing to publish a Windows media bundle without ARW/RAW support.'
+}
+if ($Formats -notmatch '(?i)\barw\b') {
+  throw 'The staged oiiotool does not advertise ARW support; refusing to publish a Windows media bundle.'
+}

@@ -21734,7 +21734,21 @@ export class LibraryService {
   ): Promise<void> {
     const key = `${input.libraryId}:${input.assetId}:${revisionId}`;
     const existing = this.getCurrentArtifact(input.libraryId, input.assetId, 'viewer_image');
-    if (existing) return;
+    const expected = `oiio@${OIIO_VERSION};raw-viewer-full;`;
+    // A failed viewer artifact is not a durable verdict about the source.
+    // In particular, a library can remain open while its media bundle is
+    // repaired or replaced. Retry failed/legacy artifacts once the RAW reader
+    // is available instead of returning the stale failure forever.
+    if (existing?.status === 'ready' && existing.generatorVersion.includes(expected)) return;
+    if (existing) {
+      openLibrary.connection
+        .prepare(
+          `UPDATE revision_artifacts
+              SET invalidated_at = ?
+            WHERE artifact_id = ? AND invalidated_at IS NULL`,
+        )
+        .run(new Date().toISOString(), existing.artifactId);
+    }
     const running = this.rawViewerImageInFlight.get(key);
     if (running) {
       await running;
@@ -23611,9 +23625,10 @@ export class LibraryService {
       this.autoRepairAttemptedByLibrary.set(libraryId, attempted);
     }
     // A previous RAW run could have persisted the generic OCIO failure before
-    // the RAW-specific default-sRGB route existed. Re-open that exact legacy
-    // failure immediately; the normal retry backoff is still used for all
-    // other transient decode failures.
+    // the RAW-specific default-sRGB route existed, or a generic OIIO failure
+    // while the media bundle lacked a RAW reader. Re-open only those
+    // RAW-scoped failures; other decode failures remain terminal until an
+    // explicit user retry.
     const legacyRawRepairEnqueued = options.retryFailed
       ? this.requeueLegacyRawColorTransformFailures(openLibrary, {
         assetIds: selectedIds,
@@ -23969,6 +23984,7 @@ export class LibraryService {
     return enqueued;
   }
 
+  /** Requeue RAW failures caused by an old transform route or missing reader. */
   private requeueLegacyRawColorTransformFailures(
     openLibrary: OpenLibrary,
     options: { assetIds: string[]; limit?: number },
@@ -23991,8 +24007,13 @@ export class LibraryService {
             AND ra.kind = 'thumbnail'
             AND ra.status = 'failed'
             AND ra.invalidated_at IS NULL
-            AND ra.error_code = 'OIIO_COLOR_TRANSFORM_FAILED'
-            AND COALESCE(ra.generator_version, '') NOT LIKE '%raw-default-srgb%'
+            AND (
+              (
+                ra.error_code = 'OIIO_COLOR_TRANSFORM_FAILED'
+                AND COALESCE(ra.generator_version, '') NOT LIKE '%raw-default-srgb%'
+              )
+              OR ra.error_code = 'OIIO_GENERATION_FAILED'
+            )
             ${selectedSql}
             AND (${rawExtensionSql})
             AND NOT EXISTS (

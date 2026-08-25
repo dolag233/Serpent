@@ -42,7 +42,7 @@ function writeFixtureFile(filePath: string, contents = 'fixture'): void {
   writeFileSync(filePath, contents);
 }
 
-function createFixture(gpl = false): string {
+function createFixture(gpl = false, raw = true): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-media-test-'));
   roots.push(root);
   mkdirSync(path.join(root, 'media-binaries'), { recursive: true });
@@ -72,6 +72,7 @@ function createFixture(gpl = false): string {
     path.join(root, 'oiio', 'darwin-arm64', 'oiiotool'),
     `case "$*" in
       *--version*) echo "3.1.12.0" ;;
+      *--list-formats*) ${raw ? 'echo " raw : arw cr2 dng nef"' : 'true'} ;;
       *--help*) echo "oiiotool -- simple OpenImageIO operations"; echo "--ociodisplay --colorconfiginfo" ;;
       *) exit 2 ;;
     esac`,
@@ -177,6 +178,13 @@ describe.skipIf(process.platform === 'win32')('media binary release gate', () =>
     const result = run(root, 'manifest');
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('forbidden build marker: --enable-gpl');
+  }, 15_000);
+
+  it('rejects an OIIO bundle that was built without the LibRaw reader', () => {
+    const root = createFixture(false, false);
+    const result = run(root, 'manifest');
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('missing the LibRaw RAW reader');
   }, 15_000);
 
   it.runIf(process.platform === 'darwin' && process.arch === 'arm64')(
