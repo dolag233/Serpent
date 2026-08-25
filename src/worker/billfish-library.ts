@@ -200,7 +200,7 @@ function metadataFromRow(row: JsonObject): BillfishAssetMetadata {
     MAX_TEXT_LENGTH,
   ) || null;
   const sourcePageUrl = httpUrlValue(
-    firstValue(row, ['source_url', 'sourceUrl', 'origin_url', 'originUrl', 'url', 'website']),
+    firstValue(row, ['source_url', 'sourceUrl', 'origin_url', 'originUrl', 'origin', 'url', 'website']),
   );
   const tags = stringArray(firstValue(row, ['tags', 'tag', 'labels', 'keywords']));
   const thumbnailPath = textValue(
@@ -263,6 +263,181 @@ function readJsonMetadata(root: string): Map<string, string> {
   return result;
 }
 
+function tableExists(tableNames: ReadonlySet<string>, name: string): boolean {
+  return tableNames.has(name);
+}
+
+function safePathSegment(value: unknown): string | null {
+  const text = textValue(value, 1_024);
+  if (text === '' || text === '.' || text === '..' || text.includes('/') || text.includes('\\')) {
+    return null;
+  }
+  return text;
+}
+
+/**
+ * Billfish 3.x stores metadata across normalized tables (`bf_file`,
+ * `bf_folder`, `bf_material_userdata`, `bf_tag_v2`, `bf_tag_join_file`) and
+ * none of them carries a path column, so the generic single-table reader below
+ * silently drops every note, rating, URL, and tag. Index those tables here.
+ *
+ * Exported `.BillfishPack` archives flatten asset files to the archive root
+ * while the database still records the original folder hierarchy, so entries
+ * are registered both by their database path and by file name; the caller
+ * resolves flattened layouts through the by-name fallback.
+ */
+function readBillfish3Metadata(
+  database: BillfishDatabase,
+  tableNames: ReadonlySet<string>,
+  byPath: Map<string, BillfishAssetMetadata>,
+  byName: Map<string, BillfishAssetMetadata[]>,
+): boolean {
+  if (!tableExists(tableNames, 'bf_file')) return false;
+
+  const folders = new Map<number, { pid: number; name: string }>();
+  if (tableExists(tableNames, 'bf_folder')) {
+    try {
+      const rows = database.prepare('SELECT id, pid, name FROM bf_folder').all() as JsonObject[];
+      for (const row of rows) {
+        const id = finiteNumber(row.id);
+        const pid = finiteNumber(row.pid);
+        const name = safePathSegment(row.name);
+        if (id === undefined || pid === undefined || name === null) continue;
+        folders.set(id, { pid, name });
+      }
+    } catch {
+      // Folder hierarchy is optional; files fall back to name-only entries.
+    }
+  }
+
+  const userdata = new Map<number, { note: string; origin: string; score: unknown }>();
+  if (tableExists(tableNames, 'bf_material_userdata')) {
+    try {
+      const rows = database
+        .prepare('SELECT file_id, note, origin, score FROM bf_material_userdata')
+        .all() as JsonObject[];
+      for (const row of rows) {
+        const fileId = finiteNumber(row.file_id);
+        if (fileId === undefined) continue;
+        userdata.set(fileId, {
+          note: textValue(firstValue(row, ['note', 'comments_summary']), MAX_TEXT_LENGTH),
+          origin: textValue(row.origin, MAX_URL_LENGTH),
+          score: row.score,
+        });
+      }
+    } catch {
+      // Ratings/notes/URLs are optional metadata.
+    }
+  }
+
+  const tagNameById = new Map<number, string>();
+  const joinTable = tableExists(tableNames, 'bf_tag_join_file');
+  const tagTable = tableExists(tableNames, 'bf_tag_v2')
+    ? 'bf_tag_v2'
+    : tableExists(tableNames, 'bf_tag')
+      ? 'bf_tag'
+      : null;
+  if (tagTable) {
+    try {
+      const rows = database.prepare(`SELECT id, name FROM ${tagTable}`).all() as JsonObject[];
+      for (const row of rows) {
+        const id = finiteNumber(row.id);
+        const name = textValue(row.name, 255);
+        if (id === undefined || name === '') continue;
+        tagNameById.set(id, name);
+      }
+    } catch {
+      // Tags are optional metadata.
+    }
+  }
+  const tagIdsByFile = new Map<number, Set<number>>();
+  if (joinTable && tagNameById.size > 0) {
+    try {
+      const rows = database
+        .prepare('SELECT file_id, tag_id FROM bf_tag_join_file')
+        .all() as JsonObject[];
+      for (const row of rows) {
+        const fileId = finiteNumber(row.file_id);
+        const tagId = finiteNumber(row.tag_id);
+        if (fileId === undefined || tagId === undefined) continue;
+        const tags = tagIdsByFile.get(fileId) ?? new Set<number>();
+        tags.add(tagId);
+        tagIdsByFile.set(fileId, tags);
+      }
+    } catch {
+      // Tag joins are optional metadata.
+    }
+  }
+
+  let files: JsonObject[];
+  try {
+    files = database
+      .prepare(`SELECT id, name, pid FROM bf_file LIMIT ${MAX_METADATA_ROWS}`)
+      .all() as JsonObject[];
+  } catch {
+    return false;
+  }
+
+  const seen = new Set<string>();
+  for (const row of files) {
+    const fileId = finiteNumber(row.id);
+    const fileName = safePathSegment(row.name);
+    if (fileId === undefined || fileName === null) continue;
+
+    // Rebuild the recorded folder chain (pid 0 is the library root) without
+    // requiring the chain to resolve: broken references degrade to a
+    // root-level entry so the by-name fallback can still match.
+    const segments: string[] = [];
+    let current = finiteNumber(row.pid) ?? 0;
+    let valid = true;
+    for (let depth = 0; current !== 0; depth += 1) {
+      if (depth >= 64) {
+        valid = false;
+        break;
+      }
+      const folder = folders.get(current);
+      if (!folder) {
+        valid = false;
+        break;
+      }
+      segments.unshift(folder.name);
+      current = folder.pid;
+    }
+    const relative = valid && segments.length > 0 ? [...segments, fileName].join('/') : fileName;
+
+    const data = userdata.get(fileId);
+    const tags: string[] = [];
+    const tagIds = tagIdsByFile.get(fileId);
+    if (tagIds) {
+      for (const tagId of tagIds) {
+        const name = tagNameById.get(tagId);
+        if (name === undefined || tags.includes(name)) continue;
+        tags.push(name);
+      }
+    }
+    const metadata: BillfishAssetMetadata = {
+      description: data && data.note !== '' ? data.note : null,
+      rating: data ? ratingValue(data.score) : 0,
+      sourcePageUrl: data ? httpUrlValue(data.origin) : null,
+      tags,
+      thumbnailPath: null,
+    };
+    if (!metadata.description && metadata.rating === 0 && !metadata.sourcePageUrl && tags.length === 0) {
+      continue;
+    }
+
+    const key = relativeIdentity(relative);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    byPath.set(key, metadata);
+    const name = fileName.toLocaleLowerCase();
+    const sameName = byName.get(name) ?? [];
+    sameName.push(metadata);
+    byName.set(name, sameName);
+  }
+  return true;
+}
+
 function readDatabaseMetadata(root: string, databasePath: string): MetadataIndex {
   const byPath = new Map<string, BillfishAssetMetadata>();
   const byName = new Map<string, BillfishAssetMetadata[]>();
@@ -272,6 +447,14 @@ function readDatabaseMetadata(root: string, databasePath: string): MetadataIndex
     const tables = database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
       .all() as Array<{ name?: unknown }>;
+    const tableNames = new Set(
+      tables
+        .map((table) => textValue(table.name, 255).toLocaleLowerCase())
+        .filter((name) => name !== ''),
+    );
+    if (readBillfish3Metadata(database, tableNames, byPath, byName)) {
+      return { byPath, byName, available: true };
+    }
     for (const table of tables.slice(0, 256)) {
       const tableName = textValue(table.name, 255);
       if (tableName === '') continue;
