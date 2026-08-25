@@ -21,6 +21,7 @@ export function buildMarqueeLayoutKey(input: MarqueeLayoutKeyInput): string {
     input.fields.name,
     input.fields.size,
     input.fields.date,
+    input.fields.dimensions,
     input.fields.badgeType,
     input.fields.badgeDuration,
     input.fields.badgeSource,

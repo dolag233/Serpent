@@ -100,7 +100,8 @@ export function detectPhysicalCpuCount(): number {
   }
 
   // If the platform does not expose topology, assume two logical threads per
-  // physical core. This is intentionally conservative for media encoders.
+  // physical core. The caller still applies the hard queue cap, so topology
+  // detection cannot expand native media concurrency on an unknown machine.
   cachedPhysicalCpuCount = Math.max(1, Math.ceil(detectLogicalCpuCount() / 2));
   return cachedPhysicalCpuCount;
 }

@@ -30,9 +30,13 @@ export function classifyDroppedSourcePaths(
     if (stat.isFile()) return 'file' as const;
     throw unsupportedDroppedEntry('UNSUPPORTED_FILE_ENTRY');
   });
+  // A single folder keeps the recursive-folder import path. Every other
+  // valid selection (multiple files, multiple folders, or a mixed selection)
+  // is handled by the multi-source path in the Worker. Previously mixed
+  // selections were rejected here, which made native Explorer drags appear
+  // to do nothing even though each selected entry was importable.
   if (kinds.length === 1 && kinds[0] === 'folder') return 'folder';
-  if (kinds.every((kind) => kind === 'file')) return 'files';
-  throw new Error('INVALID_DROP_SELECTION');
+  return 'files';
 }
 
 export interface ClipboardImageLike {

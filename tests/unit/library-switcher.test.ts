@@ -127,6 +127,7 @@ describe("LibrarySwitcher external library action", () => {
     expect(labels).toEqual([
       "新建资源库…",
       "打开资源库…",
+      "关闭资源库",
       "导入资源库",
       "导出资源库",
       "移除资源库",

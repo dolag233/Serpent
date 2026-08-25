@@ -20,6 +20,10 @@ it.skipIf(!process.env.TEST_VIDEO)(
   service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId], limit: 50 });
   await service.processThumbnailQueue(created.libraryId, { maxJobs: 10 });
 
+  // Serpent-140fe2: sheets are generated at analysis time, not proactively.
+  const ensured = await service.ensureVideoContactSheet(created.libraryId, asset.assetId);
+  if (!ensured) throw new Error('ensureVideoContactSheet returned false');
+
   const contactSheet = service.getCurrentArtifact(created.libraryId, asset.assetId, 'contact_sheet');
   if (!contactSheet || contactSheet.status !== 'ready') {
     throw new Error(`contact_sheet not ready: ${JSON.stringify(contactSheet)}`);

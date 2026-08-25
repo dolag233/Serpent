@@ -1,6 +1,7 @@
 import type { BrowseLayoutEntry } from "../shared/asset-types";
 import { formatBytes, formatShortDate } from "./format-file-meta";
 import { splitFilenameForDisplay } from "./filename-display";
+import { shouldShowGridDimensions } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { useLocale, useT, type AppLocale } from "./i18n";
 
@@ -8,12 +9,14 @@ export type LayoutPreviewCaptionFields = {
   name: boolean;
   size: boolean;
   date: boolean;
+  dimensions: boolean;
 };
 
 const DEFAULT_CAPTION_FIELDS: LayoutPreviewCaptionFields = {
   name: true,
   size: true,
   date: true,
+  dimensions: true,
 };
 
 function formatLayoutMeta(
@@ -62,8 +65,13 @@ export function BrowseLayoutPreview({
   const previewSrc = artifactId
     ? `serpent://preview/${libraryId}/${artifactId}`
     : undefined;
-  const showDimensions =
-    viewMode === "grid" && entry.width != null && entry.height != null;
+  const showDimensions = shouldShowGridDimensions(
+    fields,
+    viewMode,
+    entry.width,
+    entry.height,
+    { sourceName: entry.relativeFilePath ?? entry.displayName },
+  );
   const showName = fields.name;
   const showMeta = fields.size || fields.date;
   const displayName = entry.displayName?.trim() || "";
@@ -82,7 +90,7 @@ export function BrowseLayoutPreview({
             alt=""
             className="asset-thumbnail"
             decoding="async"
-            loading="eager"
+            loading="lazy"
             src={previewSrc}
           />
         ) : (

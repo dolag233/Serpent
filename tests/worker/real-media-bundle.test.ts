@@ -184,6 +184,14 @@ describe.runIf(hasRealBundle || requireRealMedia)('installed media bundle real-f
         .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
       expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'extracted_metadata'), queueEvidence)
         .toMatchObject({ status: 'ready', mimeType: 'application/json' });
+      // Contact sheets are intentionally AI-demand driven. Importing a video
+      // must stop after the poster/metadata lanes; explicitly exercise the
+      // durable on-demand path here so this smoke test still covers the real
+      // FFmpeg contact-sheet derivative without reintroducing import-time
+      // decoder pressure.
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'contact_sheet'), queueEvidence)
+        .toBeNull();
+      expect(await service.ensureVideoContactSheet(library.libraryId, asset.assetId)).toBe(true);
       expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'contact_sheet'), queueEvidence)
         .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
     }

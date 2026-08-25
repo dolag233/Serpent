@@ -169,6 +169,7 @@ export const AssetPreviewModal = forwardRef<
   const t = useT();
   const modalRef = useRef<HTMLElement>(null);
   const requestSequence = useRef(0);
+  const initialPreviewAssetRef = useRef<string | null>(null);
   const [resolution, setResolution] = useState<PreviewResolution | null>(null);
   const chromeContrast = useViewerChromeContrast(
     modalRef,
@@ -282,7 +283,15 @@ export const AssetPreviewModal = forwardRef<
               };
             }
             if (previous && samePreviewPlayback(previous, result.value)) {
-              return previous;
+              return {
+                ...previous,
+                ...(result.value.colorSpace
+                  ? { colorSpace: result.value.colorSpace }
+                  : {}),
+                ...(result.value.colorSpacePending === undefined
+                  ? {}
+                  : { colorSpacePending: result.value.colorSpacePending }),
+              };
             }
             return result.value;
           });
@@ -293,16 +302,26 @@ export const AssetPreviewModal = forwardRef<
           });
           directGateIdentityRef.current = gated.identity;
           setDirectApproved(gated.approved);
+          const resolutionError = result.value.errorCode
+            ? previewErrorDetail(result.value.errorCode, t) ??
+              t("preview.failedWithCode", { code: result.value.errorCode })
+            : undefined;
           // Quiet polls must not clear a source-playback error while proxy is
           // still generating; clear once we upgrade to a ready proxy URL.
           if (
+            resolutionError &&
+            !gated.approved &&
+            playbackErrorRef.current === null
+          ) {
+            setError(resolutionError);
+          } else if (
             !preserveError &&
             (!quiet ||
               (result.value.status === "ready" &&
                 result.value.playbackMode === "proxy" &&
                 result.value.url))
           ) {
-              setError(null);
+            setError(null);
           }
         }
         return result;
@@ -350,6 +369,7 @@ export const AssetPreviewModal = forwardRef<
       if (!playbackToken || requestedProxyFallbackRef.current === playbackToken) return;
       requestedProxyFallbackRef.current = playbackToken;
       const isCurrentRun = proxyFallbackRunGuardRef.current.begin();
+      const proxyKind = asset.mediaType === "audio" ? "audio_proxy" : "webm_proxy";
       // REQ-VIEW-002: keep the current source/URL mounted. Proxy generation is a
       // quiet background upgrade — do not wipe into a blocking "generating" gate.
       const detail = `Direct playback unavailable: ${errorCode}`;
@@ -366,7 +386,7 @@ export const AssetPreviewModal = forwardRef<
       const result = await api.retryArtifact({
         libraryId,
         assetId: asset.assetId,
-        kind: "webm_proxy",
+        kind: proxyKind,
       });
       if (!isCurrentRun()) return;
       if (!result.ok) {
@@ -413,6 +433,7 @@ export const AssetPreviewModal = forwardRef<
     [
       api,
       asset.assetId,
+      asset.mediaType,
       libraryId,
       resolution?.playbackToken,
       resolvePreview,
@@ -423,9 +444,18 @@ export const AssetPreviewModal = forwardRef<
   );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void resolvePreview(), 0);
+    const viewerIdentity = `${libraryId}:${asset.assetId}`;
+    const timer = window.setTimeout(() => {
+      // React StrictMode mounts effects twice in development. The first
+      // effect may be cleaned up before its zero-delay timer runs; guard in
+      // the timer (rather than the effect body) so exactly one real request
+      // survives that remount while asset navigation still gets a new one.
+      if (initialPreviewAssetRef.current === viewerIdentity) return;
+      initialPreviewAssetRef.current = viewerIdentity;
+      void resolvePreview();
+    }, 0);
     return () => window.clearTimeout(timer);
-  }, [resolvePreview]);
+  }, [asset.assetId, libraryId, resolvePreview]);
 
   useEffect(
     () =>
@@ -635,6 +665,30 @@ export const AssetPreviewModal = forwardRef<
       mediaError?.message ??
         "HTMLMediaElement emitted an error without MediaError details.",
     );
+    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
+    // commonly appears when a Range fetch is cancelled during scrub.
+    const shouldProxyFallback =
+      resolution?.playbackMode === "source" &&
+      mediaError != null &&
+      (mediaError.code === 3 || mediaError.code === 4);
+    if (shouldProxyFallback) {
+      const message =
+        previewErrorDetail(resolution.errorCode, t) ??
+        (isAudio
+          ? t("preview.audioFailed", { code: errorCode })
+          : t("preview.videoFailed", { code: errorCode }));
+      playbackErrorRef.current = message;
+      // Serpent-e56a1f: 进入代理生成流程后不再显示「视频无法播放」警告——
+      // 由「代理生成中」状态提示替代；无 playbackToken（无法生成代理）时
+      // 保留原始错误供用户看到。
+      if (resolution?.playbackToken) {
+        setError(null);
+      } else {
+        setError(message);
+      }
+      void ensureProxyFallback(errorCode);
+      return;
+    }
     if (isAudio) {
       setError(
         previewErrorDetail(resolution?.errorCode, t) ??
@@ -648,28 +702,6 @@ export const AssetPreviewModal = forwardRef<
           detail,
         })
         .catch(() => undefined);
-      return;
-    }
-    // Proxy only for codec/container failure — not MEDIA_ERR_NETWORK (2), which
-    // commonly appears when a Range fetch is cancelled during scrub.
-    const shouldProxyFallback =
-      resolution?.playbackMode === "source" &&
-      mediaError != null &&
-      (mediaError.code === 3 || mediaError.code === 4);
-    if (shouldProxyFallback) {
-      const message =
-        previewErrorDetail(resolution.errorCode, t) ??
-        t("preview.videoFailed", { code: errorCode });
-      playbackErrorRef.current = message;
-      // Serpent-e56a1f: 进入代理生成流程后不再显示「视频无法播放」警告——
-      // 由「代理生成中」状态提示替代；无 playbackToken（无法生成代理）时
-      // 保留原始错误供用户看到。
-      if (resolution?.playbackToken) {
-        setError(null);
-      } else {
-        setError(message);
-      }
-      void ensureProxyFallback(errorCode);
       return;
     }
     const message = t("preview.videoFailed", { code: errorCode });
@@ -862,10 +894,7 @@ export const AssetPreviewModal = forwardRef<
               onSwipePrevious={onPrevious}
               sequence={asset.sequence}
             />
-          ) : ready && (resolution?.mediaType === "video" || resolution?.kind === "webm_proxy") && resolution.url ? (
-            // Serpent-azf6: animated GIFs play through their WebM proxy — the
-            // viewer must use the <video> surface (Chromium cannot decode
-            // video/webm in <img>), while mediaType stays "image".
+          ) : ready && resolution?.mediaType === "video" && resolution.url ? (
             <VideoPlayerControls
               key={`${asset.assetId}:${resolution.url}:${playbackRetryGeneration}`}
               displayTransform={displayTransform}
@@ -878,6 +907,9 @@ export const AssetPreviewModal = forwardRef<
               onReady={() => {
                 setDirectApproved(true);
                 setProxyFallbackState("idle");
+                if (playbackErrorRef.current === null) {
+                  setError(null);
+                }
                 if (
                   resolution?.mediaType === "video" &&
                   resolution.playbackMode === "proxy"
@@ -956,6 +988,7 @@ export const AssetPreviewModal = forwardRef<
                 isFullscreen={isFullscreen}
                 key={`${libraryId}:${asset.assetId}`}
                 libraryId={libraryId}
+                placeholderUrl={placeholderUrl}
                 sourceUrl={resolution.url}
               />
             ) : (
@@ -965,6 +998,16 @@ export const AssetPreviewModal = forwardRef<
                 sourceUrl={resolution.url}
               />
             )
+          ) : asset.mediaType === "document" && placeholderUrl ? (
+            <PdfViewerSurface
+              api={api}
+              assetId={asset.assetId}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              placeholderUrl={placeholderUrl}
+              sourceUrl={null}
+            />
           ) : ready && resolution?.mediaType === "text" ? (
             <TextViewerControls
               key={`${libraryId}:${asset.assetId}`}

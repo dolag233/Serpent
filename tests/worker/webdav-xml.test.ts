@@ -7,7 +7,7 @@ describe('WebDAV multistatus parsing (Serpent-xffq)', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <D:multistatus xmlns:D="DAV:">
   <D:response>
-    <D:href>/Share/Serpent/小型资源库/</D:href>
+    <D:href>/Share/Serpent/test-library/</D:href>
     <D:propstat>
       <D:prop>
         <D:resourcetype><D:collection xmlns:D="DAV:"/></D:resourcetype>
@@ -30,7 +30,7 @@ describe('WebDAV multistatus parsing (Serpent-xffq)', () => {
 </D:multistatus>`;
     const entries = parseWebDAVMultistatus(xml);
     expect(entries).toHaveLength(2);
-    expect(entries[0]!.href).toBe('/Share/Serpent/小型资源库/');
+    expect(entries[0]!.href).toBe('/Share/Serpent/test-library/');
     expect(entries[0]!.props.isCollection).toBe(true);
     expect(entries[1]!.href).toBe('/Share/Serpent/a.txt');
     expect(entries[1]!.props.isCollection).toBe(false);

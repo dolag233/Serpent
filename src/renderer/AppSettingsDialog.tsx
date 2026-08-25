@@ -3,10 +3,10 @@ import { type ReactNode, useMemo, useState } from "react";
 import { AppSettingsNavigation } from "./AppSettingsNavigation";
 import {
   AiSettingsPage,
+  AssetsSettingsPage,
   AppearanceSettingsPage,
   BrowseSettingsPage,
   GeneralSettingsPage,
-  SafetySettingsPage,
 } from "./AppSettingsPages";
 import { McpSettingsPage } from "./McpSettingsPage";
 import { PluginSettingsPage } from "./PluginSettingsPage";
@@ -20,7 +20,7 @@ import {
   type AppSettingsCategoryId,
 } from "./app-settings-sections";
 import type { AiUiPreferences } from "./ai-ui-preferences";
-import type { CanvasPreferences } from "./canvas-preferences";
+import type { CanvasPreferences, CanvasCaptionAlign } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -35,12 +35,15 @@ export interface AppSettingsDialogProps {
   onActiveCategoryChange: (category: AppSettingsCategoryId) => void;
   canvasPrefs: CanvasPreferences;
   onSetViewMode: (mode: CanvasPreferences["viewMode"]) => void;
+  onSetCaptionAlign: (align: CanvasCaptionAlign) => void;
   onToggleField: (field: keyof CanvasPreferences["fields"]) => void;
   onToggleHoverAudioPlay: () => void;
   onToggleHoverVideoSound: () => void;
   aiUiPrefs: AiUiPreferences;
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
+  autoDetectImageSequences: boolean;
+  onToggleAutoDetectImageSequences: () => void;
   onOpenAppLog?: () => void;
   onOpenExtensionReleases?: () => void;
   pluginApi?: SerpentPluginManagerApi;
@@ -62,12 +65,15 @@ export function AppSettingsDialog({
   onActiveCategoryChange,
   canvasPrefs,
   onSetViewMode,
+  onSetCaptionAlign,
   onToggleField,
   onToggleHoverAudioPlay,
   onToggleHoverVideoSound,
   aiUiPrefs,
   aiConfigPanel,
   onToggleShowAiBadges,
+  autoDetectImageSequences,
+  onToggleAutoDetectImageSequences,
   onOpenAppLog,
   onOpenExtensionReleases,
   pluginApi,
@@ -175,10 +181,17 @@ export function AppSettingsDialog({
                 onOpenExtensionReleases={onOpenExtensionReleases}
               />
             ) : null}
+            {!showingPluginSettings && activeCategory === "assets" ? (
+              <AssetsSettingsPage
+                autoDetectImageSequences={autoDetectImageSequences}
+                onToggleAutoDetectImageSequences={onToggleAutoDetectImageSequences}
+              />
+            ) : null}
             {!showingPluginSettings && activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}
             {!showingPluginSettings && activeCategory === "browse" ? (
               <BrowseSettingsPage
                 canvasPrefs={canvasPrefs}
+                onSetCaptionAlign={onSetCaptionAlign}
                 onSetViewMode={onSetViewMode}
                 onToggleField={onToggleField}
                 onToggleHoverAudioPlay={onToggleHoverAudioPlay}
@@ -201,7 +214,6 @@ export function AppSettingsDialog({
                 refreshKey={pluginSettingsRefreshToken}
               />
             ) : null}
-            {!showingPluginSettings && activeCategory === "safety" ? <SafetySettingsPage /> : null}
             {!showingPluginSettings && activeCategory === "sync" ? (
               <SyncSettingsPage callbacks={syncServerCallbacks} />
             ) : null}

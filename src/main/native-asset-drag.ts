@@ -1,5 +1,6 @@
 export interface NativeDragImage {
   isEmpty(): boolean;
+  getSize(): { width: number; height: number };
   resize(options: { width: number; height: number }): NativeDragImage;
 }
 
@@ -55,9 +56,16 @@ const NATIVE_DRAG_ICON_HEIGHT = 72;
 
 function compactIcon(image: NativeDragImage | undefined): NativeDragImage | null {
   if (!image || image.isEmpty()) return null;
+  const size = image.getSize();
+  const sourceWidth = Number.isFinite(size.width) && size.width > 0 ? size.width : NATIVE_DRAG_ICON_WIDTH;
+  const sourceHeight = Number.isFinite(size.height) && size.height > 0 ? size.height : NATIVE_DRAG_ICON_HEIGHT;
+  const scale = Math.min(
+    NATIVE_DRAG_ICON_WIDTH / sourceWidth,
+    NATIVE_DRAG_ICON_HEIGHT / sourceHeight,
+  );
   const compact = image.resize({
-    width: NATIVE_DRAG_ICON_WIDTH,
-    height: NATIVE_DRAG_ICON_HEIGHT,
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
   });
   return compact.isEmpty() ? null : compact;
 }

@@ -17,7 +17,7 @@ import { MIGRATIONS, TABLE_REBUILD_MIGRATION_VERSIONS } from '../../src/worker/l
  * rebuilding (recreated in v18) — predates the discipline, not a pattern.
  */
 const TABLE_REBUILD_VERSIONS: ReadonlySet<number> = new Set([
-  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33,
+  4, 6, 7, 10, 14, 16, 18, 21, 25, 30, 32, 33, 43,
 ]);
 const HISTORICAL_DROP_EXCEPTIONS: ReadonlySet<number> = new Set([15]);
 

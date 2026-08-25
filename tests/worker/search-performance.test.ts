@@ -38,13 +38,16 @@ interface PerformanceFixture {
 let fixture: PerformanceFixture;
 
 class SearchPerfLibraryService extends LibraryService {
-  override refreshManagedAssets(libraryId: string): AssetRefreshResult {
+  override refreshManagedAssets(libraryId: string, options: { includeAssets: true }): AssetRefreshResult & { assets: ReturnType<LibraryService['listAssets']> };
+  override refreshManagedAssets(libraryId: string, options?: { includeAssets?: boolean }): AssetRefreshResult {
     // Seeded rows intentionally omit on-disk files; skip refresh so availability
     // and search-index fixtures stay deterministic for the performance gate.
     return {
       changedCount: 0,
       missingCount: 0,
-      assets: this.listAssets({ libraryId, recursive: true }),
+      ...(options?.includeAssets
+        ? { assets: this.listAssets({ libraryId, recursive: true }) }
+        : {}),
     };
   }
 }

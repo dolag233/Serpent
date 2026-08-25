@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -184,6 +185,18 @@ function InlineFolderEditRow({
 }) {
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
+
+  const commitOnce = useCallback(() => {
+    if (committingRef.current) return;
+    committingRef.current = true;
+    onCommit();
+    // Keep the guard through the pointerdown → blur sequence. The parent owns
+    // the actual async state transition and will unmount this row when done.
+    window.setTimeout(() => {
+      committingRef.current = false;
+    }, 0);
+  }, [onCommit]);
 
   // Focus with the whole name preselected: typing replaces the current
   // (rename) or default (create) name immediately, Enter accepts it as-is.
@@ -193,6 +206,20 @@ function InlineFolderEditRow({
     input.focus();
     input.select();
   }, []);
+
+  // A blank area is not focusable, so Chromium does not always blur the input
+  // when the user clicks there. Commit on the same outside interaction that
+  // would normally cause blur, keeping Enter/Escape as the explicit keyboard
+  // alternatives.
+  useEffect(() => {
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const input = inputRef.current;
+      if (input && !input.contains(event.target as Node | null)) commitOnce();
+    };
+    document.addEventListener("pointerdown", handleOutsidePointer, true);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsidePointer, true);
+  }, [commitOnce]);
 
   return (
     <div className="nav-tree-row">
@@ -210,14 +237,14 @@ function InlineFolderEditRow({
         maxLength={80}
         onBlur={(event) => {
           if (shouldHoldDismissForIme({ focusEvent: event })) return;
-          onCommit();
+          commitOnce();
         }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
-            onCommit();
+            commitOnce();
           } else if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
@@ -260,20 +287,20 @@ function InlineCollectionEditRow({
   const committingRef = useRef(false);
   const blurCommitTimerRef = useRef<number | null>(null);
 
-  const cancelScheduledBlurCommit = () => {
+  const cancelScheduledBlurCommit = useCallback(() => {
     if (blurCommitTimerRef.current === null) return;
     window.clearTimeout(blurCommitTimerRef.current);
     blurCommitTimerRef.current = null;
-  };
+  }, []);
 
-  const commitOnce = () => {
+  const commitOnce = useCallback(() => {
     cancelScheduledBlurCommit();
     if (committingRef.current) return;
     committingRef.current = true;
     void Promise.resolve(onCommit()).finally(() => {
       committingRef.current = false;
     });
-  };
+  }, [cancelScheduledBlurCommit, onCommit]);
 
   // Context-menu dismissal and row insertion happen in the same interaction
   // for “new subcollection”. Layout focus handles the initial mount before
@@ -299,6 +326,16 @@ function InlineCollectionEditRow({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const input = inputRef.current;
+      if (input && !input.contains(event.target as Node | null)) commitOnce();
+    };
+    document.addEventListener("pointerdown", handleOutsidePointer, true);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsidePointer, true);
+  }, [commitOnce]);
 
   return (
     <div className="nav-tree-row">
@@ -361,6 +398,16 @@ function InlineSmartCollectionEditRow({
 }) {
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
+
+  const commitOnce = useCallback(() => {
+    if (committingRef.current) return;
+    committingRef.current = true;
+    onCommit();
+    window.setTimeout(() => {
+      committingRef.current = false;
+    }, 0);
+  }, [onCommit]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -368,6 +415,16 @@ function InlineSmartCollectionEditRow({
     input.focus();
     input.select();
   }, []);
+
+  useEffect(() => {
+    const handleOutsidePointer = (event: PointerEvent) => {
+      const input = inputRef.current;
+      if (input && !input.contains(event.target as Node | null)) commitOnce();
+    };
+    document.addEventListener("pointerdown", handleOutsidePointer, true);
+    return () =>
+      document.removeEventListener("pointerdown", handleOutsidePointer, true);
+  }, [commitOnce]);
 
   return (
     <div className="nav-tree-row">
@@ -381,14 +438,14 @@ function InlineSmartCollectionEditRow({
         maxLength={80}
         onBlur={(event) => {
           if (shouldHoldDismissForIme({ focusEvent: event })) return;
-          onCommit();
+          commitOnce();
         }}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (isImeKeyboardEvent(event)) return;
           if (event.key === "Enter") {
             event.preventDefault();
-            onCommit();
+            commitOnce();
           } else if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
@@ -814,7 +871,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           setAssetDropTarget(key);
           return;
         }
-        if (supportsManagedAssetDrag(event.dataTransfer)) setAssetDropTarget(key);
+        if (
+          supportsManagedAssetDrag(event.dataTransfer) ||
+          supportsExternalImportTransfer(event.dataTransfer)
+        ) setAssetDropTarget(key);
       },
       onDragLeave: (event: React.DragEvent<HTMLButtonElement>) => {
         // BUG-DND-001: moving onto a row child (icon/label/count) fires
@@ -832,6 +892,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         if (supportsManagedAssetDrag(event.dataTransfer)) {
           applyManagedAssetDragOver(event);
           return;
+        }
+        if (supportsExternalImportTransfer(event.dataTransfer)) {
+          setAssetDropTarget(key);
         }
         onExternalDragOver(event);
       },
@@ -984,6 +1047,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         (folder) => folder.folderId === entry.folderId,
       );
       if (!lf) return null;
+      // Linked directories are physical folders with virtual ids in the
+      // library index.  Keep the same inline rename affordance as managed
+      // folders instead of falling back to a dialog or hiding the action.
+      if (
+        inlineFolderEdit?.kind === "rename" &&
+        inlineFolderEdit.folderId === entry.folderId
+      ) {
+        return (
+          <InlineFolderEditRow
+            depth={entry.depth}
+            key={entry.folderId}
+            onCancel={onInlineFolderEditCancel}
+            onChange={onInlineFolderEditChange}
+            onCommit={onInlineFolderEditCommit}
+            state={inlineFolderEdit}
+          />
+        );
+      }
       const offline = entry.status === "offline";
       const linkedAffordance = linkedFolderNavAffordance(entry.status);
       const hasChildren = foldersWithChildren.has(entry.folderId);
@@ -1062,7 +1143,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           }}
           dropActive={assetDropTarget === `linked:${entry.folderId}`}
           onDragEnter={(event) => {
-            if (supportsManagedAssetDrag(event.dataTransfer))
+            if (
+              supportsManagedAssetDrag(event.dataTransfer) ||
+              supportsExternalImportTransfer(event.dataTransfer)
+            )
               setAssetDropTarget(`linked:${entry.folderId}`);
           }}
           onDragLeave={(event) => {
@@ -1083,6 +1167,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               event.preventDefault();
               event.dataTransfer.dropEffect = "copy";
               onManagedAssetCopyModeChange?.(true);
+              return;
+            }
+            if (supportsExternalImportTransfer(event.dataTransfer)) {
+              event.preventDefault();
+              setAssetDropTarget(`linked:${entry.folderId}`);
             }
           }}
           onDrop={(event) => {
@@ -1099,10 +1188,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 const ids = serialized
                   ? (JSON.parse(serialized) as string[])
                   : fallbackIds!;
-                const root =
-                  linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
-                  lf;
-                void onCopyManagedToLinked(root, ids);
+                // `lf` retains the virtual child relativePath.  Passing the
+                // root summary here silently copied into the linked root and
+                // made child folders appear to accept drops without effect.
+                void onCopyManagedToLinked(lf, ids);
               } catch {
                 // drag data invalid — silently ignore
               }
@@ -1112,11 +1201,22 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             if (files.length > 0 && onResolveManagedAssetDrop) {
               event.preventDefault();
               setAssetDropTarget(null);
-              const root =
-                linkedFolders.find((folder) => folder.folderId === linkedRootId) ??
-                lf;
+              const payload = externalImportPayload(event.dataTransfer);
               void onResolveManagedAssetDrop(files).then((ids) => {
-                if (ids.length > 0) void onCopyManagedToLinked(root, ids);
+                if (ids.length > 0) {
+                  void onCopyManagedToLinked(lf, ids);
+                  return;
+                }
+                // A native file that is not indexed yet must be imported
+                // directly into the selected linked directory.  Falling
+                // through to the resolver alone made Explorer/Finder drops
+                // appear to do nothing because no managed asset id existed.
+                void onImportDroppedFiles(
+                  payload.files,
+                  lf.folderId,
+                  undefined,
+                  payload,
+                );
               });
             }
           }}

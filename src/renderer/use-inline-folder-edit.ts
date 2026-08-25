@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type { RendererLibrarySummary } from "../shared/protocol/responses";
+import { parseLinkedVirtualFolderId } from "../shared/linked-folder-tree";
 import { lookupMessage, useLocale, useT } from "./i18n";
 import { catalogs } from "./i18n/catalogs";
 import { PUBLIC_ERROR_MESSAGES_ZH, toMessage } from "./error-utils";
@@ -38,6 +39,10 @@ export interface UseInlineFolderEditParams {
   library: RendererLibrarySummary | null;
   setNotice: (message: string, historyEntryId?: string) => void;
   reloadCurrentContent: () => Promise<void>;
+  /** Linked roots and virtual child ids use a separate physical-directory API. */
+  isLinkedFolderId?: (folderId: string) => boolean;
+  /** Return true when the caller already navigated to a renamed linked id. */
+  onRenameSuccess?: (newFolderId: string, previousFolderId: string) => Promise<boolean> | boolean;
 }
 
 export interface UseInlineFolderEditResult {
@@ -65,6 +70,8 @@ export function useInlineFolderEdit({
   library,
   setNotice,
   reloadCurrentContent,
+  isLinkedFolderId,
+  onRenameSuccess,
 }: UseInlineFolderEditParams): UseInlineFolderEditResult {
   const t = useT();
   const { locale } = useLocale();
@@ -132,12 +139,38 @@ export function useInlineFolderEdit({
       );
     };
     try {
-      const result =
-        session.kind === "create"
-          ? await api.createFolder({
+      const createParent = session.kind === "create" ? session.parentFolderId : null;
+      const createParentVirtual = createParent ? parseLinkedVirtualFolderId(createParent) : null;
+      const createParentIsLinked = Boolean(
+        createParent &&
+        (createParentVirtual || isLinkedFolderId?.(createParent)),
+      );
+      const renameVirtual = session.kind === "rename"
+        ? parseLinkedVirtualFolderId(session.folderId)
+        : null;
+      const renameIsLinked = Boolean(
+        session.kind === "rename" &&
+        (renameVirtual || isLinkedFolderId?.(session.folderId)),
+      );
+      const result = session.kind === "create"
+        ? createParentIsLinked
+          ? await api.createLinkedFolderDirectory({
+              libraryId: library.libraryId,
+              linkedFolderId: createParentVirtual?.linkedFolderId ?? createParent!,
+              relativePath: createParentVirtual?.relativePath ?? "",
+              name: resolution.name,
+            })
+          : await api.createFolder({
               libraryId: library.libraryId,
               parentFolderId: session.parentFolderId ?? undefined,
               name: resolution.name,
+            })
+        : renameIsLinked
+          ? await api.renameLinkedFolderDirectory({
+              libraryId: library.libraryId,
+              linkedFolderId: renameVirtual?.linkedFolderId ?? session.folderId,
+              relativePath: renameVirtual?.relativePath ?? "",
+              newName: resolution.name,
             })
           : await api.renameFolder({
               libraryId: library.libraryId,
@@ -168,8 +201,12 @@ export function useInlineFolderEdit({
         session.kind === "create"
           ? t("folderEdit.created", { name: result.value.name })
           : t("folderEdit.renamed", { name: result.value.name }),
-        result.value.historyEntryId,
+        "historyEntryId" in result.value ? result.value.historyEntryId : undefined,
       );
+      if (session.kind === "rename") {
+        const handled = await onRenameSuccess?.(result.value.folderId, session.folderId);
+        if (handled) return;
+      }
       // A rename keeps the folderId, so the current selection survives the
       // refresh; a create lands under the already-selected parent. Neither
       // needs a re-select.
@@ -183,6 +220,8 @@ export function useInlineFolderEdit({
     inlineFolderEdit,
     locale,
     reloadCurrentContent,
+    isLinkedFolderId,
+    onRenameSuccess,
     setNotice,
     t,
   ]);

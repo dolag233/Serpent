@@ -12,6 +12,7 @@ import {
 const fixturePath = process.env.SERPENT_LARGE_LIBRARY_PERF_PATH;
 let manifest: LargeLibraryFixtureManifest;
 let service: LibraryService;
+let initialLiveAssetCount = 0;
 
 function benchmark(operation: () => unknown): number {
   operation();
@@ -24,6 +25,75 @@ function benchmark(operation: () => unknown): number {
   return samples[1]!;
 }
 
+function percentile(samples: number[], percentileValue: number): number {
+  if (samples.length === 0) return 0;
+  const ordered = samples.toSorted((left, right) => left - right);
+  const index = Math.min(
+    ordered.length - 1,
+    Math.max(0, Math.ceil(ordered.length * percentileValue) - 1),
+  );
+  return ordered[index]!;
+}
+
+async function measureReconciliationWithViewer(
+  operation: () => Promise<void>,
+  viewerOperations: Array<() => Promise<unknown>>,
+): Promise<{
+  elapsedMs: number;
+  eventLoopLagP95Ms: number;
+  eventLoopLagMaxMs: number;
+  viewerP50Ms: number;
+  viewerP95Ms: number;
+  viewerMaxMs: number;
+  viewerSamples: number;
+}> {
+  const eventLoopLagSamples: number[] = [];
+  const viewerLatencySamples: number[] = [];
+  const pendingViewerRequests = new Set<Promise<void>>();
+  const intervalMs = 5;
+  let previousTick = performance.now();
+  const eventLoopTimer = setInterval(() => {
+    const now = performance.now();
+    eventLoopLagSamples.push(Math.max(0, now - previousTick - intervalMs));
+    previousTick = now;
+  }, intervalMs);
+  let viewerIndex = 0;
+  let stopped = false;
+  const issueViewerRequest = (): void => {
+    if (stopped) return;
+    const request = viewerOperations[viewerIndex % viewerOperations.length]!;
+    viewerIndex += 1;
+    const startedAt = performance.now();
+    const pending = request()
+      .catch(() => undefined)
+      .then(() => {
+        viewerLatencySamples.push(performance.now() - startedAt);
+      });
+    pendingViewerRequests.add(pending);
+    void pending.finally(() => pendingViewerRequests.delete(pending));
+  };
+  issueViewerRequest();
+  const viewerTimer = setInterval(issueViewerRequest, 25);
+  const startedAt = performance.now();
+  try {
+    await operation();
+  } finally {
+    stopped = true;
+    clearInterval(viewerTimer);
+    clearInterval(eventLoopTimer);
+    await Promise.all([...pendingViewerRequests]);
+  }
+  return {
+    elapsedMs: performance.now() - startedAt,
+    eventLoopLagP95Ms: percentile(eventLoopLagSamples, 0.95),
+    eventLoopLagMaxMs: Math.max(...eventLoopLagSamples, 0),
+    viewerP50Ms: percentile(viewerLatencySamples, 0.5),
+    viewerP95Ms: percentile(viewerLatencySamples, 0.95),
+    viewerMaxMs: Math.max(...viewerLatencySamples, 0),
+    viewerSamples: viewerLatencySamples.length,
+  };
+}
+
 describe.skipIf(!fixturePath)('20k asset large-library performance baseline', () => {
   beforeAll(() => {
     const manifestFile = `${fixturePath}/.serpent/large-library-fixture.json`;
@@ -34,6 +104,11 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     // （生成器每次 randomUUID）；以打开后 DB 实际 id 为准。
     const opened = service.openLibrary(manifest.libraryPath);
     manifest = { ...manifest, libraryId: opened.libraryId };
+    initialLiveAssetCount = service.searchAssets({
+      libraryId: opened.libraryId,
+      limit: 1,
+      offset: 0,
+    }).total;
   }, 120_000);
 
   afterAll(() => service?.closeAll());
@@ -101,11 +176,12 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       service.listAssetCollectionMemberships({ libraryId: manifest.libraryId, assetIds: [sampleAssetId] });
     });
     const beforeDelete = service.searchAssets({ libraryId: manifest.libraryId, limit: 50, offset: 0 });
-    expect(beforeDelete.total).toBe(manifest.assetCount);
+    expect(beforeDelete.total).toBe(initialLiveAssetCount);
 
     console.info(JSON.stringify({
       suite: 'large-library-20k',
-      assets: manifest.assetCount,
+      targetAssets: manifest.assetCount,
+      liveAssets: initialLiveAssetCount,
       startupMs: Number(startupMs.toFixed(1)),
       allBrowseMs: Number(allBrowseMs.toFixed(1)),
       folderSwitchMs: Number(folderSwitchMs.toFixed(1)),
@@ -127,4 +203,55 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     if (collectionRecursiveLayoutMs >= 0) expect(collectionRecursiveLayoutMs).toBeLessThan(5_000);
     expect(inspectorMs).toBeLessThan(5_000);
   }, 120_000);
+
+  it('keeps viewer requests responsive during the complete open reconciliation', async () => {
+    const sampleAssets = service.searchAssets({
+      libraryId: manifest.libraryId,
+      limit: 500,
+      offset: 0,
+    }).items;
+    const imageAsset = sampleAssets.find((asset) => asset.mediaType === 'image')
+      ?? sampleAssets[0];
+    const nonImageAsset = sampleAssets.find((asset) => asset.mediaType !== 'image')
+      ?? sampleAssets[0];
+    if (!imageAsset || !nonImageAsset) throw new Error('Large-library fixture contains no sample assets');
+
+    const measured = await measureReconciliationWithViewer(
+      () => service.runOpenBackgroundReconciliation(manifest.libraryId),
+      [
+        () => service.resolvePreviewArtifact(manifest.libraryId, imageAsset.assetId),
+        () => service.resolvePreviewArtifact(manifest.libraryId, nonImageAsset.assetId),
+      ],
+    );
+    const liveAssets = service.searchAssets({
+      libraryId: manifest.libraryId,
+      limit: 1,
+      offset: 0,
+    }).total;
+    const result = {
+      suite: 'large-library-20k-reconciliation-viewer',
+      targetAssets: manifest.assetCount,
+      liveAssets: initialLiveAssetCount,
+      reconciliationMs: Number(measured.elapsedMs.toFixed(1)),
+      eventLoopLagP95Ms: Number(measured.eventLoopLagP95Ms.toFixed(1)),
+      eventLoopLagMaxMs: Number(measured.eventLoopLagMaxMs.toFixed(1)),
+      viewerResolveP50Ms: Number(measured.viewerP50Ms.toFixed(1)),
+      viewerResolveP95Ms: Number(measured.viewerP95Ms.toFixed(1)),
+      viewerResolveMaxMs: Number(measured.viewerMaxMs.toFixed(1)),
+      viewerSamples: measured.viewerSamples,
+      imageAssetId: imageAsset.assetId,
+      nonImageAssetId: nonImageAsset.assetId,
+    };
+    console.info(JSON.stringify(result));
+
+    // These are regression gates for the Worker starvation failure mode, not
+    // claims that a NAS can read a multi-gigabyte source in 500ms. The source
+    // bytes are intentionally not read by this Worker-layer benchmark; the
+    // browser E2E benchmark owns decode/paint timing.
+    expect(liveAssets).toBe(initialLiveAssetCount);
+    expect(measured.viewerSamples).toBeGreaterThanOrEqual(3);
+    expect(measured.eventLoopLagP95Ms).toBeLessThan(25);
+    expect(measured.eventLoopLagMaxMs).toBeLessThan(150);
+    expect(measured.viewerP95Ms).toBeLessThan(250);
+  }, 300_000);
 });

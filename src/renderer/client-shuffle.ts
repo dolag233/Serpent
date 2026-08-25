@@ -17,3 +17,17 @@ export function shuffleArray<T>(items: readonly T[], seed: number): T[] {
   }
   return out;
 }
+
+/**
+ * Apply the browse shuffle consistently to both loaded summaries and the
+ * full-scope geometry index. The latter is what masonry/justified views use
+ * to decide card order, including when discovery filters are active.
+ */
+export function shuffleBrowseItems<T>(
+  items: readonly T[],
+  seed: number | null,
+  enabled = true,
+): T[] {
+  if (!enabled || seed === null) return items.slice();
+  return shuffleArray(items, seed);
+}

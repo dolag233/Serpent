@@ -3,12 +3,19 @@
 // ---------------------------------------------------------------------------
 
 import type { LinkedFolderSummary } from '../../shared/asset-types';
-import { linkedRevealFolderId } from '../../shared/linked-folder-tree';
+import {
+  linkedRevealFolderId,
+  parseLinkedVirtualFolderId,
+} from '../../shared/linked-folder-tree';
 import { translateForLocale } from '../i18n';
 import type { CommandContext, CommandDefinition } from './command-types';
 
 function revealFolderId(ctx: SidebarCommandContext): string {
   if (ctx.locationKind === 'linked') {
+    // Context-menu callers use the virtual id as subjectId for child rows so
+    // mutations target that directory.  Do not encode the child path twice
+    // when an open/copy-path action asks for its resolved folder id.
+    if (parseLinkedVirtualFolderId(ctx.subjectId)) return ctx.subjectId;
     return linkedRevealFolderId(ctx.subjectId, ctx.linkedRelativePath);
   }
   return ctx.subjectId;
@@ -22,15 +29,15 @@ export interface SidebarCommandActions {
   readonly copyFolderPath: (folderId: string) => void;
   /** OS file clipboard copy (clarification #5). */
   readonly copyFolder: (folderId: string) => void;
-  /** Paste OS clipboard files into this managed folder. */
+  /** Paste OS clipboard files into this folder (managed or linked). */
   readonly pasteIntoFolder: (folderId: string) => void;
-  /** Duplicate managed folder as sibling. */
+  /** Duplicate a managed folder as sibling. */
   readonly cloneFolder: (folderId: string) => void;
   /** Open move-target dialog for managed folder(s). */
   readonly moveFolder: (folderIds: string[]) => void;
-  /** Managed folder → app trash (clarification #7). */
+  /** Folder → app/OS trash (clarification #7). */
   readonly trashManagedFolder: (folderId: string, name: string) => void;
-  /** Managed or linked-child folder → irreversible disk delete. */
+  /** Managed or linked folder → irreversible disk delete. */
   readonly deleteFolderFromDisk: (folderId: string, name: string) => void;
   /** Linked root only: remove index; never deletes source files. */
   readonly removeLinkedFolder: (folderId: string, name: string) => void;
@@ -106,7 +113,9 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       mac: { label: '⌘⇧N', key: 'n', metaKey: true, shiftKey: true },
       windows: { label: 'Ctrl+Shift+N', key: 'n', ctrlKey: true, shiftKey: true },
     },
-    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.createSubfolder(ctx.subjectId),
   },
   {
@@ -117,7 +126,9 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       mac: { label: 'F2', key: 'F2' },
       windows: { label: 'F2', key: 'F2' },
     },
-    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.renameFolder(ctx.subjectId, ctx.subjectName),
   },
   {
@@ -163,7 +174,9 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       mac: { label: '⌘V', key: 'v', metaKey: true },
       windows: { label: 'Ctrl+V', key: 'v', ctrlKey: true },
     },
-    visible: (ctx) => ctx.menuKind === 'folder' && ctx.locationKind === 'managed',
+    visible: (ctx) =>
+      ctx.menuKind === 'folder' &&
+      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.pasteIntoFolder(ctx.subjectId),
   },
   {
@@ -200,7 +213,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       }
       if (ctx.locationKind === 'linked') {
         ctx.actions.trashLinkedFolderSubtree(
-          ctx.subjectId,
+          ctx.linkedFolder?.linkedFolderId ?? ctx.subjectId,
           ctx.linkedRelativePath ?? '',
           ctx.subjectName,
         );
@@ -223,8 +236,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
     },
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
-      (ctx.locationKind === 'managed' ||
-        (ctx.locationKind === 'linked' && ctx.isLinkedRoot === false)),
+      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     disabledReason: offlineReason,
     run: (ctx) =>
       ctx.actions.deleteFolderFromDisk(ctx.subjectId, ctx.subjectName),

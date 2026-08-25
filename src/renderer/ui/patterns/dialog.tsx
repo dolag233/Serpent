@@ -172,7 +172,11 @@ export function DialogShell({
       aria-describedby={descriptionId}
       onKeyDown={(event) => {
         if (open && event.key === "Escape" && isTopmost && onRequestClose) {
-          if (isImeKeyboardEvent(event.nativeEvent)) {
+          // Tests and a few host integrations invoke this handler with the
+          // React-like event itself rather than a native event wrapper. Treat
+          // either shape as valid so a missing nativeEvent cannot turn Esc
+          // into an exception and leave the dialog stuck open.
+          if (isImeKeyboardEvent(event.nativeEvent ?? event)) {
             rest.onKeyDown?.(event);
             return;
           }

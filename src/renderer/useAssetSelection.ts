@@ -593,7 +593,7 @@ export function useAssetSelection({
       // Serpent-wgl2: only push to React when the hit set actually changed —
       // most frames move the box without crossing a card boundary, and the
       // previous per-frame setState re-rendered the whole selection grid.
-      const hitsKey = `${hits.assetHitIds.join("")} ${hits.folderHitIds.join("")}`;
+      const hitsKey = `${hits.assetHitIds.join("\u0001")}\u0000${hits.folderHitIds.join("\u0001")}`;
       if (hitsKey === marqueeLastHitsKeyRef.current) return;
       marqueeLastHitsKeyRef.current = hitsKey;
 

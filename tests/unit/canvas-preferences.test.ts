@@ -9,6 +9,7 @@ import {
   loadCanvasPreferences,
   PREF_KEY,
   saveCanvasPreferences,
+  shouldShowGridDimensions,
   type CanvasPreferences,
 } from '../../src/renderer/canvas-preferences';
 
@@ -71,6 +72,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -134,6 +136,7 @@ describe('loadCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 240,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -185,6 +188,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'masonry',
         cardSize: 200,
+        captionAlign: 'left',
         fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
         hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
         hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -233,6 +237,7 @@ describe('loadCanvasPreferences', () => {
         version: 1,
         viewMode: 'grid',
         cardSize: 160,
+        captionAlign: 'left',
         fields: {
           ...DEFAULT_CANVAS_PREFERENCES.fields,
           date: false,
@@ -273,6 +278,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 250,
+      captionAlign: 'left',
       fields: {
         ...DEFAULT_CANVAS_PREFERENCES.fields,
         name: false,
@@ -306,6 +312,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'grid',
       cardSize: 50,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: true,
       hoverVideoSound: false,
@@ -323,6 +330,7 @@ describe('saveCanvasPreferences', () => {
       version: 1,
       viewMode: 'masonry',
       cardSize: 200,
+      captionAlign: 'left',
       fields: {
         ...DEFAULT_CANVAS_PREFERENCES.fields,
         name: false,
@@ -357,6 +365,7 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       name: true,
       size: true,
       date: false,
+      dimensions: true,
       badgeType: true,
       badgeDuration: true,
       badgeSource: true,
@@ -369,10 +378,37 @@ describe('DEFAULT_CANVAS_PREFERENCES', () => {
       version: 1,
       viewMode: 'grid',
       cardSize: 160,
+      captionAlign: 'left',
       fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
       hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
       hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
     });
+  });
+
+  it('defaults captionAlign to left when loading older v1 prefs', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 1,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
+      }),
+    });
+
+    expect(loadCanvasPreferences(storage).captionAlign).toBe('left');
+  });
+
+  it('defaults dimensions to true when loading older v1 prefs without the field', () => {
+    const storage = createStorageStub({
+      [PREF_KEY]: JSON.stringify({
+        version: 1,
+        viewMode: 'grid',
+        cardSize: 160,
+        fields: { name: true, size: true, date: true },
+      }),
+    });
+
+    expect(loadCanvasPreferences(storage).fields.dimensions).toBe(true);
   });
 });
 
@@ -390,5 +426,25 @@ describe('CARD_SIZE_STEP / cardSizeSliderStepCount (legacy Serpent-akz helpers)'
   it('returns 0 for a non-positive step instead of dividing by zero', () => {
     expect(cardSizeSliderStepCount(96, 320, 0)).toBe(0);
     expect(cardSizeSliderStepCount(96, 320, -2)).toBe(0);
+  });
+});
+
+describe('canvas resolution caption visibility', () => {
+  const fields = { dimensions: true } as const;
+
+  it('follows the preference in both canvas layouts for visual media', () => {
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'image' })).toBe(true);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'video' })).toBe(true);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'model' })).toBe(true);
+  });
+
+  it('does not expose document dimensions as a resolution caption', () => {
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'document' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { sourceName: 'guide.pdf' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { sourceName: 'page.html' })).toBe(false);
+  });
+
+  it('honors the dimensions toggle', () => {
+    expect(shouldShowGridDimensions({ dimensions: false }, 'grid', 1920, 1080, { mediaType: 'image' })).toBe(false);
   });
 });

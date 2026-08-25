@@ -237,6 +237,7 @@ export function ContextMenu({
 }) {
   const { close } = useContextMenu();
   const menuId = useId();
+  const menuRef = useRef<HTMLDivElement>(null);
   const [keyboardNavigationActive, setKeyboardNavigationActive] = useState(false);
   const initialFocusPendingRef = useRef(true);
   const pointerFocusFrameRef = useRef<number | null>(null);
@@ -250,42 +251,65 @@ export function ContextMenu({
   });
 
   useLayoutEffect(() => {
-    const menu = document.getElementById(menuId);
-    if (!(menu instanceof HTMLDivElement)) return;
+    const applyPosition = () => {
+      const menu = document.getElementById(menuId);
+      if (!(menu instanceof HTMLDivElement)) return;
 
-    const rect = menu.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const gap = 4; // minimum px from viewport edge
+      const rect = menu.getBoundingClientRect();
+      // The document client box is the renderer's usable viewport. During an
+      // Electron window resize `innerHeight` can briefly describe the outer
+      // BrowserWindow bounds, which would place a tall menu below the page.
+      const vw = document.documentElement.clientWidth || window.innerWidth;
+      const vh = document.documentElement.clientHeight || window.innerHeight;
+      const gap = 4; // minimum px from viewport edge
 
-    let left = position.x;
-    let top = position.y;
+      let left = position.x;
+      let top = position.y;
 
-    // Clamp right edge — if menu overflows right, flip so right edge aligns to cursor
-    if (left + rect.width > vw - gap) {
-      left = position.x - rect.width;
-      // If that still overflows left, pin to left edge
-      if (left < gap) left = gap;
-    }
-    // Ensure not left of viewport
-    if (left < gap) left = gap;
+      // Clamp right edge — if menu overflows right, flip so right edge aligns to cursor
+      if (left + rect.width > vw - gap) {
+        left = position.x - rect.width;
+      }
+      // A context-menu request can originate from a scrolled item whose client
+      // coordinate is already outside the viewport. Flipping alone is not
+      // enough in that case; clamp the final box so every item remains reachable.
+      left = Math.min(Math.max(left, gap), Math.max(gap, vw - rect.width - gap));
 
-    // Clamp bottom edge — if menu overflows bottom, flip above cursor
-    if (top + rect.height > vh - gap) {
-      top = position.y - rect.height;
-      // If that still overflows top, pin to top edge
-      if (top < gap) top = gap;
-    }
-    // Ensure not above viewport
-    if (top < gap) top = gap;
+      // Clamp bottom edge — if menu overflows bottom, flip above cursor
+      if (top + rect.height > vh - gap) {
+        top = position.y - rect.height;
+      }
+      top = Math.min(Math.max(top, gap), Math.max(gap, vh - rect.height - gap));
 
-    // This is a layout effect, so commit both the measured position and
-    // visibility before the browser can paint. The bootstrap box stays hidden
-    // until it is positioned, so a fast pointer cannot target the canvas while
-    // the menu is still at -9999px.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- layout measurement must commit before paint
-    setStyle({ position: "fixed", left, top, visibility: "visible" });
-  }, [menuId, position]);
+      // This is a layout effect, so commit both the measured position and
+      // visibility before the browser can paint. The bootstrap box stays hidden
+      // until it is positioned, so a fast pointer cannot target the canvas while
+      // the menu is still at -9999px.
+      // Keep the final bounds expressed in CSS as well as in the measured
+      // numbers. BrowserWindow/DevTools viewport changes can happen between
+      // the layout effect and the next paint; `min/max` then re-clamp the
+      // already-positioned surface without waiting for a React resize pass.
+      setStyle({
+        position: "fixed",
+        left: `max(${gap}px, min(${left}px, calc(100vw - ${rect.width + gap}px)))`,
+        top: `max(${gap}px, min(${top}px, calc(100vh - ${rect.height + gap}px)))`,
+        visibility: "visible",
+      });
+    };
+
+    applyPosition();
+    // BrowserWindow sizing can settle one frame after the menu is mounted.
+    // Re-measure then as well so a menu opened during that transition cannot
+    // retain coordinates computed against the old viewport height.
+    const raf = requestAnimationFrame(applyPosition);
+    const timer = window.setTimeout(applyPosition, 0);
+    window.addEventListener("resize", applyPosition);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+      window.removeEventListener("resize", applyPosition);
+    };
+  }, [menuId, position.x, position.y]);
 
   // Keep the single focused highlight aligned with the pointer from the
   // first rendered frame; fall back to the first enabled item for keyboard use.
@@ -324,7 +348,7 @@ export function ContextMenu({
       (pointedItem && menu.contains(pointedItem) ? pointedItem : first).focus();
     });
     return () => cancelAnimationFrame(raf);
-  }, [menuId, position]);
+  }, [menuId, position.x, position.y]);
 
   useEffect(
     () => () => {
@@ -338,7 +362,16 @@ export function ContextMenu({
 
   // Arrow-key navigation + Escape within menu
   const handleMenuKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (isImeKeyboardEvent(e.nativeEvent)) return;
+    // On Windows IME layouts Chromium may expose ArrowDown as key=Process
+    // while preserving the physical direction in `code`.  Keep navigation
+    // working in that case; composition protection still applies to all
+    // non-navigation keys.
+    const navigationKey = ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)
+      ? e.key
+      : ["ArrowDown", "ArrowUp", "Home", "End"].includes(e.code)
+        ? e.code
+        : undefined;
+    if (!navigationKey && isImeKeyboardEvent(e.nativeEvent)) return;
     const menu = e.currentTarget;
     initialFocusPendingRef.current = false;
     // A pointer hover may have queued a post-commit focus reassertion. Once
@@ -353,25 +386,25 @@ export function ContextMenu({
       menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).filter((el) => el.getAttribute("aria-disabled") !== "true");
     if (items.length === 0) return;
-    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+    if (navigationKey) {
       setKeyboardNavigationActive(true);
     }
 
     const currentIdx = items.indexOf(document.activeElement as HTMLElement);
 
-    if (e.key === "ArrowDown") {
+    if (navigationKey === "ArrowDown") {
       e.preventDefault();
       const next = currentIdx < 0 ? 0 : (currentIdx + 1) % items.length;
       items[next]?.focus();
-    } else if (e.key === "ArrowUp") {
+    } else if (navigationKey === "ArrowUp") {
       e.preventDefault();
       const prev =
         currentIdx <= 0 ? items.length - 1 : (currentIdx - 1 + items.length) % items.length;
       items[prev]?.focus();
-    } else if (e.key === "Home") {
+    } else if (navigationKey === "Home") {
       e.preventDefault();
       items[0]?.focus();
-    } else if (e.key === "End") {
+    } else if (navigationKey === "End") {
       e.preventDefault();
       items[items.length - 1]?.focus();
     } else if (e.key === "Escape") {
@@ -379,6 +412,49 @@ export function ContextMenu({
       close();
     }
   };
+
+  // Keep a native fallback alongside React's delegated handler.  Electron's
+  // Windows keyboard bridge can deliver an arrow key to the focused menu item
+  // without replaying it through the React root; the native listener preserves
+  // the same focus and visual-modality contract in that case.
+  useEffect(() => {
+    const menu = menuRef.current;
+    if (!menu) return;
+    const handleNativeKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement) || !menu.contains(active)) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
+      ) return;
+      const key = ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+        ? event.key
+        : ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.code)
+          ? event.code
+          : undefined;
+      if (!key) return;
+      const items = Array.from(
+        menu.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      ).filter((item) => item.getAttribute("aria-disabled") !== "true");
+      if (items.length === 0) return;
+      event.preventDefault();
+      setKeyboardNavigationActive(true);
+      const current = items.indexOf(active);
+      if (key === "ArrowDown") {
+        items[current < 0 ? 0 : (current + 1) % items.length]?.focus();
+      } else if (key === "ArrowUp") {
+        items[current <= 0 ? items.length - 1 : (current - 1 + items.length) % items.length]?.focus();
+      } else if (key === "Home") {
+        items[0]?.focus();
+      } else {
+        items[items.length - 1]?.focus();
+      }
+    };
+    menu.addEventListener("keydown", handleNativeKeyDown);
+    return () => menu.removeEventListener("keydown", handleNativeKeyDown);
+  }, []);
 
   const schedulePointerFocus = (clientX: number, clientY: number, fallback: HTMLElement | null) => {
     // Focus synchronously for the event that caused the hover. The animation
@@ -406,6 +482,7 @@ export function ContextMenu({
       aria-label={ariaLabel}
       id={menuId}
       nodes={CONTEXT_MENU_SURFACE_NODES}
+      ref={menuRef}
       renderNode={() => <>{children}</>}
       style={style}
       // Capture navigation before a menu item or nested control can stop the

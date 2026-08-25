@@ -107,6 +107,7 @@ describe('asset metadata and content revisions', () => {
     expect(service.listMediaJobs(library.libraryId).jobs).toEqual([
       expect.objectContaining({
         assetId: importedAsset.assetId,
+        assetName: 'asset.png',
         revisionId: result.revisionId,
         kind: 'generate_thumbnail',
         status: 'queued',

@@ -27,7 +27,9 @@ export type PdfViewerSurfaceProps = {
   api: SerpentLibraryApi;
   libraryId: string;
   assetId: string;
-  sourceUrl: string;
+  sourceUrl: string | null;
+  /** Ready document thumbnail shown while pdf.js loads the real source. */
+  placeholderUrl?: string | null;
   isFullscreen: boolean;
 };
 
@@ -65,6 +67,7 @@ function clampZoom(zoom: number): number {
  */
 export function PdfViewerSurface({
   sourceUrl,
+  placeholderUrl,
   isFullscreen,
 }: PdfViewerSurfaceProps) {
   const t = useT();
@@ -82,6 +85,7 @@ export function PdfViewerSurface({
   const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [zoom, setZoom] = useState(1);
   const [hostClientWidth, setHostClientWidth] = useState(0);
+  const [pdfLoading, setPdfLoading] = useState(Boolean(sourceUrl));
   /**
    * Page-local zoom anchor. Flex gap and padding do not scale with zoom, so
    * later pages cannot use origin-uniform `(scroll + pointer) * ratio`.
@@ -121,23 +125,126 @@ export function PdfViewerSurface({
   // Load the document once per source; rendering reacts to pdfDoc/zoom below.
   // The parent keys the surface by asset, so a source change remounts this
   // component and the state below starts fresh — no synchronous reset needed.
+  //
+  // `serpent://` is intentionally not an http(s) URL. pdf.js therefore falls
+  // back to its XHR network stream and does not issue Range requests for the
+  // custom protocol. Use PDFDataRangeTransport over the existing authenticated
+  // protocol instead: the renderer never receives a filesystem path, and the
+  // PDF parser can request only the byte ranges it needs.
   useEffect(() => {
     let cancelled = false;
     let loadingTask: PDFDocumentLoadingTask | null = null;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setPdfLoading(Boolean(sourceUrl));
+      setError(null);
+      setPdfDoc(null);
+      setPageCount(null);
+      setLoadedPages(0);
+    });
+
+    const parseContentRange = (value: string | null): { length: number } | null => {
+      const match = /^bytes\s+\d+-\d+\/(\d+)$/u.exec(value?.trim() ?? "");
+      if (!match) return null;
+      const length = Number(match[1]);
+      return Number.isSafeInteger(length) && length > 0 ? { length } : null;
+    };
+
     void (async () => {
       try {
+        if (!sourceUrl) {
+          setPdfLoading(false);
+          return;
+        }
         const pdfjs = await import("pdfjs-dist");
+        // StrictMode can clean up an effect before a dynamic import resolves.
+        // Do not start a second network task from that cancelled invocation.
+        if (cancelled) return;
         // Bundle the pdf.js worker locally (vite emits it as a static asset);
         // the CSP (script-src 'self') forbids CDN/blob worker sources.
         pdfjs.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
-        loadingTask = pdfjs.getDocument({ url: sourceUrl });
+
+        let range: InstanceType<typeof pdfjs.PDFDataRangeTransport> | null = null;
+        try {
+          const probe = await fetch(sourceUrl, {
+            headers: { Range: "bytes=0-0" },
+          });
+          const contentRange = parseContentRange(probe.headers.get("Content-Range"));
+          if (probe.status === 206 && contentRange) {
+            const initialData = new Uint8Array(await probe.arrayBuffer());
+            if (!cancelled) {
+              const rangeControllers = new Set<AbortController>();
+              let aborted = false;
+              const transport = new pdfjs.PDFDataRangeTransport(
+                contentRange.length,
+                initialData,
+                false,
+              );
+              const rangeRequests = new Map<string, Promise<void>>();
+              const requestRange = (begin: number, end: number): void => {
+                if (aborted || begin >= end) return;
+                const key = `${begin}:${end}`;
+                const existing = rangeRequests.get(key);
+                if (existing) return;
+                const controller = new AbortController();
+                rangeControllers.add(controller);
+                const request = fetch(sourceUrl, {
+                  headers: { Range: `bytes=${begin}-${end - 1}` },
+                  signal: controller.signal,
+                })
+                  .then(async (response) => {
+                    if (!response.ok) throw new Error(`PDF range request failed (${response.status}).`);
+                    const bytes = new Uint8Array(await response.arrayBuffer());
+                    if (!aborted) transport.onDataRange(begin, bytes);
+                  })
+                  .catch((error: unknown) => {
+                    if (aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+                    setError(t("viewer.pdfLoadFailed"));
+                    void loadingTask?.destroy();
+                  })
+                  .finally(() => {
+                    rangeRequests.delete(key);
+                    rangeControllers.delete(controller);
+                  });
+                rangeRequests.set(key, request);
+              };
+              const rangeTransport = transport as InstanceType<typeof pdfjs.PDFDataRangeTransport> & {
+                requestDataRange(begin: number, end: number): void;
+                abort(): void;
+              };
+              rangeTransport.requestDataRange = requestRange;
+              rangeTransport.abort = () => {
+                aborted = true;
+                for (const controller of rangeControllers) controller.abort();
+                rangeControllers.clear();
+                rangeRequests.clear();
+              };
+              range = rangeTransport;
+            }
+          }
+        } catch {
+          // Fall back to the existing stream when a protocol implementation
+          // or an older exported library does not support byte ranges.
+          range = null;
+        }
+        if (cancelled) return;
+        loadingTask = range
+          ? pdfjs.getDocument({
+              range,
+              rangeChunkSize: 256 * 1024,
+              disableAutoFetch: true,
+              disableStream: true,
+            })
+          : pdfjs.getDocument({ url: sourceUrl });
         const pdf = await loadingTask.promise;
         if (!cancelled) {
           setPageCount(pdf.numPages);
           setPdfDoc(pdf);
+          setPdfLoading(false);
         }
       } catch {
         if (!cancelled) {
+          setPdfLoading(false);
           setError(t("viewer.pdfLoadFailed"));
         }
       }
@@ -302,24 +409,45 @@ export function PdfViewerSurface({
         const firstSize = { width: firstUnscaled.width, height: firstUnscaled.height };
         first.cleanup();
 
-        for (let pageNumber = 1; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
+        // Put the first placeholder in the DOM before doing any long page
+        // column work, then start the first render immediately. This keeps a
+        // real page from waiting behind a document with hundreds of pages.
+        const firstStale = staleNodes[0];
+        const firstPlaceholder = firstStale && firstStale.isConnected
+          ? firstStale
+          : document.createElement("div");
+        if (!firstStale || !firstStale.isConnected) {
+          firstPlaceholder.className = "pdf-viewer-page-placeholder";
+          layoutNode(firstPlaceholder, firstSize);
+          host.append(firstPlaceholder);
+        }
+        pageNodes.push(firstPlaceholder);
+        observer.observe(firstPlaceholder);
+        void renderPage(1);
+
+        for (let pageNumber = 2; pageNumber <= pdfDoc.numPages; pageNumber += 1) {
           if (cancelled) break;
           const stale = staleNodes[pageNumber - 1];
           if (stale && stale.isConnected) {
             pageNodes.push(stale);
             observer.observe(stale);
-            continue;
+          } else {
+            const placeholder = document.createElement("div");
+            placeholder.className = "pdf-viewer-page-placeholder";
+            layoutNode(placeholder, firstSize);
+            host.append(placeholder);
+            pageNodes.push(placeholder);
+            observer.observe(placeholder);
           }
-          const placeholder = document.createElement("div");
-          placeholder.className = "pdf-viewer-page-placeholder";
-          layoutNode(placeholder, firstSize);
-          host.append(placeholder);
-          pageNodes.push(placeholder);
-          observer.observe(placeholder);
+          // A large PDF can have thousands of pages. Let layout, input and
+          // the pdf.js worker run between small placeholder batches.
+          if (pageNumber % 32 === 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            if (cancelled) break;
+          }
         }
 
-        void renderPage(priorityPage);
-        if (priorityPage !== 1) void renderPage(1);
+        if (priorityPage !== 1) void renderPage(priorityPage);
 
       } catch {
         if (!cancelled) {
@@ -414,7 +542,16 @@ export function PdfViewerSurface({
   }, [zoom]);
 
   return (
-    <div className="pdf-viewer" data-fullscreen={isFullscreen ? "true" : undefined}>
+    <div
+      className="pdf-viewer"
+      data-fullscreen={isFullscreen ? "true" : undefined}
+      data-loading={pdfLoading ? "true" : undefined}
+    >
+      {placeholderUrl && loadedPages === 0 ? (
+        <div className="pdf-viewer-placeholder" aria-hidden="true">
+          <img alt="" src={placeholderUrl} />
+        </div>
+      ) : null}
       {pageCount !== null ? (
         <div className="pdf-viewer-toolbar">
           <button

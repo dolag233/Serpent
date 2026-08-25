@@ -46,6 +46,16 @@ const assetFileBaseNameSchema = nonBlankString.max(255)
   .refine((value) => value.trim() !== '.' && value.trim() !== '..', {
     message: "File base name must not be '.' or '..'.",
   });
+const assetRenameFileFieldsSchema = z.object({
+  newBaseName: assetFileBaseNameSchema.optional(),
+  newFileName: assetFileBaseNameSchema.optional(),
+}).refine(
+  (value) => value.newBaseName !== undefined || value.newFileName !== undefined,
+  { message: 'A new file name is required.' },
+).refine(
+  (value) => !(value.newBaseName !== undefined && value.newFileName !== undefined),
+  { message: 'Choose either a base name or a complete file name.' },
+);
 const selectedPathSchema = nonBlankString;
 const optionalIdentifierSchema = identifierSchema.optional();
 const optionalClearableDescriptionSchema = z.string().max(10000).optional();
@@ -318,6 +328,20 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('linked-folder.create-directory.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rename-directory.request'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    newName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.list.request'),
     libraryId: identifierSchema,
     folderId: optionalIdentifierSchema,
@@ -353,11 +377,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.import-files.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-folder.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-eagle.request'),
@@ -386,6 +412,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
         applyToRest: z.boolean().optional(),
       })
       .optional(),
+    autoDetectImageSequences: z.boolean().optional(),
   }),
   // Created by preload after resolving native File handles. Paths never
   // originate from Renderer code; Main/Worker map them back to asset ids.
@@ -493,6 +520,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.assets.copy.request'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema.optional(),
     assetIds: z.array(identifierSchema).min(1).max(1_000).refine((ids) => new Set(ids).size === ids.length),
     conflictStrategy: nameConflictDecisionSchema,
   }),
@@ -757,13 +785,25 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     operationId: identifierSchema,
     conflictStrategy: z.enum(['error', 'keep-both', 'replace', 'skip']).optional(),
   }),
-  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id and
-  // extension-less base name only; no filesystem path may cross this boundary.
+  // REQ-MENU-002 / REQ-COMMAND-003: rename one asset's real file by id. The
+  // desktop editor may send a complete file name so an explicit extension
+  // change can be confirmed in the UI; no filesystem path crosses this boundary.
   z.strictObject({
     type: z.literal('asset.rename-file.request'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    newBaseName: assetFileBaseNameSchema,
+    ...assetRenameFileFieldsSchema.shape,
+  }).superRefine((value, context) => {
+    const result = assetRenameFileFieldsSchema.safeParse(value);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({
+          code: 'custom',
+          path: issue.path,
+          message: issue.message,
+        });
+      }
+    }
   }),
   z.strictObject({
     type: z.literal('asset.text.read.request'),
@@ -1377,6 +1417,20 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     deleteFromDisk: z.boolean(),
   }),
   z.strictObject({
+    type: z.literal('linked-folder.create-directory'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    name: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('linked-folder.rename-directory'),
+    libraryId: identifierSchema,
+    linkedFolderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema,
+    newName: displayNameSchema,
+  }),
+  z.strictObject({
     type: z.literal('asset.list'),
     libraryId: identifierSchema,
     folderId: folderScopeIdSchema.optional(),
@@ -1505,6 +1559,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('linked-folder.assets.copy'),
     libraryId: identifierSchema,
     folderId: identifierSchema,
+    relativePath: linkedSubtreeRelativePathSchema.optional(),
     assetIds: z.array(identifierSchema).min(1).max(1_000),
     conflictStrategy: nameConflictDecisionSchema,
   }),
@@ -1832,8 +1887,19 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.rename-file'),
     libraryId: identifierSchema,
     assetId: identifierSchema,
-    newBaseName: assetFileBaseNameSchema,
+    ...assetRenameFileFieldsSchema.shape,
     automationPlan: automationFilePlanProofSchema.optional(),
+  }).superRefine((value, context) => {
+    const result = assetRenameFileFieldsSchema.safeParse(value);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        context.addIssue({
+          code: 'custom',
+          path: issue.path,
+          message: issue.message,
+        });
+      }
+    }
   }),
   z.strictObject({
     type: z.literal('asset.rename-files'),
@@ -2421,6 +2487,8 @@ export type NameConflictDecision = z.infer<typeof nameConflictDecisionSchema>;
 export const workerRequestSchema = z.strictObject({
   requestId: identifierSchema,
   command: workerCommandSchema,
+  /** Main-side wall-clock send time used only for cross-process diagnostics. */
+  sentAt: z.number().int().nonnegative().optional(),
   /** Origin metadata is non-secret and only affects the history projection. */
   historyContext: z.strictObject({
     source: z.enum(['desktop', 'script', 'mcp', 'plugin']),

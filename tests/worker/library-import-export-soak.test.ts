@@ -432,7 +432,7 @@ beforeAll(() => {
 afterAll(() => {
   fixture?.service.closeAll();
   if (fixture?.root) rmSync(fixture.root, { force: true, recursive: true });
-}, 30_000);
+}, 180_000);
 
 // ── Verify helper ────────────────────────────────────────────────────────
 

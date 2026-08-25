@@ -161,6 +161,36 @@ describe("image sequence persistence", () => {
     ).toHaveLength(3);
   });
 
+  it("imports a mixed multi-file and multi-folder selection", () => {
+    const { library, root, service } = fixture();
+    const selectedFolder = path.join(root, "selected-folder");
+    const otherFolder = path.join(root, "other-folder");
+    writeFrames(selectedFolder, ["inside.png"]);
+    writeFrames(otherFolder, ["other.png"]);
+    writeFileSync(path.join(selectedFolder, "inside.png"), "inside-bytes");
+    writeFileSync(path.join(otherFolder, "other.png"), "other-bytes");
+    const standalone = path.join(root, "standalone.txt");
+    writeFileSync(standalone, "standalone");
+
+    const completion = service.prepareOrExecuteImport({
+      createImageSequence: false,
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: [selectedFolder, otherFolder, standalone],
+    });
+
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    expect(completion.importedCount).toBe(3);
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(assets.map((asset) => asset.displayName)).toEqual(
+      expect.arrayContaining(["inside.png", "other.png", "standalone.txt"]),
+    );
+  });
+
   it("expands a single selected frame to its continuous sibling run", () => {
     const { library, root, service } = fixture();
     const frames = writeFrames(path.join(root, "source"), [

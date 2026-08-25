@@ -35,6 +35,7 @@ import type {
   FilterClause,
   FolderBrowseEntry,
   IgnoredPath,
+  LinkedFolderDirectoryMutation,
   LinkedFolderRule,
   LinkedFolderSummary,
   ManagedFolderSummary,
@@ -145,6 +146,8 @@ export interface PreviewResolution {
   exrPlanes?: Array<{ index: number; label: string }>;
   selectedExrPlane?: number;
   colorSpace?: PreviewColorSpace;
+  /** The first source response used an inferred color; a later poll may replace it with embedded metadata. */
+  colorSpacePending?: boolean;
 }
 
 export interface PreviewColorSpace {
@@ -230,6 +233,20 @@ export interface SerpentLibraryApi {
     folderId: string;
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
+  /** Create a physical directory inside a linked-folder root or virtual child. */
+  createLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    name: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>>;
+  /** Rename a physical linked-folder root or virtual child directory. */
+  renameLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    newName: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>>;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
   copyFolder(input: {
     libraryId: string;
@@ -346,10 +363,12 @@ export interface SerpentLibraryApi {
   importFiles(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>>;
   importEagleLibrary(input: {
     libraryId: string;
@@ -364,6 +383,7 @@ export interface SerpentLibraryApi {
     files: File[];
     html?: string;
     uriList?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>>;
   /** Resolve native dropped File handles to managed asset ids without exposing paths. */
   resolveManagedAssetDrop(input: {
@@ -413,7 +433,7 @@ export interface SerpentLibraryApi {
   getGitignore(input: { libraryId: string }): Promise<LibraryApiResult<{ content: string }>>;
   setGitignore(input: { libraryId: string; content: string }): Promise<LibraryApiResult<{ content: string }>>;
   setIgnore(input: { libraryId: string; locationKind: 'managed' | 'linked'; linkedFolderId?: string | null; relativePath: string; pathKind: 'asset' | 'folder' | 'extension'; ignored: boolean }): Promise<LibraryApiResult<{ ignored: boolean; path: IgnoredPath }>>;
-  copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
+  copyAssetsToLinkedFolder(input: { libraryId: string; folderId: string; relativePath?: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   convertLinkedFolderToManaged(input: { libraryId: string; folderId: string; targetFolderId?: string }): Promise<LibraryApiResult<{ managedFolderId: string; convertedCount: number; assets: AssetSummary[] }>>;
   onLifecycle(listener: (event: RendererLifecycleEvent) => void): () => void;
   onAssetsChanged(listener: (event: AssetChangeEvent) => void): () => void;
@@ -466,7 +486,7 @@ export interface SerpentLibraryApi {
   undoMoveAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
   copyAssets(input: { libraryId: string; assetIds: string[]; targetFolderId: string | null; conflictStrategy?: 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ copiedCount: number; skippedCount: number; operationId: string | null; assets: AssetSummary[]; historyEntryId?: string }>>;
   undoCopyAssets(input: { libraryId: string; operationId: string; conflictStrategy?: 'error' | 'keep-both' | 'replace' | 'skip' }): Promise<LibraryApiResult<{ undoneCount: number; skippedCount: number; assets: AssetSummary[] }>>;
-  renameAssetFile(input: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>>;
+  renameAssetFile(input: { libraryId: string; assetId: string; newBaseName?: string; newFileName?: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>>;
   readTextAsset(input: { libraryId: string; assetId: string; maxBytes?: number }): Promise<LibraryApiResult<{
     assetId: string;
     revisionId: string;
@@ -666,7 +686,7 @@ export interface SerpentLibraryApi {
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   listPluginJobs(input: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>>;
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void): () => void;
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready' | 'asset.derived.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number; kind?: 'extract_metadata' | 'extract_palette' | 'generate_contact_sheet' | 'generate_webm_proxy' | 'generate_audio_proxy' }) => void): () => void;
   // AI extended
   testAiConnection(input: {
     apiFormat: AiApiFormat;

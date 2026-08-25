@@ -262,6 +262,15 @@ export class PluginProviderScheduler {
     });
     if (input.signal?.aborted) return fallback('PLUGIN_PROVIDER_CANCELLED');
 
+    // Do not enumerate the whole library just to discover that no provider
+    // can handle this kind of media. Viewer opens hit this path for every
+    // native asset, and an eager recursive asset.list turns a small preview
+    // request into an O(library size) operation.
+    const registrations = this.options.coordinator
+      .listActiveProviders(input.libraryId)
+      .filter((candidate) => candidate.kind === input.kind);
+    if (registrations.length === 0) return fallback();
+
     let asset = input.asset;
     if (asset === undefined) {
       const listed = await this.options.requestWorker({
@@ -275,10 +284,10 @@ export class PluginProviderScheduler {
       }
     }
     const extension = extensionOf(asset.displayName);
-    const registration = this.options.coordinator
-      .listActiveProviders(input.libraryId)
-      .filter((candidate) => candidate.kind === input.kind
-        && candidate.extensions?.some((declared) => declared.replace(/^\./u, '').toLowerCase() === extension))
+    const registration = registrations
+      .filter((candidate) => candidate.extensions?.some(
+        (declared) => declared.replace(/^\./u, '').toLowerCase() === extension,
+      ))
       .sort((left, right) => `${left.pluginId}.${left.providerId}`.localeCompare(`${right.pluginId}.${right.providerId}`))[0];
     if (registration === undefined) return fallback();
 

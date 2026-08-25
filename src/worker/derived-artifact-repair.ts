@@ -56,7 +56,9 @@ export interface RetryFailedOptions {
 // evidence only that some previous path asked for it; it does not prove that
 // the source failed direct playback. The viewer owns the explicit retry after
 // a real media-element error (Serpent-cljb).
-const DERIVED_KINDS = "'thumbnail', 'video_poster', 'contact_sheet', 'audio_proxy'";
+// Serpent-140fe2: contact_sheet is excluded — failed sheets stay terminal and
+// regenerate lazily at AI-analysis time (ensureVideoContactSheet).
+const DERIVED_KINDS = "'thumbnail', 'video_poster', 'audio_proxy'";
 
 /**
  * Invalidate retryable failed derived artifacts so the next thumbnail-queue

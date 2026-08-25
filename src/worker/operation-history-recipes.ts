@@ -101,6 +101,12 @@ const renameItemSchema = z.strictObject({
   newBaseName: z.string().min(1).max(255),
 });
 
+const completeRenameSchema = z.strictObject({
+  assetId: identifierSchema,
+  expectedFileName: z.string().min(1).max(255).optional(),
+  newFileName: z.string().min(1).max(255),
+});
+
 const recipePayloadSchemas: ReadonlyMap<string, z.ZodType> = new Map<string, z.ZodType>([
   ['history-barrier', z.strictObject({ reason: z.string().min(1).max(255) })],
   ['managed-asset-move', z.strictObject({
@@ -132,6 +138,7 @@ const recipePayloadSchemas: ReadonlyMap<string, z.ZodType> = new Map<string, z.Z
       expectedBaseName: z.string().min(1).max(255).optional(),
       newBaseName: z.string().min(1).max(255),
     }),
+    completeRenameSchema,
     z.strictObject({ items: z.array(renameItemSchema).min(1) }),
   ])],
   ['asset-metadata-snapshot', z.strictObject({

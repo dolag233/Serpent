@@ -45,43 +45,36 @@ test("identifies the PBR channel matrix with read-only display modes", async () 
       channel: "base-color",
       fileName: "character_basecolor.png",
       filter: "none",
-      label: "基础色",
     },
     {
       channel: "normal",
       fileName: "character_normal.png",
       filter: "none",
-      label: "法线",
     },
     {
       channel: "roughness",
       fileName: "character_roughness.png",
       filter: "grayscale(1)",
-      label: "粗糙度",
     },
     {
       channel: "smoothness",
       fileName: "character_smoothness.png",
       filter: "grayscale(1) invert(1)",
-      label: "光滑度",
     },
     {
       channel: "metallic",
       fileName: "character_metallic.png",
       filter: "grayscale(1)",
-      label: "金属度",
     },
     {
       channel: "height",
       fileName: "character_displacement.png",
       filter: "grayscale(1)",
-      label: "高度/置换",
     },
     {
       channel: "metallic-roughness",
       fileName: "character_metallicRoughness.png",
       filter: "none",
-      label: "金属度 + 粗糙度",
     },
   ] as const;
   const sourcePaths = fixtures.map(({ fileName }) =>
@@ -160,7 +153,7 @@ test("identifies the PBR channel matrix with read-only display modes", async () 
         .toBe(fixture.filter);
       await expect(
         preview.locator(".preview-pbr-channel-notice"),
-      ).toContainText(fixture.label);
+      ).toHaveCount(0);
       await window.keyboard.press("Escape");
       await expect(preview).toBeHidden();
     }

@@ -315,7 +315,11 @@ async function seedDatabase(
   database.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE');
   try {
     for (const item of planned) {
-      const assetId = `large-asset-${pad(item.index)}`;
+      // Real UUIDs: restore/trash operation manifests validate asset ids with
+      // the production UUID pattern on open (recoverFileOperations), so a
+      // fixture id like `large-asset-00042` would make the whole library
+      // fail to open after any trash/restore benchmark run.
+      const assetId = randomUUID();
       const revisionId = `large-revision-${pad(item.index)}`;
       const pathIdentity = item.relativePath.toLocaleLowerCase('en-US');
       const description = item.index % 29 === 0

@@ -186,7 +186,9 @@ describe('library availability baseline', () => {
     service.closeAll();
 
     const db = new Database(databaseFile(created.libraryPath));
-    db.prepare('DELETE FROM schema_migrations WHERE version = 39').run();
+    // Roll back to the v38 divergence point; v39+ are additive migrations
+    // appended after it (Serpent-4bdd26) and must not survive the rewind.
+    db.prepare('DELETE FROM schema_migrations WHERE version >= 39').run();
     db.pragma('user_version = 38');
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 37').run(syncChecksum);
     db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 38').run(autoChecksum);

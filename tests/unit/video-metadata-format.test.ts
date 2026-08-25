@@ -16,6 +16,22 @@ import {
 import { parseRendererRequest, parseWorkerRequest } from "../../src/shared/protocol/requests";
 import { parseRendererResult, parseWorkerResponse } from "../../src/shared/protocol/responses";
 
+const EMPTY_RAW_IMAGE_METADATA = {
+  captureDate: null,
+  author: null,
+  cameraMake: null,
+  cameraModel: null,
+  lensModel: null,
+  iso: null,
+  fNumber: null,
+  exposureTime: null,
+  exposureCompensation: null,
+  exposureProgram: null,
+  meteringMode: null,
+  flash: null,
+  focalLength: null,
+};
+
 describe("video-metadata-format", () => {
   it("parses ffprobe ratio and plain fps", () => {
     expect(parseFrameRateFps("30000/1001")).toBeCloseTo(29.97, 2);
@@ -45,6 +61,7 @@ describe("video-metadata-format", () => {
 
   it("builds the compact technical line", () => {
     const line = formatVideoTechnicalLine({
+      ...EMPTY_RAW_IMAGE_METADATA,
       container: "mov,mp4,m4a,3gp,3g2,mj2",
       durationMs: 30_050,
       width: 1920,
@@ -65,6 +82,7 @@ describe("video-metadata-format", () => {
 
   it("falls back to container bitrate and omits silent audio", () => {
     expect(formatVideoTechnicalLine({
+      ...EMPTY_RAW_IMAGE_METADATA,
       container: null,
       framerate: "24/1",
       videoCodec: "vp9",
@@ -81,6 +99,7 @@ describe("video-metadata-format", () => {
 
   it("returns null when no technical fields are present", () => {
     expect(formatVideoTechnicalLine({
+      ...EMPTY_RAW_IMAGE_METADATA,
       container: null,
       framerate: null,
       videoCodec: null,
@@ -96,6 +115,7 @@ describe("video-metadata-format", () => {
 
   it("builds the compact audio technical line (Serpent-i07)", () => {
     expect(formatAudioTechnicalLine({
+      ...EMPTY_RAW_IMAGE_METADATA,
       container: "mp3",
       hasAudio: true,
       audioCodec: "mp3",
@@ -112,6 +132,7 @@ describe("video-metadata-format", () => {
 
   it("falls back to container bitrate for audio when stream bitrate is missing", () => {
     expect(formatAudioTechnicalLine({
+      ...EMPTY_RAW_IMAGE_METADATA,
       container: "mp3",
       hasAudio: true,
       audioCodec: "mp3",

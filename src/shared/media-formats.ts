@@ -17,7 +17,7 @@ export const OIIO_IMAGE_EXTENSIONS = [
 
 /** Camera RAW formats decoded by OIIO's LibRaw plugin. */
 export const RAW_IMAGE_EXTENSIONS = [
-  '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2',
+  '.raw', '.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2',
 ] as const;
 
 export const IMAGE_EXTENSIONS = [
@@ -39,9 +39,15 @@ export const MODEL_EXTENSIONS = [
   '.fbx', '.obj', '.gltf', '.glb', '.stl',
 ] as const;
 
+/** Document formats with a native preview/viewer path. */
+export const DOCUMENT_EXTENSIONS = [
+  '.pdf', '.html', '.htm',
+] as const;
+
 export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
+const rawImageExtensions = new Set<string>(RAW_IMAGE_EXTENSIONS);
 const oiioExtensions = new Set<string>([
   ...OIIO_IMAGE_EXTENSIONS,
   ...RAW_IMAGE_EXTENSIONS,
@@ -49,11 +55,16 @@ const oiioExtensions = new Set<string>([
 const imageExtensions = new Set<string>(IMAGE_EXTENSIONS);
 const videoExtensions = new Set<string>(VIDEO_EXTENSIONS);
 const modelExtensions = new Set<string>(MODEL_EXTENSIONS);
+const documentExtensions = new Set<string>(DOCUMENT_EXTENSIONS);
 
 function normalizedExtension(extensionOrFilename: string): string {
   const lower = extensionOrFilename.toLowerCase();
   const lastDot = lower.lastIndexOf('.');
   return lastDot >= 0 ? lower.slice(lastDot) : lower;
+}
+
+export function isRawImageExtension(extensionOrFilename: string): boolean {
+  return rawImageExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
 export function isSupportedImageExtension(extensionOrFilename: string): boolean {
@@ -68,6 +79,10 @@ export function isSupportedModelExtension(extensionOrFilename: string): boolean 
   return modelExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
+export function isSupportedDocumentExtension(extensionOrFilename: string): boolean {
+  return documentExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
 export function imageDecoderForExtension(
   extensionOrFilename: string,
 ): ImageDecoder | null {
@@ -75,6 +90,23 @@ export function imageDecoderForExtension(
   if (sharpExtensions.has(extension)) return 'sharp';
   if (oiioExtensions.has(extension)) return 'oiio';
   return null;
+}
+
+/**
+ * Non-native image viewers need a decoded derivative because Chromium cannot
+ * render the source container itself.  Keep this separate from the thumbnail
+ * decoder: TIFF can still use Sharp for ordinary cards, but large/metadata-
+ * heavy TIFFs are deliberately routed through OIIO for both safety and the
+ * full-resolution viewer path. TIFF is intentionally routed through OIIO for
+ * both card and viewer decoding; other formats retain their existing card
+ * decoder while the viewer selects the appropriate full-resolution path.
+ */
+export function imageViewerDecoderForExtension(
+  extensionOrFilename: string,
+): ImageDecoder | null {
+  const extension = normalizedExtension(extensionOrFilename);
+  if (extension === '.tif' || extension === '.tiff') return 'oiio';
+  return imageDecoderForExtension(extension);
 }
 
 /** Native source rendering is an optimization, never the format-support path. */
@@ -110,6 +142,7 @@ export function imageMimeForExtension(extensionOrFilename: string): string | nul
     case '.exr': return 'image/x-exr';
     case '.tga': return 'image/x-tga';
     case '.dng': return 'image/x-adobe-dng';
+    case '.raw': return 'image/x-camera-raw';
     case '.cr2': return 'image/x-canon-cr2';
     case '.cr3': return 'image/x-canon-cr3';
     case '.nef': return 'image/x-nikon-nef';

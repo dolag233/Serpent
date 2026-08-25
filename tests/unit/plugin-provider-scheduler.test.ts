@@ -4,6 +4,32 @@ import { PluginProviderScheduler } from '../../src/main/plugin-provider-schedule
 import type { PluginProviderRegistration } from '../../src/plugins/plugin-providers';
 
 describe('PluginProviderScheduler', () => {
+  it('does not enumerate the library when no media provider is active', async () => {
+    const listActiveProviders = vi.fn(() => []);
+    const requestWorker = vi.fn(async () => ({
+      ok: true,
+      type: 'asset.list',
+      assets: [],
+    }));
+    const scheduler = new PluginProviderScheduler({
+      coordinator: { listActiveProviders } as never,
+      supervisor: {} as never,
+      requestWorker: requestWorker as never,
+    });
+
+    await expect(scheduler.resolveMediaProvider({
+      libraryId: 'library-1',
+      assetId: 'asset-image',
+      kind: 'preview',
+    })).resolves.toEqual({
+      status: 'native-fallback',
+      assetId: 'asset-image',
+      kind: 'preview',
+    });
+    expect(listActiveProviders).toHaveBeenCalledTimes(1);
+    expect(requestWorker).not.toHaveBeenCalled();
+  });
+
   it('invokes a derived provider in bounded batches and materializes results', async () => {
     const registration: PluginProviderRegistration = {
       pluginInstanceId: '11111111-1111-4111-8111-111111111111',

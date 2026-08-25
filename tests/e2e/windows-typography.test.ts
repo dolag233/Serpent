@@ -79,7 +79,7 @@ async function readTypography(window: Page) {
       metadataCount: computed(".metadata-list dd.mono"),
       navHeading: computed(".nav-section-heading"),
       navCount: computed(".nav-count"),
-      menuSection: computed(".library-switcher-section-label"),
+      menuSection: computed(".library-switcher-section-label, .library-switcher-item"),
     };
   });
 }
@@ -127,7 +127,7 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
       name: `当前资源库 ${libraryName}`,
     });
     await libraryTrigger.click();
-    await expect(window.locator(".library-switcher-section-label").first()).toBeVisible();
+    await expect(window.locator(".library-switcher-menu .library-switcher-item").first()).toBeVisible();
 
     const typography = await readTypography(window);
 
@@ -222,7 +222,7 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
       ".inspector-badge",
       ".inspector-identity-name",
       ".nav-section-heading",
-      ".library-switcher-section-label",
+      ".library-switcher-menu .library-switcher-item",
     ]) {
       const { nodeId } = await cdp.send("DOM.querySelector", {
         nodeId: root.nodeId,
@@ -282,7 +282,7 @@ test("uses coherent Windows UI fonts and readable caption sizes", async (
     await window
       .getByRole("button", { name: `当前资源库 ${libraryName}` })
       .click();
-    await expect(window.locator(".library-switcher-section-label").first()).toBeVisible();
+    await expect(window.locator(".library-switcher-menu .library-switcher-item").first()).toBeVisible();
 
     const lightTypography = await readTypography(window);
     expect(lightTypography.theme).toBe("light");

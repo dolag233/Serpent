@@ -19,21 +19,25 @@ import {
  * input and wires the context-menu / shortcut entry. The worker owns the real
  * rename (extension preserved, disk + DB kept in sync); this hook owns session
  * state, client-side name validation, typed error mapping, and the
- * refresh/reselect convention after a successful rename.
+ * refresh/reselect convention after a successful rename. The complete file
+ * name is editable so users can intentionally change the extension after a
+ * confirmation warning.
  *
  * Commit semantics match folder inline rename (Enter and blur share them):
  * - Blank value cancels (nothing meaningful to submit).
- * - Basename unchanged from session open cancels: no IPC, no success toast.
+ * - File name unchanged from session open cancels: no IPC, no success toast.
  * - Anything else submits; typed worker failures stay open with an inline error.
  */
 
 export interface AssetRenameDialogState {
   assetId: string;
-  /** Preserved extension including the leading dot ("" when the file has none). */
+  /** Original extension, used to detect a potentially unsafe type change. */
   extension: string;
-  /** Basename when the session opened; re-committing it is a no-op cancel. */
+  /** Complete filename when the session opened; re-committing it is a no-op. */
+  originalFileName: string;
+  /** Basename retained for compatibility with existing state consumers. */
   originalBaseName: string;
-  /** Current editable base name (extension excluded). */
+  /** Current editable complete filename, including the extension. */
   value: string;
   /** Inline typed failure shown inside the open dialog. */
   error: string | null;
@@ -42,7 +46,7 @@ export interface AssetRenameDialogState {
 }
 
 export type AssetRenameCommitResolution =
-  | { action: "submit"; newBaseName: string }
+  | { action: "submit"; newFileName: string }
   | { action: "cancel" }
   | { action: "keep-editing" };
 
@@ -107,7 +111,7 @@ export function assetFileBaseNameError(
 }
 
 /**
- * Splits a display file name into editable base name and preserved extension
+ * Splits a display file name into base name and extension
  * the same way the worker does (path.posix.extname semantics: a leading-dot
  * name like ".gitkeep" has no extension, a trailing dot belongs to the
  * extension).
@@ -125,17 +129,17 @@ export function splitAssetFileName(displayName: string): {
 }
 
 /**
- * Shared decision for Enter and blur. Unchanged basename cancels so the
+ * Shared decision for Enter and blur. Unchanged file name cancels so the
  * client never shows a success toast for a no-op (worker would also no-op).
  */
 export function resolveAssetRenameCommit(
   state: AssetRenameDialogState,
 ): AssetRenameCommitResolution {
   if (state.submitting) return { action: "keep-editing" };
-  const newBaseName = state.value.trim();
-  if (newBaseName.length === 0) return { action: "cancel" };
-  if (newBaseName === state.originalBaseName) return { action: "cancel" };
-  return { action: "submit", newBaseName };
+  const newFileName = state.value.trim();
+  if (newFileName.length === 0) return { action: "cancel" };
+  if (newFileName === state.originalFileName) return { action: "cancel" };
+  return { action: "submit", newFileName };
 }
 
 export function useAssetRename({
@@ -172,8 +176,9 @@ export function useAssetRename({
       replaceAssetRenameDialog({
         assetId,
         extension,
+        originalFileName: asset.displayName,
         originalBaseName: baseName,
-        value: baseName,
+        value: asset.displayName,
         error: null,
         submitting: false,
       });
@@ -202,21 +207,22 @@ export function useAssetRename({
     }
     if (!api || !library) return;
     const { assetId, extension } = session;
-    const { newBaseName } = resolution;
+    const { newFileName } = resolution;
     // First-line validation: protocol-schema violations (separators, control
     // characters) never produce a typed error from the worker, so they must be
     // caught here to show the friendly invalid-name reason inline.
-    const validationError = assetFileBaseNameError(
-      newBaseName,
-      extension,
-      locale,
-    );
+    const validationError = assetFileBaseNameError(newFileName, "", locale);
     if (validationError) {
       const current = assetRenameDialogRef.current;
       if (current && current.assetId === assetId) {
         replaceAssetRenameDialog({ ...current, error: validationError });
       }
       return;
+    }
+    const nextExtension = splitAssetFileName(newFileName).extension;
+    if (nextExtension.toLowerCase() !== extension.toLowerCase()) {
+      const warning = translateForLocale(locale, "assetRename.extensionWarning");
+      if (typeof window !== "undefined" && !window.confirm(warning)) return;
     }
     const submittingSession = {
       ...session,
@@ -229,7 +235,7 @@ export function useAssetRename({
       const result = await api.renameAssetFile({
         libraryId: library.libraryId,
         assetId,
-        newBaseName,
+        newFileName,
       });
       if (!result.ok) {
         // Typed failures (invalid name, name conflict, asset no longer

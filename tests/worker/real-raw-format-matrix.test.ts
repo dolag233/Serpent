@@ -22,7 +22,7 @@ const canRun = Boolean(
   && existsSync(oiiotoolPath)
   && existsSync(rawFixtureDirectory),
 );
-const expectedExtensions = ['dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2'] as const;
+const expectedExtensions = ['raw', 'dng', 'cr2', 'cr3', 'nef', 'arw', 'raf', 'orf', 'rw2'] as const;
 const temporaryRoots: string[] = [];
 
 function temporaryRoot(): string {

@@ -1,6 +1,6 @@
 // REQ-FILTER-025 follow-up (Serpent-1d4w): the format filter quick-chips are
 // derived from the product format registries instead of a hardcoded list, so
-// every supported format (images incl. RAW, video, audio, 3D models) is
+// every supported format (images incl. RAW, video, audio, documents, 3D models) is
 // clickable without touching this module when the registry grows.
 //
 // The special `text` token (Serpent-4l7) is NOT an extension — the worker
@@ -10,6 +10,7 @@ import {
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
 } from "../shared/media-formats";
 import { AUDIO_EXTENSION_NAMES } from "../shared/audio-media";
 
@@ -23,6 +24,13 @@ export interface FormatFilterGroup {
 function dotless(extensions: readonly string[]): string[] {
   return extensions.map((extension) => extension.slice(1));
 }
+
+/** Formats shown in the catch-all filter group. */
+export const OTHER_FORMAT_EXTENSIONS = ["html", "hdf", "htm"] as const;
+const otherFormatExtensionSet = new Set<string>(OTHER_FORMAT_EXTENSIONS);
+const documentFilterExtensions = dotless(DOCUMENT_EXTENSIONS).filter(
+  (extension) => !otherFormatExtensionSet.has(extension),
+);
 
 export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   {
@@ -40,6 +48,10 @@ export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   {
     labelKey: "filter.formatGroupModel",
     extensions: dotless(MODEL_EXTENSIONS),
+  },
+  {
+    labelKey: "filter.formatGroupDocument",
+    extensions: documentFilterExtensions,
   },
 ];
 

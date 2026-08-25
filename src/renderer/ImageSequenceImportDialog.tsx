@@ -6,6 +6,7 @@ import type {
   ImageSequenceImportOffer,
 } from "../shared/protocol/responses";
 import { Icon } from "./Icons";
+import { shouldShowApplyToRest } from "./image-sequence-import-dialog";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
@@ -89,6 +90,10 @@ function ImageSequenceImportDialogForm({
     frameCount >= 3;
   const fpsValid = Number.isFinite(fps) && fps >= 1 && fps <= 240;
   const valid = rangeValid && fpsValid;
+  const showApplyToRest = shouldShowApplyToRest(
+    sequenceIndex,
+    offer.sequences.length,
+  );
 
   const updateFirst = (raw: number) => {
     const next = clampFrame(raw, sequence.firstFrame, lastFrame);
@@ -249,15 +254,17 @@ function ImageSequenceImportDialogForm({
             value={fps}
           />
           <p className="field-help">{t("dialog.imageSequenceImport.help")}</p>
-          <label className="checkbox-field">
-            <input
-              checked={applyToRest}
-              disabled={submitting}
-              onChange={(event) => setApplyToRest(event.currentTarget.checked)}
-              type="checkbox"
-            />
-            <span>{t("dialog.imageSequenceImport.applyToRest")}</span>
-          </label>
+          {showApplyToRest ? (
+            <label className="dialog-checkbox-row field-help">
+              <input
+                checked={applyToRest}
+                disabled={submitting}
+                onChange={(event) => setApplyToRest(event.currentTarget.checked)}
+                type="checkbox"
+              />
+              <span>{t("dialog.imageSequenceImport.applyToRest")}</span>
+            </label>
+          ) : null}
           </div>
 
           {error ? <p className="field-error" role="alert">{error}</p> : null}

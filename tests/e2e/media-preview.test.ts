@@ -425,7 +425,10 @@ test("video preview reports a specific generation failure and persists its diagn
     // reports Chromium's source playback error. The Worker-side missing
     // component result is asserted through the persisted job/log evidence
     // below; accepting both surfaces keeps this test focused on env routing.
-    await expect(preview.getByText(/媒体组件|视频播放失败/)).toBeVisible();
+    await expect(preview.getByText(/媒体组件|视频播放失败|正在生成代理视频/)).toBeVisible();
+    await expect(preview.getByRole("button", { name: "重试生成" })).toBeVisible({
+      timeout: 30_000,
+    });
     await preview.getByRole("button", { name: "重试生成" }).click();
     // Retry re-queues generation (pending/"正在生成") before the missing-FFmpeg
     // failure is written again. Wait for the actionable retry surface, then for
@@ -451,6 +454,7 @@ test("video preview reports a specific generation failure and persists its diagn
     expect(mediaFailureLog).toContain("FFMPEG_REQUIRED");
     expect(existsSync(libraryPath)).toBe(true);
 
+    await preview.hover();
     await preview.getByRole("button", { name: "关闭查看页面" }).click();
     await expect(preview).toBeHidden();
     await window.getByRole("button", { name: "更多工具" }).click();

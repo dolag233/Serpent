@@ -16,26 +16,26 @@ describe('WebDAVDriver against mock server (Serpent-xffq)', () => {
     servers.push(server);
     const driver = new WebDAVDriver({ baseUrl: server.baseUrl });
 
-    await driver.mkdir('参考资源库/assets');
+    await driver.mkdir('测试资源库/assets');
     const payload = Buffer.from('hello-sync');
-    const written = await driver.write('参考资源库/assets/hello 01.bin', payload);
+    const written = await driver.write('测试资源库/assets/hello 01.bin', payload);
     expect(written.status).toBe(201);
 
-    const readBack = await driver.read('参考资源库/assets/hello 01.bin');
+    const readBack = await driver.read('测试资源库/assets/hello 01.bin');
     expect(readBack.body.equals(payload)).toBe(true);
 
-    const entries = await driver.list('参考资源库/assets/', '1');
+    const entries = await driver.list('测试资源库/assets/', '1');
     expect(entries.some((entry) => entry.path.includes('hello 01.bin') && !entry.isDirectory)).toBe(true);
 
-    expect(await driver.exists('参考资源库/assets/hello 01.bin')).toBe(true);
-    expect(await driver.exists('参考资源库/assets/missing.bin')).toBe(false);
+    expect(await driver.exists('测试资源库/assets/hello 01.bin')).toBe(true);
+    expect(await driver.exists('测试资源库/assets/missing.bin')).toBe(false);
 
-    await driver.move('参考资源库/assets/hello 01.bin', '参考资源库/assets/renamed.bin');
-    expect(await driver.exists('参考资源库/assets/renamed.bin')).toBe(true);
-    expect(await driver.exists('参考资源库/assets/hello 01.bin')).toBe(false);
+    await driver.move('测试资源库/assets/hello 01.bin', '测试资源库/assets/renamed.bin');
+    expect(await driver.exists('测试资源库/assets/renamed.bin')).toBe(true);
+    expect(await driver.exists('测试资源库/assets/hello 01.bin')).toBe(false);
 
-    await driver.delete('参考资源库/assets/renamed.bin');
-    expect(await driver.exists('参考资源库/assets/renamed.bin')).toBe(false);
+    await driver.delete('测试资源库/assets/renamed.bin');
+    expect(await driver.exists('测试资源库/assets/renamed.bin')).toBe(false);
   });
 
   it('supports Basic authentication and reports readable auth errors', async () => {

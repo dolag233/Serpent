@@ -57,6 +57,7 @@ function makeCtx(
       name: true,
       size: true,
       date: true,
+      dimensions: true,
       badgeType: true,
       badgeDuration: true,
       badgeSource: true,
@@ -93,6 +94,7 @@ describe('工具栏命令可见性', () => {
       'canvas.field.name',
       'canvas.field.size',
       'canvas.field.date',
+      'canvas.field.dimensions',
     ]);
   });
 
@@ -106,6 +108,7 @@ describe('工具栏命令可见性', () => {
       'canvas.field.name',
       'canvas.field.size',
       'canvas.field.date',
+      'canvas.field.dimensions',
     ]);
   });
 
@@ -119,7 +122,7 @@ describe('工具栏命令可见性', () => {
     expect(registry.get('toolbar.importFiles')).toBeUndefined();
   });
 
-  it('常驻画布 id 列表覆盖刷新/视图/三字段', () => {
+  it('常驻画布 id 列表覆盖刷新/视图/四字段', () => {
     expect([...TOOLBAR_CANVAS_COMMAND_IDS]).toEqual([
       'canvas.refresh',
       'canvas.view.grid',
@@ -127,6 +130,7 @@ describe('工具栏命令可见性', () => {
       'canvas.field.name',
       'canvas.field.size',
       'canvas.field.date',
+      'canvas.field.dimensions',
     ]);
   });
 });

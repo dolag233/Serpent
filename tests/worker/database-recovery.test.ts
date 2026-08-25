@@ -230,7 +230,7 @@ describe('database damage recovery (Serpent-dw9a)', () => {
       metadataRecovered: false,
     });
 
-    reopened.refreshManagedAssets(summary.libraryId);
+    reopened.refreshManagedAssets(summary.libraryId, { includeAssets: true });
     expect(reopened.listAssets({ libraryId: summary.libraryId, recursive: true })
       .map((asset) => asset.displayName)).toContain('survivor.txt');
   });
@@ -271,7 +271,7 @@ describe('database damage recovery (Serpent-dw9a)', () => {
         }),
       ]));
 
-    const repaired = service.refreshManagedAssets(library.libraryId);
+    const repaired = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(repaired.changedCount).toBe(1);
     expect(repaired.assets).toEqual(expect.arrayContaining([
       expect.objectContaining({ assetId: asset.assetId, availability: 'available' }),
@@ -299,7 +299,7 @@ describe('database damage recovery (Serpent-dw9a)', () => {
     const managedPath = path.join(library.libraryPath, 'Assets', 'probe.jpg');
 
     rmSync(managedPath);
-    service.refreshManagedAssets(library.libraryId);
+    service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     writeFileSync(managedPath, 'known bytes');
     expect(service.probeMissingAssetRecovery({
       libraryId: library.libraryId,

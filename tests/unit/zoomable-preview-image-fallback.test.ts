@@ -17,6 +17,13 @@ describe("zoomable image decode failure fallback", () => {
     expect(source).toContain('className="preview-image-error"');
     expect(source).toContain('<Icon name="broken-file" size={42} />');
     expect(source).toContain("onError={handleImageError}");
+    // The viewer must keep one full-source decoder on the critical path. A
+    // second fetch + ImageBitmap middle layer doubled reads and decode memory
+    // for every placeholder-to-original upgrade.
+    expect(source).not.toContain("createImageBitmap");
+    expect(source).not.toContain("fetch(src");
+    expect(source).not.toContain("preview-image-middle");
+    expect(source).toContain('decoding="async"');
     expect(styles).toMatch(
       /\.preview-image-error\s*\{[\s\S]*?color:\s*var\(--tertiary\);/,
     );

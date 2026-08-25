@@ -1276,17 +1276,17 @@ describe('managed asset refresh', () => {
     writeFileSync(managedPath, 'second version');
     const overwriteTime = new Date(Date.now() + 20_000);
     utimesSync(managedPath, overwriteTime, overwriteTime);
-    const overwritten = service.refreshManagedAssets(library.libraryId);
+    const overwritten = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(overwritten).toMatchObject({ changedCount: 1, missingCount: 0 });
     expect(overwritten.assets[0]?.assetId).toBe(initial.assetId);
     expect(overwritten.assets[0]?.currentRevisionId).not.toBe(initial.currentRevisionId);
     const overwriteRevision = overwritten.assets[0]!;
 
     rmSync(managedPath);
-    const missing = service.refreshManagedAssets(library.libraryId);
+    const missing = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(missing).toMatchObject({ changedCount: 1, missingCount: 1 });
     expect(missing.assets[0]?.availability).toBe('missing');
-    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+    expect(service.refreshManagedAssets(library.libraryId, { includeAssets: true })).toMatchObject({
       changedCount: 0,
       missingCount: 0,
     });
@@ -1294,7 +1294,7 @@ describe('managed asset refresh', () => {
     writeFileSync(managedPath, 'second version');
     const acceptedTime = new Date(overwriteRevision.modifiedAt);
     utimesSync(managedPath, acceptedTime, acceptedTime);
-    const reappeared = service.refreshManagedAssets(library.libraryId);
+    const reappeared = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(reappeared).toMatchObject({ changedCount: 1, missingCount: 0 });
     expect(reappeared.assets[0]).toMatchObject({
       assetId: initial.assetId,
@@ -1303,7 +1303,7 @@ describe('managed asset refresh', () => {
     });
 
     utimesSync(managedPath, new Date(acceptedTime.getTime() + 1), new Date(acceptedTime.getTime() + 1));
-    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+    expect(service.refreshManagedAssets(library.libraryId, { includeAssets: true })).toMatchObject({
       changedCount: 0,
       missingCount: 0,
     });
@@ -1313,7 +1313,7 @@ describe('managed asset refresh', () => {
     // Serpent-1tio: a pure mtime touch with identical content (portable
     // library copy / utimes) is NOT a content change — the content
     // fingerprint matches, so the revision and its artifacts survive.
-    const statOnly = service.refreshManagedAssets(library.libraryId);
+    const statOnly = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(statOnly).toMatchObject({ changedCount: 0, missingCount: 0 });
     expect(statOnly.assets[0]?.assetId).toBe(initial.assetId);
     expect(statOnly.assets[0]?.currentRevisionId).toBe(overwriteRevision.currentRevisionId);
@@ -1321,7 +1321,7 @@ describe('managed asset refresh', () => {
     // Same byte-size content edit is still detected via the fingerprint.
     writeFileSync(managedPath, 'second version!');
     utimesSync(managedPath, new Date(acceptedTime.getTime() + 40_000), new Date(acceptedTime.getTime() + 40_000));
-    const sameSizeEdit = service.refreshManagedAssets(library.libraryId);
+    const sameSizeEdit = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(sameSizeEdit).toMatchObject({ changedCount: 1, missingCount: 0 });
     expect(sameSizeEdit.assets[0]?.currentRevisionId).not.toBe(overwriteRevision.currentRevisionId);
     service.closeAll();
@@ -1347,7 +1347,7 @@ describe('managed asset refresh', () => {
     const copiedTime = new Date(Date.now() + 60_000);
     utimesSync(managedPath, copiedTime, copiedTime);
 
-    const refreshed = service.refreshManagedAssets(library.libraryId);
+    const refreshed = service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     expect(refreshed).toMatchObject({ changedCount: 0, missingCount: 0 });
     expect(refreshed.assets[0]?.currentRevisionId).toBe(beforeRevision);
     // The fingerprint is backfilled from the file for future comparisons.
@@ -1379,7 +1379,7 @@ describe('managed asset refresh', () => {
 
     let thrown: unknown;
     try {
-      service.refreshManagedAssets(library.libraryId);
+      service.refreshManagedAssets(library.libraryId, { includeAssets: true });
     } catch (error) {
       thrown = error;
     }
@@ -1409,7 +1409,7 @@ describe('managed asset refresh', () => {
     service.resolveImport({ importId: plan.importId, suspectedDuplicate: 'skip', nameConflict: 'keep-both' });
     missing = true;
 
-    expect(service.refreshManagedAssets(library.libraryId)).toMatchObject({
+    expect(service.refreshManagedAssets(library.libraryId, { includeAssets: true })).toMatchObject({
       changedCount: 1,
       missingCount: 1,
       assets: [{ availability: 'missing' }],

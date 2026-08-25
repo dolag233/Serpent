@@ -247,6 +247,7 @@ export function inspectBinaries(root, platform) {
   const ffprobeVersion = runBinary(ffprobePath, ['-hide_banner', '-version']);
   const oiiotoolVersion = runBinary(oiiotoolPath, ['--version']);
   const oiiotoolHelp = runBinary(oiiotoolPath, ['--help']);
+  const oiiotoolFormats = runBinary(oiiotoolPath, ['--list-formats']);
   const buildConfiguration = runBinary(ffmpegPath, ['-hide_banner', '-buildconf']);
   const encoders = runBinary(ffmpegPath, ['-hide_banner', '-encoders']);
   const filters = runBinary(ffmpegPath, ['-hide_banner', '-filters']);
@@ -258,6 +259,15 @@ export function inspectBinaries(root, platform) {
   if (!/oiiotool|openimageio/i.test(oiiotoolHelp)) {
     throw new Error('oiiotool --help did not identify OpenImageIO/oiiotool.');
   }
+  // RAW support is a runtime capability, not something the version string or
+  // vcpkg feature manifest can prove.  Without the LibRaw imageio plugin the
+  // binary starts normally but every ARW/CR2/NEF import fails in both the
+  // thumbnail and full-resolution viewer paths.
+  if (!/(?:^|\r?\n)\s*raw\s*:/im.test(oiiotoolFormats) || !/\barw\b/i.test(oiiotoolFormats)) {
+    throw new Error(
+      'oiiotool is missing the LibRaw RAW reader (the --list-formats output must include raw and arw).',
+    );
+  }
   for (const operation of ['--ociodisplay', '--colorconfiginfo']) {
     if (!oiiotoolHelp.includes(operation)) {
       throw new Error(`oiiotool is missing required OpenColorIO operation: ${operation}`);
@@ -268,6 +278,7 @@ export function inspectBinaries(root, platform) {
     ffmpegVersion: ffmpegVersion.split(/\r?\n/, 1)[0],
     ffprobeVersion: ffprobeVersion.split(/\r?\n/, 1)[0],
     oiiotoolVersion: oiiotoolVersion.split(/\r?\n/, 1)[0],
+    oiiotoolFormats,
     buildConfiguration,
   };
 }

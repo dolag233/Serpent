@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
 import { publicErrorReasonSchema, publicErrorSchema } from './errors';
@@ -419,6 +419,18 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     width: z.number().int().positive(),
     height: z.number().int().positive(),
   }),
+  z.strictObject({
+    type: z.literal('asset.derived.ready'),
+    libraryId: nonBlankString,
+    assetId: nonBlankString,
+    kind: z.enum([
+      'extract_metadata',
+      'extract_palette',
+      'generate_contact_sheet',
+      'generate_webm_proxy',
+      'generate_audio_proxy',
+    ]),
+  }),
 ]);
 
 export type ThumbnailEvent = z.infer<typeof thumbnailEventSchema>;
@@ -489,6 +501,8 @@ export function parseAiContentClearedEvent(input: unknown): AiContentClearedEven
 export const mediaJobSchema = z.strictObject({
   jobId: nonBlankString,
   assetId: nonBlankString,
+  /** Basename only; absolute and library-relative paths never cross the bridge. */
+  assetName: nonBlankString.nullable().optional(),
   revisionId: nonBlankString.nullable(),
   kind: z.enum([
     'generate_thumbnail',
@@ -513,6 +527,8 @@ export type MediaJob = z.infer<typeof mediaJobSchema>;
 export const aiJobSchema = z.strictObject({
   jobId: nonBlankString,
   assetId: nonBlankString,
+  /** Basename only; absolute and library-relative paths never cross the bridge. */
+  assetName: nonBlankString.nullable().optional(),
   kind: z.enum(['ai.image.analysis', 'ai.video.analysis']),
   status: z.enum(['queued', 'running', 'paused', 'succeeded', 'failed', 'cancelled']),
   errorCode: z.string().nullable(),
@@ -654,6 +670,16 @@ const assetOperationSuccessSchemas = [
     type: z.literal('folder.renamed'),
     folder: managedFolderSummarySchema,
     historyEntryId: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.directory-created'),
+    folder: linkedFolderDirectoryMutationSchema,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('linked-folder.directory-renamed'),
+    folder: linkedFolderDirectoryMutationSchema,
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -1359,6 +1385,7 @@ const assetOperationSuccessSchemas = [
       label: nonBlankString,
     })).optional(),
     selectedExrPlane: z.number().int().nonnegative().optional(),
+    colorSpacePending: z.boolean().optional(),
     colorSpace: z.strictObject({
       id: nonBlankString,
       label: nonBlankString,
@@ -1699,6 +1726,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
       label: nonBlankString,
     })).optional(),
     selectedExrPlane: z.number().int().nonnegative().optional(),
+    colorSpacePending: z.boolean().optional(),
     colorSpace: z.strictObject({
       id: nonBlankString,
       label: nonBlankString,

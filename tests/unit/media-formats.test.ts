@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   directImageMimeForExtension,
   imageDecoderForExtension,
+  imageViewerDecoderForExtension,
   imageMimeForExtension,
+  isRawImageExtension,
   isSupportedImageExtension,
   isSupportedModelExtension,
   isSupportedVideoExtension,
@@ -22,11 +24,16 @@ describe('media format registry', () => {
     expect(directImageMimeForExtension('.png')).toBe('image/png');
     expect(directImageMimeForExtension('.tiff')).toBeNull();
     expect(directImageMimeForExtension('.psd')).toBeNull();
+    expect(imageViewerDecoderForExtension('.tiff')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.tga')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.arw')).toBe('oiio');
+    expect(imageViewerDecoderForExtension('.png')).toBe('sharp');
   });
 
   it('declares the MVP RAW set as OIIO-derived images', () => {
-    for (const extension of ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2']) {
+    for (const extension of ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.orf', '.rw2', '.raw']) {
       expect(isSupportedImageExtension(`camera${extension}`)).toBe(true);
+      expect(isRawImageExtension(`camera${extension}`)).toBe(true);
       expect(imageDecoderForExtension(extension)).toBe('oiio');
       expect(imageMimeForExtension(extension)).toMatch(/^image\//);
     }

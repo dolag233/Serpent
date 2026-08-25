@@ -1,17 +1,28 @@
 import { z } from 'zod';
 
+import {
+  isSupportedImageExtension,
+  isSupportedModelExtension,
+  isSupportedVideoExtension,
+} from '../shared/media-formats';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+export type CanvasCaptionAlign = 'left' | 'center' | 'right';
 
 export interface CanvasPreferences {
   readonly version: 1;
   readonly viewMode: 'grid' | 'masonry';
   readonly cardSize: number;
+  readonly captionAlign: CanvasCaptionAlign;
   readonly fields: {
     readonly name: boolean;
     readonly size: boolean;
     readonly date: boolean;
+    /** Grid tile captions: width × height when metadata exists (Serpent-rzqj). */
+    readonly dimensions: boolean;
     /** GIF / VIDEO / TEXT type chip (Serpent-cs1). */
     readonly badgeType: boolean;
     readonly badgeDuration: boolean;
@@ -42,11 +53,14 @@ export const CARD_SIZE_STEP = 2;
 // Zod schema
 // ---------------------------------------------------------------------------
 
+const canvasCaptionAlignSchema = z.enum(['left', 'center', 'right']);
+
 const canvasFieldsSchema = z
   .object({
     name: z.boolean(),
     size: z.boolean(),
     date: z.boolean(),
+    dimensions: z.boolean().optional(),
     badgeType: z.boolean().optional(),
     badgeDuration: z.boolean().optional(),
     badgeSource: z.boolean().optional(),
@@ -56,6 +70,7 @@ const canvasFieldsSchema = z
     name: fields.name,
     size: fields.size,
     date: fields.date,
+    dimensions: fields.dimensions ?? true,
     badgeType: fields.badgeType ?? true,
     badgeDuration: fields.badgeDuration ?? true,
     badgeSource: fields.badgeSource ?? true,
@@ -67,6 +82,7 @@ const canvasPreferencesSchema = z
     version: z.literal(1),
     viewMode: z.enum(['grid', 'masonry']),
     cardSize: z.number().int().min(CARD_SIZE_MIN).max(CARD_SIZE_MAX),
+    captionAlign: canvasCaptionAlignSchema.optional(),
     fields: canvasFieldsSchema,
     hoverAudioPlay: z.boolean().optional(),
     hoverVideoSound: z.boolean().optional(),
@@ -75,6 +91,7 @@ const canvasPreferencesSchema = z
     version: value.version,
     viewMode: value.viewMode,
     cardSize: value.cardSize,
+    captionAlign: value.captionAlign ?? 'left',
     fields: value.fields,
     hoverAudioPlay: value.hoverAudioPlay ?? true,
     hoverVideoSound: value.hoverVideoSound ?? false,
@@ -92,10 +109,12 @@ export const DEFAULT_CANVAS_PREFERENCES: CanvasPreferences = {
   version: 1,
   viewMode: 'grid',
   cardSize: 160,
+  captionAlign: 'left',
   fields: {
     name: true,
     size: true,
     date: true,
+    dimensions: true,
     badgeType: true,
     badgeDuration: true,
     badgeSource: true,
@@ -169,6 +188,7 @@ function migrateLegacy(
     version: 1,
     viewMode,
     cardSize: clampCardSize(cardSize),
+    captionAlign: DEFAULT_CANVAS_PREFERENCES.captionAlign,
     fields: { ...DEFAULT_CANVAS_PREFERENCES.fields },
     hoverAudioPlay: DEFAULT_CANVAS_PREFERENCES.hoverAudioPlay,
     hoverVideoSound: DEFAULT_CANVAS_PREFERENCES.hoverVideoSound,
@@ -246,4 +266,36 @@ export function saveCanvasPreferences(
   };
 
   s.setItem(PREF_KEY, JSON.stringify(cleaned));
+}
+
+export function assetCaptionAlignClass(align: CanvasCaptionAlign): string {
+  if (align === 'center') return 'asset-caption-align-center';
+  if (align === 'right') return 'asset-caption-align-right';
+  return 'asset-caption-align-left';
+}
+
+export function shouldShowGridDimensions(
+  fields: Pick<CanvasPreferences['fields'], 'dimensions'>,
+  _viewMode: CanvasPreferences['viewMode'],
+  width: number | null | undefined,
+  height: number | null | undefined,
+  media: {
+    mediaType?: string | null;
+    sourceName?: string | null;
+  } = {},
+): boolean {
+  if (!fields.dimensions || width == null || height == null) return false;
+
+  // Resolution is meaningful for visual media only. Keep this check next to
+  // the preference gate so loaded cards and layout placeholders cannot drift:
+  // PDF/HTML/text/audio metadata must never turn into a fake pixel caption.
+  if (media.mediaType != null) {
+    return ['image', 'video', 'model'].includes(media.mediaType);
+  }
+  const sourceName = media.sourceName?.trim();
+  return sourceName != null && (
+    isSupportedImageExtension(sourceName) ||
+    isSupportedVideoExtension(sourceName) ||
+    isSupportedModelExtension(sourceName)
+  );
 }

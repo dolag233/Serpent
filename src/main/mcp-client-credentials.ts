@@ -1,4 +1,11 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -16,6 +23,7 @@ import { readAtomicJsonFile, writeAtomicJsonFile } from './atomic-json-file';
 const credentialRecordSchema = z.strictObject({
   credentialId: z.string().uuid(),
   tokenHash: z.string().regex(/^[a-f0-9]{64}$/u),
+  tokenCiphertext: z.string().min(1).optional(),
   label: z.string().min(1).max(255),
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
@@ -29,6 +37,8 @@ const credentialFileSchema = z.strictObject({
 });
 
 const TOKEN_PEPPER_BYTES = 32;
+const TOKEN_CIPHER_ALGORITHM = 'aes-256-gcm';
+const TOKEN_CIPHER_IV_BYTES = 12;
 
 export type IssuedMcpClientCredential = {
   credentialId: string;
@@ -50,6 +60,32 @@ export function buildPepperFileAclArgs(filename: string, user: string): string[]
 
 function hashToken(token: string, pepper: Buffer): string {
   return createHash('sha256').update(pepper).update(token, 'utf8').digest('hex');
+}
+
+function encryptToken(token: string, key: Buffer): string {
+  const iv = randomBytes(TOKEN_CIPHER_IV_BYTES);
+  const cipher = createCipheriv(TOKEN_CIPHER_ALGORITHM, key, iv);
+  const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, ciphertext].map((part) => part.toString('base64url')).join('.');
+}
+
+function decryptToken(encoded: string, key: Buffer): string | undefined {
+  const [ivEncoded, tagEncoded, ciphertextEncoded] = encoded.split('.');
+  if (!ivEncoded || !tagEncoded || !ciphertextEncoded) return undefined;
+  try {
+    const iv = Buffer.from(ivEncoded, 'base64url');
+    const tag = Buffer.from(tagEncoded, 'base64url');
+    const ciphertext = Buffer.from(ciphertextEncoded, 'base64url');
+    if (iv.byteLength !== TOKEN_CIPHER_IV_BYTES || tag.byteLength !== 16 || ciphertext.byteLength === 0) {
+      return undefined;
+    }
+    const decipher = createDecipheriv(TOKEN_CIPHER_ALGORITHM, key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  } catch {
+    return undefined;
+  }
 }
 
 function readOrCreatePepper(filename: string): Buffer {
@@ -129,6 +165,7 @@ export class McpClientCredentialStore {
     const record: CredentialRecord = {
       credentialId: randomUUID(),
       tokenHash: hashToken(token, this.#pepper),
+      tokenCiphertext: encryptToken(token, this.#pepper),
       label: label.trim() || 'MCP client',
       createdAt: now,
       lastUsedAt: null,
@@ -137,6 +174,18 @@ export class McpClientCredentialStore {
     this.#records = [...this.#records, record].slice(-256);
     this.persist();
     return { credentialId: record.credentialId, token, summary: summary(record) };
+  }
+
+  /** Return the stable token for a live credential so it can be copied again. */
+  tokenFor(credentialId: string): string | undefined {
+    const record = this.#records.find((candidate) => candidate.credentialId === credentialId);
+    if (record === undefined || record.revokedAt !== null) return undefined;
+    if (record.tokenCiphertext === undefined) {
+      return undefined;
+    }
+    const token = decryptToken(record.tokenCiphertext, this.#pepper);
+    if (token === undefined || hashToken(token, this.#pepper) !== record.tokenHash) return undefined;
+    return token;
   }
 
   authenticate(token: string): CredentialRecord | undefined {

@@ -98,6 +98,26 @@ export const linkedFolderSummarySchema = z.strictObject({
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
 
+/**
+ * Result of creating or renaming a physical directory under a linked root.
+ * Linked subdirectories are virtual in the library index, so they cannot use
+ * ManagedFolderSummary (there is no managed_folders row).  The id remains the
+ * encoded linked scope id and the relative path is the canonical source path
+ * relative to the linked root.
+ */
+export const linkedFolderDirectoryMutationSchema = z.strictObject({
+  folderId: nonBlankString,
+  linkedFolderId: nonBlankString,
+  parentFolderId: nonBlankString.nullable(),
+  name: nonBlankString,
+  relativePath: z.string().max(4096),
+  status: z.enum(['available', 'offline']),
+});
+
+export type LinkedFolderDirectoryMutation = z.infer<
+  typeof linkedFolderDirectoryMutationSchema
+>;
+
 export const linkedFolderRuleSchema = z.strictObject({
   ruleId: nonBlankString,
   action: z.enum(['include', 'exclude']),
@@ -260,8 +280,13 @@ export const assetMetadataResultSchema = z.strictObject({
 export type AssetMetadataResult = z.infer<typeof assetMetadataResultSchema>;
 
 /**
- * Technical fields from the `extracted_metadata` revision artifact (ffprobe JSON).
+ * Technical fields from the `extracted_metadata` revision artifact.
  * Kept off AssetSummary so list/search payloads stay lean (REQ-VIEW-003).
+ *
+ * The video fields are populated by ffprobe. The optional camera fields are
+ * populated by EXIF/IPTC/XMP extraction for RAW and other image assets.
+ * Keeping one additive schema preserves the existing protocol for older
+ * video-only metadata artifacts.
  *
  * `framerate` is the raw ffprobe ratio string (e.g. "30000/1001").
  * Bitrate / sampleRate may be numeric or string depending on probe output.
@@ -272,8 +297,8 @@ const probeNumericSchema = z.union([z.number().finite(), z.string()]).nullable()
 export const extractedVideoMetadataSchema = z.strictObject({
   container: z.string().nullable().optional().default(null),
   durationMs: z.number().finite().nonnegative().optional(),
-  width: z.number().finite().nonnegative().optional(),
-  height: z.number().finite().nonnegative().optional(),
+  width: z.number().finite().nonnegative().nullable().optional(),
+  height: z.number().finite().nonnegative().nullable().optional(),
   framerate: z.string().nullable().optional().default(null),
   rotation: z.number().finite().optional(),
   videoCodec: z.string().nullable().optional().default(null),
@@ -289,6 +314,20 @@ export const extractedVideoMetadataSchema = z.strictObject({
   frameRateFps: z.number().finite().positive().nullable().optional(),
   /** Animated GIF / multi-page still count when extracted via sharp. */
   frameCount: z.number().int().nonnegative().nullable().optional(),
+  /** EXIF/IPTC/XMP capture and camera fields for RAW/image Inspector details. */
+  captureDate: z.string().nullable().optional().default(null),
+  author: z.string().nullable().optional().default(null),
+  cameraMake: z.string().nullable().optional().default(null),
+  cameraModel: z.string().nullable().optional().default(null),
+  lensModel: z.string().nullable().optional().default(null),
+  iso: probeNumericSchema.optional().default(null),
+  fNumber: probeNumericSchema.optional().default(null),
+  exposureTime: probeNumericSchema.optional().default(null),
+  exposureCompensation: probeNumericSchema.optional().default(null),
+  exposureProgram: probeNumericSchema.optional().default(null),
+  meteringMode: probeNumericSchema.optional().default(null),
+  flash: probeNumericSchema.optional().default(null),
+  focalLength: probeNumericSchema.optional().default(null),
 });
 
 export type ExtractedVideoMetadata = z.infer<typeof extractedVideoMetadataSchema>;

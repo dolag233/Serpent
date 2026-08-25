@@ -712,7 +712,12 @@ describe('enqueueAiAnalysisJobs', () => {
     expect(result.enqueued).toBe(1);
     expect(result.skippedAssetIds).toHaveLength(0);
     expect(service.getAiJobStatus(libraryId).jobs).toEqual([
-      expect.objectContaining({ assetId, kind: 'ai.video.analysis', status: 'queued' }),
+      expect.objectContaining({
+        assetId,
+        assetName: 'test.mp4',
+        kind: 'ai.video.analysis',
+        status: 'queued',
+      }),
     ]);
 
     service.closeAll();

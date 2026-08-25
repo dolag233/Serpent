@@ -31,6 +31,7 @@ import {
   setApplicationMenuCommandLabel,
 } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
+import { SourcePathCache, type SourcePathResolution } from "./source-path-cache";
 import {
   NativeAssetDragCache,
   startNativeAssetDrag,
@@ -304,6 +305,7 @@ import {
   type AiApiFormat,
 } from "../shared/ai-endpoints";
 import { createArtifactResponse } from "./artifact-response";
+import { PreviewCache } from "./preview-cache";
 import {
   bindLibraryMediaReadSignal,
   blockLibraryMediaReads,
@@ -404,12 +406,67 @@ type ArtifactPathBatchWaiter = {
   reject: (error: Error) => void;
 };
 const artifactPathBatches = new Map<string, ArtifactPathBatchWaiter[]>();
+const artifactPathCache = new Map<string, string>();
+const artifactPathCacheEpochByLibrary = new Map<string, number>();
+const ARTIFACT_PATH_CACHE_LIMIT = 4_096;
+
+function artifactPathCacheKey(libraryId: string, artifactId: string, usage: string): string {
+  return `${libraryId}\u0000${usage}\u0000${artifactId}`;
+}
+
+function clearArtifactPathCache(libraryId?: string): void {
+  if (libraryId === undefined) {
+    artifactPathCache.clear();
+    artifactPathCacheEpochByLibrary.clear();
+    return;
+  }
+  artifactPathCacheEpochByLibrary.set(
+    libraryId,
+    (artifactPathCacheEpochByLibrary.get(libraryId) ?? 0) + 1,
+  );
+  const prefix = `${libraryId}\u0000`;
+  for (const key of artifactPathCache.keys()) {
+    if (key.startsWith(prefix)) artifactPathCache.delete(key);
+  }
+}
+
+function artifactPathCacheEpoch(libraryId: string): number {
+  return artifactPathCacheEpochByLibrary.get(libraryId) ?? 0;
+}
+
+function cancelArtifactPathBatches(libraryId: string): void {
+  const prefix = `${libraryId}\u0000`;
+  const error = new Error('Library closed before artifact path resolution completed.');
+  for (const [key, waiters] of artifactPathBatches) {
+    if (!key.startsWith(prefix)) continue;
+    artifactPathBatches.delete(key);
+    for (const waiter of waiters) waiter.reject(error);
+  }
+}
+
+function rememberArtifactPath(libraryId: string, artifactId: string, usage: string, absolutePath: string): void {
+  const key = artifactPathCacheKey(libraryId, artifactId, usage);
+  artifactPathCache.delete(key);
+  artifactPathCache.set(key, absolutePath);
+  while (artifactPathCache.size > ARTIFACT_PATH_CACHE_LIMIT) {
+    const oldest = artifactPathCache.keys().next().value;
+    if (oldest === undefined) break;
+    artifactPathCache.delete(oldest);
+  }
+}
 
 function resolveArtifactPathBatched(
   libraryId: string,
   artifactId: string,
   usage: "preview" | "proxy",
 ): Promise<string> {
+  const cached = artifactPathCache.get(artifactPathCacheKey(libraryId, artifactId, usage));
+  if (cached !== undefined) {
+    // A lookup hit is also a use: keep hot viewport artifacts at the MRU end
+    // of the bounded cache instead of evicting them after unrelated pages.
+    rememberArtifactPath(libraryId, artifactId, usage, cached);
+    return Promise.resolve(cached);
+  }
   const key = `${libraryId}\u0000${usage}`;
   return new Promise<string>((resolve, reject) => {
     const batch = artifactPathBatches.get(key) ?? [];
@@ -428,6 +485,7 @@ function resolveArtifactPathBatched(
       void (async () => {
         for (let index = 0; index < pending.length; index += 500) {
           const chunk = pending.slice(index, index + 500);
+          const requestEpoch = artifactPathCacheEpoch(libraryId);
           try {
             const result = await client.request({
               type: "media.get-artifact-paths",
@@ -443,8 +501,15 @@ function resolveArtifactPathBatched(
             );
             for (const waiter of chunk) {
               const absolutePath = paths.get(waiter.artifactId);
-              if (absolutePath) waiter.resolve(absolutePath);
-              else waiter.reject(new Error("Artifact was absent from path batch."));
+              if (absolutePath) {
+                if (artifactPathCacheEpoch(libraryId) === requestEpoch) {
+                  rememberArtifactPath(libraryId, waiter.artifactId, usage, absolutePath);
+                }
+                waiter.resolve(absolutePath);
+              } else {
+                artifactPathCache.delete(artifactPathCacheKey(libraryId, waiter.artifactId, usage));
+                waiter.reject(new Error("Artifact was absent from path batch."));
+              }
             }
           } catch (error) {
             const failure = error instanceof Error ? error : new Error(String(error));
@@ -456,11 +521,57 @@ function resolveArtifactPathBatched(
   });
 }
 const nativeAssetDragCache = new NativeAssetDragCache();
+type NativeAssetDragPrimeQueue = {
+  pending: Set<string>;
+  generation: number;
+  running: boolean;
+};
+const nativeAssetDragPrimeQueues = new Map<string, NativeAssetDragPrimeQueue>();
+
+function cancelNativeAssetDragPrime(libraryId: string): void {
+  const queue = nativeAssetDragPrimeQueues.get(libraryId);
+  if (!queue) return;
+  queue.generation += 1;
+  queue.pending.clear();
+  if (!queue.running) nativeAssetDragPrimeQueues.delete(libraryId);
+}
+
+function clearNativeAssetDragCache(libraryId: string): void {
+  nativeAssetDragCache.clear(libraryId);
+  cancelNativeAssetDragPrime(libraryId);
+}
+/**
+ * Serpent-1e3d4f: Chromium never persists custom-protocol responses on disk,
+ * so every session re-reads preview bytes from (possibly remote) origin.
+ * Mirror served image previews into userData and serve later sessions from
+ * there. Image mimes only — video proxies/posters would thrash the budget
+ * with Range-streamed large files.
+ */
+let previewCache: PreviewCache | undefined;
+function initializePreviewCache(): void {
+  if (process.env.SERPENT_PREVIEW_CACHE_DISABLED === "1") return;
+  // E2E suites manipulate artifact files and rows directly; a mirror would
+  // serve phantom bytes. Probes that verify the cache opt in explicitly.
+  if (process.env.SERPENT_E2E === "1" && process.env.SERPENT_PREVIEW_CACHE_FORCE !== "1") {
+    return;
+  }
+  const budgetBytes = Number(process.env.SERPENT_PREVIEW_CACHE_BUDGET_BYTES ?? "");
+  const cacheLogEnabled = process.env.SERPENT_PREVIEW_CACHE_LOG === "1";
+  previewCache = new PreviewCache({
+    rootDir: path.join(app.getPath("userData"), "preview-cache"),
+    budgetBytes: Number.isFinite(budgetBytes) && budgetBytes > 0 ? budgetBytes : 2 * 1024 * 1024 * 1024,
+    onEvent: cacheLogEnabled
+      ? (event) => logger?.info("preview-cache", `${event.kind} ${event.libraryId} ${event.artifactId}${event.detail ? ` ${event.detail}` : ""}`)
+      : undefined,
+  });
+  void previewCache.evictToBudget();
+}
 /** Slice E: shared offscreen window that renders model thumbnails (Serpent-hnmg). */
 let offscreenThumbnailRenderer: OffscreenThumbnailRenderer | undefined;
 let quitAfterShutdown = false;
 let startupComplete = false;
 let logger: AppLogger | undefined;
+const VIEWER_TIMING_LOG = process.env.SERPENT_VIEWER_TIMING_LOG === "1";
 let appLogPath: string | undefined;
 let appUpdateService: AppUpdateService | undefined;
 let automationExecutionJournal: AutomationExecutionJournal | undefined;
@@ -561,6 +672,7 @@ let lastExtensionTargetWindowId: number | undefined;
 
 // Keeps selected roots in Main. Renderer receives only an opaque, one-shot token.
 const pendingRelinkPreviews = new RelinkPreviewStore();
+const sourcePathCache = new SourcePathCache();
 
 // Pending import source path (importId -> sourceFolderPath), remembered after validation.
 const pendingImportSources = new Map<string, string>();
@@ -1504,7 +1616,7 @@ async function closeOpenLibrariesBeforeReplacement(): Promise<string[]> {
           libraryId: library.libraryId,
         });
         if (!closed.ok || closed.type !== "library.closed") continue;
-        nativeAssetDragCache.clear(library.libraryId);
+        clearNativeAssetDragCache(library.libraryId);
         clearActiveRecentLibrary(recentLibraryPath(), (error) => {
           logger?.error("recent-library.clear", error);
         });
@@ -1554,6 +1666,11 @@ async function reopenLibrariesAfterFailedReplacement(
 
 function publishAssetChange(event: AssetChangeEvent): void {
   const parsed = parseAssetChangeEvent(event);
+  // Asset changes can invalidate a cached source path (delete, relink, move,
+  // or replacement). Artifact-only library changes use the separate
+  // library.changed channel and do not evict the viewer's hot path.
+  sourcePathCache.clearLibrary(parsed.libraryId);
+  clearArtifactPathCache(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'asset.changed',
     libraryId: parsed.libraryId,
@@ -1572,6 +1689,7 @@ function publishAssetChange(event: AssetChangeEvent): void {
 
 function publishLibraryChanged(event: LibraryChangedEvent): void {
   const parsed = parseLibraryChangedEvent(event);
+  clearArtifactPathCache(parsed.libraryId);
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'library.changed',
     libraryId: parsed.libraryId,
@@ -1875,30 +1993,69 @@ async function primeNativeAssetDragCache(
 }
 
 /**
- * Serpent-v4jf: how many sorted-list-head assets to prime synchronously before
- * a card-bearing response reaches the renderer. The head of the sorted list is
- * exactly the first screen the user sees; priming more than a screenful before
- * forwarding only delays the browse result.
+ * Serpent-v4jf/Serpent-29125f: how many sorted-list-head assets to prime
+ * synchronously before a card-bearing response reaches the renderer. Native
+ * drag can only use entries that are ready when dragstart enters Electron's
+ * nested OS loop, but priming hundreds of cards here serializes every browse
+ * response behind Worker work. The renderer's overscan window is normally a
+ * few dozen cards, so keep this bounded to a small first-screen cushion.
  */
-const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 500;
+const NATIVE_DRAG_PRIME_VISIBLE_COUNT = 64;
 
 /**
  * Fire-and-forget primer for the rest of a large browse result. Chunked so a
  * 50k result does not post one giant worker request and does not hold the
  * worker for a single long burst; each chunk is a normal upsert.
  */
-async function primeNativeAssetDragCacheInBackground(
+async function drainNativeAssetDragPrimeQueue(
+  libraryId: string,
+  queue: NativeAssetDragPrimeQueue,
+): Promise<void> {
+  const generation = queue.generation;
+  try {
+    // Keep each background request below the Worker-side 500-id resolution
+    // batch. A 5,000-id request was technically fire-and-forget but still held
+    // the Worker callback queue for a long burst in text-heavy libraries.
+    const chunkSize = 500;
+    while (queue.generation === generation && queue.pending.size > 0) {
+      const chunk = [...queue.pending].slice(0, chunkSize);
+      for (const assetId of chunk) queue.pending.delete(assetId);
+      await primeNativeAssetDragCache(libraryId, chunk, "upsert");
+      // Leave a small scheduling gap between chunks. This is deliberately
+      // longer than a microtask: viewer, search and thumbnail requests must be
+      // able to enter the Worker queue between background drag hydration waves.
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    queue.running = false;
+    if (nativeAssetDragPrimeQueues.get(libraryId) === queue) {
+      if (queue.pending.size === 0) {
+        nativeAssetDragPrimeQueues.delete(libraryId);
+      } else {
+        // A new request arrived while the queue was being cancelled/replaced;
+        // continue with the current generation instead of dropping its entries.
+        queue.running = true;
+        void drainNativeAssetDragPrimeQueue(libraryId, queue);
+      }
+    }
+  }
+}
+
+function primeNativeAssetDragCacheInBackground(
   libraryId: string,
   assetIds: readonly string[],
-): Promise<void> {
-  const chunkSize = 5_000;
-  for (let i = 0; i < assetIds.length; i += chunkSize) {
-    const chunk = assetIds.slice(i, i + chunkSize);
-    await primeNativeAssetDragCache(libraryId, chunk, "upsert");
-    // Yield between chunks so unrelated worker traffic (thumbnail events,
-    // progress pushes) is not starved behind a long prime.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+): void {
+  if (assetIds.length === 0) return;
+  const queue = nativeAssetDragPrimeQueues.get(libraryId) ?? {
+    pending: new Set<string>(),
+    generation: 0,
+    running: false,
+  } satisfies NativeAssetDragPrimeQueue;
+  nativeAssetDragPrimeQueues.set(libraryId, queue);
+  for (const assetId of assetIds) queue.pending.add(assetId);
+  if (queue.running) return;
+  queue.running = true;
+  void drainNativeAssetDragPrimeQueue(libraryId, queue);
 }
 
 function createNativeDialogHost(): NativeDialogHost {
@@ -2199,6 +2356,22 @@ async function commandFor(
         relativePath: request.relativePath,
         deleteFromDisk: request.deleteFromDisk,
       };
+    case "linked-folder.create-directory.request":
+      return {
+        type: "linked-folder.create-directory",
+        libraryId: request.libraryId,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        name: request.name,
+      };
+    case "linked-folder.rename-directory.request":
+      return {
+        type: "linked-folder.rename-directory",
+        libraryId: request.libraryId,
+        linkedFolderId: request.linkedFolderId,
+        relativePath: request.relativePath,
+        newName: request.newName,
+      };
     case "folder.open-in-file-manager.request":
       // Handled directly in handleLibraryRequest because it requires shell.openPath.
       return {
@@ -2263,6 +2436,9 @@ async function commandFor(
             sourcePaths,
             expandImageSequences:
               !app.isPackaged && process.env.SERPENT_E2E === "1",
+            ...(request.autoDetectImageSequences === false
+              ? { createImageSequence: false }
+              : {}),
             imageSequenceFps:
               !app.isPackaged && process.env.SERPENT_E2E === "1"
                 ? 30
@@ -2279,6 +2455,9 @@ async function commandFor(
             targetFolderId: request.targetFolderId,
             sourceKind: "folder",
             sourcePaths,
+            ...(request.autoDetectImageSequences === false
+              ? { createImageSequence: false }
+              : {}),
           }
         : undefined;
     }
@@ -2430,6 +2609,7 @@ async function commandFor(
         type: "linked-folder.assets.copy",
         libraryId: request.libraryId,
         folderId: request.folderId,
+        relativePath: request.relativePath,
         assetIds: request.assetIds,
         conflictStrategy: request.conflictStrategy,
       };
@@ -2738,7 +2918,8 @@ async function commandFor(
         type: "asset.rename-file",
         libraryId: request.libraryId,
         assetId: request.assetId,
-        newBaseName: request.newBaseName,
+        ...(request.newBaseName === undefined ? {} : { newBaseName: request.newBaseName }),
+        ...(request.newFileName === undefined ? {} : { newFileName: request.newFileName }),
       };
     case "asset.text.read.request":
       return {
@@ -3344,7 +3525,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       // Drop serpent:// file handles before the Worker tries to rm the root.
       deleteFromDiskLibraryId = request.libraryId;
       blockLibraryMediaReads(request.libraryId);
-      nativeAssetDragCache.clear(request.libraryId);
+      clearNativeAssetDragCache(request.libraryId);
     }
 
     if (request.type === "asset.import-drop-invalid.report") {
@@ -3972,6 +4153,7 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         !app.isPackaged && process.env.SERPENT_E2E === "1";
       if (
         sourceKind === "files" &&
+        request.autoDetectImageSequences !== false &&
         !request.imageSequenceDecision &&
         !e2eAutoExpand
       ) {
@@ -4080,7 +4262,8 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(sourceKind === "files" && !e2eAutoExpand
+          ...(request.autoDetectImageSequences === false ||
+          (sourceKind === "files" && !e2eAutoExpand)
             ? { createImageSequence: false }
             : {}),
           imageSequenceFps: e2eAutoExpand ? 30 : undefined,
@@ -4255,6 +4438,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       command.type === "asset.import.prepare" &&
       command.sourceKind === "files" &&
       command.expandImageSequences !== true &&
+      (request.type === "asset.import-files.request"
+        ? request.autoDetectImageSequences !== false
+        : true) &&
       request.type !== "asset.import-drop.request" &&
       request.type !== "asset.import-sequence.confirm" &&
       // Clipboard paste into a folder must keep ordinary conflict flows
@@ -4351,9 +4537,22 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
 
     // 测试连接（sync.probe）：单次超时后自动重试，最大重试后给出提醒
     // （用户决定 2026-08-17；传输数据本身无墙钟超时）。
+    const viewerRequest = command.type === "media.get-preview-artifact" ? command : undefined;
+    const viewerWorkerStartedAt = VIEWER_TIMING_LOG && viewerRequest !== undefined
+      ? performance.now()
+      : 0;
     const workerResult = command.type === "sync.probe"
       ? await runSyncProbeWithRetry(command)
       : await workerClient.request(command);
+    if (viewerWorkerStartedAt > 0) {
+      logger?.info("viewer.preview-worker-timing", "Preview request resolved.", {
+        libraryId: viewerRequest?.libraryId,
+        assetId: viewerRequest?.assetId,
+        workerMs: Math.round(performance.now() - viewerWorkerStartedAt),
+        resultType: workerResult.ok ? workerResult.type : undefined,
+        errorCode: workerResult.ok ? undefined : workerResult.error.code,
+      });
+    }
     if (!workerResult.ok && previousLibraryPaths.length > 0) {
       await reopenLibrariesAfterFailedReplacement(previousLibraryPaths);
     }
@@ -4468,6 +4667,11 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
           logger?.error("recent-library.remove", error);
         },
       );
+      // Serpent-140fe2 review: deleted libraries must not leave phantom
+      // preview mirrors consuming the LRU budget.
+      if ("libraryId" in request) {
+        void previewCache?.purgeLibrary(request.libraryId);
+      }
     }
 
     // Serpent-xffq: 同步成功即记录绑定与上次同步时间，供“已同步”状态展示。
@@ -4524,9 +4728,14 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         pendingImportLibraries.delete(importId);
         pendingImportCollections.delete(importId);
       }
+      clearArtifactPathCache(request.libraryId);
+      cancelArtifactPathBatches(request.libraryId);
     }
     if (workerResult.ok && request.type === "library.delete-from-disk.request") {
       pendingRelinkPreviews.clearLibrary(request.libraryId);
+      sourcePathCache.clearLibrary(request.libraryId);
+      clearArtifactPathCache(request.libraryId);
+      cancelArtifactPathBatches(request.libraryId);
       for (const [importId, libraryId] of pendingImportLibraries) {
         if (libraryId !== request.libraryId) continue;
         pendingImportLibraries.delete(importId);
@@ -4564,6 +4773,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
       });
     }
     if (workerResult.ok && workerResult.type === "library.closed") {
+      sourcePathCache.clearLibrary(workerResult.libraryId);
+      clearArtifactPathCache(workerResult.libraryId);
+      cancelArtifactPathBatches(workerResult.libraryId);
       pluginActivationCoordinator?.onLibraryClosed(workerResult.libraryId);
       for (const [executionId, context] of pluginAutomationContexts) {
         if (context.libraryId === workerResult.libraryId) {
@@ -4633,6 +4845,9 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         ...(workerResult.selectedExrPlane === undefined
           ? {}
           : { selectedExrPlane: workerResult.selectedExrPlane }),
+        ...(workerResult.colorSpacePending === undefined
+          ? {}
+          : { colorSpacePending: workerResult.colorSpacePending }),
         ...(workerResult.colorSpace ? { colorSpace: workerResult.colorSpace } : {}),
       } satisfies RendererResult;
     }
@@ -5164,13 +5379,13 @@ async function handleLibraryRequest(input: unknown): Promise<RendererResult> {
         },
       });
     } else if (result.type === "library.closed") {
-      nativeAssetDragCache.clear(result.libraryId);
+      clearNativeAssetDragCache(result.libraryId);
       clearActiveRecentLibrary(recentLibraryPath(), (error) => {
         logger?.error("recent-library.clear", error);
       });
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     } else if (result.type === "library.deleted") {
-      nativeAssetDragCache.clear(result.libraryId);
+      clearNativeAssetDragCache(result.libraryId);
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
     return result;
@@ -6661,18 +6876,18 @@ async function startApplication(): Promise<void> {
       if (request.type === 'rename-credential') {
         return response({ ok: true, snapshot: server.renameCredential(request.credentialId, request.label) });
       }
-      if (request.type === 'duplicate-credential') {
-        const duplicated = await server.duplicateCredential(request.credentialId, request.format);
-        clipboard.writeText(duplicated.configText);
+      if (request.type === 'copy-agent-connection') {
+        const copied = await server.copyAgentConnection(request.credentialId, request.format);
+        clipboard.writeText(copied.connectionText);
         return response({
           ok: true,
           copied: true,
-          credentialId: duplicated.credentialId,
-          snapshot: duplicated.snapshot,
+          credentialId: copied.credentialId,
+          snapshot: copied.snapshot,
         });
       }
       const config = await server.createClientConfig(request.input.format, request.input.label);
-      clipboard.writeText(config.configText);
+      clipboard.writeText(config.connectionText);
       return response({ ok: true, copied: true, credentialId: config.credentialId, snapshot: config.snapshot });
     } catch (error) {
       const code = error instanceof EmbeddedMcpServerError ? error.code : 'MCP_SERVER_START_FAILED';
@@ -6835,6 +7050,10 @@ async function startApplication(): Promise<void> {
       }
 
       if (url.hostname === "source") {
+        const sourceWorkerClient = workerClient;
+        if (!sourceWorkerClient) {
+          return new Response("Worker unavailable", { status: 503 });
+        }
         logger?.info(
           "serpent-protocol.source-request",
           "Resolving a source asset request.",
@@ -6858,7 +7077,7 @@ async function startApplication(): Promise<void> {
             if (isLibraryMediaReadBlocked(libraryId)) {
               return new Response("Library unavailable", { status: 410 });
             }
-            return createArtifactResponse(
+            return await createArtifactResponse(
               authorizedSource.absolutePath,
               authorizedSource.mimeType,
               {
@@ -6879,28 +7098,59 @@ async function startApplication(): Promise<void> {
             return new Response("Source file missing", { status: 404 });
           }
         }
-        const sourceResult = await workerClient.request({
-          type: "media.get-source-path",
+        const sourceStartedAt = performance.now();
+        const sourceKey: SourcePathResolution = {
           libraryId,
           assetId: artifactId,
           revisionId,
-        });
-        if (!sourceResult.ok || sourceResult.type !== "media.source-path") {
+          absolutePath: "",
+          mimeType: "",
+        };
+        const sourceCacheHit = sourcePathCache.has(libraryId, artifactId, revisionId);
+        let sourceResult: SourcePathResolution;
+        try {
+          sourceResult = await sourcePathCache.getOrResolve(sourceKey, async () => {
+            const result = await sourceWorkerClient.request({
+              type: "media.get-source-path",
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+            });
+            if (!result.ok || result.type !== "media.source-path") {
+              throw new Error("Source not found");
+            }
+            return {
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+              absolutePath: result.absolutePath,
+              mimeType: result.mimeType,
+            };
+          });
+        } catch (error) {
+          sourcePathCache.delete(libraryId, artifactId, revisionId);
           logger?.info(
             "serpent-protocol.source-stale",
             "Rejected missing or stale source token.",
-            {
+            { libraryId, assetId: artifactId },
+          );
+          if (VIEWER_TIMING_LOG) {
+            logger?.info("viewer.source-timing", "Source lookup failed.", {
               libraryId,
               assetId: artifactId,
-            },
-          );
+              revisionId,
+              cacheHit: sourceCacheHit,
+              workerMs: Math.round(performance.now() - sourceStartedAt),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
           return new Response("Source not found", { status: 404 });
         }
         if (isLibraryMediaReadBlocked(libraryId)) {
           return new Response("Library unavailable", { status: 410 });
         }
         try {
-          return createArtifactResponse(
+          const response = await createArtifactResponse(
             sourceResult.absolutePath,
             sourceResult.mimeType,
             {
@@ -6913,7 +7163,20 @@ async function startApplication(): Promise<void> {
                 }),
             },
           );
+          if (VIEWER_TIMING_LOG) {
+            logger?.info("viewer.source-timing", "Source response ready.", {
+              libraryId,
+              assetId: artifactId,
+              revisionId,
+              cacheHit: sourceCacheHit,
+              workerMs: Math.round(performance.now() - sourceStartedAt),
+              status: response.status,
+              range: request.headers.get("range") ?? undefined,
+            });
+          }
+          return response;
         } catch (error) {
+          sourcePathCache.delete(libraryId, artifactId, revisionId);
           logger?.error("serpent-protocol.source-read", error, {
             libraryId,
             assetId: artifactId,
@@ -6951,8 +7214,37 @@ async function startApplication(): Promise<void> {
         return new Response("Library unavailable", { status: 410 });
       }
 
+      // Serpent-1e3d4f: image previews are mirrored into userData on first
+      // serve; later sessions stream from the local mirror instead of the
+      // (possibly remote) origin. Video proxies/posters stay uncached — they
+      // are large and Range-streamed.
+      const isCacheableImageMime = mimeType.startsWith("image/");
+      const cachedMirror = isCacheableImageMime
+        ? previewCache?.locateSync(libraryId, artifactId, ext)
+        : null;
+      if (cachedMirror) {
+        try {
+          return await createArtifactResponse(
+            cachedMirror,
+            mimeType,
+            {
+              rangeHeader: request.headers.get("range"),
+              signal: bindLibraryMediaReadSignal(libraryId, request.signal),
+              onStreamError: (error) =>
+                logger?.error("preview-cache.stream", error, {
+                  libraryId,
+                  artifactId,
+                }),
+            },
+          );
+        } catch {
+          // Mirror unreadable (evicted mid-stream, permissions): fall through
+          // to the origin and let store() refresh the mirror.
+        }
+      }
+
       try {
-        return createArtifactResponse(
+        const response = await createArtifactResponse(
           absoluteArtifactPath,
           mimeType,
           {
@@ -6965,15 +7257,24 @@ async function startApplication(): Promise<void> {
               }),
           },
         );
+        if (isCacheableImageMime && !request.headers.get("range")) {
+          void previewCache?.store(libraryId, artifactId, absoluteArtifactPath, ext);
+        }
+        return response;
       } catch (error) {
         logger?.error("serpent-protocol.read", error, {
           libraryId,
           artifactId,
         });
+        // A watcher/library-change event may have invalidated the path after
+        // the batch returned. Do not keep serving a stale artifact location
+        // after the first failed read; the next request will ask the Worker
+        // for the current path.
+        artifactPathCache.delete(artifactPathCacheKey(libraryId, artifactId, url.hostname));
         return new Response("Artifact file missing", { status: 404 });
       }
     } catch (error) {
-      logger?.error("serpent-protocol", error);
+      logger?.error("serpent-protocol", error, { url: request.url });
       return new Response("Internal error", { status: 500 });
     }
   });
@@ -7552,6 +7853,8 @@ async function startApplication(): Promise<void> {
     logger?.error("extension-server", error);
     // Extension server failure is non-fatal; the app continues without it.
   }
+
+  initializePreviewCache();
 
   startupComplete = true;
 }

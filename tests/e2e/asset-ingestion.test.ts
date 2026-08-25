@@ -117,7 +117,8 @@ test('imports files and a directory hierarchy, then reconciles external changes'
     expect(assetsAfterCopy.filter((asset) => asset.displayName.startsWith('notes')).length).toBe(2);
 
     await sidebarFolderRow(window, '角色').click();
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
     await window.getByRole('menuitem', { name: '导入文件夹', exact: true }).click();
     await expect(sidebarFolderRow(window, '正面')).toBeVisible();
     await sidebarFolderRow(window, '正面').click();

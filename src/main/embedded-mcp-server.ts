@@ -32,7 +32,7 @@ import {
   type McpServerPreferences,
 } from '../shared/mcp';
 import { McpClientCredentialStore } from './mcp-client-credentials';
-import { buildMcpClientConfigText } from '../shared/mcp-client-config';
+import { buildMcpAgentConnectionText, buildMcpClientConfigText } from '../shared/mcp-client-config';
 import type { McpPermissionPolicyStore } from './mcp-permission-policy-store';
 import type { McpPermissionBroker } from './mcp-permission-broker';
 import { McpSettingsStore } from './mcp-settings-store';
@@ -93,6 +93,7 @@ export class EmbeddedMcpServerError extends Error {
     | 'MCP_SERVER_INVALID_REQUEST'
     | 'MCP_SERVER_TOO_MANY_SESSIONS'
     | 'MCP_CLIENT_UNAUTHORIZED'
+    | 'MCP_CLIENT_TOKEN_UNAVAILABLE'
     | 'MCP_CLIENT_REVOKED'
     | 'MCP_SESSION_NOT_FOUND'
     | 'MCP_SESSION_CLOSED';
@@ -475,6 +476,7 @@ export class EmbeddedMcpServer {
     credentialId: string;
     snapshot: McpSettingsSnapshot;
     configText: string;
+    connectionText: string;
   }> {
     if (this.#runtime.status !== 'running') {
       if (!this.#settings.preferences.enabled) {
@@ -487,19 +489,15 @@ export class EmbeddedMcpServer {
     }
     const credential = this.#credentials.issue(label);
     const configText = this.#buildConfigText(format, this.#runtime.endpoint, credential.token);
-    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText };
+    const connectionText = buildMcpAgentConnectionText(format, this.#runtime.endpoint, credential.token);
+    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText, connectionText };
   }
 
-  /**
-   * Clone an existing credential: a NEW token with the same label and
-   * permission profile, whose fresh config is returned for copying. Tokens
-   * are stored hashed, so the original config can never be re-shown; a
-   * duplicate is the honest "copy this credential" affordance.
-   */
-  public async duplicateCredential(
+  /** Return an Agent-ready bundle without changing the existing credential. */
+  public async copyAgentConnection(
     credentialId: string,
     format: McpConfigFormat,
-  ): Promise<{ credentialId: string; snapshot: McpSettingsSnapshot; configText: string }> {
+  ): Promise<{ credentialId: string; snapshot: McpSettingsSnapshot; configText: string; connectionText: string }> {
     if (this.#runtime.status !== 'running') {
       if (!this.#settings.preferences.enabled) {
         throw new EmbeddedMcpServerError('MCP_SERVER_NOT_ENABLED', 'Enable and start the MCP server before copying a client configuration.');
@@ -515,12 +513,13 @@ export class EmbeddedMcpServer {
     if (existing === undefined || existing.revokedAt !== null) {
       throw new EmbeddedMcpServerError('MCP_CLIENT_UNAUTHORIZED', 'The MCP client credential is unavailable.');
     }
-    const mode = this.#permissionPolicyStore?.getMode(credentialId) ?? 'auto';
-    const label = `${existing.label} 副本`;
-    const credential = this.#credentials.issue(label);
-    this.#permissionPolicyStore?.setMode(credential.credentialId, mode);
-    const configText = this.#buildConfigText(format, this.#runtime.endpoint, credential.token);
-    return { credentialId: credential.credentialId, snapshot: this.#publish(), configText };
+    const token = this.#credentials.tokenFor(credentialId);
+    if (token === undefined) {
+      throw new EmbeddedMcpServerError('MCP_CLIENT_TOKEN_UNAVAILABLE', 'The MCP client credential token is unavailable. Create a new client credential.');
+    }
+    const configText = this.#buildConfigText(format, this.#runtime.endpoint, token);
+    const connectionText = buildMcpAgentConnectionText(format, this.#runtime.endpoint, token);
+    return { credentialId, snapshot: this.#publish(), configText, connectionText };
   }
 
   #buildConfigText(format: McpConfigFormat, endpoint: string, token: string): string {

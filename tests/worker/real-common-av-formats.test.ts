@@ -99,7 +99,7 @@ afterAll(() => {
  * still the checksum-pinned resource bundle test.
  */
 describe.runIf(canRun)('real common audio/video format matrix', () => {
-  it('keeps video source-first and only creates the audio playback proxy by default', async () => {
+  it('keeps audio/video source-first and creates playback proxies only on explicit fallback', async () => {
     const root = temporaryRoot();
     const sourceRoot = path.join(root, 'sources');
     const sourcePaths = buildFixtures(sourceRoot);
@@ -144,20 +144,20 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
           if (firstVideoAssetId === null) firstVideoAssetId = asset.assetId;
           continue;
         }
-        const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'audio_proxy');
-        expect(artifact, `${asset.displayName}: ${JSON.stringify(jobs)}`).toMatchObject({
+        expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'audio_proxy'),
+          `${asset.displayName}: ${JSON.stringify(jobs)}`).toBeNull();
+        expect(jobs.some((job) => job.kind === 'generate_audio_proxy'),
+          `${asset.displayName}: ${JSON.stringify(jobs)}`).toBe(false);
+        expect(service.getPreviewArtifact(library.libraryId, asset.assetId)).toMatchObject({
+          mediaType: 'audio',
           status: 'ready',
-          mimeType: 'audio/ogg',
+          playbackMode: 'source',
         });
-        const proxyPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'proxy');
-        const probe = spawnSync(ffprobePath!, [
-          '-v', 'error', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', proxyPath,
-        ], { encoding: 'utf8', timeout: 30_000 });
-        expect(probe.status, `${asset.displayName}: ${probe.stderr}`).toBe(0);
-        const streams = JSON.parse(probe.stdout) as { streams?: Array<{ codec_name?: string; codec_type?: string }> };
-        const expectedAudioCodec = 'opus';
-        expect(streams.streams?.some((stream) => stream.codec_name === expectedAudioCodec && stream.codec_type === 'audio'))
-          .toBe(true);
+        expect(service.getPreviewArtifact(library.libraryId, asset.assetId, 'hover')).toMatchObject({
+          mediaType: 'audio',
+          status: 'ready',
+          playbackMode: 'source',
+        });
       }
       // Serpent-c8a1a3: 代理生成后 hover 意图返回 proxy（无法解码容器的
       // hover 预览依赖这条路径；循环内已先验证所有视频无 proxy）。
@@ -175,6 +175,26 @@ describe.runIf(canRun)('real common audio/video format matrix', () => {
           playbackMode: 'proxy',
         });
       }
+      const firstAudio = assets.find((asset) => asset.mediaType === 'audio');
+      expect(firstAudio).toBeDefined();
+      service.enqueueArtifactRetry({
+        libraryId: library.libraryId,
+        assetId: firstAudio!.assetId,
+        kind: 'audio_proxy',
+      });
+      while (service.listMediaJobs(library.libraryId).queued > 0) {
+        expect(await service.processThumbnailQueue(library.libraryId)).toBeGreaterThan(0);
+      }
+      const artifact = service.getCurrentArtifact(library.libraryId, firstAudio!.assetId, 'audio_proxy');
+      expect(artifact).toMatchObject({ status: 'ready', mimeType: 'audio/ogg' });
+      const proxyPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'proxy');
+      const probe = spawnSync(ffprobePath!, [
+        '-v', 'error', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', proxyPath,
+      ], { encoding: 'utf8', timeout: 30_000 });
+      expect(probe.status, `${firstAudio!.displayName}: ${probe.stderr}`).toBe(0);
+      const streams = JSON.parse(probe.stdout) as { streams?: Array<{ codec_name?: string; codec_type?: string }> };
+      expect(streams.streams?.some((stream) => stream.codec_name === 'opus' && stream.codec_type === 'audio'))
+        .toBe(true);
     } finally {
       service.closeAll();
     }

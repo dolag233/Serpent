@@ -18,7 +18,7 @@ import {
 import { searchQuerySchema } from '../shared/asset-types';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
 import type { ModelCompanionAsset } from '../shared/model-companions';
-import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
+import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderDirectoryMutation, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
 import {
   ASSET_CHANGE_CHANNEL,
   EXTENSION_SAVE_COMPLETED_CHANNEL,
@@ -133,6 +133,7 @@ import {
 } from '../shared/command-completed';
 import {
   appLogAutomationCorrelationIdSchema,
+  appLogFileNameSchema,
   parseAppLogEntry,
   type AppLogAutomationCorrelationId,
   type ReadAppLogResult,
@@ -460,6 +461,40 @@ const library: SerpentLibraryApi = Object.freeze({
     };
   },
 
+  async createLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    name: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>> {
+    const result = await request({
+      type: 'linked-folder.create-directory.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.directory-created') {
+      throw new Error('Unexpected linked-folder-create-directory response.');
+    }
+    return { ok: true, value: result.folder };
+  },
+
+  async renameLinkedFolderDirectory(input: {
+    libraryId: string;
+    linkedFolderId: string;
+    relativePath: string;
+    newName: string;
+  }): Promise<LibraryApiResult<LinkedFolderDirectoryMutation>> {
+    const result = await request({
+      type: 'linked-folder.rename-directory.request',
+      ...input,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'linked-folder.directory-renamed') {
+      throw new Error('Unexpected linked-folder-rename-directory response.');
+    }
+    return { ok: true, value: result.folder };
+  },
+
   async copyFolder({ libraryId, folderId }: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>> {
     const result = await request({ type: 'folder.copy.request', libraryId, folderId });
     if (!result.ok) return failure(result);
@@ -703,6 +738,7 @@ const library: SerpentLibraryApi = Object.freeze({
   async importFiles(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
     return importRequest({ type: 'asset.import-files.request', ...input });
   },
@@ -710,6 +746,7 @@ const library: SerpentLibraryApi = Object.freeze({
   async importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan>> {
     const result = await importRequest({ type: 'asset.import-folder.request', ...input });
     if (!result.ok) return { ok: false, error: result.error };
@@ -747,6 +784,7 @@ const library: SerpentLibraryApi = Object.freeze({
     files: File[];
     html?: string;
     uriList?: string;
+    autoDetectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImageSequenceImportOffer>> {
     // Native File handles always win. Browser drags can include text/html
     // beside Files; the secondary metadata must never turn a local import into
@@ -787,6 +825,7 @@ const library: SerpentLibraryApi = Object.freeze({
         targetFolderId: input.targetFolderId,
         targetCollectionId: input.targetCollectionId,
         sourcePaths,
+        autoDetectImageSequences: input.autoDetectImageSequences,
       });
     } catch {
       // Main owns persistent diagnostics. Report only the semantic failure;
@@ -972,8 +1011,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: { ignored: result.ignored, path: result.path } };
   },
 
-  async copyAssetsToLinkedFolder({ libraryId, folderId, assetIds, conflictStrategy }: { libraryId: string; folderId: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }) {
-    const result = await request({ type: 'linked-folder.assets.copy.request', libraryId, folderId, assetIds, conflictStrategy });
+  async copyAssetsToLinkedFolder({ libraryId, folderId, relativePath, assetIds, conflictStrategy }: { libraryId: string; folderId: string; relativePath?: string; assetIds: string[]; conflictStrategy: 'keep-both' | 'replace' | 'skip' }) {
+    const result = await request({ type: 'linked-folder.assets.copy.request', libraryId, folderId, relativePath, assetIds, conflictStrategy });
     if (!result.ok) return failure(result);
     if (result.type !== 'linked-folder.assets.copied') throw new Error('Unexpected linked-folder-assets-copied response.');
     return { ok: true as const, value: { copiedCount: result.copiedCount, skippedCount: result.skippedCount, assets: result.assets } };
@@ -1313,8 +1352,14 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { undoneCount: result.undoneCount, skippedCount: result.skippedCount, assets: result.assets } };
   },
 
-  async renameAssetFile({ libraryId, assetId, newBaseName }: { libraryId: string; assetId: string; newBaseName: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
-    const result = await request({ type: 'asset.rename-file.request', libraryId, assetId, newBaseName });
+  async renameAssetFile({ libraryId, assetId, newBaseName, newFileName }: { libraryId: string; assetId: string; newBaseName?: string; newFileName?: string }): Promise<LibraryApiResult<AssetSummary & { historyEntryId?: string }>> {
+    const result = await request({
+      type: 'asset.rename-file.request',
+      libraryId,
+      assetId,
+      ...(newBaseName === undefined ? {} : { newBaseName }),
+      ...(newFileName === undefined ? {} : { newFileName }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.file-renamed') throw new Error('Unexpected rename-asset-file response.');
     return {
@@ -1904,6 +1949,7 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.playbackToken ? { playbackToken: result.playbackToken } : {}),
         ...(result.exrPlanes ? { exrPlanes: result.exrPlanes } : {}),
         ...(result.selectedExrPlane === undefined ? {} : { selectedExrPlane: result.selectedExrPlane }),
+        ...(result.colorSpacePending === undefined ? {} : { colorSpacePending: result.colorSpacePending }),
         ...(result.colorSpace ? { colorSpace: result.colorSpace } : {}),
       },
     };
@@ -2202,7 +2248,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number }) => void) {
+  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready' | 'asset.derived.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number; kind?: 'extract_metadata' | 'extract_palette' | 'generate_contact_sheet' | 'generate_webm_proxy' | 'generate_audio_proxy' }) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseThumbnailEvent(input));
@@ -2283,12 +2329,16 @@ function parseRevealAppLogResult(input: unknown): RevealAppLogResult {
 function parseReadAppLogResult(input: unknown): ReadAppLogResult {
   if (typeof input === 'object' && input !== null && 'ok' in input && (input as { ok: unknown }).ok === true) {
     const value = input as { entries?: unknown; fileName?: unknown };
-    if (value.fileName === 'serpent.log' && Array.isArray(value.entries)) {
+    if (
+      typeof value.fileName === 'string' &&
+      appLogFileNameSchema.safeParse(value.fileName).success &&
+      Array.isArray(value.entries)
+    ) {
       const entries = value.entries.flatMap((entry) => {
         const parsed = parseAppLogEntry(entry);
         return parsed ? [parsed] : [];
       });
-      return { ok: true, entries, fileName: 'serpent.log' };
+      return { ok: true, entries, fileName: value.fileName };
     }
   }
   const code =

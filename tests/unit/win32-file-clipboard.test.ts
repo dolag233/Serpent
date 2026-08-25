@@ -22,15 +22,20 @@ describe("win32-file-clipboard", () => {
 
       expect(writeWin32FileClipboard([file])).toBe(true);
 
-      const out = execFileSync(
+      // Windows PowerShell 5 can emit its console output in the active OEM
+      // code page, which corrupts CJK paths even when CF_HDROP itself is
+      // correct. Ask PowerShell for a UTF-16LE base64 payload so this test
+      // validates the clipboard data without depending on console encoding.
+      const encoded = execFileSync(
         "powershell",
         [
           "-NoProfile",
           "-Command",
-          "(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }) -join ';'",
+          "$value = (Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }) -join ';'; [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($value))",
         ],
         { encoding: "utf8" },
       ).trim();
+      const out = Buffer.from(encoded, "base64").toString("utf16le");
       expect(out).toContain(file);
     },
   );

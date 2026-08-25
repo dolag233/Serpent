@@ -84,7 +84,16 @@ export function resolveManagedDropEffect(
   return mode === 'copy' ? 'copy' : 'move';
 }
 
-/** Assets eligible for folder move / trash: managed, present on disk, not already trashed. */
+/** Assets eligible for a folder drop: managed or linked, present on disk, not trashed. */
+function folderDropAssets(assets: readonly DragAssetFact[]): DragAssetFact[] {
+  return assets.filter(
+    (asset) =>
+      asset.availability === 'available' &&
+      !asset.deletedAt,
+  );
+}
+
+/** Assets eligible for the Serpent trash: linked files stay outside the trash. */
 function movableAssets(assets: readonly DragAssetFact[]): DragAssetFact[] {
   return assets.filter(
     (asset) =>
@@ -114,7 +123,9 @@ export type FolderDropResolution =
  * Resolve a drop onto a managed folder row (or the library root, targetFolderId
  * = null). Move onto the current folder is a no-op reject; copy onto the
  * current folder is allowed (Finder-style duplicate with keep-both naming).
- * Linked/missing/trashed assets are skipped and counted for the result toast.
+ * Missing/trashed assets are skipped and counted for the result toast. Linked
+ * assets are accepted too; the executor copies them into a managed folder
+ * because their source remains owned by the linked directory.
  */
 export function resolveFolderDrop(input: {
   readonly targetFolderId: string | null;
@@ -126,7 +137,7 @@ export function resolveFolderDrop(input: {
   if (mode === 'move' && input.targetFolderId === input.currentFolderId) {
     return { kind: 'reject', reason: 'same-folder', skippedCount: 0 };
   }
-  const eligible = movableAssets(input.assets);
+  const eligible = folderDropAssets(input.assets);
   const skippedCount = input.assets.length - eligible.length;
   if (eligible.length === 0) {
     return { kind: 'reject', reason: 'no-eligible-assets', skippedCount };

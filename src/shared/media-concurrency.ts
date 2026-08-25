@@ -1,13 +1,15 @@
 /**
- * Decoder / media-job concurrency derived from physical CPU core count.
- *
- * Reserve two physical cores for the OS, then one more for the Serpent
- * process that is already running this work, so the pool is at most
- * `physicalCpus - 3`. Never hard-code a thread count at call sites.
+ * Native media decoding is memory-bound before it is CPU-bound. A high-core
+ * machine must not turn every physical core into a simultaneous FFmpeg/Sharp
+ * process: one 4K video can retain hundreds of decoded frames, and libvips
+ * also has its own internal thread pool. Keep the queue small and let the
+ * per-decoder lanes apply their stricter limits.
  */
+export const MEDIA_QUEUE_CONCURRENCY = 2;
+
 export function mediaDecodeConcurrency(physicalCpus: number): number {
   if (!Number.isFinite(physicalCpus) || physicalCpus < 1) return 1;
-  return Math.max(1, Math.trunc(physicalCpus) - 3);
+  return Math.min(MEDIA_QUEUE_CONCURRENCY, Math.max(1, Math.trunc(physicalCpus)));
 }
 
 /** Keep the claim wave larger than the live pool so workers do not idle. */

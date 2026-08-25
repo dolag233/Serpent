@@ -682,6 +682,44 @@ describe('restoreAssets', () => {
     service.closeAll();
   });
 
+  it('reuses text previews by revision and invalidates them after save (Serpent-29125f)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({ displayName: 'Text Preview Cache', selectedParentPath: root });
+
+    writeFileSync(path.join(root, 'note.txt'), 'cached text');
+    const assetId = importNoConflict(service, created.libraryId, path.join(root, 'note.txt')).assets[0]!.assetId;
+    const first = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId,
+      maxBytes: 2048,
+    });
+
+    // Keep the database revision unchanged so this proves the Worker cache is
+    // keyed by the persisted revision, not merely by asset id.
+    writeFileSync(path.join(created.libraryPath, 'Assets', 'note.txt'), 'external change');
+    const cached = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId,
+      maxBytes: 2048,
+    });
+    expect(first.content).toBe('cached text');
+    expect(cached.content).toBe('cached text');
+
+    service.saveTextAsset({
+      libraryId: created.libraryId,
+      assetId,
+      content: 'saved text',
+    });
+    const refreshed = service.readTextAsset({
+      libraryId: created.libraryId,
+      assetId,
+      maxBytes: 2048,
+    });
+    expect(refreshed.content).toBe('saved text');
+    service.closeAll();
+  });
+
   it('restores to a specified target folder', () => {
     const root = temporaryRoot();
     const service = newService();

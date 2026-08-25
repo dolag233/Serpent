@@ -83,6 +83,7 @@ export function LibrarySwitcher({
   disabled = false,
   onCreateLibrary,
   onOpenLibrary,
+  onCloseLibrary,
   onRemoveLibrary,
   onDeleteLibraryFromDisk,
   onOpenLibrarySettings,
@@ -227,6 +228,16 @@ export function LibrarySwitcher({
             type="button"
           >
             {t("shell.openLibraryEllipsis")}
+          </button>
+          <button
+            className="library-switcher-item"
+            disabled={!libraryName || busy}
+            onClick={() => runMenuAction(onCloseLibrary)}
+            role="menuitem"
+            tabIndex={-1}
+            type="button"
+          >
+            {t("shell.closeLibrary")}
           </button>
           <button
             className="library-switcher-item"

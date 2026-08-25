@@ -43,6 +43,28 @@ const browseDiagnosticsEnabled = Boolean(
 /** Page size for browse/search first load and window fetches. */
 export const BROWSE_PAGE_SIZE = 100;
 
+/**
+ * The tail sentinel is deliberately disabled while the compact layout index
+ * is hydrating. During that window the sentinel is still rendered directly
+ * after the first page, so a large scope can look "near the end" and enqueue
+ * a tail query before the full scrollbar geometry exists. That background
+ * query competes with the first real scrollbar jump for the single Worker.
+ */
+export function shouldRunBrowseSentinel(options: {
+  layoutHydrationComplete: boolean;
+  total: number;
+}): boolean {
+  return options.layoutHydrationComplete && options.total > 0;
+}
+
+/** Match the observer's 800px root margin with an explicit geometry guard. */
+export function isBrowseRootNearTail(
+  root: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight"> | null,
+): boolean {
+  if (!root) return true;
+  return root.scrollTop + root.clientHeight >= root.scrollHeight - 800;
+}
+
 export type BrowsePageDefinition =
   | {
       kind: "search";
@@ -289,12 +311,16 @@ export function useBrowsePagination(
   const generationRef = useRef(0);
   const totalRef = useRef(0);
   const layoutRef = useRef<BrowseLayoutEntry[]>([]);
+  const layoutHydrationCompleteRef = useRef(false);
   const filledOffsetsRef = useRef<Set<number>>(new Set());
   const inFlightOffsetsRef = useRef<Set<number>>(new Set());
   const deletedIdsRef = useRef<Set<string>>(new Set());
   const [hasMorePages, setHasMorePages] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [sentinelNode, setSentinelNode] = useState<HTMLDivElement | null>(null);
+  // Re-arm the IntersectionObserver after the compact layout response settles.
+  // The observer must not depend on the large layout array itself.
+  const [layoutHydrationVersion, setLayoutHydrationVersion] = useState(0);
 
   const applyTarget = useCallback(
     (definition: BrowsePageDefinition) =>
@@ -326,6 +352,8 @@ export function useBrowsePagination(
         previewArtifactId: asset.thumbnailArtifactId,
       }));
       layoutRef.current = initialLayout;
+      layoutHydrationCompleteRef.current = firstPage.items.length >= firstPage.total;
+      setLayoutHydrationVersion((version) => version + 1);
       setBrowseLayout(initialLayout);
       const filled = new Set<number>();
       filled.add(browsePageOffset(firstPage.offset, BROWSE_PAGE_SIZE));
@@ -338,14 +366,17 @@ export function useBrowsePagination(
       const generation = generationRef.current;
       if (api) {
         void fetchBrowseLayout({ api, definition }).then((layout) => {
+          if (generation !== generationRef.current) return;
+          // Whether the full layout succeeded or failed, the sentinel may now
+          // fall back to its normal tail-page behavior. On success the full
+          // geometry prevents a false early intersection; on failure this
+          // preserves the existing pagination fallback.
+          layoutHydrationCompleteRef.current = true;
+          setLayoutHydrationVersion((version) => version + 1);
           // A superseded/failed layout response must never erase the compact
           // geometry that currently owns the scrollbar. An actually empty
           // scope is valid only when the first page also reported total=0.
-          if (
-            !layout
-            || generation !== generationRef.current
-            || (layout.length === 0 && totalRef.current > 0)
-          ) return;
+          if (!layout || (layout.length === 0 && totalRef.current > 0)) return;
           layoutRef.current = layout;
           setBrowseLayout(layout);
           applyTarget(definition)((current) =>
@@ -372,6 +403,18 @@ export function useBrowsePagination(
       if (coveredOffsets.every((covered) => filledOffsetsRef.current.has(covered))) return;
       if (coveredOffsets.some((covered) => inFlightOffsetsRef.current.has(covered))) return;
       for (const covered of coveredOffsets) inFlightOffsetsRef.current.add(covered);
+      if (browseDiagnosticsEnabled) {
+        // Serpent-9e1d8d: issue-time marker. The existing -result/-page events
+        // only fire on resolution/apply, so jump-latency attribution could not
+        // separate renderer decision delay from worker query cost.
+        window.dispatchEvent(new CustomEvent("serpent:e2e-browse-request", {
+          detail: {
+            requestOffset: offset,
+            requestLimit: limit,
+            requestGeneration: generation,
+          },
+        }));
+      }
       setLoadingMore(true);
       try {
         const result =
@@ -565,6 +608,8 @@ export function useBrowsePagination(
     generationRef.current += 1;
     totalRef.current = 0;
     layoutRef.current = [];
+    layoutHydrationCompleteRef.current = false;
+    setLayoutHydrationVersion((version) => version + 1);
     setBrowseLayout([]);
     filledOffsetsRef.current = new Set();
     inFlightOffsetsRef.current = new Set();
@@ -582,14 +627,25 @@ export function useBrowsePagination(
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) void appendNextPage();
+          if (
+            entry.isIntersecting
+            && isBrowseRootNearTail(root)
+            && shouldRunBrowseSentinel({
+              layoutHydrationComplete: layoutHydrationCompleteRef.current,
+              total: totalRef.current,
+            })
+            // A visible-range request is the interactive path. Let it finish
+            // before the low-priority tail fallback can start another Worker
+            // query for the same scope.
+            && inFlightOffsetsRef.current.size === 0
+          ) void appendNextPage();
         }
       },
       { root, rootMargin: "800px 0px" },
     );
     observer.observe(sentinelNode);
     return () => observer.disconnect();
-  }, [appendNextPage, sentinelNode]);
+  }, [appendNextPage, layoutHydrationVersion, sentinelNode]);
 
   return {
     beginPage,

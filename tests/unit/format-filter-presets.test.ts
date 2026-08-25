@@ -11,24 +11,35 @@ import {
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
 } from "../../src/shared/media-formats";
 import {
   FORMAT_FILTER_GROUPS,
   FORMAT_TEXT_TOKEN,
+  OTHER_FORMAT_EXTENSIONS,
 } from "../../src/renderer/format-filter-presets";
 
 function allChipTokens(): string[] {
-  return FORMAT_FILTER_GROUPS.flatMap((group) => [...group.extensions]);
+  return [
+    ...FORMAT_FILTER_GROUPS.flatMap((group) => [...group.extensions]),
+    ...OTHER_FORMAT_EXTENSIONS,
+  ];
 }
 
+const otherFormatSet = new Set<string>(OTHER_FORMAT_EXTENSIONS);
+
 describe("format-filter-presets", () => {
-  it("covers every registered image/video/audio/model extension exactly once", () => {
+  it("covers every registered image/video/audio/document/model extension exactly once", () => {
     const chips = allChipTokens();
     const expected = [
       ...IMAGE_EXTENSIONS.map((extension) => extension.slice(1)),
       ...VIDEO_EXTENSIONS.map((extension) => extension.slice(1)),
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
+      ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)).filter(
+        (extension) => !otherFormatSet.has(extension),
+      ),
+      ...OTHER_FORMAT_EXTENSIONS,
     ];
     expect(new Set(chips)).toEqual(new Set(expected));
     expect(chips.length).toBe(new Set(chips).size);
@@ -53,5 +64,13 @@ describe("format-filter-presets", () => {
   it("ships the special text token separately from extension groups", () => {
     expect(FORMAT_TEXT_TOKEN).toBe("text");
     expect(allChipTokens()).not.toContain(FORMAT_TEXT_TOKEN);
+  });
+
+  it("keeps HTML, HDF, and HTM in the other-format group", () => {
+    const documentGroup = FORMAT_FILTER_GROUPS.find(
+      (group) => group.labelKey === "filter.formatGroupDocument",
+    );
+    expect(documentGroup?.extensions).toEqual(["pdf"]);
+    expect(OTHER_FORMAT_EXTENSIONS).toEqual(["html", "hdf", "htm"]);
   });
 });

@@ -12,8 +12,9 @@ function renameSession(
   return {
     assetId: "asset-1",
     extension: ".png",
+    originalFileName: "hero.png",
     originalBaseName: "hero",
-    value: "hero",
+    value: "hero.png",
     error: null,
     submitting: false,
     ...overrides,
@@ -49,14 +50,14 @@ describe("resolveAssetRenameCommit", () => {
 
   it("treats re-committing the original basename as a no-op cancel", () => {
     expect(
-      resolveAssetRenameCommit(renameSession({ value: "  hero  " })),
+      resolveAssetRenameCommit(renameSession({ value: "  hero.png  " })),
     ).toEqual({ action: "cancel" });
   });
 
   it("submits a changed trimmed basename", () => {
     expect(
-      resolveAssetRenameCommit(renameSession({ value: " hero-renamed " })),
-    ).toEqual({ action: "submit", newBaseName: "hero-renamed" });
+      resolveAssetRenameCommit(renameSession({ value: " hero-renamed.png " })),
+    ).toEqual({ action: "submit", newFileName: "hero-renamed.png" });
   });
 
   it("keeps editing when a request is already in flight", () => {

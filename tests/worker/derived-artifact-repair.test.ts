@@ -191,7 +191,7 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     expect(invalidatedArtifactCount(dbPath)).toBe(0);
   });
 
-  it('re-enqueues a failed contact sheet when metadata and poster are ready', () => {
+  it('keeps failed contact sheets terminal — AI analysis regenerates on demand (Serpent-140fe2)', () => {
     const root = temporaryRoot();
     const service = newService();
     const created = service.createLibrary({ displayName: '联系表重试库', selectedParentPath: root });
@@ -207,8 +207,10 @@ describe('retryable failed derived artifacts (Serpent-5xbg)', () => {
     service.openLibrary(created.libraryPath);
     service.enqueueThumbnailJobs(created.libraryId, { retryFailed: true });
 
-    expect(queuedJobCount(dbPath, 'generate_contact_sheet')).toBe(1);
-    expect(invalidatedArtifactCount(dbPath)).toBe(1);
+    // Serpent-140fe2: contact sheets are generated lazily at AI-analysis time
+    // (ensureVideoContactSheet). Open/refresh sweeps must not resurrect the
+    // doomed batches that flooded converted libraries.
+    expect(queuedJobCount(dbPath, 'generate_contact_sheet')).toBe(0);
   });
 
   it('never retries permanent failures (missing source, unsupported format)', () => {

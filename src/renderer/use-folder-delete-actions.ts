@@ -7,6 +7,7 @@ import {
   isBrowseScopeAffectedByFolderTrash,
   type FolderParentNode,
 } from "./folder-trash-scope";
+import { linkedRevealFolderId } from "../shared/linked-folder-tree";
 
 export type FolderDiskDeleteTarget =
   | {
@@ -15,7 +16,9 @@ export type FolderDiskDeleteTarget =
       name: string;
     }
   | {
+      /** Linked root or virtual child; relativePath="" means the root. */
       kind: "linked-child";
+      folderId: string;
       linkedFolderId: string;
       relativePath: string;
       name: string;
@@ -54,7 +57,15 @@ export function useFolderDeleteActions({
 }: UseFolderDeleteActionsParams) {
   const afterFolderMutation = useCallback(
     async (deletedFolderIds: readonly string[]) => {
+      const linkedScopeAffected = deletedFolderIds.some((deletedId) => {
+        if (assetScope === deletedId) return true;
+        if (deletedId.startsWith("lfv:")) {
+          return assetScope.startsWith(`${deletedId}/`);
+        }
+        return assetScope.startsWith(`lfv:${deletedId}/`);
+      });
       if (
+        linkedScopeAffected ||
         isBrowseScopeAffectedByFolderTrash(assetScope, deletedFolderIds, folders)
       ) {
         onDeletedCurrentScope(deletedFolderIds);
@@ -140,7 +151,7 @@ export function useFolderDeleteActions({
             count: result.value.deletedAssetCount,
           }),
         );
-        await afterFolderMutation([]);
+        await afterFolderMutation([target.folderId]);
       } catch (caught) {
         setError(
           toMessage(
@@ -234,7 +245,9 @@ export function useFolderDeleteActions({
             count: result.value.deletedAssetCount,
           }),
         );
-        await afterFolderMutation([]);
+        await afterFolderMutation([
+          linkedRevealFolderId(linkedFolderId, relativePath),
+        ]);
       } catch (caught) {
         setError(
           toMessage(

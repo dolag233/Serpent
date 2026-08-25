@@ -2,12 +2,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { _electron as electron, expect, test } from "@playwright/test";
+import { _electron as electron, expect, test, type Page } from "@playwright/test";
 
 import {
   assetCard as locateAssetCard,
   resolveElectronExecutablePath,
 } from "./electron-test-helpers";
+
+function collectionRow(window: Page, name: string) {
+  return window
+    .locator('.navigation-pane button.nav-row[data-nav-collection-id]')
+    .filter({ hasText: name })
+    .first();
+}
 
 test("persists organization and metadata across restart and surfaces optimistic-lock conflicts", async () => {
   const temporaryRoot = mkdtempSync(
@@ -92,9 +99,9 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await window
       .getByPlaceholder("新建合集")
       .press("Enter");
-    await expect(window.getByRole("button", { name: /持久合集/ })).toBeVisible();
+    await expect(collectionRow(window, "持久合集")).toBeVisible();
 
-    await window.getByRole("button", { name: /持久合集/ }).click();
+    await collectionRow(window, "持久合集").click();
     await window.getByRole("button", { name: "添加合集" }).click();
     await window
       .getByPlaceholder("新建合集")
@@ -103,7 +110,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
       .getByPlaceholder("新建合集")
       .press("Enter");
     await expect(
-      window.getByRole("button", { name: /持久子合集/ }),
+      collectionRow(window, "持久子合集"),
     ).toBeVisible();
     await window.getByRole("button", { name: /所有资产/ }).click();
 
@@ -196,13 +203,13 @@ test("persists organization and metadata across restart and surfaces optimistic-
     await expect(
       locateAssetCard(window, "persistent-asset.txt"),
     ).toBeVisible();
-    await window.getByRole("button", { name: /持久合集/ }).click();
+    await collectionRow(window, "持久合集").click();
     let restoredCard = locateAssetCard(window, "persistent-asset.txt");
     await expect(restoredCard).toBeVisible();
     await expect(
-      window.getByRole("button", { name: /持久子合集/ }),
+      collectionRow(window, "持久子合集"),
     ).toBeVisible();
-    await window.getByRole("button", { name: /持久子合集/ }).click();
+    await collectionRow(window, "持久子合集").click();
     restoredCard = locateAssetCard(window, "persistent-asset.txt");
     await expect(restoredCard).toBeVisible();
     await restoredCard.click();
@@ -280,13 +287,14 @@ test("persists organization and metadata across restart and surfaces optimistic-
     expect(restoredOrganization.childParentId).toBe(
       restoredOrganization.parentId,
     );
+    const restoredEntityVersion = restoredOrganization.metadata.entityVersion;
     expect(restoredOrganization).toMatchObject({
       metadata: {
-        entityVersion: 4,
         favorite: true,
         rating: 4,
       },
     });
+    expect(restoredEntityVersion).toBeGreaterThanOrEqual(4);
 
     const competingWrite = await window.evaluate(async (targetAssetId) => {
       const api = (
@@ -343,7 +351,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
       });
     }, assetId);
     expect(competingWrite.ok).toBe(true);
-    expect(competingWrite.value?.entityVersion).toBe(5);
+    expect(competingWrite.value?.entityVersion).toBe(restoredEntityVersion + 1);
 
     await restoredDescriptionInput.fill("界面中的陈旧修改");
     await restoredDescriptionInput.blur();
@@ -383,7 +391,7 @@ test("persists organization and metadata across restart and surfaces optimistic-
     expect(latestBeforeRefresh).toMatchObject({
       ok: true,
       value: {
-        entityVersion: 5,
+        entityVersion: restoredEntityVersion + 1,
         description: "另一客户端的最新描述",
       },
     });

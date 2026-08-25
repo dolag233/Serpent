@@ -16,7 +16,10 @@ import {
   SUPPORTED_SCHEMA_VERSION,
   THUMBNAIL_VISIBLE_PAGE_SIZE,
 } from '../../src/worker/library-service';
-import { workerMediaDecodeConcurrency } from '../../src/worker/media-concurrency';
+import { MEDIA_QUEUE_CONCURRENCY } from '../../src/shared/media-concurrency';
+import {
+  workerMediaDecodeConcurrency,
+} from '../../src/worker/media-concurrency';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -762,7 +765,7 @@ describe('preview availability while derivatives are generated', () => {
     service.closeAll();
   });
 
-  it('queues an Ogg proxy for WAV playback rather than relying on a source codec', () => {
+  it('keeps natively playable WAV playback on the source without queuing a proxy', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({
@@ -776,16 +779,18 @@ describe('preview availability while derivatives are generated', () => {
 
     expect(service.getPreviewArtifact(created.libraryId, asset.assetId, 'hover')).toMatchObject({
       mediaType: 'audio',
-      status: 'pending',
+      status: 'ready',
       kind: 'audio_proxy',
-      mimeType: 'audio/ogg',
+      mimeType: 'audio/wav',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
     });
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     expect(
       db.prepare(
         "SELECT kind, status FROM jobs WHERE asset_id = ? AND kind = 'generate_audio_proxy'",
       ).get(asset.assetId),
-    ).toMatchObject({ kind: 'generate_audio_proxy', status: 'queued' });
+    ).toBeUndefined();
     db.close();
     service.closeAll();
   });
@@ -895,7 +900,7 @@ describe('enqueueThumbnailJobs', () => {
     service.closeAll();
   });
 
-  it('queues a missing startup thumbnail when a library is reopened', () => {
+  it('defers the startup thumbnail enqueue out of library.open but requeues on demand', () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'ReopenQueue', selectedParentPath: root });
@@ -904,12 +909,29 @@ describe('enqueueThumbnailJobs', () => {
     importNoConflict(service, created.libraryId, source);
     service.closeAll();
 
+    // Serpent-4bdd26: the synchronous open no longer enqueues the startup
+    // wave (~230ms of full-table scans on a 20k library). The Worker's
+    // deferStartupThumbnailScene schedules the same parameters after the
+    // renderer reports its first viewport; an explicit caller (automation,
+    // CLI) triggers it directly.
     const reopened = service.openLibrary(created.libraryPath);
     const db = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
-    const queued = db.prepare(
+    const queuedBefore = db.prepare(
       "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
     ).get() as { count: number };
-    expect(queued.count).toBe(1);
+    expect(queuedBefore.count).toBe(0);
+
+    const enqueued = service.enqueueThumbnailJobs(reopened.libraryId, {
+      limit: 50,
+      priority: 100,
+      repairFailed: true,
+      retryFailed: true,
+    });
+    expect(enqueued).toBe(1);
+    const queuedAfter = db.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get() as { count: number };
+    expect(queuedAfter.count).toBe(1);
     db.close();
     service.closeAll();
   });
@@ -1101,7 +1123,7 @@ describe('processThumbnailQueue', () => {
     service.closeAll();
   });
 
-  it('caps Sharp work at the CPU-derived pool across assets (Serpent-azf6)', async () => {
+  it('caps Sharp work at the fixed memory-safe pool across assets', async () => {
     const root = temporaryRoot();
     let active = 0;
     let maximum = 0;
@@ -1145,18 +1167,25 @@ describe('processThumbnailQueue', () => {
         assetId: service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!.assetId,
       });
     }
+    let completed = 0;
     const operations = targets.map((target) => target.service.generateThumbnail({
       libraryId: target.libraryId,
       assetId: target.assetId,
+    }).finally(() => {
+      completed += 1;
+      changed();
     }));
 
+    expect(workerMediaDecodeConcurrency()).toBeLessThanOrEqual(MEDIA_QUEUE_CONCURRENCY);
     const expectedMaximum = Math.min(targets.length, workerMediaDecodeConcurrency());
     await waitFor(() => active === expectedMaximum);
     expect(maximum).toBe(expectedMaximum);
     releases.splice(0).forEach((release) => release());
-    // The held slots free up; any remaining operation acquires one of them.
-    if (expectedMaximum < targets.length) {
-      await waitFor(() => releases.length === targets.length - expectedMaximum);
+    // The held slots free up in waves. Do not assume the final wave size: a
+    // fixed two-job pool produces 2 + 2 + 1, while a single-core machine
+    // produces 1 + 1 + 1 + 1 + 1.
+    while (completed < targets.length) {
+      await waitFor(() => releases.length > 0 || completed === targets.length);
       releases.splice(0).forEach((release) => release());
     }
     await Promise.all(operations);
@@ -1461,7 +1490,7 @@ describe('generateThumbnail (animated GIF still page)', () => {
   });
 });
 
-describe('animated GIF webm proxy (Serpent-azf6)', () => {
+describe('animated GIF native playback (Serpent-43d32f)', () => {
   async function buildGif(root: string, frames: number): Promise<string> {
     const { execFileSync } = await import('node:child_process');
     const ffmpeg = process.env['SERPENT_FFMPEG_PATH'] ?? 'ffmpeg';
@@ -1503,12 +1532,12 @@ describe('animated GIF webm proxy (Serpent-azf6)', () => {
     };
   }
 
-  it('enqueues a low-priority webm proxy job behind the still thumbnail for animated GIFs', async () => {
+  it('keeps animated GIFs on the native image path — no proxy job, source playback', async () => {
     const root = temporaryRoot();
     const gifPath = await buildGif(root, 4);
     if (gifPath === '') return; // ffmpeg unavailable in this environment
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'GIF Proxy', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'GIF Native', selectedParentPath: root });
     importNoConflict(service, created.libraryId, gifPath);
     const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
 
@@ -1516,36 +1545,54 @@ describe('animated GIF webm proxy (Serpent-azf6)', () => {
     await service.processThumbnailQueue(created.libraryId, { maxJobs: 4 });
 
     const rows = openJobs(created)(
-      `SELECT kind, status, priority FROM jobs
-        WHERE asset_id = ? AND kind = 'generate_webm_proxy'`,
+      `SELECT kind FROM jobs WHERE asset_id = ? AND kind = 'generate_webm_proxy'`,
       asset.assetId,
-    ) as Array<{ kind: string; status: string; priority: number }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.status).toBe('queued');
-    expect(rows[0]!.priority).toBe(100);
+    ) as Array<{ kind: string }>;
+    expect(rows).toHaveLength(0);
+
+    // Chromium renders animated GIFs inside <img>, so hover/viewer play the
+    // original source instead of a WebM transcode (Serpent-43d32f).
+    const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
+    expect(preview.mediaType).toBe('image');
+    expect(preview.kind).not.toBe('webm_proxy');
+    expect(preview.playbackMode).toBe('source');
+    expect(preview.status).toBe('ready');
     service.closeAll();
   });
 
-  it('resolves the preview through the webm proxy once it is ready', async () => {
+  it('retires queued webm proxy jobs for GIFs left by older builds on reopen', async () => {
     const root = temporaryRoot();
     const gifPath = await buildGif(root, 4);
     if (gifPath === '') return;
     const service = new LibraryService();
-    const created = service.createLibrary({ displayName: 'GIF Proxy', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'GIF Retire', selectedParentPath: root });
     importNoConflict(service, created.libraryId, gifPath);
-    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
-
-    service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] });
-    // Drain 1: still thumbnail (+ proxy enqueued). Drain 2: the proxy itself.
-    await service.processThumbnailQueue(created.libraryId, { maxJobs: 4 });
-    await service.processThumbnailQueue(created.libraryId, { maxJobs: 4 });
-
-    const preview = await service.resolvePreviewArtifact(created.libraryId, asset.assetId);
-    expect(preview.mediaType).toBe('image');
-    expect(preview.kind).toBe('webm_proxy');
-    expect(preview.playbackMode).toBe('proxy');
-    expect(preview.status).toBe('ready');
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const gifAsset = db.prepare(
+      "SELECT asset_id, current_revision_id FROM assets WHERE lower(relative_file_path) LIKE '%.gif'",
+    ).get() as { asset_id: string; current_revision_id: string };
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES ('legacy-gif-proxy', ?, ?, ?, 'generate_webm_proxy', 'queued', 100, 0.0, 0,
+               strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+    ).run(created.libraryId, gifAsset.asset_id, gifAsset.current_revision_id);
+    db.close();
     service.closeAll();
+
+    const reopened = new LibraryService();
+    const reopenedLibrary = reopened.openLibrary(created.libraryPath);
+    // Serpent-4bdd26: the retirement moved into the background reconciliation
+    // (its GIF scan costs ~180ms on SMB); drive it explicitly.
+    await reopened.runOpenBackgroundReconciliation(reopenedLibrary.libraryId);
+    const verifyDb = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const legacyJob = verifyDb.prepare(
+      "SELECT status, error_code FROM jobs WHERE job_id = 'legacy-gif-proxy'",
+    ).get() as { status: string; error_code: string | null };
+    verifyDb.close();
+    expect(legacyJob).toMatchObject({ status: 'cancelled', error_code: 'GIF_PROXY_RETIRED' });
+    reopened.closeAll();
   });
 
   it('keeps static single-page GIFs on the plain image path (no proxy job)', async () => {
@@ -1785,6 +1832,21 @@ describe('visible-window header probe (Serpent-visible-window)', () => {
       "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
     ).run(revision.current_revision_id);
 
+    const asyncDimensions = await service.persistVisibleWindowImageDimensionsAsync(
+      created.libraryId,
+      [
+        jpegAsset.assetId,
+        textAsset.assetId,
+        'missing-asset',
+      ],
+    );
+    expect(asyncDimensions).toEqual([{ assetId: jpegAsset.assetId, width: 32, height: 24 }]);
+
+    // The synchronous helper remains covered for direct maintenance callers,
+    // but the Worker visible-window path uses the async variant above.
+    db.prepare(
+      "DELETE FROM revision_artifacts WHERE revision_id = ? AND kind = 'extracted_metadata'",
+    ).run(revision.current_revision_id);
     const dimensions = service.persistVisibleWindowImageDimensions(created.libraryId, [
       jpegAsset.assetId,
       textAsset.assetId,

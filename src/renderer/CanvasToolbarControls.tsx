@@ -18,13 +18,18 @@ import { Slider } from "./ui/primitives";
 import { ShellSurface } from "./ui/surfaces";
 
 const FIELD_BUTTONS: readonly {
-  readonly id: "canvas.field.name" | "canvas.field.size" | "canvas.field.date";
+  readonly id:
+    | "canvas.field.name"
+    | "canvas.field.size"
+    | "canvas.field.date"
+    | "canvas.field.dimensions";
   readonly field: keyof CanvasPreferences["fields"];
   readonly icon: IconName;
 }[] = [
   { id: "canvas.field.name", field: "name", icon: "tag" },
   { id: "canvas.field.size", field: "size", icon: "info" },
   { id: "canvas.field.date", field: "date", icon: "clock" },
+  { id: "canvas.field.dimensions", field: "dimensions", icon: "fit-window" },
 ];
 
 function ToolButton({

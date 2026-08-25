@@ -42,6 +42,10 @@ import {
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
 import {
+  normalizeVisibleWindowAssetIds,
+  visibleWindowReportKey,
+} from "./visible-window";
+import {
   assetSupportsThumbnail,
   isBenignThumbnailErrorCode,
 } from "../shared/thumbnail-support";
@@ -83,6 +87,7 @@ import {
 import { folderBrowseScope } from "./folder-browse-scope";
 import {
   linkedDirectoryName,
+  linkedRevealFolderId,
   parseLinkedVirtualFolderId,
 } from "../shared/linked-folder-tree";
 import {
@@ -192,6 +197,10 @@ import {
   type AiUiPreferences,
 } from "./ai-ui-preferences";
 import {
+  loadImageSequencePreferences,
+  saveImageSequencePreferences,
+} from "./image-sequence-preferences";
+import {
   SmartCollectionSettingsDialog,
   type SmartCollectionSettingsTarget,
 } from "./SmartCollectionSettingsDialog";
@@ -215,7 +224,10 @@ import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
 import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
-import { readPublishedCanvasAssetLayout } from "./canvas-asset-layout";
+import {
+  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+  readPublishedCanvasAssetLayout,
+} from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
 import { resolveBrowsePasteDestination } from "./browse-paste-target";
@@ -309,7 +321,7 @@ import { invertSelection } from "./invert-selection";
 import { trashedFoldersToBrowseEntries } from "./trashed-folder-entries";
 import { computeMasonrySelectionAssetIds } from "./masonry-selection-order";
 import { resolveMasonryTabTarget } from "./masonry-focus-order";
-import { shuffleArray } from "./client-shuffle";
+import { shuffleBrowseItems } from "./client-shuffle";
 import { toMessage, messageForPublicError, LibraryOperationError } from "./error-utils";
 
 import type {
@@ -366,10 +378,12 @@ import {
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { InspectorPanel } from "./InspectorPanel";
 import {
+  assetCaptionAlignClass,
   CARD_SIZE_MAX,
   CARD_SIZE_MIN,
   loadCanvasPreferences,
   saveCanvasPreferences,
+  shouldShowGridDimensions,
   type CanvasPreferences,
 } from "./canvas-preferences";
 import {
@@ -1391,6 +1405,9 @@ function AppInner() {
   const [canvasPrefs, setCanvasPrefs] = useState<CanvasPreferences>(() =>
     loadCanvasPreferences(),
   );
+  const [imageSequencePrefs, setImageSequencePrefs] = useState(() =>
+    loadImageSequencePreferences(),
+  );
   // Hover live previews (audio/video) carry the viewer volume preference over.
   const {
     volume: viewerVolume,
@@ -1782,8 +1799,7 @@ function AppInner() {
           trashBrowseTombstoneId,
         )
       : assets;
-    if (shuffleSeed === null || showTrash) return base;
-    return shuffleArray(base, shuffleSeed);
+    return shuffleBrowseItems(base, shuffleSeed, !showTrash);
   }, [
     assets,
     showTrash,
@@ -1793,6 +1809,14 @@ function AppInner() {
     trashedFolders,
   ]);
 
+  // Serpent-b963a9: masonry/justified canvases use the full-scope layout index
+  // for geometry, so shuffling only the loaded summaries leaves the cards in
+  // the original order whenever a filter is active. Keep the API rank index
+  // unchanged for pagination, but use the same client shuffle for rendering.
+  const visibleBrowseLayout = useMemo(() => {
+    return shuffleBrowseItems(browseLayout, shuffleSeed, !showTrash);
+  }, [browseLayout, showTrash, shuffleSeed]);
+
   // Report mounted cards and real layout slots. A fresh scrollbar destination
   // can queue its thumbnail work before the page summaries mount, while the
   // compact-layout scroll listener below fetches those summaries in parallel.
@@ -1800,7 +1824,12 @@ function AppInner() {
     if (!api || !library) return;
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
+    // A new browse layout can follow an asset mutation while the visible IDs
+    // stay identical. Reset the renderer-side guard so it can re-arm the
+    // Worker after the Worker invalidates its corresponding key.
+    reportedVisibleWindowKeyRef.current = "";
     let frame: number | undefined;
+    let debounceTimer: number | undefined;
     const report = () => {
       frame = undefined;
       const canvasRect = canvas.getBoundingClientRect();
@@ -1825,25 +1854,31 @@ function AppInner() {
         }
       }
       if (ids.length === 0) return;
-      const key = `${library.libraryId}:${ids.join(",")}`;
+      const stableIds = normalizeVisibleWindowAssetIds(ids);
+      const key = visibleWindowReportKey(library.libraryId, stableIds);
       if (key === reportedVisibleWindowKeyRef.current) return;
       reportedVisibleWindowKeyRef.current = key;
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
-        assetIds: ids.slice(0, 300),
+        assetIds: stableIds,
       });
     };
     const schedule = () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(report);
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        debounceTimer = undefined;
+        frame = window.requestAnimationFrame(report);
+      }, 50);
     };
     canvas.addEventListener("scroll", schedule, { passive: true });
     schedule();
     return () => {
       canvas.removeEventListener("scroll", schedule);
       if (frame !== undefined) window.cancelAnimationFrame(frame);
+      if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     };
-  }, [api, library, assetViewMode, browseLayout, assets, trashedAssets]);
+  }, [api, library, assetViewMode, browseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -2595,6 +2630,10 @@ function AppInner() {
   }, [aiUiPrefs]);
 
   useEffect(() => {
+    saveImageSequencePreferences(imageSequencePrefs);
+  }, [imageSequencePrefs]);
+
+  useEffect(() => {
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
     const handleWheel = (event: WheelEvent) => {
@@ -2915,6 +2954,50 @@ function AppInner() {
           : folderBrowseScope(scope, folderRecursiveRef.current));
       const libId = { libraryId: activeLibrary.libraryId };
       const generation = ++contentLoadGenerationRef.current;
+      const includeLibraryCounts =
+        refreshSidebar || trashMode || scope === "all" || scope === "root";
+      // Post the primary browse request before sidebar/count hydration. The
+      // Worker is a single synchronous SQLite owner; constructing the sidebar
+      // Promise first used to put folders/tags/collections ahead of the page
+      // the user is actually waiting to see (several hundred ms on 20k
+      // libraries, and materially worse on network-backed libraries).
+      const primaryAssetPromise = api.searchAssets({
+        ...libId,
+        query: opts?.discovery?.search ?? null,
+        filters: opts?.discovery?.filters,
+        scope: browseScope,
+        sort: opts?.discovery?.sort,
+        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        limit: BROWSE_PAGE_SIZE,
+        offset: 0,
+        showIgnored: includeIgnored,
+      });
+      const allAssetsPromise = includeLibraryCounts && (trashMode || scope !== "all")
+        ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
+        : Promise.resolve(undefined);
+      const rootCountPromise = includeLibraryCounts && (trashMode || scope !== "root")
+        ? api.searchAssets({
+            ...libId,
+            query: null,
+            limit: 1,
+            offset: 0,
+            scope: { kind: "folder", folderId: null, recursive: false },
+            showIgnored: includeIgnored,
+          })
+        : Promise.resolve(undefined);
+      const trashCountPromise = includeLibraryCounts
+        ? api.searchAssets({
+            ...libId,
+            query: null,
+            limit: 1,
+            offset: 0,
+            scope: { kind: "trash" },
+            showIgnored: includeIgnored,
+          })
+        : Promise.resolve(undefined);
+      // Sidebar hydration is intentionally started after the primary browse
+      // and its count requests have entered the Worker queue. This keeps the
+      // startup ordering deterministic without making sidebar state stale.
       const sidebarPromise = refreshSidebar
         ? Promise.all([
             api.listFolders({ ...libId, showIgnored: includeIgnored }),
@@ -2927,43 +3010,11 @@ function AppInner() {
               : Promise.resolve(null),
           ])
         : Promise.resolve(null);
-      const includeLibraryCounts =
-        refreshSidebar || trashMode || scope === "all" || scope === "root";
       const results = await Promise.all([
-        api.searchAssets({
-          ...libId,
-          query: opts?.discovery?.search ?? null,
-          filters: opts?.discovery?.filters,
-          scope: browseScope,
-          sort: opts?.discovery?.sort,
-          // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
-          limit: BROWSE_PAGE_SIZE,
-          offset: 0,
-          showIgnored: includeIgnored,
-        }),
-        includeLibraryCounts && (trashMode || scope !== "all")
-          ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
-          : Promise.resolve(undefined),
-        includeLibraryCounts && (trashMode || scope !== "root")
-          ? api.searchAssets({
-              ...libId,
-              query: null,
-              limit: 1,
-              offset: 0,
-              scope: { kind: "folder", folderId: null, recursive: false },
-              showIgnored: includeIgnored,
-            })
-          : Promise.resolve(undefined),
-        includeLibraryCounts
-          ? api.searchAssets({
-              ...libId,
-              query: null,
-              limit: 1,
-              offset: 0,
-              scope: { kind: "trash" },
-              showIgnored: includeIgnored,
-            })
-          : Promise.resolve(undefined),
+        primaryAssetPromise,
+        allAssetsPromise,
+        rootCountPromise,
+        trashCountPromise,
         sidebarPromise,
       ]).catch((caught: unknown) => {
         if (generation !== contentLoadGenerationRef.current) return null;
@@ -3362,6 +3413,30 @@ function AppInner() {
         });
         return;
       }
+      if (event.type === "asset.derived.ready") {
+        // Secondary media work is deliberately delayed so it cannot compete
+        // with the visible thumbnail wave. Refresh only the selected
+        // Inspector metadata when that work completes; a full canvas reload
+        // here would turn one palette into a library-wide render storm.
+        if (
+          (event.kind === "extract_metadata" || event.kind === "extract_palette") &&
+          selectedAssetIdRef.current === event.assetId &&
+          library
+        ) {
+          void api
+            .getAssetMetadata({
+              libraryId: library.libraryId,
+              assetId: event.assetId,
+            })
+            .then((result) => {
+              if (result.ok && selectedAssetIdRef.current === event.assetId) {
+                applyLoadedMetadata(event.assetId, result.value);
+              }
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
       if (event.type === "asset.thumbnail.failed") {
         queueLayoutArtifactPatch(event.assetId, null);
         const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
@@ -3425,7 +3500,7 @@ function AppInner() {
         window.cancelAnimationFrame(folderBrowseRefreshFrame);
       }
     };
-  }, [api, library?.libraryId, t]);
+  }, [api, applyLoadedMetadata, library, library?.libraryId, t]);
   useEffect(() => {
     if (!api || !library) return;
     const unsubscribeProgress = api.onAiProgress((event) => {
@@ -5450,6 +5525,7 @@ function AppInner() {
     library,
     busy,
     activeCollectionId,
+    autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
     previewBlocksDrop: Boolean(previewAsset),
     managedImportTargetFolderIdRef,
     reloadCurrentContent,
@@ -5498,6 +5574,19 @@ function AppInner() {
     library,
     setNotice,
     reloadCurrentContent,
+    isLinkedFolderId: (folderId) =>
+      parseLinkedVirtualFolderId(folderId) !== null ||
+      linkedFolders.some((folder) => folder.folderId === folderId),
+    onRenameSuccess: async (newFolderId, previousFolderId) => {
+      if (assetScope !== previousFolderId) return false;
+      // Renaming the folder currently being browsed navigates to the same
+      // scope with the same id.  Folder navigation normally skips the sidebar
+      // query for performance, but here that would immediately put the old
+      // name back after the success notice.  Refresh the folder tree as part
+      // of this mutation so the sidebar settles in the same render cycle.
+      await chooseFolder(newFolderId, { refreshSidebar: true });
+      return true;
+    },
   });
 
   const reloadSmartCollections = useCallback(async () => {
@@ -5571,7 +5660,10 @@ function AppInner() {
     selectedAssetCount: selectedAssetIds.length,
     resolveManagedFolderName,
     canRenameFolder: (folderId) =>
-      folders.some((folder) => folder.folderId === folderId),
+      folders.some((folder) => folder.folderId === folderId) ||
+      linkedFolders.some(
+        (folder) => folder.folderId === folderId && folder.status === "available",
+      ),
     createSubfolder: (parentFolderId) => {
       cancelInlineSmartCollectionEdit();
       openInlineFolderCreate(parentFolderId);
@@ -5588,6 +5680,7 @@ function AppInner() {
       if (virtual) {
         openDiskDelete({
           kind: "linked-child",
+          folderId,
           linkedFolderId: virtual.linkedFolderId,
           relativePath: virtual.relativePath,
           name,
@@ -5595,6 +5688,13 @@ function AppInner() {
         return;
       }
       if (linkedFolders.some((folder) => folder.folderId === folderId)) {
+        openDiskDelete({
+          kind: "linked-child",
+          folderId,
+          linkedFolderId: folderId,
+          relativePath: "",
+          name,
+        });
         return;
       }
       openDiskDelete({ kind: "managed", folderId, name });
@@ -5923,10 +6023,12 @@ function AppInner() {
           ? await api.importFiles({
               libraryId: library.libraryId,
               targetFolderId: selectedFolderId,
+              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             })
           : await api.importFolder({
               libraryId: library.libraryId,
               targetFolderId: selectedFolderId,
+              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
@@ -7814,14 +7916,15 @@ function AppInner() {
   }, [library?.libraryId]);
 
   // 打开库后拉取同步绑定状态（库切换器 link/link-off 图标）。
+  const activeLibraryId = library?.libraryId;
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      if (!api || !library) {
+      if (!api || !activeLibraryId) {
         if (!cancelled) setSyncBindingStatus("none");
         return;
       }
-      const result = await api.syncGetBinding({ libraryId: library.libraryId });
+      const result = await api.syncGetBinding({ libraryId: activeLibraryId });
       if (cancelled) return;
       if (result.ok && result.value) {
         setSyncBindingStatus(result.value.enabled ? "enabled" : "disabled");
@@ -7832,7 +7935,7 @@ function AppInner() {
     return () => {
       cancelled = true;
     };
-  }, [api, library?.libraryId]);
+  }, [api, activeLibraryId]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -10391,13 +10494,23 @@ function AppInner() {
                         canvasPrefs.fields.size ||
                         canvasPrefs.fields.date ||
                         snippetCaption != null ||
-                        (assetViewMode === "grid" &&
-                          asset.width != null &&
-                          asset.height != null)) && (
-                        <div className="asset-caption">
-                          {assetViewMode === "grid" &&
-                            asset.width != null &&
-                            asset.height != null &&
+                        shouldShowGridDimensions(
+                          canvasPrefs.fields,
+                          assetViewMode,
+                          asset.width,
+                          asset.height,
+                          { mediaType: asset.mediaType },
+                        )) && (
+                        <div
+                          className={`asset-caption ${assetCaptionAlignClass(canvasPrefs.captionAlign)}`}
+                        >
+                          {shouldShowGridDimensions(
+                            canvasPrefs.fields,
+                            assetViewMode,
+                            asset.width,
+                            asset.height,
+                            { mediaType: asset.mediaType },
+                          ) &&
                             !renamingThisAsset && (
                               <span className="asset-dimensions">
                                 {asset.width} × {asset.height}
@@ -10432,11 +10545,6 @@ function AppInner() {
                                     onMouseDown={(event) => event.stopPropagation()}
                                     value={assetRenameDialog.value}
                                   />
-                                  {assetRenameDialog.extension ? (
-                                    <span className="asset-inline-rename-ext">
-                                      {assetRenameDialog.extension}
-                                    </span>
-                                  ) : null}
                                   {assetRenameDialog.error ? (
                                     <span className="asset-inline-rename-error">
                                       {assetRenameDialog.error}
@@ -10486,7 +10594,7 @@ function AppInner() {
                         {assetViewMode === "masonry" ? (
                           <MasonryColumns
                             assets={section.assets}
-                            layout={browseLayout}
+                            layout={visibleBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry) =>
@@ -10507,7 +10615,13 @@ function AppInner() {
                             showCaption={
                               canvasPrefs.fields.name ||
                               canvasPrefs.fields.size ||
-                              canvasPrefs.fields.date
+                              canvasPrefs.fields.date ||
+                              canvasPrefs.fields.dimensions
+                            }
+                            captionBandPx={
+                              canvasPrefs.fields.dimensions
+                                ? MASONRY_DIMENSIONS_CAPTION_BAND_PX
+                                : undefined
                             }
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)
@@ -10516,7 +10630,7 @@ function AppInner() {
                         ) : (
                           <JustifiedAssetRows
                             assets={section.assets}
-                            layout={browseLayout}
+                            layout={visibleBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry) =>
@@ -10879,6 +10993,7 @@ function AppInner() {
           />
         }
         aiUiPrefs={aiUiPrefs}
+        autoDetectImageSequences={imageSequencePrefs.autoDetectOnImport}
         canvasPrefs={canvasPrefs}
         onActiveCategoryChange={setAppSettingsCategory}
         onClose={() => {
@@ -10887,6 +11002,9 @@ function AppInner() {
         }}
         onSetViewMode={(mode) => {
           setCanvasPrefs((p) => ({ ...p, viewMode: mode }));
+        }}
+        onSetCaptionAlign={(align) => {
+          setCanvasPrefs((p) => ({ ...p, captionAlign: align }));
         }}
         onToggleField={(field) => {
           setCanvasPrefs((p) => ({
@@ -10902,6 +11020,12 @@ function AppInner() {
         }}
         onToggleShowAiBadges={() => {
           setAiUiPrefs((p) => ({ ...p, showAiBadges: !p.showAiBadges }));
+        }}
+        onToggleAutoDetectImageSequences={() => {
+          setImageSequencePrefs((p) => ({
+            ...p,
+            autoDetectOnImport: !p.autoDetectOnImport,
+          }));
         }}
         onOpenAppLog={openAppLog}
         onOpenExtensionReleases={() => {
@@ -11428,8 +11552,17 @@ function AppInner() {
           if (linkedRelativePath) {
             openDiskDelete({
               kind: "linked-child",
+              folderId: linkedRevealFolderId(folderId, linkedRelativePath),
               linkedFolderId: folderId,
               relativePath: linkedRelativePath,
+              name,
+            });
+          } else {
+            openDiskDelete({
+              kind: "linked-child",
+              folderId,
+              linkedFolderId: folderId,
+              relativePath: "",
               name,
             });
           }

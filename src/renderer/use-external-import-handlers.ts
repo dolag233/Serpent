@@ -42,6 +42,7 @@ export type UseExternalImportHandlersParams = {
   library: RendererLibrarySummary | null;
   busy: boolean;
   activeCollectionId: string | null;
+  autoDetectImageSequences: boolean;
   /** When set, external drop highlight/import is suppressed (viewer open). */
   previewBlocksDrop: boolean;
   managedImportTargetFolderIdRef: MutableRefObject<string | undefined>;
@@ -77,6 +78,7 @@ export function useExternalImportHandlers({
   library,
   busy,
   activeCollectionId,
+  autoDetectImageSequences,
   previewBlocksDrop,
   managedImportTargetFolderIdRef,
   reloadCurrentContent,
@@ -158,6 +160,7 @@ export function useExternalImportHandlers({
           libraryId: library.libraryId,
           targetFolderId: targetFolderId ?? undefined,
           targetCollectionId,
+          autoDetectImageSequences,
           files,
           html: webPayload?.html,
           uriList: webPayload?.uriList,
@@ -175,6 +178,7 @@ export function useExternalImportHandlers({
     },
     [
       activeCollectionId,
+      autoDetectImageSequences,
       api,
       applyDesktopImportResult,
       busy,

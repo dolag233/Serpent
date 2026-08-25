@@ -2,6 +2,7 @@ import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
+import { Tooltip } from "./ui/primitives/Tooltip";
 import {
   formatPluginJobError,
   formatPluginJobProgressMessage,
@@ -9,6 +10,23 @@ import {
   getPluginJobDisplayProgress,
 } from "./plugin-job-display";
 import type { MediaJobStatus, AiJobStatus, PluginJobStatus } from "../shared/library-api";
+
+function MediaJobAssetLabel({
+  assetName,
+  fallback,
+}: {
+  assetName: string | null | undefined;
+  fallback: string;
+}) {
+  const label = assetName ?? fallback;
+  const content = (
+    <span className="media-jobs-grid-cell media-jobs-asset-name">
+      {label}
+    </span>
+  );
+
+  return assetName ? <Tooltip label={assetName}>{content}</Tooltip> : content;
+}
 
 export interface MediaJobsDialogProps {
   open: boolean;
@@ -145,17 +163,24 @@ export function MediaJobsDialog({
                         display: "grid",
                         gap: 8,
                         gridTemplateColumns:
-                          "minmax(140px, 1fr) 90px minmax(180px, 2fr)",
+                          "minmax(0, 1.4fr) minmax(0, 1.2fr) 90px minmax(0, 2fr)",
                         fontSize: 11,
                       }}
                     >
-                      <span>
+                      <MediaJobAssetLabel
+                        assetName={job.assetName}
+                        fallback={t("dialog.mediaJobs.libraryScope")}
+                      />
+                      <span className="media-jobs-grid-cell">
                         {job.kind
                           .replace("generate_", "")
                           .replaceAll("_", " ")}
                       </span>
-                      <strong>{job.status}</strong>
-                      <span title={job.errorCode ?? undefined}>
+                      <strong className="media-jobs-grid-cell">{job.status}</strong>
+                      <span
+                        className="media-jobs-grid-cell"
+                        title={job.errorCode ?? undefined}
+                      >
                         {job.errorDetail ??
                           job.errorCode ??
                           `${Math.round(job.progress * 100)}%`}
@@ -269,13 +294,20 @@ export function MediaJobsDialog({
                           display: "grid",
                           gap: 8,
                           gridTemplateColumns:
-                            "minmax(150px, 1fr) 90px minmax(180px, 2fr)",
+                            "minmax(0, 1.4fr) minmax(0, 1.2fr) 90px minmax(0, 2fr)",
                           fontSize: 11,
                         }}
                       >
-                        <span>{job.kind}</span>
-                        <strong>{job.status}</strong>
-                        <span title={job.errorCode ?? undefined}>
+                        <MediaJobAssetLabel
+                          assetName={job.assetName}
+                          fallback={t("dialog.mediaJobs.libraryScope")}
+                        />
+                        <span className="media-jobs-grid-cell">{job.kind}</span>
+                        <strong className="media-jobs-grid-cell">{job.status}</strong>
+                        <span
+                          className="media-jobs-grid-cell"
+                          title={job.errorCode ?? undefined}
+                        >
                           {job.errorDetail ?? job.errorCode ?? "—"}
                         </span>
                       </div>
