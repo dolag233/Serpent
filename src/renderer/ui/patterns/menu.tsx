@@ -1,4 +1,4 @@
-import type { HTMLAttributes, ReactNode } from "react";
+import type { HTMLAttributes, ReactNode, Ref } from "react";
 
 export type MenuNodeKind = "item" | "submenu" | "separator";
 
@@ -147,6 +147,7 @@ export interface MenuSurfaceProps
   readonly nodes: readonly ResolvedMenuNode[];
   /** The host owns row rendering, portals, keyboard navigation, and selection. */
   readonly renderNode: (node: ResolvedMenuNode, depth: number) => ReactNode;
+  readonly ref?: Ref<HTMLDivElement>;
 }
 
 /**
@@ -157,6 +158,7 @@ export interface MenuSurfaceProps
 export function MenuSurface({
   nodes,
   renderNode,
+  ref,
   className,
   ...rest
 }: MenuSurfaceProps) {
@@ -167,6 +169,7 @@ export function MenuSurface({
   return (
     <div
       {...rest}
+      ref={ref}
       className={className ? `ui-menu-surface ${className}` : "ui-menu-surface"}
       data-ui-pattern="menu-surface"
       role="menu"

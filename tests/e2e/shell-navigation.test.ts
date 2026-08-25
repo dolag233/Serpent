@@ -1,10 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { _electron as electron, expect, test } from "@playwright/test";
 
 import { resolveElectronExecutablePath } from "./electron-test-helpers";
+
+const packageVersion = (JSON.parse(
+  readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+) as { version: string }).version;
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -138,13 +142,14 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
         window.getByRole("dialog", { name: "开源组件与许可" }),
       ).toBeVisible();
       await window.keyboard.press("Escape");
+      await expect(window.getByRole("dialog")).toHaveCount(0);
 
       await settingsButton.click();
       await window.getByRole("menuitem", { name: "关于", exact: true }).hover();
       await window.getByRole("menuitem", { name: "关于 Serpent", exact: true }).click();
       const aboutDialog = window.getByRole("dialog", { name: "Serpent" });
       await expect(aboutDialog).toBeVisible();
-      await expect(window.getByText("版本 0.1.1", { exact: true })).toBeVisible();
+      await expect(window.getByText(`版本 ${packageVersion}`, { exact: true })).toBeVisible();
       const refreshButton = aboutDialog.getByRole("button", { name: "检查更新" });
       await expect(refreshButton).toBeVisible();
       await expect(refreshButton).toHaveAttribute("data-hover-tip", "检查更新");
@@ -158,6 +163,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
         return text !== null && text !== "正在检查 GitHub Releases…";
       }, { timeout: 30_000 }).toBe(true);
       await window.keyboard.press("Escape");
+      await expect(window.getByRole("dialog")).toHaveCount(0);
     } else {
       await application.evaluate(({ BrowserWindow, Menu }) => {
         const item = Menu.getApplicationMenu()?.getMenuItemById("about.serpent");
@@ -179,6 +185,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
         return text !== null && text !== "正在检查 GitHub Releases…";
       }, { timeout: 30_000 }).toBe(true);
       await window.keyboard.press("Escape");
+      await expect(window.getByRole("dialog")).toHaveCount(0);
 
       await settingsButton.click();
       const settingsDialog = window.getByRole("dialog");

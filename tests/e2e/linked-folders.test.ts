@@ -55,7 +55,8 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
 
@@ -195,7 +196,8 @@ test('restores a linked library after a full app restart', async () => {
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
     // Link the folder.
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
     await window.getByRole('button', { name: 'source', exact: true }).click();
@@ -298,7 +300,8 @@ test('applies default ignore rules — .git and node_modules are not registered 
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
 
-    await window.getByRole('button', { name: /资源库菜单|当前资源库/ }).click();
+    await window.getByRole('button', { name: '主菜单' }).click();
+    await window.getByRole('menuitem', { name: '文件', exact: true }).hover();
     await window.getByRole('menuitem', { name: '导入链接文件夹' }).click();
     await expect(window.getByRole('button', { name: 'source', exact: true })).toBeVisible();
     await window.getByRole('button', { name: 'source', exact: true }).click();

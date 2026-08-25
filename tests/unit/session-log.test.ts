@@ -40,7 +40,9 @@ describe('formatSessionTimestamp (Serpent-wgmy)', () => {
 describe('sessionLogPathFor', () => {
   it('builds the plain snake/underscore-free session path', () => {
     const d = new Date(2026, 7, 16, 22, 14, 12);
-    expect(sessionLogPathFor('/tmp/logs', d)).toBe('/tmp/logs/serpent-20260816T221412.log');
+    expect(sessionLogPathFor('/tmp/logs', d)).toBe(
+      path.join('/tmp/logs', 'serpent-20260816T221412.log'),
+    );
   });
 });
 
@@ -49,26 +51,26 @@ describe('chooseUniqueSessionLogPath', () => {
     const d = new Date(2026, 7, 16, 22, 14, 12);
     const exists = () => false;
     expect(chooseUniqueSessionLogPath('/tmp/logs', d, exists, 42)).toBe(
-      '/tmp/logs/serpent-20260816T221412.log',
+      path.join('/tmp/logs', 'serpent-20260816T221412.log'),
     );
   });
 
   it('falls back to millisecond precision on a same-second collision', () => {
     const d = new Date(2026, 7, 16, 22, 14, 12, 345);
     const exists = (filePath: string) =>
-      filePath === '/tmp/logs/serpent-20260816T221412.log';
+      filePath === path.join('/tmp/logs', 'serpent-20260816T221412.log');
     expect(chooseUniqueSessionLogPath('/tmp/logs', d, exists, 42)).toBe(
-      '/tmp/logs/serpent-20260816T221412345.log',
+      path.join('/tmp/logs', 'serpent-20260816T221412345.log'),
     );
   });
 
   it('falls back to pid when the millisecond file also collides', () => {
     const d = new Date(2026, 7, 16, 22, 14, 12, 345);
     const exists = (filePath: string) =>
-      filePath === '/tmp/logs/serpent-20260816T221412.log' ||
-      filePath === '/tmp/logs/serpent-20260816T221412345.log';
+      filePath === path.join('/tmp/logs', 'serpent-20260816T221412.log') ||
+      filePath === path.join('/tmp/logs', 'serpent-20260816T221412345.log');
     expect(chooseUniqueSessionLogPath('/tmp/logs', d, exists, 99)).toBe(
-      '/tmp/logs/serpent-20260816T221412-99.log',
+      path.join('/tmp/logs', 'serpent-20260816T221412-99.log'),
     );
   });
 });
@@ -102,6 +104,19 @@ describe('pruneSessionLogs', () => {
     writeFileSync(path.join(dir, 'other.txt'), 'other');
     writeFileSync(path.join(dir, 'serpent-20260816T000000.log'), 'one');
     writeFileSync(path.join(dir, 'serpent-20260816T000001.log'), 'two');
+    // Filesystem directory order is not a recency signal on Windows; make the
+    // intended survivor explicit through mtime so the pruning contract is
+    // deterministic across platforms.
+    utimesSync(
+      path.join(dir, 'serpent-20260816T000000.log'),
+      new Date(2026, 7, 16, 0, 0, 0),
+      new Date(2026, 7, 16, 0, 0, 0),
+    );
+    utimesSync(
+      path.join(dir, 'serpent-20260816T000001.log'),
+      new Date(2026, 7, 16, 0, 0, 1),
+      new Date(2026, 7, 16, 0, 0, 1),
+    );
     const removed = pruneSessionLogs(dir, 1);
     expect(removed).toHaveLength(1);
     const remaining = readdirSync(dir).sort();

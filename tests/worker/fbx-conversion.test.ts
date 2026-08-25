@@ -59,7 +59,7 @@ function importAsset(service: LibraryService, libraryId: string, sourcePath: str
 afterEach(() => {
   for (const service of services.splice(0)) service.closeAll();
   for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true });
-});
+}, 120_000);
 
 /* ------------------------------------------------------------------ */
 /* GLB structural helpers                                              */

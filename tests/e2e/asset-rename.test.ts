@@ -84,10 +84,10 @@ test("renames an asset file from the context menu and renames the real file on d
     await createLibraryAndImport(window, libraryName);
 
     const { card, input } = await openInlineRename(window, "hero.png");
-    await expect(input).toHaveValue("hero");
-    await expect(card.locator(".asset-inline-rename-ext")).toHaveText(".png");
+    await expect(input).toHaveValue("hero.png");
+    await expect(card.locator(".asset-inline-rename-ext")).toHaveCount(0);
 
-    await input.fill("hero-renamed");
+    await input.fill("hero-renamed.png");
     await input.press("Enter");
 
     const renamedCard = window.locator(
@@ -140,7 +140,7 @@ test("keeps the inline rename open with a conflict error and allows retry after 
     ).toBeVisible({ timeout: 15_000 });
 
     const { card, input } = await openInlineRename(window, "alpha.png");
-    await input.fill("beta");
+    await input.fill("beta.png");
     await input.press("Enter");
 
     await expect(card.locator(".asset-inline-rename-error")).toContainText(
@@ -149,7 +149,7 @@ test("keeps the inline rename open with a conflict error and allows retry after 
     );
     expect(existsSync(path.join(libraryPath, "Assets", "alpha.png"))).toBe(true);
 
-    await input.fill("alpha-renamed");
+    await input.fill("alpha-renamed.png");
     await input.press("Enter");
     await expect(
       window.locator('[data-asset-id][title="alpha-renamed.png"]'),

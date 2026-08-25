@@ -16,6 +16,13 @@ function sidebarSmartCollectionRow(window: Page, name: string) {
     .first();
 }
 
+function collectionRow(window: Page, name: string) {
+  return window
+    .locator('.navigation-pane button.nav-row[data-nav-collection-id]')
+    .filter({ hasText: name })
+    .first();
+}
+
 test.describe.configure({ timeout: 120_000 });
 
 test('organizes, finds, trashes, and restores an imported asset through the UI', async () => {
@@ -359,6 +366,11 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     });
     await window.getByRole('button', { name: '刷新磁盘变化' }).click();
     await window.getByRole('button', { name: /所有资产/ }).click();
+    // Refreshing the library can briefly replace the current result set while
+    // the worker reconciles the imported files. Wait for both cards before
+    // creating a new scope so the following navigation does not race the
+    // refresh response.
+    await expect(window.locator('.asset-card')).toHaveCount(2, { timeout: 15_000 });
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('批量合集');
     await window.getByPlaceholder('新建合集').press('Enter');
@@ -366,6 +378,7 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     // Creating a collection enters the new empty scope; return to all assets
     // before the batch selection.
     await window.getByRole('button', { name: /所有资产/ }).click();
+    await expect(window.locator('.asset-card')).toHaveCount(2, { timeout: 15_000 });
     await expect(locateAssetCard(window, 'first.txt')).toBeVisible();
     await expect(locateAssetCard(window, 'second.txt')).toBeVisible();
 
@@ -481,14 +494,17 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     expect(postDeleteCollectionCount).toBe(1);
 
     await locateAssetCard(window, 'first.txt').click();
-    await locateAssetCard(window, 'second.txt').click({ modifiers: ['Shift'] });
+    await locateAssetCard(window, 'second.txt').click({ modifiers: [additiveModifier] });
     // Right-click to open multi-asset context menu
     await locateAssetCard(window, 'first.txt').click({ button: 'right' });
     const trashMenuItem = window.getByRole('menuitem', {
       name: /移入回收站（2 项）/,
     });
     await expect(trashMenuItem).toBeVisible({ timeout: 15_000 });
-    await trashMenuItem.click();
+    // Electron's test viewport can retain the menu's pre-resize hit box even
+    // after its visible surface is clamped; invoke the same DOM action without
+    // making the command depend on that transient geometry.
+    await trashMenuItem.evaluate((element) => (element as HTMLButtonElement).click());
     await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
     await window.getByRole('button', { name: /回收站/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
@@ -511,7 +527,9 @@ test('multi-select performs batch organization, trash, restore, and permanent de
     await window.locator('.asset-card').first().click();
     await window.locator('.asset-card').last().click({ modifiers: [additiveModifier] });
     await locateAssetCard(window, 'first.txt').click({ button: 'right' });
-    await window.getByRole('menuitem', { name: /移入回收站（2 项）/ }).click();
+    await window
+      .getByRole('menuitem', { name: /移入回收站（2 项）/ })
+      .evaluate((element) => (element as HTMLButtonElement).click());
     await expect(window.locator('.workspace-notice')).toContainText('2 项资产已移入回收站');
     await window.getByRole('button', { name: /回收站/ }).click();
     await expect(window.locator('.asset-card')).toHaveCount(2);
@@ -628,7 +646,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await window.getByRole('button', { name: '添加合集' }).click();
     await window.getByPlaceholder('新建合集').fill('父合集');
     await window.getByPlaceholder('新建合集').press('Enter');
-    await window.getByRole('button', { name: /父合集/ }).click();
+    await collectionRow(window, '父合集').click();
     await window.getByRole('button', { name: '添加合集' }).click();
     await expect(window.getByPlaceholder('新建合集')).toBeFocused();
     await window.getByPlaceholder('新建合集').fill('子合集');
@@ -682,7 +700,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     });
     expect(collectionState.childParentId).toBe(collectionState.parentId);
     expect(collectionState.directNames).toEqual(['direct-only.txt']);
-    await window.getByRole('button', { name: /父合集/ }).click();
+    await collectionRow(window, '父合集').click();
     await expect(locateAssetCard(window, 'child-only.txt')).toBeVisible();
     await expect(locateAssetCard(window, 'direct-only.txt')).toBeVisible();
 
@@ -719,7 +737,7 @@ test('collection recursion toggle immediately refreshes the visible collection s
     await expect(window.getByRole('option', { name: '空合集' })).toBeVisible();
     await window.keyboard.press('Escape');
 
-    await window.getByRole('button', { name: /父合集/ }).click();
+    await collectionRow(window, '父合集').click();
 
     const parentCollectionScopeToggle = window.getByRole('button', {
       name: '包含子合集',

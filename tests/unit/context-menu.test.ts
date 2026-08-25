@@ -114,4 +114,62 @@ describe("ContextMenu focus lifecycle", () => {
     );
     expect(item?.classList.contains("is-danger")).toBe(true);
   });
+
+  it("uses the keyboard focus marker for arrow navigation", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(
+            ContextMenuProvider,
+            null,
+            createElement(
+              ContextMenu,
+              {
+                ariaLabel: "Asset actions",
+                position: { x: 20, y: 20 },
+                children: createElement(
+                  Fragment,
+                  null,
+                  createElement(ContextMenuItem, {
+                    label: "First",
+                    onAction: () => undefined,
+                  }),
+                  createElement(ContextMenuItem, {
+                    label: "Second",
+                    onAction: () => undefined,
+                  }),
+                ),
+              },
+            ),
+          ),
+        ),
+      );
+    });
+
+    const menu = container.querySelector<HTMLElement>('[role="menu"]');
+    const items = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    );
+    expect(menu).not.toBeNull();
+    items[0]?.focus();
+    await act(async () => {
+      items[0]?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "ArrowDown",
+          code: "ArrowDown",
+        }),
+      );
+    });
+
+    expect(menu?.classList.contains("is-keyboard-navigation")).toBe(true);
+    expect(document.activeElement).toBe(items[1]);
+  });
 });
