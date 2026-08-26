@@ -5902,6 +5902,13 @@ async function startApplication(): Promise<void> {
   workerClient = new LibraryWorkerClient(
     path.join(__dirname, "library_worker.js"),
     logger,
+    {
+      ...process.env,
+      SERPENT_LIBRARY_METADATA_CACHE_PATH: path.join(
+        app.getPath('userData'),
+        'library-metadata-cache',
+      ),
+    },
   );
   await workerClient.start();
   const activeWorkerClient = workerClient;

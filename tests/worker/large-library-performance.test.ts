@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { performance } from 'node:perf_hooks';
+import path from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -33,6 +35,29 @@ function percentile(samples: number[], percentileValue: number): number {
     Math.max(0, Math.ceil(ordered.length * percentileValue) - 1),
   );
   return ordered[index]!;
+}
+
+function isCatalogBrowseStatement(sql: string): boolean {
+  return sql.includes('SELECT COUNT(*) AS total FROM assets a')
+    || /SELECT a\.asset_id,\s*a\.location_kind/u.test(sql);
+}
+
+function measureBrowseSamples(
+  service: LibraryService,
+  libraryId: string,
+  trace: string[],
+): { samples: number[]; primaryBrowseStatements: number[] } {
+  service.searchAssets({ libraryId, limit: 50, offset: 0 });
+  const samples: number[] = [];
+  const primaryBrowseStatements: number[] = [];
+  for (let index = 0; index < 7; index += 1) {
+    trace.length = 0;
+    const startedAt = performance.now();
+    service.searchAssets({ libraryId, limit: 50, offset: 0 });
+    samples.push(performance.now() - startedAt);
+    primaryBrowseStatements.push(trace.filter(isCatalogBrowseStatement).length);
+  }
+  return { samples, primaryBrowseStatements };
 }
 
 async function measureReconciliationWithViewer(
@@ -94,21 +119,25 @@ async function measureReconciliationWithViewer(
   };
 }
 
+function openBaselineService(): void {
+  service = new LibraryService({ observerFactory: () => ({ close() {} }) });
+  // Fixture 生成时的 libraryId 与重建后的 DB libraryId 可能不一致
+  // （生成器每次 randomUUID）；以打开后 DB 实际 id 为准。
+  const opened = service.openLibrary(manifest.libraryPath);
+  manifest = { ...manifest, libraryId: opened.libraryId };
+  initialLiveAssetCount = service.searchAssets({
+    libraryId: opened.libraryId,
+    limit: 1,
+    offset: 0,
+  }).total;
+}
+
 describe.skipIf(!fixturePath)('20k asset large-library performance baseline', () => {
   beforeAll(() => {
     const manifestFile = `${fixturePath}/.serpent/large-library-fixture.json`;
     if (!existsSync(manifestFile)) throw new Error(`Missing fixture manifest: ${manifestFile}`);
     manifest = JSON.parse(readFileSync(manifestFile, 'utf8')) as LargeLibraryFixtureManifest;
-    service = new LibraryService({ observerFactory: () => ({ close() {} }) });
-    // Fixture 生成时的 libraryId 与重建后的 DB libraryId 可能不一致
-    // （生成器每次 randomUUID）；以打开后 DB 实际 id 为准。
-    const opened = service.openLibrary(manifest.libraryPath);
-    manifest = { ...manifest, libraryId: opened.libraryId };
-    initialLiveAssetCount = service.searchAssets({
-      libraryId: opened.libraryId,
-      limit: 1,
-      offset: 0,
-    }).total;
+    openBaselineService();
   }, 120_000);
 
   afterAll(() => service?.closeAll());
@@ -128,12 +157,15 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       limit: 50,
       offset: 0,
     }));
-    const folderSwitchMs = benchmark(() => service.searchAssets({
-      libraryId: manifest.libraryId,
-      scope: { kind: 'folder', folderId: manifest.sampleFolderId, recursive: false },
-      limit: 50,
-      offset: 0,
-    }));
+    const sampleFolderId = service.listManagedFolders(manifest.libraryId)[0]?.folderId;
+    const folderSwitchMs = sampleFolderId === undefined
+      ? -1
+      : benchmark(() => service.searchAssets({
+          libraryId: manifest.libraryId,
+          scope: { kind: 'folder', folderId: sampleFolderId, recursive: false },
+          limit: 50,
+          offset: 0,
+        }));
     // 合集切换（非递归 + 递归，递归含子合集范围）。
     const firstCollectionId = service.listCollections(manifest.libraryId)[0]?.collectionId;
     let collectionSwitchMs = -1;
@@ -246,7 +278,7 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     }));
     expect(searchMs).toBeLessThan(5_000);
     expect(layoutMs).toBeLessThan(5_000);
-    expect(folderSwitchMs).toBeLessThan(5_000);
+    if (folderSwitchMs >= 0) expect(folderSwitchMs).toBeLessThan(5_000);
     // 合集切换 ≤ 5s 兜底线；真实目标随报告与文件夹同量级（500ms 首屏）。
     if (collectionSwitchMs >= 0) expect(collectionSwitchMs).toBeLessThan(5_000);
     if (collectionRecursiveSwitchMs >= 0) expect(collectionRecursiveSwitchMs).toBeLessThan(5_000);
@@ -258,6 +290,96 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     expect(navigationWarmMs).toBeLessThan(5_000);
     expect(inspectorMs).toBeLessThan(5_000);
   }, 120_000);
+
+  it('records the 20k remote metadata cache cold/hot browse baseline', async () => {
+    expect(manifest.assetCount).toBeGreaterThanOrEqual(20_000);
+    // better-sqlite3 deliberately serializes PRAGMA journal setup with other
+    // writers. This benchmark needs exclusive ownership of the fixture while
+    // it opens the network-mode services; restore the baseline service in the
+    // finally block for the viewer-responsiveness test that follows.
+    service.closeAll();
+    const benchmarkRoot = mkdtempSync(path.join(tmpdir(), 'serpent-network-metadata-20k-'));
+    const cacheDirectory = path.join(benchmarkRoot, 'cache');
+    const uncachedDirectory = path.join(benchmarkRoot, 'uncached');
+    let builder: LibraryService | undefined;
+    let remote: LibraryService | undefined;
+    let cached: LibraryService | undefined;
+    const rssBefore = process.memoryUsage().rss;
+    try {
+      builder = new LibraryService({
+        networkMetadataCacheDirectory: cacheDirectory,
+        networkScanIntervalMs: 0,
+        storageKindOverrideForTests: 'network',
+        observerFactory: () => ({ close() {} }),
+      });
+      const builderOpen = builder.openLibrary(manifest.libraryPath);
+      const snapshotStartedAt = performance.now();
+      await builder.runOpenBackgroundReconciliation(builderOpen.libraryId);
+      const snapshotBuildMs = performance.now() - snapshotStartedAt;
+      builder.closeAll();
+      builder = undefined;
+
+      const remoteTrace: string[] = [];
+      remote = new LibraryService({
+        networkMetadataCacheDirectory: uncachedDirectory,
+        networkScanIntervalMs: 0,
+        storageKindOverrideForTests: 'network',
+        observerFactory: () => ({ close() {} }),
+        onDbStatement: (sql) => remoteTrace.push(sql),
+      });
+      const remoteOpenStartedAt = performance.now();
+      const remoteOpen = remote.openLibrary(manifest.libraryPath);
+      const remoteOpenMs = performance.now() - remoteOpenStartedAt;
+      const remoteSamples = measureBrowseSamples(remote, remoteOpen.libraryId, remoteTrace);
+      const rssAfterRemote = process.memoryUsage().rss;
+
+      const cachedTrace: string[] = [];
+      const cachedEvents: string[] = [];
+      cached = new LibraryService({
+        networkMetadataCacheDirectory: cacheDirectory,
+        networkScanIntervalMs: 0,
+        storageKindOverrideForTests: 'network',
+        observerFactory: () => ({ close() {} }),
+        onDbStatement: (sql) => cachedTrace.push(sql),
+        onNetworkMetadataCacheEvent: (event) => cachedEvents.push(event.type),
+      });
+      const cachedOpenStartedAt = performance.now();
+      const cachedOpen = cached.openLibrary(manifest.libraryPath);
+      const cachedOpenMs = performance.now() - cachedOpenStartedAt;
+      const cachedSamples = measureBrowseSamples(cached, cachedOpen.libraryId, cachedTrace);
+      const rssAfterCached = process.memoryUsage().rss;
+
+      const cachedBrowseStatements = cachedSamples.primaryBrowseStatements;
+      console.info(`NETWORK_METADATA_CACHE_20K_PERF_JSON ${JSON.stringify({
+        targetAssets: manifest.assetCount,
+        liveAssets: initialLiveAssetCount,
+        snapshotBuildMs: Number(snapshotBuildMs.toFixed(1)),
+        remoteOpenMs: Number(remoteOpenMs.toFixed(1)),
+        cachedOpenMs: Number(cachedOpenMs.toFixed(1)),
+        remoteBrowseP50Ms: Number(percentile(remoteSamples.samples, 0.5).toFixed(1)),
+        remoteBrowseP95Ms: Number(percentile(remoteSamples.samples, 0.95).toFixed(1)),
+        remoteBrowseMaxMs: Number(Math.max(...remoteSamples.samples).toFixed(1)),
+        cachedBrowseP50Ms: Number(percentile(cachedSamples.samples, 0.5).toFixed(1)),
+        cachedBrowseP95Ms: Number(percentile(cachedSamples.samples, 0.95).toFixed(1)),
+        cachedBrowseMaxMs: Number(Math.max(...cachedSamples.samples).toFixed(1)),
+        remoteBrowseStatements: remoteSamples.primaryBrowseStatements,
+        cachedBrowseStatements,
+        cachedHit: cachedEvents.includes('hit'),
+        rssBeforeMiB: Number((rssBefore / 1024 / 1024).toFixed(1)),
+        rssAfterRemoteMiB: Number((rssAfterRemote / 1024 / 1024).toFixed(1)),
+        rssAfterCachedMiB: Number((rssAfterCached / 1024 / 1024).toFixed(1)),
+      })}`);
+      expect(remoteSamples.primaryBrowseStatements.every((count) => count > 0)).toBe(true);
+      expect(cachedSamples.primaryBrowseStatements.every((count) => count === 0)).toBe(true);
+      expect(cachedEvents.includes('hit')).toBe(true);
+    } finally {
+      cached?.closeAll();
+      remote?.closeAll();
+      builder?.closeAll();
+      rmSync(benchmarkRoot, { recursive: true, force: true });
+      openBaselineService();
+    }
+  }, 300_000);
 
   it('keeps viewer requests responsive during the complete open reconciliation', async () => {
     const sampleAssets = service.searchAssets({

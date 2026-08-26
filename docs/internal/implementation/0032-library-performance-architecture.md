@@ -457,6 +457,24 @@ PDF 额外要求：
 
 - 网络盘不承诺高频 watcher 可靠性；使用低频目录 fingerprint/mtime 扫描。
 - 远端扫描按目录 checkpoint 恢复，断线立即停止新的写入和解码读取。
+- SQLite 元数据目录使用用户目录下的可丢弃本地快照：缓存键只由 canonical library path
+  的 hash 构成，manifest 记录 library、schema、窄化后的 `browse_change_sequence` 和源文件
+  指纹；快照通过 Online Backup API 生成并以只读连接打开，不改变远端 schema。
+- 命中快照时普通 SELECT/EXPLAIN 和只读 CTE 走本地快照；写入、事务、租约/变更游标、PRAGMA
+  与无法证明为只读的 SQL 仍走远端可写连接；jobs、artifact、lease 和搜索索引等 volatile
+  表不能由目录快照回答。远端库是唯一真相源，缓存不能回写或替代写入。
+- 跨重开以持久化 `browse_change_sequence` 作为语义 freshness key，避免 journal/checkpoint
+  的文件维护造成无意义冷启动；同一打开代次仍校验 size/mtime，backup 前后变化则放弃该快照
+  并重试。忽略规则表由 schema v46、序列帧表由 v47 的窄 cursor trigger 纳入同一 freshness
+  边界，v45 checksum 保持不变。
+- 首次命中后的 snapshot refresh、远端变更订阅失效和低频 network scan 都由当前 open generation
+  持有；临时校验失败保留最后一份已验证快照，下一次开库在远端路径不可用时只允许进入明确
+  的 read-only degraded snapshot；断线不制造“可写的离线旧数据”。用户目录缓存默认上限
+  512 MiB，超限按 manifest 时间淘汰旧派生快照；generation 文件只由当前 manifest 引用，
+  manifest 还校验 snapshot 的 SHA-256/size。
+- generation 发布、最终远端状态门禁、服务接管、回滚和跨库预算 prune 共享缓存目录级独占锁；
+  接管时重新校验 manifest/generation 指针，若另一进程已发布更新 generation，则关闭未接管
+  连接并按最新源状态重试。锁带 owner token 和存活进程检查，陈旧锁只在安全条件下回收。
 - ready preview 可以从 Main 本地镜像缓存读取；源文件打开仍需重新验证远端可用性。
 - UI 显示后台校验或离线状态，但保持已有缓存内容可浏览。
 
@@ -575,6 +593,17 @@ wave p50 155.1ms），同一夹具 warm 对照为 7/10（全部解码 p50 179.2m
 first visual wave p50 134.8ms）。因此 20k 严格门禁尚未通过；该结果不覆盖 100k、Windows、
 NAS/SMB、packaged 或人工验收。
 
+阶段 D.7 已接入远程 SQLite 元数据本地快照读写分离、cache-first 的窄 browse cursor/size/mtime
+校验、不可变 generation + manifest 指针、SHA-256/size、`quick_check`、缓存预算、失效重建和
+mount-missing 的只读 degraded 打开；schema v46/v47 以新增忽略规则与序列帧 cursor trigger
+保持 v45 checksum 不变。详见
+[D.7 开发日志](../development/2026-08-26-library-performance-architecture-stage-d7-network-metadata-cache-development-log.md)。
+当前 macOS arm64 本地 APFS 20k 夹具已完成 Worker/SQLite 结构性冷/热对照：命中缓存时每次
+browse 的主库查询由 2 条降为 0 条，最新一次快照构建 3.99s、缓存开库 576.1ms；但本地没有
+SMB 往返，因此墙钟 p50 9.3ms 对 9.1ms 不是网络收益证明。发布、最终状态门禁、回滚和全
+目录预算清理由同一目录级跨进程锁串行化；真实 SMB/NAS、Windows、packaged、100k 和人工验收
+仍未验证。结果详见 D.7 开发日志。
+
 ### 阶段 E：扫描、监听与文件操作（P1/P2）
 
 - 对账改为异步目录迭代 + 短事务批次。
@@ -600,6 +629,8 @@ NAS/SMB、packaged 或人工验收。
 9. 本地 watcher 事件合并、网络盘轮询、忽略目录剪枝。
 10. 操作中断后完整进程重启，对账 DB、文件、manifest 和 artifact。
 11. Eagle/Billfish 大尺寸缩略图的 copy-first、后台归一化、失败保留旧 artifact 和重试标记。
+12. 远程资源库的本地 SQLite 元数据快照命中、读写分离、外部变更失效、backup 竞态、损坏回退、
+    cache-only degraded 打开和缓存预算淘汰。
 
 任何触及资源库打开、关闭、schema、`library-service` 或 Worker 生命周期的实现都必须完整运行：
 

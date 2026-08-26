@@ -196,7 +196,11 @@ export class LibraryWorkerClient {
   #documentThumbnailRenderListener:
     ((request: DocumentThumbnailRenderRequest) => Promise<DocumentThumbnailRenderResponse["result"]>) | undefined;
 
-  constructor(modulePath: string, private readonly logger: AppLogger) {
+  constructor(
+    modulePath: string,
+    private readonly logger: AppLogger,
+    private readonly workerEnvironment: NodeJS.ProcessEnv = process.env,
+  ) {
     this.#modulePath = modulePath;
   }
 
@@ -233,7 +237,7 @@ export class LibraryWorkerClient {
       stdio: 'pipe',
       // GUI / UtilityProcess PATH often omits user-installed ffmpeg; pin
       // absolute bundled/dev media CLIs so video posters match hover preview.
-      env: mediaBinaryWorkerEnv(),
+      env: mediaBinaryWorkerEnv(this.workerEnvironment),
     });
     this.#child = child;
     child.stdout?.on('data', (chunk) => this.logger.worker('stdout', chunk));

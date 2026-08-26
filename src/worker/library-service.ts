@@ -108,6 +108,20 @@ import {
   type LibraryWriteLease,
   type LibraryWriteLeaseHeartbeat,
 } from './library-write-coordinator';
+import {
+  createNetworkReadThroughConnection,
+  defaultNetworkMetadataCacheDirectory,
+  NetworkMetadataCache,
+  NetworkMetadataSnapshotRejectedError,
+  networkMetadataCacheKey,
+  networkMetadataSourceFingerprint,
+  networkMetadataSourceFingerprintEqual,
+  type NetworkMetadataCacheDatabase,
+  type NetworkMetadataCacheEvent,
+  type NetworkMetadataCacheManifest,
+  type NetworkMetadataSourceFingerprint,
+  type NetworkReadThroughConnection,
+} from './network-metadata-cache';
 
 import { columnsFor, degradedDefaults, hasTable, invalidateColumnProbe, missingColumns, qualify, selectColumns } from './lenient-columns';
 import {
@@ -2552,6 +2566,60 @@ const BROWSE_CHANGE_SEQUENCE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(BROWSE_CHANGE_SEQUENCE_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v46: ignored-path materialization changes the visible browse
+// result, but the two tables are intentionally separate from the v45 core
+// table list so the released v45 checksum remains immutable.
+const BROWSE_IGNORE_RULE_SEQUENCE_SCHEMA_SQL = `
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_explicit_ignored_paths_insert
+    AFTER INSERT ON explicit_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_explicit_ignored_paths_update
+    AFTER UPDATE ON explicit_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_explicit_ignored_paths_delete
+    AFTER DELETE ON explicit_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_gitignore_ignored_paths_insert
+    AFTER INSERT ON gitignore_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_gitignore_ignored_paths_update
+    AFTER UPDATE ON gitignore_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_gitignore_ignored_paths_delete
+    AFTER DELETE ON gitignore_ignored_paths BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+`;
+const BROWSE_IGNORE_RULE_SEQUENCE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(BROWSE_IGNORE_RULE_SEQUENCE_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v47: sequence frame rows decide whether a source asset is a
+// visible browse item. Keep those changes on the same narrow cursor so the
+// catalog allowlist can safely serve the default browse query from a snapshot.
+const BROWSE_SEQUENCE_FRAME_SCHEMA_SQL = `
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_asset_sequence_frames_insert
+    AFTER INSERT ON asset_sequence_frames BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_asset_sequence_frames_update
+    AFTER UPDATE ON asset_sequence_frames BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+  CREATE TRIGGER IF NOT EXISTS browse_change_on_asset_sequence_frames_delete
+    AFTER DELETE ON asset_sequence_frames BEGIN
+      UPDATE browse_change_sequence SET sequence = sequence + 1;
+    END;
+`;
+const BROWSE_SEQUENCE_FRAME_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(BROWSE_SEQUENCE_FRAME_SCHEMA_SQL)
+  .digest('hex');
+
 // Migration v26: the thumbnail queue asks whether a job already exists for a
 // revision. Without a matching index, opening a large library performs a
 // quadratic NOT EXISTS scan over the jobs table before the visible batch is
@@ -3138,6 +3206,16 @@ export const MIGRATIONS = [
     sql: BROWSE_CHANGE_SEQUENCE_SCHEMA_SQL,
     checksum: BROWSE_CHANGE_SEQUENCE_SCHEMA_CHECKSUM,
   },
+  {
+    version: 46,
+    sql: BROWSE_IGNORE_RULE_SEQUENCE_SCHEMA_SQL,
+    checksum: BROWSE_IGNORE_RULE_SEQUENCE_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 47,
+    sql: BROWSE_SEQUENCE_FRAME_SCHEMA_SQL,
+    checksum: BROWSE_SEQUENCE_FRAME_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -3164,6 +3242,8 @@ interface MigrationRow {
 
 interface OpenLibrary {
   connection: DatabaseConnection;
+  /** The remote writable truth source; `connection` may be a NAS read-through adapter. */
+  writeConnection: DatabaseConnection;
   summary: InternalLibrarySummary;
   changeSubscription: LibraryChangeSubscription;
   /** Whether this handle was opened for inspection without write access. */
@@ -3200,7 +3280,60 @@ interface OpenLibrary {
    * forcing the expensive navigation queries to run again.
    */
   navigationSummaryCache?: { key: string; value: LibraryNavigationSummary };
+  /**
+   * Remote-library metadata snapshot. The snapshot is disposable and
+   * read-only; every write and ambiguous SQL statement remains on
+   * `writeConnection` through the read-through adapter.
+   */
+  networkMetadataCache?: {
+    cacheKey: string;
+    databasePath: string;
+    schemaVersion: number;
+    readThrough: NetworkReadThroughConnection;
+    manifest?: NetworkMetadataCacheManifest;
+    /** Fingerprint observed by this open generation; manifest mtime is advisory across opens. */
+    observedSourceFingerprint?: NetworkMetadataSourceFingerprint;
+    /** Narrow catalog cursor; volatile jobs/artifacts do not invalidate this snapshot. */
+    observedSourceChangeSequence?: number;
+    refreshInFlight?: Promise<void>;
+  };
 }
+
+export interface NetworkMetadataSourceState {
+  schemaVersion: number;
+  sourceChangeSequence: number;
+  sourceFingerprint: NetworkMetadataSourceFingerprint;
+}
+
+export interface NetworkMetadataSnapshotProgress {
+  remainingPages: number;
+  totalPages: number;
+}
+
+const NETWORK_METADATA_SNAPSHOT_TABLES = [
+  // These tables define catalog membership, ordering, folder/collection
+  // navigation and the metadata shown in the browse surface. Everything not
+  // explicitly listed remains on the remote primary, including future tables.
+  'assets',
+  'revisions',
+  'managed_folders',
+  'linked_folders',
+  'linked_folder_rules',
+  'linked_ignored_assets',
+  'asset_sequence_frames',
+  'asset_metadata',
+  'asset_color_space_overrides',
+  'tags',
+  'human_asset_tags',
+  'ai_asset_tags',
+  'collections',
+  'collection_assets',
+  'smart_collections',
+  'ai_content',
+  'trashed_managed_folders',
+  'explicit_ignored_paths',
+  'gitignore_ignored_paths',
+] as const;
 
 type DiscoveredSourceEntry = {
   assetId?: string;
@@ -4085,6 +4218,17 @@ export type ModelThumbnailRenderer = (
 ) => Promise<ModelThumbnailRenderOutcome>;
 
 export interface LibraryServiceOptions {
+  /** User-scoped local cache root for remote-library metadata snapshots. */
+  networkMetadataCacheDirectory?: string;
+  /** Test/diagnostic seam; events never contain absolute library/cache paths. */
+  onNetworkMetadataCacheEvent?: (event: NetworkMetadataCacheEvent) => void;
+  /** Test-only seam for proving stale-snapshot behavior when source state is unavailable. */
+  networkMetadataSourceStateForTests?: (input: {
+    libraryId: string;
+    sourceDatabasePath: string;
+  }) => NetworkMetadataSourceState | undefined;
+  /** Test-only seam for injecting a concurrent writer during SQLite backup. */
+  onNetworkMetadataSnapshotProgress?: (progress: NetworkMetadataSnapshotProgress) => void;
   afterSourceSnapshotCopy?: (sourcePath: string) => void;
   assetLstat?: (assetPath: string) => Stats;
   /** Test-only async fingerprint seam for proving file I/O stays outside DB transactions. */
@@ -5985,6 +6129,8 @@ export class LibraryService {
   private readonly openOperationHistoryGroups = new Map<string, string>();
   /** Prevent a replayed history recipe from creating a second history entry. */
   private historyReplayDepth = 0;
+  /** User-scoped disposable read snapshots for network libraries. */
+  private readonly networkMetadataCache: NetworkMetadataCache;
   /**
    * After in-app filesystem mutations (text save, copy, move, import…), watcher
    * refreshes still update DB but must not surface a "disk synced" toast — that
@@ -5993,7 +6139,11 @@ export class LibraryService {
   private suppressWatcherNotifyUntilMs = 0;
   private artifactsDirReady = new WeakSet<OpenLibrary>();
 
-  constructor(private readonly options: LibraryServiceOptions = {}) {}
+  constructor(private readonly options: LibraryServiceOptions = {}) {
+    this.networkMetadataCache = new NetworkMetadataCache(
+      options.networkMetadataCacheDirectory ?? defaultNetworkMetadataCacheDirectory(),
+    );
+  }
 
   noteInteractiveActivity(libraryId: string, idleMs = 1_000): void {
     this.interactiveIdleUntilByLibrary.set(
@@ -6672,6 +6822,9 @@ export class LibraryService {
     task.promise = (async () => {
       try {
         await this.yieldReconciliation(task);
+        if (reason === 'network') {
+          await this.refreshNetworkMetadataCache(openLibrary, task, 'network');
+        }
         await this.refreshManagedAssetsOnOpen(
           libraryId,
           task,
@@ -7729,7 +7882,7 @@ export class LibraryService {
         row.status === 'applying'
         && row.kind !== undefined
         && JOB_LEASE_APPLYING_KINDS.has(row.kind)
-        && new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        && new LibraryWriteCoordinator(openLibrary.writeConnection, openLibrary.summary.libraryId)
           .hasLiveJobLease(row.operation_id)
       ) {
         retainedOperationIds.add(row.operation_id);
@@ -8005,6 +8158,7 @@ export class LibraryService {
     });
     transaction();
     openLibrary.gitignoreText = text;
+    this.rebindCurrentNetworkMetadataCache(openLibrary);
   }
 
   /** Cheap liveness check for callers that must not open or mutate state. */
@@ -8073,7 +8227,7 @@ export class LibraryService {
     options?: AcquireLibraryWriteLeaseOptions,
   ): Promise<LibraryWriteLease> {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).acquire(options);
+    return new LibraryWriteCoordinator(openLibrary.writeConnection, libraryId).acquire(options);
   }
 
   /**
@@ -8087,7 +8241,7 @@ export class LibraryService {
     options?: AcquireLibraryWriteLeaseOptions,
   ): Promise<LibraryJobLease> {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    return new LibraryWriteCoordinator(openLibrary.connection, libraryId).claimJob(jobId, options);
+    return new LibraryWriteCoordinator(openLibrary.writeConnection, libraryId).claimJob(jobId, options);
   }
 
   /**
@@ -8106,7 +8260,7 @@ export class LibraryService {
     options?: AcquireLibraryWriteLeaseOptions,
   ): Promise<T> {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const coordinator = new LibraryWriteCoordinator(openLibrary.connection, libraryId);
+    const coordinator = new LibraryWriteCoordinator(openLibrary.writeConnection, libraryId);
     const lease = await coordinator.acquire(options);
     try {
       this.options.beforeBoundedWriteTransaction?.(libraryId);
@@ -8147,7 +8301,7 @@ export class LibraryService {
   getChangeSequence(libraryId: string): number {
     const openLibrary = this.requireOpenLibrary(libraryId);
     try {
-      return new LibraryWriteCoordinator(openLibrary.connection, libraryId).currentChangeSequence();
+      return new LibraryWriteCoordinator(openLibrary.writeConnection, libraryId).currentChangeSequence();
     } catch (error) {
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }
@@ -10198,7 +10352,7 @@ export class LibraryService {
     intervalMs = 250,
   ): LibraryChangeSubscription {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    return new LibraryWriteCoordinator(openLibrary.connection, libraryId)
+    return new LibraryWriteCoordinator(openLibrary.writeConnection, libraryId)
       .subscribeToChangeSequence({ intervalMs, onChange });
   }
 
@@ -24776,6 +24930,501 @@ export class LibraryService {
     return removed;
   }
 
+  private emitNetworkMetadataCacheEvent(event: NetworkMetadataCacheEvent): void {
+    try {
+      this.options.onNetworkMetadataCacheEvent?.(event);
+    } catch (error) {
+      // Diagnostics must never make an otherwise usable network library fail
+      // to open or close.
+      this.diagnose('network-metadata-cache.event', error, {
+        libraryId: event.libraryId,
+        eventType: event.type,
+      });
+    }
+  }
+
+  private networkMetadataBrowseChangeSequence(
+    connection: DatabaseConnection,
+    libraryId: string,
+  ): number {
+    const row = connection
+      .prepare(
+        'SELECT sequence FROM browse_change_sequence WHERE library_id = ?',
+      )
+      .get(libraryId) as { sequence: number } | undefined;
+    if (!row || !Number.isSafeInteger(row.sequence) || row.sequence < 0) {
+      throw new Error('The browse change sequence is missing or invalid.');
+    }
+    return row.sequence;
+  }
+
+  private networkMetadataSourceState(
+    connection: DatabaseConnection,
+    libraryId: string,
+    sourceDatabasePath: string,
+  ): NetworkMetadataSourceState | undefined {
+    try {
+      const testOverride = this.options.networkMetadataSourceStateForTests;
+      if (testOverride) return testOverride({ libraryId, sourceDatabasePath });
+      const sourceFingerprint = networkMetadataSourceFingerprint(sourceDatabasePath);
+      if (!sourceFingerprint) return undefined;
+      // The broad library sequence also advances for jobs and artifact status.
+      // Those volatile rows are deliberately routed to the remote primary and
+      // must not invalidate a catalog snapshot while media work is running.
+      return {
+        schemaVersion: schemaVersion(connection),
+        sourceChangeSequence: this.networkMetadataBrowseChangeSequence(connection, libraryId),
+        sourceFingerprint,
+      };
+    } catch (error) {
+      this.diagnose('network-metadata-cache.source-state', error, { libraryId });
+      return undefined;
+    }
+  }
+
+  private validateNetworkMetadataSnapshot(
+    connection: DatabaseConnection,
+    libraryId: string,
+    expectedSchemaVersion: number,
+  ): void {
+    if (schemaVersion(connection) !== expectedSchemaVersion) {
+      throw new LibraryServiceError('LIBRARY_CORRUPT');
+    }
+    const library = readLibraryIdentity(connection, { skipQuickCheck: true });
+    if (library.library_id !== libraryId) throw new LibraryServiceError('LIBRARY_CORRUPT');
+    verifyMigrationHistory(connection, expectedSchemaVersion);
+  }
+
+  private createNetworkMetadataReadThrough(input: {
+    connection: DatabaseConnection;
+    canonicalPath: string;
+    libraryId: string;
+    startServices: boolean;
+    primarySchemaVersion: number;
+    expectedSourceChangeSequence?: number;
+  }): {
+    connection: DatabaseConnection;
+    writeConnection: DatabaseConnection;
+    state?: OpenLibrary['networkMetadataCache'];
+  } {
+    if (!input.startServices) {
+      return { connection: input.connection, writeConnection: input.connection };
+    }
+    const sourceDatabasePath = databasePath(input.canonicalPath);
+    const cacheKey = networkMetadataCacheKey(input.canonicalPath);
+    if (input.primarySchemaVersion !== SUPPORTED_SCHEMA_VERSION) {
+      return { connection: input.connection, writeConnection: input.connection };
+    }
+
+    let loaded;
+    try {
+      // Cache-first: opening and validating the local snapshot must not wait
+      // for a remote stat or cursor round trip. The background reconciliation
+      // validates the manifest cursor/fingerprint and replaces it if stale.
+      const openReadonly = (snapshotPath: string): DatabaseConnection => openConfiguredDatabase(
+        snapshotPath,
+        this.options.sqliteBusyTimeoutMsForTests,
+        { readonly: true },
+      );
+      const validateConnection = (connection: NetworkMetadataCacheDatabase): void => {
+        this.validateNetworkMetadataSnapshot(
+          connection as DatabaseConnection,
+          input.libraryId,
+          input.primarySchemaVersion,
+        );
+      };
+      const validate = (
+        connection: NetworkMetadataCacheDatabase,
+        manifest: NetworkMetadataCacheManifest,
+      ): void => {
+        if (
+          manifest.libraryId !== input.libraryId
+          || manifest.schemaVersion !== input.primarySchemaVersion
+        ) {
+          throw new LibraryServiceError('LIBRARY_CORRUPT');
+        }
+        validateConnection(connection);
+      };
+      loaded = input.expectedSourceChangeSequence === undefined
+        ? this.networkMetadataCache.loadLatest({
+            cacheKey,
+            openReadonly,
+            validate,
+          })
+        : this.networkMetadataCache.load({
+            cacheKey,
+            libraryId: input.libraryId,
+            schemaVersion: input.primarySchemaVersion,
+            sourceChangeSequence: input.expectedSourceChangeSequence,
+            openReadonly,
+            validate: validateConnection,
+          });
+    } catch (error) {
+      this.diagnose('network-metadata-cache.load', error, { libraryId: input.libraryId });
+    }
+
+    const readThrough = createNetworkReadThroughConnection(
+      input.connection,
+      loaded?.connection,
+      { allowedSnapshotTables: NETWORK_METADATA_SNAPSHOT_TABLES },
+    ) as NetworkReadThroughConnection;
+    const writeThrough = createNetworkReadThroughConnection(
+      input.connection,
+      undefined,
+      {
+        allowSnapshotReads: false,
+        onPrimaryMutation: () => readThrough.invalidateReadConnection(),
+      },
+    );
+    this.emitNetworkMetadataCacheEvent({
+      type: loaded ? 'hit' : 'miss',
+      libraryId: input.libraryId,
+      sourceChangeSequence: loaded?.manifest.sourceChangeSequence,
+      ...(loaded
+        ? { reason: 'awaiting-remote-validation' }
+        : { reason: 'no-verified-snapshot' }),
+    });
+    return {
+      connection: readThrough as unknown as DatabaseConnection,
+      writeConnection: writeThrough as unknown as DatabaseConnection,
+      state: {
+        cacheKey,
+        databasePath: sourceDatabasePath,
+        schemaVersion: input.primarySchemaVersion,
+        readThrough,
+        ...(loaded ? { observedSourceFingerprint: loaded.manifest.sourceFingerprint } : {}),
+        observedSourceChangeSequence: loaded?.manifest.sourceChangeSequence,
+        ...(loaded ? { manifest: loaded.manifest } : {}),
+      },
+    };
+  }
+
+  private async refreshNetworkMetadataCache(
+    openLibrary: OpenLibrary,
+    task: OpenReconciliationTask,
+    reason: 'open' | 'network',
+  ): Promise<void> {
+    const state = openLibrary.networkMetadataCache;
+    if (!state) return;
+    const libraryId = openLibrary.summary.libraryId;
+    const sourceState = this.networkMetadataSourceState(
+      openLibrary.writeConnection,
+      libraryId,
+      state.databasePath,
+    );
+    if (!sourceState) {
+      // A transient network failure must not blank the last verified local
+      // view. Keep it read-only/stale and let the next low-frequency scan
+      // validate the remote truth before replacing it.
+      this.emitNetworkMetadataCacheEvent({
+        type: 'offline',
+        libraryId,
+        sourceChangeSequence: state.manifest?.sourceChangeSequence,
+        reason: 'remote-source-state-unavailable',
+      });
+      return;
+    }
+    if (sourceState.schemaVersion !== state.schemaVersion) {
+      state.readThrough.invalidateReadConnection();
+      this.emitNetworkMetadataCacheEvent({
+        type: 'error',
+        libraryId,
+        reason: 'remote-source-state-unavailable',
+      });
+      return;
+    }
+
+    const currentManifest = state.manifest;
+    const sourceFingerprintChanged = state.observedSourceFingerprint !== undefined
+      && !networkMetadataSourceFingerprintEqual(
+        state.observedSourceFingerprint,
+        sourceState.sourceFingerprint,
+      );
+    const currentSnapshotIsCurrent = currentManifest !== undefined
+      && currentManifest.sourceChangeSequence === sourceState.sourceChangeSequence
+      && currentManifest.schemaVersion === sourceState.schemaVersion;
+    if (currentSnapshotIsCurrent && !sourceFingerprintChanged && state.readThrough.readCacheActive) return;
+
+    if (state.refreshInFlight) {
+      await state.refreshInFlight;
+      return;
+    }
+
+    const sourceCursorChanged = currentManifest !== undefined
+      && currentManifest.sourceChangeSequence !== sourceState.sourceChangeSequence;
+    if (sourceCursorChanged || sourceFingerprintChanged) {
+      // The source state is now known to be newer/different. Stop serving the
+      // old snapshot immediately; a failed/oversized refresh must fall back to
+      // the remote primary rather than keep showing known-stale catalog rows.
+      state.readThrough.invalidateReadConnection();
+      this.emitNetworkMetadataCacheEvent({
+        type: 'stale',
+        libraryId,
+        sourceChangeSequence: sourceState.sourceChangeSequence,
+        reason: sourceFingerprintChanged ? 'remote-source-fingerprint' : reason,
+      });
+    }
+    const startedAt = performance.now();
+    this.emitNetworkMetadataCacheEvent({
+      type: 'refresh-started',
+      libraryId,
+      sourceChangeSequence: sourceState.sourceChangeSequence,
+      reason,
+    });
+    const refresh = (async (): Promise<void> => {
+      let attemptSourceState = sourceState;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        let verifiedSourceState: NetworkMetadataSourceState | undefined;
+        try {
+          this.assertReconciliationActive(task);
+          const loaded = await this.networkMetadataCache.createSnapshot({
+            onProgress: this.options.onNetworkMetadataSnapshotProgress,
+            cacheKey: state.cacheKey,
+            libraryId,
+            schemaVersion: attemptSourceState.schemaVersion,
+            sourceChangeSequence: attemptSourceState.sourceChangeSequence,
+            sourceFingerprint: attemptSourceState.sourceFingerprint,
+            sourceConnection: openLibrary.writeConnection,
+            signal: task.controller.signal,
+            openReadonly: (snapshotPath) => openConfiguredDatabase(
+              snapshotPath,
+              this.options.sqliteBusyTimeoutMsForTests,
+              { readonly: true },
+            ),
+            validate: (connection) => this.validateNetworkMetadataSnapshot(
+              connection as DatabaseConnection,
+              libraryId,
+              attemptSourceState.schemaVersion,
+            ),
+            beforePublish: () => {
+              const currentSourceState = this.networkMetadataSourceState(
+                openLibrary.writeConnection,
+                libraryId,
+                state.databasePath,
+              );
+              return currentSourceState !== undefined
+                && currentSourceState.sourceChangeSequence === attemptSourceState.sourceChangeSequence
+                && networkMetadataSourceFingerprintEqual(
+                  currentSourceState.sourceFingerprint,
+                  attemptSourceState.sourceFingerprint,
+                );
+            },
+            afterPublish: () => {
+              const currentSourceState = this.networkMetadataSourceState(
+                openLibrary.writeConnection,
+                libraryId,
+                state.databasePath,
+              );
+              if (
+                currentSourceState === undefined
+                || currentSourceState.sourceChangeSequence !== attemptSourceState.sourceChangeSequence
+                || !networkMetadataSourceFingerprintEqual(
+                  currentSourceState.sourceFingerprint,
+                  attemptSourceState.sourceFingerprint,
+                )
+              ) return false;
+              verifiedSourceState = currentSourceState;
+              return true;
+            },
+          });
+          const accepted = await this.networkMetadataCache.acceptSnapshot({
+            snapshot: loaded,
+            accept: (acceptedSnapshot) => {
+              this.assertReconciliationActive(task);
+              if (openLibrary.networkMetadataCache !== state) {
+                // syncGitignore or another lifecycle boundary replaced this
+                // state while the backup was in flight; acceptSnapshot closes
+                // the unclaimed connection before the next attempt exits.
+                return false;
+              }
+              state.readThrough.replaceReadConnection(acceptedSnapshot.connection);
+              state.manifest = acceptedSnapshot.manifest;
+              state.observedSourceFingerprint = verifiedSourceState?.sourceFingerprint
+                ?? attemptSourceState.sourceFingerprint;
+              state.observedSourceChangeSequence = verifiedSourceState?.sourceChangeSequence
+                ?? attemptSourceState.sourceChangeSequence;
+              return true;
+            },
+          });
+          if (accepted) {
+            this.emitNetworkMetadataCacheEvent({
+              type: 'refreshed',
+              libraryId,
+              sourceChangeSequence: loaded.manifest.sourceChangeSequence,
+              durationMs: Math.round(performance.now() - startedAt),
+              reason,
+            });
+            return;
+          }
+
+          if (openLibrary.networkMetadataCache !== state) return;
+          if (attempt === 0) {
+            const retrySourceState = this.networkMetadataSourceState(
+              openLibrary.writeConnection,
+              libraryId,
+              state.databasePath,
+            );
+            if (retrySourceState && retrySourceState.schemaVersion === state.schemaVersion) {
+              attemptSourceState = retrySourceState;
+              continue;
+            }
+          }
+          this.emitNetworkMetadataCacheEvent({
+            type: 'refresh-skipped',
+            libraryId,
+            sourceChangeSequence: attemptSourceState.sourceChangeSequence,
+            durationMs: Math.round(performance.now() - startedAt),
+            reason: 'publication-raced',
+          });
+          return;
+        } catch (error) {
+          if (task.controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+          if (error instanceof NetworkMetadataSnapshotRejectedError) {
+            this.emitNetworkMetadataCacheEvent({
+              type: 'refresh-skipped',
+              libraryId,
+              sourceChangeSequence: verifiedSourceState?.sourceChangeSequence ?? attemptSourceState.sourceChangeSequence,
+              durationMs: Math.round(performance.now() - startedAt),
+              reason: error.reason,
+            });
+            return;
+          }
+          this.emitNetworkMetadataCacheEvent({
+            type: 'error',
+            libraryId,
+            durationMs: Math.round(performance.now() - startedAt),
+            reason: 'snapshot-failed',
+          });
+          this.diagnose('network-metadata-cache.refresh', error, { libraryId, reason });
+          return;
+        }
+      }
+    })();
+    state.refreshInFlight = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (state.refreshInFlight === refresh) state.refreshInFlight = undefined;
+    }
+  }
+
+  private rebindCurrentNetworkMetadataCache(openLibrary: OpenLibrary): void {
+    const state = openLibrary.networkMetadataCache;
+    // A cache that has never been created is intentionally built by the
+    // cancellable background owner, not synchronously from every first read.
+    if (!state || state.manifest === undefined || state.readThrough.readCacheActive) return;
+    let primarySchemaVersion: number;
+    let expectedSourceChangeSequence: number;
+    try {
+      primarySchemaVersion = schemaVersion(state.readThrough.primaryConnection as DatabaseConnection);
+      expectedSourceChangeSequence = this.networkMetadataBrowseChangeSequence(
+        state.readThrough.primaryConnection as DatabaseConnection,
+        openLibrary.summary.libraryId,
+      );
+    } catch {
+      return;
+    }
+    const rebound = this.createNetworkMetadataReadThrough({
+      connection: state.readThrough.primaryConnection as DatabaseConnection,
+      canonicalPath: openLibrary.summary.libraryPath,
+      libraryId: openLibrary.summary.libraryId,
+      startServices: true,
+      primarySchemaVersion,
+      expectedSourceChangeSequence,
+    });
+    if (rebound.state?.readThrough.readCacheActive) {
+      openLibrary.connection = rebound.connection;
+      openLibrary.writeConnection = rebound.writeConnection;
+      openLibrary.networkMetadataCache = rebound.state;
+      return;
+    }
+    // Do not retry the same stale manifest on every metadata read. The next
+    // open/network reconciliation will create a fresh snapshot from the
+    // current remote source state.
+    state.manifest = undefined;
+  }
+
+  /**
+   * Degraded open for a network library whose mount is currently unavailable.
+   * The cache is deliberately exposed as read-only: it can serve catalog
+   * metadata, but it must never manufacture a writable remote source or imply
+   * that file previews/imports can succeed while the mount is gone.
+   */
+  private openCachedNetworkMetadataSnapshot(
+    selectedLibraryPath: string,
+  ): InternalLibrarySummary | undefined {
+    let normalizedPath: string;
+    try {
+      normalizedPath = normalizeAbsolutePath(selectedLibraryPath);
+    } catch {
+      return undefined;
+    }
+    const cacheKey = networkMetadataCacheKey(normalizedPath);
+    let loaded;
+    try {
+      loaded = this.networkMetadataCache.loadLatest({
+        cacheKey,
+        openReadonly: (snapshotPath) => openConfiguredDatabase(
+          snapshotPath,
+          this.options.sqliteBusyTimeoutMsForTests,
+          { readonly: true },
+        ),
+        validate: (connection, manifest) => {
+          if (manifest.schemaVersion !== SUPPORTED_SCHEMA_VERSION) {
+            throw new LibraryServiceError('LIBRARY_CORRUPT');
+          }
+          this.validateNetworkMetadataSnapshot(
+            connection as DatabaseConnection,
+            manifest.libraryId,
+            manifest.schemaVersion,
+          );
+        },
+      });
+    } catch (error) {
+      this.diagnose('network-metadata-cache.offline-load', error, { cacheKey });
+      return undefined;
+    }
+    if (!loaded) return undefined;
+
+    try {
+      const library = readLibraryIdentity(loaded.connection, { skipQuickCheck: true });
+      if (this.openById.has(library.library_id)) {
+        loaded.connection.close();
+        return this.openById.get(library.library_id)!.summary;
+      }
+      const summary: InternalLibrarySummary = {
+        libraryId: library.library_id,
+        displayName: library.display_name,
+        libraryPath: normalizedPath,
+        readOnly: true,
+        networkStorage: true,
+        libraryVersion: loaded.manifest.schemaVersion,
+        supportedSchemaVersion: SUPPORTED_SCHEMA_VERSION,
+      };
+      this.openById.set(library.library_id, {
+        connection: loaded.connection as DatabaseConnection,
+        writeConnection: loaded.connection as DatabaseConnection,
+        summary,
+        readOnly: true,
+        changeSubscription: { lastSequence: 0, stop() {} },
+        preservedRelinkPathIdentities: new Set(),
+        gitignoreText: '',
+      });
+      this.openIdByPath.set(normalizedPath, library.library_id);
+      this.emitNetworkMetadataCacheEvent({
+        type: 'offline',
+        libraryId: library.library_id,
+        sourceChangeSequence: loaded.manifest.sourceChangeSequence,
+        reason: 'cached-snapshot-opened',
+      });
+      return summary;
+    } catch (error) {
+      closeIgnoringFailure(loaded.connection as DatabaseConnection);
+      this.diagnose('network-metadata-cache.offline-open', error, { cacheKey });
+      return undefined;
+    }
+  }
+
   /**
    * Serpent-tumv (LIB-018, progressive open): the disk-heavy post-open
    * reconciliation that used to run inside the synchronous library.open —
@@ -24828,6 +25477,8 @@ export class LibraryService {
         // Keep this cheap guard here; the full quick_check is deliberately
         // deferred until the end so a 20k-library integrity scan cannot sit in
         // front of the first viewer request.
+        await this.refreshNetworkMetadataCache(openLibrary, task, 'open');
+        markStage('network-metadata-cache');
         readLibraryIdentity(openLibrary.connection, { skipQuickCheck: true });
         markStage('identity');
         await this.yieldReconciliation(task);
@@ -29157,7 +29808,7 @@ export class LibraryService {
 
     let jobLease: LibraryJobLease;
     try {
-      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+      jobLease = new LibraryWriteCoordinator(openLibrary.writeConnection, openLibrary.summary.libraryId)
         .claimJobOnce(operationId);
     } catch (error) {
       this.removeOperation(operationPath);
@@ -29807,7 +30458,7 @@ export class LibraryService {
 
     let jobLease: LibraryJobLease;
     try {
-      jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+      jobLease = new LibraryWriteCoordinator(openLibrary.writeConnection, openLibrary.summary.libraryId)
         .claimJobOnce(operationId);
     } catch (error) {
       this.removeOperation(operationPath);
@@ -30871,7 +31522,7 @@ export class LibraryService {
            (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
          VALUES (?, 'content-replace-batch', 'preparing', ?, NULL, ?, ?)`,
       ).run(operationId, JSON.stringify(manifest), now, now);
-      const jobLease = new LibraryWriteCoordinator(openLibrary.connection, input.libraryId)
+      const jobLease = new LibraryWriteCoordinator(openLibrary.writeConnection, input.libraryId)
         .claimJobOnce(operationId);
       const jobHeartbeat = jobLease.startHeartbeat();
       try {
@@ -32158,7 +32809,7 @@ export class LibraryService {
 
       let jobLease: LibraryJobLease;
       try {
-        jobLease = new LibraryWriteCoordinator(openLibrary.connection, openLibrary.summary.libraryId)
+        jobLease = new LibraryWriteCoordinator(openLibrary.writeConnection, openLibrary.summary.libraryId)
           .claimJobOnce(operationId);
       } catch (error) {
         this.removeOperation(operationPath);
@@ -36867,7 +37518,7 @@ export class LibraryService {
 
     let jobLease: LibraryJobLease;
     try {
-      jobLease = new LibraryWriteCoordinator(openLibrary.connection, pending.libraryId)
+      jobLease = new LibraryWriteCoordinator(openLibrary.writeConnection, pending.libraryId)
         .claimJobOnce(operationId);
     } catch (error) {
       this.removeOperation(operationPath);
@@ -38938,8 +39589,10 @@ export class LibraryService {
    */
   openLibrary(selectedLibraryPath: string): InternalLibrarySummary {
     let canonicalPath: string | undefined;
+    let normalizedPath: string | undefined;
     try {
       const selectedPath = normalizeAbsolutePath(selectedLibraryPath);
+      normalizedPath = selectedPath;
       if (existsSync(selectedPath) && directoryExists(selectedPath)) {
         canonicalPath = realpathSync(selectedPath);
       }
@@ -38947,9 +39600,28 @@ export class LibraryService {
       // The primary open path below owns the public validation error.
     }
 
+    // A network mount can disappear between sessions. If the selected path or
+    // its primary DB is unavailable, prefer the last verified local snapshot
+    // over returning a misleading generic NOT_A_LIBRARY error. The helper only
+    // reads this user-scoped derived cache and returns a read-only summary.
+    if (
+      normalizedPath !== undefined
+      && (!existsSync(normalizedPath) || !realFileExists(databasePath(normalizedPath)))
+    ) {
+      const cached = this.openCachedNetworkMetadataSnapshot(normalizedPath);
+      if (cached) return cached;
+    }
+
     try {
       return this.openLibraryPrimary(selectedLibraryPath);
     } catch (error) {
+      if (
+        normalizedPath !== undefined
+        && (!existsSync(normalizedPath) || !realFileExists(databasePath(normalizedPath)))
+      ) {
+        const cached = this.openCachedNetworkMetadataSnapshot(normalizedPath);
+        if (cached) return cached;
+      }
       if (!canonicalPath || !this.isDatabaseRecoveryFailure(error)) throw error;
       if (!this.canAttemptDatabaseRecovery(canonicalPath)) throw error;
       // Do not turn a valid database's journal/migration/operation error into
@@ -39260,6 +39932,33 @@ export class LibraryService {
       throw new LibraryServiceError('LIBRARY_CORRUPT');
     }
 
+    const networkReadThrough = input.networkStorage
+      ? this.createNetworkMetadataReadThrough({
+          connection: input.connection,
+          canonicalPath: input.canonicalPath,
+          libraryId: input.library.library_id,
+          startServices: input.startServices,
+          primarySchemaVersion: input.libraryVersion ?? SUPPORTED_SCHEMA_VERSION,
+        })
+      : { connection: input.connection, writeConnection: input.connection };
+    const exposedConnection = networkReadThrough.connection;
+    const writeConnection = networkReadThrough.writeConnection;
+    const activeNetworkMetadataCache = networkReadThrough.state;
+    const registeredOpenLibrary: { value?: OpenLibrary } = {};
+    const initialGitignoreText = input.startServices
+      ? (() => {
+          try {
+            // Prime the in-memory value so the first requireOpenLibrary does
+            // not rewrite identical ignore rows and advance browse cursor.
+            return readGitignoreText(input.canonicalPath);
+          } catch {
+            // Preserve the old retry-on-first-use behavior for a transient
+            // filesystem read failure without blocking the open response.
+            return '\u0000';
+          }
+        })()
+      : '';
+
     const summary: InternalLibrarySummary = {
       libraryId: input.library.library_id,
       displayName: input.library.display_name,
@@ -39276,6 +39975,38 @@ export class LibraryService {
       ? new LibraryWriteCoordinator(input.connection, summary.libraryId)
         .subscribeToChangeSequence({
           onChange: (changeSequence) => {
+            const currentOpenLibrary = registeredOpenLibrary.value;
+            const networkCache = currentOpenLibrary?.networkMetadataCache;
+            let browseSequenceChanged = false;
+            if (networkCache) {
+              try {
+                const browseSequence = this.networkMetadataBrowseChangeSequence(
+                  input.connection,
+                  summary.libraryId,
+                );
+                browseSequenceChanged = browseSequence !== networkCache.observedSourceChangeSequence;
+                if (browseSequenceChanged) {
+                  networkCache.observedSourceChangeSequence = browseSequence;
+                  networkCache.readThrough.invalidateReadConnection();
+                }
+              } catch (error) {
+                // The broad subscription is still useful for ordinary library
+                // change notifications. A temporary read failure must not
+                // blank a verified catalog snapshot; the background validator
+                // owns the offline/degraded decision.
+                this.diagnose('network-metadata-cache.browse-sequence', error, {
+                  libraryId: summary.libraryId,
+                });
+              }
+            }
+            if (browseSequenceChanged && networkCache?.manifest) {
+              this.emitNetworkMetadataCacheEvent({
+                type: 'invalidated',
+                libraryId: summary.libraryId,
+                sourceChangeSequence: changeSequence,
+                reason: 'remote-change-sequence',
+              });
+            }
             this.invalidateArtifactPathCache(summary.libraryId);
             this.options.onLibraryChanged?.({
               type: 'library.changed',
@@ -39286,13 +40017,16 @@ export class LibraryService {
         })
       : { lastSequence: 0, stop: () => {} };
     const openLibrary: OpenLibrary = {
-      connection: input.connection,
+      connection: exposedConnection,
+      writeConnection,
       summary,
       readOnly: false,
       changeSubscription,
       preservedRelinkPathIdentities: new Set(),
-      gitignoreText: input.startServices ? '\u0000' : '',
+      gitignoreText: initialGitignoreText,
+      ...(activeNetworkMetadataCache ? { networkMetadataCache: activeNetworkMetadataCache } : {}),
     };
+    registeredOpenLibrary.value = openLibrary;
     this.openById.set(summary.libraryId, openLibrary);
     this.openIdByPath.set(input.canonicalPath, summary.libraryId);
     if (!input.startServices) return summary;
@@ -39323,7 +40057,7 @@ export class LibraryService {
     // reconciliation — its GIF LIKE subquery scans all assets (~180ms on SMB)
     // and only cancels doomed legacy transcodes, which can wait seconds.
     interruptUnfinishedPluginJobs(
-      openLibrary.connection,
+      openLibrary.writeConnection,
       openLibrary.summary.libraryId,
       this.applicationSessionId,
     );
@@ -39337,6 +40071,38 @@ export class LibraryService {
     markAdoptStage('asset-watcher');
     this.reconcileLinkedWatchers(openLibrary);
     markAdoptStage('watchers');
+    // Startup recovery contains a few idempotent metadata transactions. They
+    // intentionally run against the remote truth, so rebind the verified
+    // snapshot after that synchronous phase if the semantic change sequence
+    // is still unchanged. This preserves immediate second-open cache hits
+    // without allowing a startup write to serve stale rows.
+    if (activeNetworkMetadataCache && !activeNetworkMetadataCache.readThrough.readCacheActive) {
+      let expectedSourceChangeSequence: number | undefined;
+      try {
+        expectedSourceChangeSequence = this.networkMetadataBrowseChangeSequence(
+          input.connection,
+          summary.libraryId,
+        );
+      } catch {
+        // The background validator will keep the primary path authoritative if
+        // the remote cursor cannot be read during this lifecycle boundary.
+      }
+      if (expectedSourceChangeSequence !== undefined) {
+        const rebound = this.createNetworkMetadataReadThrough({
+          connection: input.connection,
+          canonicalPath: input.canonicalPath,
+          libraryId: summary.libraryId,
+          startServices: true,
+          primarySchemaVersion: input.libraryVersion ?? SUPPORTED_SCHEMA_VERSION,
+          expectedSourceChangeSequence,
+        });
+        if (rebound.state?.readThrough.readCacheActive) {
+          openLibrary.connection = rebound.connection;
+          openLibrary.writeConnection = rebound.writeConnection;
+          openLibrary.networkMetadataCache = rebound.state;
+        }
+      }
+    }
     // Serpent-tumv (LIB-018, progressive open): the disk-heavy reconciliation
     // steps moved out of the synchronous open path and run in the background
     // (runOpenBackgroundReconciliation). Opening a large library used to
@@ -39573,6 +40339,7 @@ export class LibraryService {
       };
       this.openById.set(summary.libraryId, {
         connection,
+        writeConnection: connection,
         summary,
         readOnly: true,
         changeSubscription: { lastSequence: 0, stop() {} },
@@ -40201,7 +40968,7 @@ export class LibraryService {
       // Online Backup yields between page batches, allowing the live library to
       // continue serving reads and writes while SQLite maintains a consistent
       // snapshot for the exported database.
-      await this.createConsistentDatabaseSnapshot(openLibrary.connection, tempDbPath, cancelState);
+      await this.createConsistentDatabaseSnapshot(openLibrary.writeConnection, tempDbPath, cancelState);
 
       // Phase 2: enumerate
       this.emitProgress({
@@ -40743,7 +41510,7 @@ export class LibraryService {
       if (cancelState.cancelled) throw new LibraryServiceError('CANCELLED');
 
       tempDbPath = path.join(tempDir, `library-${exportId}.db`);
-      await this.createConsistentDatabaseSnapshot(openLibrary.connection, tempDbPath, cancelState);
+      await this.createConsistentDatabaseSnapshot(openLibrary.writeConnection, tempDbPath, cancelState);
 
       // Phase 2: enumerate
       this.emitProgress({

@@ -107,6 +107,24 @@
   Eagle/Billfish 用户库、packaged、Computer Use 和人类验收仍未执行，相关工单保持 in_progress。
   详见 [D.6 开发日志](development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
 
+- **2026-08-26 0032 阶段 D.7 远程元数据快照缓存**：远程库接入用户目录级可丢弃 SQLite
+  snapshot；命中时普通读查询走本地只读连接，写入、事务、租约、volatile 表与歧义 SQL
+  继续走远端真相源。Online Backup、manifest 原子轮换、身份/schema/quick-check 校验、
+  512 MiB 默认缓存预算、窄 `browse_change_sequence` 与当前打开代次 size/mtime 校验、外部
+  变更失效和 backup 竞态重建均已接线；本地库不受影响。增加 mount-missing 时合法快照的
+  明确只读 degraded open，禁止伪造可写离线库；schema v46/v47 只新增忽略规则与序列帧
+  cursor trigger，保留 v45 checksum；快照采用不可变 generation + manifest 指针和 SHA-256/size，
+  发布、最终状态门禁、回滚与全目录预算清理由同一目录级跨进程锁串行化。合成 4ms/语句机制
+  对照最新结果为远端 browse 2 条查询、缓存 0 条，20.5ms → 8.5ms；这只证明路由，不是 NAS
+  实测。真实 macOS arm64 APFS 20k 夹具完整 3/3 通过：目标 20,000、当前 live 19,965；snapshot
+  build 3,986.5ms、cached open 576.1ms，browse 主库查询每次 2 条 → 0 条，remote/cached p50
+  为 9.3/9.1ms（本地没有 SMB RTT，墙钟不宣称加速）。验证：定向 3 files / 22 passed，完整
+  Worker 86 files / 1,245 passed / 22 skipped，资源库可用性 9 files / 207 passed，开库生命周期
+  Electron E2E 3 passed（10.8s），typecheck/lint/diff check 通过。真实 SMB/NAS 多机/断线、Windows、packaged、100k 和人类验收仍未执行，
+  完整 `npm run test` 仍有 4 个既有环境失败；Luna High 最终双轴复核 P0/P1=0，保留真实
+  stale-lock/Windows/SMB 证据缺口，`Serpent-08a344` 保持 open。详见
+  [D.7 开发日志](development/2026-08-26-library-performance-architecture-stage-d7-network-metadata-cache-development-log.md)。
+
 - **2026-08-26 0032 阶段 E 监听与恢复**：本地 watcher 事件按库合并、复制中的文件经过
   size/mtime 稳定窗口，网络库改为低频目录 fingerprint/checkpoint；忽略目录在进入前剪枝。
   新增真实进程终止后的文件操作恢复 E2E：父/子 Electron 进程在文件已放置但提交前退出，
