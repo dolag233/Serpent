@@ -674,6 +674,33 @@ describe('getThumbnailArtifact', () => {
 });
 
 describe('preview availability while derivatives are generated', () => {
+  it('serves a low-pixel source just above 1 MiB without queuing a thumbnail', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ImmediateLosslessImagePreview', selectedParentPath: root });
+    const sourcePath = path.join(root, 'moderately-large.png');
+    const encoded = await createPngBytes(1024, 768);
+    const targetBytes = Math.floor(1.5 * 1024 * 1024);
+    expect(encoded.byteLength).toBeLessThan(targetBytes);
+    writeFileSync(sourcePath, Buffer.concat([encoded, Buffer.alloc(targetBytes - encoded.byteLength)]));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(asset.byteSize).toBe(targetBytes);
+    expect(asset.previewKind).toBe('source');
+    expect(asset.previewRevisionId).toBe(asset.currentRevisionId);
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(0);
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceRevisionId: asset.currentRevisionId,
+      sourceMimeType: 'image/png',
+    });
+
+    service.closeAll();
+  });
+
   it('serves a bounded native image source and skips its thumbnail job', () => {
     const root = temporaryRoot();
     const service = new LibraryService();

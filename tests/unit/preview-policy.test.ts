@@ -19,6 +19,16 @@ describe("isSourceDirectPreview", () => {
     expect(isSourceDirectPreview(base)).toBe(true);
   });
 
+  it("accepts a low-pixel lossless image just above the old byte boundary", () => {
+    expect(isSourceDirectPreview({
+      ...base,
+      fileName: "large-lossless.png",
+      byteSize: Math.floor(1.5 * 1024 * 1024),
+      width: 1024,
+      height: 768,
+    })).toBe(true);
+  });
+
   it("rejects unknown or oversized dimensions and bytes", () => {
     expect(isSourceDirectPreview({ ...base, width: null })).toBe(false);
     expect(isSourceDirectPreview({ ...base, height: SOURCE_DIRECT_MAX_LONG_EDGE_PX + 1 })).toBe(false);

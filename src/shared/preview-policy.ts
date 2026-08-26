@@ -12,9 +12,12 @@ export const SOURCE_DIRECT_MAX_LONG_EDGE_PX = 2048;
 // explicit source route remains full fidelity.
 export const SOURCE_DIRECT_MAX_PIXELS = 2_000_000;
 // Keep card source reads below the cost of decoding a multi-megabyte PNG/JPEG
-// in every visible card. Larger native images still use the bounded thumbnail
-// lane; the viewer's explicit source route remains full fidelity.
-export const SOURCE_DIRECT_MAX_BYTES = 1 * 1024 * 1024;
+// in every visible card. The 2 MiB encoded cap is paired with the 2 MP decoded
+// cap above, so a low-pixel PNG with a moderately large lossless payload does
+// not pay a redundant native thumbnail generation pass. Larger native images
+// still use the bounded thumbnail lane; the viewer's explicit source route
+// remains full fidelity.
+export const SOURCE_DIRECT_MAX_BYTES = 2 * 1024 * 1024;
 
 const SOURCE_DIRECT_EXTENSIONS = new Set([
   ".jpg",

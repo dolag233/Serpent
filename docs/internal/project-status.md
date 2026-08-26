@@ -55,17 +55,20 @@
   [C.2 日志](development/2026-08-26-library-performance-architecture-stage-c2-geometry-development-log.md)、
   [C.3 日志](development/2026-08-26-library-performance-architecture-stage-c3-navigation-summary-development-log.md)。
 
-- **2026-08-26 0032 阶段 D.3 小型源图直出**：JPG/JPEG/PNG/WebP/GIF 在尺寸已知、长边
-  ≤2048 px、源文件 ≤1 MiB 且解码像素 ≤2,000,000 时直接使用受 revision 鉴权的 source
+- **2026-08-27 0032 阶段 D.3 小型源图直出**：JPG/JPEG/PNG/WebP/GIF 在尺寸已知、长边
+  ≤2048 px、源文件 ≤2 MiB 且解码像素 ≤2,000,000 时直接使用受 revision 鉴权的 source
   通道，跳过 primary thumbnail；大图、复杂格式和视频仍走 artifact。卡片、BrowseLayout、
   hover、Inspector 与查看器已统一 `previewKind/previewRevisionId`；source-direct 图像的
   色卡改为独立的 bounded 64×64 secondary path，不重新把 thumbnail 当作首帧门禁；序列帧
   也按 artifact 优先、revision-pinned source-direct 回退处理，并排除缺失/删除帧。验证：
-  Worker 定向 3 files / 93 tests、fixture 回归 5 files / 99 passed / 1 skipped、
-  library-availability 9 files / 203 tests、普通媒体真实解码 E2E 1 passed、序列查看器
-  E2E 1/1 passed、分页/缩略图 E2E 4/4 passed，`npm run lint` 与 `npm run typecheck` 通过；
+  Worker 定向新增 1.5 MiB 边界为 2 files / 72 tests passed；完整 Worker 86 files /
+  1,252 passed / 22 skipped，fixture 回归 5 files / 99 passed / 1 skipped，
+  library-availability 9 files / 207 tests passed，`npm run lint` 与 `npm run typecheck` 通过。
+  选择性真实 Electron 回归 10 passed / 1 skipped / 1 failed；失败是视频海报首个 350 ms
+  采样点偶发单图未解码，随后同一用例独立重复 10/10 passed，不能把整组回归写成全绿。
   当前 HEAD 本地 20k 基准独立两次 10/10（P50 162.3/156.6ms、P95/Max 315.9/308.4ms、
-  长任务 0），该旧证据因 benchmark 漏计未挂载 `<img>` 的可见图片卡片而撤回，不再作为门禁通过依据。
+  长任务 0），该旧证据因 benchmark 漏计未挂载 `<img>` 的可见图片卡片而撤回，不再作为门禁通过依据；
+  2 MiB 新鲜严格基准 3/10，不能宣称 500 ms 门禁通过。
   详见 [阶段 D.3 开发日志](development/2026-08-26-library-performance-architecture-stage-d3-source-direct-development-log.md)。
 
 - **2026-08-26 0032 阶段 D.4 RAW 内嵌预览**：卡片缩略图对 TIFF/IFD 形态的 RAW 先做有界结构扫描，
