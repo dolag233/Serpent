@@ -30,6 +30,7 @@ function createActions(): MainMenuActions {
     openAbout: vi.fn(),
     openGitHub: vi.fn(),
     openOpenSourceLicenses: vi.fn(),
+    revealAppLog: vi.fn(),
   };
 }
 

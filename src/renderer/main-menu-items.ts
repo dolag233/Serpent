@@ -62,6 +62,8 @@ export type MainMenuActions = {
   readonly openAbout: () => void;
   readonly openGitHub: () => void;
   readonly openOpenSourceLicenses: () => void;
+  /** Serpent-9d2a6f: reveal the app log in the file manager. */
+  readonly revealAppLog: () => void;
 };
 
 export type MainMenuState = {
@@ -274,6 +276,13 @@ export function buildMainMenuSections({
           id: "about.open-source",
           label: label(locale, "shell.mainMenuOpenSource"),
           onSelect: actions.openOpenSourceLicenses,
+        },
+        {
+          // Serpent-9d2a6f: 在文件管理器中露出当前会话日志（路径由 Main
+          // 持有，Renderer 只见「成功/失败」）。
+          id: "about.reveal-log",
+          label: label(locale, "shell.mainMenuRevealLog"),
+          onSelect: actions.revealAppLog,
         },
         {
           // Serpent-0fe8b4: 菜单里不再显示版本号（无用的 disabled 项），
