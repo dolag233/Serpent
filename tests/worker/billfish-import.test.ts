@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { readBillfishLibrary } from '../../src/worker/billfish-library';
 import { LibraryService } from '../../src/worker/library-service';
+import { IMPORTED_THUMBNAIL_NORMALIZATION_JOB } from '../../src/worker/imported-thumbnail-policy';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
@@ -136,6 +137,13 @@ describe('Billfish library import', () => {
         status: 'ready',
         generatorVersion: 'billfish-thumbnail@1',
       });
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: hero!.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
     } finally {
       service.closeAll();
     }

@@ -23,9 +23,17 @@ describe("media native memory budget", () => {
       width: 4_096,
       height: 4_096,
     });
+    const twoRasterCopies = estimateMediaNativeMemoryBytes({
+      decoder: "sharp",
+      sourceByteSize: 1_024,
+      width: 4_096,
+      height: 4_096,
+      decodedRasterCopies: 2,
+    });
 
     expect(small).toBeLessThan(unknown);
     expect(larger).toBeGreaterThan(small);
+    expect(twoRasterCopies).toBeGreaterThan(larger);
     expect(larger).toBeLessThanOrEqual(MEDIA_NATIVE_MEMORY_BUDGET_BYTES);
     expect(estimateMediaNativeMemoryBytes({ decoder: "oiio" })).toBeGreaterThan(unknown);
   });

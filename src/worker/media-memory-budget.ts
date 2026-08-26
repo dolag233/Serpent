@@ -33,6 +33,8 @@ export interface MediaNativeMemoryEstimate {
   sourceByteSize?: number | null;
   width?: number | null;
   height?: number | null;
+  /** Number of simultaneously retained RGBA-sized raster copies. */
+  decodedRasterCopies?: number | null;
 }
 
 /** A decoder input was rejected before native allocation could begin. */
@@ -74,8 +76,12 @@ export function estimateMediaNativeMemoryBytes(input: MediaNativeMemoryEstimate)
   }
 
   const pixelBytes = width * height * BYTES_PER_RGBA_PIXEL;
+  const rasterCopies = positiveSafeInteger(input.decodedRasterCopies) ?? 1;
+  const rasterBytes = pixelBytes > Number.MAX_SAFE_INTEGER / rasterCopies
+    ? Number.POSITIVE_INFINITY
+    : pixelBytes * rasterCopies;
   const stagedSourceBytes = Math.min(sourceBytes ?? 0, SOURCE_STAGING_BYTES_CAP);
-  const estimate = pixelBytes + stagedSourceBytes + DECODER_OVERHEAD_BYTES;
+  const estimate = rasterBytes + stagedSourceBytes + DECODER_OVERHEAD_BYTES;
   return Math.min(
     MEDIA_NATIVE_MEMORY_BUDGET_BYTES,
     Math.max(MIN_RESERVATION_BYTES, estimate),

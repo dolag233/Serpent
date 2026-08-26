@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
+import { IMPORTED_THUMBNAIL_NORMALIZATION_JOB } from '../../src/worker/imported-thumbnail-policy';
 import { ONE_PX_RED_PNG } from '../fixtures/fbx/ascii-fbx';
 
 const temporaryRoots: string[] = [];
@@ -151,6 +152,9 @@ describe('Eagle library import', () => {
       status: 'ready',
       generatorVersion: 'eagle-thumbnail@1',
     });
+    expect(service.listMediaJobs(library.libraryId).jobs.filter((job) =>
+      job.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB && job.status === 'queued',
+    )).toHaveLength(2);
     expect(service.getCurrentArtifact(library.libraryId, video!.assetId, 'webm_proxy')).toBeNull();
     service.closeAll();
   });

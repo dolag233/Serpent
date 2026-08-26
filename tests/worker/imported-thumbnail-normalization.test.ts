@@ -1,16 +1,18 @@
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import BetterSqlite3 from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { LibraryService, type LibraryServiceOptions, type SharpModule } from '../../src/worker/library-service';
+import { mediaResourceGuard, MediaResourceExhaustedError } from '../../src/worker/media-resource-guard';
 import {
   IMPORTED_THUMBNAIL_GENERATOR_PREFIX,
   IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+  IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
 } from '../../src/worker/imported-thumbnail-policy';
 
 const require = createRequire(import.meta.url);
@@ -19,14 +21,58 @@ const temporaryRoots: string[] = [];
 type SharpImage = {
   jpeg(options?: { quality?: number }): { toBuffer(): Promise<Buffer> };
   metadata(): Promise<{ width?: number; height?: number }>;
+  raw?(): { toBuffer(): Promise<Buffer> };
 };
 
 type SharpFactory = (
   input: string | Buffer,
-  options?: { animated?: boolean; raw?: { width: number; height: number; channels: number } },
+  options?: {
+    animated?: boolean;
+    page?: number;
+    pages?: number;
+    raw?: { width: number; height: number; channels: number };
+  },
 ) => SharpImage;
 
 const sharp = require('sharp') as SharpFactory;
+const productionSharp = sharp as unknown as SharpModule;
+type SharpOptions = NonNullable<Parameters<SharpModule>[1]>;
+
+function cancelAfterRawDecodeStarts(onDecode: () => void): SharpModule {
+  return ((
+    input: string | Buffer,
+    options?: {
+      animated?: boolean;
+      page?: number;
+      pages?: number;
+      failOn?: 'warning' | 'error' | 'none';
+      sequentialRead?: boolean;
+      limitInputPixels?: number;
+    },
+  ) => {
+    const instance = productionSharp(input, options);
+    const rawMethod = instance.raw;
+    if (!rawMethod) return instance;
+    instance.raw = () => {
+      const rawInstance = rawMethod.call(instance);
+      const rawWithBuffer = rawInstance as unknown as {
+        toBuffer?: (bufferOptions?: unknown) => Promise<unknown>;
+      };
+      const originalToBuffer = rawWithBuffer.toBuffer;
+      if (!originalToBuffer) return rawInstance;
+      rawWithBuffer.toBuffer = async (bufferOptions?: unknown) => {
+        const decoding = originalToBuffer.call(rawWithBuffer, bufferOptions);
+        // Let the native operation start before the caller cancels it. The
+        // production path then observes the abort at the page boundary.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        onDecode();
+        return decoding;
+      };
+      return rawInstance;
+    };
+    return instance;
+  }) as unknown as SharpModule;
+}
 
 function temporaryRoot(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'serpent-import-thumbnail-'));
@@ -43,6 +89,24 @@ async function largeJpeg(): Promise<Buffer> {
   }).jpeg({ quality: 92 }).toBuffer();
 }
 
+async function boundedJpeg(): Promise<Buffer> {
+  const width = 320;
+  const height = 180;
+  const pixels = Buffer.alloc(width * height * 3, 127);
+  return sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).jpeg({ quality: 82 }).toBuffer();
+}
+
+async function oversizedButCompressibleJpeg(): Promise<Buffer> {
+  const width = 2_048;
+  const height = 1_024;
+  const pixels = Buffer.alloc(width * height * 3, 127);
+  return sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).jpeg({ quality: 92 }).toBuffer();
+}
+
 function writeEagleLibrary(
   root: string,
   thumbnail: Buffer,
@@ -52,6 +116,8 @@ function writeEagleLibrary(
     sourceExtension?: string;
     thumbnail?: Buffer;
     thumbnailExtension?: string;
+    width?: number;
+    height?: number;
   } = {},
 ): string {
   const libraryPath = path.join(root, 'Oversized Eagle.library');
@@ -63,8 +129,8 @@ function writeEagleLibrary(
     id: 'hero',
     name: 'hero',
     ext: sourceExtension,
-    width: 1_600,
-    height: 900,
+    width: options.width ?? 1_600,
+    height: options.height ?? 900,
   }));
   writeFileSync(path.join(infoPath, `hero.${sourceExtension}`), options.source ?? thumbnail);
   writeFileSync(
@@ -93,12 +159,30 @@ function animatedGif(): Buffer {
     'base64',
   );
 }
+function singleFrameGif(): Buffer {
+  return Buffer.from(
+    'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
+    'base64',
+  );
+}
 
 function animatedWebp(): Buffer {
   return Buffer.from(
     'UklGRsYAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAAAAAAAAABBTk1GSgAAAAAAAAAAAAEAAAEAAGQAAABWUDggMgAAANABAJ0BKgIAAgABQCYloAJ0ugH4AAOwAP7pIh/7z5+58/c+f9Gf/5T98jj+Rx/8oEAAQU5NRkgAAAAAAAAAAAABAAABAABkAAAAVlA4IDAAAADQAQCdASoCAAIAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=',
     'base64',
   );
+}
+
+function oversizedAnimatedGif(): Buffer {
+  return Buffer.concat([animatedGif(), Buffer.alloc(256 * 1024)]);
+}
+
+function manyPageAnimatedGif(): Buffer {
+  const source = animatedGif();
+  const header = source.subarray(0, 39);
+  const frame = source.subarray(39, 62);
+  const trailer = source.subarray(84);
+  return Buffer.concat([header, ...Array.from({ length: 129 }, () => frame), trailer]);
 }
 
 function writeBillfishLibrary(root: string, thumbnail: Buffer): string {
@@ -163,6 +247,9 @@ async function assertNormalized(
   const outputMetadata = await sharp(outputPath).metadata();
   expect(outputMetadata.width).toBeLessThanOrEqual(512);
   expect(outputMetadata.height).toBeLessThanOrEqual(512);
+  expect(after!.width).toBe(outputMetadata.width);
+  expect(after!.height).toBe(outputMetadata.height);
+  expect(statSync(outputPath).size).toBeLessThanOrEqual(256 * 1024);
   expect(existsSync(oldPath)).toBe(false);
   expect(service.listMediaJobs(libraryId).jobs).toEqual(expect.arrayContaining([
     expect.objectContaining({
@@ -174,9 +261,14 @@ async function assertNormalized(
 }
 
 afterEach(() => {
+  mediaResourceGuard.reset();
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+beforeEach(() => {
+  mediaResourceGuard.reset();
 });
 
 describe('imported thumbnail normalization', () => {
@@ -195,16 +287,231 @@ describe('imported thumbnail normalization', () => {
       expect(result.importedCount).toBe(1);
       const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0];
       expect(asset).toBeDefined();
-      const importedJob = service.listMediaJobs(library.libraryId).jobs.find(
-        (candidate) => candidate.assetId === asset!.assetId
-          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      await assertNormalized(service, library.libraryId, asset!.assetId);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('validates a bounded preview before preserving it despite a high-resolution source', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await boundedJpeg();
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      expect(artifact).toMatchObject({
+        generatorVersion: 'eagle-thumbnail@1',
+        width: 1_600,
+        height: 900,
+      });
+      const beforePath = service.getArtifactAbsolutePath(
+        library.libraryId,
+        artifact.artifactId,
+        'preview',
+      );
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      const preserved = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      expect(preserved).toMatchObject({
+        artifactId: artifact.artifactId,
+        generatorVersion: IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
+        width: 320,
+        height: 180,
+      });
+      expect(service.getCurrentArtifact(
+        library.libraryId,
+        asset.assetId,
+        'extracted_metadata',
+      )).toMatchObject({
+        width: 1_600,
+        height: 900,
+      });
+      await expect(sharp(service.getArtifactAbsolutePath(
+        library.libraryId,
+        preserved.artifactId,
+        'preview',
+      )).metadata()).resolves.toMatchObject({
+        width: 320,
+        height: 180,
+      });
+      expect(existsSync(beforePath)).toBe(true);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('finds an oversized preview when source dimensions are small', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await oversizedButCompressibleJpeg();
+    expect(thumbnail.byteLength).toBeLessThan(256 * 1024);
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail, {
+          width: 320,
+          height: 180,
+        }),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
+      await assertNormalized(service, library.libraryId, asset.assetId);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('probes legacy rows during bounded backfill before replacing a small preview', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await boundedJpeg();
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(
+        library.libraryId,
+        before.artifactId,
+        'preview',
+      );
+      const database = new (BetterSqlite3 as unknown as {
+        new (filename: string): {
+          prepare(source: string): { run(...parameters: unknown[]): unknown };
+          close(): void;
+        };
+      })(path.join(library.libraryPath, '.serpent', 'library.db'));
+      database.prepare(
+        `UPDATE revision_artifacts
+            SET generator_version = 'eagle-thumbnail@1'
+          WHERE artifact_id = ?`,
+      ).run(before.artifactId);
+      database.close();
+
+      const importedJob = service.listMediaJobs(library.libraryId).jobs.find((job) =>
+        job.assetId === asset.assetId
+          && job.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
       );
       expect(importedJob).toBeDefined();
       expect(service.cancelMediaJobs(library.libraryId, [importedJob!.jobId])).toEqual({
         cancelledCount: 1,
       });
+
       expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(1);
-      await assertNormalized(service, library.libraryId, asset!.assetId);
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      const after = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      expect(after).toMatchObject({
+        artifactId: before.artifactId,
+        generatorVersion: expect.stringContaining(IMPORTED_THUMBNAIL_GENERATOR_PREFIX),
+      });
+      expect(after.generatorVersion).toContain('preserved-bounded@1');
+      expect(existsSync(beforePath)).toBe(true);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('fails a truncated bounded preview instead of permanently preserving it', async () => {
+    const root = temporaryRoot();
+    const validSource = await boundedJpeg();
+    const truncatedPreview = validSource.subarray(0, Math.max(32, Math.floor(validSource.length / 2)));
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, validSource, {
+          thumbnail: truncatedPreview,
+        }),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      expect(existsSync(beforePath)).toBe(true);
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')).toMatchObject({
+        artifactId: before.artifactId,
+        generatorVersion: 'eagle-thumbnail@1',
+        status: 'ready',
+      });
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'failed',
+        }),
+      ]));
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('keeps imported normalization out of an interactive visible wave', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await largeJpeg();
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+        interactive: true,
+        assetIds: [asset.assetId],
+      })).resolves.toBe(0);
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
+      await assertNormalized(service, library.libraryId, asset.assetId);
     } finally {
       service.closeAll();
     }
@@ -267,7 +574,7 @@ describe('imported thumbnail normalization', () => {
       await service.importEagleLibrary({
         libraryId: library.libraryId,
         sourceRootPath: writeEagleLibrary(root, thumbnail, {
-          thumbnail: animatedGif(),
+          thumbnail: oversizedAnimatedGif(),
           thumbnailExtension: 'gif',
         }),
       });
@@ -275,6 +582,11 @@ describe('imported thumbnail normalization', () => {
       const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
       const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
       expect(before.mimeType).toBe('image/gif');
+      // The ordinary repair pass runs before the background marker is claimed.
+      // It must not invalidate the only ready copy while normalization is still
+      // pending.
+      expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+      expect(existsSync(beforePath)).toBe(true);
       await expect(service.processThumbnailQueue(library.libraryId, {
         maxJobs: 1,
         jobKinds: ['generate_thumbnail'],
@@ -306,11 +618,66 @@ describe('imported thumbnail normalization', () => {
     }
   });
 
-  it('keeps an animated WebP when the decoder reports multiple pages', async () => {
+  it('keeps a single-frame imported GIF through the ordinary stale repair pass', async () => {
     const root = temporaryRoot();
     const thumbnail = await largeJpeg();
     const service = new LibraryService({
       observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail, {
+          source: singleFrameGif(),
+          sourceExtension: 'gif',
+          thumbnail: singleFrameGif(),
+          thumbnailExtension: 'gif',
+        }),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
+      expect(before.mimeType).toBe('image/gif');
+      expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+      expect(existsSync(beforePath)).toBe(true);
+
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')).toMatchObject({
+        artifactId: before.artifactId,
+        generatorVersion: IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
+        mimeType: 'image/gif',
+        width: 1,
+        height: 1,
+      });
+      expect(existsSync(beforePath)).toBe(true);
+      expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('keeps an animated WebP when the decoder reports multiple pages', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await largeJpeg();
+    const observedPageOptions: Array<Pick<SharpOptions, 'animated' | 'page' | 'pages'>> = [];
+    const recordingSharp = ((input: string | Buffer, options?: SharpOptions) => {
+      if (options?.page !== undefined) {
+        observedPageOptions.push({
+          animated: options.animated,
+          page: options.page,
+          pages: options.pages,
+        });
+      }
+      return productionSharp(input, options);
+    }) as SharpModule;
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      sharpFn: recordingSharp,
     });
     try {
       const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
@@ -324,6 +691,8 @@ describe('imported thumbnail normalization', () => {
       const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
       const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
       const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
+      expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+      expect(existsSync(beforePath)).toBe(true);
       await expect(service.processThumbnailQueue(library.libraryId, {
         maxJobs: 1,
         jobKinds: ['generate_thumbnail'],
@@ -339,7 +708,229 @@ describe('imported thumbnail normalization', () => {
         format: 'webp',
         pages: 2,
       });
+      const frame0 = await sharp(beforePath, { animated: true, page: 0 }).raw!().toBuffer();
+      const frame1 = await sharp(beforePath, { animated: true, page: 1 }).raw!().toBuffer();
+      expect(frame0.equals(frame1)).toBe(false);
+      expect(observedPageOptions).toEqual(expect.arrayContaining([
+        { animated: true, page: 0, pages: 1 },
+        { animated: true, page: 1, pages: 1 },
+      ]));
       expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('rejects an imported animation above the validation page budget', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await largeJpeg();
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail, {
+          thumbnail: manyPageAnimatedGif(),
+          thumbnailExtension: 'gif',
+        }),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const before = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
+
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+
+      expect(existsSync(beforePath)).toBe(true);
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')).toMatchObject({
+        artifactId: before.artifactId,
+        generatorVersion: 'eagle-thumbnail@1',
+        status: 'ready',
+      });
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'failed',
+        }),
+      ]));
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('stops a normalization job cancelled while a page is being decoded', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await boundedJpeg();
+    let libraryId = '';
+    let jobId = '';
+    let cancelRequested = false;
+    const cancellingSharp = cancelAfterRawDecodeStarts(() => {
+      if (cancelRequested || !libraryId || !jobId) return;
+      cancelRequested = true;
+      service.cancelMediaJobs(libraryId, [jobId]);
+    });
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      sharpFn: cancellingSharp,
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      libraryId = library.libraryId;
+      await service.importEagleLibrary({
+        libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId, recursive: true })[0]!;
+      const before = service.getCurrentArtifact(libraryId, asset.assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(libraryId, before.artifactId, 'preview');
+      const job = service.listMediaJobs(libraryId).jobs.find((candidate) =>
+        candidate.assetId === asset.assetId
+          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      );
+      expect(job).toBeDefined();
+      jobId = job!.jobId;
+
+      await expect(service.processThumbnailQueue(libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+
+      expect(cancelRequested).toBe(true);
+      expect(existsSync(beforePath)).toBe(true);
+      expect(service.getCurrentArtifact(libraryId, asset.assetId, 'thumbnail')).toMatchObject({
+        artifactId: before.artifactId,
+        generatorVersion: 'eagle-thumbnail@1',
+        status: 'ready',
+      });
+      expect(service.listMediaJobs(libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          jobId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'cancelled',
+        }),
+      ]));
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('does not publish an imported replacement after the source revision changes', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await largeJpeg();
+    let databasePath = '';
+    let assetId = '';
+    let revisionId = '';
+    let switched = false;
+    const switchingSharp: SharpModule = (input, options) => {
+      const instance = productionSharp(input, options);
+      if (
+        !switched
+        && databasePath
+        && assetId
+        && revisionId
+        && typeof input === 'string'
+        && options?.page === undefined
+      ) {
+        const originalMetadata = instance.metadata.bind(instance);
+        instance.metadata = async () => {
+          const metadata = await originalMetadata();
+          if (!switched) {
+            switched = true;
+            const Database = BetterSqlite3 as unknown as {
+              new (filename: string): {
+                prepare(source: string): { run(...parameters: unknown[]): unknown };
+                close(): void;
+              };
+            };
+            const database = new Database(databasePath);
+            const replacementRevisionId = randomUUID();
+            const now = new Date().toISOString();
+            database.prepare(
+              `INSERT INTO revisions
+                 (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
+                  original_filename, origin, accepted_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'external_change', ?)`,
+            ).run(
+              replacementRevisionId,
+              assetId,
+              revisionId,
+              1,
+              now,
+              'hero.jpg',
+              now,
+            );
+            database.prepare(
+              'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
+            ).run(replacementRevisionId, now, assetId);
+            database.close();
+          }
+          return metadata;
+        };
+      }
+      return instance;
+    };
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      sharpFn: switchingSharp,
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      assetId = asset.assetId;
+      revisionId = asset.currentRevisionId;
+      const before = service.getCurrentArtifact(library.libraryId, assetId, 'thumbnail')!;
+      const beforePath = service.getArtifactAbsolutePath(library.libraryId, before.artifactId, 'preview');
+      const job = service.listMediaJobs(library.libraryId).jobs.find((candidate) =>
+        candidate.assetId === assetId
+          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      );
+      expect(job).toBeDefined();
+
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+
+      expect(switched).toBe(true);
+      expect(existsSync(beforePath)).toBe(true);
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          jobId: job!.jobId,
+          errorCode: 'STALE_REVISION',
+          status: 'cancelled',
+        }),
+      ]));
+      const Database = BetterSqlite3 as unknown as {
+        new (filename: string): {
+          prepare(source: string): { get(...parameters: unknown[]): unknown };
+          close(): void;
+        };
+      };
+      const database = new Database(databasePath);
+      const oldArtifact = database.prepare(
+        `SELECT status, invalidated_at
+           FROM revision_artifacts
+          WHERE artifact_id = ?`,
+      ).get(before.artifactId) as { status: string; invalidated_at: string | null } | undefined;
+      const replacementCount = database.prepare(
+        `SELECT COUNT(*) AS count
+           FROM revision_artifacts
+          WHERE revision_id = ?
+            AND kind = 'thumbnail'`,
+      ).get(revisionId) as { count: number };
+      database.close();
+      expect(oldArtifact).toEqual({ status: 'ready', invalidated_at: null });
+      expect(replacementCount.count).toBe(1);
     } finally {
       service.closeAll();
     }
@@ -353,7 +944,7 @@ describe('imported thumbnail normalization', () => {
     });
     const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
     const sourceRootPath = writeEagleLibrary(root, thumbnail, {
-      thumbnail: animatedGif(),
+      thumbnail: oversizedAnimatedGif(),
       thumbnailExtension: 'gif',
     });
     let assetId: string;
@@ -404,7 +995,7 @@ describe('imported thumbnail normalization', () => {
 
   it('keeps a preserved animation current during explicit visible and ordinary waves', async () => {
     const root = temporaryRoot();
-    const thumbnail = animatedGif();
+    const thumbnail = oversizedAnimatedGif();
     const service = new LibraryService({
       observerFactory: () => ({ close() {} }),
     });
@@ -518,6 +1109,188 @@ describe('imported thumbnail normalization', () => {
       ]));
     } finally {
       service.closeAll();
+    }
+  });
+
+  it('keeps the normalization marker when native memory pressure requeues a job', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await largeJpeg();
+    const resourceSharp: SharpModule = (() => {
+      throw new MediaResourceExhaustedError('synthetic memory pressure', 'test');
+    }) as unknown as SharpModule;
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      sharpFn: resourceSharp,
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const job = service.listMediaJobs(library.libraryId).jobs.find((candidate) =>
+        candidate.assetId === asset.assetId
+          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      );
+      expect(job).toBeDefined();
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          jobId: job!.jobId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
+      expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('keeps the normalization marker when a running job loses its lease', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await boundedJpeg();
+    let databasePath = '';
+    let jobId = '';
+    let leaseStolen = false;
+    const stealingSharp: SharpModule = (input, options) => {
+      if (!leaseStolen) {
+        leaseStolen = true;
+        const database = new (BetterSqlite3 as unknown as {
+          new (filename: string): {
+            prepare(source: string): { run(...parameters: unknown[]): unknown };
+            close(): void;
+          };
+        })(databasePath);
+        database.prepare(
+          `UPDATE library_job_leases
+              SET owner_id = ?, acquired_at_ms = 0, expires_at_ms = 1
+            WHERE job_id = ?`,
+        ).run('foreign-owner', jobId);
+        database.close();
+      }
+      return productionSharp(input, options);
+    };
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+      sharpFn: stealingSharp,
+    });
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      databasePath = path.join(library.libraryPath, '.serpent', 'library.db');
+      await service.importEagleLibrary({
+        libraryId: library.libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+      const job = service.listMediaJobs(library.libraryId).jobs.find((candidate) =>
+        candidate.assetId === asset.assetId
+          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      );
+      expect(job).toBeDefined();
+      jobId = job!.jobId;
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          jobId: job!.jobId,
+          errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+          status: 'queued',
+        }),
+      ]));
+      expect(service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail')).toMatchObject({
+        artifactId: expect.any(String),
+        generatorVersion: IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
+      });
+      await expect(service.processThumbnailQueue(library.libraryId, {
+        maxJobs: 1,
+        jobKinds: ['generate_thumbnail'],
+      })).resolves.toBe(1);
+      expect(service.listMediaJobs(library.libraryId).jobs).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          jobId: job!.jobId,
+          errorCode: null,
+          status: 'succeeded',
+        }),
+      ]));
+    } finally {
+      service.closeAll();
+    }
+  });
+
+  it('recovers a running normalization job with its marker after reopening', async () => {
+    const root = temporaryRoot();
+    const thumbnail = await boundedJpeg();
+    const service = new LibraryService({
+      observerFactory: () => ({ close() {} }),
+    });
+    let libraryPath!: string;
+    let libraryId!: string;
+    let assetId!: string;
+    let jobId!: string;
+    try {
+      const library = service.createLibrary({ displayName: 'Target', selectedParentPath: root });
+      libraryPath = library.libraryPath;
+      libraryId = library.libraryId;
+      await service.importEagleLibrary({
+        libraryId,
+        sourceRootPath: writeEagleLibrary(root, thumbnail),
+      });
+      const asset = service.listAssets({ libraryId, recursive: true })[0]!;
+      assetId = asset.assetId;
+      const job = service.listMediaJobs(libraryId).jobs.find((candidate) =>
+        candidate.assetId === assetId
+          && candidate.errorCode === IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+      );
+      expect(job).toBeDefined();
+      jobId = job!.jobId;
+      const database = new (BetterSqlite3 as unknown as {
+        new (filename: string): {
+          prepare(source: string): { run(...parameters: unknown[]): unknown };
+          close(): void;
+        };
+      })(path.join(libraryPath, '.serpent', 'library.db'));
+      database.prepare(
+        `UPDATE jobs
+            SET status = 'running', error_code = ?
+          WHERE job_id = ?`,
+      ).run(IMPORTED_THUMBNAIL_NORMALIZATION_JOB, jobId);
+      database.close();
+      service.closeAll();
+
+      const reopened = new LibraryService({
+        observerFactory: () => ({ close() {} }),
+      });
+      try {
+        expect(reopened.openLibrary(libraryPath).libraryId).toBe(libraryId);
+        expect(reopened.listMediaJobs(libraryId).jobs).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            jobId,
+            errorCode: IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+            status: 'queued',
+          }),
+        ]));
+        await expect(reopened.processThumbnailQueue(libraryId, {
+          maxJobs: 1,
+          jobKinds: ['generate_thumbnail'],
+        })).resolves.toBe(1);
+        expect(reopened.listMediaJobs(libraryId).jobs).toEqual(expect.arrayContaining([
+          expect.objectContaining({ jobId, errorCode: null, status: 'succeeded' }),
+        ]));
+        expect(reopened.getCurrentArtifact(libraryId, assetId, 'thumbnail')).toMatchObject({
+          generatorVersion: IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
+        });
+      } finally {
+        reopened.closeAll();
+      }
+    } finally {
+      if (service.listLibraries().length > 0) service.closeAll();
     }
   });
 });

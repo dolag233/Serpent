@@ -25,7 +25,15 @@ describe('imported thumbnail policy', () => {
     })).toBe(true);
   });
 
-  it('does not spend a background decode on a small bounded preview', () => {
+  it('probes a small-byte preview when its dimensions are unavailable', () => {
+    expect(importedThumbnailNeedsNormalization({
+      byteSize: IMPORTED_THUMBNAIL_MAX_BYTES,
+      width: null,
+      height: null,
+    })).toBe(true);
+  });
+
+  it('does not require re-encoding after a bounded preview is validated', () => {
     expect(importedThumbnailNeedsNormalization({
       byteSize: IMPORTED_THUMBNAIL_MAX_BYTES,
       width: IMPORTED_THUMBNAIL_MAX_EDGE,

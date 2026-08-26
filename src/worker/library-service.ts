@@ -213,7 +213,9 @@ import {
 // The Worker loads it lazily so it can still start if sharp is missing.
 export interface SharpModule {
   (input: string | Buffer, options?: {
+    animated?: boolean;
     page?: number;
+    pages?: number;
     failOn?: 'warning' | 'error' | 'none';
     sequentialRead?: boolean;
     limitInputPixels?: number;
@@ -325,6 +327,10 @@ const IMPORTED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};sha
 /** Animated imported previews stay byte-for-byte intact but still need a durable completion marker. */
 const IMPORTED_ANIMATED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};preserved-animated@1`;
 const IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS = 32_000_000;
+// Validate animated previews one frame at a time. This keeps the retained
+// decode buffer bounded while rejecting pathological frame-count bombs rather
+// than silently marking an unverified animation as preserved.
+const IMPORTED_THUMBNAIL_MAX_VALIDATION_PAGES = 128;
 // Keep ordinary card decodes below Sharp's much larger default decompression
 // bomb limit. The 64 MP bound still accepts the fixture's 8K class while
 // preventing a single malformed source from retaining hundreds of MB of
@@ -705,6 +711,7 @@ import {
   IMPORTED_THUMBNAIL_MAX_BYTES,
   IMPORTED_THUMBNAIL_MAX_EDGE,
   IMPORTED_THUMBNAIL_NORMALIZATION_JOB,
+  IMPORTED_THUMBNAIL_PRESERVED_GENERATOR,
   importedThumbnailNeedsNormalization,
   isImportedThumbnailGenerator,
   isLegacyImportedThumbnailGenerator,
@@ -4637,6 +4644,19 @@ async function defaultTrashItem(sourcePath: string): Promise<void> {
 }
 
 export class SimulatedCrashError extends Error {}
+
+class StaleMediaRevisionError extends Error {
+  readonly code = 'STALE_REVISION';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'StaleMediaRevisionError';
+  }
+}
+
+function isStaleMediaRevisionError(error: unknown): error is StaleMediaRevisionError {
+  return error instanceof StaleMediaRevisionError;
+}
 
 export class LibraryServiceError extends Error {
   constructor(
@@ -18375,6 +18395,9 @@ export class LibraryService {
     openLibrary.connection.prepare(
       `UPDATE jobs SET status = 'queued', progress = 0.0,
         error_code = CASE
+          WHEN kind = 'generate_thumbnail'
+            AND error_code = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
+          THEN '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
           WHEN kind IN ('generate_webm_proxy', 'generate_audio_proxy')
             AND error_code = '${EXPLICIT_PROXY_FALLBACK_MARKER}'
           THEN '${EXPLICIT_PROXY_FALLBACK_MARKER}'
@@ -20211,13 +20234,17 @@ export class LibraryService {
         relative_file_path: string;
         current_revision_id: string | null;
       } | undefined;
-    if (!asset || asset.current_revision_id !== input.revisionId) return null;
+    if (!asset) {
+      throw new StaleMediaRevisionError('Imported thumbnail asset was deleted before normalization.');
+    }
+    if (asset.current_revision_id !== input.revisionId) {
+      throw new StaleMediaRevisionError('Imported thumbnail revision is no longer current.');
+    }
     const mediaType = LibraryService.detectMediaType(asset.relative_file_path);
     const artifactKind = mediaType === 'video' ? 'video_poster' : 'thumbnail';
     const legacy = openLibrary.connection
       .prepare(
-        `SELECT artifact_id, file_path, mime_type, byte_size, width, height,
-                generator_version
+        `SELECT artifact_id, file_path, mime_type, byte_size, generator_version
            FROM revision_artifacts
           WHERE revision_id = ?
             AND kind = ?
@@ -20230,8 +20257,6 @@ export class LibraryService {
         file_path: string;
         mime_type: string;
         byte_size: number;
-        width: number | null;
-        height: number | null;
         generator_version: string;
       } | undefined;
     if (!legacy || !isLegacyImportedThumbnailGenerator(legacy.generator_version)) {
@@ -20244,6 +20269,107 @@ export class LibraryService {
     mkdirSync(artifactsDir, { recursive: true });
     let temporaryPath: string | undefined;
     let finalPath: string | undefined;
+    let replacementCommitted = false;
+    const throwIfCancelled = (): void => {
+      if (execution.signal?.aborted) {
+        throw new DOMException('Imported thumbnail normalization was cancelled.', 'AbortError');
+      }
+    };
+    const assertCurrentRevision = (): void => {
+      const current = openLibrary.connection
+        .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+        .get(input.assetId) as { current_revision_id: string | null } | undefined;
+      if (!current || current.current_revision_id !== input.revisionId) {
+        throw new StaleMediaRevisionError('Imported thumbnail revision is no longer current.');
+      }
+    };
+    const markCurrentArtifact = (
+      generatorVersion: string,
+      previewDimensions: { width: number; height: number },
+    ): void => {
+      throwIfCancelled();
+      const now = new Date().toISOString();
+      openLibrary.connection.transaction(() => {
+        throwIfCancelled();
+        assertCurrentRevision();
+        const current = openLibrary.connection
+          .prepare(
+            `SELECT artifact_id
+               FROM revision_artifacts
+              WHERE revision_id = ?
+                AND kind = ?
+                AND status = 'ready'
+                AND invalidated_at IS NULL
+              LIMIT 1`,
+          )
+          .get(input.revisionId, artifactKind) as { artifact_id: string } | undefined;
+        if (!current || current.artifact_id !== legacy.artifact_id) {
+          throw new Error('Imported thumbnail became stale before marking complete.');
+        }
+        const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
+        const identity = artifactIdentityForPersistedRow({
+          assetId: input.assetId,
+          revisionId: input.revisionId,
+          kind: artifactKind,
+          generatorVersion,
+        });
+        const hasIdentityColumns = [
+          'artifact_role',
+          'generator_id',
+          'settings_hash',
+          'artifact_key',
+        ].every((column) => artifactColumns.has(column));
+        if (hasIdentityColumns && identity === null) {
+          throw new Error('Imported thumbnail has no artifact identity role.');
+        }
+        const updateColumns = ['generator_version = ?'];
+        const updateParameters: unknown[] = [generatorVersion];
+        if (artifactColumns.has('width') && artifactColumns.has('height')) {
+          updateColumns.push('width = ?', 'height = ?');
+          updateParameters.push(previewDimensions.width, previewDimensions.height);
+        }
+        if (hasIdentityColumns) {
+          updateColumns.push(
+            'artifact_role = ?',
+            'generator_id = ?',
+            'settings_hash = ?',
+            'artifact_key = ?',
+          );
+          updateParameters.push(
+            identity!.role,
+            identity!.generatorId,
+            identity!.settingsHash,
+            identity!.key,
+          );
+        }
+        updateColumns.push('generated_at = ?');
+        updateParameters.push(
+          now,
+          legacy.artifact_id,
+          input.revisionId,
+          input.assetId,
+          input.revisionId,
+        );
+        const result = openLibrary.connection
+          .prepare(
+            `UPDATE revision_artifacts
+                SET ${updateColumns.join(', ')}
+              WHERE artifact_id = ?
+                AND revision_id = ?
+                AND invalidated_at IS NULL
+                AND EXISTS (
+                  SELECT 1 FROM assets
+                   WHERE asset_id = ?
+                     AND current_revision_id = ?
+                )`,
+          )
+          .run(...updateParameters);
+        if (result.changes !== 1) {
+          assertCurrentRevision();
+          throw new Error('Imported thumbnail became stale before marking complete.');
+        }
+      })();
+    };
 
     try {
       const output = await runSharpDecoder(
@@ -20252,11 +20378,12 @@ export class LibraryService {
         async () => {
           const sharp = this.options.sharpFn ?? requireSharp();
           const probe = sharp(oldArtifactPath, {
-            failOn: 'none',
-            sequentialRead: false,
+            failOn: 'error',
+            sequentialRead: true,
             limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
           });
           const metadata = await probe.metadata();
+          throwIfCancelled();
           const inputWidth = metadata.width ?? 0;
           const inputHeight = metadata.height ?? 0;
           if (
@@ -20269,77 +20396,72 @@ export class LibraryService {
             throw new Error('Imported thumbnail exceeds the pixel budget.');
           }
           const pages = metadata.pages ?? 1;
+          if (
+            !Number.isSafeInteger(pages)
+            || pages < 1
+            || pages > IMPORTED_THUMBNAIL_MAX_VALIDATION_PAGES
+          ) {
+            throw new Error('Imported animated thumbnail exceeds the validation frame budget.');
+          }
           const extension = path.extname(oldArtifactPath).toLowerCase();
           const format = metadata.format?.toLowerCase();
           const animated = pages > 1
             && (format === 'gif' || format === 'webp' || extension === '.gif' || extension === '.webp');
+          const needsNormalization = importedThumbnailNeedsNormalization({
+            byteSize: legacy.byte_size,
+            height: inputHeight,
+            width: inputWidth,
+          });
+          const verifyDecodedPixels = async (): Promise<void> => {
+            // metadata() only reads container headers. Decode each page one at
+            // a time so a bounded preview is not marked preserved while its
+            // compressed pixel stream is truncated, and never materialize all
+            // animation frames in one native buffer.
+            for (let page = 0; page < pages; page += 1) {
+              throwIfCancelled();
+              const pageDecoder = sharp(oldArtifactPath, {
+                animated: pages > 1,
+                failOn: 'error',
+                page,
+                pages: 1,
+                sequentialRead: true,
+                limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+              });
+              const rawDecoder = pageDecoder.raw?.();
+              if (!rawDecoder?.toBuffer) {
+                throw new Error('Sharp cannot validate imported thumbnail pixels.');
+              }
+              await rawDecoder.toBuffer();
+              throwIfCancelled();
+            }
+          };
           // An imported animated preview is already the user's chosen card
           // image. Flattening it into a JPEG/WEBP would silently change its
-          // semantics, so leave the copied artifact in place but persist a
-          // current-generator marker. Without that marker every subsequent
-          // startup backfill would probe and enqueue the same animation again.
+          // semantics, so leave the copied artifact in place after validating
+          // every frame and persist a current-generator marker. Without that
+          // marker every subsequent startup backfill would enqueue it again.
           if (animated) {
-            const now = new Date().toISOString();
-            openLibrary.connection.transaction(() => {
-              const current = openLibrary.connection
-                .prepare(
-                  `SELECT artifact_id
-                     FROM revision_artifacts
-                    WHERE revision_id = ?
-                      AND kind = ?
-                      AND status = 'ready'
-                      AND invalidated_at IS NULL
-                    LIMIT 1`,
-                )
-                .get(input.revisionId, artifactKind) as { artifact_id: string } | undefined;
-              if (!current || current.artifact_id !== legacy.artifact_id) {
-                throw new Error('Imported animated thumbnail became stale before marking complete.');
-              }
-              const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
-              const identity = artifactIdentityForPersistedRow({
-                assetId: input.assetId,
-                revisionId: input.revisionId,
-                kind: artifactKind,
-                generatorVersion: IMPORTED_ANIMATED_THUMBNAIL_GENERATOR,
-              });
-              const hasIdentityColumns = [
-                'artifact_role',
-                'generator_id',
-                'settings_hash',
-                'artifact_key',
-              ].every((column) => artifactColumns.has(column));
-              if (hasIdentityColumns && identity === null) {
-                throw new Error('Imported animated thumbnail has no artifact identity role.');
-              }
-              const updateColumns = hasIdentityColumns
-                ? `generator_version = ?, artifact_role = ?, generator_id = ?,
-                   settings_hash = ?, artifact_key = ?, generated_at = ?`
-                : 'generator_version = ?, generated_at = ?';
-              const updateParameters: unknown[] = hasIdentityColumns
-                ? [
-                    IMPORTED_ANIMATED_THUMBNAIL_GENERATOR,
-                    identity!.role,
-                    identity!.generatorId,
-                    identity!.settingsHash,
-                    identity!.key,
-                    now,
-                    legacy.artifact_id,
-                  ]
-                : [IMPORTED_ANIMATED_THUMBNAIL_GENERATOR, now, legacy.artifact_id];
-              openLibrary.connection
-                .prepare(
-                  `UPDATE revision_artifacts
-                      SET ${updateColumns}
-                    WHERE artifact_id = ?
-                      AND invalidated_at IS NULL`,
-                )
-                .run(...updateParameters);
-            })();
+            await verifyDecodedPixels();
+            markCurrentArtifact(IMPORTED_ANIMATED_THUMBNAIL_GENERATOR, {
+              height: inputHeight,
+              width: inputWidth,
+            });
             // Keep the existing artifact publication path unchanged. The
             // durable generator marker above is the completion record; no
             // newly generated artifact needs to be published for an
             // animation that was intentionally preserved in its original
             // format.
+            return null;
+          }
+          // A source asset can be 4K while its external card preview is
+          // already bounded. These are the actual preview dimensions, and the
+          // pixel stream has now been decoded rather than merely inspected.
+          if (!needsNormalization) {
+            await verifyDecodedPixels();
+            markCurrentArtifact(IMPORTED_THUMBNAIL_PRESERVED_GENERATOR, {
+              height: inputHeight,
+              width: inputWidth,
+            });
             return null;
           }
           const hasAlpha = metadata.hasAlpha === true || metadata.channels === 4;
@@ -20350,32 +20472,54 @@ export class LibraryService {
           const tempPath = path.join(artifactsDir, tempRelativePath);
           temporaryPath = tempPath;
           finalPath = outputPath;
-          const pipeline = sharp(oldArtifactPath, {
-            failOn: 'none',
-            sequentialRead: false,
-            limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
-          })
-            .rotate()
-            .toColourspace('srgb')
-            .resize({
-              width: IMPORTED_THUMBNAIL_MAX_EDGE,
-              height: IMPORTED_THUMBNAIL_MAX_EDGE,
-              fit: 'inside',
-              withoutEnlargement: true,
-            });
-          if (hasAlpha) {
-            await pipeline.webp({ quality: 80 }).toFile(tempPath);
-          } else {
-            await pipeline.jpeg({ quality: 72 }).toFile(tempPath);
+          const qualityLevels = hasAlpha ? [80, 60, 40, 25] : [72, 56, 40, 28];
+          const outputEdges = [
+            IMPORTED_THUMBNAIL_MAX_EDGE,
+            448,
+            384,
+            320,
+            256,
+          ];
+          let outputByteSize = 0;
+          for (const outputEdge of outputEdges) {
+            throwIfCancelled();
+            for (const quality of qualityLevels) {
+              throwIfCancelled();
+              const pipeline = sharp(oldArtifactPath, {
+                failOn: 'error',
+                sequentialRead: true,
+                limitInputPixels: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+              })
+                .rotate()
+                .toColourspace('srgb')
+                .resize({
+                  width: outputEdge,
+                  height: outputEdge,
+                  fit: 'inside',
+                  withoutEnlargement: true,
+                });
+              if (hasAlpha) {
+                await pipeline.webp({ quality }).toFile(tempPath);
+              } else {
+                await pipeline.jpeg({ quality }).toFile(tempPath);
+              }
+              throwIfCancelled();
+              outputByteSize = statSync(tempPath).size;
+              if (outputByteSize <= IMPORTED_THUMBNAIL_MAX_BYTES) break;
+            }
+            if (outputByteSize <= IMPORTED_THUMBNAIL_MAX_BYTES) break;
           }
-          if (execution.signal?.aborted) {
-            throw new DOMException('Imported thumbnail normalization was cancelled.', 'AbortError');
+          if (outputByteSize <= 0) throw new Error('Normalized imported thumbnail is empty.');
+          if (outputByteSize > IMPORTED_THUMBNAIL_MAX_BYTES) {
+            throw new Error('Normalized imported thumbnail exceeded the byte budget.');
           }
+          throwIfCancelled();
           const outputMetadata = await sharp(tempPath, {
             failOn: 'none',
             sequentialRead: true,
             limitInputPixels: IMPORTED_THUMBNAIL_MAX_EDGE * IMPORTED_THUMBNAIL_MAX_EDGE,
           }).metadata();
+          throwIfCancelled();
           const outputWidth = outputMetadata.width ?? 0;
           const outputHeight = outputMetadata.height ?? 0;
           if (
@@ -20389,35 +20533,50 @@ export class LibraryService {
             throw new Error('Normalized imported thumbnail exceeded the edge budget.');
           }
           const outputStat = statSync(tempPath);
-          if (outputStat.size <= 0) throw new Error('Normalized imported thumbnail is empty.');
+          if (outputStat.size <= 0 || outputStat.size > IMPORTED_THUMBNAIL_MAX_BYTES) {
+            throw new Error('Normalized imported thumbnail exceeded the byte budget.');
+          }
           return {
             byteSize: outputStat.size,
-            height: legacy.height,
+            height: outputHeight,
             mimeType: hasAlpha ? 'image/webp' : 'image/jpeg',
             outputHeight,
             outputWidth,
             relativePath,
-            width: legacy.width,
+            width: outputWidth,
           };
         },
         {
           sourceByteSize: legacy.byte_size,
-          width: legacy.width,
-          height: legacy.height,
+          // Eagle/Billfish artifact width/height describe the source asset,
+          // not the adjacent copied preview. Reserve against the preview's
+          // actual safety ceiling instead of letting untrusted source
+          // metadata distort native admission (or under-reserving a large
+          // preview whose header was not known before the decoder starts).
+          width: IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS,
+          height: 1,
+          // Pixel validation materializes one decoded raster in libvips and a
+          // second copy in the V8-facing raw Buffer. Reserve both before the
+          // decoder starts; this intentionally serializes worst-case imports
+          // under the process-wide 384 MiB native budget.
+          decodedRasterCopies: 2,
         },
       );
 
       if (output === null) return null;
 
       if (!temporaryPath || !finalPath) throw new Error('Normalized thumbnail output path is missing.');
+      throwIfCancelled();
       renameSync(temporaryPath, finalPath);
       temporaryPath = undefined;
 
       const now = new Date().toISOString();
       openLibrary.connection.transaction(() => {
+        throwIfCancelled();
+        assertCurrentRevision();
         const current = openLibrary.connection
           .prepare(
-            `SELECT artifact_id, file_path
+            `SELECT artifact_id
                FROM revision_artifacts
               WHERE revision_id = ?
                 AND kind = ?
@@ -20427,19 +20586,22 @@ export class LibraryService {
           )
           .get(input.revisionId, artifactKind) as {
             artifact_id: string;
-            file_path: string;
           } | undefined;
         if (!current || current.artifact_id !== legacy.artifact_id) {
           throw new Error('Imported thumbnail became stale before replacement.');
         }
-        openLibrary.connection
+        const invalidated = openLibrary.connection
           .prepare(
             `UPDATE revision_artifacts
                 SET invalidated_at = ?
               WHERE artifact_id = ?
+                AND revision_id = ?
                 AND invalidated_at IS NULL`,
           )
-          .run(now, legacy.artifact_id);
+          .run(now, legacy.artifact_id, input.revisionId);
+        if (invalidated.changes !== 1) {
+          throw new Error('Imported thumbnail became stale before replacement.');
+        }
         openLibrary.connection
           .prepare(
             `INSERT INTO revision_artifacts
@@ -20460,15 +20622,24 @@ export class LibraryService {
             now,
           );
       })();
+      replacementCommitted = true;
 
       // The old copy is no longer reachable through the current artifact row.
       // Removal is best-effort: the reconciliation pass can clean an orphan
       // after a process crash between the transaction and this unlink.
-      rmSync(oldArtifactPath, { force: true });
+      try {
+        rmSync(oldArtifactPath, { force: true });
+      } catch (error) {
+        this.diagnose('imported-thumbnail.normalize-cleanup', error, {
+          assetId: input.assetId,
+          revisionId: input.revisionId,
+          artifactId: legacy.artifact_id,
+        });
+      }
       return { artifactId: newArtifactId };
     } catch (error) {
       if (temporaryPath) rmSync(temporaryPath, { force: true });
-      if (finalPath) rmSync(finalPath, { force: true });
+      if (finalPath && !replacementCommitted) rmSync(finalPath, { force: true });
       this.diagnose('imported-thumbnail.normalize', error, {
         assetId: input.assetId,
         revisionId: input.revisionId,
@@ -26641,9 +26812,7 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     assetId: string,
     revisionId: string,
-    copied: Pick<EagleCopiedThumbnail, 'byteSize' | 'width' | 'height'>,
   ): number {
-    if (!importedThumbnailNeedsNormalization(copied)) return 0;
     const activeOrFailed = openLibrary.connection
       .prepare(
         `SELECT 1
@@ -26701,7 +26870,7 @@ export class LibraryService {
       : Math.max(1, Math.min(500, Math.trunc(options.limit)));
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.asset_id, a.current_revision_id, ra.byte_size, ra.width, ra.height
+        `SELECT a.asset_id, a.current_revision_id
            FROM assets a
            JOIN revision_artifacts ra
              ON ra.revision_id = a.current_revision_id
@@ -26726,11 +26895,6 @@ export class LibraryService {
               ra.generator_version LIKE 'eagle-thumbnail@1%'
               OR ra.generator_version LIKE 'billfish-thumbnail@1%'
             )
-            AND (
-              ra.byte_size > ${IMPORTED_THUMBNAIL_MAX_BYTES}
-              OR ra.width > ${IMPORTED_THUMBNAIL_MAX_EDGE}
-              OR ra.height > ${IMPORTED_THUMBNAIL_MAX_EDGE}
-            )
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
             AND NOT EXISTS (
               SELECT 1
@@ -26753,9 +26917,6 @@ export class LibraryService {
       ) as Array<{
         asset_id: string;
         current_revision_id: string;
-        byte_size: number;
-        width: number | null;
-        height: number | null;
       }>;
     if (rows.length === 0) return 0;
     let enqueued = 0;
@@ -26765,11 +26926,6 @@ export class LibraryService {
           openLibrary,
           row.asset_id,
           row.current_revision_id,
-          {
-            byteSize: row.byte_size,
-            width: row.width,
-            height: row.height,
-          },
         );
       }
     })();
@@ -26895,6 +27051,8 @@ export class LibraryService {
             AND invalidated_at IS NULL
             AND generator_version NOT LIKE '%gifstill%'
             AND generator_version NOT LIKE ?
+            AND generator_version NOT LIKE ?
+            AND generator_version NOT LIKE ?
             AND revision_id IN (
               SELECT current_revision_id FROM assets
                WHERE deleted_at IS NULL
@@ -26902,7 +27060,12 @@ export class LibraryService {
                  AND LOWER(relative_file_path) LIKE '%.gif'
             )`,
       )
-      .run(nowInvalidate, `${IMPORTED_ANIMATED_THUMBNAIL_GENERATOR}%`);
+      .run(
+        nowInvalidate,
+        'eagle-thumbnail@1%',
+        'billfish-thumbnail@1%',
+        `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX}%`,
+      );
     // Serpent-4dee67: ICO cards created before largest-page selection used
     // the first directory entry (often a 16px icon). Invalidate those rows so
     // the next queue wave regenerates them from the largest ICO page.
@@ -27023,7 +27186,11 @@ export class LibraryService {
                       AND preserved.kind = 'thumbnail'
                       AND preserved.status = 'ready'
                       AND preserved.invalidated_at IS NULL
-                      AND preserved.generator_version LIKE '${IMPORTED_ANIMATED_THUMBNAIL_GENERATOR}%'
+                      AND (
+                        preserved.generator_version LIKE 'eagle-thumbnail@1%'
+                        OR preserved.generator_version LIKE 'billfish-thumbnail@1%'
+                        OR preserved.generator_version LIKE '${IMPORTED_THUMBNAIL_GENERATOR_PREFIX}%'
+                      )
                  )
             )`,
       )
@@ -27617,6 +27784,16 @@ export class LibraryService {
                   .join(' OR ')})
            ) THEN 1 ELSE 0 END DESC, `
       : '';
+    // Imported previews are already ready copies. Their low-priority
+    // normalization must never consume a visible-wave slot just because the
+    // visible asset has no missing primary job; leave it to the background
+    // queue after the interaction window yields.
+    const interactiveImportedNormalizationGuard = options.interactive
+      ? `AND NOT (
+          jobs.kind = 'generate_thumbnail'
+          AND COALESCE(jobs.error_code, '') = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
+        )`
+      : '';
     const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count, error_code
          FROM jobs
@@ -27625,6 +27802,7 @@ export class LibraryService {
           AND status = 'queued'
           ${buildAssetClause(claimAssetIds)}
           ${primaryPreviewClaimGuard}
+          ${interactiveImportedNormalizationGuard}
           ${deferSecondaryAfterPrimarySql}
           AND (
             error_code IS NULL
@@ -27910,9 +28088,13 @@ export class LibraryService {
         });
       } catch (error) {
         if (!(error instanceof LibraryWriteCoordinatorError)) throw error;
+        const retryErrorCode = job.kind === 'generate_thumbnail'
+          && job.error_code === IMPORTED_THUMBNAIL_NORMALIZATION_JOB
+          ? IMPORTED_THUMBNAIL_NORMALIZATION_JOB
+          : 'JOB_LEASE_BUSY';
         openLibrary.connection.prepare(
-          "UPDATE jobs SET status = 'queued', error_code = 'JOB_LEASE_BUSY', updated_at = ? WHERE job_id = ? AND status = 'running'",
-        ).run(new Date().toISOString(), job.job_id);
+          'UPDATE jobs SET status = \'queued\', error_code = ?, updated_at = ? WHERE job_id = ? AND status = \'running\'',
+        ).run(retryErrorCode, new Date().toISOString(), job.job_id);
         budget += 1;
         // Serpent-308675 adversarial-review fix: timeoutMs:0 makes claimJob
         // throw immediately, and the reset-to-queued above means the same
@@ -28204,6 +28386,31 @@ export class LibraryService {
           }
         }
       } catch (error) {
+        if (isStaleMediaRevisionError(error)) {
+          this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+          });
+          openLibrary.connection.prepare(
+            `UPDATE jobs
+                SET status = 'cancelled', error_code = 'STALE_REVISION',
+                    error_detail = ?, updated_at = ?
+              WHERE job_id = ? AND status = 'running'`,
+          ).run(
+            safeMediaJobErrorDetail('STALE_REVISION'),
+            new Date().toISOString(),
+            job.job_id,
+          );
+          this.diagnose('media-job.stale-revision', error, {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+          });
+          processed += 1;
+          continue;
+        }
         const resourceError = asMediaResourceExhaustedError(error, 'media-job');
         if (resourceError) {
           this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
@@ -28213,12 +28420,14 @@ export class LibraryService {
             preserveLateArtifacts: isImportedThumbnailNormalization,
           });
           const cooldownMs = mediaResourceGuard.recordFailure();
-          const retryErrorCode = (
-            (job.kind === 'generate_webm_proxy' || job.kind === 'generate_audio_proxy')
-            && job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER
-          )
-            ? EXPLICIT_PROXY_FALLBACK_MARKER
-            : MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE;
+          const retryErrorCode = isImportedThumbnailNormalization
+            ? IMPORTED_THUMBNAIL_NORMALIZATION_JOB
+            : (
+              (job.kind === 'generate_webm_proxy' || job.kind === 'generate_audio_proxy')
+              && job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER
+            )
+              ? EXPLICIT_PROXY_FALLBACK_MARKER
+              : MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE;
           openLibrary.connection.prepare(
             `UPDATE jobs
                 SET status = 'queued', error_code = ?,
@@ -28249,12 +28458,14 @@ export class LibraryService {
           });
           // Lease loss must not leave the job stuck in `running`; requeue so a
           // later wave (or process restart recovery) can claim it again.
-          const retryErrorCode = (
-            (job.kind === 'generate_webm_proxy' || job.kind === 'generate_audio_proxy')
-            && job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER
-          )
-            ? EXPLICIT_PROXY_FALLBACK_MARKER
-            : 'JOB_LEASE_LOST';
+          const retryErrorCode = isImportedThumbnailNormalization
+            ? IMPORTED_THUMBNAIL_NORMALIZATION_JOB
+            : (
+              (job.kind === 'generate_webm_proxy' || job.kind === 'generate_audio_proxy')
+              && job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER
+            )
+              ? EXPLICIT_PROXY_FALLBACK_MARKER
+              : 'JOB_LEASE_LOST';
           openLibrary.connection.prepare(
             "UPDATE jobs SET status = 'queued', error_code = ?, updated_at = ? WHERE job_id = ? AND status = 'running'",
           ).run(retryErrorCode, new Date().toISOString(), job.job_id);
@@ -37432,6 +37643,11 @@ export class LibraryService {
       this.artifactsDirReady.add(openLibrary);
     }
     copyFileExclusive(resolvedThumbnailPath, artifactAbsPath);
+    // Do not decode or trust the source metadata here. Copy-first must publish
+    // the card without blocking the import, while the low-priority job below
+    // performs a bounded pixel validation before it can retire this legacy
+    // generator marker. This also keeps a truncated file from becoming a
+    // permanently "verified" artifact merely because its header was readable.
     return {
       artifactAbsPath,
       artifactId,
@@ -37480,12 +37696,10 @@ export class LibraryService {
         copied.generatorVersion,
         now,
       );
-    this.enqueueImportedThumbnailNormalizationJob(
-      openLibrary,
-      assetId,
-      revisionId,
-      copied,
-    );
+    // Every copied preview is verified in the background, including a small
+    // one. Header dimensions and metadata are not sufficient to prove that
+    // the compressed pixel stream is readable.
+    this.enqueueImportedThumbnailNormalizationJob(openLibrary, assetId, revisionId);
   }
 
   private persistEagleThumbnailArtifact(

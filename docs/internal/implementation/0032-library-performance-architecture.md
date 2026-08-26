@@ -580,8 +580,10 @@ type PerformanceSpan = {
   `extract_metadata` job 渐进完成，不能重新阻塞 card-thumbnail 的首屏路径。header-only
   尺寸 artifact 不是完整元数据终态，metadata-less 文件则以成功 job 终态去重，避免每次刷新
   无限重排。
-- Eagle/Billfish 导入保留 copy-first 首屏，超出 512 边长或字节预算的外部预览在后台
-  有界归一化；旧 artifact 在新 artifact 事务提交前保持可用。
+- Eagle/Billfish 导入保留 copy-first 首屏；每个外部预览都在后台先做有界实际像素验证，
+  超出 512 边长或字节预算的预览再做有界归一化。验证通过后才记录 durable marker，
+  旧 artifact 在验证/新 artifact 事务提交前保持可用，损坏或失败可重试；验证/归一化
+  成功后 artifact 的 width/height 写入预览实际尺寸，源图几何保留在独立 metadata artifact。
 - PreviewCache 增加观测与按库预算；生成器版本变更只失效相关 artifact。
 - 可见媒体波次使用重叠率和 generation 做抢占；轻量 viewport wave 不得顺手触发全局补队列
   或尺寸回填；连续 claim 之间让出 Worker event loop，并保持 bounded wave 的 primary/
@@ -657,7 +659,8 @@ SMB 往返，因此墙钟 p50 9.3ms 对 9.1ms 不是网络收益证明。发布�
 8. 文件夹/合集递归计数正确，合集资产去重，标签/MCP 更新触发局部失效。
 9. 本地 watcher 事件合并、网络盘轮询、忽略目录剪枝。
 10. 操作中断后完整进程重启，对账 DB、文件、manifest 和 artifact。
-11. Eagle/Billfish 大尺寸缩略图的 copy-first、后台归一化、失败保留旧 artifact 和重试标记。
+11. Eagle/Billfish 预览的 copy-first、后台实际解码验证/归一化、损坏保护、失败保留旧
+    artifact、资源/lease/重启恢复和不可丢失的重试标记。
 12. 远程资源库的本地 SQLite 元数据快照命中、读写分离、外部变更失效、backup 竞态、损坏回退、
     cache-only degraded 打开和缓存预算淘汰。
 

@@ -10,6 +10,9 @@ export const IMPORTED_THUMBNAIL_MAX_EDGE = 512;
 export const IMPORTED_THUMBNAIL_MAX_BYTES = 256 * 1024;
 export const IMPORTED_THUMBNAIL_NORMALIZATION_JOB = 'IMPORT_THUMBNAIL_NORMALIZE';
 export const IMPORTED_THUMBNAIL_GENERATOR_PREFIX = 'import-thumbnail@2';
+/** A copied preview that was verified in-place and did not need re-encoding. */
+export const IMPORTED_THUMBNAIL_PRESERVED_GENERATOR =
+  `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};preserved-bounded@1`;
 
 const LEGACY_IMPORTED_THUMBNAIL_GENERATORS = [
   'eagle-thumbnail@1',
@@ -33,12 +36,15 @@ export function importedThumbnailNeedsNormalization(input: {
   width: number | null | undefined;
   height: number | null | undefined;
 }): boolean {
-  if (!Number.isSafeInteger(input.byteSize) || input.byteSize <= 0) return false;
+  // Unknown dimensions are not evidence that the external preview is safe.
+  // Callers may still publish the copy immediately, but the background lane
+  // must probe it before allowing the legacy artifact to become permanent.
+  if (!Number.isSafeInteger(input.byteSize) || input.byteSize <= 0) return true;
   if (input.byteSize > IMPORTED_THUMBNAIL_MAX_BYTES) return true;
-  if (input.width === null || input.width === undefined
-    || input.height === null || input.height === undefined) {
-    return false;
-  }
-  return input.width > IMPORTED_THUMBNAIL_MAX_EDGE
-    || input.height > IMPORTED_THUMBNAIL_MAX_EDGE;
+  const width = input.width;
+  const height = input.height;
+  if (!Number.isSafeInteger(width) || typeof width !== 'number' || width <= 0
+    || !Number.isSafeInteger(height) || typeof height !== 'number' || height <= 0) return true;
+  return width > IMPORTED_THUMBNAIL_MAX_EDGE
+    || height > IMPORTED_THUMBNAIL_MAX_EDGE;
 }

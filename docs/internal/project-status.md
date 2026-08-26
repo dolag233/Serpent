@@ -83,15 +83,22 @@
   真实 RAW 矩阵因未配置样本跳过；packaged/Windows/NAS/SMB/Computer Use 尚未执行。详见
   [阶段 D.4 开发日志](development/2026-08-26-library-performance-architecture-stage-d4-raw-embedded-thumbnail-development-log.md)。
 
-- **2026-08-26 0032 阶段 D.5 外部库缩略图归一化**：Eagle/Billfish 导入仍先原样复制并立即
-  提供 ready 预览；超过 512 边长或 256 KiB 的缩略图通过专用低优先级 job 在后台以 Sharp
-  有界重编码，输出不透明 JPEG/透明 WebP，视频 poster 也走同一替换事务。失败、取消或
-  revision 竞争时旧 artifact 保持 ready，存量库 backfill 默认最多 256 且 visible wave 不
-  抢占。验证：策略单测 4/4，归一化 Worker 8/8，完整 Worker 85 files / 1,232 passed / 21 skipped，
-  library-availability 9 files / 203 passed，typecheck/lint/diff check 通过；64 个合成高熵外部 JPEG
-  基准 64/64，675.1ms、10.5ms/asset，
-  字节减少 98.05%、RSS 增量 27.9MiB。真实 Eagle 用户库、20k 外部缩略图分组、NAS/SMB、
-  Windows、packaged 尚未验证，`Serpent-688714` 保持 open。详见
+- **2026-08-27 0032 阶段 D.5 外部库缩略图归一化**：Eagle/Billfish 导入仍先原样复制并立即
+  提供 ready 预览；每个外部预览（包括看似已经 ≤512、≤256 KiB 的副本）都进入专用低优先级
+  job，后台先逐页实际解码验证，超出 512 边长或 256 KiB 的才以 Sharp 有界重编码；输出为
+  不透明 JPEG/透明 WebP，视频 poster 也走同一替换事务。损坏/失败、取消、资源耗尽、lease
+  丢失或 revision 竞争时旧 artifact 保持 ready，归一化 marker 在重试和启动恢复中不丢失；
+  存量库 backfill 默认最多 256，visible wave 明确不抢占。验证：定向 6 files / 47 passed（含
+  截断、129 页动画、资源耗尽、lease/revision 竞争和重开恢复）；3 轮 × 64 合成混合预览均
+  64/64，导入 P50/P95/Max 232.1/285.7/285.7ms，归一化波次 973.5/980.4/980.4ms（P95
+  15.3ms/asset），单 job P50/P95/Max 18.9/21.9/24.5ms，峰值/累计 RSS 增量 21.7/79.7MiB，
+  导入/归一化 Worker event-loop lag 266.4/1.8ms；可见波 0 个归一化任务，候选缩减 98.05%。
+  另有 32MP 单页压力档位 8/8 成功，单 job P50/P95/Max 17.5/21.9/21.9ms，峰值/累计 RSS
+  6.6/13.4MiB。完整 Worker 串行 86 files passed / 14 skipped，1,269 passed /
+  22 skipped；资源库可用性 9 files / 207 passed；完整 `npm run test` 仍有 4 个既有环境失败，
+  不能记作全绿。真实 Eagle 用户库、20k 外部缩略图分组、NAS/SMB、Windows、packaged 尚未
+  验证；Luna High 最终复核未发现 P0/P1，独立进程崩溃恢复、真实平台/大库基准仍按未验证处理，
+  `Serpent-688714` 保持 open。详见
   [阶段 D.5 开发日志](development/2026-08-26-library-performance-architecture-stage-d5-imported-thumbnail-normalization-development-log.md)。
 
 - **2026-08-26 性能基准口径更正**：旧版 20k 两次 10/10 只统计已经挂载 `<img>` 的图片卡片，
