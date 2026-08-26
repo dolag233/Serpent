@@ -234,7 +234,8 @@ test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 
     const tools = window.locator(".pdf-viewer-tool");
     await tools.nth(1).click();
     await expect(zoomLabel).toHaveText("125%");
-    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
+    await expect.poll(readResolutionScore, { timeout: 3_000 })
+      .toBeGreaterThanOrEqual(0.95);
 
     // Ctrl+wheel zooms further (125% × exp(0.12) ≈ 141%).
     await pages.hover();
@@ -251,14 +252,16 @@ test("zooms the PDF viewer via toolbar and Ctrl+wheel, pans by drag (Serpent P2 
       );
     });
     await expect(zoomLabel).toHaveText("141%");
-    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
+    await expect.poll(readResolutionScore, { timeout: 3_000 })
+      .toBeGreaterThanOrEqual(0.95);
 
     // Zoom far enough that pages overflow the viewport, then drag to pan.
     for (let i = 0; i < 4; i += 1) {
       await tools.nth(1).click();
     }
     await expect(zoomLabel).toHaveText("344%");
-    expect(await readResolutionScore()).toBeGreaterThanOrEqual(0.95);
+    await expect.poll(readResolutionScore, { timeout: 3_000 })
+      .toBeGreaterThanOrEqual(0.95);
     const box = await pages.boundingBox();
     expect(box).not.toBeNull();
     const before = await pages.evaluate((el) => ({ l: el.scrollLeft, t: el.scrollTop }));

@@ -146,6 +146,9 @@ export const imageSequenceFrameSummarySchema = z.strictObject({
   currentRevisionId: nonBlankString,
   frameNumber: z.number().int().nonnegative(),
   thumbnailArtifactId: nonBlankString.nullable(),
+  /** Bounded source-direct frame preview when no derived artifact is needed. */
+  previewKind: z.enum(['source']).nullable().optional(),
+  previewRevisionId: nonBlankString.nullable().optional(),
 });
 
 export const imageSequenceSummarySchema = z.strictObject({
@@ -178,6 +181,9 @@ export const assetSummarySchema = z.strictObject({
   remainingDays: z.number().int().nullable(),
   thumbnailStatus: z.enum(['ready', 'pending', 'failed']).nullable(),
   thumbnailArtifactId: nonBlankString.nullable(),
+  /** Card may use the bounded original source while no artifact is ready. */
+  previewKind: z.enum(['source']).nullable().optional(),
+  previewRevisionId: nonBlankString.nullable().optional(),
   mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
@@ -194,6 +200,9 @@ export const browseLayoutEntrySchema = z.strictObject({
   height: z.number().int().positive().nullable(),
   /** Ready persistent preview; lets an unseen virtual slot paint before its full summary. */
   previewArtifactId: nonBlankString.nullable().optional(),
+  /** Bounded source-direct card preview for small native raster images. */
+  previewKind: z.enum(['source']).nullable().optional(),
+  previewRevisionId: nonBlankString.nullable().optional(),
   /** Caption fields so layout slots are not blank while AssetSummary pages stream in (Serpent-l2at). */
   displayName: nonBlankString.optional(),
   relativeFilePath: portableRelativePathSchema.optional(),
@@ -203,6 +212,32 @@ export const browseLayoutEntrySchema = z.strictObject({
 });
 
 export type BrowseLayoutEntry = z.infer<typeof browseLayoutEntrySchema>;
+
+/**
+ * A bounded geometry response for one BrowseSession window. Unlike
+ * BrowseLayoutEntry, entries carry their logical index so the Renderer can
+ * cache only the viewport/overscan blocks it currently needs.
+ */
+export const browseGeometryEntrySchema = z.strictObject({
+  index: z.number().int().nonnegative(),
+  assetId: nonBlankString,
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  previewArtifactId: nonBlankString.nullable().optional(),
+  previewKind: z.enum(['source']).nullable().optional(),
+  previewRevisionId: nonBlankString.nullable().optional(),
+});
+
+export type BrowseGeometryEntry = z.infer<typeof browseGeometryEntrySchema>;
+
+export const browseGeometryBlockSchema = z.strictObject({
+  sessionId: nonBlankString,
+  startIndex: z.number().int().nonnegative(),
+  changeSequence: z.number().int().nonnegative(),
+  entries: z.array(browseGeometryEntrySchema).max(500),
+});
+
+export type BrowseGeometryBlock = z.infer<typeof browseGeometryBlockSchema>;
 
 export const tagSummarySchema = z.strictObject({
   tagId: nonBlankString,

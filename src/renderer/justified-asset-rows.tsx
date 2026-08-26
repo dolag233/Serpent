@@ -21,6 +21,11 @@ import {
 } from "./canvas-asset-layout";
 import { resolveJustifiedCaptionBandPx } from "./justified-caption-band";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
+import type { VirtualBrowseLayout } from "./browse/virtual-browse-layout";
+import {
+  VirtualJustifiedAssetRows,
+  type BrowseCardRenderOptions,
+} from "./browse/virtual-browse-canvas";
 
 export {
   resolveJustifiedCaptionBandPx,
@@ -48,24 +53,45 @@ export function justifiedSlotStyle(
   };
 }
 
-export function JustifiedAssetRows({
+type JustifiedAssetRowsProps = {
+  assets: AssetSummary[];
+  layout: BrowseLayoutEntry[];
+  virtualLayout?: VirtualBrowseLayout | null;
+  cardSize: number;
+  renderCard: (
+    asset: AssetSummary,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+  renderLayoutPreview?: (
+    entry: BrowseLayoutEntry,
+    options?: BrowseCardRenderOptions,
+  ) => ReactNode;
+  /** @deprecated Ignored. Preview height is locked to layout placement. */
+  captionBandPx?: number;
+};
+
+export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
+  if (props.virtualLayout) {
+    return (
+      <VirtualJustifiedAssetRows
+        assets={props.assets}
+        layout={props.virtualLayout}
+        cardSize={props.cardSize}
+        renderCard={props.renderCard}
+        renderLayoutPreview={props.renderLayoutPreview}
+      />
+    );
+  }
+  return <RegularJustifiedAssetRows {...props} />;
+}
+
+function RegularJustifiedAssetRows({
   assets,
   layout,
   cardSize,
   renderCard,
   renderLayoutPreview,
-}: {
-  assets: AssetSummary[];
-  layout: BrowseLayoutEntry[];
-  cardSize: number;
-  renderCard: (asset: AssetSummary) => ReactNode;
-  renderLayoutPreview?: (entry: BrowseLayoutEntry) => ReactNode;
-  /**
-   * @deprecated Ignored. Preview height is locked to layout placement;
-   * caption renders at natural height below (Serpent-5p45).
-   */
-  captionBandPx?: number;
-}) {
+}: JustifiedAssetRowsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const viewport = useCanvasLocalViewport(containerRef, cardSize);

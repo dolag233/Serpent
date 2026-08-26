@@ -71,9 +71,13 @@ export function assetCardKey(
   return `${libraryId ?? "no-library"}:${assetId}`;
 }
 
-/** Original-file URL used when the derived thumbnail is missing or failed. */
-export function sourceSrc(libraryId: string, assetId: string): string {
-  return `serpent://source/${libraryId}/${assetId}`;
+/** Original-file URL used by a bounded source-direct card preview. */
+export function sourceSrc(
+  libraryId: string,
+  assetId: string,
+  revisionId: string,
+): string {
+  return `serpent://source/${libraryId}/${assetId}?revision=${encodeURIComponent(revisionId)}`;
 }
 
 export function resolveAssetCardCoverUrl(input: {
@@ -84,13 +88,42 @@ export function resolveAssetCardCoverUrl(input: {
   deletedAt?: string | null;
   thumbnailStatus: "ready" | "pending" | "failed" | null;
   thumbnailArtifactId: string | null;
+  /**
+   * The compact BrowseSession layout can observe a ready artifact before the
+   * heavier AssetSummary page does. It is a same-session fallback only; a
+   * failed summary must never resurrect a stale artifact from that snapshot.
+   */
+  layoutPreviewArtifactId?: string | null;
+  previewKind?: "source" | null;
+  previewRevisionId?: string | null;
 }): { url: string | null; usedSourceFallback: boolean } {
   const { libraryId } = input;
   if (!libraryId) return { url: null, usedSourceFallback: false };
-  if (input.thumbnailStatus === "ready" && input.thumbnailArtifactId) {
+  const artifactId = input.thumbnailStatus === "failed"
+    ? input.thumbnailArtifactId
+    : input.thumbnailArtifactId ?? input.layoutPreviewArtifactId ?? null;
+  if (input.thumbnailStatus === "ready" && artifactId) {
     return {
-      url: coverSrc(libraryId, input.thumbnailArtifactId),
+      url: coverSrc(libraryId, artifactId),
       usedSourceFallback: false,
+    };
+  }
+  if (input.thumbnailStatus !== "failed" && input.layoutPreviewArtifactId) {
+    return {
+      url: coverSrc(libraryId, input.layoutPreviewArtifactId),
+      usedSourceFallback: false,
+    };
+  }
+  if (
+    input.mediaType === "image"
+    && input.availability !== "missing"
+    && !input.deletedAt
+    && input.previewKind === "source"
+    && input.previewRevisionId
+  ) {
+    return {
+      url: sourceSrc(libraryId, input.assetId, input.previewRevisionId),
+      usedSourceFallback: true,
     };
   }
   return { url: null, usedSourceFallback: false };

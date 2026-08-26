@@ -8,6 +8,7 @@ import {
   resolveLivePreviewMedia,
   resolveLiveVideoMuted,
   shouldPlayLiveAudio,
+  sourceSrc,
 } from "../../src/renderer/asset-card-hover-preview";
 
 describe("isCardHoverPreviewable", () => {
@@ -130,6 +131,14 @@ describe("coverSrc", () => {
   });
 });
 
+describe("sourceSrc", () => {
+  it("pins the source URL to the authorized revision", () => {
+    expect(sourceSrc("lib-a", "asset-b", "rev-c")).toBe(
+      "serpent://source/lib-a/asset-b?revision=rev-c",
+    );
+  });
+});
+
 describe("assetCardKey", () => {
   it("remounts a reused asset id when the library changes", () => {
     expect(assetCardKey("library-a", "asset-1")).not.toBe(
@@ -238,6 +247,58 @@ describe("resolveAssetCardCoverUrl", () => {
         deletedAt: null,
         thumbnailStatus: "failed",
         thumbnailArtifactId: null,
+      }),
+    ).toEqual({ url: null, usedSourceFallback: false });
+  });
+
+  it("uses a bounded source preview while the thumbnail is pending", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "pending",
+        thumbnailArtifactId: null,
+        previewKind: "source",
+        previewRevisionId: "rev-1",
+      }),
+    ).toEqual({
+      url: "serpent://source/lib/a1?revision=rev-1",
+      usedSourceFallback: true,
+    });
+  });
+
+  it("uses a ready artifact observed by the compact layout snapshot", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "pending",
+        thumbnailArtifactId: null,
+        layoutPreviewArtifactId: "layout-art-1",
+      }),
+    ).toEqual({
+      url: coverSrc("lib", "layout-art-1"),
+      usedSourceFallback: false,
+    });
+  });
+
+  it("does not resurrect a layout artifact after the summary reports failure", () => {
+    expect(
+      resolveAssetCardCoverUrl({
+        libraryId: "lib",
+        assetId: "a1",
+        mediaType: "image",
+        availability: "available",
+        deletedAt: null,
+        thumbnailStatus: "failed",
+        thumbnailArtifactId: null,
+        layoutPreviewArtifactId: "stale-layout-art-1",
       }),
     ).toEqual({ url: null, usedSourceFallback: false });
   });

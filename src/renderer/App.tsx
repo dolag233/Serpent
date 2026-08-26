@@ -396,6 +396,12 @@ import {
 } from "./folder-card-width";
 import { BrowseLayoutPreview } from "./BrowseLayoutPreview";
 import { assetSummaryFromLayoutEntry } from "./browse-window-slots";
+import { isGeometryPlaceholder } from "./browse/use-virtual-browse-session";
+import { deferNavigationHydration } from "./browse/defer-navigation-hydration";
+import {
+  virtualLayoutEntryForAsset,
+  type VirtualBrowseLayout,
+} from "./browse/virtual-browse-layout";
 import { formatBytes, formatShortDate } from "./format-file-meta";
 import {
   isLibraryOpenTransferKind,
@@ -624,6 +630,8 @@ function AppInner() {
   }>({ folderId: "", name: "", targetFolderId: "" });
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [browseLayout, setBrowseLayout] = useState<BrowseLayoutEntry[]>([]);
+  const [virtualBrowseLayout, setVirtualBrowseLayout] =
+    useState<VirtualBrowseLayout | null>(null);
   const [layoutThumbnailArtifacts, setLayoutThumbnailArtifacts] = useState<{
     libraryId: string;
     ids: Map<string, string>;
@@ -986,6 +994,7 @@ function AppInner() {
     setAssets,
     setTrashedAssets,
     setBrowseLayout,
+    setVirtualBrowseLayout,
     setSearchTotal,
     setSearchOffset,
     setSearchSnippets,
@@ -1739,6 +1748,9 @@ function AppInner() {
     : assets.find((asset) => asset.assetId === selectedAssetId);
   const selectedLayoutEntry = selectedAssetId
     ? browseLayout.find((entry) => entry.assetId === selectedAssetId)
+      ?? (virtualBrowseLayout
+        ? virtualLayoutEntryForAsset(virtualBrowseLayout, selectedAssetId)
+        : undefined)
     : undefined;
   const selectedAsset = selectedAssetFromList
     ?? (selectedLayoutEntry ? assetSummaryFromLayoutEntry(selectedLayoutEntry) : undefined);
@@ -1848,7 +1860,11 @@ function AppInner() {
           continue;
         }
         const assetId = slot.dataset.assetId ?? slot.dataset.layoutAssetId;
-        if (assetId && !seenIds.has(assetId)) {
+        if (
+          assetId &&
+          !isGeometryPlaceholder({ assetId }) &&
+          !seenIds.has(assetId)
+        ) {
           seenIds.add(assetId);
           ids.push(assetId);
         }
@@ -1878,7 +1894,7 @@ function AppInner() {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       if (debounceTimer !== undefined) window.clearTimeout(debounceTimer);
     };
-  }, [api, library, assetViewMode, browseLayout]);
+  }, [api, library, assetViewMode, browseLayout, virtualBrowseLayout]);
 
   // Map the scrollbar to the compact real-asset index. One-frame coalescing
   // avoids request spam without spending 50ms of the 500ms loading budget.
@@ -1894,7 +1910,7 @@ function AppInner() {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         frame = undefined;
-        const total = browseLayout.length;
+        const total = virtualBrowseLayout?.total ?? browseLayout.length;
         if (total === 0) return;
         const canvasRect = canvas.getBoundingClientRect();
         const visibleRanks: number[] = [];
@@ -1902,15 +1918,30 @@ function AppInner() {
           ".masonry-columns, .justified-rows",
         )) {
           const layout = readPublishedCanvasAssetLayout(grid);
-          if (!layout) continue;
           const gridRect = grid.getBoundingClientRect();
-          const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
-          const viewTop = canvas.scrollTop - gridContentTop;
-          const viewBottom = viewTop + canvas.clientHeight;
-          for (const item of layout) {
-            if (item.y + item.height < viewTop || item.y > viewBottom) continue;
-            const rank = rankById.get(item.id);
-            if (rank !== undefined) visibleRanks.push(rank);
+          if (layout) {
+            const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
+            const viewTop = canvas.scrollTop - gridContentTop;
+            const viewBottom = viewTop + canvas.clientHeight;
+            for (const item of layout) {
+              if (item.y + item.height < viewTop || item.y > viewBottom) continue;
+              const rank = rankById.get(item.id);
+              if (rank !== undefined) visibleRanks.push(rank);
+            }
+          } else {
+            for (const slot of grid.querySelectorAll<HTMLElement>("[data-layout-index]")) {
+              const rect = slot.getBoundingClientRect();
+              if (
+                rect.bottom <= canvasRect.top
+                || rect.top >= canvasRect.bottom
+                || rect.right <= canvasRect.left
+                || rect.left >= canvasRect.right
+              ) continue;
+              const rank = Number(slot.dataset.layoutIndex);
+              if (Number.isSafeInteger(rank) && rank >= 0 && rank < total) {
+                visibleRanks.push(rank);
+              }
+            }
           }
         }
         if (visibleRanks.length > 0) {
@@ -1939,6 +1970,7 @@ function AppInner() {
     browseLayout,
     ensureBrowseVisibleRange,
     library,
+    virtualBrowseLayout,
   ]);
 
   const pluginBrowseScope = useMemo<Partial<PluginContributionContext["browse"]>>(
@@ -2961,106 +2993,65 @@ function AppInner() {
       // Promise first used to put folders/tags/collections ahead of the page
       // the user is actually waiting to see (several hundred ms on 20k
       // libraries, and materially worse on network-backed libraries).
-      const primaryAssetPromise = api.searchAssets({
+      const primaryAssetPromise = api.openBrowseSession({
         ...libId,
         query: opts?.discovery?.search ?? null,
         filters: opts?.discovery?.filters,
         scope: browseScope,
         sort: opts?.discovery?.sort,
-        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        // Stage C.1: materialize the ordered scope once in Worker; later
+        // pages reuse the opaque snapshot instead of rebuilding COUNT/scope SQL.
         limit: BROWSE_PAGE_SIZE,
-        offset: 0,
         showIgnored: includeIgnored,
       });
-      const allAssetsPromise = includeLibraryCounts && (trashMode || scope !== "all")
-        ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
+      // Navigation hydration is one Worker read model. When it is not needed,
+      // retain the old count-only fallback for mutation paths that explicitly
+      // keep sidebar rows untouched. Both paths start after the primary browse
+      // request, so sidebar work cannot win the Worker queue race.
+      const navigationPromise = refreshSidebar
+        ? primaryAssetPromise.then(() => deferNavigationHydration(() => {
+            if (generation !== contentLoadGenerationRef.current) {
+              return Promise.resolve(undefined);
+            }
+            return api.fetchLibraryNavigationSummary({
+              ...libId,
+              showIgnored: includeIgnored,
+              includeTrashedFolders: trashMode,
+            });
+          }))
         : Promise.resolve(undefined);
-      const rootCountPromise = includeLibraryCounts && (trashMode || scope !== "root")
-        ? api.searchAssets({
-            ...libId,
-            query: null,
-            limit: 1,
-            offset: 0,
-            scope: { kind: "folder", folderId: null, recursive: false },
-            showIgnored: includeIgnored,
-          })
-        : Promise.resolve(undefined);
-      const trashCountPromise = includeLibraryCounts
-        ? api.searchAssets({
-            ...libId,
-            query: null,
-            limit: 1,
-            offset: 0,
-            scope: { kind: "trash" },
-            showIgnored: includeIgnored,
-          })
-        : Promise.resolve(undefined);
-      // Sidebar hydration is intentionally started after the primary browse
-      // and its count requests have entered the Worker queue. This keeps the
-      // startup ordering deterministic without making sidebar state stale.
-      const sidebarPromise = refreshSidebar
+      const countPromise = !refreshSidebar && includeLibraryCounts
         ? Promise.all([
-            api.listFolders({ ...libId, showIgnored: includeIgnored }),
-            api.listLinkedFolders(libId),
-            api.listTags(libId),
-            api.listCollections(libId),
-            api.listSmartCollections(libId),
-            trashMode
-              ? api.listTrashedFolders(libId)
-              : Promise.resolve(null),
+            trashMode || scope !== "all"
+              ? api.searchAssets({ ...libId, query: null, limit: 1, offset: 0, showIgnored: includeIgnored })
+              : Promise.resolve(undefined),
+            trashMode || scope !== "root"
+              ? api.searchAssets({
+                  ...libId,
+                  query: null,
+                  limit: 1,
+                  offset: 0,
+                  scope: { kind: "folder", folderId: null, recursive: false },
+                  showIgnored: includeIgnored,
+                })
+              : Promise.resolve(undefined),
+            api.searchAssets({
+              ...libId,
+              query: null,
+              limit: 1,
+              offset: 0,
+              scope: { kind: "trash" },
+              showIgnored: includeIgnored,
+            }),
           ])
-        : Promise.resolve(null);
-      const results = await Promise.all([
-        primaryAssetPromise,
-        allAssetsPromise,
-        rootCountPromise,
-        trashCountPromise,
-        sidebarPromise,
-      ]).catch((caught: unknown) => {
-        if (generation !== contentLoadGenerationRef.current) return null;
-        throw caught;
-      });
-      if (results === null || generation !== contentLoadGenerationRef.current) {
-        return;
-      }
-      const [assetResult, allResult, rootCountResult, trashCountResult, sidebarResult] = results;
+        : Promise.resolve(undefined);
+      const assetResult = await primaryAssetPromise;
+      if (generation !== contentLoadGenerationRef.current) return;
       if (!assetResult.ok) throw new LibraryOperationError(assetResult.error);
-      if (allResult && !allResult.ok)
-        throw new LibraryOperationError(allResult.error);
-      if (rootCountResult && !rootCountResult.ok)
-        throw new LibraryOperationError(rootCountResult.error);
-      if (trashCountResult && !trashCountResult.ok)
-        throw new LibraryOperationError(trashCountResult.error);
-      if (sidebarResult) {
-        const [
-          folderResult,
-          linkedResult,
-          tagResult,
-          collectionResult,
-          smartResult,
-          trashedFoldersResult,
-        ] = sidebarResult;
-        if (!folderResult.ok) throw new LibraryOperationError(folderResult.error);
-        if (!linkedResult.ok) throw new LibraryOperationError(linkedResult.error);
-        if (!tagResult.ok) throw new LibraryOperationError(tagResult.error);
-        if (!collectionResult.ok) {
-          throw new LibraryOperationError(collectionResult.error);
-        }
-        if (!smartResult.ok) throw new LibraryOperationError(smartResult.error);
-        setFolders(folderResult.value);
-        setLinkedFolders(linkedResult.value);
-        setTags(tagResult.value);
-        setCollections(collectionResult.value);
-        setSmartCollections(smartResult.value);
-        if (trashMode) {
-          if (trashedFoldersResult && !trashedFoldersResult.ok) {
-            throw new LibraryOperationError(trashedFoldersResult.error);
-          }
-          setTrashedFolders(trashedFoldersResult?.value ?? []);
-        } else {
-          setTrashedFolders([]);
-        }
-      }
+
+      // Apply the canvas immediately. Sidebar rows and their recursive counts
+      // are deliberately allowed to arrive later; they are not a first-paint
+      // dependency for the browse surface.
       // Serpent-sa65: beginPage owns the first summaries and starts the compact
       // real-asset layout fetch that gives the virtual canvas full geometry.
       // Serpent-2oga: drop stale failure badges when the list already has ready thumbs.
@@ -3077,25 +3068,13 @@ function AppInner() {
         }
         return next.size === current.size ? current : next;
       });
-      // CU-B2: keep library-wide counts when this load actually fetched them.
-      // Folder-to-folder navigation skips the extra COUNT queries so a 7000-item
-      // search is not queued behind a whole-library scan.
-      if (allResult) {
-        setAllAssetCount(allResult.value.total);
-      } else if (!trashMode && scope === "all") {
-        setAllAssetCount(assetResult.value.total);
-      }
-      if (!trashMode && scope === "root") {
-        setRootAssetCount(assetResult.value.total);
-      } else if (rootCountResult) {
-        setRootAssetCount(rootCountResult.value.total);
-      }
-      if (trashCountResult) {
-        setTrashedAssetCount(trashCountResult.value.total);
-      }
       setSearchTotal(assetResult.value.total);
       setSearchOffset(assetResult.value.offset);
-      setSearchSnippets(new Map());
+      setSearchSnippets(
+        new Map(
+          (assetResult.value.snippets ?? []).map((snippet) => [snippet.assetId, snippet.text]),
+        ),
+      );
       // Serpent-ws4k: register the paginated query so the scroll sentinel can
       // append the next page with the exact same scope/sort/filters.
       registerBrowseSearchPage(beginBrowsePage, {
@@ -3105,14 +3084,49 @@ function AppInner() {
         scope: browseScope,
         sort: opts?.discovery?.sort,
         showIgnored: includeIgnored,
+        sessionId: assetResult.value.sessionId,
         target: trashMode ? "trash" : "assets",
         items: assetResult.value.items,
         total: assetResult.value.total,
         offset: assetResult.value.offset,
+        snippets: assetResult.value.snippets,
       });
+
+      // Progressive navigation hydration. A stale navigation response is
+      // ignored just like a stale browse page and cannot repaint a newer
+      // library/scope.
+      void Promise.all([navigationPromise, countPromise])
+        .then(([navigation, counts]) => {
+          if (generation !== contentLoadGenerationRef.current) return;
+          if (navigation) {
+            if (!navigation.ok) throw new LibraryOperationError(navigation.error);
+            setAllAssetCount(navigation.value.allAssetCount);
+            setRootAssetCount(navigation.value.rootAssetCount);
+            setTrashedAssetCount(navigation.value.trashedAssetCount);
+            setFolders(navigation.value.folders);
+            setLinkedFolders(navigation.value.linkedFolders);
+            setTags(navigation.value.tags);
+            setCollections(navigation.value.collections);
+            setSmartCollections(navigation.value.smartCollections);
+            setTrashedFolders(navigation.value.trashedFolders);
+            return;
+          }
+          if (!counts) return;
+          const [allResult, rootCountResult, trashCountResult] = counts;
+          if (allResult && !allResult.ok) throw new LibraryOperationError(allResult.error);
+          if (rootCountResult && !rootCountResult.ok) throw new LibraryOperationError(rootCountResult.error);
+          if (!trashCountResult.ok) throw new LibraryOperationError(trashCountResult.error);
+          if (allResult) setAllAssetCount(allResult.value.total);
+          if (rootCountResult) setRootAssetCount(rootCountResult.value.total);
+          setTrashedAssetCount(trashCountResult.value.total);
+        })
+        .catch((caught: unknown) => {
+          if (generation !== contentLoadGenerationRef.current) return;
+          setError(toMessage(caught, t("toast.readAssetsFailed"), locale));
+        });
       return assetResult.value.items;
     },
-    [api, beginBrowsePage, showIgnoredItems],
+    [api, beginBrowsePage, locale, setError, showIgnoredItems, t],
   );
 
   useBrowserSessionRestore({
@@ -4264,14 +4278,13 @@ function AppInner() {
         tagFilter: joined,
         tagFilterMatch: match,
       });
-      const result = await api.searchAssets({
+      const result = await api.openBrowseSession({
         libraryId: library.libraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
         // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
-        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4287,6 +4300,8 @@ function AppInner() {
         items: result.value.items,
         total: result.value.total,
         offset: result.value.offset,
+        sessionId: result.value.sessionId,
+        snippets: result.value.snippets,
       });
     } catch (caught) {
       setError(toMessage(caught, t("toast.readTagAssetsFailed"), locale));
@@ -4319,14 +4334,13 @@ function AppInner() {
     setUiState("loading");
     try {
       const definition = currentQueryDefinition({ tagFilter: tag.name });
-      const result = await api.searchAssets({
+      const result = await api.openBrowseSession({
         libraryId: library.libraryId,
         query: definition.search ?? null,
         filters: definition.filters,
         sort: definition.sort,
         // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
-        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4342,6 +4356,8 @@ function AppInner() {
         items: result.value.items,
         total: result.value.total,
         offset: result.value.offset,
+        sessionId: result.value.sessionId,
+        snippets: result.value.snippets,
       });
       recordNavigation({ kind: "tag", tagId });
     } catch (caught) {
@@ -4770,7 +4786,7 @@ function AppInner() {
     setAssets([]);
     setUiState("loading");
     try {
-      const result = await api.searchAssets({
+      const result = await api.openBrowseSession({
         libraryId: library.libraryId,
         query: null,
         scope: {
@@ -4780,7 +4796,6 @@ function AppInner() {
         },
         // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
-        offset: 0,
         showIgnored: showIgnoredItems,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
@@ -4796,6 +4811,8 @@ function AppInner() {
         items: result.value.items,
         total: result.value.total,
         offset: result.value.offset,
+        sessionId: result.value.sessionId,
+        snippets: result.value.snippets,
       });
       recordNavigation({
         kind: "collection",
@@ -5715,15 +5732,15 @@ function AppInner() {
   async function executeSearchDefinition(definition: SearchDefinition) {
     if (!api || !library) return;
     const requestGeneration = ++searchRequestGenerationRef.current;
-    const result = await api.searchAssets({
+    const searchScope = currentSearchScope();
+    const result = await api.openBrowseSession({
       libraryId: library.libraryId,
       query: definition.search ?? null,
       filters: definition.filters,
-      scope: currentSearchScope(),
+      scope: searchScope,
       sort: definition.sort,
       // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
       limit: BROWSE_PAGE_SIZE,
-      offset: 0,
       showIgnored: showIgnoredItems,
     });
     if (!result.ok) throw new LibraryOperationError(result.error);
@@ -5742,13 +5759,15 @@ function AppInner() {
       libraryId: library.libraryId,
       query: definition.search ?? null,
       filters: definition.filters,
-      scope: currentSearchScope(),
+      scope: searchScope,
       sort: definition.sort,
       showIgnored: showIgnoredItems,
+      sessionId: result.value.sessionId,
       target: "assets",
       items: result.value.items,
       total: result.value.total,
       offset: result.value.offset,
+      snippets: result.value.snippets,
     });
     return result.value;
   }
@@ -5855,12 +5874,11 @@ function AppInner() {
     resetBrowsePagination();
     setAssets([]);
     try {
-      const result = await api.executeSmartCollection({
+      const result = await api.openBrowseSession({
         libraryId: library.libraryId,
-        collectionId,
-        // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
+        query: null,
+        smartCollectionId: collectionId,
         limit: BROWSE_PAGE_SIZE,
-        offset: 0,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
       setShowTrash(false);
@@ -5884,9 +5902,11 @@ function AppInner() {
       registerBrowseSmartCollectionPage(beginBrowsePage, {
         libraryId: library.libraryId,
         collectionId,
+        sessionId: result.value.sessionId,
         items: result.value.items,
         total: result.value.total,
         offset: result.value.offset,
+        snippets: result.value.snippets,
       });
     } catch (caught) {
       setError(toMessage(caught, t("toast.smartCollectionRunFailed"), locale));
@@ -10023,7 +10043,10 @@ function AppInner() {
                   {(() => {
                     const showCornerBadges =
                       shouldShowAssetCardBadges(assetCardSize);
-                    const renderAssetCard = (asset: AssetSummary) => {
+                    const renderAssetCard = (
+                      asset: AssetSummary,
+                      renderOptions?: { loadImmediately?: boolean },
+                    ) => {
                       const typeBadge = assetTypeBadgeLabel(
                         asset.mediaType,
                         asset.displayName,
@@ -10075,6 +10098,9 @@ function AppInner() {
                         layoutThumbnailArtifacts.libraryId === library?.libraryId
                           ? layoutThumbnailArtifacts.ids.get(asset.assetId)
                           : undefined;
+                      const layoutEntry = virtualBrowseLayout
+                        ? virtualLayoutEntryForAsset(virtualBrowseLayout, asset.assetId)
+                        : undefined;
                       const cardCover = resolveAssetCardCoverUrl({
                         libraryId: library?.libraryId,
                         assetId: asset.assetId,
@@ -10086,6 +10112,12 @@ function AppInner() {
                           : asset.thumbnailStatus,
                         thumbnailArtifactId:
                           layoutThumbnailArtifactId ?? asset.thumbnailArtifactId,
+                        layoutPreviewArtifactId:
+                          layoutThumbnailArtifactId
+                          ?? layoutEntry?.previewArtifactId
+                          ?? null,
+                        previewKind: asset.previewKind,
+                        previewRevisionId: asset.previewRevisionId,
                       });
                       const showThumbnailFailure = shouldShowThumbnailFailureBadge(
                         asset,
@@ -10101,6 +10133,7 @@ function AppInner() {
                       aria-pressed={selectedIdSet.has(asset.assetId)}
                       className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
+                      data-media-type={asset.mediaType}
                       title={asset.displayName}
                       draggable={!showTrash && !renamingThisAsset}
                       key={assetCardKey(library?.libraryId, asset.assetId)}
@@ -10314,6 +10347,11 @@ function AppInner() {
                                   hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={sequenceActive}
                                   libraryId={library.libraryId}
+                                  loadImmediately={
+                                    renderOptions?.loadImmediately
+                                      ?? Boolean(virtualBrowseLayout)
+                                  }
+                                  deferUntilVisible={Boolean(virtualBrowseLayout)}
                                   mediaMuted={viewerVolumeMuted}
                                   mediaVolume={viewerVolume}
                                   preview={null}
@@ -10342,6 +10380,11 @@ function AppInner() {
                                   hoverVideoSound={canvasPrefs.hoverVideoSound}
                                   isActive={cardActive}
                                   libraryId={library.libraryId}
+                                  loadImmediately={
+                                    renderOptions?.loadImmediately
+                                      ?? Boolean(virtualBrowseLayout)
+                                  }
+                                  deferUntilVisible={Boolean(virtualBrowseLayout)}
                                   mediaMuted={viewerVolumeMuted}
                                   mediaVolume={viewerVolume}
                                   onLiveVideoError={() =>
@@ -10367,6 +10410,11 @@ function AppInner() {
                                 hoverVideoSound={canvasPrefs.hoverVideoSound}
                                 isActive={false}
                                 libraryId={library.libraryId}
+                                loadImmediately={
+                                  renderOptions?.loadImmediately
+                                    ?? Boolean(virtualBrowseLayout)
+                                }
+                                deferUntilVisible={Boolean(virtualBrowseLayout)}
                                 mediaMuted={viewerVolumeMuted}
                                 mediaVolume={viewerVolume}
                                 preview={null}
@@ -10595,9 +10643,10 @@ function AppInner() {
                           <MasonryColumns
                             assets={section.assets}
                             layout={visibleBrowseLayout}
+                            virtualLayout={virtualBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
-                            renderLayoutPreview={(entry) =>
+                            renderLayoutPreview={(entry, renderOptions) =>
                               library ? (
                                 <BrowseLayoutPreview
                                   entry={entry}
@@ -10609,6 +10658,8 @@ function AppInner() {
                                       : undefined
                                   }
                                   viewMode="masonry"
+                                  loadImmediately={renderOptions?.loadImmediately ?? true}
+                                  deferUntilVisible={Boolean(virtualBrowseLayout)}
                                 />
                               ) : null
                             }
@@ -10631,9 +10682,10 @@ function AppInner() {
                           <JustifiedAssetRows
                             assets={section.assets}
                             layout={visibleBrowseLayout}
+                            virtualLayout={virtualBrowseLayout}
                             cardSize={assetCardSize}
                             renderCard={renderAssetCard}
-                            renderLayoutPreview={(entry) =>
+                            renderLayoutPreview={(entry, renderOptions) =>
                               library ? (
                                 <BrowseLayoutPreview
                                   entry={entry}
@@ -10645,6 +10697,8 @@ function AppInner() {
                                       : undefined
                                   }
                                   viewMode="grid"
+                                  loadImmediately={renderOptions?.loadImmediately ?? true}
+                                  deferUntilVisible={Boolean(virtualBrowseLayout)}
                                 />
                               ) : null
                             }

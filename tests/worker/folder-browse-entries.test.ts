@@ -21,8 +21,10 @@ interface TestDatabaseConnection {
 
 const TestDatabase = require('better-sqlite3') as new (filename: string) => TestDatabaseConnection;
 
+// Cover-scene scheduling tests need a real derived-thumbnail candidate rather
+// than a source-direct image.
 const VALID_1X1_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 

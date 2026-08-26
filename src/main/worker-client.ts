@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { utilityProcess, type UtilityProcess } from 'electron';
 
 import type { WorkerCommand, WorkerHistoryContext } from '../shared/protocol/requests';
+import type { performanceLaneForCommand } from '../shared/performance-contract';
 import type { AppLogger } from './app-logger';
+import { LibraryRequestBroker } from './library-request-broker';
 import { mediaBinaryWorkerEnv } from './media-binary-env';
 import {
   parseWorkerControlMessage,
@@ -46,6 +48,7 @@ import {
 
 interface PendingRequest {
   commandType: string;
+  lane: ReturnType<typeof performanceLaneForCommand>;
   resolve(result: WorkerResult): void;
   reject(error: Error): void;
   sentAt: number | undefined;
@@ -166,6 +169,7 @@ export class LibraryWorkerClient {
   #ready = false;
   #pending = new Map<string, PendingRequest>();
   #expiredRequestIds = new Set<string>();
+  #requestBroker = new LibraryRequestBroker();
   // Serpent-2cc492（真实 NAS 生产库事故，2026-08-23）：开库后的第一批元数据
   // 查询在 SMB 冷缓存下实测单条 20-35s（assets 表每页一次网络往返），远超
   // 15s 默认超时；响应迟到即被丢弃、UI 呈现「空资源库」且无法自愈。开库
@@ -300,6 +304,7 @@ export class LibraryWorkerClient {
     if (!child || !this.#ready) return Promise.reject(new Error('Library Worker is unavailable.'));
 
     const requestId = randomUUID();
+    const sentAtEpochMs = Date.now();
     if (
       command.type === 'library.open'
       || command.type === 'library.open-eagle'
@@ -315,6 +320,10 @@ export class LibraryWorkerClient {
         : inOpenGrace && command.type !== 'library.open'
           ? Math.max(baseTimeout, OPEN_STARTUP_GRACE_TIMEOUT_MS)
           : baseTimeout;
+      const performanceEnvelope = this.#requestBroker.envelopeFor(command, {
+        sentAtEpochMs,
+        timeoutMs: timeout,
+      });
       const timer = timeout == null
         ? undefined
         : setTimeout(() => {
@@ -331,6 +340,7 @@ export class LibraryWorkerClient {
       const sentAt = WORKER_CMD_LOG ? Date.now() : undefined;
       this.#pending.set(requestId, {
         commandType: command.type,
+        lane: performanceEnvelope.lane,
         resolve,
         reject,
         sentAt,
@@ -340,6 +350,7 @@ export class LibraryWorkerClient {
         requestId,
         command,
         ...(sentAt === undefined ? {} : { sentAt }),
+        performance: performanceEnvelope,
         ...(options.dispatch === undefined ? {} : { dispatch: options.dispatch }),
         ...(options.historyContext === undefined ? {} : { historyContext: options.historyContext }),
       });
@@ -721,6 +732,11 @@ export class LibraryWorkerClient {
       return;
     }
 
+    // Lifecycle generations describe Worker state, not request bookkeeping.
+    // Observe them even when Main already timed out and discarded the pending
+    // promise, otherwise the next request could be sent without the fence.
+    this.#requestBroker.observeResult(response.result);
+
     const pending = this.#pending.get(response.requestId);
     if (!pending) {
       if (this.#expiredRequestIds.delete(response.requestId)) {
@@ -744,6 +760,7 @@ export class LibraryWorkerClient {
         {
           requestId: response.requestId,
           commandType: pending.commandType,
+          lane: pending.lane,
           totalMs: Math.max(0, Date.now() - pending.sentAt),
         },
       );
@@ -763,6 +780,7 @@ export class LibraryWorkerClient {
     this.#ready = false;
     this.#child = undefined;
     this.#shuttingDown = false;
+    this.#requestBroker.reset();
     this.#rejectAll(new Error(`Library Worker exited (${code}).`));
   };
 

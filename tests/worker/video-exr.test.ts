@@ -16,6 +16,7 @@ import {
   type SpawnResult,
 } from '../../src/worker/library-service';
 import { mediaResourceGuard } from '../../src/worker/media-resource-guard';
+import { extractRawEmbeddedJpegThumbnail } from '../../src/worker/raw-embedded-thumbnail';
 import { AUDIO_WAVEFORM_COVER_GENERATOR_TAG } from '../../src/shared/audio-media';
 import { importNoConflict as sharedImportNoConflict } from './import-no-conflict';
 
@@ -47,6 +48,30 @@ const VALID_1X1_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
   'base64',
 );
+
+function buildRawWithEmbeddedJpeg(jpeg: Buffer): Buffer {
+  const firstIfdOffset = 8;
+  const secondIfdOffset = 16;
+  const jpegOffset = secondIfdOffset + 2 + 2 * 12 + 4;
+  const output = Buffer.alloc(jpegOffset + jpeg.length);
+  output.write('II', 0, 'ascii');
+  output.writeUInt16LE(42, 2);
+  output.writeUInt32LE(firstIfdOffset, 4);
+  output.writeUInt16LE(0, firstIfdOffset);
+  output.writeUInt32LE(secondIfdOffset, firstIfdOffset + 2);
+  output.writeUInt16LE(2, secondIfdOffset);
+  output.writeUInt16LE(0x0201, secondIfdOffset + 2);
+  output.writeUInt16LE(4, secondIfdOffset + 4);
+  output.writeUInt32LE(1, secondIfdOffset + 6);
+  output.writeUInt32LE(jpegOffset, secondIfdOffset + 10);
+  output.writeUInt16LE(0x0202, secondIfdOffset + 14);
+  output.writeUInt16LE(4, secondIfdOffset + 16);
+  output.writeUInt32LE(1, secondIfdOffset + 18);
+  output.writeUInt32LE(jpeg.length, secondIfdOffset + 22);
+  output.writeUInt32LE(0, secondIfdOffset + 26);
+  jpeg.copy(output, jpegOffset);
+  return output;
+}
 
 it('escapes Windows paths embedded in FFmpeg filtergraphs', () => {
   expect(escapeFfmpegFilterPath(String.raw`C:\Serpent\fonts\DejaVuSans.ttf`))
@@ -1873,6 +1898,65 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
+  it('uses a bounded embedded RAW JPEG for the card and reserves OIIO for the viewer', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({
+          Make: 'Sony',
+          Model: 'ILCE-7RM3',
+          ExifImageWidth: 6000,
+          ExifImageHeight: 4000,
+        }),
+      },
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawEmbedded', selectedParentPath: root });
+    const sourcePath = path.join(root, 'embedded.ARW');
+    const embeddedJpeg = await (require('sharp') as (input: Buffer) => {
+      jpeg(options?: { quality?: number }): { toBuffer(): Promise<Buffer> };
+    })(VALID_1X1_PNG).jpeg().toBuffer();
+    writeFileSync(sourcePath, buildRawWithEmbeddedJpeg(embeddedJpeg));
+    expect(extractRawEmbeddedJpegThumbnail(sourcePath)).toEqual(embeddedJpeg);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    });
+
+    expect(result?.artifactId).toBeTruthy();
+    expect(invocations.filter((args) =>
+      args.some((argument) => argument.toLowerCase().endsWith('.arw'))
+      && !args.includes('--info'),
+    )).toHaveLength(0);
+    const artifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    expect(artifact).toMatchObject({
+      status: 'ready',
+      mimeType: 'image/jpeg',
+      generatorVersion: expect.stringContaining('raw-embedded-jpeg@1'),
+      width: 6000,
+      height: 4000,
+    });
+    const artifactPath = path.join(
+      created.libraryPath,
+      '.serpent',
+      'artifacts',
+      artifact!.filePath,
+    );
+    const outputMetadata = await (require('sharp') as (input: string) => {
+      metadata(): Promise<{ width?: number; height?: number }>;
+    })(artifactPath).metadata();
+    expect(outputMetadata).toMatchObject({ width: 1, height: 1 });
+    service.closeAll();
+  });
+
   it('keeps a RAW thumbnail successful when EXIF metadata is unavailable', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();
@@ -2911,7 +2995,7 @@ describe('independent video derivative jobs', () => {
     const recoveredDb = assertDb(created.libraryPath);
     expect(recoveredDb.prepare(
       "SELECT status, error_code FROM jobs WHERE kind = 'generate_webm_proxy'",
-    ).get()).toMatchObject({ status: 'queued', error_code: 'PROCESS_INTERRUPTED' });
+    ).get()).toMatchObject({ status: 'queued', error_code: 'EXPLICIT_PROXY_FALLBACK' });
     recoveredDb.close();
     reopened.closeAll();
   });

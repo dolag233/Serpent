@@ -436,6 +436,8 @@ function InspectorHero({
       currentRevisionId: frame.currentRevisionId,
       thumbnailStatus: frame.thumbnailArtifactId ? "ready" as const : null,
       thumbnailArtifactId: frame.thumbnailArtifactId,
+      previewKind: frame.previewKind ?? null,
+      previewRevisionId: frame.previewRevisionId ?? null,
       sequence: undefined,
     }));
   }, [asset]);

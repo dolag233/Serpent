@@ -131,7 +131,8 @@ Renderer 只发送领域语义和必要的 `interactionGeneration`，不自行�
 - `libraryGeneration` 不匹配：请求在进入业务 handler 前取消。
 - `interactionGeneration` 已被同 lane 的新请求替代：返回 typed cancelled，不进入 SQLite 或文件系统。
 - source/artifact 请求对应的 revision 不再是当前 revision：返回 stale，不解析旧文件。
-- 请求超过 deadline：只有尚未开始的可取消请求被丢弃；已经开始的文件写入必须完成到安全提交点再取消。
+- 请求超过 deadline：只有尚未进入 scheduler admission boundary 的可取消请求被丢弃；`onAdmitted`
+  开始后即视为已开始，已经开始的文件写入必须完成到安全提交点再取消。
 
 ### 5.3 统一计时
 
@@ -227,7 +228,15 @@ type ReconciliationOwner = {
 
 关闭或重新打开同一资源库时：先 abort，等待 Promise 到达安全点，再关闭数据库。旧 owner 无权发送事件、写缓存或触碰新 generation。
 
-### 7.3 文件系统与事务分离
+### 7.3 startup burst gate
+
+开库后的对账与全库媒体回填共享一个按 `libraryId + libraryGeneration` 隔离的
+startup burst gate。gate 在 `library.opened` 响应投递前保留一个 opening sentinel；只有
+首个成功的 `asset.search`/`folder.browse-entries` 响应已经投递且该库的在飞命令归零后，
+才允许维护任务进入 scheduler。不同资源库的 browse 不能释放彼此的 gate；关闭、重新打开
+代际替换和 Worker shutdown 只取消对应 gate。15 秒上限是降级逃生阀，不是首屏成功证明。
+
+### 7.4 文件系统与事务分离
 
 对账分成两阶段：
 
@@ -323,6 +332,9 @@ Renderer 只请求视口附近和滚动目标附近的块。长距离拖动滚�
 ### 9.3 媒体节点预算
 
 - DOM 只保留可见区域和约 1–2 屏 overscan。
+- 当前实现为快速滚动保留约 5 个 viewport 的结构化 runway，但只有与真实 viewport 相交
+  的卡片获得立即加载优先级并挂载媒体 URL；overscan 卡片只保留几何/图标，不触发源图或
+  artifact 解码。这是为避免白区的结构预算，不等于 5 个 viewport 的媒体解码预算。
 - 不可见卡片释放 `<video>`、canvas、PDF page 和大图解码资源；普通 `<img>` 是否保留由内存预算决定。
 - 同一帧收到多个 `thumbnail.ready` 时批量 patch，并在一次布局提交中完成。
 - 可见窗口上报由统一 viewport controller 产生，不依赖任意 `assets` 字段变化。
@@ -368,6 +380,9 @@ ready 和确定性 failed 都需要缓存。只有源 revision、生成器版本
 | 3D | 单视图 card render | 源模型 viewer | AI 四视图与卡片图分开 |
 
 source-direct 由文件体积、像素总量、动画/多页属性、平台能力共同决定，不能只看扩展名。
+当前卡片策略的明确 admission 为：原生 JPG/JPEG/PNG/WebP/GIF、尺寸已知、长边不超过
+2048 px、源文件不超过 1 MiB、总像素不超过 2,000,000；这只约束卡片/布局预览，查看器
+显式 source 路径仍可按 revision 鉴权读取完整源文件。
 
 ### 10.3 路径和字节缓存
 
@@ -541,9 +556,24 @@ type PerformanceSpan = {
 - `src/worker/artifact-policy.ts`：格式能力、source-direct、artifact role 和幂等键。
 - durable job claim 前 admission control。
 - RAW 内嵌预览、复杂图像 viewer-image、原生视频直放和代理 fallback 分开。
+- Eagle/Billfish 导入保留 copy-first 首屏，超出 512 边长或字节预算的外部预览在后台
+  有界归一化；旧 artifact 在新 artifact 事务提交前保持可用。
 - PreviewCache 增加观测与按库预算；生成器版本变更只失效相关 artifact。
+- 可见媒体波次使用重叠率和 generation 做抢占；轻量 viewport wave 不得顺手触发全局补队列
+  或尺寸回填；连续 claim 之间让出 Worker event loop，并保持 bounded wave 的 primary/
+  secondary 边界。
 
-完成条件：同一 revision 不重复生成；原生支持格式不无条件生成代理；非视觉资产不进入色卡。
+完成条件：同一 revision 不重复生成；原生支持格式不无条件生成代理；非视觉资产不进入色卡；
+外部库大尺寸预览不会成为可见窗口的长期原样解码负担，归一化失败不丢失旧预览。
+
+本阶段的可见媒体队列稳定化记录在
+[D.6 开发日志](../development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
+它解决了严格 20k 基准中“数据库 artifact 已 ready 但真实卡片没有 `src`”的摘要/布局快照
+竞态，但修正后的 `all-images` 基准还暴露出冷缩略图生成尾延迟：实际 20,000 live asset
+本地 APFS 夹具冷跑为 1/10（全部解码 p50 1,176.9ms、p95/max 5,005.7ms，first visual
+wave p50 155.1ms），同一夹具 warm 对照为 7/10（全部解码 p50 179.2ms、p95/max 5,015.3ms，
+first visual wave p50 134.8ms）。因此 20k 严格门禁尚未通过；该结果不覆盖 100k、Windows、
+NAS/SMB、packaged 或人工验收。
 
 ### 阶段 E：扫描、监听与文件操作（P1/P2）
 
@@ -569,6 +599,7 @@ type PerformanceSpan = {
 8. 文件夹/合集递归计数正确，合集资产去重，标签/MCP 更新触发局部失效。
 9. 本地 watcher 事件合并、网络盘轮询、忽略目录剪枝。
 10. 操作中断后完整进程重启，对账 DB、文件、manifest 和 artifact。
+11. Eagle/Billfish 大尺寸缩略图的 copy-first、后台归一化、失败保留旧 artifact 和重试标记。
 
 任何触及资源库打开、关闭、schema、`library-service` 或 Worker 生命周期的实现都必须完整运行：
 
@@ -588,6 +619,8 @@ npm run test:library-availability
 - 可见缩略图首张、全部首屏和 cache hit。
 - 查看器 placeholder、首帧、高清升级和取消。
 - 后台任务吞吐、队列深度、峰值内存与子进程数。
+- 外部库预览归一化的原样复制字节、归一化耗时/吞吐、输出字节、峰值内存和可见窗口解码
+  尾延迟；合成基准不能替代真实 Eagle/Billfish、Windows 与 NAS/SMB 证据。
 - 本地 SSD、Windows/macOS、SMB/NAS 分开记录，不能互相替代证据。
 
 ### 17.3 人工验收

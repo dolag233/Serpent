@@ -4,6 +4,7 @@ import { splitFilenameForDisplay } from "./filename-display";
 import { shouldShowGridDimensions } from "./canvas-preferences";
 import { Icon } from "./Icons";
 import { useLocale, useT, type AppLocale } from "./i18n";
+import { sourceSrc } from "./asset-card-hover-preview";
 
 export type LayoutPreviewCaptionFields = {
   name: boolean;
@@ -52,19 +53,27 @@ export function BrowseLayoutPreview({
   previewArtifactId,
   viewMode = "masonry",
   fields = DEFAULT_CAPTION_FIELDS,
+  loadImmediately = true,
+  deferUntilVisible = false,
 }: {
   entry: BrowseLayoutEntry;
   libraryId: string;
   previewArtifactId?: string | null;
   viewMode?: "grid" | "masonry";
   fields?: LayoutPreviewCaptionFields;
+  /** High priority is reserved for layout slots intersecting the viewport. */
+  loadImmediately?: boolean;
+  /** Keep source/artifact URLs off the virtual overscan runway. */
+  deferUntilVisible?: boolean;
 }) {
   const { locale } = useLocale();
   const t = useT();
   const artifactId = previewArtifactId ?? entry.previewArtifactId;
   const previewSrc = artifactId
     ? `serpent://preview/${libraryId}/${artifactId}`
-    : undefined;
+    : entry.previewKind === "source" && entry.previewRevisionId
+      ? sourceSrc(libraryId, entry.assetId, entry.previewRevisionId)
+      : undefined;
   const showDimensions = shouldShowGridDimensions(
     fields,
     viewMode,
@@ -77,6 +86,7 @@ export function BrowseLayoutPreview({
   const displayName = entry.displayName?.trim() || "";
   const metaText = formatLayoutMeta(entry, fields, locale, t("common.unknownTime"));
   const hasCaption = showDimensions || showName || showMeta;
+  const shouldLoadPreview = !deferUntilVisible || loadImmediately;
 
   return (
     <div
@@ -85,12 +95,13 @@ export function BrowseLayoutPreview({
       data-asset-id={entry.assetId}
     >
       <div className="asset-preview">
-        {previewSrc ? (
+        {previewSrc && shouldLoadPreview ? (
           <img
             alt=""
             className="asset-thumbnail"
             decoding="async"
-            loading="lazy"
+            fetchPriority={loadImmediately ? "high" : "auto"}
+            loading={loadImmediately ? "eager" : "lazy"}
             src={previewSrc}
           />
         ) : (

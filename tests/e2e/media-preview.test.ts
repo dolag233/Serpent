@@ -57,24 +57,49 @@ const configuredFfprobePath = configuredFfmpegPath
   : undefined;
 
 async function expectImageDecoded(image: Locator) {
-  await expect
-    .poll(
-      () =>
-        image.evaluate((element) => {
-          if (!(element instanceof HTMLImageElement)) return false;
-          return (
-            element.complete &&
-            element.naturalWidth > 0 &&
-            element.naturalHeight > 0
-          );
-        }),
-      {
-        message:
-          "expected the image resource to decode, not merely render a visible <img>",
-        timeout: 15_000,
-      },
-    )
-    .toBe(true);
+  try {
+    await expect
+      .poll(
+        () =>
+          image.evaluate((element) => {
+            if (!(element instanceof HTMLImageElement)) return { decoded: false };
+            return {
+              decoded:
+                element.complete &&
+                element.naturalWidth > 0 &&
+                element.naturalHeight > 0,
+              complete: element.complete,
+              naturalWidth: element.naturalWidth,
+              naturalHeight: element.naturalHeight,
+              currentSrc: element.currentSrc,
+              src: element.getAttribute("src"),
+            };
+          }),
+        {
+          message:
+            "expected the image resource to decode, not merely render a visible <img>",
+          timeout: 15_000,
+        },
+      )
+      .toMatchObject({ decoded: true });
+  } catch (error) {
+    let state = "unavailable";
+    try {
+      state = JSON.stringify(await image.evaluate((element) => ({
+        complete: element instanceof HTMLImageElement ? element.complete : null,
+        naturalWidth: element instanceof HTMLImageElement ? element.naturalWidth : null,
+        naturalHeight: element instanceof HTMLImageElement ? element.naturalHeight : null,
+        currentSrc: element instanceof HTMLImageElement ? element.currentSrc : null,
+        src: element.getAttribute("src"),
+      })));
+    } catch {
+      // Keep the original Playwright error when the element disappeared.
+    }
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; final image state: ${state}`,
+      { cause: error },
+    );
+  }
 }
 
 test("generates a decoded thumbnail and keeps asset viewer context coherent", async () => {
@@ -148,6 +173,13 @@ test("generates a decoded thumbnail and keeps asset viewer context coherent", as
       await thumbnail.evaluate((image) => getComputedStyle(image).objectFit),
     ).toBe("contain");
 
+    // Import reveal selects the imported batch and reapplies it once the
+    // debounced browse refresh settles. Clear that intentional reveal before
+    // exercising single-asset Inspector/viewer behavior; otherwise a click
+    // during the 280ms settle window is correctly superseded by the reveal.
+    await expect(window.locator('.asset-card[aria-pressed="true"]')).toHaveCount(3);
+    await window.keyboard.press("Escape");
+    await expect(window.locator('.asset-card[aria-pressed="true"]')).toHaveCount(0);
     await assetCard.click();
     await expect(assetCard).toHaveAttribute("aria-pressed", "true");
     const inspectorThumbnail = window.locator(

@@ -30,6 +30,13 @@ const jumpFractions = (process.env.SERPENT_LARGE_LIBRARY_E2E_JUMPS ?? "")
   .filter((value) => Number.isFinite(value) && value >= 0 && value <= 1);
 const effectiveJumpFractions = jumpFractions.length > 0 ? jumpFractions : defaultJumpFractions;
 const targetMs = 500;
+// The ticket keeps the strict all-visible-images gate. The architecture also
+// needs a progressive-loading gate that measures the first real visual wave
+// separately; selecting it is explicit so a passing first wave can never be
+// mistaken for strict all-image completion.
+const gateMode = process.env.SERPENT_LARGE_LIBRARY_E2E_GATE === "first-wave"
+  ? "first-wave"
+  : "all-images";
 const observationTimeoutMs = Number(
   process.env.SERPENT_LARGE_LIBRARY_E2E_OBSERVATION_MS ?? 5_000,
 );
@@ -62,7 +69,7 @@ function countLiveAssetsViaElectron(libraryPath: string): number {
     const { createRequire } = require("node:module");
     const repoRequire = createRequire(${JSON.stringify(path.resolve("package.json"))});
     const Database = repoRequire("better-sqlite3");
-    const db = new Database(${JSON.stringify(path.join(fixturePath ?? "", ".serpent", "library.db"))}, { readonly: true, fileMustExist: true });
+    const db = new Database(${JSON.stringify(path.join(libraryPath, ".serpent", "library.db"))}, { readonly: true, fileMustExist: true });
     const row = db.prepare("SELECT COUNT(*) AS n FROM assets WHERE deleted_at IS NULL").get();
     db.close();
     process.stdout.write(String(row.n));
@@ -87,23 +94,28 @@ test.describe.configure({ timeout: 1_200_000 });
 
 test.skip(!fixturePath, "Set SERPENT_LARGE_LIBRARY_E2E_PATH to a generated 10k+ fixture.");
 
-test("fourth-stop random scrollbar jumps decode the visible viewport within 500ms", async () => {
+test("fourth-stop random scrollbar jumps measure progressive visible decode", async () => {
   if (!fixturePath) throw new Error("Missing large-library fixture path.");
-  const manifestPath = path.join(fixturePath, ".serpent", "large-library-fixture.json");
-  let assetCount: number;
+  // Reuse mode is intentionally stateful, but its denominator and fixture
+  // metadata must come from the directory that Electron will actually open.
+  // Reading these from the source fixture hid drift in reused artifact/job
+  // state and made the benchmark report the wrong population.
+  const measuredLibraryPath = reuseLibraryPath || fixturePath;
+  const manifestPath = path.join(measuredLibraryPath, ".serpent", "large-library-fixture.json");
   let fixtureVersion: number | string;
   if (existsSync(manifestPath)) {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-      assetCount: number;
       version: number;
     };
-    assetCount = manifest.assetCount;
     fixtureVersion = manifest.version;
   } else {
     // Real-library mode: no generator manifest, count straight from the DB.
-    assetCount = countLiveAssetsViaElectron(fixturePath);
     fixtureVersion = "real-library";
   }
+  // The manifest describes how the fixture was generated, not the current
+  // live population: ignored/deleted assets and a reused library can drift.
+  // Always use the DB owned by the library path that will be opened below.
+  const assetCount = countLiveAssetsViaElectron(measuredLibraryPath);
   expect(assetCount).toBeGreaterThanOrEqual(minAssets);
 
   mkdirSync(cloneRoot, { recursive: true });
@@ -269,10 +281,16 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       fraction: number;
       elapsedMs: number;
       visibleCards: number;
+      imageCards: number;
       decodedImages: number;
       placeholders: number;
       defaultIcons: number;
+      firstVisualWaveAt: number | null;
+      firstVisualWaveDecodedImages: number;
       imgCardsAllDecodedAt: number | null;
+      eventualCompleteAt: number | null;
+      observationElapsedMs: number;
+      undecodedImageIds: string[];
       visibleAssetIds: string[];
       visibleLayoutAssetIds: string[];
       visibleLayoutRanks: number[];
@@ -311,6 +329,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
         naturalWidth: number;
         naturalHeight: number;
       }>;
+      gatePassed: boolean;
       timedOut: boolean;
     }> = [];
 
@@ -326,7 +345,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
         }));
       }
       const sample = await window.evaluate(
-        async ({ fraction: targetFraction, timeoutMs }) => {
+        async ({ fraction: targetFraction, timeoutMs, gate }) => {
           const canvasElement = document.querySelector<HTMLElement>(".workspace-canvas");
           if (!canvasElement) throw new Error("Missing workspace canvas.");
           const diagnostics = (globalThis as unknown as {
@@ -339,7 +358,10 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
           };
           eventRoot.__serpentBrowsePages = [];
           const startedAt = performance.now();
+          let firstVisualWaveAt: number | null = null;
+          let firstVisualWaveDecodedImages = 0;
           let imgCardsAllDecodedAt: number | null = null;
+          let eventualCompleteAt: number | null = null;
           const doneTimeline: Array<{
             relMs: number;
             visibleCards: number;
@@ -361,10 +383,16 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             fraction: number;
             elapsedMs: number;
             visibleCards: number;
+            imageCards: number;
             decodedImages: number;
             placeholders: number;
             defaultIcons: number;
+            firstVisualWaveAt: number | null;
+            firstVisualWaveDecodedImages: number;
             imgCardsAllDecodedAt: number | null;
+            eventualCompleteAt: number | null;
+            observationElapsedMs: number;
+            undecodedImageIds: string[];
             visibleAssetIds: string[];
             visibleLayoutAssetIds: string[];
             visibleLayoutRanks: number[];
@@ -403,6 +431,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
               naturalWidth: number;
               naturalHeight: number;
             }>;
+            gatePassed: boolean;
             timedOut: boolean;
           }>((resolve) => {
             const inspect = () => {
@@ -422,7 +451,8 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                 card.classList.contains("is-browse-placeholder")
                 || card.dataset.assetId?.startsWith("__pending:"),
               ).length;
-              const decodedImages = visible.filter((card) => {
+              const imageCards = visible.filter((card) => card.dataset.mediaType === "image");
+              const decodedImages = imageCards.filter((card) => {
                 const image = card.querySelector<HTMLImageElement>("img.asset-thumbnail");
                 return image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
               }).length;
@@ -508,34 +538,47 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   transferSize: entry.transferSize,
                 }));
               const loadedIds = new Set(visibleAssetIds);
-              // Serpent-140fe2 diagnostics: libraries that legitimately contain
-              // non-media files (code, unknown binaries) always have icon-only
-              // cards, so `defaultIcons === 0` can never turn done. Track the
-              // media-readiness moment separately: the instant every visible
-              // card that carries an <img> has it decoded.
-              const imgCards = visible.filter((card) =>
-                Boolean(card.querySelector("img")));
-              const imgDecoded = imgCards.filter((card) => {
-                const image = card.querySelector<HTMLImageElement>("img");
-                return image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0;
-              }).length;
+              const layoutReady = visibleLayoutAssetIds.length >= 4
+                && visibleLayoutAssetIds.every((assetId) => loadedIds.has(assetId))
+                && placeholders === 0;
+              // Keep the image denominator explicit. Mixed libraries may
+              // contain icon-only model/text/unsupported cards, but those do
+              // not count as decoded image previews.
+              const imgDecoded = decodedImages;
+              const firstWaveTarget = Math.min(4, imageCards.length);
+              if (
+                firstVisualWaveAt === null
+                && imageCards.length > 0
+                && layoutReady
+                && imgDecoded >= firstWaveTarget
+              ) {
+                firstVisualWaveAt = Math.round(elapsedMs * 10) / 10;
+                firstVisualWaveDecodedImages = imgDecoded;
+              }
               if (
                 imgCardsAllDecodedAt === null
-                && imgCards.length > 4
-                && imgDecoded === imgCards.length
+                && imageCards.length > 0
+                && layoutReady
+                && imgDecoded === imageCards.length
               ) {
                 imgCardsAllDecodedAt = Math.round(elapsedMs * 10) / 10;
+                eventualCompleteAt = imgCardsAllDecodedAt;
               }
-              // Serpent-4bdd26: done must key on media cards only. The old
-              // `decodedImages === visible.length` also counted icon-only
-              // cards (gltf/txt/c4d carry no <img>), which made any viewport
-              // containing non-image assets wait out the full timeout even
-              // though every real image had decoded.
-              const done = visibleLayoutAssetIds.length >= 4
-                && visibleLayoutAssetIds.every((assetId) => loadedIds.has(assetId))
-                && placeholders === 0
-                && imgCards.length > 4
-                && imgDecoded === imgCards.length;
+              // Strict sa65 completion remains available as a separate
+              // metric. The architecture's primary gate is the first visual
+              // wave; both values are recorded so a progressive pass cannot
+              // hide a slow tail.
+              const strictDone = imgCardsAllDecodedAt !== null;
+              const observationDone = strictDone || elapsedMs >= timeoutMs;
+              const gatePassed = gate === "first-wave"
+                ? firstVisualWaveAt !== null && firstVisualWaveAt <= 500
+                : strictDone && imgCardsAllDecodedAt !== null && imgCardsAllDecodedAt <= 500;
+              const undecodedImageIds = imageCards
+                .filter((card) => {
+                  const image = card.querySelector<HTMLImageElement>("img.asset-thumbnail");
+                  return !(image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0);
+                })
+                .map((card) => card.dataset.assetId ?? "");
               doneTimeline.push({
                 relMs: Math.round(elapsedMs * 10) / 10,
                 visibleCards: visible.length,
@@ -546,17 +589,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   (assetId) => !loadedIds.has(assetId),
                 ).length,
               });
-              if (done || elapsedMs >= timeoutMs) {
+              if (observationDone) {
                 performance.mark("bench:jump-done");
                 performance.measure("bench:jump", "bench:jump-start", "bench:jump-done");
+                const gateElapsedMs = gate === "first-wave"
+                  ? firstVisualWaveAt ?? elapsedMs
+                  : imgCardsAllDecodedAt ?? elapsedMs;
                 resolve({
                   fraction: targetFraction,
-                  elapsedMs,
+                  elapsedMs: gateElapsedMs,
                   visibleCards: visible.length,
+                  imageCards: imageCards.length,
                   decodedImages,
                   placeholders,
                   defaultIcons,
+                  firstVisualWaveAt,
+                  firstVisualWaveDecodedImages,
                   imgCardsAllDecodedAt,
+                  eventualCompleteAt,
+                  observationElapsedMs: elapsedMs,
+                  undecodedImageIds,
                   visibleAssetIds,
                   visibleLayoutAssetIds,
                   visibleLayoutRanks,
@@ -571,7 +623,8 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
                   longTaskCount: eventRoot.__serpentLongTasks?.length ?? 0,
                   longTaskMaxMs: Math.max(0, ...(eventRoot.__serpentLongTasks ?? [])),
                   imageStates,
-                  timedOut: !done,
+                  gatePassed,
+                  timedOut: !strictDone,
                 });
                 return;
               }
@@ -580,7 +633,7 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
             requestAnimationFrame(inspect);
           });
         },
-        { fraction, timeoutMs: observationTimeoutMs },
+        { fraction, timeoutMs: observationTimeoutMs, gate: gateMode },
       );
       if (cdp && profileDir) {
         const stopResult = await cdp.send("Profiler.stop");
@@ -608,8 +661,20 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
     }
 
     const elapsed = samples.map((sample) => sample.elapsedMs).sort((a, b) => a - b);
-    const p50 = elapsed[Math.floor(elapsed.length * 0.5)]!;
-    const p95 = elapsed[Math.min(elapsed.length - 1, Math.ceil(elapsed.length * 0.95) - 1)]!;
+    const firstWaveElapsed = samples
+      .map((sample) => sample.firstVisualWaveAt)
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
+    const eventualElapsed = samples
+      .map((sample) => sample.eventualCompleteAt)
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
+    const percentile = (values: number[], quantile: number): number | null => {
+      if (values.length === 0) return null;
+      return values[Math.min(values.length - 1, Math.ceil(values.length * quantile) - 1)]!;
+    };
+    const p50 = percentile(elapsed, 0.5)!;
+    const p95 = percentile(elapsed, 0.95)!;
     const result = {
       suite: "large-library-electron-scroll",
       fixtureVersion,
@@ -617,14 +682,26 @@ test("fourth-stop random scrollbar jumps decode the visible viewport within 500m
       cardSizeIndex: 3,
       jumps: samples.length,
       targetMs,
-      passed: samples.filter((sample) => !sample.timedOut && sample.elapsedMs <= targetMs).length,
+      gateMode,
+      passed: samples.filter((sample) => sample.gatePassed).length,
       p50Ms: Number(p50.toFixed(1)),
       p95Ms: Number(p95.toFixed(1)),
       maxMs: Number(Math.max(...elapsed).toFixed(1)),
+      firstVisualWaveP50Ms: percentile(firstWaveElapsed, 0.5),
+      firstVisualWaveP95Ms: percentile(firstWaveElapsed, 0.95),
+      firstVisualWaveMaxMs: firstWaveElapsed.length > 0
+        ? Number(Math.max(...firstWaveElapsed).toFixed(1))
+        : null,
+      eventualCompleteCount: eventualElapsed.length,
+      eventualCompleteP50Ms: percentile(eventualElapsed, 0.5),
+      strictAllImagesWithinTarget: samples.filter((sample) =>
+        sample.imgCardsAllDecodedAt !== null && sample.imgCardsAllDecodedAt <= targetMs,
+      ).length,
       observationTimeoutMs,
       samples: samples.map((sample) => ({
         ...sample,
         elapsedMs: Number(sample.elapsedMs.toFixed(1)),
+        observationElapsedMs: Number(sample.observationElapsedMs.toFixed(1)),
       })),
     };
     console.info(`[large-library-benchmark] ${JSON.stringify(result)}`);

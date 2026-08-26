@@ -1,0 +1,99 @@
+# 2026-08-26 大型资源库性能架构阶段 D.3 开发日志：小型源图直出与媒体准入
+
+关联架构：[`0032-library-performance-architecture.md`](../implementation/0032-library-performance-architecture.md)  关联工单：`Serpent-3kfe`、`Serpent-90ff52`、`Serpent-sa65`
+
+## 目标与边界
+
+Eagle 式双轨策略的目标是减少小型、浏览器可解码图片的无意义缩略图生成：卡片、
+Inspector 和查看器可以直接读取经过 revision 鉴权的源文件；大图、复杂格式和视频
+仍使用独立 artifact。直出不是“看到扩展名就放行”，而是同时满足以下条件：
+
+- 媒体类型为 image，格式为 JPG/JPEG、PNG、WebP 或 GIF；SVG 不走该路径。
+- Worker 已有正数的宽高元数据，长边不超过 2048 px。
+- 当前 revision 源文件不超过 1 MiB、解码像素不超过 2,000,000，且 source URL 仍由当前
+  库/revision 协议鉴权。长边仍限制为 2048 px；像素预算是为了控制浏览器 RGBA 解码峰值，
+  查看器显式 source 路径不受这条卡片 admission 限制。
+
+超过边界或尺寸未知的图像继续进入 `card-thumbnail` 策略。存量 ready artifact 不删除，
+新导入和新 revision 才采用 admission 结果；因此策略切换不会让旧卡片突然失去已生成
+的产物。
+
+## 实现与四列追溯
+
+| 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
+| --- | --- | --- | --- |
+| 小型原生图像采用 source-direct，不创建 primary thumbnail job | `src/shared/preview-policy.ts`；`src/worker/artifact-policy.ts`；`LibraryService.enqueueThumbnailJobs` | `tests/unit/preview-policy.test.ts`、`tests/unit/artifact-policy.test.ts`；`tests/worker/thumbnails.test.ts` | macOS Electron Worker 定向通过；Windows/NAS/packaged 未验证 |
+| 卡片、BrowseLayout、hover、Inspector 与查看器使用同一 source/revision 语义 | `src/worker/library-service.ts` 的 summary/layout 字段；`src/renderer/asset-card-hover-preview.ts`；`src/renderer/BrowseLayoutPreview.tsx`；`src/renderer/inspector-preview.ts` | `tests/unit/asset-card-hover-preview.test.ts`、`tests/unit/inspector-preview.test.ts`、`tests/unit/protocol.test.ts`；`tests/e2e/media-preview.test.ts` | 隔离 macOS Electron：卡片、Inspector naturalWidth/object-fit、viewer context 真实解码通过；Windows/packaged/Computer Use 未执行 |
+| source-direct 资产仍能获得非首帧的色卡，不把色卡重新变成缩略图门禁 | `LibraryService.enqueuePaletteJob`、`enqueueReadyPaletteJobs`、`generateQueuedPaletteArtifact` | `tests/worker/palette-artifact.test.ts`；`tests/worker/thumbnails.test.ts` | Electron Worker：source-direct 1×1 PNG 直接读取源图提取 bounded 64×64 palette 通过；真实大图/NAS 未验证 |
+| 序列帧逐帧复用 artifact 优先、revision-pinned source-direct 回退，并排除缺失/删除帧 | `src/renderer/sequence-frame-preview.ts`；`AssetCardMedia.tsx`；`SequenceFrameCanvas.tsx`；`ImageSequencePlayer.tsx`；`LibraryService.withImageSequenceSummaries` | `tests/unit/sequence-frame-preview.test.ts`；`tests/worker/image-sequence.test.ts`；`tests/e2e/image-sequence-viewer.test.ts` | macOS 隔离 Electron：序列真实 Canvas、暂停后逐帧 source 解码、旋转/镜像与重启持久化 1/1 通过；Windows/packaged/Computer Use 未执行 |
+| 超阈值/未知尺寸/非视觉格式保持 derived artifact 语义 | `preview-policy.ts`、`artifact-policy.ts` 与既有 media admission | `tests/unit/preview-policy.test.ts`；`tests/worker/real-media-bundle.test.ts`、`thumbnail-throughput.test.ts`、`media-ignore-scheduling.test.ts`、`folder-browse-entries.test.ts`、`trash-relink.test.ts` | 5 个 Worker fixture 回归 99 passed / 1 skipped；真实复杂格式矩阵未验证 |
+
+## 关键实现
+
+1. `AssetSummary`、`BrowseLayoutEntry` 和 geometry entry 传递 `previewKind` 与
+   `previewRevisionId`，避免 Renderer 以“没有 thumbnail artifact”误判为损坏。
+2. source URL 只在当前 revision 可用且策略明确允许时生成，artifact URL 仍优先；
+   旧 artifact 不被 source-direct 回退覆盖。
+3. Inspector 原先只认识 ready thumbnail，现改为在 artifact 缺失时使用同一有界
+   source-direct URL，因此不会出现“卡片已解码、Inspector 仍空白”的分叉。
+4. source-direct 跳过 primary thumbnail 后，palette 不再等待 thumbnail-completed
+   事件。Worker 在入队和 claim 阶段分别做 source/revision/availability 检查，生成时
+   只用受限 source read 和 64×64 bounded Sharp 提取，palette 仍是
+   `background-secondary`，不是首屏门禁。
+5. 测试中需要验证“确实生成 derived thumbnail”的 fixture 改用 2049 px 长边，避免
+   旧的 1×1 测试图片被新策略正确地跳过后造成错误失败；这不是放宽断言，而是让 fixture
+   表达它测试的 artifact 分支。
+
+## 验证记录
+
+- `npm run typecheck`：通过。
+- `npx eslint src/renderer/inspector-preview.ts src/renderer/InspectorPanel.tsx
+  src/worker/library-service.ts tests/unit/inspector-preview.test.ts
+  tests/worker/palette-artifact.test.ts`：通过。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts
+  tests/worker/palette-artifact.test.ts tests/worker/thumbnails.test.ts`：2 files / 76 tests
+  passed。
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts
+  tests/worker/thumbnail-throughput.test.ts tests/worker/media-ignore-scheduling.test.ts
+  tests/worker/folder-browse-entries.test.ts tests/worker/trash-relink.test.ts
+  tests/worker/real-media-bundle.test.ts`：5 files / 99 passed / 1 skipped。
+- `npm run test:library-availability`：9 files / 203 tests passed。
+- `node scripts/run-e2e.mjs tests/e2e/media-preview.test.ts --grep "generates a decoded thumbnail"`：
+  1 passed / 8.2s；卡片、Inspector 和查看器真实媒体解码断言通过。
+- `node scripts/run-e2e.mjs tests/e2e/image-sequence-viewer.test.ts`：1 passed / 8.7s；
+  覆盖自动识别、解散/重建、FPS 持久化、播放、暂停后的 source-direct 逐帧解码、旋转、
+  右键菜单双向镜像与完整退出后的恢复。测试原先查找已不存在的 toolbar class 和内联镜像
+  按钮，本轮按当前查看器交互修正选择器，未改变运行时行为。
+- `node scripts/run-e2e.mjs tests/e2e/asset-pagination.test.ts
+  tests/e2e/thumbnail-scroll-regression.test.ts`：4 passed / 40.1s。
+- `node scripts/run-e2e.mjs tests/e2e/media-preview.test.ts`：1 passed、1 skipped、1 failed；
+  source-direct/Inspector 旅程通过，失败项是既有视频错误验收在 `closeLibraryViaSwitcher`
+  等待切换器隐藏时超时，非 source-direct 断言失败，仍按未完全通过记录。
+- 当前 HEAD 的真实 Electron 20,000 资产滚动基准（相同本地 APFS fixture、两次独立 userData）：
+  10/10 + 10/10；P50 为 162.3/156.6 ms，P95/Max 为 315.9/308.4 ms，所有样本
+  `longTaskCount=0`。这次基准同时覆盖 source-direct admission、可视区媒体 URL 限制、稀疏几何
+  和导航摘要延后；证明本地 20k 组合路径已达 500 ms 目标，但不是 Windows/NAS/packaged 证据。
+- source-direct 真实 Electron 小型图 benchmark 首次运行 3/4 个跳转达到 500ms，P50
+  456ms、P95/Max 769.1ms；重复运行 2/4，P50 526.4ms、P95 553.9ms。结果仍有明显
+  波动，不能宣称 `Serpent-sa65` 或 0032 的 500ms 门禁通过。
+- 当前 HEAD 在补齐序列帧 source/revision 路由后再次运行同一 2100 图像命令：3/4，
+  P50 462.3ms、P95/Max 672.2ms；第 3 跳转记录 4 个长任务、最长 108ms。P50 有改善
+  但尾延迟和长任务仍未达标，不能用这次结果覆盖 20k/100k 门禁。
+- `npm run lint`：通过（仅保留 `library-service.ts` 超过 500KB 的 Babel deopt 提示）；
+  `npm run typecheck` 同上通过。
+
+## 未完成与风险
+
+当前已取得本地 20k 混合基线，但尚未取得 100k、真实 SMB/NAS、Windows、packaged 和
+Computer Use 证据。小图直出减少了 primary thumbnail 工作，但不能替代分别测量
+ready artifact、source-direct 和复杂格式三组的 decoded-thumbnail 尾延迟；不能把布局、
+协议、源读取和媒体生成混在一个数字里。Stage D.3 因此保持实现完成、性能/平台验收未完成。
+
+## 基准口径更正（2026-08-26）
+
+本日志前面的 20k 两次 10/10 使用了旧版 benchmark：分母只包含已经挂载 `<img>` 的卡片，
+遗漏了仍是可见图片但尚未挂载图片元素的卡片。该证据撤回。修正后的默认严格模式在同一
+20k APFS 库一次跳转为 0/1（5000.9ms 仍有 13 张图片未解码）；明确标记的 first-wave
+模式十次跳转为 9/10，P50 167.1ms、P95/Max 555.9ms，观察窗口内全部图片完成仅 4/10。
+first-wave 单次 439.7ms 不能代表稳定通过。因此 D.3 的代码验证仍成立，但 `Serpent-sa65`
+和 `Serpent-90ff52` 的性能门禁仍未通过。

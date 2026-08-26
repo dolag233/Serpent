@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { SerpentLibraryApi } from "../shared/library-api";
-import { coverSrc } from "./asset-card-hover-preview";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
@@ -11,6 +10,7 @@ import { Slider } from "./ui/primitives";
 import { advanceImageSequenceFrame } from "./image-sequence-playback";
 import type { ViewerDisplayTransform } from "./viewer-display-transform";
 import { ZoomableImage } from "./zoomable-preview-image";
+import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
 
 export interface ImageSequencePlayerProps {
   api: SerpentLibraryApi;
@@ -45,11 +45,7 @@ export function ImageSequencePlayer({
   const t = useT();
   const thumbnailUrls = useMemo(
     () =>
-      sequence.frames.map((frame) =>
-        frame.thumbnailArtifactId
-          ? coverSrc(libraryId, frame.thumbnailArtifactId)
-          : null,
-      ),
+      sequence.frames.map((frame) => resolveSequenceFrameUrl(libraryId, frame)),
     [libraryId, sequence.frames],
   );
   const [resolvedUrls, setResolvedUrls] = useState<Map<string, string>>(

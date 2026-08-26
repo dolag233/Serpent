@@ -38,11 +38,13 @@ function temporaryRoot(): string {
   return root;
 }
 
-// Valid 1x1 PNG bytes (pre-computed); a distinct 4-byte trailer keeps every
-// imported file's content hash unique so library-level content dedup never
-// collapses the batch.
-const VALID_1X1_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+// A valid 2049×1 PNG deliberately sits just above the source-direct long-edge
+// limit. These tests exercise derived-thumbnail queue ordering, not the
+// source-direct image path; a distinct 4-byte trailer keeps every imported
+// file's content hash unique so library-level content dedup never collapses
+// the batch.
+const THUMBNAIL_REQUIRED_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -50,7 +52,7 @@ function distinctPngBytes(index: number): Buffer {
   const trailer = Buffer.from([
     (index >> 24) & 0xff, (index >> 16) & 0xff, (index >> 8) & 0xff, index & 0xff,
   ]);
-  return Buffer.concat([VALID_1X1_PNG, trailer]);
+  return Buffer.concat([THUMBNAIL_REQUIRED_PNG, trailer]);
 }
 
 /**
@@ -69,7 +71,7 @@ function instantSharp() {
       webp() { return this; },
       jpeg() { return this; },
       async toFile(outputPath: string) {
-        writeFileSync(outputPath, VALID_1X1_PNG);
+        writeFileSync(outputPath, THUMBNAIL_REQUIRED_PNG);
       },
     };
     return pipeline;
@@ -112,6 +114,38 @@ afterEach(() => {
 });
 
 describe('thumbnail queue DB-write batching (Serpent-xoaz)', () => {
+  it('returns control between successive claim rounds', async () => {
+    const root = temporaryRoot();
+    let claimCount = 0;
+    let eventLoopYielded = false;
+    let thirdClaimBeforeYield = false;
+    const service = new LibraryService({
+      sharpFn: instantSharp(),
+      onDbStatement: (sql) => {
+        if (!sql.includes("UPDATE jobs SET status = 'running'")) return;
+        claimCount += 1;
+        if (claimCount === 2) {
+          setImmediate(() => {
+            eventLoopYielded = true;
+          });
+        } else if (claimCount === 3 && !eventLoopYielded) {
+          thirdClaimBeforeYield = true;
+        }
+      },
+    });
+    const created = service.createLibrary({ displayName: 'ClaimYield', selectedParentPath: root });
+
+    const sourceDir = path.join(root, 'sources');
+    createDistinctPngs(sourceDir, 6);
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+    expect(service.enqueueThumbnailJobs(created.libraryId, { limit: 500 })).toBe(6);
+
+    expect(await service.processThumbnailQueue(created.libraryId, { maxJobs: 6 })).toBe(6);
+    expect(claimCount).toBe(6);
+    expect(thirdClaimBeforeYield).toBe(false);
+    service.closeAll();
+  });
+
   it('flushes one batched success UPDATE per worker instead of one per job', async () => {
     const root = temporaryRoot();
     const statements: string[] = [];

@@ -67,7 +67,9 @@ describe('local extracted palette artifact', () => {
     const assetId = importAsset(service, library.libraryId, source);
 
     service.enqueueThumbnailJobs(library.libraryId);
-    expect(await service.processThumbnailQueue(library.libraryId)).toBe(2);
+    // Small native images bypass the derived thumbnail lane; the remaining
+    // visual derivative is the bounded source-direct palette job.
+    expect(await service.processThumbnailQueue(library.libraryId)).toBe(1);
 
     const artifact = service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette');
     expect(artifact).toMatchObject({ status: 'ready', mimeType: 'application/json' });
@@ -205,6 +207,40 @@ describe('local extracted palette artifact', () => {
     expect(service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette'))
       .toMatchObject({ status: 'ready' });
     service.closeAll();
+  });
+
+  it('queues and extracts a bounded palette directly from a source-direct image', async () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const library = service.createLibrary({ displayName: 'SourceDirectPalette', selectedParentPath: root });
+    const source = path.join(root, 'small.png');
+    writeFileSync(source, VALID_1X1_PNG);
+    const assetId = importAsset(service, library.libraryId, source);
+    const asset = service.listAssets({ libraryId: library.libraryId, recursive: true })[0]!;
+
+    expect(asset.previewKind).toBe('source');
+    expect(service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: [assetId],
+      limit: 1,
+      skipStaleRepair: true,
+    })).toBe(0);
+    expect(service.listMediaJobs(library.libraryId).jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetId,
+          kind: 'extract_palette',
+          status: 'queued',
+        }),
+      ]),
+    );
+
+    expect(await service.processThumbnailQueue(library.libraryId, {
+      assetIds: [assetId],
+      jobKinds: ['extract_palette'],
+      maxJobs: 1,
+    })).toBe(1);
+    expect(service.getCurrentArtifact(library.libraryId, assetId, 'extracted_palette'))
+      .toMatchObject({ status: 'ready' });
   });
 
   it('does not extract a palette from an audio waveform poster', async () => {

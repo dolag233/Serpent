@@ -168,6 +168,51 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       libraryId: manifest.libraryId,
       layoutOnly: true,
     }));
+    // Stage C: the ordered BrowseSession is the shared source for later page,
+    // geometry and select-all reads. Keep these timings beside the historical
+    // raw-search baseline so a future optimization cannot silently regress to
+    // rebuilding the scope for every scrollbar jump.
+    const sessionOpenMs = benchmark(() => service.createBrowseSession({
+      libraryId: manifest.libraryId,
+      libraryGeneration: 1,
+      query: null,
+      sort: { field: 'name', order: 'asc' },
+      limit: 50,
+    }));
+    const sessionForBenchmark = service.createBrowseSession({
+      libraryId: manifest.libraryId,
+      libraryGeneration: 1,
+      query: null,
+      sort: { field: 'name', order: 'asc' },
+      limit: 50,
+    });
+    const sessionOffset = initialLiveAssetCount > 100 ? 100 : 0;
+    const sessionPageMs = benchmark(() => service.readBrowseSessionPage({
+      libraryId: manifest.libraryId,
+      libraryGeneration: 1,
+      sessionId: sessionForBenchmark.session.sessionId,
+      limit: 50,
+      offset: sessionOffset,
+    }));
+    const sessionGeometryMs = benchmark(() => service.readBrowseSessionGeometry({
+      libraryId: manifest.libraryId,
+      libraryGeneration: 1,
+      sessionId: sessionForBenchmark.session.sessionId,
+      startIndex: sessionOffset,
+      limit: 128,
+    }));
+    const navigationColdStartedAt = performance.now();
+    service.getLibraryNavigationSummary({
+      libraryId: manifest.libraryId,
+      showIgnored: false,
+      includeTrashedFolders: false,
+    });
+    const navigationInitialMs = performance.now() - navigationColdStartedAt;
+    const navigationWarmMs = benchmark(() => service.getLibraryNavigationSummary({
+      libraryId: manifest.libraryId,
+      showIgnored: false,
+      includeTrashedFolders: false,
+    }));
     // 用 DB 实际 asset（fixture 生成时的 sampleAssetId 基于旧 libraryId）。
     const sampleAssetId = service.searchAssets({ libraryId: manifest.libraryId, limit: 1, offset: 0 }).items[0]?.assetId;
     if (!sampleAssetId) throw new Error('Large-library fixture contains no assets');
@@ -179,7 +224,7 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     expect(beforeDelete.total).toBe(initialLiveAssetCount);
 
     console.info(JSON.stringify({
-      suite: 'large-library-20k',
+      suite: `large-library-${manifest.assetCount}`,
       targetAssets: manifest.assetCount,
       liveAssets: initialLiveAssetCount,
       startupMs: Number(startupMs.toFixed(1)),
@@ -190,6 +235,11 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       collectionRecursiveLayoutMs: collectionRecursiveLayoutMs < 0 ? null : Number(collectionRecursiveLayoutMs.toFixed(1)),
       searchMs: Number(searchMs.toFixed(1)),
       layoutMs: Number(layoutMs.toFixed(1)),
+      browseSessionOpenMs: Number(sessionOpenMs.toFixed(1)),
+      browseSessionPageMs: Number(sessionPageMs.toFixed(1)),
+      browseSessionGeometryMs: Number(sessionGeometryMs.toFixed(1)),
+      navigationSummaryInitialMs: Number(navigationInitialMs.toFixed(1)),
+      navigationSummaryWarmMs: Number(navigationWarmMs.toFixed(1)),
       inspectorMs: Number(inspectorMs.toFixed(1)),
       deleteRefreshMs: null,
       deleteRefreshNote: 'Not exercised by this baseline; Serpent-x710 is explicitly excluded.',
@@ -201,6 +251,11 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
     if (collectionSwitchMs >= 0) expect(collectionSwitchMs).toBeLessThan(5_000);
     if (collectionRecursiveSwitchMs >= 0) expect(collectionRecursiveSwitchMs).toBeLessThan(5_000);
     if (collectionRecursiveLayoutMs >= 0) expect(collectionRecursiveLayoutMs).toBeLessThan(5_000);
+    expect(sessionOpenMs).toBeLessThan(5_000);
+    expect(sessionPageMs).toBeLessThan(5_000);
+    expect(sessionGeometryMs).toBeLessThan(5_000);
+    expect(navigationInitialMs).toBeLessThan(5_000);
+    expect(navigationWarmMs).toBeLessThan(5_000);
     expect(inspectorMs).toBeLessThan(5_000);
   }, 120_000);
 
@@ -229,7 +284,7 @@ describe.skipIf(!fixturePath)('20k asset large-library performance baseline', ()
       offset: 0,
     }).total;
     const result = {
-      suite: 'large-library-20k-reconciliation-viewer',
+      suite: `large-library-${manifest.assetCount}-reconciliation-viewer`,
       targetAssets: manifest.assetCount,
       liveAssets: initialLiveAssetCount,
       reconciliationMs: Number(measured.elapsedMs.toFixed(1)),

@@ -31,6 +31,7 @@ import {
   setApplicationMenuCommandLabel,
 } from "./application-menu";
 import { applyDevAppIcon, appIconImage } from "./app-icon";
+import { ArtifactPathCache } from "./artifact-path-cache";
 import { SourcePathCache, type SourcePathResolution } from "./source-path-cache";
 import {
   NativeAssetDragCache,
@@ -402,36 +403,19 @@ let workerClient: LibraryWorkerClient | undefined;
 let syncAutoScheduler: SyncAutoScheduler | undefined;
 type ArtifactPathBatchWaiter = {
   artifactId: string;
+  generation: number;
   resolve: (absolutePath: string) => void;
   reject: (error: Error) => void;
 };
 const artifactPathBatches = new Map<string, ArtifactPathBatchWaiter[]>();
-const artifactPathCache = new Map<string, string>();
-const artifactPathCacheEpochByLibrary = new Map<string, number>();
-const ARTIFACT_PATH_CACHE_LIMIT = 4_096;
-
-function artifactPathCacheKey(libraryId: string, artifactId: string, usage: string): string {
-  return `${libraryId}\u0000${usage}\u0000${artifactId}`;
-}
+const artifactPathCache = new ArtifactPathCache(4_096);
 
 function clearArtifactPathCache(libraryId?: string): void {
   if (libraryId === undefined) {
     artifactPathCache.clear();
-    artifactPathCacheEpochByLibrary.clear();
     return;
   }
-  artifactPathCacheEpochByLibrary.set(
-    libraryId,
-    (artifactPathCacheEpochByLibrary.get(libraryId) ?? 0) + 1,
-  );
-  const prefix = `${libraryId}\u0000`;
-  for (const key of artifactPathCache.keys()) {
-    if (key.startsWith(prefix)) artifactPathCache.delete(key);
-  }
-}
-
-function artifactPathCacheEpoch(libraryId: string): number {
-  return artifactPathCacheEpochByLibrary.get(libraryId) ?? 0;
+  artifactPathCache.clearLibrary(libraryId);
 }
 
 function cancelArtifactPathBatches(libraryId: string): void {
@@ -444,33 +428,24 @@ function cancelArtifactPathBatches(libraryId: string): void {
   }
 }
 
-function rememberArtifactPath(libraryId: string, artifactId: string, usage: string, absolutePath: string): void {
-  const key = artifactPathCacheKey(libraryId, artifactId, usage);
-  artifactPathCache.delete(key);
-  artifactPathCache.set(key, absolutePath);
-  while (artifactPathCache.size > ARTIFACT_PATH_CACHE_LIMIT) {
-    const oldest = artifactPathCache.keys().next().value;
-    if (oldest === undefined) break;
-    artifactPathCache.delete(oldest);
-  }
-}
-
 function resolveArtifactPathBatched(
   libraryId: string,
   artifactId: string,
   usage: "preview" | "proxy",
 ): Promise<string> {
-  const cached = artifactPathCache.get(artifactPathCacheKey(libraryId, artifactId, usage));
+  const generation = artifactPathCache.generation(libraryId);
+  const cached = artifactPathCache.get(libraryId, artifactId, usage, generation);
   if (cached !== undefined) {
     // A lookup hit is also a use: keep hot viewport artifacts at the MRU end
     // of the bounded cache instead of evicting them after unrelated pages.
-    rememberArtifactPath(libraryId, artifactId, usage, cached);
     return Promise.resolve(cached);
   }
-  const key = `${libraryId}\u0000${usage}`;
+  // Keep requests from different library generations in separate batches. A
+  // reopen can happen while the 2ms coalescing window is still pending.
+  const key = `${libraryId}\u0000${usage}\u0000${generation}`;
   return new Promise<string>((resolve, reject) => {
     const batch = artifactPathBatches.get(key) ?? [];
-    batch.push({ artifactId, resolve, reject });
+    batch.push({ artifactId, generation, resolve, reject });
     artifactPathBatches.set(key, batch);
     if (batch.length > 1) return;
     setTimeout(() => {
@@ -485,7 +460,7 @@ function resolveArtifactPathBatched(
       void (async () => {
         for (let index = 0; index < pending.length; index += 500) {
           const chunk = pending.slice(index, index + 500);
-          const requestEpoch = artifactPathCacheEpoch(libraryId);
+          const requestGeneration = chunk[0]?.generation ?? generation;
           try {
             const result = await client.request({
               type: "media.get-artifact-paths",
@@ -501,13 +476,22 @@ function resolveArtifactPathBatched(
             );
             for (const waiter of chunk) {
               const absolutePath = paths.get(waiter.artifactId);
-              if (absolutePath) {
-                if (artifactPathCacheEpoch(libraryId) === requestEpoch) {
-                  rememberArtifactPath(libraryId, waiter.artifactId, usage, absolutePath);
-                }
+              if (
+                absolutePath &&
+                artifactPathCache.generation(libraryId) === requestGeneration
+              ) {
+                artifactPathCache.set(
+                  libraryId,
+                  waiter.artifactId,
+                  usage,
+                  absolutePath,
+                  requestGeneration,
+                );
                 waiter.resolve(absolutePath);
+              } else if (absolutePath) {
+                waiter.reject(new Error("Artifact path resolution became stale."));
               } else {
-                artifactPathCache.delete(artifactPathCacheKey(libraryId, waiter.artifactId, usage));
+                artifactPathCache.invalidateArtifact(libraryId, waiter.artifactId, usage);
                 waiter.reject(new Error("Artifact was absent from path batch."));
               }
             }
@@ -2796,6 +2780,53 @@ async function commandFor(
         limit: request.limit,
         offset: request.offset,
         showIgnored: request.showIgnored,
+      };
+    case "browse.session.open.request":
+      return {
+        type: "browse.session.open",
+        libraryId: request.libraryId,
+        query: request.query,
+        filters: request.filters,
+        scope: request.scope,
+        sort: request.sort,
+        smartCollectionId: request.smartCollectionId,
+        limit: request.limit,
+        showIgnored: request.showIgnored,
+      };
+    case "browse.session.page.request":
+      return {
+        type: "browse.session.page",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+        limit: request.limit,
+        offset: request.offset,
+      };
+    case "browse.session.geometry.request":
+      return {
+        type: "browse.session.geometry",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+        startIndex: request.startIndex,
+        limit: request.limit,
+      };
+    case "browse.session.ids.request":
+      return {
+        type: "browse.session.ids",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+      };
+    case "browse.session.close.request":
+      return {
+        type: "browse.session.close",
+        libraryId: request.libraryId,
+        sessionId: request.sessionId,
+      };
+    case "library.navigation-summary.request":
+      return {
+        type: "library.navigation-summary",
+        libraryId: request.libraryId,
+        showIgnored: request.showIgnored,
+        includeTrashedFolders: request.includeTrashedFolders,
       };
     case "ai.search-plan.request":
       // Planned directly in Main so provider credentials never enter the
@@ -7270,7 +7301,7 @@ async function startApplication(): Promise<void> {
         // the batch returned. Do not keep serving a stale artifact location
         // after the first failed read; the next request will ask the Worker
         // for the current path.
-        artifactPathCache.delete(artifactPathCacheKey(libraryId, artifactId, url.hostname));
+        artifactPathCache.invalidateArtifact(libraryId, artifactId, url.hostname);
         return new Response("Artifact file missing", { status: 404 });
       }
     } catch (error) {

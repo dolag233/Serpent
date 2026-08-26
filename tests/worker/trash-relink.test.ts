@@ -41,10 +41,10 @@ function newService(
 
 const require = createRequire(import.meta.url);
 
-// Valid 1x1 white PNG bytes (pre-computed), matching thumbnails.test.ts so
-// trash tests can generate real decodable thumbnails through the media queue.
+// Valid 2049×1 PNG bytes (pre-computed), matching the derived-thumbnail
+// boundary so trash tests can generate a real artifact through the media queue.
 const VALID_1X1_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+  'iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==',
   'base64',
 );
 
@@ -521,7 +521,14 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
     ).get(artifactId) as { status: string; invalidated_at: string | null };
     expect(artifactRow).toEqual({ status: 'ready', invalidated_at: null });
     db.close();
-    expect(existsSync(path.join(created.libraryPath, '.serpent', 'artifacts', `${artifactId}.webp`))).toBe(true);
+    // The generator may choose JPEG or WebP based on source opacity; resolve
+    // the authorized artifact path instead of coupling the trash invariant to
+    // one encoder extension.
+    expect(existsSync(service.getArtifactAbsolutePath(
+      created.libraryId,
+      artifactId,
+      'preview',
+    ))).toBe(true);
 
     // The trash listing (the renderer's trash-scope data source) must keep
     // exposing the thumbnail artifact so the card can build a preview URL.
