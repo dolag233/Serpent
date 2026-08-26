@@ -18,6 +18,8 @@ describe('artifact policy', () => {
     expect(artifactRoleForJob('generate_audio_proxy', 'audio')).toBe('playback-proxy');
     expect(artifactKindForJob('generate_audio_proxy', 'audio')).toBe('audio_proxy');
     expect(artifactRoleForJob('generate_audio_proxy', 'video')).toBeNull();
+    expect(artifactRoleForJob('extract_metadata', 'image')).toBe('technical-metadata');
+    expect(artifactKindForJob('extract_metadata', 'image')).toBe('extracted_metadata');
     expect(artifactRoleForJob('extract_palette', 'audio')).toBeNull();
   });
 

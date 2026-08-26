@@ -30,6 +30,11 @@ export interface RawImageMetadata {
   focalLength: number | string | null;
 }
 
+export type RawImageMetadataExtractionResult =
+  | { status: 'metadata'; metadata: RawImageMetadata }
+  | { status: 'empty' }
+  | { status: 'failed'; error: unknown };
+
 let exifrModule: RawImageMetadataParser | undefined;
 
 function requireExifr(): RawImageMetadataParser {
@@ -160,20 +165,79 @@ export function hasRawImageMetadata(metadata: RawImageMetadata): boolean {
   return Object.values(metadata).some((value) => value !== null);
 }
 
+function abortError(): DOMException {
+  return new DOMException('RAW metadata extraction cancelled.', 'AbortError');
+}
+
+/**
+ * Race the parser against queue cancellation while still attaching handlers to
+ * the parser promise. exifr does not expose an AbortSignal, so this cannot
+ * interrupt a synchronous decoder internally; it does release the queue lease
+ * and lets the scheduler move on as soon as the parser yields. The late parser
+ * result is deliberately ignored by the caller and can never be persisted.
+ */
+async function parseWithCancellation(
+  absoluteFilePath: string,
+  parser: RawImageMetadataParser,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  if (signal?.aborted) throw abortError();
+  const parsePromise = Promise.resolve().then(() => parser.parse(absoluteFilePath, {
+    tiff: true,
+    exif: true,
+    iptc: true,
+    xmp: true,
+  }));
+  if (!signal) return parsePromise;
+
+  return new Promise<unknown>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(abortError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void parsePromise.then(
+      (output) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(output);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+export async function extractRawImageMetadataDetailed(
+  absoluteFilePath: string,
+  parser: RawImageMetadataParser = requireExifr(),
+  signal?: AbortSignal,
+): Promise<RawImageMetadataExtractionResult> {
+  try {
+    const output = await parseWithCancellation(absoluteFilePath, parser, signal);
+    const metadata = normalizeRawImageMetadata(output);
+    return hasRawImageMetadata(metadata)
+      ? { status: 'metadata', metadata }
+      : { status: 'empty' };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    return { status: 'failed', error };
+  }
+}
+
 export async function extractRawImageMetadata(
   absoluteFilePath: string,
   parser: RawImageMetadataParser = requireExifr(),
 ): Promise<RawImageMetadata | null> {
-  try {
-    const output = await parser.parse(absoluteFilePath, {
-      tiff: true,
-      exif: true,
-      iptc: true,
-      xmp: true,
-    });
-    const metadata = normalizeRawImageMetadata(output);
-    return hasRawImageMetadata(metadata) ? metadata : null;
-  } catch {
-    return null;
-  }
+  const result = await extractRawImageMetadataDetailed(absoluteFilePath, parser);
+  return result.status === 'metadata' ? result.metadata : null;
 }

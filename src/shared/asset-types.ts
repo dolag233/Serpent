@@ -371,6 +371,8 @@ export const extractedMetadataResultSchema = z.strictObject({
   assetId: nonBlankString,
   status: z.enum(['ready', 'pending', 'failed', 'missing']),
   metadata: extractedVideoMetadataSchema.nullable(),
+  /** Header-only image dimensions are useful for layout, but not Inspector-complete. */
+  metadataCompleteness: z.enum(['complete', 'header-only']).default('complete'),
   errorCode: z.string().nullable().optional().default(null),
 });
 

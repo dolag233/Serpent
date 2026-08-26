@@ -462,6 +462,8 @@ const FFMPEG_VERSION = '8.1';
  */
 const MEDIA_JOB_LEASE_DURATION_MS = 60_000;
 const MEDIA_RESOURCE_RETRY_DELAY_MS = 30_000;
+const RAW_IMAGE_METADATA_RETRY_DELAY_MS = 30_000;
+const RAW_IMAGE_METADATA_MAX_ATTEMPTS = 3;
 /** Opaque ≈4:3 light-stage covers (Serpent-dxk); stale strip/dark covers requeue. */
 const AUDIO_WAVEFORM_GENERATOR = `ffmpeg@${FFMPEG_VERSION}+${AUDIO_WAVEFORM_COVER_GENERATOR_TAG}`;
 const MAX_WEBM_PROXY_BYTES = 512 * 1024 * 1024;
@@ -539,6 +541,8 @@ function safeMediaJobErrorDetail(errorCode: string): string {
       return 'The OpenImageIO component is unavailable. Reinstall or repair Serpent.';
     case 'STALE_REVISION':
       return 'The source changed before media processing finished. Retry the current revision.';
+    case 'RAW_METADATA_EXTRACTION_FAILED':
+      return 'Camera metadata extraction failed; the job will retry after a backoff.';
     case 'PALETTE_SOURCE_NOT_READY':
       return 'The current preview image is not ready. Regenerate the thumbnail or video poster first.';
     case 'PALETTE_EXTRACTION_FAILED':
@@ -638,7 +642,9 @@ import type {
 import { assetAuthorSchema, sourcePageUrlSchema } from '../shared/protocol/requests';
 import { extractAuthorFromExif } from './author-from-exif';
 import {
+  extractRawImageMetadataDetailed,
   extractRawImageMetadata,
+  normalizeRawImageMetadata,
   type RawImageMetadata,
   type RawImageMetadataParser,
 } from './raw-image-metadata';
@@ -4329,6 +4335,8 @@ interface MediaExecutionContext {
   signal?: AbortSignal;
   /** Queue-owned video metadata is a separate durable job. */
   includeVideoMetadata?: boolean;
+  /** Queue-owned RAW metadata is a separate low-priority durable job. */
+  includeRawMetadata?: boolean;
   /** Visible image cards may use the bounded interactive Sharp lane. */
   lane?: MediaDecodeLane;
   /** Source facts already read during queue admission; avoids a second probe. */
@@ -17000,6 +17008,7 @@ export class LibraryService {
         assetId: input.assetId,
         status: 'missing',
         metadata: null,
+        metadataCompleteness: 'complete',
         errorCode: null,
       };
     }
@@ -17016,6 +17025,7 @@ export class LibraryService {
         assetId: input.assetId,
         status,
         metadata: null,
+        metadataCompleteness: 'complete',
         errorCode: artifact.errorCode,
       };
     }
@@ -17032,6 +17042,7 @@ export class LibraryService {
           assetId: input.assetId,
           status: 'failed',
           metadata: null,
+          metadataCompleteness: 'complete',
           errorCode: 'EXTRACTED_METADATA_INVALID',
         };
       }
@@ -17039,6 +17050,9 @@ export class LibraryService {
         assetId: input.assetId,
         status: 'ready',
         metadata: parsed.data as ExtractedVideoMetadata,
+        metadataCompleteness: artifact.generatorVersion.startsWith('image-header@')
+          ? 'header-only'
+          : 'complete',
         errorCode: null,
       };
     } catch {
@@ -17046,6 +17060,7 @@ export class LibraryService {
         assetId: input.assetId,
         status: 'failed',
         metadata: null,
+        metadataCompleteness: 'complete',
         errorCode: 'EXTRACTED_METADATA_UNREADABLE',
       };
     }
@@ -19594,7 +19609,16 @@ export class LibraryService {
     const colorSpaceOverride = mediaType === 'image'
       ? this.getColorSpaceOverride(openLibrary.connection, input.assetId)
       : null;
-    const tiffHeaderSize = isTiffExtension(ext)
+    const hasSourceDimensions = Number.isSafeInteger(execution.sourceWidth)
+      && Number.isSafeInteger(execution.sourceHeight)
+      && execution.sourceWidth! > 0
+      && execution.sourceHeight! > 0;
+    // RAW files commonly use a TIFF-compatible header. Probe it once before
+    // the card route so layout gets source dimensions without making the
+    // embedded-JPEG path read the source a second time. A queued card already
+    // carrying header dimensions skips this I/O entirely.
+    const tiffHeaderSize = (isTiffExtension(ext) || isRawImageExtension(ext))
+      && !hasSourceDimensions
       ? await readImageDimensions(assetPath)
       : null;
     const sourceExecution: MediaExecutionContext = {
@@ -19605,8 +19629,8 @@ export class LibraryService {
     };
     const safeTiffForSharp = isBoundedTiffForSharp({
       sourceByteSize: assetRow.source_byte_size,
-      width: tiffHeaderSize?.width,
-      height: tiffHeaderSize?.height,
+      width: tiffHeaderSize?.width ?? execution.sourceWidth,
+      height: tiffHeaderSize?.height ?? execution.sourceHeight,
     });
     if (
       (
@@ -21803,6 +21827,266 @@ export class LibraryService {
     ).run(randomUUID(), openLibrary.summary.libraryId, assetId, revisionId, priority, now, now);
   }
 
+  /**
+   * Enqueue bounded RAW technical-metadata work without coupling it to the
+   * card thumbnail. Header-only artifacts are intentionally not terminal:
+   * they provide layout dimensions, but the Inspector still needs the later
+   * EXIF/IPTC/XMP projection. A successful no-metadata job is terminal at the
+   * job layer so unsupported/metadata-less camera files do not requeue on
+   * every browse refresh. The queue also persists a normalized, empty
+   * metadata artifact so the terminal state is visible to readers.
+   */
+  private enqueueRawImageMetadataJobs(
+    openLibrary: OpenLibrary,
+    options: { assetIds?: readonly string[]; limit?: number } = {},
+  ): number {
+    const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
+    if (options.assetIds !== undefined && selectedIds.length === 0) return 0;
+    const selectedSql = selectedIds.length > 0
+      ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const rawExtensionSql = RAW_IMAGE_EXTENSIONS
+      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+      .join(' OR ');
+    // Metadata is a secondary Inspector aid. Keep each enqueue call bounded;
+    // the regular background scheduler will admit the next batch after the
+    // primary thumbnail wave yields.
+    const limit = options.limit === undefined
+      ? 256
+      : Math.max(1, Math.min(500, Math.trunc(options.limit)));
+    const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
+    const retryRows = openLibrary.connection
+      .prepare(
+        `SELECT j.job_id
+           FROM jobs j
+           JOIN assets a ON a.asset_id = j.asset_id
+          WHERE j.library_id = ?
+            AND j.kind = 'extract_metadata'
+            AND j.status = 'failed'
+            AND j.error_code = 'RAW_METADATA_EXTRACTION_FAILED'
+            AND j.attempt_count < ?
+            AND j.updated_at <= ?
+            AND a.deleted_at IS NULL
+            AND a.current_revision_id = j.revision_id
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_folders loff
+               WHERE loff.folder_id = a.linked_folder_id
+                 AND loff.status = 'offline'
+            )
+            AND (${rawExtensionSql})
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts complete_metadata
+               WHERE complete_metadata.revision_id = a.current_revision_id
+                 AND complete_metadata.kind = 'extracted_metadata'
+                 AND complete_metadata.status = 'ready'
+                 AND complete_metadata.invalidated_at IS NULL
+                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts failed_metadata
+               WHERE failed_metadata.revision_id = a.current_revision_id
+                 AND failed_metadata.kind = 'extracted_metadata'
+                 AND failed_metadata.status = 'failed'
+                 AND failed_metadata.invalidated_at IS NULL
+            )
+          ORDER BY j.updated_at, j.job_id
+          LIMIT ?`,
+      )
+      .all(
+        openLibrary.summary.libraryId,
+        RAW_IMAGE_METADATA_MAX_ATTEMPTS,
+        retryCutoff,
+        ...selectedIds,
+        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        limit,
+      ) as Array<{ job_id: string }>;
+    const now = new Date().toISOString();
+    let enqueued = 0;
+    const requeue = openLibrary.connection.prepare(
+      `UPDATE jobs
+          SET status = 'queued', progress = 0.0,
+              error_code = NULL, error_detail = NULL, updated_at = ?
+        WHERE job_id = ? AND status = 'failed'`,
+    );
+    openLibrary.connection.transaction(() => {
+      for (const row of retryRows) {
+        enqueued += requeue.run(now, row.job_id).changes;
+      }
+    })();
+
+    const remainingLimit = Math.max(0, limit - enqueued);
+    if (remainingLimit === 0) return enqueued;
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT a.asset_id, a.current_revision_id
+           FROM assets a
+          WHERE a.deleted_at IS NULL
+            AND a.current_revision_id IS NOT NULL
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_folders loff
+               WHERE loff.folder_id = a.linked_folder_id
+                 AND loff.status = 'offline'
+            )
+            AND (${rawExtensionSql})
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+            AND NOT EXISTS (
+              SELECT 1 FROM jobs active
+               WHERE active.library_id = ?
+                 AND active.asset_id = a.asset_id
+                 AND active.revision_id = a.current_revision_id
+                 AND active.kind = 'extract_metadata'
+                 AND active.status IN ('queued', 'running', 'paused')
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM jobs terminal
+               WHERE terminal.library_id = ?
+                 AND terminal.asset_id = a.asset_id
+                 AND terminal.revision_id = a.current_revision_id
+                 AND terminal.kind = 'extract_metadata'
+                 AND terminal.status = 'succeeded'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM jobs failed_retry
+               WHERE failed_retry.library_id = ?
+                 AND failed_retry.asset_id = a.asset_id
+                 AND failed_retry.revision_id = a.current_revision_id
+                 AND failed_retry.kind = 'extract_metadata'
+                 AND failed_retry.status = 'failed'
+                 AND failed_retry.error_code = 'RAW_METADATA_EXTRACTION_FAILED'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts complete_metadata
+               WHERE complete_metadata.revision_id = a.current_revision_id
+                 AND complete_metadata.kind = 'extracted_metadata'
+                 AND complete_metadata.status = 'ready'
+                 AND complete_metadata.invalidated_at IS NULL
+                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts failed_metadata
+               WHERE failed_metadata.revision_id = a.current_revision_id
+                 AND failed_metadata.kind = 'extracted_metadata'
+                 AND failed_metadata.status = 'failed'
+                 AND failed_metadata.invalidated_at IS NULL
+            )
+          ORDER BY a.created_at DESC, a.relative_file_path
+          LIMIT ?`,
+      )
+      .all(
+        ...selectedIds,
+          ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        openLibrary.summary.libraryId,
+        openLibrary.summary.libraryId,
+        openLibrary.summary.libraryId,
+        remainingLimit,
+      ) as Array<{ asset_id: string; current_revision_id: string }>;
+    if (rows.length === 0) return enqueued;
+
+    const insert = openLibrary.connection.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority,
+          progress, attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'extract_metadata', 'queued', -25, 0.0, 0, ?, ?)`,
+    );
+    openLibrary.connection.transaction(() => {
+      for (const row of rows) {
+        const admission = admitArtifactJob({
+          assetId: row.asset_id,
+          revisionId: row.current_revision_id,
+          currentRevisionId: row.current_revision_id,
+          mediaType: 'image',
+          jobKind: 'extract_metadata',
+          availability: 'available',
+          ignored: false,
+          readyArtifact: false,
+          failedArtifact: false,
+          activeJob: false,
+        });
+        if (!admission.admitted) continue;
+        enqueued += insert.run(
+          randomUUID(),
+          openLibrary.summary.libraryId,
+          row.asset_id,
+          row.current_revision_id,
+          now,
+          now,
+        ).changes;
+      }
+    })();
+    return enqueued;
+  }
+
+  /**
+   * Admit the next bounded RAW metadata batch for the idle secondary pump.
+   * This is intentionally separate from visible thumbnail admission so a
+   * large RAW catalogue is eventually drained without expanding the card
+   * queue or putting EXIF work on the first-content path.
+   */
+  enqueueRawImageMetadataBackfill(libraryId: string, limit = 256): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return 0;
+    return this.enqueueRawImageMetadataJobs(openLibrary, { limit });
+  }
+
+  /** Return the delay before an eligible transient RAW metadata failure may retry. */
+  rawImageMetadataRetryDelayMs(libraryId: string): number | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    // Leniently opened pre-status libraries cannot have durable metadata job
+    // state. The secondary scheduler must treat them as having no retryable
+    // RAW work instead of issuing a schema-incompatible query on every pump.
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return null;
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT MIN(j.updated_at) AS updated_at
+           FROM jobs j
+           JOIN assets a ON a.asset_id = j.asset_id
+          WHERE j.library_id = ?
+            AND j.kind = 'extract_metadata'
+            AND j.status = 'failed'
+            AND j.error_code = 'RAW_METADATA_EXTRACTION_FAILED'
+            AND j.attempt_count < ?
+            AND a.deleted_at IS NULL
+            AND a.current_revision_id = j.revision_id
+            AND a.availability = 'available'
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_folders loff
+               WHERE loff.folder_id = a.linked_folder_id
+                 AND loff.status = 'offline'
+            )
+            AND (${RAW_IMAGE_EXTENSIONS.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts complete_metadata
+               WHERE complete_metadata.revision_id = a.current_revision_id
+                 AND complete_metadata.kind = 'extracted_metadata'
+                 AND complete_metadata.status = 'ready'
+                 AND complete_metadata.invalidated_at IS NULL
+                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts failed_metadata
+               WHERE failed_metadata.revision_id = a.current_revision_id
+                 AND failed_metadata.kind = 'extracted_metadata'
+                 AND failed_metadata.status = 'failed'
+                 AND failed_metadata.invalidated_at IS NULL
+            )`,
+      )
+      .get(
+        openLibrary.summary.libraryId,
+        RAW_IMAGE_METADATA_MAX_ATTEMPTS,
+        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+      ) as { updated_at: string | null } | undefined;
+    if (!row?.updated_at) return null;
+    const updatedAt = Date.parse(row.updated_at);
+    if (!Number.isFinite(updatedAt)) return null;
+    return Math.max(0, updatedAt + RAW_IMAGE_METADATA_RETRY_DELAY_MS - Date.now());
+  }
+
   private enqueuePaletteJob(
     openLibrary: OpenLibrary,
     assetId: string,
@@ -22277,6 +22561,65 @@ export class LibraryService {
       resolveFfprobePath(),
       execution,
     );
+    return true;
+  }
+
+  private async generateQueuedRawImageMetadata(
+    libraryId: string,
+    assetId: string,
+    queuedRevisionId: string,
+    execution: MediaExecutionContext,
+  ): Promise<boolean> {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const asset = openLibrary.connection
+      .prepare(
+        'SELECT relative_file_path, current_revision_id FROM assets WHERE asset_id = ?',
+      )
+      .get(assetId) as {
+        relative_file_path: string;
+        current_revision_id: string | null;
+      } | undefined;
+    if (!asset?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
+    if (asset.current_revision_id !== queuedRevisionId) return false;
+    if (!isRawImageExtension(asset.relative_file_path)) return false;
+
+    const assetPath = this.resolveAssetPath(libraryId, assetId);
+    const extraction = await extractRawImageMetadataDetailed(
+      assetPath,
+      this.options.rawImageMetadataParser,
+      execution.signal,
+    );
+    const current = openLibrary.connection
+      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { current_revision_id: string | null } | undefined;
+    if (execution.signal?.aborted) {
+      throw new DOMException('RAW metadata extraction cancelled.', 'AbortError');
+    }
+    if (current?.current_revision_id !== queuedRevisionId) return false;
+    if (extraction.status === 'failed') {
+      throw new Error('RAW image metadata extraction failed.', {
+        cause: extraction.error,
+      });
+    }
+    const metadata = extraction.status === 'metadata'
+      ? extraction.metadata
+      : normalizeRawImageMetadata({
+        width: execution.sourceWidth ?? null,
+        height: execution.sourceHeight ?? null,
+      });
+    const persisted = await this.persistRawImageMetadata(
+      openLibrary,
+      queuedRevisionId,
+      assetPath,
+      metadata,
+      {
+        width: execution.sourceWidth,
+        height: execution.sourceHeight,
+      },
+    );
+    if (!persisted) {
+      throw new Error('RAW image metadata artifact could not be persisted.');
+    }
     return true;
   }
 
@@ -22944,13 +23287,18 @@ export class LibraryService {
         throw new DOMException('Media job cancelled after embedded RAW thumbnail generation.', 'AbortError');
       }
 
-      const rawMetadata = await extractRawImageMetadata(
-        assetPath,
-        this.options.rawImageMetadataParser,
-      );
-      const headerSize = await readImageDimensions(assetPath);
-      const sourceWidth = rawMetadata?.width ?? headerSize?.width ?? embeddedDimensions.width;
-      const sourceHeight = rawMetadata?.height ?? headerSize?.height ?? embeddedDimensions.height;
+      const rawMetadata = execution.includeRawMetadata === false
+        ? null
+        : await extractRawImageMetadata(
+          assetPath,
+          this.options.rawImageMetadataParser,
+        );
+      const sourceWidth = rawMetadata?.width
+        ?? execution.sourceWidth
+        ?? embeddedDimensions.width;
+      const sourceHeight = rawMetadata?.height
+        ?? execution.sourceHeight
+        ?? embeddedDimensions.height;
       const outputStat = statSync(artifactAbsPath);
       openLibrary.connection
         .prepare(
@@ -22970,7 +23318,10 @@ export class LibraryService {
           new Date().toISOString(),
         );
       if (rawMetadata) {
-        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
+        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata, {
+          width: execution.sourceWidth,
+          height: execution.sourceHeight,
+        });
       }
       return { artifactId };
     } catch (error) {
@@ -23094,7 +23445,7 @@ export class LibraryService {
       }
 
       const outputStat = statSync(artifactAbsPath);
-      const rawMetadata = isRawAsset && !isViewerImage
+      const rawMetadata = isRawAsset && !isViewerImage && execution.includeRawMetadata !== false
         ? await extractRawImageMetadata(
           assetPath,
           this.options.rawImageMetadataParser,
@@ -23115,7 +23466,10 @@ export class LibraryService {
               : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
       if (rawMetadata) {
-        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
+        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata, {
+          width: execution.sourceWidth,
+          height: execution.sourceHeight,
+        });
       }
 
       return { artifactId };
@@ -23175,7 +23529,8 @@ export class LibraryService {
     revisionId: string,
     assetPath: string,
     metadata: RawImageMetadata,
-  ): Promise<void> {
+    knownDimensions?: { width?: number | null; height?: number | null },
+  ): Promise<boolean> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     const artifactRelPath = `${artifactId}.json`;
@@ -23183,7 +23538,13 @@ export class LibraryService {
     try {
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
-      const headerSize = await readImageDimensions(assetPath);
+      const hasKnownDimensions = Number.isSafeInteger(knownDimensions?.width)
+        && Number.isSafeInteger(knownDimensions?.height)
+        && knownDimensions!.width! > 0
+        && knownDimensions!.height! > 0;
+      const headerSize = hasKnownDimensions
+        ? { width: knownDimensions!.width!, height: knownDimensions!.height! }
+        : await readImageDimensions(assetPath);
       const now = new Date().toISOString();
       openLibrary.connection.transaction(() => {
         openLibrary.connection
@@ -23211,14 +23572,16 @@ export class LibraryService {
             metadata.height ?? headerSize?.height ?? null,
             'exifr@7.1.3;raw-image-metadata-v1',
             now,
-          );
+        );
       })();
+      return true;
     } catch (error) {
       rmSync(artifactAbsPath, { force: true });
       this.diagnose('image.raw-metadata', error, {
         revisionId,
         extension: path.extname(assetPath).toLowerCase(),
       });
+      return false;
     }
   }
 
@@ -26899,6 +27262,14 @@ export class LibraryService {
       );
     }
 
+    // RAW card generation is deliberately independent from the EXIF/IPTC/XMP
+    // parser. Keep the metadata admission bounded and lower priority so the
+    // embedded-JPEG/OIIO card path is the first useful result after open.
+    enqueued += this.enqueueRawImageMetadataJobs(openLibrary, {
+      ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
+      ...(limit === undefined ? {} : { limit }),
+    });
+
     // Native audio is source-first just like native video. Its waveform cover
     // and viewer strip are still generated above, but an Ogg playback proxy is
     // not useful until the browser actually reports a source decode failure.
@@ -27448,14 +27819,21 @@ export class LibraryService {
       );
       const currentArtifact = claimAsset?.current_revision_id === job.revision_id
         && claimArtifactKind
-        ? openLibrary.connection
-          .prepare(
-            `SELECT status FROM revision_artifacts
+          ? openLibrary.connection
+            .prepare(
+            `SELECT status, generator_version FROM revision_artifacts
                WHERE revision_id = ? AND kind = ? AND invalidated_at IS NULL
                LIMIT 1`,
-          )
-          .get(job.revision_id, claimArtifactKind) as { status: string } | undefined
+            )
+            .get(job.revision_id, claimArtifactKind) as {
+              status: string;
+              generator_version: string;
+            } | undefined
         : undefined;
+      const headerOnlyImageMetadata = job.kind === 'extract_metadata'
+        && claimMediaType === 'image'
+        && currentArtifact?.status === 'ready'
+        && currentArtifact.generator_version.startsWith('image-header@');
       const siblingJob = openLibrary.connection
         .prepare(
           `SELECT 1 FROM jobs
@@ -27483,7 +27861,7 @@ export class LibraryService {
         explicitRequest: job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER,
         readyArtifact: isImportedThumbnailNormalization
           ? false
-          : currentArtifact?.status === 'ready',
+          : currentArtifact?.status === 'ready' && !headerOnlyImageMetadata,
         failedArtifact: currentArtifact?.status === 'failed',
         retryFailed: true,
         activeJob: siblingJob !== undefined,
@@ -27637,6 +28015,7 @@ export class LibraryService {
                   {
                     signal: controller.signal,
                     includeVideoMetadata: false,
+                    includeRawMetadata: false,
                     sourceByteSize: claimAsset?.source_byte_size,
                     sourceWidth: claimAsset?.source_width,
                     sourceHeight: claimAsset?.source_height,
@@ -27693,9 +28072,20 @@ export class LibraryService {
             });
           }
         } else if (job.kind === 'extract_metadata') {
-          const current = await this.generateQueuedVideoMetadata(
-            libraryId, job.asset_id, job.revision_id, { signal: controller.signal },
-          );
+          const current = claimMediaType === 'image'
+            ? await this.generateQueuedRawImageMetadata(
+              libraryId,
+              job.asset_id,
+              job.revision_id,
+              {
+                signal: controller.signal,
+                sourceWidth: claimAsset?.source_width,
+                sourceHeight: claimAsset?.source_height,
+              },
+            )
+            : await this.generateQueuedVideoMetadata(
+              libraryId, job.asset_id, job.revision_id, { signal: controller.signal },
+            );
           if (!current) {
             openLibrary.connection.prepare(
               "UPDATE jobs SET status = 'cancelled', error_code = 'STALE_REVISION', updated_at = ? WHERE job_id = ?",
@@ -27916,12 +28306,14 @@ export class LibraryService {
           .get(job.revision_id, failedKind, failedKind) as { error_code: string | null } | undefined;
         const errorCode = isImportedThumbnailNormalization
           ? IMPORTED_THUMBNAIL_NORMALIZATION_JOB
-          : failedArtifact?.error_code
-            ?? (job.kind === 'generate_thumbnail'
-              ? 'THUMBNAIL_GENERATION_FAILED'
-              : job.kind === 'extract_palette'
-                ? 'PALETTE_EXTRACTION_FAILED'
-                : 'MEDIA_PROCESSING_FAILED');
+          : job.kind === 'extract_metadata' && claimMediaType === 'image'
+            ? 'RAW_METADATA_EXTRACTION_FAILED'
+            : failedArtifact?.error_code
+              ?? (job.kind === 'generate_thumbnail'
+                ? 'THUMBNAIL_GENERATION_FAILED'
+                : job.kind === 'extract_palette'
+                  ? 'PALETTE_EXTRACTION_FAILED'
+                  : 'MEDIA_PROCESSING_FAILED');
         openLibrary.connection
           .prepare(
             `UPDATE jobs

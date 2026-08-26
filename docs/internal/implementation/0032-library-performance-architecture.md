@@ -576,6 +576,10 @@ type PerformanceSpan = {
 - Sharp、OIIO、FFmpeg 共用进程级 native 内存准入预算；已知超大 OIIO 输入在 spawn 前拒绝，
   估算预算不替代操作系统 cgroup。
 - RAW 内嵌预览、复杂图像 viewer-image、原生视频直放和代理 fallback 分开。
+- RAW 卡片只负责尽快发布内嵌 JPEG/OIIO 预览；EXIF/IPTC/XMP 技术元数据必须作为独立、低优先级
+  `extract_metadata` job 渐进完成，不能重新阻塞 card-thumbnail 的首屏路径。header-only
+  尺寸 artifact 不是完整元数据终态，metadata-less 文件则以成功 job 终态去重，避免每次刷新
+  无限重排。
 - Eagle/Billfish 导入保留 copy-first 首屏，超出 512 边长或字节预算的外部预览在后台
   有界归一化；旧 artifact 在新 artifact 事务提交前保持可用。
 - PreviewCache 增加观测与按库预算；生成器版本变更只失效相关 artifact。
@@ -610,6 +614,13 @@ FFmpeg 解码路径统一受每个 Library Worker 384 MiB 的估算 native admis
 TIFF/图像尺寸探针为异步；普通 TIFF 在源 ≤16MiB、≤16MP 且有界 IFD 时走 Sharp，超限或未知
 TIFF 走 OIIO。该结果不覆盖 100k、Windows、NAS/SMB、packaged 或人工验收，D.6 仍不可标记
 为 accepted。
+
+D.4 后续收口还将 RAW 卡片与技术元数据解析拆成两个 lane：队列 primary 明确关闭 RAW
+`exifr`，卡片成功后由有界 secondary `extract_metadata` 任务补齐 Inspector 字段；直接调用
+仍保留兼容的同步元数据行为。metadata-less 文件会持久化规范化空 artifact，header-only artifact
+只供布局使用，不会阻止后续补齐；取消只保证队列等待者立即释放，不能中断已经进入 exifr 的
+同步内部解析。这样“内嵌 JPEG 很快”不再被大 EXIF/IPTC/XMP 块抵消。当前只用 crafted ARW
+注入阻塞 parser 证明时序，真实相机格式矩阵和跨平台/packaged 仍未验证。
 
 阶段 D.7 已接入远程 SQLite 元数据本地快照读写分离、cache-first 的窄 browse cursor/size/mtime
 校验、不可变 generation + manifest 指针、SHA-256/size、`quick_check`、缓存预算、失效重建和

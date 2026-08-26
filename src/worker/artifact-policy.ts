@@ -146,7 +146,13 @@ export function artifactRoleForJob(
     case 'generate_audio_proxy':
       return mediaType === 'audio' ? 'playback-proxy' : null;
     case 'extract_metadata':
-      return mediaType === 'video' ? 'technical-metadata' : null;
+      // Video ffprobe and camera-image EXIF/IPTC/XMP extraction share the
+      // durable technical-metadata role. The queue still decides which
+      // extractor to run from the source extension; keeping the role mapping
+      // media-type aware lets both paths use the same claim/failure fencing.
+      return mediaType === 'video' || mediaType === 'image'
+        ? 'technical-metadata'
+        : null;
     case 'extract_palette':
       return VISUAL_MEDIA_TYPES.has(mediaType) ? 'palette' : null;
   }
@@ -168,7 +174,10 @@ export function artifactKindForJob(
     case 'generate_contact_sheet': return mediaType === 'video' ? 'contact_sheet' : null;
     case 'generate_webm_proxy': return mediaType === 'video' ? 'webm_proxy' : null;
     case 'generate_audio_proxy': return mediaType === 'audio' ? 'audio_proxy' : null;
-    case 'extract_metadata': return mediaType === 'video' ? 'extracted_metadata' : null;
+    case 'extract_metadata':
+      return mediaType === 'video' || mediaType === 'image'
+        ? 'extracted_metadata'
+        : null;
     case 'extract_palette': return VISUAL_MEDIA_TYPES.has(mediaType) ? 'extracted_palette' : null;
   }
 }

@@ -1148,6 +1148,25 @@ const secondaryMediaIdleUntil = new Map<string, number>();
 const rescheduledSecondaryMediaQueues = new Set<string>();
 const urgentSecondaryMediaQueues = new Set<string>();
 const urgentSecondaryMediaAssetIds = new Map<string, Set<string>>();
+const secondaryMediaRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const secondaryMediaFairnessTurns = new Map<string, number>();
+const RAW_METADATA_BACKFILL_BATCH_SIZE = 256;
+
+function cancelSecondaryMediaRetry(libraryId: string): void {
+  const timer = secondaryMediaRetryTimers.get(libraryId);
+  if (timer !== undefined) clearTimeout(timer);
+  secondaryMediaRetryTimers.delete(libraryId);
+}
+
+function scheduleSecondaryMediaRetry(libraryId: string, delayMs: number): void {
+  if (secondaryMediaRetryTimers.has(libraryId)) return;
+  const timer = setTimeout(() => {
+    secondaryMediaRetryTimers.delete(libraryId);
+    if (automaticMediaAdmissionAllowed(libraryId)) scheduleSecondaryMediaQueue(libraryId);
+  }, Math.max(250, delayMs));
+  timer.unref?.();
+  secondaryMediaRetryTimers.set(libraryId, timer);
+}
 
 function noteInteractiveMediaRequest(
   libraryId: string,
@@ -1220,6 +1239,8 @@ function cancelAutomaticMediaForLibrary(libraryId: string): void {
   const secondaryController = activeSecondaryMediaQueueControllers.get(libraryId);
   if (secondaryController) secondaryController.abort();
   rescheduledSecondaryMediaQueues.delete(libraryId);
+  cancelSecondaryMediaRetry(libraryId);
+  secondaryMediaFairnessTurns.delete(libraryId);
   secondaryMediaIdleUntil.delete(libraryId);
   urgentSecondaryMediaQueues.delete(libraryId);
   urgentSecondaryMediaAssetIds.delete(libraryId);
@@ -1235,6 +1256,7 @@ function scheduleSecondaryMediaQueue(
   options: { urgent?: boolean; assetId?: string } = {},
 ): void {
   if (!automaticMediaAdmissionAllowed(libraryId)) return;
+  cancelSecondaryMediaRetry(libraryId);
   if (options.urgent) {
     // An explicit viewer fallback is a user-visible recovery path, not an
     // automatic derivative. Let it bypass the idle window so a queued proxy
@@ -1319,22 +1341,50 @@ function scheduleSecondaryMediaQueue(
     }
     try {
       const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
-      const processed = await libraryService.processThumbnailQueue(libraryId, {
-        maxJobs: 1,
-        jobKinds: SECONDARY_MEDIA_JOB_KINDS,
-        ...(urgentAssetIds && urgentAssetIds.size > 0
-          ? { assetIds: [...urgentAssetIds] }
-          : {}),
-        signal: queueController.signal,
-        onDerivedReady: (event) => {
-          parentPort?.postMessage({
-            type: 'asset.derived.ready',
-            libraryId,
-            assetId: event.assetId,
-            kind: event.kind,
-          });
-        },
-      });
+      let admittedRawMetadata = 0;
+      if (!urgent) {
+        // A startup scene only admits one bounded RAW batch. Keep admitting
+        // the next batch here after the current secondary queue drains so a
+        // 50k-camera library eventually reaches every Inspector record.
+        admittedRawMetadata = libraryService.enqueueRawImageMetadataBackfill(
+          libraryId,
+          RAW_METADATA_BACKFILL_BATCH_SIZE,
+        );
+      }
+      const fairnessTurn = (secondaryMediaFairnessTurns.get(libraryId) ?? 0) + 1;
+      secondaryMediaFairnessTurns.set(libraryId, fairnessTurn);
+      // Palette/proxy jobs can be numerous and have a higher historical
+      // priority. Every fourth normal turn explicitly services metadata so
+      // RAW Inspector work cannot be starved while keeping the ordinary
+      // secondary ordering for the other three turns.
+      const preferRawMetadata = !urgent && fairnessTurn % 4 === 0;
+      const runSecondaryJobs = (
+        jobKinds: typeof SECONDARY_MEDIA_JOB_KINDS | readonly ['extract_metadata'],
+      ) =>
+        libraryService.processThumbnailQueue(libraryId, {
+          maxJobs: 1,
+          jobKinds,
+          ...(urgentAssetIds && urgentAssetIds.size > 0
+            ? { assetIds: [...urgentAssetIds] }
+            : {}),
+          signal: queueController.signal,
+          onDerivedReady: (event) => {
+            parentPort?.postMessage({
+              type: 'asset.derived.ready',
+              libraryId,
+              assetId: event.assetId,
+              kind: event.kind,
+            });
+          },
+        });
+      let processed = await runSecondaryJobs(
+        preferRawMetadata ? ['extract_metadata'] : SECONDARY_MEDIA_JOB_KINDS,
+      );
+      if (processed === 0 && preferRawMetadata && !queueController.signal.aborted) {
+        // No metadata was ready for this fairness turn; let palette/proxy
+        // work make progress instead of treating the empty lane as drained.
+        processed = await runSecondaryJobs(SECONDARY_MEDIA_JOB_KINDS);
+      }
       if (mediaResourceGuard.isCoolingDown()) {
         scheduleMediaResourceRetry(libraryId);
         if (urgent) {
@@ -1347,6 +1397,17 @@ function scheduleSecondaryMediaQueue(
       if (processed > 0 && !queueController.signal.aborted) {
         setTimeout(() => void runOne(), 50);
         return;
+      }
+      if (!urgent && !queueController.signal.aborted) {
+        const retryDelay = libraryService.rawImageMetadataRetryDelayMs(libraryId);
+        if (retryDelay !== null) scheduleSecondaryMediaRetry(libraryId, retryDelay);
+        // `admittedRawMetadata` is intentionally read here: if a new batch
+        // was admitted but no job was claimable, keep the pump alive for one
+        // more turn so a race with a terminal artifact cannot strand it.
+        if (admittedRawMetadata > 0) {
+          setTimeout(() => void runOne(), 50);
+          return;
+        }
       }
       if (urgent) {
         // `assetIds` scopes the claim to the explicit fallback set. A zero
@@ -4582,6 +4643,7 @@ parentPort.on('message', async (event) => {
         ...activeThumbnailQueueControllers.keys(),
         ...activeSecondaryMediaQueues,
         ...activeSecondaryMediaQueueControllers.keys(),
+        ...secondaryMediaRetryTimers.keys(),
         ...pendingThumbnailQueueAborts,
       ])) {
         cancelAutomaticMediaForLibrary(libraryId);

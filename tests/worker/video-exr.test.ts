@@ -1975,6 +1975,303 @@ describe('EXR/TGA (oiiotool)', () => {
     service.closeAll();
   });
 
+  it('keeps queued RAW card generation independent from EXIF metadata extraction', async () => {
+    const root = temporaryRoot();
+    let metadataStarted!: () => void;
+    const metadataStartedPromise = new Promise<void>((resolve) => {
+      metadataStarted = resolve;
+    });
+    let releaseMetadata!: () => void;
+    const metadataGate = new Promise<void>((resolve) => {
+      releaseMetadata = resolve;
+    });
+    let parserCalls = 0;
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => {
+          parserCalls += 1;
+          metadataStarted();
+          await metadataGate;
+          return {
+            Make: 'Sony',
+            Model: 'ILCE-7RM3',
+            ExifImageWidth: 6000,
+            ExifImageHeight: 4000,
+          };
+        },
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawQueueLanes', selectedParentPath: root });
+    const sourcePath = path.join(root, 'queued.ARW');
+    const embeddedJpeg = await (require('sharp') as (input: Buffer) => {
+      jpeg(options?: { quality?: number }): { toBuffer(): Promise<Buffer> };
+    })(VALID_1X1_PNG).jpeg().toBuffer();
+    writeFileSync(sourcePath, buildRawWithEmbeddedJpeg(embeddedJpeg));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(2);
+    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ assetId: asset.assetId, kind: 'generate_thumbnail', status: 'queued' }),
+        expect.objectContaining({ assetId: asset.assetId, kind: 'extract_metadata', status: 'queued' }),
+      ]),
+    );
+
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+    });
+    expect(parserCalls).toBe(0);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({ status: 'ready', mimeType: 'image/jpeg' });
+
+    const metadataProcessing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    await metadataStartedPromise;
+    expect(parserCalls).toBe(1);
+    // The slow Inspector parser must not hold back the already-published card.
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({ status: 'ready' });
+    releaseMetadata();
+    await metadataProcessing;
+
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toMatchObject({ status: 'ready' });
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(0);
+    service.closeAll();
+  });
+
+  it('distinguishes header-only RAW dimensions from complete Inspector metadata', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({
+          Make: 'Nikon',
+          Model: 'Z 8',
+          ExifImageWidth: 8256,
+          ExifImageHeight: 5504,
+        }),
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawMetadataCompleteness', selectedParentPath: root });
+    const sourcePath = path.join(root, 'header-only.NEF');
+    writeFileSync(sourcePath, buildClassicTiffDimensions(8256, 5504));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const headerArtifactId = randomUUID();
+    const headerArtifactFile = `${headerArtifactId}.json`;
+    const artifactsPath = path.join(created.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsPath, { recursive: true });
+    writeFileSync(
+      path.join(artifactsPath, headerArtifactFile),
+      JSON.stringify({ width: 8256, height: 5504 }),
+      'utf-8',
+    );
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          width, height, generator_version, status, generated_at)
+       VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, 'ready', ?)`,
+    ).run(
+      headerArtifactId,
+      asset.currentRevisionId,
+      Buffer.byteLength(JSON.stringify({ width: 8256, height: 5504 })),
+      headerArtifactFile,
+      8256,
+      5504,
+      'image-header@test',
+      new Date().toISOString(),
+    );
+    db.close();
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'ready',
+      metadataCompleteness: 'header-only',
+      metadata: { width: 8256, height: 5504 },
+    });
+
+    expect(service.enqueueThumbnailJobs(created.libraryId)).toBe(2);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'ready',
+      metadataCompleteness: 'complete',
+      metadata: {
+        width: 8256,
+        height: 5504,
+        cameraMake: 'Nikon',
+        cameraModel: 'Z 8',
+      },
+    });
+    service.closeAll();
+  });
+
+  it('drains RAW metadata beyond the first bounded admission batch', async () => {
+    const root = temporaryRoot();
+    const embeddedJpeg = await (require('sharp') as (input: Buffer) => {
+      jpeg(options?: { quality?: number }): { toBuffer(): Promise<Buffer> };
+    })(VALID_1X1_PNG).jpeg().toBuffer();
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => ({
+          Make: 'Sony',
+          Model: 'ILCE-7RM3',
+          ExifImageWidth: 6000,
+          ExifImageHeight: 4000,
+        }),
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawMetadataBackfill', selectedParentPath: root });
+    for (let index = 0; index < 60; index += 1) {
+      writeFileSync(
+        path.join(root, `camera-${String(index).padStart(2, '0')}.ARW`),
+        buildRawWithEmbeddedJpeg(embeddedJpeg),
+      );
+      importNoConflict(
+        service,
+        created.libraryId,
+        path.join(root, `camera-${String(index).padStart(2, '0')}.ARW`),
+      );
+    }
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(60);
+
+    service.enqueueThumbnailJobs(created.libraryId, { limit: 50 });
+    expect(service.listMediaJobs(created.libraryId).jobs.filter(
+      (job) => job.kind === 'extract_metadata',
+    )).toHaveLength(50);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 100,
+      jobKinds: ['extract_metadata'],
+    });
+
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(10);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 100,
+      jobKinds: ['extract_metadata'],
+    });
+    expect(assets.every((asset) => service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    }).metadataCompleteness === 'complete')).toBe(true);
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(0);
+    service.closeAll();
+  });
+
+  it('retries transient RAW metadata extraction failures after backoff', async () => {
+    const root = temporaryRoot();
+    let parserCalls = 0;
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => {
+          parserCalls += 1;
+          if (parserCalls === 1) throw new Error('temporary metadata I/O failure');
+          return { Make: 'Canon', Model: 'EOS R5', ExifImageWidth: 8192, ExifImageHeight: 5464 };
+        },
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawMetadataRetry', selectedParentPath: root });
+    const sourcePath = path.join(root, 'retry.CR3');
+    writeFileSync(sourcePath, Buffer.from('camera-raw-placeholder'));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    service.enqueueThumbnailJobs(created.libraryId);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    const failedJob = service.listMediaJobs(created.libraryId).jobs.find(
+      (job) => job.kind === 'extract_metadata',
+    )!;
+    expect(failedJob).toMatchObject({
+      status: 'failed',
+      errorCode: 'RAW_METADATA_EXTRACTION_FAILED',
+      attemptCount: 1,
+    });
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId)).toBe(0);
+
+    const db = assertDb(created.libraryPath);
+    db.prepare('UPDATE jobs SET updated_at = ? WHERE job_id = ?')
+      .run(new Date(Date.now() - 31_000).toISOString(), failedJob.jobId);
+    db.close();
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId)).toBe(1);
+    await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+    });
+    expect(parserCalls).toBe(2);
+    expect(service.getExtractedMetadata({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).toMatchObject({
+      status: 'ready',
+      metadataCompleteness: 'complete',
+      metadata: { cameraMake: 'Canon', cameraModel: 'EOS R5' },
+    });
+    service.closeAll();
+  });
+
+  it('returns promptly when a queued RAW metadata parser is cancelled', async () => {
+    const root = temporaryRoot();
+    let metadataStarted!: () => void;
+    const metadataStartedPromise = new Promise<void>((resolve) => {
+      metadataStarted = resolve;
+    });
+    let releaseParser!: () => void;
+    const parserGate = new Promise<void>((resolve) => {
+      releaseParser = resolve;
+    });
+    const service = new LibraryService({
+      rawImageMetadataParser: {
+        parse: async () => {
+          metadataStarted();
+          await parserGate;
+          return { Make: 'Fujifilm', Model: 'GFX', ExifImageWidth: 8256, ExifImageHeight: 5504 };
+        },
+      },
+    });
+    const created = service.createLibrary({ displayName: 'RawMetadataCancel', selectedParentPath: root });
+    const sourcePath = path.join(root, 'cancel.RAF');
+    writeFileSync(sourcePath, Buffer.from('camera-raw-placeholder'));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    service.enqueueThumbnailJobs(created.libraryId);
+    const controller = new AbortController();
+    const processing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['extract_metadata'],
+      signal: controller.signal,
+    });
+    await metadataStartedPromise;
+    const cancelledAt = performance.now();
+    controller.abort();
+    await processing;
+    expect(performance.now() - cancelledAt).toBeLessThan(1_000);
+    expect(service.listMediaJobs(created.libraryId).jobs.find(
+      (job) => job.kind === 'extract_metadata',
+    )).toMatchObject({ status: 'queued' });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toBeNull();
+    releaseParser();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'extracted_metadata'))
+      .toBeNull();
+    service.closeAll();
+  });
+
   it('keeps a RAW thumbnail successful when EXIF metadata is unavailable', async () => {
     process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
     const root = temporaryRoot();

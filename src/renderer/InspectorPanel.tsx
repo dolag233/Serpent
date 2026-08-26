@@ -174,6 +174,8 @@ export interface InspectorPanelProps {
   pluginApi?: SerpentPluginManagerApi;
   libraryId?: string;
   pluginContributionRefreshKey?: string | null;
+  /** Re-read progressive extracted metadata after a secondary job commits. */
+  extractedMetadataRefreshKey?: number;
 }
 
 function InspectorHeroSinglePreview({
@@ -584,6 +586,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     pluginApi,
     libraryId,
     pluginContributionRefreshKey = null,
+    extractedMetadataRefreshKey = 0,
   } = props;
 
   const { locale, t } = useLocale();
@@ -741,10 +744,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
             assetId,
             metadata: result.value.metadata,
           });
-          return;
         }
+        const needsProgressiveMetadata =
+          result.value.status === "ready"
+          && result.value.metadataCompleteness === "header-only";
         if (
-          (result.value.status === "pending" || result.value.status === "missing")
+          (result.value.status === "pending"
+            || result.value.status === "missing"
+            || needsProgressiveMetadata)
           && attempts < maxAttempts
         ) {
           attempts += 1;
@@ -764,6 +771,7 @@ export function InspectorPanel(props: InspectorPanelProps) {
     };
   }, [
     api,
+    extractedMetadataRefreshKey,
     library?.libraryId,
     selectedAsset,
     selectionCount,

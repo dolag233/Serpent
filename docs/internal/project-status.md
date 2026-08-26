@@ -1,6 +1,6 @@
 # Serpent 项目状态
 
-> 更新时间：2026-08-26
+> 更新时间：2026-08-27
 > 事实来源：`docs/internal/implementation/mvp-roadmap.md` 与各切片开发/审查/QA 文档
 
 - **2026-08-24 `Serpent-29125f` 资源库/查看器性能优化**：按基线研究完成开库对账异步
@@ -71,11 +71,16 @@
   2 MiB 新鲜严格基准 3/10，不能宣称 500 ms 门禁通过。
   详见 [阶段 D.3 开发日志](development/2026-08-26-library-performance-architecture-stage-d3-source-direct-development-log.md)。
 
-- **2026-08-26 0032 阶段 D.4 RAW 内嵌预览**：卡片缩略图对 TIFF/IFD 形态的 RAW 先做有界结构扫描，
+- **2026-08-27 0032 阶段 D.4 RAW 内嵌预览**：卡片缩略图对 TIFF/IFD 形态的 RAW 先做有界结构扫描，
   精确读取并复用内嵌 JPEG；读取上限 8 MiB、解码像素上限 16 MP，格式不明确或超限才回退 OIIO。
-  RAW 卡片路径不再先启动无效的 OIIO `--info` 色彩空间探测；查看器仍保留完整 RAW 解码路径。
-  验证：RAW helper 单测 3/3、Worker `video-exr` 56/56、资源库可用性 9 files / 203 tests、
-  typecheck/定向 lint 通过；真实相机 RAW 矩阵与 packaged/Windows 尚未执行。详见
+  RAW 卡片路径不再先启动无效的 OIIO `--info` 色彩空间探测；本轮进一步把 EXIF/IPTC/XMP
+  解析移到独立低优先级 `extract_metadata` job，队列卡片不会等待 Inspector 元数据；查看器
+  仍保留完整 RAW 解码路径。
+  验证：RAW helper 5/5；定向组合回归 4 files / 144 passed；资源库可用性 9 files / 207 passed；
+  完整 Worker 86 files / 1,257 passed / 22 skipped；`npm run test` 记录 484 passed / 15 skipped，
+  另有 4 个既有环境失败，不能记作全绿；真实 Electron `all-images` 基准 10/10（live 19,965，
+  全部图片 p50/p95/max 159.7/228.1/228.1ms，首波 p50/p95/max 159.1/199.6/199.6ms，最终完成 10/10）。
+  真实 RAW 矩阵因未配置样本跳过；packaged/Windows/NAS/SMB/Computer Use 尚未执行。详见
   [阶段 D.4 开发日志](development/2026-08-26-library-performance-architecture-stage-d4-raw-embedded-thumbnail-development-log.md)。
 
 - **2026-08-26 0032 阶段 D.5 外部库缩略图归一化**：Eagle/Billfish 导入仍先原样复制并立即

@@ -8,6 +8,9 @@ import {
   extractRawEmbeddedJpegThumbnail,
   RAW_EMBEDDED_THUMBNAIL_MAX_BYTES,
 } from '../../src/worker/raw-embedded-thumbnail';
+import {
+  extractRawImageMetadataDetailed,
+} from '../../src/worker/raw-image-metadata';
 
 const temporaryRoots: string[] = [];
 
@@ -104,5 +107,41 @@ describe('extractRawEmbeddedJpegThumbnail', () => {
     ]), 'little');
     const oversizedPath = temporaryFile(oversized);
     expect(extractRawEmbeddedJpegThumbnail(oversizedPath)).toBeNull();
+  });
+});
+
+describe('extractRawImageMetadataDetailed', () => {
+  it('separates empty metadata from parser failures', async () => {
+    await expect(extractRawImageMetadataDetailed(
+      '/tmp/metadata-empty.ARW',
+      { parse: async () => ({}) },
+    )).resolves.toEqual({ status: 'empty' });
+
+    const failure = new Error('parser failed');
+    await expect(extractRawImageMetadataDetailed(
+      '/tmp/metadata-failed.ARW',
+      { parse: async () => { throw failure; } },
+    )).resolves.toMatchObject({ status: 'failed', error: failure });
+  });
+
+  it('lets queue cancellation release the caller before a non-cancellable parser settles', async () => {
+    let release!: () => void;
+    const parserGate = new Promise<void>((resolve) => { release = resolve; });
+    const controller = new AbortController();
+    const parsing = extractRawImageMetadataDetailed(
+      '/tmp/metadata-cancelled.ARW',
+      {
+        parse: async () => {
+          await parserGate;
+          return { Make: 'Sony' };
+        },
+      },
+      controller.signal,
+    );
+    await Promise.resolve();
+    controller.abort();
+    await expect(parsing).rejects.toMatchObject({ name: 'AbortError' });
+    release();
+    await new Promise<void>((resolve) => setImmediate(resolve));
   });
 });

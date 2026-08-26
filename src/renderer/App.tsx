@@ -942,6 +942,8 @@ function AppInner() {
   // Metadata editor
   const [assetMetadata, setAssetMetadata] =
     useState<AssetMetadataResult | null>(null);
+  const [extractedMetadataRefreshKey, setExtractedMetadataRefreshKey] =
+    useState(0);
   const [versionConflict, setVersionConflict] = useState(false);
   const selectedAssetIdRef = useRef(selectedAssetId);
   useEffect(() => {
@@ -3437,6 +3439,9 @@ function AppInner() {
           selectedAssetIdRef.current === event.assetId &&
           library
         ) {
+          if (event.kind === "extract_metadata") {
+            setExtractedMetadataRefreshKey((key) => key + 1);
+          }
           void api
             .getAssetMetadata({
               libraryId: library.libraryId,
@@ -10842,6 +10847,7 @@ function AppInner() {
         pluginApi={(window as RendererWindow).serpent?.plugins}
         libraryId={library?.libraryId}
         pluginContributionRefreshKey={pluginContributionRefreshKey}
+        extractedMetadataRefreshKey={extractedMetadataRefreshKey}
       />
       <ImageSequenceDialog
         count={
