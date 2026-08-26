@@ -23,10 +23,15 @@
    → window-caption 701（窗口控制按钮，必须用 --ui-layer-window-caption）
    → modal 800（模态内容）→ tooltip 900
    ```
-4. 窗口控制按钮组件（Windows `WindowsWindowControls` 等）必须引用
-   `--ui-layer-window-caption`；`body.serpent-modal-open` 时给按钮链恢复
-   `pointer-events: auto`。
-5. **平台差异**：Windows 无边框窗由 renderer 自绘 caption（受本规范约束）；
+4. 窗口控制按钮组件（Windows `WindowsWindowControls` 等）是**窗口级层**：
+   `createPortal` 到 `document.body`（与 `PortaledPopover` 同为逃逸 shell
+   stacking context 的既有模式）、`position: fixed`、引用
+   `--ui-layer-window-caption`。**禁止**把按钮挂进 `.app-shell` 等
+   `isolation: isolate` 的容器——子元素 z-index 只在其内部比较，永远赢不了
+   蒙层（Serpent-52a9b4 第一次修复即因此失败）。
+5. 验收必须用真实命中/点击证据（如 `document.elementFromPoint`、Playwright
+   actionability），**不得**只断言 computedStyle 的 z-index/pointer-events。
+6. **平台差异**：Windows 无边框窗由 renderer 自绘 caption（受本规范约束）；
    macOS `hiddenInset` 使用系统原生红绿灯（绘制在 web content 之上，天然不受
    蒙层影响，无需代码）；涉及平台分支时两个平台都必须验证。
 
