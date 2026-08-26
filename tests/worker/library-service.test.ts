@@ -1159,9 +1159,39 @@ describe('LibraryService lifecycle', () => {
     const deleted = service.deleteLibraryFromDisk(created.libraryId);
     expect(deleted.libraryId).toBe(created.libraryId);
     expect(deleted.libraryPath).toBe(libraryPath);
+    expect(deleted.pendingAsidePath).toBeNull();
     expect(existsSync(libraryPath)).toBe(false);
     expect(existsSync(path.join(linkedRoot, 'outside.png'))).toBe(true);
     expectServiceError(() => service.closeLibrary(created.libraryId), 'LIBRARY_NOT_OPEN');
     expectServiceError(() => service.openLibrary(libraryPath), 'LIBRARY_NOT_FOUND');
+  });
+
+  it('cleans up aside roots left by a prior deletion and skips foreign paths (Serpent-65d837)', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Delete Me',
+      selectedParentPath: root,
+    });
+    const asidePath = `${created.libraryPath}.del-123456`;
+    mkdirSync(asidePath);
+    writeFileSync(path.join(asidePath, 'leftover.bin'), Buffer.alloc(8));
+
+    const missingAside = `${created.libraryPath}.del-999999`;
+    const foreignPath = path.join(root, 'unrelated-directory');
+
+    const outcome = service.cleanupPendingDeletions([
+      asidePath,
+      missingAside,
+      foreignPath,
+    ]);
+    expect(outcome.cleanedPaths.sort()).toEqual([asidePath, missingAside].sort());
+    expect(outcome.remainingPaths).toEqual([foreignPath]);
+    expect(existsSync(asidePath)).toBe(false);
+
+    // Idempotent: paths already gone still count as cleaned.
+    const second = service.cleanupPendingDeletions([asidePath]);
+    expect(second.cleanedPaths).toEqual([asidePath]);
+    expect(second.remainingPaths).toEqual([]);
   });
 });

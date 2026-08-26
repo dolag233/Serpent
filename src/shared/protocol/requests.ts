@@ -1241,6 +1241,10 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('system.cleanup-pending-deletions'),
+    asidePaths: z.array(nonBlankString).min(1).max(64),
+  }),
+  z.strictObject({
     type: z.literal('library.list'),
   }),
   z.strictObject({

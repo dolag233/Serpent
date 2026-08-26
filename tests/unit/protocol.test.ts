@@ -2660,3 +2660,66 @@ describe('sync open-remote-libraries protocol (Serpent-xffq)', () => {
     });
   });
 });
+
+describe('library deletion deferred-cleanup protocol (Serpent-65d837)', () => {
+  it('parses a worker deletion carrying a pending aside path', () => {
+    const response = parseWorkerResponse({
+      requestId: 'req-01',
+      result: {
+        ok: true,
+        type: 'library.deleted',
+        libraryId: 'library-01',
+        displayName: 'Art',
+        libraryPath: 'C:/media/Art',
+        pendingAsidePath: 'C:/media/Art.del-123',
+      },
+    });
+    expect(response.result).toMatchObject({ ok: true, type: 'library.deleted' });
+    expect((response.result as { pendingAsidePath?: string }).pendingAsidePath).toBe('C:/media/Art.del-123');
+  });
+
+  it('parses a fully cleaned worker deletion without a pending aside', () => {
+    const response = parseWorkerResponse({
+      requestId: 'req-02',
+      result: {
+        ok: true,
+        type: 'library.deleted',
+        libraryId: 'library-01',
+        displayName: 'Art',
+        libraryPath: 'C:/media/Art',
+      },
+    });
+    expect(response.result).toMatchObject({ ok: true, type: 'library.deleted' });
+    expect((response.result as { pendingAsidePath?: string }).pendingAsidePath).toBe(undefined);
+  });
+
+  it('parses the renderer-facing pendingCleanup flag', () => {
+    const result = parseRendererResult({
+      ok: true,
+      type: 'library.deleted',
+      libraryId: 'library-01',
+      displayName: 'Art',
+      pendingCleanup: true,
+    });
+    expect((result as { pendingCleanup?: boolean }).pendingCleanup).toBe(true);
+  });
+
+  it('parses the pending cleanup command and rejects an empty path list', () => {
+    expect(parseWorkerRequest({
+      requestId: 'cleanup-01',
+      command: {
+        type: 'system.cleanup-pending-deletions',
+        asidePaths: ['C:/media/Art.del-123'],
+      },
+    }).command).toEqual({
+      type: 'system.cleanup-pending-deletions',
+      asidePaths: ['C:/media/Art.del-123'],
+    });
+    expect(() =>
+      parseWorkerRequest({
+        requestId: 'cleanup-02',
+        command: { type: 'system.cleanup-pending-deletions', asidePaths: [] },
+      }),
+    ).toThrow();
+  });
+});

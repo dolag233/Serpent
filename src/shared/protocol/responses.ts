@@ -1616,6 +1616,15 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     libraryId: nonBlankString,
     displayName: nonBlankString,
     libraryPath: nonBlankString,
+    // Serpent-65d837: set when the root was renamed aside and the aside copy
+    // still could not be removed; Main must re-queue it for deferred cleanup.
+    pendingAsidePath: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('system.cleanup-pending-deletions'),
+    cleanedPaths: z.array(nonBlankString),
+    remainingPaths: z.array(nonBlankString),
   }),
   z.strictObject({
     ok: z.literal(true),
@@ -2040,6 +2049,9 @@ const rendererSuccessResultSchema = z.discriminatedUnion('type', [
     type: z.literal('library.deleted'),
     libraryId: nonBlankString,
     displayName: nonBlankString,
+    // Serpent-65d837: true when a leftover .del-* root still needs deferred
+    // cleanup; the Renderer shows a notice describing automatic retries.
+    pendingCleanup: z.boolean().optional(),
   }),
   z.strictObject({
     ok: z.literal(true),

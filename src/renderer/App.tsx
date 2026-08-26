@@ -1229,6 +1229,17 @@ function AppInner() {
     void refreshAppLog(automationCorrelationId);
   }
 
+  function revealAppLog(): void {
+    const bridge = (window as RendererWindow).serpent?.shell;
+    if (!bridge?.revealAppLog) {
+      setError(t("toast.aiRevealLogFailed"));
+      return;
+    }
+    void bridge.revealAppLog().then((result) => {
+      if (!result.ok) setError(t("toast.aiRevealLogFailed"));
+    });
+  }
+
   // AI analysis state
   const [aiApiFormat, setAiApiFormat] = useState<AiApiFormat>("dashscope_native");
   const [aiModel, setAiModel] = useState("qwen3-vl-plus");
@@ -6496,7 +6507,13 @@ function AppInner() {
       toreDown = true;
       applyClosedLibraryUi();
       await refreshRecentLibraries(null);
-      setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
+      // Serpent-65d837: the library root is gone but a `.del-*` aside may still
+      // be draining; never let the user believe the disk is fully clean.
+      if (result.ok && result.value.pendingCleanup) {
+        setNotice(t("toast.libraryDeletedCleanupPending", { name: deletedName }));
+      } else {
+        setNotice(t("toast.libraryDeletedFromDisk", { name: deletedName }));
+      }
     } catch (caught) {
       // Serpent-qgm1: a failed disk deletion must NOT masquerade as success.
       // The worker reopens a still-valid library; a half-deleted tree comes
@@ -8942,6 +8959,7 @@ function AppInner() {
         void shellApi?.openExternalUrl("https://github.com/dolag233/Serpent");
       },
       openOpenSourceLicenses: () => setOpenSourceLicensesOpen(true),
+      revealAppLog,
     },
   });
 
@@ -11176,16 +11194,7 @@ function AppInner() {
         onClose={() => setAppLogOpen(false)}
         onAutomationCorrelationIdChange={setAppLogAutomationCorrelationId}
         onRefresh={() => void refreshAppLog()}
-        onReveal={() => {
-          const bridge = (window as RendererWindow).serpent?.shell;
-          if (!bridge?.revealAppLog) {
-            setError(t("toast.aiRevealLogFailed"));
-            return;
-          }
-          void bridge.revealAppLog().then((result) => {
-            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
-          });
-        }}
+        onReveal={revealAppLog}
         open={appLogOpen}
       />
       {library?.recovery && (
@@ -11455,16 +11464,7 @@ function AppInner() {
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
-        onRevealAppLog={() => {
-          const shellBridge = (window as RendererWindow).serpent?.shell;
-          if (!shellBridge?.revealAppLog) {
-            setError(t("toast.aiRevealLogFailed"));
-            return;
-          }
-          void shellBridge.revealAppLog().then((result) => {
-            if (!result.ok) setError(t("toast.aiRevealLogFailed"));
-          });
-        }}
+        onRevealAppLog={revealAppLog}
         onViewAppLog={openAppLog}
       />
       {/* Unified context menu */}

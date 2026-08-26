@@ -218,7 +218,12 @@ export interface SerpentLibraryApi {
   /** Close then permanently delete the library root on disk (Serpent-9i8). */
   deleteLibraryFromDisk(input: {
     libraryId: string;
-  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>>;
+  }): Promise<LibraryApiResult<{
+    libraryId: string;
+    displayName: string;
+    /** Serpent-65d837: a `.del-*` aside still needs deferred cleanup. */
+    pendingCleanup?: boolean;
+  }>>;
   listOpen(): Promise<LibraryApiResult<RendererLibrarySummary[]>>;
   getOperationHistoryStatus(input: { libraryId: string }): Promise<LibraryApiResult<HistoryStatus>>;
   undoOperationHistory(input: { libraryId: string; expectedHistoryEntryId: string }): Promise<LibraryApiResult<HistoryStatus>>;

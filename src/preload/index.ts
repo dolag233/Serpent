@@ -373,7 +373,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId,
   }: {
     libraryId: string;
-  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string }>> {
+  }): Promise<LibraryApiResult<{ libraryId: string; displayName: string; pendingCleanup?: boolean }>> {
     const result = await request({ type: 'library.delete-from-disk.request', libraryId });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.deleted') {
@@ -381,7 +381,11 @@ const library: SerpentLibraryApi = Object.freeze({
     }
     return {
       ok: true as const,
-      value: { libraryId: result.libraryId, displayName: result.displayName },
+      value: {
+        libraryId: result.libraryId,
+        displayName: result.displayName,
+        ...(result.pendingCleanup ? { pendingCleanup: result.pendingCleanup } : {}),
+      },
     };
   },
 

@@ -128,11 +128,17 @@ export interface RemoveLibraryRootOptions extends RemoveWithRetryOptions {
  * `rmSync` then throws EPERM/ENOTEMPTY and leaves a half-deleted tree.
  * Retry, then rename the root aside so the original path is gone even if the
  * aside copy is still draining.
+ *
+ * Returns `{ asidePath: null }` when the root folder is fully removed, or
+ * `{ asidePath }` when the root was renamed aside but the aside copy could not
+ * be removed yet (Serpent-65d837). The original path is gone either way, but a
+ * non-null `asidePath` means the caller must schedule cleanup and tell the
+ * user; never treat a leftover aside as a successful deletion.
  */
 export function removeLibraryRootWithRetry(
   libraryPath: string,
   options: RemoveLibraryRootOptions = {},
-): void {
+): { asidePath: string | null } {
   const retryOptions: RemoveWithRetryOptions = {
     rmFn: options.rmFn,
     waitFn: options.waitFn,
@@ -142,7 +148,7 @@ export function removeLibraryRootWithRetry(
   const existsFn = options.existsFn ?? existsSync;
   try {
     removePathWithSyncRetry(libraryPath, retryOptions);
-    return;
+    return { asidePath: null };
   } catch (error) {
     if (!isRetryableRemoveError(error)) throw error;
     const asidePath = `${libraryPath}.del-${options.nowFn?.() ?? Date.now()}`;
@@ -159,8 +165,12 @@ export function removeLibraryRootWithRetry(
     try {
       removePathWithSyncRetry(asidePath, retryOptions);
     } catch {
-      // Original path is gone; leftover aside is best-effort cleanup.
+      // Original path is gone; keep the aside for deferred cleanup, unless the
+      // original path somehow came back (nothing may silently leave it there).
+      if (existsFn(libraryPath)) throw error;
+      return { asidePath };
     }
     if (existsFn(libraryPath)) throw error;
+    return { asidePath: null };
   }
 }

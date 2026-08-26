@@ -1819,6 +1819,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         libraryId: deleted.libraryId,
         displayName: deleted.displayName,
         libraryPath: deleted.libraryPath,
+        ...(deleted.pendingAsidePath ? { pendingAsidePath: deleted.pendingAsidePath } : {}),
+      };
+    }
+    case 'system.cleanup-pending-deletions': {
+      const outcome = libraryService.cleanupPendingDeletions(request.command.asidePaths);
+      return {
+        ok: true,
+        type: 'system.cleanup-pending-deletions',
+        cleanedPaths: outcome.cleanedPaths,
+        remainingPaths: outcome.remainingPaths,
       };
     }
     case 'folder.create':

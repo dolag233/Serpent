@@ -38455,6 +38455,7 @@ export class LibraryService {
     libraryId: string;
     displayName: string;
     libraryPath: string;
+    pendingAsidePath: string | null;
   } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const { libraryPath, displayName } = openLibrary.summary;
@@ -38473,8 +38474,9 @@ export class LibraryService {
 
     this.closeLibrary(libraryId);
 
+    let pendingAsidePath: string | null;
     try {
-      removeLibraryRootWithRetry(libraryPath);
+      pendingAsidePath = removeLibraryRootWithRetry(libraryPath).asidePath;
     } catch (error) {
       this.diagnose('library.delete-from-disk', error, { libraryPath });
       // Serpent-qgm1: the library was closed before rm — if the deletion
@@ -38512,7 +38514,38 @@ export class LibraryService {
       });
     }
 
-    return { libraryId, displayName, libraryPath };
+    return { libraryId, displayName, libraryPath, pendingAsidePath };
+  }
+
+  /**
+   * Serpent-65d837: remove library roots that were renamed aside (`.del-*`)
+   * after a previous deletion could not fully remove them while a Windows
+   * handle was still open. Idempotent — missing paths are harmless because
+   * `removePathWithSyncRetry` uses `rmSync(..., { force: true })`. Returns the
+   * paths that were removed and the ones that still fail (caller re-queues).
+   */
+  cleanupPendingDeletions(asidePaths: string[]): {
+    cleanedPaths: string[];
+    remainingPaths: string[];
+  } {
+    const cleanedPaths: string[] = [];
+    const remainingPaths: string[] = [];
+    for (const asidePath of asidePaths) {
+      // Only ever touch paths owned by this feature: the suffix is generated
+      // by removeLibraryRootWithRetry and must stay inside a library root.
+      if (typeof asidePath !== 'string' || !asidePath.includes('.del-')) {
+        remainingPaths.push(asidePath);
+        continue;
+      }
+      try {
+        removePathWithSyncRetry(asidePath);
+        cleanedPaths.push(asidePath);
+      } catch (error) {
+        this.diagnose('library.cleanup-pending-deletions', error, { asidePath });
+        remainingPaths.push(asidePath);
+      }
+    }
+    return { cleanedPaths, remainingPaths };
   }
 
   listLibraries(): InternalLibrarySummary[] {
