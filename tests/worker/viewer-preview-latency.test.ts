@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LibraryService, type LibraryServiceOptions } from '../../src/worker/library-service';
 import { importNoConflict } from './import-no-conflict';
@@ -52,7 +52,14 @@ describe('viewer source preview latency', () => {
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 250)),
     ]);
     expect(first).not.toBeNull();
-    expect(metadataCalls).toBeGreaterThan(0);
+    // The colour-space probe is now admitted through the shared native-memory
+    // budget. A free reservation still starts on the next microtask, so the
+    // source response must win the race without requiring the probe to have
+    // entered Sharp before the caller resumes.
+    await vi.waitFor(() => expect(metadataCalls).toBeGreaterThan(0), {
+      timeout: 1_000,
+      interval: 5,
+    });
     expect(first).toMatchObject({
       playbackMode: 'source',
       status: 'ready',

@@ -164,8 +164,11 @@ describe('media scheduling respects ignore rules', () => {
     const kept = fixture.service.filterIgnoredAssetIds(fixture.created.libraryId, [
       fixture.rootAssetId,
       fixture.nestedAssetId,
+      fixture.rootAssetId,
     ]);
-    expect(kept).toEqual([fixture.rootAssetId]);
+    // The implementation batches the SQL lookup, but the public result keeps
+    // the caller's order and duplicate ids for queue/reporting semantics.
+    expect(kept).toEqual([fixture.rootAssetId, fixture.rootAssetId]);
   });
 
   it('does not enqueue secondary video or AI work for ignored assets', () => {

@@ -573,6 +573,8 @@ type PerformanceSpan = {
 
 - `src/worker/artifact-policy.ts`：格式能力、source-direct、artifact role 和幂等键。
 - durable job claim 前 admission control。
+- Sharp、OIIO、FFmpeg 共用进程级 native 内存准入预算；已知超大 OIIO 输入在 spawn 前拒绝，
+  估算预算不替代操作系统 cgroup。
 - RAW 内嵌预览、复杂图像 viewer-image、原生视频直放和代理 fallback 分开。
 - Eagle/Billfish 导入保留 copy-first 首屏，超出 512 边长或字节预算的外部预览在后台
   有界归一化；旧 artifact 在新 artifact 事务提交前保持可用。
@@ -587,11 +589,27 @@ type PerformanceSpan = {
 本阶段的可见媒体队列稳定化记录在
 [D.6 开发日志](../development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
 它解决了严格 20k 基准中“数据库 artifact 已 ready 但真实卡片没有 `src`”的摘要/布局快照
-竞态，但修正后的 `all-images` 基准还暴露出冷缩略图生成尾延迟：实际 20,000 live asset
-本地 APFS 夹具冷跑为 1/10（全部解码 p50 1,176.9ms、p95/max 5,005.7ms，first visual
-wave p50 155.1ms），同一夹具 warm 对照为 7/10（全部解码 p50 179.2ms、p95/max 5,015.3ms，
-first visual wave p50 134.8ms）。因此 20k 严格门禁尚未通过；该结果不覆盖 100k、Windows、
-NAS/SMB、packaged 或人工验收。
+竞态。随后冷路径对账发现 `library.changed` 在派生 artifact 写入时推进 Main 的 artifact-path
+cache generation，使已经解析出新文件的 `serpent://preview` 请求被错误判为 stale；该竞态现已
+修复，资产/源文件变化和 close/reopen 仍按原有边界失效路径缓存。随后又将 Renderer 的可见
+窗口上报收紧为实际视口相交卡片，将 `filterIgnoredAssetIds` 改为每 500 个 ID 一次的有界
+批量 SQL，并让被可见波次抢占的 Sharp 任务只清理临时输出、保留 queued 状态。当前源码在
+同一份实际 live 19,965（目录名为 20k）的本地 APFS 夹具上，真实 Electron `all-images`、
+10 次跳转、5 秒观察窗的取消清理修正前独立冷跑曾为严格 6/10，全部解码 p50 476.5ms、
+p95/max 597.9ms、最终完成 10/10；first visual wave p50 128.7ms、p95/max 151.8ms，
+Main long-task max 0ms。加入取消等待器竞态修正后，从同一夹具重新清理 artifact/job 并冷启动
+的最新独立冷跑为严格 5/10，全部解码 p50 496.6ms、p95/max 557.7ms、最终完成 10/10；
+first visual wave p50 122.6ms、p95/max 161.7ms，Main long-task max 0ms。
+此前批量过滤合入后的两次独立冷跑为 9/10 与 7/10，合计 16/20、合并 p50 477.4ms、p95
+527.9ms、max 544.4ms。首屏开始出现仍满足架构目标，但“全部可见图片 500ms 内完成”受冷
+启动尾延迟影响尚未稳定通过，不能用合并或单次样本替代硬门禁。当前只对已知源大小 ≤32MiB
+且解码像素 ≤16MP 的可见普通图像启用最多 4 个进程内 Sharp 交互槽位；后台图像仍为 2，
+进程级总 Sharp 上限仍为 4，未知/大型源不进入交互槽位。LibraryService 中的 Sharp、OIIO、
+FFmpeg 解码路径统一受每个 Library Worker 384 MiB 的估算 native admission budget 约束；
+已知超过 64 MP 的 OIIO 输入和未知尺寸且超过 512 MiB 的 OIIO 输入在 spawn 前拒绝。关键
+TIFF/图像尺寸探针为异步；普通 TIFF 在源 ≤16MiB、≤16MP 且有界 IFD 时走 Sharp，超限或未知
+TIFF 走 OIIO。该结果不覆盖 100k、Windows、NAS/SMB、packaged 或人工验收，D.6 仍不可标记
+为 accepted。
 
 阶段 D.7 已接入远程 SQLite 元数据本地快照读写分离、cache-first 的窄 browse cursor/size/mtime
 校验、不可变 generation + manifest 指针、SHA-256/size、`quick_check`、缓存预算、失效重建和

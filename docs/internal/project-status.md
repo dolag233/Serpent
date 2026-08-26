@@ -95,17 +95,24 @@
 
 - **2026-08-26 0032 阶段 D.6 可见媒体队列稳定化**：远距离可见窗口按重叠率抢占旧波次，
   viewport-only 波不再触发全局补队列/尺寸回填，连续媒体 claim 之间让出 Worker event loop；
-  同时修复了 BrowseSession 布局快照已有 ready artifact、AssetSummary 尚未同步时真实卡片没有
-  `src` 的竞态，并保护摘要失败状态不复活旧 artifact。严格真实 Electron 20k 本地 APFS 基准
-  使用 SQLite 实际计数为 20,000 的夹具和 10 个随机跳转：首次冷跑 `all-images` 为 1/10
-  （p50 1,176.9ms、p95/max 5,005.7ms、first visual wave p50 155.1ms、eventual 9/10），
-  同一夹具 warm 对照为 7/10（p50 179.2ms、p95/max 5,015.3ms、first visual wave p50 134.8ms、
-  eventual 8/10）。因此严格性能门禁未通过，不能沿用旧的 10/10 结论；瓶颈已收敛为冷缩略图
-  生成尾延迟，而不是主窗口长任务。当前 Worker 85 files / 1,234 passed / 21 skipped，
-  library-availability 9/203，typecheck/lint/diff check 通过；媒体/document/sequence Electron
-  定向套件 7 passed / 1 skipped。该结果已替代旧的漏计口径，但 100k、Windows、真实 NAS/SMB、
-  Eagle/Billfish 用户库、packaged、Computer Use 和人类验收仍未执行，相关工单保持 in_progress。
-  详见 [D.6 开发日志](development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
+  Renderer 只上报实际与视口相交的卡片，避免 overscan 占用首屏高优先级波次；可见波次按最新
+  asset scope 动态收窄，已知 ≤32MiB/≤16MP 普通图像使用有界交互 Sharp 槽位，TIFF 按有界
+  IFD/源大小在 Sharp 与 OIIO 间分流；`filterIgnoredAssetIds` 使用每 500 个 ID 一次的批量
+  SQL；被抢占的 Sharp 任务清理临时输出并保留 queued，不再伪造失败 artifact。Sharp/OIIO/FFmpeg
+  解码路径进一步共用每个 Library Worker 384 MiB 估算 native 内存准入，已知超大 OIIO 输入在
+  spawn 前拒绝，关键尺寸探针改为异步。同时修复了派生 artifact 写入触发 Main artifact-path
+  cache generation、导致已生成缩略图被 stale 协议错误遮蔽的竞态。当前严格真实 Electron
+  `all-images` 基准使用本地 APFS 夹具（目录名 20k，SQLite 实际 live 19,965）和 10 个随机跳转：
+  取消清理修正前的当前源码冷跑曾为 6/10；加入取消等待器竞态修正后，从同一夹具重新清理
+  artifact/job 的最新当前源码冷跑为 5/10 在 500ms 内完成全部可见图片，全部解码 p50 496.6ms、
+  p95/max 557.7ms，first visual wave p50 122.6ms、p95/max 161.7ms，最终完成 10/10，
+  Main long-task max 0ms；
+  批量过滤合入后的两次先行冷跑合计 16/20（p50 477.4ms、p95 527.9ms、max 544.4ms）。
+  架构定义的“500ms 内开始出现首屏”满足，但 `Serpent-sa65` 的全部可见图片 500ms 硬门禁
+  仍未稳定通过，不能把 D.6 或整体 0032 标记完成。另有当前 HEAD 混合媒体基准 3×100 任务
+  全部完成、资源失败 0，峰值进程树 RSS 增量 88.3MiB、最大事件循环延迟 73.7ms。100k、
+  Windows、真实 NAS/SMB、Eagle/Billfish 用户库、packaged、Computer Use 和人类验收仍未执行，
+  相关工单保持 in_progress。详见 [D.6 开发日志](development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md)。
 
 - **2026-08-26 0032 阶段 D.7 远程元数据快照缓存**：远程库接入用户目录级可丢弃 SQLite
   snapshot；命中时普通读查询走本地只读连接，写入、事务、租约、volatile 表与歧义 SQL

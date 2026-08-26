@@ -18,6 +18,7 @@ import {
   type LibraryServiceDiagnostic,
 } from '../../src/worker/library-service';
 import { mediaResourceGuard } from '../../src/worker/media-resource-guard';
+import { isSourceDirectPreview } from '../../src/shared/preview-policy';
 import type { LargeLibraryFixtureManifest } from './large-library-fixture';
 
 /**
@@ -53,7 +54,10 @@ type Database = new (filename: string, options?: { readonly?: boolean }) => {
 
 type BenchAsset = {
   assetId: string;
+  byteSize: number | null;
+  height: number | null;
   relativeFilePath: string;
+  width: number | null;
 };
 
 type RssSample = {
@@ -106,21 +110,58 @@ function loadSupportedAssets(libraryPath: string): BenchAsset[] {
   const database = new TestDatabase(databasePath(libraryPath), { readonly: true });
   try {
     const rows = database.prepare(
-      `SELECT asset_id, relative_file_path
-         FROM assets
-        WHERE deleted_at IS NULL
-          AND availability = 'available'
-        ORDER BY relative_file_path`,
-    ).all() as Array<{ asset_id: string; relative_file_path: string }>;
+      `SELECT a.asset_id, a.relative_file_path, r.byte_size,
+              (SELECT width
+                 FROM revision_artifacts metadata
+                WHERE metadata.revision_id = a.current_revision_id
+                  AND metadata.kind = 'extracted_metadata'
+                  AND metadata.status = 'ready'
+                  AND metadata.invalidated_at IS NULL
+                LIMIT 1) AS width,
+              (SELECT height
+                 FROM revision_artifacts metadata
+                WHERE metadata.revision_id = a.current_revision_id
+                  AND metadata.kind = 'extracted_metadata'
+                  AND metadata.status = 'ready'
+                  AND metadata.invalidated_at IS NULL
+                LIMIT 1) AS height
+         FROM assets a
+         LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+        WHERE a.deleted_at IS NULL
+          AND a.availability = 'available'
+         ORDER BY a.relative_file_path`,
+    ).all() as Array<{
+      asset_id: string;
+      byte_size: number | null;
+      height: number | null;
+      relative_file_path: string;
+      width: number | null;
+    }>;
     return rows
       .filter((row) => {
         const extension = path.extname(row.relative_file_path).toLowerCase();
-        return [
+        if (![
           '.jpg', '.jpeg', '.png', '.webp', '.gif', '.tiff', '.tif',
           '.mp4', '.webm', '.mov', '.wav',
-        ].includes(extension);
+        ].includes(extension)) return false;
+        // Source-direct images intentionally have no thumbnail job. Exclude
+        // them so this benchmark measures the native generation path and its
+        // memory envelope rather than failing the enqueue cardinality check.
+        return !isSourceDirectPreview({
+          fileName: row.relative_file_path,
+          mediaType: 'image',
+          byteSize: row.byte_size ?? 0,
+          width: row.width,
+          height: row.height,
+        });
       })
-      .map((row) => ({ assetId: row.asset_id, relativeFilePath: row.relative_file_path }));
+      .map((row) => ({
+        assetId: row.asset_id,
+        byteSize: row.byte_size,
+        height: row.height,
+        relativeFilePath: row.relative_file_path,
+        width: row.width,
+      }));
   } finally {
     database.close();
   }

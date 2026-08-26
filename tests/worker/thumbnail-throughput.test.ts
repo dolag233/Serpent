@@ -78,6 +78,20 @@ function instantSharp() {
   };
 }
 
+function delayedSharp(onWrite: () => void, delayMs = 50) {
+  const createPipeline = instantSharp();
+  return (...args: Parameters<ReturnType<typeof instantSharp>>) => {
+    const pipeline = createPipeline(...args);
+    const write = pipeline.toFile;
+    pipeline.toFile = async function delayedToFile(outputPath: string) {
+      onWrite();
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return write.call(this, outputPath);
+    };
+    return pipeline;
+  };
+}
+
 function createDistinctPngs(directory: string, count: number): void {
   mkdirSync(directory, { recursive: true });
   for (let index = 0; index < count; index += 1) {
@@ -190,6 +204,53 @@ describe('thumbnail queue DB-write batching (Serpent-xoaz)', () => {
     expect(summary.some((row) => row.status === 'failed')).toBe(false);
     service.closeAll();
   });
+
+  it('narrows future claims when a newer visible window arrives', async () => {
+    const root = temporaryRoot();
+    let writeCount = 0;
+    let bothWritesStarted!: () => void;
+    const twoWritesStarted = new Promise<void>((resolve) => {
+      bothWritesStarted = resolve;
+    });
+    const service = new LibraryService({
+      sharpFn: delayedSharp(() => {
+        writeCount += 1;
+        if (writeCount === 2) bothWritesStarted();
+      }, 80),
+    });
+    const created = service.createLibrary({ displayName: 'PreserveVisibleClaim', selectedParentPath: root });
+    const sourceDir = path.join(root, 'sources');
+    createDistinctPngs(sourceDir, 3);
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(3);
+    const [overlapping, stale, outside] = assets;
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [overlapping!.assetId, stale!.assetId, outside!.assetId],
+      priority: 350,
+    })).toBe(3);
+
+    const claimAssetIdsRef = {
+      current: [overlapping!.assetId, stale!.assetId, outside!.assetId],
+    };
+    const processing = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 3,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: claimAssetIdsRef.current,
+      claimAssetIdsRef,
+    });
+    await twoWritesStarted;
+    claimAssetIdsRef.current = [overlapping!.assetId];
+    await processing;
+
+    const statuses = service.listMediaJobs(created.libraryId).jobs;
+    expect(statuses.find((job) => job.assetId === overlapping!.assetId && job.kind === 'generate_thumbnail')?.status).toBe('succeeded');
+    // Jobs already claimed before the report are allowed to finish; only
+    // future claims are narrowed to the latest viewport.
+    expect(statuses.find((job) => job.assetId === stale!.assetId && job.kind === 'generate_thumbnail')?.status).toBe('succeeded');
+    expect(statuses.find((job) => job.assetId === outside!.assetId && job.kind === 'generate_thumbnail')?.status).toBe('queued');
+    service.closeAll();
+  });
 });
 
 describe('thumbnail fill order (Serpent-xoaz)', () => {
@@ -262,6 +323,102 @@ describe('thumbnail fill order (Serpent-xoaz)', () => {
     db2.close();
     // Insertion order follows the caller's id sequence, not created_at DESC.
     expect(jobs.map((job) => job.asset_id)).toEqual(requested);
+    service.closeAll();
+  });
+});
+
+describe('visible thumbnail admission (Serpent-d6)', () => {
+  it('keeps model rendering out of the fast visible wave while preserving order', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'VisibleMediaKinds', selectedParentPath: root });
+
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(path.join(sourceDir, 'image.png'), distinctPngBytes(1));
+    writeFileSync(path.join(sourceDir, 'model.glb'), Buffer.from('glTF-model-placeholder'));
+    writeFileSync(path.join(sourceDir, 'second.png'), distinctPngBytes(2));
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const model = assets.find((asset) => asset.displayName === 'model.glb')!;
+    const image = assets.find((asset) => asset.displayName === 'image.png')!;
+    const second = assets.find((asset) => asset.displayName === 'second.png')!;
+    const selected = [model.assetId, image.assetId, second.assetId, model.assetId];
+
+    expect(service.filterVisibleThumbnailAssetIds(created.libraryId, selected)).toEqual([
+      image.assetId,
+      second.assetId,
+    ]);
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: selected,
+      priority: 350,
+      limit: selected.length,
+    })).toBe(3);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const modelJob = db.prepare(
+      `SELECT COUNT(*) AS count FROM jobs
+        WHERE asset_id = ? AND kind = 'generate_thumbnail'`,
+    ).get(model.assetId) as { count: number };
+    db.close();
+    // Filtering is an admission policy for the visible wave, not a format
+    // policy: the model remains queueable for startup/mutation processing.
+    expect(modelJob.count).toBe(1);
+    service.closeAll();
+  });
+
+  it('prioritizes image cards ahead of video posters in an interactive wave', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      sharpFn: instantSharp(),
+      spawnFn: async (_command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('mock-video-poster'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'VisibleImageFirst', selectedParentPath: root });
+
+    const sourceDir = path.join(root, 'sources');
+    mkdirSync(sourceDir, { recursive: true });
+    writeFileSync(path.join(sourceDir, 'image.png'), distinctPngBytes(3));
+    writeFileSync(path.join(sourceDir, 'video.mp4'), Buffer.from('mock-video-source'));
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const image = assets.find((asset) => asset.displayName === 'image.png')!;
+    const video = assets.find((asset) => asset.displayName === 'video.mp4')!;
+    expect(image).toBeDefined();
+    expect(video).toBeDefined();
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [video.assetId, image.assetId],
+      priority: 350,
+      limit: 2,
+    })).toBe(2);
+
+    // Make the video the FIFO winner under the old priority/created_at order;
+    // the interactive image-first term must still claim the image.
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const stamp = db.prepare(
+      "UPDATE jobs SET created_at = ? WHERE asset_id = ? AND kind = 'generate_thumbnail'",
+    );
+    stamp.run('2026-01-01T00:00:00.000Z', video.assetId);
+    stamp.run('2026-01-01T00:00:01.000Z', image.assetId);
+    db.close();
+
+    const completed: string[] = [];
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [video.assetId, image.assetId],
+      interactive: true,
+      onResult: ({ assetId }) => completed.push(assetId),
+    })).toBe(1);
+    expect(completed).toEqual([image.assetId]);
     service.closeAll();
   });
 });

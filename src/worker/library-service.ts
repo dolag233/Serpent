@@ -60,7 +60,11 @@ import {
   type RepresentativeColor,
 } from './palette-extractor';
 import { pathIsWithin } from './path-utils';
-import { workerMediaDecodeConcurrency, workerMediaDecodeWaveSize } from './media-concurrency';
+import {
+  workerMediaDecodeConcurrency,
+  workerMediaDecodeWaveSize,
+  workerMediaInteractiveDecodeConcurrency,
+} from './media-concurrency';
 import {
   encoderUsesHardwareName,
   ffmpegOneFrameEncodeArgs,
@@ -131,6 +135,15 @@ import {
   mediaResourceGuard,
   mediaResourceFailureFromSpawnResult,
 } from './media-resource-guard';
+import {
+  estimateMediaNativeMemoryBytes,
+  MEDIA_INPUT_TOO_LARGE_ERROR_CODE,
+  MEDIA_MAX_INPUT_PIXELS,
+  MEDIA_MAX_UNKNOWN_OIIO_SOURCE_BYTES,
+  MediaInputTooLargeError,
+  mediaNativeMemoryBudget,
+  type MediaNativeMemoryEstimate,
+} from './media-memory-budget';
 import {
   clearMigrationFailure,
   MAX_MIGRATION_ATTEMPTS,
@@ -312,6 +325,117 @@ const IMPORTED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};sha
 /** Animated imported previews stay byte-for-byte intact but still need a durable completion marker. */
 const IMPORTED_ANIMATED_THUMBNAIL_GENERATOR = `${IMPORTED_THUMBNAIL_GENERATOR_PREFIX};preserved-animated@1`;
 const IMPORTED_THUMBNAIL_MAX_INPUT_PIXELS = 32_000_000;
+// Keep ordinary card decodes below Sharp's much larger default decompression
+// bomb limit. The 64 MP bound still accepts the fixture's 8K class while
+// preventing a single malformed source from retaining hundreds of MB of
+// decoded pixels in the Worker.
+const THUMBNAIL_MAX_INPUT_PIXELS = MEDIA_MAX_INPUT_PIXELS;
+// A visible wave may use one extra Sharp worker only for sources whose decoded
+// footprint is bounded. Larger/unknown sources stay on the background lane so
+// a fast scroll cannot turn four large native allocations into an OOM spike.
+const THUMBNAIL_INTERACTIVE_MAX_SOURCE_BYTES = 32 * 1024 * 1024;
+const THUMBNAIL_INTERACTIVE_MAX_INPUT_PIXELS = 16_000_000;
+// TIFF is a dual-decoder format: Sharp is materially faster for ordinary
+// files, while OIIO is the safe path for large/private-tag-heavy files that
+// can trip libvips' cumulative metadata allocation limit. Keep the Sharp
+// admission bound below the general media limit so a TIFF cannot consume an
+// unbounded native buffer before the OIIO fallback gets a chance to handle it.
+const TIFF_SHARP_MAX_SOURCE_BYTES = 16 * 1024 * 1024;
+const TIFF_SHARP_MAX_INPUT_PIXELS = 16_000_000;
+
+function isTiffExtension(extensionOrFileName: string): boolean {
+  const extension = extensionOrFileName.startsWith('.')
+    ? extensionOrFileName.toLowerCase()
+    : path.extname(extensionOrFileName).toLowerCase();
+  return extension === '.tif' || extension === '.tiff';
+}
+
+function isBoundedTiffForSharp(input: {
+  sourceByteSize: number | null | undefined;
+  width: number | null | undefined;
+  height: number | null | undefined;
+}): boolean {
+  return Number.isSafeInteger(input.sourceByteSize)
+    && input.sourceByteSize! > 0
+    && input.sourceByteSize! <= TIFF_SHARP_MAX_SOURCE_BYTES
+    && Number.isSafeInteger(input.width)
+    && Number.isSafeInteger(input.height)
+    && input.width! > 0
+    && input.height! > 0
+    && input.width! <= TIFF_SHARP_MAX_INPUT_PIXELS / input.height!;
+}
+
+function isSafeForInteractiveImageLane(input: {
+  sourceByteSize: number | null | undefined;
+  width: number | null | undefined;
+  height: number | null | undefined;
+}): boolean {
+  return Number.isSafeInteger(input.sourceByteSize)
+    && input.sourceByteSize! > 0
+    && input.sourceByteSize! <= THUMBNAIL_INTERACTIVE_MAX_SOURCE_BYTES
+    && Number.isSafeInteger(input.width)
+    && Number.isSafeInteger(input.height)
+    && input.width! > 0
+    && input.height! > 0
+    && input.width! <= THUMBNAIL_INTERACTIVE_MAX_INPUT_PIXELS / input.height!;
+}
+
+type MediaNativeMemoryEstimateInput = Omit<MediaNativeMemoryEstimate, 'decoder'>;
+
+async function inspectMediaNativeInput(
+  assetPath: string,
+  execution: MediaExecutionContext,
+): Promise<MediaNativeMemoryEstimateInput> {
+  let sourceByteSize = execution.sourceByteSize;
+  if (!Number.isSafeInteger(sourceByteSize) || sourceByteSize! <= 0) {
+    try {
+      sourceByteSize = Number((await lstatAsync(assetPath)).size);
+    } catch {
+      sourceByteSize = null;
+    }
+  }
+
+  let sourceWidth = execution.sourceWidth;
+  let sourceHeight = execution.sourceHeight;
+  if (
+    !Number.isSafeInteger(sourceWidth)
+    || !Number.isSafeInteger(sourceHeight)
+    || sourceWidth! <= 0
+    || sourceHeight! <= 0
+  ) {
+    const dimensions = await readImageDimensions(assetPath);
+    sourceWidth = dimensions?.width ?? null;
+    sourceHeight = dimensions?.height ?? null;
+  }
+
+  return { sourceByteSize, width: sourceWidth, height: sourceHeight };
+}
+
+function assertOiioInputWithinSafetyBudget(
+  input: MediaNativeMemoryEstimateInput,
+): void {
+  const hasDimensions = Number.isSafeInteger(input.width)
+    && Number.isSafeInteger(input.height)
+    && input.width! > 0
+    && input.height! > 0;
+  if (hasDimensions && input.width! > MEDIA_MAX_INPUT_PIXELS / input.height!) {
+    throw new MediaInputTooLargeError(
+      `OIIO input exceeds the ${MEDIA_MAX_INPUT_PIXELS.toLocaleString()} pixel preview safety limit.`,
+    );
+  }
+  // A malformed/unsupported header cannot provide a pixel bound. Refuse only
+  // truly huge unknown inputs; ordinary unknown formats still get the single
+  // OIIO slot plus the full unknown-input reservation in the shared budget.
+  if (
+    !hasDimensions
+    && Number.isSafeInteger(input.sourceByteSize)
+    && input.sourceByteSize! > MEDIA_MAX_UNKNOWN_OIIO_SOURCE_BYTES
+  ) {
+    throw new MediaInputTooLargeError(
+      'OIIO input has no readable dimensions and exceeds the unknown-input byte safety limit.',
+    );
+  }
+}
 // A generator writes the final artifact before committing its DB row. Keep
 // recently-created unreferenced files out of the open-time sweep so a live
 // media job cannot be mistaken for a crash orphan; the next reconciliation
@@ -419,6 +543,8 @@ function safeMediaJobErrorDetail(errorCode: string): string {
       return 'The current preview image is not ready. Regenerate the thumbnail or video poster first.';
     case 'PALETTE_EXTRACTION_FAILED':
       return 'Local palette extraction failed. See the local Serpent log for diagnostic details.';
+    case MEDIA_INPUT_TOO_LARGE_ERROR_CODE:
+      return 'This source is too large to decode safely for a preview. The original file remains available.';
     case IMPORTED_THUMBNAIL_NORMALIZATION_JOB:
       return 'The imported preview could not be normalized. The original imported preview remains available.';
     default:
@@ -429,7 +555,8 @@ function safeMediaJobErrorDetail(errorCode: string): string {
 type OiioArtifactErrorCode =
   | 'OIIO_REQUIRED'
   | 'OIIO_COLOR_TRANSFORM_FAILED'
-  | 'OIIO_GENERATION_FAILED';
+  | 'OIIO_GENERATION_FAILED'
+  | typeof MEDIA_INPUT_TOO_LARGE_ERROR_CODE;
 
 export type ExrPlaneDescriptor = {
   index: number;
@@ -4116,7 +4243,10 @@ class AsyncSemaphore {
       while (this.waiting.length > 0) {
         const waiter = this.waiting.shift()!;
         waiter.signal?.removeEventListener('abort', waiter.abort!);
-        if (waiter.signal?.aborted) continue;
+        if (waiter.signal?.aborted) {
+          waiter.reject(new DOMException('Media job cancelled while waiting for a decoder.', 'AbortError'));
+          continue;
+        }
         waiter.resolve(this.releaseFactory());
         return;
       }
@@ -4132,11 +4262,37 @@ class AsyncSemaphore {
 // reduce it on single-core machines, never expand native memory pressure.
 // FFmpeg and OIIO stay at one because their frame buffers are memory-bound.
 const MEDIA_DECODE_CONCURRENCY = workerMediaDecodeConcurrency();
+const MEDIA_INTERACTIVE_DECODE_CONCURRENCY = workerMediaInteractiveDecodeConcurrency();
+// Background image work remains limited to the original two slots. Two extra
+// process-wide Sharp slots are available only to the interactive image lane;
+// the native gate keeps background + interactive work at most the interactive
+// cap even when more than one library is open.
+const sharpNativeDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DECODE_CONCURRENCY);
 const sharpDecoderSemaphore = new AsyncSemaphore(MEDIA_DECODE_CONCURRENCY);
+const interactiveSharpDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DECODE_CONCURRENCY);
 // FFmpeg's thumbnail filter can retain decoded frames; one native process at
 // a time is the intentional safety limit even on high-core machines.
 const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
+
+type MediaDecodeLane = 'background' | 'interactive';
+
+function runSharpDecoder<T>(
+  signal: AbortSignal | undefined,
+  lane: MediaDecodeLane | undefined,
+  task: () => Promise<T>,
+  memory?: Omit<MediaNativeMemoryEstimate, 'decoder'>,
+): Promise<T> {
+  const laneSemaphore = lane === 'interactive'
+    ? interactiveSharpDecoderSemaphore
+    : sharpDecoderSemaphore;
+  const memoryBytes = estimateMediaNativeMemoryBytes({ decoder: 'sharp', ...memory });
+  return mediaNativeMemoryBudget.run(
+    signal,
+    memoryBytes,
+    () => sharpNativeDecoderSemaphore.run(signal, () => laneSemaphore.run(signal, task)),
+  );
+}
 const MEDIA_QUEUE_LOG = process.env.SERPENT_MEDIA_QUEUE_LOG === '1';
 
 function logMediaQueueEvent(
@@ -4148,8 +4304,10 @@ function logMediaQueueEvent(
     console.error(JSON.stringify({
       timestamp: new Date().toISOString(),
       scope: 'worker.media-queue',
-      stage,
-      context,
+      // AppLogger keeps the structured `context` object when forwarding Worker
+      // stderr and intentionally drops sibling fields. Keep the phase inside
+      // that object so queue diagnostics retain their correlation point.
+      context: { mediaStage: stage, ...context },
     }));
   } catch {
     // Diagnostic logging must never affect media queue correctness.
@@ -4171,6 +4329,12 @@ interface MediaExecutionContext {
   signal?: AbortSignal;
   /** Queue-owned video metadata is a separate durable job. */
   includeVideoMetadata?: boolean;
+  /** Visible image cards may use the bounded interactive Sharp lane. */
+  lane?: MediaDecodeLane;
+  /** Source facts already read during queue admission; avoids a second probe. */
+  sourceByteSize?: number | null;
+  sourceWidth?: number | null;
+  sourceHeight?: number | null;
 }
 
 /**
@@ -6573,45 +6737,65 @@ export class LibraryService {
   private runFfmpeg(
     command: string,
     args: string[],
-    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+    options: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      memory?: Omit<MediaNativeMemoryEstimate, 'decoder'>;
+    } = {},
   ): Promise<SpawnResult> {
+    const { memory, ...spawnOptions } = options;
     const boundedArgs = constrainFfmpegDecoderArgs(command, args);
-    return ffmpegDecoderSemaphore.run(
-      options.signal,
-      async () => {
-        try {
-          const result = await this.spawnFn(command, boundedArgs, options);
-          if (mediaResourceFailureFromSpawnResult(result)) {
-            throw asMediaResourceExhaustedError(result, 'ffmpeg')
-              ?? new Error('FFmpeg reported native resource pressure.');
+    const memoryBytes = estimateMediaNativeMemoryBytes({ decoder: 'ffmpeg', ...memory });
+    return mediaNativeMemoryBudget.run(
+      spawnOptions.signal,
+      memoryBytes,
+      () => ffmpegDecoderSemaphore.run(
+        spawnOptions.signal,
+        async () => {
+          try {
+            const result = await this.spawnFn(command, boundedArgs, spawnOptions);
+            if (mediaResourceFailureFromSpawnResult(result)) {
+              throw asMediaResourceExhaustedError(result, 'ffmpeg')
+                ?? new Error('FFmpeg reported native resource pressure.');
+            }
+            return result;
+          } catch (error) {
+            throw asMediaResourceExhaustedError(error, 'ffmpeg') ?? error;
           }
-          return result;
-        } catch (error) {
-          throw asMediaResourceExhaustedError(error, 'ffmpeg') ?? error;
-        }
-      },
+        },
+      ),
     );
   }
 
   private runOiio(
     command: string,
     args: string[],
-    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+    options: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      memory?: Omit<MediaNativeMemoryEstimate, 'decoder'>;
+    } = {},
   ): Promise<SpawnResult> {
-    return oiioDecoderSemaphore.run(
-      options.signal,
-      async () => {
-        try {
-          const result = await this.spawnFn(command, args, options);
-          if (mediaResourceFailureFromSpawnResult(result)) {
-            throw asMediaResourceExhaustedError(result, 'oiio')
-              ?? new Error('OpenImageIO reported native resource pressure.');
+    const { memory, ...spawnOptions } = options;
+    const memoryBytes = estimateMediaNativeMemoryBytes({ decoder: 'oiio', ...memory });
+    return mediaNativeMemoryBudget.run(
+      spawnOptions.signal,
+      memoryBytes,
+      () => oiioDecoderSemaphore.run(
+        spawnOptions.signal,
+        async () => {
+          try {
+            const result = await this.spawnFn(command, args, spawnOptions);
+            if (mediaResourceFailureFromSpawnResult(result)) {
+              throw asMediaResourceExhaustedError(result, 'oiio')
+                ?? new Error('OpenImageIO reported native resource pressure.');
+            }
+            return result;
+          } catch (error) {
+            throw asMediaResourceExhaustedError(error, 'oiio') ?? error;
           }
-          return result;
-        } catch (error) {
-          throw asMediaResourceExhaustedError(error, 'oiio') ?? error;
-        }
-      },
+        },
+      ),
     );
   }
 
@@ -11096,7 +11280,11 @@ export class LibraryService {
         return metadataCache.get(absolutePath) ?? null;
       }
       try {
-        const metadata = await sharp(absolutePath).metadata();
+        const metadata = await runSharpDecoder(
+          undefined,
+          'background',
+          () => sharp(absolutePath).metadata(),
+        );
         const width = metadata.width;
         const height = metadata.height;
         if (
@@ -19269,6 +19457,38 @@ export class LibraryService {
     });
   }
 
+  /**
+   * Keep the fast visible-thumbnail wave on media that can complete in the
+   * Worker. Models are rendered through Main's single-flight offscreen GPU
+   * window and may legitimately take seconds (or wait for a renderer timeout
+   * when WebGL is unavailable). They remain eligible for the normal startup /
+   * mutation queue; only the interactive viewport wave excludes them.
+   */
+  filterVisibleThumbnailAssetIds(
+    libraryId: string,
+    assetIds: readonly string[],
+  ): string[] {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    const selectedIds = [...new Set(assetIds)].slice(0, THUMBNAIL_VISIBLE_PAGE_SIZE);
+    if (selectedIds.length === 0) return [];
+    const rows = openLibrary.connection
+      .prepare(
+        `SELECT asset_id, relative_file_path
+           FROM assets
+          WHERE asset_id IN (${selectedIds.map(() => '?').join(',')})`,
+      )
+      .all(...selectedIds) as Array<{
+        asset_id: string;
+        relative_file_path: string;
+      }>;
+    const modelIds = new Set(
+      rows
+        .filter((row) => LibraryService.detectMediaType(row.relative_file_path) === 'model')
+        .map((row) => row.asset_id),
+    );
+    return selectedIds.filter((assetId) => !modelIds.has(assetId));
+  }
+
   // ── Thumbnail Generation Dispatch ─────────────────────────────────
 
   /**
@@ -19297,8 +19517,16 @@ export class LibraryService {
 
     // Get the current revision for this asset
     const assetRow = openLibrary.connection
-      .prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?')
-      .get(input.assetId) as { current_revision_id: string | null } | undefined;
+      .prepare(
+        `SELECT a.current_revision_id, r.byte_size AS source_byte_size
+           FROM assets a
+           LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
+          WHERE a.asset_id = ?`,
+      )
+      .get(input.assetId) as {
+        current_revision_id: string | null;
+        source_byte_size: number | null;
+      } | undefined;
     if (!assetRow?.current_revision_id) throw new LibraryServiceError('ASSET_NOT_FOUND');
     const revisionId = assetRow.current_revision_id;
     const ext = path.extname(assetPath).toLowerCase();
@@ -19366,20 +19594,40 @@ export class LibraryService {
     const colorSpaceOverride = mediaType === 'image'
       ? this.getColorSpaceOverride(openLibrary.connection, input.assetId)
       : null;
+    const tiffHeaderSize = isTiffExtension(ext)
+      ? await readImageDimensions(assetPath)
+      : null;
+    const sourceExecution: MediaExecutionContext = {
+      ...execution,
+      sourceByteSize: execution.sourceByteSize ?? assetRow.source_byte_size,
+      sourceWidth: execution.sourceWidth ?? tiffHeaderSize?.width,
+      sourceHeight: execution.sourceHeight ?? tiffHeaderSize?.height,
+    };
+    const safeTiffForSharp = isBoundedTiffForSharp({
+      sourceByteSize: assetRow.source_byte_size,
+      width: tiffHeaderSize?.width,
+      height: tiffHeaderSize?.height,
+    });
     if (
-      mediaType === 'image' &&
-      imageDecoder === 'sharp' &&
-      viewerDecoder === 'sharp' &&
-      (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
+      (
+        mediaType === 'image' &&
+        imageDecoder === 'sharp' &&
+        viewerDecoder === 'sharp' &&
+        (!colorSpaceOverride || !canOverrideImageColorSpace(ext))
+      ) || (
+        mediaType === 'image' &&
+        safeTiffForSharp &&
+        !colorSpaceOverride
+      )
     ) {
-      return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, execution);
+      return this.generateImageThumbnail(input, openLibrary, assetPath, revisionId, sourceExecution);
     }
 
-    // TIFF is intentionally decoded by OIIO even when Sharp can handle an
-    // ordinary file. libvips applies a 50 MiB cumulative allocation limit to
-    // custom TIFF tags; camera/scanner TIFFs with large private metadata then
-    // fail before the pixels are ever read. OIIO ignores that metadata for
-    // the raster conversion and keeps the Worker responsive.
+    // TIFFs whose bounded header/size admission is unknown or unsafe stay on
+    // OIIO. libvips applies a cumulative allocation limit to custom TIFF tags;
+    // camera/scanner TIFFs with large private metadata can fail before the
+    // pixels are ever read. OIIO ignores that metadata for the raster
+    // conversion and keeps the Worker responsive.
     if (mediaType === 'image' && viewerDecoder === 'oiio') {
       // RAW output is already LibRaw/OIIO's display-ready default sRGB and
       // the embedded-JPEG card path does not consume a source colour-space
@@ -19394,7 +19642,7 @@ export class LibraryService {
         assetPath,
         revisionId,
         { inputColorSpace: colorSpaceOverride ?? colorSpace?.id },
-        execution,
+        sourceExecution,
       );
     }
 
@@ -19405,7 +19653,7 @@ export class LibraryService {
         assetPath,
         revisionId,
         { inputColorSpace: colorSpaceOverride },
-        execution,
+        sourceExecution,
       );
     }
 
@@ -19415,13 +19663,13 @@ export class LibraryService {
         openLibrary,
         assetPath,
         revisionId,
-        execution,
-        execution.includeVideoMetadata !== false,
+        sourceExecution,
+        sourceExecution.includeVideoMetadata !== false,
       );
     }
 
     if (mediaType === 'audio') {
-      return this.generateAudioArtifacts(input, openLibrary, assetPath, revisionId, execution);
+      return this.generateAudioArtifacts(input, openLibrary, assetPath, revisionId, sourceExecution);
     }
 
     throw new LibraryServiceError('INTERNAL_ERROR');
@@ -19536,17 +19784,23 @@ export class LibraryService {
       throw new LibraryServiceError('AI_ANALYSIS_FAILED', { reason: 'THUMBNAIL_REQUIRED' });
     }
     const frames = outcome.frames;
-    const sharp = this.options.sharpFn ?? requireSharp();
     // 1×4 strip, left to right: 斜45°/正视/侧视/俯视 (each frame ≤512 wide).
-    const tiledResult = await sharp(
-      Buffer.concat(frames.map((frame) => Buffer.from(frame.pngBytes))),
-    ).composite(
-      frames.map((frame, index) => ({
-        input: Buffer.from(frame.pngBytes),
-        left: index * frame.width,
-        top: 0,
-      })),
-    ).png!().toBuffer!();
+    const tiledResult = await runSharpDecoder(signal, undefined, async () => {
+      const sharp = this.options.sharpFn ?? requireSharp();
+      return sharp(
+        Buffer.concat(frames.map((frame) => Buffer.from(frame.pngBytes))),
+      ).composite(
+        frames.map((frame, index) => ({
+          input: Buffer.from(frame.pngBytes),
+          left: index * frame.width,
+          top: 0,
+        })),
+      ).png!().toBuffer!();
+    }, {
+      sourceByteSize: frames.reduce((total, frame) => total + frame.pngBytes.byteLength, 0),
+      width: frames.reduce((total, frame) => total + frame.width, 0),
+      height: 512,
+    });
     return { pngBytes: tiledResult as Buffer, mime: 'image/png' };
   }
 
@@ -19773,15 +20027,22 @@ export class LibraryService {
           throw new DOMException('Media job cancelled after PDF render.', 'AbortError');
         }
         const pngBuffer = canvas.toBuffer('image/png');
-        const sharp = this.options.sharpFn ?? requireSharp();
         const width = Math.round(viewport.width);
         const height = Math.round(viewport.height);
-        await sharp(pngBuffer)
-          .rotate()
-          .toColourspace('srgb')
-          .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 72 })
-          .toFile(artifactAbsPath);
+        await runSharpDecoder(
+          execution.signal,
+          execution.lane,
+          async () => {
+            const sharp = this.options.sharpFn ?? requireSharp();
+            await sharp(pngBuffer)
+              .rotate()
+              .toColourspace('srgb')
+              .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+              .jpeg({ quality: 72 })
+              .toFile(artifactAbsPath);
+          },
+          { sourceByteSize: pngBuffer.byteLength, width, height },
+        );
         const outputStat = statSync(artifactAbsPath);
         openLibrary.connection
           .prepare(
@@ -19865,13 +20126,24 @@ export class LibraryService {
     mkdirSync(artifactsDir, { recursive: true });
     const artifactRelPath = `${artifactId}.jpg`;
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
-    const sharp = this.options.sharpFn ?? requireSharp();
-    await sharp(Buffer.from(rendered.png))
-      .rotate()
-      .toColourspace('srgb')
-      .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 72 })
-      .toFile(artifactAbsPath);
+    await runSharpDecoder(
+      execution.signal,
+      execution.lane,
+      async () => {
+        const sharp = this.options.sharpFn ?? requireSharp();
+        await sharp(Buffer.from(rendered.png))
+          .rotate()
+          .toColourspace('srgb')
+          .resize({ width: 512, height: 512, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 72 })
+          .toFile(artifactAbsPath);
+      },
+      {
+        sourceByteSize: rendered.png.byteLength,
+        width: rendered.width,
+        height: rendered.height,
+      },
+    );
     const outputStat = statSync(artifactAbsPath);
     openLibrary.connection
       .prepare(
@@ -19950,8 +20222,9 @@ export class LibraryService {
     let finalPath: string | undefined;
 
     try {
-      const output = await sharpDecoderSemaphore.run(
+      const output = await runSharpDecoder(
         execution.signal,
+        execution.lane,
         async () => {
           const sharp = this.options.sharpFn ?? requireSharp();
           const probe = sharp(oldArtifactPath, {
@@ -20103,6 +20376,11 @@ export class LibraryService {
             width: legacy.width,
           };
         },
+        {
+          sourceByteSize: legacy.byte_size,
+          width: legacy.width,
+          height: legacy.height,
+        },
       );
 
       if (output === null) return null;
@@ -20193,12 +20471,21 @@ export class LibraryService {
     let imageProcessed = false;
 
     try {
-      const headerSize = readImageDimensionsSync(assetPath);
+      const headerSize = execution.sourceWidth != null
+        && execution.sourceHeight != null
+        && execution.sourceWidth > 0
+        && execution.sourceHeight > 0
+        ? {
+            width: execution.sourceWidth,
+            height: execution.sourceHeight,
+          }
+        : await readImageDimensions(assetPath);
       if (headerSize) {
         this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
       }
-      const { inputWidth, inputHeight, gifMetadata } = await sharpDecoderSemaphore.run(
+      const { inputWidth, inputHeight, gifMetadata } = await runSharpDecoder(
         execution.signal,
+        execution.lane,
         async () => {
           const s = this.options.sharpFn ?? requireSharp();
           // Serpent-thumb-perf: random access enables libvips shrink-on-load
@@ -20206,7 +20493,11 @@ export class LibraryService {
           // 512px resize instead of full resolution). GIF keeps sequential
           // reads for animation safety; failOn stays 'none' for truncation
           // tolerance.
-          const probe = s(assetPath, { failOn: 'none', sequentialRead: false });
+          const probe = s(assetPath, {
+            failOn: 'none',
+            sequentialRead: false,
+            limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+          });
           const metadata = await probe.metadata();
           const pages = metadata.pages ?? 1;
           const isGif =
@@ -20221,7 +20512,10 @@ export class LibraryService {
                 throw new DOMException('Media job cancelled during GIF page probe.', 'AbortError');
               }
               try {
-                const samplePipeline = s(assetPath, { page: candidate })
+                const samplePipeline = s(assetPath, {
+                  page: candidate,
+                  limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+                })
                   .rotate()
                   .toColourspace('srgb')
                   .resize({
@@ -20229,6 +20523,8 @@ export class LibraryService {
                     height: GIF_THUMBNAIL_PROBE_SIZE,
                     fit: 'inside',
                     withoutEnlargement: true,
+                    // Keep the probe bounded to a small frame; the final card
+                    // still preserves the existing thumbnail sampling policy.
                   });
                 const rawFn = samplePipeline.raw;
                 if (!rawFn) {
@@ -20261,8 +20557,17 @@ export class LibraryService {
           }
 
           const pipeline = isAnimatedGif
-            ? s(assetPath, { page, failOn: 'none', sequentialRead: true })
-            : s(assetPath, { failOn: 'none', sequentialRead: false });
+            ? s(assetPath, {
+                page,
+                failOn: 'none',
+                sequentialRead: true,
+                limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+              })
+            : s(assetPath, {
+                failOn: 'none',
+                sequentialRead: false,
+                limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+              });
           const finalMeta = isAnimatedGif ? await pipeline.metadata() : metadata;
           const swapsDimensions = finalMeta.orientation !== undefined
             && finalMeta.orientation >= 5
@@ -20286,6 +20591,8 @@ export class LibraryService {
               height: 512,
               fit: 'inside',
               withoutEnlargement: true,
+              // Card thumbnails stay bounded to 512px; the viewer still
+              // resolves the full-fidelity source when opened.
             });
           if (hasAlpha) {
             await sized.webp({ quality: 80 }).toFile(artifactAbsPath);
@@ -20305,6 +20612,11 @@ export class LibraryService {
               })
             : null;
           return { inputWidth, inputHeight, gifMetadata: gifMeta };
+        },
+        {
+          sourceByteSize: execution.sourceByteSize,
+          width: headerSize?.width ?? execution.sourceWidth,
+          height: headerSize?.height ?? execution.sourceHeight,
         },
       );
 
@@ -20352,6 +20664,21 @@ export class LibraryService {
       return { artifactId };
     } catch (error) {
       const extension = path.extname(assetPath).toLowerCase();
+      // A visible-window preemption or queue cancellation is not a decode
+      // failure. Do not create a failed artifact, run a second header probe,
+      // or misreport an AbortError as LIBRARY_NOT_WRITABLE; the queue will
+      // leave the durable job queued for the newest viewport.
+      if (execution.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        try {
+          rmSync(artifactAbsPath, { force: true });
+        } catch (cleanupError) {
+          this.diagnose('thumbnail.abort-cleanup', cleanupError, {
+            libraryId: input.libraryId,
+            assetId: input.assetId,
+          });
+        }
+        throw error;
+      }
       if (
         !imageProcessed &&
         (extension === '.jpg' || extension === '.jpeg') &&
@@ -20413,7 +20740,7 @@ export class LibraryService {
             : 'THUMBNAIL_GENERATION_FAILED',
           new Date().toISOString(),
         );
-      const headerSize = readImageDimensionsSync(assetPath);
+      const headerSize = await readImageDimensions(assetPath);
       if (headerSize) {
         this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
       }
@@ -20481,7 +20808,7 @@ export class LibraryService {
           stderr: result.stderr.slice(-400),
         });
       }
-      const headerSize = readImageDimensionsSync(assetPath);
+      const headerSize = await readImageDimensions(assetPath);
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -21306,14 +21633,19 @@ export class LibraryService {
         );
       }
 
-      const sharp = this.options.sharpFn ?? requireSharp();
-      const flatten = sharp(tempAbsPath).flatten?.({
-        background: { ...options.flattenBackground },
+      await runSharpDecoder(execution.signal, execution.lane, async () => {
+        const sharp = this.options.sharpFn ?? requireSharp();
+        const flatten = sharp(tempAbsPath).flatten?.({
+          background: { ...options.flattenBackground },
+        });
+        if (!flatten?.png || !flatten.toFile) {
+          throw new Error('Sharp flatten/png API unavailable for waveform covers.');
+        }
+        await flatten.png().toFile(artifactAbsPath);
+      }, {
+        width: options.width,
+        height: options.height,
       });
-      if (!flatten?.png || !flatten.toFile) {
-        throw new Error('Sharp flatten/png API unavailable for waveform covers.');
-      }
-      await flatten.png().toFile(artifactAbsPath);
       rmSync(tempAbsPath, { force: true });
 
       const outputStat = statSync(artifactAbsPath);
@@ -21685,7 +22017,7 @@ export class LibraryService {
     ).run(new Date().toISOString(), queuedRevisionId);
 
     try {
-      const palette = await sharpDecoderSemaphore.run(execution.signal, async () => {
+      const palette = await runSharpDecoder(execution.signal, execution.lane, async () => {
         const sharp = this.options.paletteSharpFn
           ?? (requireSharp() as unknown as PaletteSharpModule);
         const decoded = await sharp(sourcePath)
@@ -21755,28 +22087,28 @@ export class LibraryService {
   filterIgnoredAssetIds(libraryId: string, assetIds: readonly string[]): string[] {
     if (assetIds.length === 0) return [];
     const openLibrary = this.requireOpenLibrary(libraryId);
-    const stmt = openLibrary.connection
-      .prepare(
-        'SELECT location_kind, linked_folder_id, relative_file_path FROM assets WHERE asset_id = ?',
-      );
-    const out: string[] = [];
-    for (const assetId of assetIds) {
-      const row = stmt.get(assetId) as {
-        location_kind: 'managed' | 'linked';
-        linked_folder_id: string | null;
-        relative_file_path: string;
-      } | undefined;
-      if (!row) continue;
-      if (this.isExplicitlyIgnored(
-        openLibrary,
-        row.location_kind,
-        row.linked_folder_id,
-        row.relative_file_path,
-        'asset',
-      )) continue;
-      out.push(assetId);
+    // Visible-window reports and bounded queue fills call this with many ids.
+    // The old per-id asset lookup followed by a per-id ignore-rule lookup made
+    // one report perform dozens of SQLite turns, even though the result is a
+    // simple membership filter. Keep the original caller order (and duplicate
+    // ids) while doing the rule evaluation in one bounded query per chunk.
+    const uniqueAssetIds = [...new Set(assetIds)];
+    const keptAssetIds = new Set<string>();
+    const chunkSize = 500;
+    const ignoreSql = this.explicitIgnoreSql(openLibrary.connection, 'a');
+    for (let offset = 0; offset < uniqueAssetIds.length; offset += chunkSize) {
+      const chunk = uniqueAssetIds.slice(offset, offset + chunkSize);
+      const rows = openLibrary.connection
+        .prepare(
+          `SELECT a.asset_id
+             FROM assets a
+            WHERE a.asset_id IN (${chunk.map(() => '?').join(',')})
+              AND ${ignoreSql}`,
+        )
+        .all(...chunk) as Array<{ asset_id: string }>;
+      for (const row of rows) keptAssetIds.add(row.asset_id);
     }
-    return out;
+    return assetIds.filter((assetId) => keptAssetIds.has(assetId));
   }
 
   /**
@@ -22567,8 +22899,9 @@ export class LibraryService {
     const artifactAbsPath = path.join(artifactsDir, artifactRelPath);
 
     try {
-      const embeddedDimensions = await sharpDecoderSemaphore.run(
+      const embeddedDimensions = await runSharpDecoder(
         execution.signal,
+        execution.lane,
         async () => {
           const sharp = this.options.sharpFn ?? requireSharp();
           const pipeline = sharp(embeddedJpeg, {
@@ -22615,7 +22948,7 @@ export class LibraryService {
         assetPath,
         this.options.rawImageMetadataParser,
       );
-      const headerSize = readImageDimensionsSync(assetPath);
+      const headerSize = await readImageDimensions(assetPath);
       const sourceWidth = rawMetadata?.width ?? headerSize?.width ?? embeddedDimensions.width;
       const sourceHeight = rawMetadata?.height ?? headerSize?.height ?? embeddedDimensions.height;
       const outputStat = statSync(artifactAbsPath);
@@ -22637,7 +22970,7 @@ export class LibraryService {
           new Date().toISOString(),
         );
       if (rawMetadata) {
-        this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
+        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
       }
       return { artifactId };
     } catch (error) {
@@ -22715,6 +23048,9 @@ export class LibraryService {
         if (embeddedThumbnail) return embeddedThumbnail;
       }
 
+      const nativeInput = await inspectMediaNativeInput(assetPath, execution);
+      assertOiioInputWithinSafetyBudget(nativeInput);
+
       // LibRaw already converts camera RAW data to its display-ready default
       // output. Running that result through the studio OCIO display transform
       // makes some ARW/RAW files fail with OIIO_COLOR_TRANSFORM_FAILED, so RAW
@@ -22747,6 +23083,7 @@ export class LibraryService {
       const result = await this.runOiio(oiiotoolPath, args, {
         timeoutMs: 60_000,
         signal: execution.signal,
+        memory: nativeInput,
       });
 
       if (result.exitCode !== 0) {
@@ -22778,7 +23115,7 @@ export class LibraryService {
               : `oiio@${OIIO_VERSION};${isViewerImage ? 'viewer-full;' : ''}ocio=studio-v4-aces2;colorspace=${inputColorSpace ?? 'auto'};exposure=${exposureStops};subimage=${subimage}`,
           new Date().toISOString());
       if (rawMetadata) {
-        this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
+        await this.persistRawImageMetadata(openLibrary, revisionId, assetPath, rawMetadata);
       }
 
       return { artifactId };
@@ -22786,6 +23123,8 @@ export class LibraryService {
       const resourceError = asMediaResourceExhaustedError(error, 'oiio');
       const errorCode: OiioArtifactErrorCode | typeof MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE = resourceError
         ? MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE
+        : error instanceof MediaInputTooLargeError
+          ? MEDIA_INPUT_TOO_LARGE_ERROR_CODE
         : isMissingPathError(error)
         ? 'OIIO_REQUIRED'
         : error instanceof OiioInvocationError
@@ -22831,12 +23170,12 @@ export class LibraryService {
    * Inspector. Metadata extraction is deliberately best-effort: a camera file
    * with no readable EXIF must still keep its successful thumbnail.
    */
-  private persistRawImageMetadata(
+  private async persistRawImageMetadata(
     openLibrary: OpenLibrary,
     revisionId: string,
     assetPath: string,
     metadata: RawImageMetadata,
-  ): void {
+  ): Promise<void> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     const artifactRelPath = `${artifactId}.json`;
@@ -22844,7 +23183,7 @@ export class LibraryService {
     try {
       writeFileSync(artifactAbsPath, JSON.stringify(metadata, null, 2), 'utf-8');
       const outputStat = statSync(artifactAbsPath);
-      const headerSize = readImageDimensionsSync(assetPath);
+      const headerSize = await readImageDimensions(assetPath);
       const now = new Date().toISOString();
       openLibrary.connection.transaction(() => {
         openLibrary.connection
@@ -22986,7 +23325,15 @@ export class LibraryService {
     let height: number | null = null;
     if (input.mimeType.toLowerCase().startsWith('image/')) {
       try {
-        const metadata = await (this.options.sharpFn ?? requireSharp())(bytes).metadata();
+        const metadata = await runSharpDecoder(
+          undefined,
+          'background',
+          () => (this.options.sharpFn ?? requireSharp())(bytes, {
+            failOn: 'none',
+            limitInputPixels: MEDIA_MAX_INPUT_PIXELS,
+          }).metadata(),
+          { sourceByteSize: bytes.length },
+        );
         const metadataWidth = metadata.width;
         const metadataHeight = metadata.height;
         width = typeof metadataWidth === 'number'
@@ -23418,14 +23765,18 @@ export class LibraryService {
     let detected: ImageColorSpaceInfo | undefined;
     try {
       if (decoder === 'sharp') {
-        const metadata = await (this.options.sharpFn ?? requireSharp())(assetPath).metadata();
+        const metadata = await runSharpDecoder(undefined, 'background', async () =>
+          (this.options.sharpFn ?? requireSharp())(assetPath).metadata(),
+        );
         const profileName = parseIccProfileDescription(metadata.icc);
         detected = colorSpaceInfoFromName(profileName, 'embedded')
           ?? colorSpaceInfoFromName(metadata.space, metadata.hasProfile ? 'embedded' : 'metadata');
       } else {
+        const nativeInput = await inspectMediaNativeInput(assetPath, {});
+        assertOiioInputWithinSafetyBudget(nativeInput);
         const result = await this.runOiio(resolveOiiotoolPath(), [
           '--info', '-v', '-a', assetPath,
-        ], { timeoutMs: 30_000 });
+        ], { timeoutMs: 30_000, memory: nativeInput });
         if (result.exitCode === 0) {
           detected = parseOiioColorSpaceInfo(result.stdout.toString('utf-8'));
         }
@@ -23455,9 +23806,11 @@ export class LibraryService {
     const cached = this.exrPlanesByRevision.get(revisionId);
     if (cached) return cached;
     try {
+      const nativeInput = await inspectMediaNativeInput(assetPath, {});
+      assertOiioInputWithinSafetyBudget(nativeInput);
       const result = await this.runOiio(resolveOiiotoolPath(), [
         '--info', '-v', '-a', assetPath,
-      ], { timeoutMs: 30_000 });
+      ], { timeoutMs: 30_000, memory: nativeInput });
       if (result.exitCode !== 0) return [{ index: 0, label: 'Part 0' }];
       const planes = parseExrPlaneDescriptors(result.stdout.toString('utf-8'));
       this.exrPlanesByRevision.set(revisionId, planes);
@@ -25799,6 +26152,9 @@ export class LibraryService {
     relativeFilePath: string,
     kind: 'thumbnail' | 'video_poster',
     generatorVersion: string,
+    sourceByteSize?: number | null,
+    sourceWidth?: number | null,
+    sourceHeight?: number | null,
   ): boolean {
     if (generatorVersion.startsWith('plugin:')) return true;
     // Imported Eagle/Billfish previews are deliberately kept as the visible
@@ -25814,9 +26170,18 @@ export class LibraryService {
     switch (mediaType) {
       case 'image': {
         const extension = path.extname(relativeFilePath).toLowerCase();
+        const boundedTiffForSharp = isTiffExtension(extension)
+          && isBoundedTiffForSharp({
+            sourceByteSize,
+            width: sourceWidth,
+            height: sourceHeight,
+          });
         const oiioOwned = isRawImageExtension(extension)
           || extension === '.ico'
-          || imageViewerDecoderForExtension(extension) === 'oiio';
+          || (
+            imageViewerDecoderForExtension(extension) === 'oiio'
+            && !boundedTiffForSharp
+          );
         return oiioOwned
           ? generatorVersion.startsWith(`oiio@${OIIO_VERSION}`)
             || generatorVersion.startsWith(RAW_EMBEDDED_THUMBNAIL_GENERATOR)
@@ -25843,8 +26208,27 @@ export class LibraryService {
     const placeholders = assetIds.map(() => '?').join(',');
     const rows = openLibrary.connection
       .prepare(
-        `SELECT a.relative_file_path, ra.artifact_id, ra.kind, ra.generator_version
+        `SELECT a.relative_file_path, ra.artifact_id, ra.kind, ra.generator_version,
+                source_revision.byte_size AS source_byte_size,
+                (SELECT source_metadata.width
+                   FROM revision_artifacts source_metadata
+                  WHERE source_metadata.revision_id = a.current_revision_id
+                    AND source_metadata.kind = 'extracted_metadata'
+                    AND source_metadata.status = 'ready'
+                    AND source_metadata.invalidated_at IS NULL
+                  ORDER BY source_metadata.generated_at DESC
+                  LIMIT 1) AS source_width,
+                (SELECT source_metadata.height
+                   FROM revision_artifacts source_metadata
+                  WHERE source_metadata.revision_id = a.current_revision_id
+                    AND source_metadata.kind = 'extracted_metadata'
+                    AND source_metadata.status = 'ready'
+                    AND source_metadata.invalidated_at IS NULL
+                  ORDER BY source_metadata.generated_at DESC
+                  LIMIT 1) AS source_height
            FROM assets a
+           JOIN revisions source_revision
+             ON source_revision.revision_id = a.current_revision_id
            JOIN revision_artifacts ra ON ra.revision_id = a.current_revision_id
           WHERE a.asset_id IN (${placeholders})
             AND a.deleted_at IS NULL
@@ -25857,11 +26241,17 @@ export class LibraryService {
         artifact_id: string;
         kind: 'thumbnail' | 'video_poster';
         generator_version: string;
+        source_byte_size: number | null;
+        source_width: number | null;
+        source_height: number | null;
       }>;
     const stale = rows.filter((row) => !this.primaryArtifactGeneratorIsCurrent(
       row.relative_file_path,
       row.kind,
       row.generator_version,
+      row.source_byte_size,
+      row.source_width,
+      row.source_height,
     ));
     if (stale.length === 0) return 0;
     const invalidate = openLibrary.connection.prepare(
@@ -26604,6 +26994,14 @@ export class LibraryService {
       maxJobs?: number;
       /** Restrict a pump to one media lane; omitted preserves full-queue behavior. */
       jobKinds?: readonly MediaJobKind[];
+      /** Current viewport image cards may use the bounded interactive lane. */
+      interactive?: boolean;
+      /**
+       * Mutable claim scope updated by the Worker when a newer visible window
+       * arrives while this queue is awaiting native media work. Undefined
+       * keeps the original queue-wide scope; an array limits future claims.
+       */
+      claimAssetIdsRef?: { current: readonly string[] | undefined };
       /** Serpent-4bdd26 收编：Restrict a visible-window pump to the latest viewport asset ids. */
       assetIds?: readonly string[];
       /** Serpent-4bdd26 收编：Stop claiming more jobs when a newer queue scene supersedes this pump. */
@@ -26668,11 +27066,12 @@ export class LibraryService {
     const pumpAssetIds = options.assetIds === undefined
       ? undefined
       : [...new Set(options.assetIds)].slice(0, 100);
-    const assetClause = pumpAssetIds === undefined
+    const buildAssetClause = (assetIds: readonly string[] | undefined): string => assetIds === undefined
       ? ''
-      : pumpAssetIds.length === 0
+      : assetIds.length === 0
         ? 'AND 1 = 0'
-        : `AND asset_id IN (${pumpAssetIds.map(() => '?').join(',')})`;
+        : `AND asset_id IN (${assetIds.map(() => '?').join(',')})`;
+    const assetClause = buildAssetClause(pumpAssetIds);
     // Primary previews must not be held behind a secondary FFmpeg derivative
     // for the same revision. This matters even with a single FFmpeg decoder
     // slot: a proxy claimed first can hold that slot while the poster waits
@@ -26830,13 +27229,30 @@ export class LibraryService {
           );
       }
     }
-    const nextJob = openLibrary.connection.prepare(
+    // The visible wave is a latency budget, not a general FIFO pump. Video
+    // posters share the primary job kind with images, but their FFmpeg path
+    // is deliberately single-flight and can take materially longer. If a
+    // video happens to be older than an image in the same viewport, claiming
+    // it first consumes one of the interactive workers without improving the
+    // image-card gate. Keep image jobs ahead of other primary media only for
+    // the visible wave; background/import ordering remains unchanged.
+    const interactiveImageFirstOrder = options.interactive
+      ? `CASE WHEN jobs.kind = 'generate_thumbnail' AND EXISTS (
+             SELECT 1
+               FROM assets visible_asset
+              WHERE visible_asset.asset_id = jobs.asset_id
+                AND (${IMAGE_EXTENSIONS
+                  .map((extension) => `LOWER(visible_asset.relative_file_path) LIKE '%${extension}'`)
+                  .join(' OR ')})
+           ) THEN 1 ELSE 0 END DESC, `
+      : '';
+    const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count, error_code
          FROM jobs
         WHERE library_id = ?
           AND kind IN (${jobKinds.map(() => '?').join(',')})
           AND status = 'queued'
-          ${assetClause}
+          ${buildAssetClause(claimAssetIds)}
           ${primaryPreviewClaimGuard}
           ${deferSecondaryAfterPrimarySql}
           AND (
@@ -26844,12 +27260,38 @@ export class LibraryService {
             OR error_code NOT IN ('JOB_LEASE_LOST', '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}')
             OR updated_at <= ?
           )
-        ORDER BY priority DESC, created_at
+        ORDER BY ${interactiveImageFirstOrder}priority DESC, created_at
         LIMIT 1`,
     );
+    const normalizedClaimAssetIds = (assetIds: readonly string[] | undefined): string[] | undefined =>
+      assetIds === undefined ? undefined : [...new Set(assetIds)].slice(0, 100);
+    const claimAssetIdsKey = (assetIds: readonly string[] | undefined): string | undefined =>
+      assetIds === undefined ? undefined : [...assetIds].toSorted().join('\u0000');
+    let nextJobAssetIds = pumpAssetIds;
+    let nextJobAssetKey = claimAssetIdsKey(nextJobAssetIds);
+    let nextJob = nextJobQuery(nextJobAssetIds);
+    const claimNextJob = (): unknown => {
+      const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
+      const currentAssetIds = normalizedClaimAssetIds(requestedAssetIds);
+      const currentAssetKey = claimAssetIdsKey(currentAssetIds);
+      if (currentAssetKey !== nextJobAssetKey) {
+        nextJobAssetIds = currentAssetIds;
+        nextJobAssetKey = currentAssetKey;
+        nextJob = nextJobQuery(nextJobAssetIds);
+      }
+      return nextJob.get(
+        libraryId,
+        ...jobKinds,
+        ...(nextJobAssetIds ?? []),
+        ...(deferSecondaryAfterPrimarySql === '' ? [] : [waveStartedAtIso]),
+        new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
+      );
+    };
 
     let processed = 0;
-    const decodeConcurrency = workerMediaDecodeConcurrency();
+    const decodeConcurrency = options.interactive
+      ? workerMediaInteractiveDecodeConcurrency()
+      : workerMediaDecodeConcurrency();
     const maxJobs = Math.max(
       1,
       Math.min(100, options.maxJobs ?? workerMediaDecodeWaveSize()),
@@ -26922,13 +27364,7 @@ export class LibraryService {
       if (options.signal?.aborted) return;
       if (mediaResourceGuard.isCoolingDown()) return;
       budget -= 1;
-      const job = nextJob.get(
-        libraryId,
-        ...jobKinds,
-        ...(pumpAssetIds ?? []),
-        ...(deferSecondaryAfterPrimarySql === '' ? [] : [waveStartedAtIso]),
-        new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
-      ) as {
+      const job = claimNextJob() as {
         job_id: string;
         asset_id: string;
         revision_id: string;
@@ -27087,6 +27523,13 @@ export class LibraryService {
           timeoutMs: 0,
           leaseDurationMs: MEDIA_JOB_LEASE_DURATION_MS,
         });
+        logMediaQueueEvent('job-lease-acquired', {
+          libraryId,
+          jobId: job.job_id,
+          assetId: job.asset_id,
+          kind: job.kind,
+          elapsedMs: Math.round((performance.now() - jobStartedAt) * 100) / 100,
+        });
       } catch (error) {
         if (!(error instanceof LibraryWriteCoordinatorError)) throw error;
         openLibrary.connection.prepare(
@@ -27191,8 +27634,34 @@ export class LibraryService {
                   )
                 : await this.generateThumbnail(
                   { libraryId, assetId: job.asset_id },
-                  { signal: controller.signal, includeVideoMetadata: false },
+                  {
+                    signal: controller.signal,
+                    includeVideoMetadata: false,
+                    sourceByteSize: claimAsset?.source_byte_size,
+                    sourceWidth: claimAsset?.source_width,
+                    sourceHeight: claimAsset?.source_height,
+                    // Only image jobs use the interactive Sharp lane. Video,
+                    // document, and model work retain their dedicated
+                    // decoder limits even when claimed by a visible wave.
+                    lane: options.interactive
+                      && claimMediaType === 'image'
+                      && claimAsset !== undefined
+                      && isSafeForInteractiveImageLane({
+                        sourceByteSize: claimAsset.source_byte_size,
+                        width: claimAsset.source_width,
+                        height: claimAsset.source_height,
+                      })
+                      ? 'interactive'
+                      : 'background',
+                  },
                 );
+          logMediaQueueEvent('job-generated', {
+            libraryId,
+            jobId: job.job_id,
+            assetId: job.asset_id,
+            kind: job.kind,
+            elapsedMs: Math.round((performance.now() - jobStartedAt) * 100) / 100,
+          });
           if (controller.signal.aborted || this.mediaJobState(libraryId, job.job_id) !== 'running') {
             this.discardLateMediaArtifacts(openLibrary, job.revision_id, previousArtifacts, {
               libraryId,

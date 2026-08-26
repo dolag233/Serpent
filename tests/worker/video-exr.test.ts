@@ -73,6 +73,24 @@ function buildRawWithEmbeddedJpeg(jpeg: Buffer): Buffer {
   return output;
 }
 
+function buildClassicTiffDimensions(width: number, height: number): Buffer {
+  const output = Buffer.alloc(38);
+  output.write('II', 0, 'ascii');
+  output.writeUInt16LE(42, 2);
+  output.writeUInt32LE(8, 4);
+  output.writeUInt16LE(2, 8);
+  output.writeUInt16LE(256, 10);
+  output.writeUInt16LE(4, 12);
+  output.writeUInt32LE(1, 14);
+  output.writeUInt32LE(width, 18);
+  output.writeUInt16LE(257, 22);
+  output.writeUInt16LE(4, 24);
+  output.writeUInt32LE(1, 26);
+  output.writeUInt32LE(height, 30);
+  output.writeUInt32LE(0, 34);
+  return output;
+}
+
 it('escapes Windows paths embedded in FFmpeg filtergraphs', () => {
   expect(escapeFfmpegFilterPath(String.raw`C:\Serpent\fonts\DejaVuSans.ttf`))
     .toBe(String.raw`C\:/Serpent/fonts/DejaVuSans.ttf`);
@@ -2217,6 +2235,149 @@ describe('EXR/TGA (oiiotool)', () => {
       "SELECT COUNT(*) AS count FROM revision_artifacts WHERE status = 'failed'",
     ).get()).toMatchObject({ count: 0 });
     db.close();
+    service.closeAll();
+  });
+
+  it('uses the bounded Sharp path for ordinary TIFF thumbnails', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[][] = [];
+    const sharp = require('sharp') as (input: {
+      create: {
+        width: number;
+        height: number;
+        channels: number;
+        background: Record<string, number>;
+      };
+    }) => {
+      tiff(options?: { compression?: string }): { toFile(path: string): Promise<unknown> };
+    };
+    const service = new LibraryService({
+      spawnFn: async (_command, args) => {
+        invocations.push(args);
+        const outputPath = args[args.length - 1];
+        if (outputPath?.endsWith('.png')) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          writeFileSync(outputPath, Buffer.from('fake-png-data'));
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'SmallTIFF', selectedParentPath: root });
+    const sourcePath = path.join(root, 'ordinary.tiff');
+    await sharp({
+      create: {
+        width: 64,
+        height: 48,
+        channels: 3,
+        background: { r: 120, g: 80, b: 40 },
+      },
+    }).tiff({ compression: 'lzw' }).toFile(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const result = (await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    }))!;
+
+    expect(invocations).toHaveLength(0);
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({
+        artifactId: result.artifactId,
+        status: 'ready',
+        mimeType: 'image/jpeg',
+        generatorId: expect.stringContaining('sharp@'),
+      });
+    service.closeAll();
+  });
+
+  it('rejects an OIIO raster above the pixel safety budget before spawning', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const invocations: string[] = [];
+    const service = new LibraryService({
+      spawnFn: async (command) => {
+        invocations.push(command);
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({ displayName: 'HugeTIFF', selectedParentPath: root });
+    const sourcePath = path.join(root, 'huge.tiff');
+    writeFileSync(sourcePath, buildClassicTiffDimensions(100_000, 1_000));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).rejects.toMatchObject({ reason: 'MEDIA_PROCESSING_FAILED' });
+
+    expect(invocations).toEqual([]);
+    const db = assertDb(created.libraryPath);
+    expect(db.prepare(
+      "SELECT status, error_code FROM revision_artifacts WHERE kind = 'thumbnail'",
+    ).get()).toMatchObject({
+      status: 'failed',
+      error_code: 'MEDIA_INPUT_TOO_LARGE',
+    });
+    db.close();
+    service.closeAll();
+  });
+
+  it('retires a legacy OIIO thumbnail when a bounded TIFF can use Sharp', async () => {
+    process.env['SERPENT_OIIO_PATH'] = '/fake/oiiotool';
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const sharp = require('sharp') as (input: {
+      create: {
+        width: number;
+        height: number;
+        channels: number;
+        background: Record<string, number>;
+      };
+    }) => {
+      tiff(options?: { compression?: string }): { toFile(path: string): Promise<unknown> };
+    };
+    const created = service.createLibrary({ displayName: 'LegacyTIFF', selectedParentPath: root });
+    const sourcePath = path.join(root, 'legacy.tiff');
+    await sharp({
+      create: {
+        width: 64,
+        height: 48,
+        channels: 3,
+        background: { r: 40, g: 80, b: 120 },
+      },
+    }).tiff({ compression: 'lzw' }).toFile(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const generated = (await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    }))!;
+
+    const db = assertDb(created.libraryPath);
+    db.prepare(
+      `UPDATE revision_artifacts
+          SET generator_version = 'oiio@3.1.12.0;legacy-tiff'
+        WHERE artifact_id = ?`,
+    ).run(generated.artifactId);
+    db.close();
+
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: [asset.assetId],
+      limit: 1,
+      priority: 350,
+    })).toBe(1);
+    expect(service.listMediaJobs(created.libraryId).jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetId: asset.assetId,
+          kind: 'generate_thumbnail',
+          status: 'queued',
+        }),
+      ]),
+    );
     service.closeAll();
   });
 

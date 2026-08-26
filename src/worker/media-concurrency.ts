@@ -5,6 +5,7 @@ import { availableParallelism, cpus, platform } from "node:os";
 import {
   mediaDecodeConcurrency,
   mediaDecodeWaveSize,
+  mediaInteractiveDecodeConcurrency,
 } from "../shared/media-concurrency";
 
 export function detectLogicalCpuCount(): number {
@@ -108,6 +109,10 @@ export function detectPhysicalCpuCount(): number {
 
 export function workerMediaDecodeConcurrency(): number {
   return mediaDecodeConcurrency(detectPhysicalCpuCount());
+}
+
+export function workerMediaInteractiveDecodeConcurrency(): number {
+  return mediaInteractiveDecodeConcurrency(detectPhysicalCpuCount());
 }
 
 export function workerMediaDecodeWaveSize(): number {

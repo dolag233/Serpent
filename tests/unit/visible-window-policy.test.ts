@@ -69,6 +69,12 @@ describe('visible-window scheduling policy', () => {
       viewportOnlyWave: false,
       queueWasAborted: false,
       continueImmediately: false,
+      visibleWavePending: true,
+    })).toBe(false);
+    expect(shouldRunThumbnailBackgroundRepair({
+      viewportOnlyWave: false,
+      queueWasAborted: false,
+      continueImmediately: false,
     })).toBe(true);
   });
 });

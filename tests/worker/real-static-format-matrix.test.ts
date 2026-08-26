@@ -84,12 +84,15 @@ describe.runIf(canRun)('real OIIO static-format matrix', () => {
 
       for (const asset of service.listAssets({ libraryId: library.libraryId, recursive: true })) {
         const artifact = service.getCurrentArtifact(library.libraryId, asset.assetId, 'thumbnail');
-        // SVG stays on the Sharp thumbnail route and emits WebP. TIFF now
-        // joins the OIIO-backed BMP/ICO/EXR/TGA path so large private tags do
-        // not trip Sharp's libvips allocation limit.
-        const expectedMimeType = /\.(?:bmp|ico|exr|tga|tiff)$/u.test(asset.displayName)
+        // SVG stays on the Sharp thumbnail route and emits WebP. Ordinary
+        // bounded TIFFs use the faster Sharp path; OIIO remains reserved for
+        // OIIO-only formats and TIFFs that exceed the Sharp safety admission.
+        const displayName = asset.displayName.toLowerCase();
+        const expectedMimeType = /\.(?:bmp|ico|exr|tga)$/u.test(displayName)
           ? 'image/png'
-          : 'image/webp';
+          : /\.tiff?$/u.test(displayName)
+            ? 'image/jpeg'
+            : 'image/webp';
         expect(artifact, asset.displayName).toMatchObject({ status: 'ready', mimeType: expectedMimeType });
         const outputPath = service.getArtifactAbsolutePath(library.libraryId, artifact!.artifactId, 'preview');
         const output = readFileSync(outputPath);
@@ -97,6 +100,8 @@ describe.runIf(canRun)('real OIIO static-format matrix', () => {
           expect(output.subarray(0, 8)).toEqual(
             Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
           );
+        } else if (expectedMimeType === 'image/jpeg') {
+          expect(output.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
         } else {
           expect(output.subarray(0, 4)).toEqual(Buffer.from('RIFF'));
           expect(output.subarray(8, 12)).toEqual(Buffer.from('WEBP'));

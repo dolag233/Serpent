@@ -119,18 +119,31 @@ describe.skipIf(!fixturePath)("10k visible-thumbnail generation benchmark", () =
     if (selectedQueuedJobs.length > 0) {
       service.cancelMediaJobs(manifest.libraryId, selectedQueuedJobs);
     }
+    // Re-read the cold page after removing its terminal artifacts. The warm
+    // page above intentionally still contains artifact-backed summaries, so
+    // it cannot tell us which native images will be admitted to the derived
+    // thumbnail lane versus served source-direct.
+    const coldPage = service.searchAssets({
+      libraryId: manifest.libraryId,
+      limit: assetIds.length,
+      offset: benchmarkOffset,
+    });
+    const generatedAssetIds = coldPage.items
+      .filter((asset) => asset.previewKind !== 'source')
+      .map((asset) => asset.assetId);
     const enqueued = service.enqueueThumbnailJobs(manifest.libraryId, {
       assetIds,
       limit: assetIds.length,
       priority: 350,
       skipStaleRepair: true,
     });
-    expect(enqueued).toBe(assetIds.length);
+    expect(enqueued).toBe(generatedAssetIds.length);
 
     const completed: string[] = [];
     const startedAt = performance.now();
     const processed = await service.processThumbnailQueue(manifest.libraryId, {
       maxJobs: assetIds.length,
+      jobKinds: ['generate_thumbnail'],
       onResult: (result) => {
         if (result.artifactId) completed.push(result.assetId);
       },
@@ -140,13 +153,15 @@ describe.skipIf(!fixturePath)("10k visible-thumbnail generation benchmark", () =
       suite: "large-library-visible-thumbnail-generation",
       assets: manifest.assetCount,
       requested: assetIds.length,
+      generated: generatedAssetIds.length,
+      sourceDirect: assetIds.length - generatedAssetIds.length,
       processed,
       completed: completed.length,
       elapsedMs: Number(elapsedMs.toFixed(1)),
       throughputPerSecond: Number((completed.length / (elapsedMs / 1_000)).toFixed(1)),
     }));
 
-    expect(processed).toBe(assetIds.length);
-    expect(completed).toHaveLength(assetIds.length);
+    expect(processed).toBe(generatedAssetIds.length);
+    expect(completed).toHaveLength(generatedAssetIds.length);
   }, 120_000);
 });

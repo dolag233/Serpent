@@ -1845,18 +1845,18 @@ function AppInner() {
     const report = () => {
       frame = undefined;
       const canvasRect = canvas.getBoundingClientRect();
-      // Queue only the viewport plus a small decode runway. A full viewport
-      // above and below used to enqueue up to 3x the work needed for the
-      // interaction, allowing below-fold thumbnails to compete with cards the
-      // user can already see.
-      const runway = Math.round(canvas.clientHeight * 0.25);
+      // Queue only cards that actually intersect the viewport. The virtual
+      // canvas deliberately mounts an overscan/runway band, but those cards
+      // pass deferUntilVisible to AssetCardMedia and do not load a URL yet.
+      // Sending them through the same high-priority queue would let below-fold
+      // work compete with the images the user can already see.
       const ids: string[] = [];
       const seenIds = new Set<string>();
       for (const slot of canvas.querySelectorAll<HTMLElement>(
         ".asset-card[data-asset-id], [data-layout-asset-id]",
       )) {
         const rect = slot.getBoundingClientRect();
-        if (rect.bottom < canvasRect.top - runway || rect.top > canvasRect.bottom + runway) {
+        if (rect.bottom <= canvasRect.top || rect.top >= canvasRect.bottom) {
           continue;
         }
         const assetId = slot.dataset.assetId ?? slot.dataset.layoutAssetId;

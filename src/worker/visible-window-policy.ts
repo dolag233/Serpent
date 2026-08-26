@@ -58,8 +58,11 @@ export function shouldRunThumbnailBackgroundRepair(input: {
   viewportOnlyWave: boolean;
   queueWasAborted: boolean;
   continueImmediately: boolean;
+  /** A newer visible report arrived while this non-visible wave was running. */
+  visibleWavePending?: boolean;
 }): boolean {
   return !input.viewportOnlyWave
     && !input.queueWasAborted
-    && !input.continueImmediately;
+    && !input.continueImmediately
+    && input.visibleWavePending !== true;
 }

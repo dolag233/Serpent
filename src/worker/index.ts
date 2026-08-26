@@ -142,6 +142,15 @@ const activeThumbnailQueues = new Set<string>();
 const rescheduledThumbnailQueues = new Set<string>();
 // Serpent-4bdd26 收编 codex/large-library-performance@15f3325c：视口抢占机制。
 const activeThumbnailQueueControllers = new Map<string, AbortController>();
+/**
+ * The active queue's claim scope is mutable because a visible-window report
+ * can arrive while processThumbnailQueue is awaiting native work. Updating
+ * the scope makes the current pump stop claiming stale queued ids without
+ * aborting overlapping native jobs and immediately decoding them again.
+ */
+const activeThumbnailQueueAssetScopes = new Map<string, {
+  current: string[] | undefined;
+}>();
 const pendingThumbnailQueueAborts = new Set<string>();
 const deferredMediaResourceRetries = new Map<string, ReturnType<typeof setTimeout>>();
 // Lifecycle admission fence: aborting a queue is cooperative, so its cleanup
@@ -723,11 +732,13 @@ function scheduleThumbnailQueue(
         },
       );
       // The current pump may have claimed a large startup/initial-page wave.
-      // A real destination change stops it before it can claim another stale
-      // job. Geometry-only reports keep the current wave alive and merely
-      // replace the pending visible set, avoiding cancellation churn.
-      if (options.preemptVisible !== false) {
-        activeThumbnailQueueControllers.get(libraryId)?.abort();
+      // Narrow the current pump to the newest visible ids. A destination
+      // change already interrupted running jobs outside that set; aborting
+      // the whole queue here would also requeue overlapping jobs and make the
+      // replacement wave decode the same first cards twice.
+      const assetScope = activeThumbnailQueueAssetScopes.get(libraryId);
+      if (assetScope) {
+        assetScope.current = [...new Set(options.assetIds)].slice(0, 100);
       }
     }
     rescheduledThumbnailQueues.add(libraryId);
@@ -740,7 +751,10 @@ function scheduleThumbnailQueue(
     let pendingVisibleWaveCompleted = false;
     const pendingVisibleWave = pendingVisibleThumbnailWaves.get(libraryId);
     const queueController = new AbortController();
+    const assetScope = activeThumbnailQueueAssetScopes.get(libraryId)
+      ?? { current: undefined };
     activeThumbnailQueueControllers.set(libraryId, queueController);
+    activeThumbnailQueueAssetScopes.set(libraryId, assetScope);
     if (pendingThumbnailQueueAborts.delete(libraryId)) {
       queueController.abort();
     }
@@ -797,6 +811,9 @@ function scheduleThumbnailQueue(
         ?? (options.skipStaleRepair && options.assetIds
           ? [...new Set(options.assetIds)].slice(0, 100)
           : undefined);
+      if (assetScope.current === undefined && visibleAssetIds !== undefined) {
+        assetScope.current = visibleAssetIds;
+      }
       const processWaveSize = pendingVisibleWave !== undefined
         ? Math.max(1, Math.min(100, Math.trunc(pendingVisibleWave.waveSize)))
         : options.processMaxJobs !== undefined
@@ -807,8 +824,10 @@ function scheduleThumbnailQueue(
       const processed = await libraryService.processThumbnailQueue(libraryId, {
         maxJobs: processWaveSize,
         jobKinds: ['generate_thumbnail', 'generate_video_poster'],
+        interactive: viewportOnlyWave,
         ...(visibleAssetIds === undefined ? {} : { assetIds: visibleAssetIds }),
         signal: queueController.signal,
+        claimAssetIdsRef: assetScope,
         onResult,
         onAiInputReady: (event) => {
           parentPort?.postMessage({
@@ -843,10 +862,15 @@ function scheduleThumbnailQueue(
       continueImmediately = !queueWasAborted
         && !viewportOnlyWave
         && processed === processWaveSize;
+      // A visible report can arrive while a startup/maintenance wave is
+      // awaiting native work. Do not let that older closure launch its
+      // whole-library repair tail before the pending viewport takes over.
+      const visibleWavePending = pendingVisibleThumbnailWaves.has(libraryId);
       const mayRunBackgroundRepair = () => shouldRunThumbnailBackgroundRepair({
         viewportOnlyWave,
         queueWasAborted,
         continueImmediately,
+        visibleWavePending,
       });
       if (mayRunBackgroundRepair()) {
         const filled = libraryService.enqueueThumbnailJobs(libraryId, {
@@ -884,6 +908,9 @@ function scheduleThumbnailQueue(
     }
     if (activeThumbnailQueueControllers.get(libraryId) === queueController) {
       activeThumbnailQueueControllers.delete(libraryId);
+    }
+    if (activeThumbnailQueueAssetScopes.get(libraryId) === assetScope) {
+      activeThumbnailQueueAssetScopes.delete(libraryId);
     }
     activeThumbnailQueues.delete(libraryId);
     const completedVisibleWaveIsCurrent = pendingVisibleWaveCompleted
@@ -3828,8 +3855,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const visibleAssetIds = libraryService.filterIgnoredAssetIds(
         libraryId,
         assetIds,
-      ).toSorted();
-      const visibleWindowKey = visibleAssetIds.join('\u0000');
+      );
+      // The renderer order is meaningful for the first visual wave (top to
+      // bottom), while the key and overlap calculation are set-like. Keep the
+      // stable key sorted without destroying the caller's scheduling order.
+      const visibleWindowKey = [...visibleAssetIds].toSorted().join('\u0000');
       if (visibleWindowKey === lastVisibleWindowKeyByLibrary.get(libraryId)) {
         return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
       }
@@ -3845,12 +3875,22 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       if (preemptVisible) {
         libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
       }
-      if (visibleAssetIds.length > 0) {
+      // Models use Main's single-flight offscreen renderer. Keep that
+      // potentially slow/timeout-prone work out of the fast visible raster
+      // wave so it cannot occupy one of the two Worker queue slots while the
+      // user-visible image/video cards are being filled. Startup and mutation
+      // scenes still process model jobs in the background, and an explicit
+      // model preview request still uses the normal visible hint.
+      const fastVisibleAssetIds = libraryService.filterVisibleThumbnailAssetIds(
+        libraryId,
+        visibleAssetIds,
+      );
+      if (fastVisibleAssetIds.length > 0) {
         scheduleThumbnailScene(
           libraryId,
           'visible',
-          visibleAssetIds,
-          visibleAssetIds.length,
+          fastVisibleAssetIds,
+          fastVisibleAssetIds.length,
           { light: true, preemptVisible },
         );
       }

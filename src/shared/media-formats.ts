@@ -98,8 +98,9 @@ export function imageDecoderForExtension(
  * decoder: TIFF can still use Sharp for ordinary cards, but large/metadata-
  * heavy TIFFs are deliberately routed through OIIO for both safety and the
  * full-resolution viewer path. TIFF is intentionally routed through OIIO for
- * both card and viewer decoding; other formats retain their existing card
- * decoder while the viewer selects the appropriate full-resolution path.
+ * viewer decoding. The card path may still choose bounded Sharp for ordinary
+ * TIFFs; other formats retain their existing card decoder while the viewer
+ * selects the appropriate full-resolution path.
  */
 export function imageViewerDecoderForExtension(
   extensionOrFilename: string,

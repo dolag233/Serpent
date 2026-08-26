@@ -1673,7 +1673,13 @@ function publishAssetChange(event: AssetChangeEvent): void {
 
 function publishLibraryChanged(event: LibraryChangedEvent): void {
   const parsed = parseLibraryChangedEvent(event);
-  clearArtifactPathCache(parsed.libraryId);
+  // `library.changed` is also emitted for immutable derived-artifact writes.
+  // Advancing the Main-side path-cache generation here races a thumbnail
+  // response that is already resolving: the path lookup returns a valid new
+  // artifact, but the generation check rejects it as stale. The Renderer then
+  // sees a transient protocol failure and permanently replaces the image with
+  // its broken-file fallback. Asset/source mutations use asset.changed and
+  // explicitly clear this cache; close/reopen paths clear it as well.
   pluginActivationCoordinator?.fanOutDomainEvent(createPluginDomainEvent({
     kind: 'library.changed',
     libraryId: parsed.libraryId,
