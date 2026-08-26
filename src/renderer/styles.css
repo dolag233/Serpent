@@ -606,16 +606,17 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 
 
 .windows-window-controls {
-  position: absolute;
+  /* Serpent-52a9b4: portaled to document.body — position: fixed and the
+     window-caption layer so minimize/maximize/close stay above every modal
+     backdrop (see ui/0007). The toolbar reserves the same 3-caption width, so
+     layout is unchanged. macOS native traffic lights are window-level by
+     design and unaffected. */
+  position: fixed;
   top: 0;
   right: 0;
-  /* Serpent-52a9b4: must stay above the modal backdrop (see ui/0007) so
-     minimize/maximize/close remain clickable while any modal with a blurred
-     scrim is open. macOS draws native traffic lights above web content
-     regardless of z-index, so this stays Windows-only. */
   z-index: var(--ui-layer-window-caption);
   display: flex;
-  height: 100%;
+  height: var(--shell-toolbar-height);
   -webkit-app-region: no-drag;
 }
 
@@ -3639,15 +3640,10 @@ input[type="range"] {
   pointer-events: auto;
 }
 
-/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open. */
+/* While a modal is open, freeze shell chrome so hover popovers (filters) cannot open.
+   The portaled caption buttons live outside `.app-shell`, so they are exempt. */
 body.serpent-modal-open .app-shell {
   pointer-events: none;
-}
-
-/* Serpent-52a9b4: except the Windows caption buttons — minimize/maximize/close
-   must keep working under the blurred modal backdrop. */
-body.serpent-modal-open .app-shell .windows-window-controls {
-  pointer-events: auto;
 }
 
 /* ------------------------------------------------------------------ */

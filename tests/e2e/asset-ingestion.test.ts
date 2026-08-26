@@ -70,16 +70,25 @@ test('imports files and a directory hierarchy, then reconciles external changes'
   try {
     const window = await application.firstWindow();
     await window.getByRole('button', { name: '创建资源库' }).click();
-    // Serpent-52a9b4: the modal backdrop covers the shell, but the Windows
-    // caption buttons (minimize/maximize/close) must stay clickable.
-    const captionStyle = await window
+    // Serpent-52a9b4: the modal backdrop must never intercept the Windows
+    // caption buttons. Hit-testing the caption strip at runtime proves the
+    // buttons remain clickable under the blurred scrim (a computed-style
+    // assertion is not enough — stacking contexts defeat it silently).
+    const captionHit = await window
       .locator('.windows-window-controls')
       .evaluate((element) => {
-        const style = getComputedStyle(element);
-        return { zIndex: style.zIndex, pointerEvents: style.pointerEvents };
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2,
+        );
+        return {
+          broad: rect.width > 0 && rect.height > 0,
+          onCaption: Boolean(hit && hit.closest('.windows-window-controls')),
+        };
       });
-    expect(Number(captionStyle.zIndex)).toBeGreaterThan(700);
-    expect(captionStyle.pointerEvents).toBe('auto');
+    expect(captionHit.broad).toBe(true);
+    expect(captionHit.onCaption).toBe(true);
     await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
     await window.getByRole('button', { name: '创建', exact: true }).click();
     await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from "react";
+import { createPortal } from "react-dom";
 
 import { useT } from "./i18n";
 import type { SerpentShellApi } from "../shared/external-url";
@@ -95,7 +96,13 @@ export function WindowsWindowControls({
     });
   };
 
-  return (
+  // Serpent-52a9b4: caption buttons are window-level chrome and must never be
+  // trapped inside a stacking context (`.app-shell` uses `isolation: isolate`,
+  // so children z-index never compares against the modal backdrop). Portaling
+  // to body (same pattern as PortaledPopover) puts them above
+  // `--ui-layer-modal-backdrop` for every dialog while keeping the toolbar
+  // itself frozen under the modal.
+  return createPortal(
     <div
       aria-label={t("shell.windowControls")}
       className="windows-window-controls"
@@ -132,6 +139,7 @@ export function WindowsWindowControls({
       >
         <CaptionIcon kind="close" />
       </button>
-    </div>
+    </div>,
+    document.body,
   );
 }
