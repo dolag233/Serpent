@@ -265,6 +265,8 @@ export interface SharpInstance {
   }>;
   webp(options: { quality?: number }): SharpInstance;
   toFile(output: string): Promise<unknown>;
+  /** Drop native libvips handles immediately; GC is too late on Windows. */
+  destroy?(): void;
 }
 
 interface PaletteSharpInstance {
@@ -20789,10 +20791,19 @@ export class LibraryService {
               // Card thumbnails stay bounded to 512px; the viewer still
               // resolves the full-fidelity source when opened.
             });
-          if (hasAlpha) {
-            await sized.webp({ quality: 80 }).toFile(artifactAbsPath);
-          } else {
-            await sized.jpeg({ quality: 72 }).toFile(artifactAbsPath);
+          try {
+            if (hasAlpha) {
+              await sized.webp({ quality: 80 }).toFile(artifactAbsPath);
+            } else {
+              await sized.jpeg({ quality: 72 }).toFile(artifactAbsPath);
+            }
+          } finally {
+            // Windows cannot rm/rename the library while libvips still holds
+            // the source or artifact. Destroying here is required: files:0
+            // only skips the cache, it does not close the current pipeline.
+            sized.destroy?.();
+            pipeline.destroy?.();
+            probe.destroy?.();
           }
           if (execution.signal?.aborted) {
             throw new DOMException('Media job cancelled after image decoding.', 'AbortError');

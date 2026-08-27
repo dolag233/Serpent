@@ -22,6 +22,9 @@ import {
   LibraryServiceError,
   SUPPORTED_SCHEMA_VERSION,
 } from '../../src/worker/library-service';
+import {
+  removeLibraryRootWithRetry,
+} from '../../src/worker/windows-fs-retry';
 import { importNoConflict } from './import-no-conflict';
 
 const temporaryRoots: string[] = [];
@@ -104,10 +107,25 @@ function expectServiceError(operation: () => unknown, code: LibraryServiceError[
   expect((thrown as LibraryServiceError).code).toBe(code);
 }
 
-afterEach(() => {
-  for (const service of services.splice(0)) service.closeAll();
+function flushSharpFileCache(): void {
+  try {
+    const sharp = require('sharp') as {
+      cache?: (options: boolean | { files?: number; memory?: number; items?: number }) => void;
+    };
+    // Drop any libvips file handles left by the last thumbnail pipeline so
+    // Windows can delete the temp library root (POSIX unlinks open files).
+    sharp.cache?.(false);
+    sharp.cache?.({ files: 0, memory: 32, items: 128 });
+  } catch {
+    // Sharp is optional in this file; tests that never decode images skip it.
+  }
+}
+
+afterEach(async () => {
+  await Promise.all(services.splice(0).map((service) => service.closeAllAsync()));
+  flushSharpFileCache();
   for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { force: true, recursive: true });
+    removeLibraryRootWithRetry(root);
   }
 });
 
@@ -539,10 +557,19 @@ describe('trash preview artifacts (BUG-TRASH-001)', () => {
     // The media protocol resolution must keep serving the artifact for the
     // trashed asset, and the served bytes must still decode as an image.
     const servedPath = service.getArtifactAbsolutePath(created.libraryId, artifactId, 'preview');
-    const sharp = require('sharp') as (input: string) => { metadata(): Promise<{ width?: number; height?: number }> };
-    const metadata = await sharp(servedPath).metadata();
-    expect(metadata.width).toBeGreaterThan(0);
-    expect(metadata.height).toBeGreaterThan(0);
+    const servedBytes = readFileSync(servedPath);
+    const sharp = require('sharp') as (input: Buffer) => {
+      metadata(): Promise<{ width?: number; height?: number }>;
+      destroy?(): void;
+    };
+    const decoder = sharp(servedBytes);
+    try {
+      const metadata = await decoder.metadata();
+      expect(metadata.width).toBeGreaterThan(0);
+      expect(metadata.height).toBeGreaterThan(0);
+    } finally {
+      decoder.destroy?.();
+    }
 
     service.closeAll();
   });
